@@ -16,13 +16,13 @@ internal static class DiagnosticDescriptors {
       title: "Receptor Discovered",
       messageFormat: "Found receptor '{0}' handling {1} → {2}",
       category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Warning,
+      defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
       description: "A receptor implementation was discovered and will be registered."
   );
 
   /// <summary>
-  /// WHIZ002: Warning - No receptors found in the compilation.
+  /// WHIZ002: Warning - No receptors found in the compilation. 
   /// </summary>
   public static readonly DiagnosticDescriptor NoReceptorsFound = new(
       id: "WHIZ002",

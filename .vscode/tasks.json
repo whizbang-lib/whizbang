@@ -2,50 +2,46 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "test: all",
+      "label": "⚡ Show Generator Diagnostics",
+      "command": "pwsh",
+      "type": "shell",
+      "args": [
+        "${workspaceFolder}/scripts/show-diagnostics.ps1"
+      ],
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "new",
+        "focus": true
+      },
+      "runOptions": {
+        "runOn": "default"
+      }
+    },
+    {
+      "label": "build (show diagnostics)",
       "command": "dotnet",
       "type": "process",
-      "args": ["test"],
+      "args": [
+        "build",
+        "${workspaceFolder}/tests/Whizbang.Core.Tests/Whizbang.Core.Tests.csproj",
+        "--no-incremental",
+        "-v:detailed"
+      ],
       "problemMatcher": "$msCompile",
       "group": {
-        "kind": "test",
-        "isDefault": true
-      },
-      "presentation": {
-        "reveal": "always",
-        "panel": "dedicated"
-      }
-    },
-    {
-      "label": "test: Core.Tests",
-      "command": "dotnet",
-      "type": "process",
-      "args": ["test", "tests/Whizbang.Core.Tests"],
-      "problemMatcher": "$msCompile",
-      "group": "test",
-      "presentation": {
-        "reveal": "always",
-        "panel": "dedicated"
-      }
-    },
-    {
-      "label": "test: watch",
-      "command": "dotnet",
-      "type": "process",
-      "args": ["watch", "test", "--project", "tests/Whizbang.Core.Tests"],
-      "problemMatcher": "$msCompile",
-      "group": "test",
-      "isBackground": true,
-      "presentation": {
-        "reveal": "always",
-        "panel": "dedicated"
+        "kind": "build",
+        "isDefault": false
       }
     },
     {
       "label": "build",
       "command": "dotnet",
       "type": "process",
-      "args": ["build"],
+      "args": [
+        "build",
+        "${workspaceFolder}"
+      ],
       "problemMatcher": "$msCompile",
       "group": {
         "kind": "build",

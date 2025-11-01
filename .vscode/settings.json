@@ -1,12 +1,15 @@
 {
-    "dotnet.testWindow.useTestingPlatformProtocol": true,
-    "editor.formatOnSave": true,
-    "editor.formatOnSaveMode": "file",
-    "files.eol": "\n",
-    "omnisharp.enableEditorConfigSupport": true,
-    "omnisharp.enableRoslynAnalyzers": true,
-    "cSpell.ignorePaths": [
-        ".gitignore",
-        "**/.gitignore"
-    ]
+  "dotnet.testWindow.useTestingPlatformProtocol": true,
+  "editor.formatOnSave": true,
+  "editor.formatOnSaveMode": "file",
+  "files.eol": "\n",
+  "omnisharp.enableEditorConfigSupport": true,
+  "omnisharp.enableRoslynAnalyzers": true,
+  "cSpell.ignorePaths": [
+    "settings.json",
+    ".gitignore",
+    "**/.gitignore",
+    "**/*.csproj",
+  ],
+  "task.allowAutomaticTasks": "on"
 }

@@ -2,22 +2,14 @@
   <PropertyGroup>
     <ManagePackageVersionsCentrally>true</ManagePackageVersionsCentrally>
   </PropertyGroup>
-
   <ItemGroup>
-    <!-- Testing -->
-    <PackageVersion Include="TUnit" Version="0.4.26" />
-    <PackageVersion Include="Rocks" Version="8.3.0" />
     <PackageVersion Include="Bogus" Version="35.6.1" />
-
-    <!-- Source Generation -->
-    <PackageVersion Include="Vogen" Version="8.0.2" />
-    <PackageVersion Include="PolySharp" Version="1.15.0" />
-
-    <!-- Framework -->
-    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.0" />
-
-    <!-- Roslyn for Source Generators -->
-    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
     <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0" />
+    <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
+    <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.0" />
+    <PackageVersion Include="PolySharp" Version="1.15.0" />
+    <PackageVersion Include="Rocks" Version="8.3.0" />
+    <PackageVersion Include="TUnit" Version="0.88.0" />
+    <PackageVersion Include="Vogen" Version="8.0.2" />
   </ItemGroup>
 </Project>

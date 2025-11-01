@@ -2,6 +2,8 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Generated;
+using Whizbang.Core.Tests.Common;
 
 namespace Whizbang.Core.Tests.Receptors;
 
@@ -9,7 +11,10 @@ namespace Whizbang.Core.Tests.Receptors;
 /// Tests for v0.1.0 Receptor functionality.
 /// These tests define the required behavior for stateless receptors.
 /// </summary>
-public class ReceptorTests {
+[Category("Receptors")]
+public class ReceptorTests : DiagnosticTestBase {
+  protected override DiagnosticCategory DiagnosticCategories => DiagnosticCategory.ReceptorDiscovery;
+
   // Test Messages
   public record CreateOrder(Guid CustomerId, OrderItem[] Items);
   public record OrderItem(string Sku, int Quantity, decimal Price);
@@ -33,7 +38,7 @@ public class ReceptorTests {
     var receptor = new OrderReceptor();
     var command = new CreateOrder(
         CustomerId: Guid.NewGuid(),
-        Items: new[] { new OrderItem("SKU-001", 2, 29.99m) }
+        Items: [new OrderItem("SKU-001", 2, 29.99m)]
     );
 
     // Act
@@ -51,7 +56,7 @@ public class ReceptorTests {
     var receptor = new OrderReceptor();
     var command = new CreateOrder(
         CustomerId: Guid.NewGuid(),
-        Items: Array.Empty<OrderItem>()
+        Items: []
     );
 
     // Act & Assert
@@ -66,7 +71,7 @@ public class ReceptorTests {
     var receptor = new OrderReceptor();
     var command = new CreateOrder(
         CustomerId: Guid.NewGuid(),
-        Items: new[] { new OrderItem("SKU-001", 1, 10.00m) }
+        Items: [new OrderItem("SKU-001", 1, 10.00m)]
     );
 
     // Act
@@ -84,10 +89,10 @@ public class ReceptorTests {
     var receptor = new OrderReceptor();
     var command = new CreateOrder(
         CustomerId: Guid.NewGuid(),
-        Items: new[] {
+        Items: [
                 new OrderItem("SKU-001", 2, 10.00m),
                 new OrderItem("SKU-002", 3, 15.00m)
-        }
+        ]
     );
 
     // Act
@@ -103,11 +108,11 @@ public class ReceptorTests {
     var receptor = new OrderReceptor();
     var command1 = new CreateOrder(
         CustomerId: Guid.NewGuid(),
-        Items: new[] { new OrderItem("SKU-001", 1, 10.00m) }
+        Items: [new OrderItem("SKU-001", 1, 10.00m)]
     );
     var command2 = new CreateOrder(
         CustomerId: Guid.NewGuid(),
-        Items: new[] { new OrderItem("SKU-002", 2, 20.00m) }
+        Items: [new OrderItem("SKU-002", 2, 20.00m)]
     );
 
     // Act
@@ -131,7 +136,7 @@ public class ReceptorTests {
     var auditReceptor = new OrderAuditReceptor();
     var command = new CreateOrder(
         CustomerId: Guid.NewGuid(),
-        Items: new[] { new OrderItem("SKU-001", 1, 10.00m) }
+        Items: [new OrderItem("SKU-001", 1, 10.00m)]
     );
 
     // Act
@@ -164,7 +169,7 @@ public class ReceptorTests {
     var orderCreated = new OrderCreated(
         Guid.NewGuid(),
         Guid.NewGuid(),
-        new[] { new OrderItem("SKU-001", 10, 100.00m) },
+        [new OrderItem("SKU-001", 10, 100.00m)],
         1000.00m
     );
 

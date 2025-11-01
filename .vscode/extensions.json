@@ -2,6 +2,7 @@
   "recommendations": [
     "ms-dotnettools.csdevkit",
     "ms-dotnettools.csharp",
-    "editorconfig.editorconfig"
+    "editorconfig.editorconfig",
+    "sanaajani.taskrunnercode"
   ]
 }

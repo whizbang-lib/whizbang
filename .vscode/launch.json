@@ -1,0 +1,16 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": ".NET Core Launch (with diagnostics)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "⚡ Show Generator Diagnostics",
+      "program": "${workspaceFolder}/tests/Whizbang.Core.Tests/bin/Debug/net9.0/Whizbang.Core.Tests.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "console": "internalConsole"
+    }
+  ]
+}
