@@ -4,5 +4,9 @@
     "editor.formatOnSaveMode": "file",
     "files.eol": "\n",
     "omnisharp.enableEditorConfigSupport": true,
-    "omnisharp.enableRoslynAnalyzers": true
+    "omnisharp.enableRoslynAnalyzers": true,
+    "cSpell.ignorePaths": [
+        ".gitignore",
+        "**/.gitignore"
+    ]
 }

@@ -8,8 +8,8 @@ namespace Whizbang.Core.ValueObjects;
 /// </summary>
 [ValueObject<Guid>]
 public readonly partial struct CorrelationId {
-    /// <summary>
-    /// Creates a new CorrelationId with a new unique identifier.
-    /// </summary>
-    public static CorrelationId New() => From(Guid.NewGuid());
+  /// <summary>
+  /// Creates a new CorrelationId with a new unique identifier.
+  /// </summary>
+  public static CorrelationId New() => From(Guid.NewGuid());
 }

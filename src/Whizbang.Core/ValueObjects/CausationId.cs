@@ -8,8 +8,8 @@ namespace Whizbang.Core.ValueObjects;
 /// </summary>
 [ValueObject<Guid>]
 public readonly partial struct CausationId {
-    /// <summary>
-    /// Creates a new CausationId with a new unique identifier.
-    /// </summary>
-    public static CausationId New() => From(Guid.NewGuid());
+  /// <summary>
+  /// Creates a new CausationId with a new unique identifier.
+  /// </summary>
+  public static CausationId New() => From(Guid.NewGuid());
 }

@@ -8,10 +8,10 @@ namespace Whizbang.Core;
 /// <typeparam name="TMessage">The type of message this receptor handles</typeparam>
 /// <typeparam name="TResponse">The type of response this receptor produces</typeparam>
 public interface IReceptor<in TMessage, TResponse> {
-    /// <summary>
-    /// Receives a message, applies business logic, and returns a response.
-    /// </summary>
-    /// <param name="message">The message to process</param>
-    /// <returns>The response representing the decision made</returns>
-    Task<TResponse> ReceiveAsync(TMessage message);
+  /// <summary>
+  /// Receives a message, applies business logic, and returns a response.
+  /// </summary>
+  /// <param name="message">The message to process</param>
+  /// <returns>The response representing the decision made</returns>
+  Task<TResponse> ReceiveAsync(TMessage message);
 }
