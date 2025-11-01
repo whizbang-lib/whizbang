@@ -2,7 +2,6 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
-using Whizbang.Core.Attributes;
 
 namespace Whizbang.Core.Tests.Receptors;
 
@@ -181,14 +180,12 @@ public class ReceptorTests {
     // Supporting types for multi-destination test
     public record AuditEvent(string Action, Guid EntityId);
 
-    [WhizbangHandler]
     public class OrderBusinessReceptor : IReceptor<CreateOrder, OrderCreated> {
         public async Task<OrderCreated> ReceiveAsync(CreateOrder message) {
             throw new NotImplementedException("OrderBusinessReceptor not yet implemented");
         }
     }
 
-    [WhizbangHandler]
     public class OrderAuditReceptor : IReceptor<CreateOrder, AuditEvent> {
         public async Task<AuditEvent> ReceiveAsync(CreateOrder message) {
             throw new NotImplementedException("OrderAuditReceptor not yet implemented");
@@ -199,7 +196,6 @@ public class ReceptorTests {
     public record ProcessPayment(Guid PaymentId, decimal Amount);
     public record PaymentProcessed(Guid PaymentId, decimal Amount);
 
-    [WhizbangHandler]
     public class PaymentReceptor : IReceptor<ProcessPayment, (PaymentProcessed, AuditEvent)> {
         public async Task<(PaymentProcessed, AuditEvent)> ReceiveAsync(ProcessPayment message) {
             throw new NotImplementedException("PaymentReceptor not yet implemented");
@@ -211,7 +207,6 @@ public class ReceptorTests {
     public record EmailSent(Guid CustomerId) : NotificationEvent;
     public record HighValueAlert(Guid OrderId) : NotificationEvent;
 
-    [WhizbangHandler]
     public class NotificationReceptor : IReceptor<OrderCreated, NotificationEvent[]> {
         public async Task<NotificationEvent[]> ReceiveAsync(OrderCreated message) {
             throw new NotImplementedException("NotificationReceptor not yet implemented");

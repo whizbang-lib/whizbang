@@ -7,11 +7,24 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+
+    <!-- Enable viewing generated files -->
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/Generated</CompilerGeneratedFilesOutputPath>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Exclude generated files from compilation (they're already compiled via the generator pipeline) -->
+    <Compile Remove="Generated/**/*.cs" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
     <ProjectReference Include="../../src/Whizbang.Testing/Whizbang.Testing.csproj" />
+    <!-- Source Generator reference -->
+    <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,3 +1,8 @@
 {
-    "dotnet.testWindow.useTestingPlatformProtocol": true
+    "dotnet.testWindow.useTestingPlatformProtocol": true,
+    "editor.formatOnSave": true,
+    "editor.formatOnSaveMode": "file",
+    "files.eol": "\n",
+    "omnisharp.enableEditorConfigSupport": true,
+    "omnisharp.enableRoslynAnalyzers": true
 }
