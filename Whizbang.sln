@@ -9,13 +9,9 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Whizbang.Core", "src\Whizba
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Whizbang.Generators", "src\Whizbang.Generators\Whizbang.Generators.csproj", "{FCE0F1B8-C252-4E8E-ABDE-9536900440F8}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Whizbang.Testing", "src\Whizbang.Testing\Whizbang.Testing.csproj", "{2375F5CF-8631-4C46-8649-AB5933297FB6}"
-EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{FD3F88E6-A708-43A9-9458-9171C8D531DC}"
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Whizbang.Core.Tests", "tests\Whizbang.Core.Tests\Whizbang.Core.Tests.csproj", "{6E669BFC-8D38-4616-964F-D7B2179DB577}"
-EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Whizbang.Documentation.Tests", "tests\Whizbang.Documentation.Tests\Whizbang.Documentation.Tests.csproj", "{94E37479-A862-4E59-A118-4F5E67116B88}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
@@ -34,24 +30,14 @@ Global
 		{FCE0F1B8-C252-4E8E-ABDE-9536900440F8}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{FCE0F1B8-C252-4E8E-ABDE-9536900440F8}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{FCE0F1B8-C252-4E8E-ABDE-9536900440F8}.Release|Any CPU.Build.0 = Release|Any CPU
-		{2375F5CF-8631-4C46-8649-AB5933297FB6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{2375F5CF-8631-4C46-8649-AB5933297FB6}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{2375F5CF-8631-4C46-8649-AB5933297FB6}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{2375F5CF-8631-4C46-8649-AB5933297FB6}.Release|Any CPU.Build.0 = Release|Any CPU
 		{6E669BFC-8D38-4616-964F-D7B2179DB577}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
 		{6E669BFC-8D38-4616-964F-D7B2179DB577}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{6E669BFC-8D38-4616-964F-D7B2179DB577}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{6E669BFC-8D38-4616-964F-D7B2179DB577}.Release|Any CPU.Build.0 = Release|Any CPU
-		{94E37479-A862-4E59-A118-4F5E67116B88}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
-		{94E37479-A862-4E59-A118-4F5E67116B88}.Debug|Any CPU.Build.0 = Debug|Any CPU
-		{94E37479-A862-4E59-A118-4F5E67116B88}.Release|Any CPU.ActiveCfg = Release|Any CPU
-		{94E37479-A862-4E59-A118-4F5E67116B88}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{F379FCD9-E19B-467A-A321-F0CB9C0B6185} = {3F1DD888-5F29-4C8C-9521-60B49DF30801}
 		{FCE0F1B8-C252-4E8E-ABDE-9536900440F8} = {3F1DD888-5F29-4C8C-9521-60B49DF30801}
-		{2375F5CF-8631-4C46-8649-AB5933297FB6} = {3F1DD888-5F29-4C8C-9521-60B49DF30801}
 		{6E669BFC-8D38-4616-964F-D7B2179DB577} = {FD3F88E6-A708-43A9-9458-9171C8D531DC}
-		{94E37479-A862-4E59-A118-4F5E67116B88} = {FD3F88E6-A708-43A9-9458-9171C8D531DC}
 	EndGlobalSection
 EndGlobal

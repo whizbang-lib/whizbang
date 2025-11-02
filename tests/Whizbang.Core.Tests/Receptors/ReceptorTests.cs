@@ -27,8 +27,24 @@ public class ReceptorTests : DiagnosticTestBase {
   // Test receptor implementations (will be created when implementing)
   public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
     public async Task<OrderCreated> ReceiveAsync(CreateOrder message) {
-      // This will fail until implemented
-      throw new NotImplementedException("OrderReceptor not yet implemented");
+      // Validation
+      if (message.Items.Length == 0) {
+        throw new InvalidOperationException("Order must have items");
+      }
+
+      // Introduce async delay to ensure task is not immediately completed
+      await Task.Delay(1);
+
+      // Calculate total
+      var total = message.Items.Sum(item => item.Quantity * item.Price);
+
+      // Return event
+      return new OrderCreated(
+          OrderId: Guid.NewGuid(),
+          CustomerId: message.CustomerId,
+          Items: message.Items,
+          Total: total
+      );
     }
   }
 
@@ -187,13 +203,27 @@ public class ReceptorTests : DiagnosticTestBase {
 
   public class OrderBusinessReceptor : IReceptor<CreateOrder, OrderCreated> {
     public async Task<OrderCreated> ReceiveAsync(CreateOrder message) {
-      throw new NotImplementedException("OrderBusinessReceptor not yet implemented");
+      await Task.Delay(1);
+
+      var total = message.Items.Sum(item => item.Quantity * item.Price);
+
+      return new OrderCreated(
+          OrderId: Guid.NewGuid(),
+          CustomerId: message.CustomerId,
+          Items: message.Items,
+          Total: total
+      );
     }
   }
 
   public class OrderAuditReceptor : IReceptor<CreateOrder, AuditEvent> {
     public async Task<AuditEvent> ReceiveAsync(CreateOrder message) {
-      throw new NotImplementedException("OrderAuditReceptor not yet implemented");
+      await Task.Delay(1);
+
+      return new AuditEvent(
+          Action: "OrderCreated",
+          EntityId: message.CustomerId
+      );
     }
   }
 
@@ -203,7 +233,19 @@ public class ReceptorTests : DiagnosticTestBase {
 
   public class PaymentReceptor : IReceptor<ProcessPayment, (PaymentProcessed, AuditEvent)> {
     public async Task<(PaymentProcessed, AuditEvent)> ReceiveAsync(ProcessPayment message) {
-      throw new NotImplementedException("PaymentReceptor not yet implemented");
+      await Task.Delay(1);
+
+      var payment = new PaymentProcessed(
+          PaymentId: message.PaymentId,
+          Amount: message.Amount
+      );
+
+      var audit = new AuditEvent(
+          Action: "PaymentProcessed",
+          EntityId: message.PaymentId
+      );
+
+      return (payment, audit);
     }
   }
 
@@ -214,7 +256,19 @@ public class ReceptorTests : DiagnosticTestBase {
 
   public class NotificationReceptor : IReceptor<OrderCreated, INotificationEvent[]> {
     public async Task<INotificationEvent[]> ReceiveAsync(OrderCreated message) {
-      throw new NotImplementedException("NotificationReceptor not yet implemented");
+      await Task.Delay(1);
+
+      var notifications = new List<INotificationEvent>();
+
+      // Always send email
+      notifications.Add(new EmailSent(message.CustomerId));
+
+      // High value alert for orders >= $1000
+      if (message.Total >= 1000m) {
+        notifications.Add(new HighValueAlert(message.OrderId));
+      }
+
+      return notifications.ToArray();
     }
   }
 }

@@ -1,7 +1,9 @@
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Generated;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Dispatcher;
@@ -23,7 +25,7 @@ public class DispatcherTests {
     var command = new CreateOrder(Guid.NewGuid(), new[] { "item1", "item2" });
 
     // Act
-    var result = await dispatcher.Send<OrderCreated>(command);
+    var result = await dispatcher.SendAsync<OrderCreated>(command);
 
     // Assert
     await Assert.That(result).IsNotNull();
@@ -38,9 +40,10 @@ public class DispatcherTests {
     var unknownCommand = new UnknownCommand();
 
     // Act & Assert
-    await Assert.That(async () => await dispatcher.Send<object>(unknownCommand))
-        .ThrowsExactly<HandlerNotFoundException>()
-        .WithMessage("*UnknownCommand*");
+    var exception = await Assert.That(async () => await dispatcher.SendAsync<object>(unknownCommand))
+        .ThrowsExactly<HandlerNotFoundException>();
+
+    await Assert.That(exception?.Message).Contains("UnknownCommand");
   }
 
   [Test]
@@ -54,7 +57,7 @@ public class DispatcherTests {
     );
 
     // Act
-    var result = await dispatcher.Send<OrderCreated>(command, context);
+    var result = await dispatcher.SendAsync<OrderCreated>(command, context);
 
     // Assert
     await Assert.That(result).IsNotNull();
@@ -66,13 +69,12 @@ public class DispatcherTests {
     // Arrange
     var dispatcher = CreateDispatcher();
     var orderCreated = new OrderCreated(Guid.NewGuid(), Guid.NewGuid());
-    var notificationCount = 0;
 
     // Subscribe multiple handlers (this will be via perspectives in implementation)
     // For now, test that Publish doesn't throw
 
     // Act
-    await dispatcher.Publish(orderCreated);
+    await dispatcher.PublishAsync(orderCreated);
 
     // Assert
     // Should complete without error
@@ -90,7 +92,7 @@ public class DispatcherTests {
         };
 
     // Act
-    var results = await dispatcher.SendMany<OrderCreated>(commands);
+    var results = await dispatcher.SendManyAsync<OrderCreated>(commands);
 
     // Assert
     await Assert.That(results).IsNotNull();
@@ -108,8 +110,8 @@ public class DispatcherTests {
     var command2 = new CreateOrder(Guid.NewGuid(), new[] { "item2" });
 
     // Act
-    var result1 = await dispatcher.Send<OrderCreated>(command1);
-    var result2 = await dispatcher.Send<OrderCreated>(command2);
+    var result1 = await dispatcher.SendAsync<OrderCreated>(command1);
+    var result2 = await dispatcher.SendAsync<OrderCreated>(command2);
 
     // Assert
     // Each message should have unique MessageId (tracked in context)
@@ -123,7 +125,7 @@ public class DispatcherTests {
     var createCommand = new CreateOrder(Guid.NewGuid(), new[] { "item1" });
 
     // Act
-    var result = await dispatcher.Send<OrderCreated>(createCommand);
+    var result = await dispatcher.SendAsync<OrderCreated>(createCommand);
 
     // Assert - Should route to OrderReceptor specifically
     await Assert.That(result).IsTypeOf<OrderCreated>();
@@ -143,7 +145,7 @@ public class DispatcherTests {
     // Act - Send should complete
     // In full implementation with multi-destination support,
     // this would return results from all receptors
-    var result = await dispatcher.Send<OrderCreated>(command);
+    var result = await dispatcher.SendAsync<OrderCreated>(command);
 
     // Assert
     await Assert.That(result).IsNotNull();
@@ -157,7 +159,7 @@ public class DispatcherTests {
     var command = new CreateOrder(Guid.NewGuid(), new[] { "item1" });
 
     // Act
-    var result = await dispatcher.Send<OrderCreated>(command, initialContext);
+    var result = await dispatcher.SendAsync<OrderCreated>(command, initialContext);
 
     // Assert
     // The result's causation should reference the command's message ID
@@ -168,9 +170,30 @@ public class DispatcherTests {
   // Helper method to create dispatcher
   // Will be implemented to return InMemoryDispatcher
   private IDispatcher CreateDispatcher() {
-    throw new NotImplementedException("Dispatcher creation not yet implemented");
+    var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
+
+    // Register receptors
+    services.AddReceptors();
+
+    // Register dispatcher
+    services.AddWhizbangDispatcher();
+
+    var serviceProvider = services.BuildServiceProvider();
+    return serviceProvider.GetRequiredService<IDispatcher>();
   }
 
   // Test supporting types
   public record UnknownCommand();
+
+  // Test receptor for DispatcherTests
+  public class DispatcherTestOrderReceptor : IReceptor<CreateOrder, OrderCreated> {
+    public async Task<OrderCreated> ReceiveAsync(CreateOrder message) {
+      await Task.Delay(1);
+
+      return new OrderCreated(
+          OrderId: Guid.NewGuid(),
+          CustomerId: message.CustomerId
+      );
+    }
+  }
 }

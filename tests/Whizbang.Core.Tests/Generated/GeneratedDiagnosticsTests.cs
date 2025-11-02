@@ -20,7 +20,7 @@ public class GeneratedDiagnosticsTests : DiagnosticTestBase {
     await Assert.That(output).Contains("Whizbang Source Generators - Build Diagnostics");
     await Assert.That(output).Contains("ReceptorDiscoveryGenerator");
     await Assert.That(output).Contains("ReceptorDiscovery");
-    await Assert.That(output).Contains("Discovered 5 receptor(s)");
+    await Assert.That(output).Contains("Discovered 11 receptor(s)");
     await Assert.That(output).Contains("OrderReceptor");
     await Assert.That(output).Contains("PaymentReceptor");
     await Assert.That(output).Contains("(PaymentProcessed, AuditEvent)");
@@ -75,6 +75,6 @@ public class GeneratedDiagnosticsTests : DiagnosticTestBase {
     await Assert.That(receptorOnly).Contains("ReceptorDiscovery");
 
     // Both should contain receptor info
-    await Assert.That(receptorOnly).Contains("Discovered 5 receptor(s)");
+    await Assert.That(receptorOnly).Contains("Discovered 11 receptor(s)");
   }
 }

@@ -11,5 +11,6 @@
     "**/.gitignore",
     "**/*.csproj",
   ],
-  "task.allowAutomaticTasks": "on"
+  "task.allowAutomaticTasks": "on",
+  "dotnet.automaticallySyncWithActiveItem": true
 }

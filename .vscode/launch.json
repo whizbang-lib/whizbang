@@ -2,15 +2,65 @@
   "version": "0.2.0",
   "configurations": [
     {
-      "name": ".NET Core Launch (with diagnostics)",
+      "name": "Debug Tests",
       "type": "coreclr",
       "request": "launch",
-      "preLaunchTask": "⚡ Show Generator Diagnostics",
-      "program": "${workspaceFolder}/tests/Whizbang.Core.Tests/bin/Debug/net9.0/Whizbang.Core.Tests.dll",
-      "args": [],
+      "preLaunchTask": "build",
+      "program": "dotnet",
+      "args": [
+        "exec",
+        "${workspaceFolder}/tests/Whizbang.Core.Tests/bin/Debug/net9.0/Whizbang.Core.Tests.dll",
+        "--maximum-parallel-tests",
+        "1",
+        "--fail-fast"
+      ],
       "cwd": "${workspaceFolder}",
       "stopAtEntry": false,
-      "console": "internalConsole"
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Debug Tests (with diagnostics)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "dotnet",
+      "args": [
+        "exec",
+        "${workspaceFolder}/tests/Whizbang.Core.Tests/bin/Debug/net9.0/Whizbang.Core.Tests.dll"
+      ],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "WHIZBANG_SHOW_DIAGNOSTICS": "1"
+      }
+    },
+    {
+      "name": "Debug Specific Test",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "dotnet",
+      "args": [
+        "exec",
+        "${workspaceFolder}/tests/Whizbang.Core.Tests/bin/Debug/net9.0/Whizbang.Core.Tests.dll",
+        "--treenode-filter",
+        "/*/*/*/${input:testFilter}"
+      ],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "console": "integratedTerminal",
+      "justMyCode": false
+    }
+  ],
+  "inputs": [
+    {
+      "id": "testFilter",
+      "type": "promptString",
+      "description": "Test method name (e.g., Publish_WithEvent_ShouldNotifyAllHandlersAsync)",
+      "default": ""
     }
   ]
 }

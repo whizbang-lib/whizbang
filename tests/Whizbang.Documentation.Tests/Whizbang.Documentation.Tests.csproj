@@ -9,7 +9,6 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
-    <ProjectReference Include="../../src/Whizbang.Testing/Whizbang.Testing.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="TUnit" />

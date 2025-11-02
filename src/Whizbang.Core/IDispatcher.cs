@@ -11,7 +11,7 @@ public interface IDispatcher {
   /// <typeparam name="TResult">The expected result type</typeparam>
   /// <param name="message">The message to send</param>
   /// <returns>The result from the receptor</returns>
-  Task<TResult> Send<TResult>(object message);
+  Task<TResult> SendAsync<TResult>(object message);
 
   /// <summary>
   /// Sends a message with explicit context.
@@ -20,14 +20,14 @@ public interface IDispatcher {
   /// <param name="message">The message to send</param>
   /// <param name="context">The message context</param>
   /// <returns>The result from the receptor</returns>
-  Task<TResult> Send<TResult>(object message, IMessageContext context);
+  Task<TResult> SendAsync<TResult>(object message, IMessageContext context);
 
   /// <summary>
   /// Publishes an event to all interested handlers.
   /// </summary>
   /// <typeparam name="TEvent">The event type</typeparam>
   /// <param name="event">The event to publish</param>
-  Task Publish<TEvent>(TEvent @event);
+  Task PublishAsync<TEvent>(TEvent @event);
 
   /// <summary>
   /// Sends multiple messages and collects all responses.
@@ -35,5 +35,5 @@ public interface IDispatcher {
   /// <typeparam name="TResult">The expected result type</typeparam>
   /// <param name="messages">The messages to send</param>
   /// <returns>All results from receptors</returns>
-  Task<IEnumerable<TResult>> SendMany<TResult>(IEnumerable<object> messages);
+  Task<IEnumerable<TResult>> SendManyAsync<TResult>(IEnumerable<object> messages);
 }
