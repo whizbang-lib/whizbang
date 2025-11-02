@@ -223,7 +223,8 @@ dotnet_style_prefer_simplified_boolean_expressions = true:suggestion
 dotnet_style_prefer_compound_assignment = true:suggestion
 dotnet_style_prefer_collection_expression = when_types_loosely_match:suggestion
 dotnet_style_prefer_simplified_interpolation = true:suggestion
-dotnet_style_namespace_match_folder = true:suggestion
+# Disabled - doesn't support excluding 'src/' prefix from folder matching
+dotnet_style_namespace_match_folder = false
 dotnet_style_allow_multiple_blank_lines_experimental = true:silent
 dotnet_style_allow_statement_immediately_after_block_experimental = true:silent
 dotnet_code_quality_unused_parameters = all:suggestion
@@ -258,6 +259,8 @@ csharp_style_pattern_local_over_anonymous_function = true:suggestion
 csharp_style_inlined_variable_declaration = true:suggestion
 # Namespaces
 csharp_style_namespace_declarations = file_scoped:warning
+# IDE0130 disabled - doesn't support excluding 'src/' prefix from folder matching
+dotnet_diagnostic.IDE0130.severity = none
 ###############################
 # C# Formatting Rules         #
 ###############################

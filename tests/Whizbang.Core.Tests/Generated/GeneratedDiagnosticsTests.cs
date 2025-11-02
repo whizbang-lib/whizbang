@@ -9,7 +9,7 @@ namespace Whizbang.Core.Tests.Generated;
 public class GeneratedDiagnosticsTests : DiagnosticTestBase {
 
   [Test]
-  public async Task Diagnostics_ShouldCollectReceptorDiscoveryInfo() {
+  public async Task Diagnostics_ShouldCollectReceptorDiscoveryInfoAsync() {
     // Arrange & Act
     var output = WhizbangDiagnostics.Diagnostics(
       categories: DiagnosticCategory.ReceptorDiscovery,
@@ -28,7 +28,7 @@ public class GeneratedDiagnosticsTests : DiagnosticTestBase {
   }
 
   [Test]
-  public async Task Diagnostics_ShouldCaptureTimestamp() {
+  public async Task Diagnostics_ShouldCaptureTimestampAsync() {
     // Arrange & Act
     var output = WhizbangDiagnostics.Diagnostics(
       categories: DiagnosticCategory.ReceptorDiscovery,
@@ -44,7 +44,7 @@ public class GeneratedDiagnosticsTests : DiagnosticTestBase {
   }
 
   [Test]
-  public async Task Diagnostics_ShouldDisplayFormattedOutput() {
+  public async Task Diagnostics_ShouldDisplayFormattedOutputAsync() {
     // Arrange & Act
     var output = WhizbangDiagnostics.Diagnostics(
       categories: DiagnosticCategory.ReceptorDiscovery,
@@ -59,7 +59,7 @@ public class GeneratedDiagnosticsTests : DiagnosticTestBase {
   }
 
   [Test]
-  public async Task Diagnostics_ShouldFilterByCategory() {
+  public async Task Diagnostics_ShouldFilterByCategoryAsync() {
     // Arrange & Act
     var allOutput = WhizbangDiagnostics.Diagnostics(
       categories: DiagnosticCategory.All,

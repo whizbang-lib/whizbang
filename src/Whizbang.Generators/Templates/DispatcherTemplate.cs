@@ -49,6 +49,6 @@ internal sealed class GeneratedDispatcher : Dispatcher {
     // This region will be replaced with generated publish routing code
     #endregion
 
-    return async _ => { };
+    return _ => Task.CompletedTask;
   }
 }

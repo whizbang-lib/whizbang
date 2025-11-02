@@ -237,7 +237,7 @@ public class DispatcherReceptorIntegrationTests {
         await dispatcher.SendAsync<OrderPlaced>(command))
         .ThrowsExactly<InvalidOperationException>();
 
-    await Assert.That(exception.Message).Contains("Order must have items");
+    await Assert.That(exception!.Message).Contains("Order must have items");
   }
 
   /// <summary>
@@ -262,7 +262,7 @@ public class DispatcherReceptorIntegrationTests {
         await dispatcher.SendAsync<OrderPlaced>(command))
         .ThrowsExactly<HandlerNotFoundException>();
 
-    await Assert.That(exception.Message).Contains("PlaceOrder");
+    await Assert.That(exception!.Message).Contains("PlaceOrder");
   }
 
   /// <summary>
@@ -421,5 +421,87 @@ public class DispatcherReceptorIntegrationTests {
     await Assert.That(dispatcher).IsNotNull();
     await Assert.That(orderResult).IsNotNull();
     await Assert.That(userResult).IsNotNull();
+  }
+
+  // TODO: These tests are placeholders for v0.2.0 Dispatcher integration with MessageEnvelope/Hops
+  // Currently skipped as v0.1.0 Dispatcher doesn't create envelopes yet
+  // Uncomment and implement when Dispatcher is upgraded to work with MessageEnvelope
+
+  /// <summary>
+  /// Tests that dispatcher creates a MessageEnvelope with an initial hop
+  /// </summary>
+  [Test]
+  [Skip("v0.2.0 - Dispatcher doesn't create MessageEnvelope yet")]
+  public async Task Integration_Dispatcher_ShouldCreateEnvelopeWithInitialHopAsync() {
+    // This test will be implemented when Dispatcher is upgraded to create MessageEnvelope
+    // Expected behavior:
+    // 1. Dispatcher receives plain message
+    // 2. Creates MessageEnvelope with MessageId, CorrelationId, CausationId
+    // 3. Creates initial hop with:
+    //    - ServiceName
+    //    - Timestamp
+    //    - CallerMemberName, CallerFilePath, CallerLineNumber
+    // 4. Passes envelope to receptor
+    await Task.CompletedTask;
+  }
+
+  /// <summary>
+  /// Tests that hops contain correct caller information
+  /// </summary>
+  [Test]
+  [Skip("v0.2.0 - Dispatcher doesn't create MessageEnvelope yet")]
+  public async Task Integration_Hops_ShouldCaptureCallerInformationAsync() {
+    // This test will verify that caller info (method, file, line) is captured
+    // Expected behavior:
+    // 1. Dispatcher creates hop with CallerMemberName = "SendAsync" or similar
+    // 2. CallerFilePath points to source file
+    // 3. CallerLineNumber is set
+    await Task.CompletedTask;
+  }
+
+  /// <summary>
+  /// Tests that multiple messages create separate envelopes with unique hops
+  /// </summary>
+  [Test]
+  [Skip("v0.2.0 - Dispatcher doesn't create MessageEnvelope yet")]
+  public async Task Integration_MultipleMessages_ShouldCreateSeparateEnvelopesAsync() {
+    // This test will verify that each message gets its own envelope
+    // Expected behavior:
+    // 1. Message 1 creates Envelope 1 with Hop 1
+    // 2. Message 2 creates Envelope 2 with Hop 2
+    // 3. MessageIds are different
+    // 4. Timestamps are different
+    await Task.CompletedTask;
+  }
+
+  /// <summary>
+  /// Tests that causation hops are carried forward in workflows
+  /// </summary>
+  [Test]
+  [Skip("v0.2.0 - Dispatcher doesn't create MessageEnvelope yet")]
+  public async Task Integration_Workflow_ShouldCarryForwardCausationHopsAsync() {
+    // This test will verify distributed tracing via causation hops
+    // Expected workflow:
+    // 1. Dispatcher sends PlaceOrder → creates Envelope A with Hop A (Current)
+    // 2. OrderReceptor receives Envelope A → creates OrderPlaced
+    // 3. Dispatcher sends OrderPlaced → creates Envelope B with:
+    //    - Hop B (Current) for OrderPlaced processing
+    //    - Hop A (Causation) copied from parent Envelope A
+    // 4. Can trace back to original PlaceOrder via causation hops
+    await Task.CompletedTask;
+  }
+
+  /// <summary>
+  /// Tests that security context is preserved in hops
+  /// </summary>
+  [Test]
+  [Skip("v0.2.0 - Dispatcher doesn't create MessageEnvelope yet")]
+  public async Task Integration_Hops_ShouldPreserveSecurityContextAsync() {
+    // This test will verify security context flows through hops
+    // Expected behavior:
+    // 1. Dispatcher creates hop with SecurityContext (UserId, TenantId)
+    // 2. Context is available to receptors
+    // 3. Context can change per hop (e.g., service boundary crossing)
+    await Task.CompletedTask;
   }
 }

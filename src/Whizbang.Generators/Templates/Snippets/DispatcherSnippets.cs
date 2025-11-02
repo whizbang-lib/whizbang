@@ -62,7 +62,7 @@ public class DispatcherSnippets {
     }
     #endregion
 
-    return async _ => { };
+    return _ => Task.CompletedTask;
   }
 
   /// <summary>
