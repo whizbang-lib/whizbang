@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 
 namespace Whizbang.Core;
@@ -40,6 +42,9 @@ public abstract class Dispatcher : IDispatcher {
   /// Creates a new message context automatically.
   /// </summary>
   [DebuggerStepThrough]
+  [StackTraceHidden]
+  [RequiresUnreferencedCode("Message types and handlers are resolved using runtime type information. For AOT compatibility, ensure all message types and handlers are registered at compile time.")]
+  [RequiresDynamicCode("Message dispatching uses generic type parameters that may require runtime code generation. For AOT compatibility, use source-generated dispatcher.")]
   public Task<TResult> SendAsync<TResult>(object message) {
     var context = MessageContext.New();
     return SendAsync<TResult>(message, context);
@@ -50,6 +55,9 @@ public abstract class Dispatcher : IDispatcher {
   /// Uses generated delegate to invoke receptor with zero reflection.
   /// </summary>
   [DebuggerStepThrough]
+  [StackTraceHidden]
+  [RequiresUnreferencedCode("Message types and handlers are resolved using runtime type information. For AOT compatibility, ensure all message types and handlers are registered at compile time.")]
+  [RequiresDynamicCode("Message dispatching uses generic type parameters that may require runtime code generation. For AOT compatibility, use source-generated dispatcher.")]
   public async Task<TResult> SendAsync<TResult>(object message, IMessageContext context) {
     ArgumentNullException.ThrowIfNull(message);
 
@@ -76,6 +84,9 @@ public abstract class Dispatcher : IDispatcher {
   /// Uses generated delegate to invoke receptors with zero reflection.
   /// </summary>
   [DebuggerStepThrough]
+  [StackTraceHidden]
+  [RequiresUnreferencedCode("Event types and handlers are resolved using runtime type information. For AOT compatibility, ensure all event types and handlers are registered at compile time.")]
+  [RequiresDynamicCode("Event publishing uses generic type parameters that may require runtime code generation. For AOT compatibility, use source-generated dispatcher.")]
   public async Task PublishAsync<TEvent>(TEvent @event) {
     if (@event == null) {
       throw new ArgumentNullException(nameof(@event));
@@ -94,6 +105,9 @@ public abstract class Dispatcher : IDispatcher {
   /// Sends multiple messages and returns all results.
   /// </summary>
   [DebuggerStepThrough]
+  [StackTraceHidden]
+  [RequiresUnreferencedCode("Message types and handlers are resolved using runtime type information. For AOT compatibility, ensure all message types and handlers are registered at compile time.")]
+  [RequiresDynamicCode("Message dispatching uses generic type parameters that may require runtime code generation. For AOT compatibility, use source-generated dispatcher.")]
   public async Task<IEnumerable<TResult>> SendManyAsync<TResult>(IEnumerable<object> messages) {
     ArgumentNullException.ThrowIfNull(messages);
 
@@ -109,11 +123,15 @@ public abstract class Dispatcher : IDispatcher {
   /// Implemented by generated code - returns a strongly-typed delegate for invoking a receptor.
   /// The delegate encapsulates the receptor lookup and invocation with zero reflection.
   /// </summary>
+  [UnconditionalSuppressMessage("AOT", "IL2026", Justification = "Generated code uses compile-time type resolution with no reflection.")]
+  [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Generated code uses compile-time type resolution with no dynamic code generation.")]
   protected abstract ReceptorInvoker<TResult>? _getReceptorInvoker<TResult>(object message, Type messageType);
 
   /// <summary>
   /// Implemented by generated code - returns a strongly-typed delegate for publishing to receptors.
   /// The delegate encapsulates finding all receptors and invoking them with zero reflection.
   /// </summary>
+  [UnconditionalSuppressMessage("AOT", "IL2026", Justification = "Generated code uses compile-time type resolution with no reflection.")]
+  [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Generated code uses compile-time type resolution with no dynamic code generation.")]
   protected abstract ReceptorPublisher<TEvent> _getReceptorPublisher<TEvent>(TEvent @event, Type eventType);
 }

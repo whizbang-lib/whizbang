@@ -6,6 +6,7 @@
 
 using System;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
@@ -17,6 +18,8 @@ namespace Whizbang.Core.Generated;
 /// Derives from Whizbang.Core.Dispatcher and implements abstract methods that return delegates.
 /// The delegates provide strongly-typed invocation without any reflection.
 /// </summary>
+[ExcludeFromCodeCoverage]
+[DebuggerNonUserCode]
 internal sealed class GeneratedDispatcher : Dispatcher {
   public GeneratedDispatcher(IServiceProvider serviceProvider) : base(serviceProvider) {
   }

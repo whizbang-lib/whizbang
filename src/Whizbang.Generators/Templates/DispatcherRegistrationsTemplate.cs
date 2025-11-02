@@ -5,6 +5,7 @@
 #nullable enable
 
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
 
@@ -12,10 +13,13 @@ namespace Whizbang.Core.Generated {
   /// <summary>
   /// Auto-generated registrations for receptors and dispatcher.
   /// </summary>
+  [ExcludeFromCodeCoverage]
+  [DebuggerNonUserCode]
   public static class DispatcherRegistrations {
     /// <summary>
     /// Registers all {{RECEPTOR_COUNT}} discovered receptors with the service collection.
     /// </summary>
+    [ExcludeFromCodeCoverage]
     [DebuggerNonUserCode]
     public static IServiceCollection AddReceptors(this IServiceCollection services) {
       #region RECEPTOR_REGISTRATIONS
@@ -27,6 +31,7 @@ namespace Whizbang.Core.Generated {
     /// <summary>
     /// Registers the generated zero-reflection dispatcher.
     /// </summary>
+    [ExcludeFromCodeCoverage]
     [DebuggerNonUserCode]
     public static IServiceCollection AddWhizbangDispatcher(this IServiceCollection services) {
       services.AddSingleton<IDispatcher, GeneratedDispatcher>();

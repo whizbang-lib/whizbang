@@ -5,13 +5,17 @@
 #nullable enable
 
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 
 namespace Whizbang.Core.Generated {
   /// <summary>
   /// Registers receptor discovery diagnostics with the central diagnostics collector.
   /// This class is auto-generated and registers its information during static initialization.
   /// </summary>
+  [ExcludeFromCodeCoverage]
+  [DebuggerNonUserCode]
   public static class ReceptorDiscoveryDiagnostics {
+    [ExcludeFromCodeCoverage]
     [DebuggerNonUserCode]
     static ReceptorDiscoveryDiagnostics() {
       // Build a detailed message about discovered receptors

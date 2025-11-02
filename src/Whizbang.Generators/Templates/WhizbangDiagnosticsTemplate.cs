@@ -7,6 +7,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 
 namespace Whizbang.Core.Generated {
@@ -42,6 +43,8 @@ namespace Whizbang.Core.Generated {
   /// Central diagnostics aggregator for all Whizbang generators.
   /// Collects diagnostic information captured at build time.
   /// </summary>
+  [ExcludeFromCodeCoverage]
+  [DebuggerNonUserCode]
   public static class WhizbangDiagnostics {
     private static readonly List<DiagnosticEntry> _entries = new();
     private static readonly object _lock = new();
@@ -50,6 +53,7 @@ namespace Whizbang.Core.Generated {
     /// Adds a diagnostic entry to the collection.
     /// This is called during static initialization by each generator.
     /// </summary>
+    [ExcludeFromCodeCoverage]
     [DebuggerNonUserCode]
     public static void AddEntry(DiagnosticEntry entry) {
       lock (_lock) {
@@ -64,6 +68,7 @@ namespace Whizbang.Core.Generated {
     /// <param name="categories">Filter diagnostics by category. Defaults to All.</param>
     /// <param name="printToConsole">If true, prints the diagnostics to console. Defaults to true.</param>
     /// <returns>Formatted diagnostic information as a string.</returns>
+    [ExcludeFromCodeCoverage]
     public static string Diagnostics(DiagnosticCategory categories = DiagnosticCategory.All, bool printToConsole = true) {
       var filteredEntries = _entries.Where(e => (e.Category & categories) != 0).ToList();
 
@@ -107,6 +112,7 @@ namespace Whizbang.Core.Generated {
     /// Prints all collected diagnostic information from all generators.
     /// This is a convenience method that calls Diagnostics(printToConsole: true).
     /// </summary>
+    [ExcludeFromCodeCoverage]
     [Obsolete("Use Diagnostics() instead. This method will be removed in a future version.")]
     public static void PrintDiagnostics() {
       Diagnostics(printToConsole: true);

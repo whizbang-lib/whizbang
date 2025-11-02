@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Vogen;
 
 namespace Whizbang.Core.ValueObjects;
@@ -11,5 +12,6 @@ public readonly partial struct CorrelationId {
   /// <summary>
   /// Creates a new CorrelationId with a new unique identifier.
   /// </summary>
+  [MethodImpl(MethodImplOptions.AggressiveInlining)]
   public static CorrelationId New() => From(Guid.NewGuid());
 }

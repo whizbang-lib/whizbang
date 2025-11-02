@@ -1,12 +1,16 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace Whizbang.Core;
 
 /// <summary>
 /// Thrown when no handler is found for a given message type.
 /// </summary>
+[Serializable]
 public class HandlerNotFoundException : Exception {
   /// <summary>
   /// The type of message that has no handler.
   /// </summary>
+  [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicFields)]
   public Type MessageType { get; }
 
   /// <summary>
