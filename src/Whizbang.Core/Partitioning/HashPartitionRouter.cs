@@ -1,3 +1,4 @@
+using System.Buffers;
 using System.Text;
 using Whizbang.Core.Policies;
 
@@ -36,20 +37,40 @@ public class HashPartitionRouter : IPartitionRouter {
   }
 
   /// <summary>
-  /// Computes FNV-1a hash of a string.
+  /// Computes FNV-1a hash of a string with zero heap allocations.
   /// FNV-1a (Fowler-Noll-Vo) is a fast, non-cryptographic hash function with good distribution.
+  /// Uses stackalloc for small strings and ArrayPool for large strings to avoid allocations.
   /// </summary>
   private static int ComputeFnv1aHash(string value) {
     // FNV-1a parameters for 32-bit hash
     const int FNV_PRIME = 16777619;
     const int FNV_OFFSET_BASIS = unchecked((int)2166136261);
+    const int STACK_ALLOC_THRESHOLD = 256; // Use stack for strings up to 256 bytes encoded
 
     var hash = FNV_OFFSET_BASIS;
-    var bytes = Encoding.UTF8.GetBytes(value);
+    var maxBytes = Encoding.UTF8.GetMaxByteCount(value.Length);
 
-    foreach (var b in bytes) {
-      hash ^= b;
-      hash *= FNV_PRIME;
+    if (maxBytes <= STACK_ALLOC_THRESHOLD) {
+      // Stack allocation for small strings (ZERO heap allocation)
+      Span<byte> bytes = stackalloc byte[maxBytes];
+      var actualBytes = Encoding.UTF8.GetBytes(value, bytes);
+
+      for (int i = 0; i < actualBytes; i++) {
+        hash ^= bytes[i];
+        hash *= FNV_PRIME;
+      }
+    } else {
+      // Rent from ArrayPool for large strings (minimal allocation, reused)
+      var buffer = ArrayPool<byte>.Shared.Rent(maxBytes);
+      try {
+        var actualBytes = Encoding.UTF8.GetBytes(value, buffer);
+        for (int i = 0; i < actualBytes; i++) {
+          hash ^= buffer[i];
+          hash *= FNV_PRIME;
+        }
+      } finally {
+        ArrayPool<byte>.Shared.Return(buffer);
+      }
     }
 
     return hash;

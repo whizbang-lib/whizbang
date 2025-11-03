@@ -21,6 +21,10 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Whizbang.Sequencing.Tests",
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Whizbang.Partitioning.Tests", "tests\Whizbang.Partitioning.Tests\Whizbang.Partitioning.Tests.csproj", "{06C2B75C-F82D-4F26-BD50-0DF7A3E91A14}"
 EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "benchmarks", "benchmarks", "{4264D1A9-166A-40CE-B40E-E139350BD865}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Whizbang.Benchmarks", "benchmarks\Whizbang.Benchmarks\Whizbang.Benchmarks.csproj", "{EED8080B-3682-4E8A-8C82-0EB321036B47}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -58,6 +62,10 @@ Global
 		{06C2B75C-F82D-4F26-BD50-0DF7A3E91A14}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{06C2B75C-F82D-4F26-BD50-0DF7A3E91A14}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{06C2B75C-F82D-4F26-BD50-0DF7A3E91A14}.Release|Any CPU.Build.0 = Release|Any CPU
+		{EED8080B-3682-4E8A-8C82-0EB321036B47}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{EED8080B-3682-4E8A-8C82-0EB321036B47}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{EED8080B-3682-4E8A-8C82-0EB321036B47}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{EED8080B-3682-4E8A-8C82-0EB321036B47}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{F379FCD9-E19B-467A-A321-F0CB9C0B6185} = {3F1DD888-5F29-4C8C-9521-60B49DF30801}
@@ -67,5 +75,6 @@ Global
 		{D68209A2-BC2A-44EC-BE56-39B1351082A7} = {FD3F88E6-A708-43A9-9458-9171C8D531DC}
 		{5E3CE65C-EC32-456B-BBF2-1F73A589AB98} = {FD3F88E6-A708-43A9-9458-9171C8D531DC}
 		{06C2B75C-F82D-4F26-BD50-0DF7A3E91A14} = {FD3F88E6-A708-43A9-9458-9171C8D531DC}
+		{EED8080B-3682-4E8A-8C82-0EB321036B47} = {4264D1A9-166A-40CE-B40E-E139350BD865}
 	EndGlobalSection
 EndGlobal

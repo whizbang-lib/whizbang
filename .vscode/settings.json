@@ -12,5 +12,9 @@
     "**/*.csproj",
   ],
   "task.allowAutomaticTasks": "on",
-  "dotnet.automaticallySyncWithActiveItem": true
+  "dotnet.automaticallySyncWithActiveItem": true,
+  "cSpell.words": [
+    "Carbone",
+    "Diagnoser"
+  ]
 }
