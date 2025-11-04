@@ -27,8 +27,11 @@ public class InMemoryTraceStore : ITraceStore {
 
   public Task<List<IMessageEnvelope>> GetByCorrelationAsync(CorrelationId correlationId, CancellationToken ct = default) {
     var results = _traces.Values
-      .Where(e => e.CorrelationId.Equals(correlationId))
-      .OrderBy(e => e.Hops.FirstOrDefault(h => h.Type == HopType.Current)?.Timestamp ?? DateTimeOffset.MinValue)
+      .Where(e => {
+        var corrId = e.GetCorrelationId();
+        return corrId != null && corrId.Equals(correlationId);
+      })
+      .OrderBy(e => e.GetMessageTimestamp())
       .ToList();
 
     return Task.FromResult(results);
@@ -47,17 +50,17 @@ public class InMemoryTraceStore : ITraceStore {
     results.Add(envelope);
 
     // Walk up the causation chain (parents)
-    var currentCausationId = envelope.CausationId;
-    while (currentCausationId != null && currentCausationId.Value != Guid.Empty) {
-      var parentId = MessageId.From(currentCausationId.Value);
-      if (chain.Contains(parentId)) {
+    var currentCausationId = envelope.GetCausationId();
+    while (currentCausationId is { Value: var guidValue } && guidValue != Guid.Empty) {
+      // currentCausationId is the MessageId of the parent message
+      if (chain.Contains(currentCausationId.Value)) {
         break; // Circular reference protection
       }
 
-      if (_traces.TryGetValue(parentId, out var parent)) {
-        chain.Add(parent.MessageId);
+      if (_traces.TryGetValue(currentCausationId.Value, out var parent)) {
+        chain.Add(currentCausationId.Value); // Add the parent's MessageId to the chain
         results.Add(parent);
-        currentCausationId = parent.CausationId;
+        currentCausationId = parent.GetCausationId();
       } else {
         break;
       }
@@ -65,10 +68,13 @@ public class InMemoryTraceStore : ITraceStore {
 
     // Walk down the causation chain (children)
     var children = _traces.Values
-      .Where(e => e.CausationId != null &&
-                 e.CausationId.Value != Guid.Empty &&
-                 MessageId.From(e.CausationId.Value).Equals(messageId) &&
-                 !chain.Contains(e.MessageId))
+      .Where(e => {
+        var causationId = e.GetCausationId();
+        return causationId != null &&
+               causationId.Value != Guid.Empty &&
+               causationId.Equals(messageId) &&
+               !chain.Contains(e.MessageId);
+      })
       .ToList();
 
     foreach (var child in children) {
@@ -95,10 +101,13 @@ public class InMemoryTraceStore : ITraceStore {
 
     // Find children of this message
     var children = _traces.Values
-      .Where(e => e.CausationId != null &&
-                 e.CausationId.Value != Guid.Empty &&
-                 MessageId.From(e.CausationId.Value).Equals(message.MessageId) &&
-                 !chain.Contains(e.MessageId))
+      .Where(e => {
+        var causationId = e.GetCausationId();
+        return causationId != null &&
+               causationId.Value != Guid.Empty &&
+               causationId.Equals(message.MessageId) &&
+               !chain.Contains(e.MessageId);
+      })
       .ToList();
 
     foreach (var child in children) {

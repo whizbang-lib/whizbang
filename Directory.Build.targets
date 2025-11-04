@@ -1,0 +1,24 @@
+<Project>
+  <!-- Post-build task to extract message registry JSON from generated C# file -->
+  <Target Name="ExtractMessageRegistry" AfterTargets="Build">
+    <PropertyGroup>
+      <WhizbangDir>$(MSBuildProjectDirectory)/.whizbang</WhizbangDir>
+      <GeneratedCSharpFile>$(MSBuildProjectDirectory)/.whizbang-generated/Whizbang.Generators/Whizbang.Generators.MessageRegistryGenerator/MessageRegistry.g.cs</GeneratedCSharpFile>
+      <RegistryJsonFile>$(WhizbangDir)/message-registry.json</RegistryJsonFile>
+    </PropertyGroup>
+
+    <!-- Create .whizbang directory if it doesn't exist -->
+    <MakeDir Directories="$(WhizbangDir)" Condition="!Exists('$(WhizbangDir)')" />
+
+    <!-- Extract JSON from generated C# file using PowerShell/bash -->
+    <Exec
+      Command="bash -c 'sed -n &quot;/internal const string Json = @\&quot;/,/^\&quot;;/p&quot; &quot;$(GeneratedCSharpFile)&quot; | sed &quot;1s/.*@\&quot;//;/^\&quot;;/d&quot; | sed &quot;s/\&quot;\&quot;/\&quot;/g&quot; &gt; &quot;$(RegistryJsonFile)&quot;'"
+      Condition="Exists('$(GeneratedCSharpFile)')"
+      IgnoreExitCode="false" />
+
+    <Message
+      Text="Whizbang: Message registry extracted to $(RegistryJsonFile)"
+      Importance="high"
+      Condition="Exists('$(RegistryJsonFile)')" />
+  </Target>
+</Project>

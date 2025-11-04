@@ -44,6 +44,7 @@ Generated\ Files/
 
 # Whizbang Source Generator output
 **/.whizbang-generated/
+**/.whizbang/
 
 # MSTest test Results
 [Tt]est[Rr]esult*/

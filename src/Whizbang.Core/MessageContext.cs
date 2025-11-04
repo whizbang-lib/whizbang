@@ -13,7 +13,7 @@ public class MessageContext : IMessageContext {
   public CorrelationId CorrelationId { get; init; }
 
   /// <inheritdoc />
-  public CausationId CausationId { get; init; }
+  public MessageId CausationId { get; init; }
 
   /// <inheritdoc />
   public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
@@ -29,10 +29,10 @@ public class MessageContext : IMessageContext {
   /// <summary>
   /// Creates a new context with a new MessageId and the specified CorrelationId.
   /// </summary>
-  public static MessageContext Create(CorrelationId correlationId, CausationId? causationId = null) {
+  public static MessageContext Create(CorrelationId correlationId, MessageId? causationId = null) {
     return new MessageContext {
       CorrelationId = correlationId,
-      CausationId = causationId ?? CausationId.New()
+      CausationId = causationId ?? MessageId.New()
     };
   }
 
@@ -42,7 +42,7 @@ public class MessageContext : IMessageContext {
   public static MessageContext New() {
     return new MessageContext {
       CorrelationId = CorrelationId.New(),
-      CausationId = CausationId.New()
+      CausationId = MessageId.New()
     };
   }
 }

@@ -35,11 +35,6 @@ public class SimpleBenchmarks {
     return CorrelationId.New();
   }
 
-  [Benchmark]
-  public CausationId CreateCausationId() {
-    return CausationId.New();
-  }
-
   // Sequence Provider Benchmarks
   [Benchmark]
   public async Task<long> GetNextSequence() {
@@ -82,8 +77,6 @@ public class SimpleBenchmarks {
     var message = new TestCommand("test-123", 42);
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
-      CorrelationId = CorrelationId.New(),
-      CausationId = CausationId.New(),
       Payload = message,
       Hops = new List<MessageHop>()
     };

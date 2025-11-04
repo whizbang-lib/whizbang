@@ -1,0 +1,7 @@
+<Project>
+  <PropertyGroup>
+    <!-- Enable source generator output to file system -->
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
+  </PropertyGroup>
+</Project>

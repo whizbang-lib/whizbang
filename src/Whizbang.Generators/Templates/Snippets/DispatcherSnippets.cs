@@ -25,12 +25,14 @@ public class DispatcherSnippets {
     #region SEND_ROUTING_SNIPPET
     if (messageType == typeof(__MESSAGE_TYPE__)) {
       var receptor = ServiceProvider.GetService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
-      if (receptor == null) return null;
+      if (receptor == null) {
+        return null;
+      }
 
       [System.Diagnostics.DebuggerStepThrough]
       async Task<TResult> InvokeReceptor(object msg) {
         var typedMsg = (__MESSAGE_TYPE__)msg;
-        var result = await receptor.ReceiveAsync(typedMsg);
+        var result = await receptor.HandleAsync(typedMsg);
         return (TResult)(object)result!;
       }
 
@@ -54,7 +56,7 @@ public class DispatcherSnippets {
       async Task PublishToReceptors(TEvent evt) {
         var typedEvt = (__MESSAGE_TYPE__)(object)evt!;
         foreach (var receptor in receptors) {
-          await receptor.ReceiveAsync(typedEvt);
+          await receptor.HandleAsync(typedEvt);
         }
       }
 

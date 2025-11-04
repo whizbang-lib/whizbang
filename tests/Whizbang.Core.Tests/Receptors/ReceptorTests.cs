@@ -26,7 +26,7 @@ public class ReceptorTests : DiagnosticTestBase {
 
   // Test receptor implementations (will be created when implementing)
   public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
-    public async Task<OrderCreated> ReceiveAsync(CreateOrder message) {
+    public async Task<OrderCreated> HandleAsync(CreateOrder message, CancellationToken cancellationToken = default) {
       // Validation
       if (message.Items.Length == 0) {
         throw new InvalidOperationException("Order must have items");
@@ -58,7 +58,7 @@ public class ReceptorTests : DiagnosticTestBase {
     );
 
     // Act
-    var result = await receptor.ReceiveAsync(command);
+    var result = await receptor.HandleAsync(command);
 
     // Assert
     await Assert.That(result).IsTypeOf<OrderCreated>();
@@ -76,7 +76,7 @@ public class ReceptorTests : DiagnosticTestBase {
     );
 
     // Act & Assert
-    await Assert.That(async () => await receptor.ReceiveAsync(command))
+    await Assert.That(async () => await receptor.HandleAsync(command))
         .ThrowsExactly<InvalidOperationException>()
         .WithMessage("Order must have items");
   }
@@ -91,7 +91,7 @@ public class ReceptorTests : DiagnosticTestBase {
     );
 
     // Act
-    var task = receptor.ReceiveAsync(command);
+    var task = receptor.HandleAsync(command);
     await Assert.That(task.IsCompleted).IsFalse(); // Should be async
     var result = await task;
 
@@ -112,7 +112,7 @@ public class ReceptorTests : DiagnosticTestBase {
     );
 
     // Act
-    var result = await receptor.ReceiveAsync(command);
+    var result = await receptor.HandleAsync(command);
 
     // Assert
     await Assert.That(result.Total).IsEqualTo(65.00m); // (2 * 10) + (3 * 15)
@@ -132,8 +132,8 @@ public class ReceptorTests : DiagnosticTestBase {
     );
 
     // Act
-    var result1 = await receptor.ReceiveAsync(command1);
-    var result2 = await receptor.ReceiveAsync(command2);
+    var result1 = await receptor.HandleAsync(command1);
+    var result2 = await receptor.HandleAsync(command2);
 
     // Assert - Each call should be independent
     await Assert.That(result1.OrderId).IsNotEqualTo(result2.OrderId);
@@ -156,8 +156,8 @@ public class ReceptorTests : DiagnosticTestBase {
     );
 
     // Act
-    var businessResult = await businessReceptor.ReceiveAsync(command);
-    var auditResult = await auditReceptor.ReceiveAsync(command);
+    var businessResult = await businessReceptor.HandleAsync(command);
+    var auditResult = await auditReceptor.HandleAsync(command);
 
     // Assert
     await Assert.That(businessResult).IsTypeOf<OrderCreated>();
@@ -171,7 +171,7 @@ public class ReceptorTests : DiagnosticTestBase {
     var command = new ProcessPayment(Guid.NewGuid(), 100.00m);
 
     // Act
-    var (payment, audit) = await receptor.ReceiveAsync(command);
+    var (payment, audit) = await receptor.HandleAsync(command);
 
     // Assert
     await Assert.That(payment).IsTypeOf<PaymentProcessed>();
@@ -190,7 +190,7 @@ public class ReceptorTests : DiagnosticTestBase {
     );
 
     // Act
-    var notifications = await receptor.ReceiveAsync(orderCreated);
+    var notifications = await receptor.HandleAsync(orderCreated);
 
     // Assert
     await Assert.That(notifications.Length).IsGreaterThan(0);
@@ -202,7 +202,7 @@ public class ReceptorTests : DiagnosticTestBase {
   public record AuditEvent(string Action, Guid EntityId);
 
   public class OrderBusinessReceptor : IReceptor<CreateOrder, OrderCreated> {
-    public async Task<OrderCreated> ReceiveAsync(CreateOrder message) {
+    public async Task<OrderCreated> HandleAsync(CreateOrder message, CancellationToken cancellationToken = default) {
       await Task.Delay(1);
 
       var total = message.Items.Sum(item => item.Quantity * item.Price);
@@ -217,7 +217,7 @@ public class ReceptorTests : DiagnosticTestBase {
   }
 
   public class OrderAuditReceptor : IReceptor<CreateOrder, AuditEvent> {
-    public async Task<AuditEvent> ReceiveAsync(CreateOrder message) {
+    public async Task<AuditEvent> HandleAsync(CreateOrder message, CancellationToken cancellationToken = default) {
       await Task.Delay(1);
 
       return new AuditEvent(
@@ -232,7 +232,7 @@ public class ReceptorTests : DiagnosticTestBase {
   public record PaymentProcessed(Guid PaymentId, decimal Amount);
 
   public class PaymentReceptor : IReceptor<ProcessPayment, (PaymentProcessed, AuditEvent)> {
-    public async Task<(PaymentProcessed, AuditEvent)> ReceiveAsync(ProcessPayment message) {
+    public async Task<(PaymentProcessed, AuditEvent)> HandleAsync(ProcessPayment message, CancellationToken cancellationToken = default) {
       await Task.Delay(1);
 
       var payment = new PaymentProcessed(
@@ -255,7 +255,7 @@ public class ReceptorTests : DiagnosticTestBase {
   public record HighValueAlert(Guid OrderId) : INotificationEvent;
 
   public class NotificationReceptor : IReceptor<OrderCreated, INotificationEvent[]> {
-    public async Task<INotificationEvent[]> ReceiveAsync(OrderCreated message) {
+    public async Task<INotificationEvent[]> HandleAsync(OrderCreated message, CancellationToken cancellationToken = default) {
       await Task.Delay(1);
 
       var notifications = new List<INotificationEvent>();

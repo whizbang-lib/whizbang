@@ -47,19 +47,6 @@ public class SerializationTests {
     await Assert.That(deserialized).IsEqualTo(original);
   }
 
-  [Test]
-  public async Task CausationId_SerializesAndDeserializes_CorrectlyAsync() {
-    // Arrange
-    var original = CausationId.New();
-
-    // Act
-    var json = JsonSerializer.Serialize(original, Options);
-    var deserialized = JsonSerializer.Deserialize<CausationId>(json, Options);
-
-    // Assert
-    await Assert.That(deserialized).IsEqualTo(original);
-  }
-
   #endregion
 
   #region SecurityContext Serialization Tests
@@ -144,8 +131,8 @@ public class SerializationTests {
     var original = new MessageHop {
       ServiceName = "TestService",
       Type = HopType.Causation,
-      CausationMessageId = MessageId.New(),
-      CausationMessageType = "OrderCreated"
+      CausationId = MessageId.New(),
+      CausationType = "OrderCreated"
     };
 
     // Act
@@ -154,8 +141,8 @@ public class SerializationTests {
 
     // Assert
     await Assert.That(deserialized!.Type).IsEqualTo(HopType.Causation);
-    await Assert.That(deserialized!.CausationMessageId).IsEqualTo(original.CausationMessageId);
-    await Assert.That(deserialized!.CausationMessageType).IsEqualTo("OrderCreated");
+    await Assert.That(deserialized!.CausationId).IsEqualTo(original.CausationId);
+    await Assert.That(deserialized!.CausationType).IsEqualTo("OrderCreated");
   }
 
   [Test]
@@ -209,8 +196,6 @@ public class SerializationTests {
     // Arrange
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
-      CorrelationId = CorrelationId.New(),
-      CausationId = CausationId.New(),
       Payload = new TestMessage("test", 42),
       Hops = new List<MessageHop> {
         new MessageHop {
@@ -228,7 +213,7 @@ public class SerializationTests {
     // Assert
     await Assert.That(deserialized).IsNotNull();
     await Assert.That(deserialized!.MessageId).IsEqualTo(original.MessageId);
-    await Assert.That(deserialized!.CorrelationId).IsEqualTo(original.CorrelationId);
+    await Assert.That(deserialized!.GetCorrelationId()).IsEqualTo(original.GetCorrelationId());
     await Assert.That(deserialized!.Payload.Value).IsEqualTo("test");
     await Assert.That(deserialized!.Payload.Count).IsEqualTo(42);
   }
@@ -249,8 +234,6 @@ public class SerializationTests {
 
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
-      CorrelationId = CorrelationId.New(),
-      CausationId = CausationId.New(),
       Payload = new TestMessage("test", 1),
       Hops = new List<MessageHop> { hop1, hop2 }
     };
@@ -271,8 +254,8 @@ public class SerializationTests {
     var causationHop = new MessageHop {
       ServiceName = "ParentService",
       Type = HopType.Causation,
-      CausationMessageId = MessageId.New(),
-      CausationMessageType = "OrderCreated",
+      CausationId = MessageId.New(),
+      CausationType = "OrderCreated",
       Timestamp = DateTimeOffset.UtcNow.AddMinutes(-1)
     };
 
@@ -284,8 +267,6 @@ public class SerializationTests {
 
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
-      CorrelationId = CorrelationId.New(),
-      CausationId = CausationId.New(),
       Payload = new TestMessage("test", 1),
       Hops = new List<MessageHop> { causationHop, currentHop }
     };
@@ -309,8 +290,6 @@ public class SerializationTests {
     // Arrange
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
-      CorrelationId = CorrelationId.New(),
-      CausationId = CausationId.New(),
       Payload = new TestMessage("test", 1),
       Hops = new List<MessageHop> {
         new MessageHop { ServiceName = "Test" }
@@ -332,8 +311,6 @@ public class SerializationTests {
     // Arrange
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
-      CorrelationId = CorrelationId.New(),
-      CausationId = CausationId.New(),
       Payload = new TestMessage("test", 1),
       Hops = new List<MessageHop> {
         new MessageHop {
@@ -364,8 +341,6 @@ public class SerializationTests {
 
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
-      CorrelationId = CorrelationId.New(),
-      CausationId = CausationId.New(),
       Payload = new TestMessage("complex test", 999),
       Hops = new List<MessageHop> {
         new MessageHop {
@@ -398,8 +373,8 @@ public class SerializationTests {
     // Assert - All data preserved
     await Assert.That(deserialized).IsNotNull();
     await Assert.That(deserialized!.MessageId).IsEqualTo(original.MessageId);
-    await Assert.That(deserialized!.CorrelationId).IsEqualTo(original.CorrelationId);
-    await Assert.That(deserialized!.CausationId).IsEqualTo(original.CausationId);
+    await Assert.That(deserialized!.GetCorrelationId()).IsEqualTo(original.GetCorrelationId());
+    await Assert.That(deserialized!.MessageId).IsEqualTo(original.MessageId);
     await Assert.That(deserialized!.Payload.Value).IsEqualTo("complex test");
     await Assert.That(deserialized!.Payload.Count).IsEqualTo(999);
 

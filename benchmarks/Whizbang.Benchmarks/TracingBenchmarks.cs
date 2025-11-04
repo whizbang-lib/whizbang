@@ -27,11 +27,6 @@ public class TracingBenchmarks {
   }
 
   [Benchmark]
-  public CausationId CreateCausationId() {
-    return CausationId.New();
-  }
-
-  [Benchmark]
   public MessageHop CreateMessageHop() {
     return new MessageHop {
       Type = HopType.Current,
@@ -49,8 +44,6 @@ public class TracingBenchmarks {
     var message = new TestCommand("test-123", 42);
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
-      CorrelationId = CorrelationId.New(),
-      CausationId = CausationId.New(),
       Payload = message,
       Hops = new List<MessageHop>()
     };
@@ -67,8 +60,6 @@ public class TracingBenchmarks {
     var message = new TestCommand("test-123", 42);
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
-      CorrelationId = CorrelationId.New(),
-      CausationId = CausationId.New(),
       Payload = message,
       Hops = new List<MessageHop>()
     };
@@ -95,8 +86,6 @@ public class TracingBenchmarks {
     var message = new TestCommand("test-123", 42);
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
-      CorrelationId = CorrelationId.New(),
-      CausationId = CausationId.New(),
       Payload = message,
       Hops = new List<MessageHop>()
     };
@@ -111,15 +100,15 @@ public class TracingBenchmarks {
       Type = HopType.Causation,
       ServiceName = "Service2",
       Timestamp = DateTimeOffset.UtcNow.AddSeconds(-1),
-      CausationMessageId = MessageId.New(),
-      CausationMessageType = "ParentCommand"
+      MessageId = MessageId.New(),
+      CausationType = "ParentCommand"
     });
     envelope.AddHop(new MessageHop {
       Type = HopType.Causation,
       ServiceName = "Service3",
       Timestamp = DateTimeOffset.UtcNow.AddSeconds(-2),
-      CausationMessageId = MessageId.New(),
-      CausationMessageType = "GrandparentCommand"
+      MessageId = MessageId.New(),
+      CausationType = "GrandparentCommand"
     });
 
     return envelope;
@@ -176,8 +165,6 @@ public class TracingBenchmarks {
     var message = new TestCommand("test-123", 42);
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
-      CorrelationId = CorrelationId.New(),
-      CausationId = CausationId.New(),
       Payload = message,
       Hops = new List<MessageHop>()
     };
@@ -194,8 +181,6 @@ public class TracingBenchmarks {
     var message = new TestCommand("test-123", 42);
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
-      CorrelationId = CorrelationId.New(),
-      CausationId = CausationId.New(),
       Payload = message,
       Hops = new List<MessageHop>()
     };

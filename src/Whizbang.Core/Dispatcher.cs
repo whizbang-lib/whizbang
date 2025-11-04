@@ -4,6 +4,8 @@ using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
+using Whizbang.Core.Observability;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core;
 
@@ -26,9 +28,11 @@ public delegate Task ReceptorPublisher<in TEvent>(TEvent @event);
 /// </summary>
 public abstract class Dispatcher : IDispatcher {
   private readonly IServiceProvider _serviceProvider;
+  private readonly ITraceStore? _traceStore;
 
-  protected Dispatcher(IServiceProvider serviceProvider) {
+  protected Dispatcher(IServiceProvider serviceProvider, ITraceStore? traceStore = null) {
     _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
+    _traceStore = traceStore;
   }
 
   /// <summary>
@@ -53,12 +57,19 @@ public abstract class Dispatcher : IDispatcher {
   /// <summary>
   /// Sends a message with an explicit context and returns a typed result.
   /// Uses generated delegate to invoke receptor with zero reflection.
+  /// Creates MessageEnvelope with hop for observability if trace store is configured.
   /// </summary>
   [DebuggerStepThrough]
   [StackTraceHidden]
   [RequiresUnreferencedCode("Message types and handlers are resolved using runtime type information. For AOT compatibility, ensure all message types and handlers are registered at compile time.")]
   [RequiresDynamicCode("Message dispatching uses generic type parameters that may require runtime code generation. For AOT compatibility, use source-generated dispatcher.")]
-  public async Task<TResult> SendAsync<TResult>(object message, IMessageContext context) {
+  public async Task<TResult> SendAsync<TResult>(
+    object message,
+    IMessageContext context,
+    [CallerMemberName] string callerMemberName = "",
+    [CallerFilePath] string callerFilePath = "",
+    [CallerLineNumber] int callerLineNumber = 0
+  ) {
     ArgumentNullException.ThrowIfNull(message);
 
     if (context == null) {
@@ -74,9 +85,46 @@ public abstract class Dispatcher : IDispatcher {
       throw new HandlerNotFoundException(messageType);
     }
 
+    // Create envelope with hop for observability (v0.2.0)
+    if (_traceStore != null) {
+      var envelope = CreateEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
+      await _traceStore.StoreAsync(envelope);
+    }
+
     // Invoke using delegate - zero reflection, strongly typed
     var result = await invoker(message);
     return result;
+  }
+
+  /// <summary>
+  /// Creates a MessageEnvelope with initial hop containing caller information and context.
+  /// </summary>
+  private IMessageEnvelope CreateEnvelope<TMessage>(
+    TMessage message,
+    IMessageContext context,
+    string callerMemberName,
+    string callerFilePath,
+    int callerLineNumber
+  ) {
+    var envelope = new MessageEnvelope<TMessage> {
+      MessageId = MessageId.New(),
+      Payload = message!,
+      Hops = new List<MessageHop>()
+    };
+
+    var hop = new MessageHop {
+      Type = HopType.Current,
+      ServiceName = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name ?? "Unknown",
+      Timestamp = DateTimeOffset.UtcNow,
+      CorrelationId = context.CorrelationId,
+      CausationId = context.CausationId,
+      CallerMemberName = callerMemberName,
+      CallerFilePath = callerFilePath,
+      CallerLineNumber = callerLineNumber
+    };
+
+    envelope.AddHop(hop);
+    return envelope;
   }
 
   /// <summary>

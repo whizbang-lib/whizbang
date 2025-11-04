@@ -28,12 +28,15 @@ public class PolicyEngineTests {
   private IMessageEnvelope CreateTestEnvelope<TMessage>(TMessage payload) {
     var envelope = new Whizbang.Core.Observability.MessageEnvelope<TMessage> {
       MessageId = MessageId.New(),
-      CorrelationId = CorrelationId.New(),
-      CausationId = CausationId.New(),
       Payload = payload,
       Hops = new List<MessageHop>()
     };
-    envelope.AddHop(new MessageHop { ServiceName = "Test", Timestamp = DateTimeOffset.UtcNow });
+    envelope.AddHop(new MessageHop {
+      ServiceName = "Test",
+      Timestamp = DateTimeOffset.UtcNow,
+      CorrelationId = CorrelationId.New(),
+      CausationId = MessageId.New()
+    });
     return envelope;
   }
 

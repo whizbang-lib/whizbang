@@ -46,8 +46,6 @@ public class PolicyContextTests {
     var message = new TestMessage("test");
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
-      CorrelationId = CorrelationId.New(),
-      CausationId = CausationId.New(),
       Payload = message,
       Topic = "test-topic",
       StreamKey = "test-stream"
@@ -364,8 +362,6 @@ public enum WhizbangFlags {
 /// </summary>
 public class MessageEnvelope<TMessage> {
   public MessageId MessageId { get; init; }
-  public CorrelationId CorrelationId { get; init; }
-  public CausationId CausationId { get; init; }
   public TMessage Payload { get; init; } = default!;
   public string Topic { get; init; } = string.Empty;
   public string StreamKey { get; init; } = string.Empty;

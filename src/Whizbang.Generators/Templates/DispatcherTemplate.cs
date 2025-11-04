@@ -10,6 +10,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Generated;
 
@@ -21,7 +22,8 @@ namespace Whizbang.Core.Generated;
 [ExcludeFromCodeCoverage]
 [DebuggerNonUserCode]
 internal sealed class GeneratedDispatcher : Dispatcher {
-  public GeneratedDispatcher(IServiceProvider serviceProvider) : base(serviceProvider) {
+  public GeneratedDispatcher(IServiceProvider serviceProvider, ITraceStore? traceStore = null)
+    : base(serviceProvider, traceStore) {
   }
 
   /// <summary>

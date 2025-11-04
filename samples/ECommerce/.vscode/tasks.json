@@ -1,0 +1,101 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "build",
+      "command": "dotnet",
+      "type": "process",
+      "args": [
+        "build",
+        "${workspaceFolder}/ECommerce.sln",
+        "/property:GenerateFullPaths=true",
+        "/consoleloggerparameters:NoSummary;ForceNoAlign"
+      ],
+      "problemMatcher": "$msCompile",
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "build AppHost",
+      "command": "dotnet",
+      "type": "process",
+      "args": [
+        "build",
+        "${workspaceFolder}/ECommerce.AppHost/ECommerce.AppHost.csproj",
+        "/property:GenerateFullPaths=true",
+        "/consoleloggerparameters:NoSummary;ForceNoAlign"
+      ],
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "restore",
+      "command": "dotnet",
+      "type": "process",
+      "args": [
+        "restore",
+        "${workspaceFolder}/ECommerce.sln"
+      ],
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "clean",
+      "command": "dotnet",
+      "type": "process",
+      "args": [
+        "clean",
+        "${workspaceFolder}/ECommerce.sln"
+      ],
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "run AppHost",
+      "command": "dotnet",
+      "type": "process",
+      "args": [
+        "run",
+        "--project",
+        "${workspaceFolder}/ECommerce.AppHost/ECommerce.AppHost.csproj"
+      ],
+      "problemMatcher": "$msCompile",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "isBackground": false
+    },
+    {
+      "label": "watch AppHost",
+      "command": "dotnet",
+      "type": "process",
+      "args": [
+        "watch",
+        "run",
+        "--project",
+        "${workspaceFolder}/ECommerce.AppHost/ECommerce.AppHost.csproj"
+      ],
+      "problemMatcher": "$msCompile",
+      "isBackground": true
+    },
+    {
+      "label": "setup dev certs",
+      "type": "shell",
+      "command": "${workspaceFolder}/.vscode/setup-dev-certs.sh",
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "setup and build AppHost",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "setup dev certs",
+        "build AppHost"
+      ],
+      "problemMatcher": []
+    }
+  ]
+}

@@ -53,7 +53,7 @@ public class DispatcherTests {
     var command = new CreateOrder(Guid.NewGuid(), new[] { "item1" });
     var context = MessageContext.Create(
         CorrelationId.New(),
-        CausationId.New()
+        MessageId.New()
     );
 
     // Act
@@ -187,7 +187,7 @@ public class DispatcherTests {
 
   // Test receptor for DispatcherTests
   public class DispatcherTestOrderReceptor : IReceptor<CreateOrder, OrderCreated> {
-    public async Task<OrderCreated> ReceiveAsync(CreateOrder message) {
+    public async Task<OrderCreated> HandleAsync(CreateOrder message, CancellationToken cancellationToken = default) {
       await Task.Delay(1);
 
       return new OrderCreated(

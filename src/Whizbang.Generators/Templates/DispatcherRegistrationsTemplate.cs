@@ -7,7 +7,9 @@
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Whizbang.Core;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Generated {
   /// <summary>
@@ -30,12 +32,16 @@ namespace Whizbang.Core.Generated {
 
     /// <summary>
     /// Registers the generated zero-reflection dispatcher.
+    /// Automatically uses ITraceStore if registered for envelope observability.
     /// </summary>
     [ExcludeFromCodeCoverage]
     [DebuggerNonUserCode]
     public static IServiceCollection AddWhizbangDispatcher(this IServiceCollection services) {
-      services.AddSingleton<IDispatcher, GeneratedDispatcher>();
-      services.AddSingleton<Dispatcher, GeneratedDispatcher>();
+      services.AddSingleton<IDispatcher>(sp => {
+        var traceStore = sp.GetService<ITraceStore>();
+        return new GeneratedDispatcher(sp, traceStore);
+      });
+      services.AddSingleton<Dispatcher>(sp => (GeneratedDispatcher)sp.GetRequiredService<IDispatcher>());
       return services;
     }
   }

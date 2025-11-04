@@ -13,16 +13,6 @@ public interface IMessageEnvelope {
   MessageId MessageId { get; }
 
   /// <summary>
-  /// Identifies the logical workflow this message belongs to.
-  /// </summary>
-  CorrelationId CorrelationId { get; }
-
-  /// <summary>
-  /// Identifies the message that caused this message to be created.
-  /// </summary>
-  CausationId CausationId { get; }
-
-  /// <summary>
   /// Hops this message has taken through the system.
   /// </summary>
   List<MessageHop> Hops { get; }
@@ -36,4 +26,14 @@ public interface IMessageEnvelope {
   /// Gets the message timestamp (first hop's timestamp).
   /// </summary>
   DateTimeOffset GetMessageTimestamp();
+
+  /// <summary>
+  /// Gets the correlation ID from the first hop.
+  /// </summary>
+  CorrelationId? GetCorrelationId();
+
+  /// <summary>
+  /// Gets the causation ID from the first hop.
+  /// </summary>
+  MessageId? GetCausationId();
 }

@@ -9,9 +9,10 @@ namespace Whizbang.Core;
 /// <typeparam name="TResponse">The type of response this receptor produces</typeparam>
 public interface IReceptor<in TMessage, TResponse> {
   /// <summary>
-  /// Receives a message, applies business logic, and returns a response.
+  /// Handles a message, applies business logic, and returns a response.
   /// </summary>
   /// <param name="message">The message to process</param>
+  /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>The response representing the decision made</returns>
-  Task<TResponse> ReceiveAsync(TMessage message);
+  Task<TResponse> HandleAsync(TMessage message, CancellationToken cancellationToken = default);
 }

@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsAspireHost>true</IsAspireHost>
+    <UserSecretsId>9976ad98-4dd7-41b4-9cd0-277a1817a5ba</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.AppHost" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ECommerce.OrderService.API\ECommerce.OrderService.API.csproj" />
+    <ProjectReference Include="..\ECommerce.InventoryWorker\ECommerce.InventoryWorker.csproj" />
+    <ProjectReference Include="..\ECommerce.NotificationWorker\ECommerce.NotificationWorker.csproj" />
+    <ProjectReference Include="..\ECommerce.PaymentWorker\ECommerce.PaymentWorker.csproj" />
+    <ProjectReference Include="..\ECommerce.ShippingWorker\ECommerce.ShippingWorker.csproj" />
+  </ItemGroup>
+
+</Project>

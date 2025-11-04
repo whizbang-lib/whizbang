@@ -21,7 +21,7 @@ public interface IMessageContext {
   /// Identifies the message that caused this message to be created.
   /// Forms a causal chain for event sourcing and distributed tracing.
   /// </summary>
-  CausationId CausationId { get; }
+  MessageId CausationId { get; }
 
   /// <summary>
   /// When this message was created.

@@ -16,18 +16,6 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope {
   public required MessageId MessageId { get; init; }
 
   /// <summary>
-  /// Identifies the logical workflow this message belongs to.
-  /// All messages in a workflow share the same CorrelationId.
-  /// </summary>
-  public CorrelationId CorrelationId { get; init; }
-
-  /// <summary>
-  /// Identifies the message that caused this message to be created.
-  /// Forms a causal chain for event sourcing and distributed tracing.
-  /// </summary>
-  public CausationId CausationId { get; init; }
-
-  /// <summary>
   /// The actual message payload.
   /// </summary>
   public required TMessage Payload { get; init; }
@@ -126,6 +114,24 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope {
   /// <returns>The timestamp of the first hop</returns>
   public DateTimeOffset GetMessageTimestamp() {
     return Hops[0].Timestamp;
+  }
+
+  /// <summary>
+  /// Gets the correlation ID from the first hop.
+  /// The first hop establishes the correlation context for the entire message flow.
+  /// </summary>
+  /// <returns>The correlation ID from the first hop, or null if not set</returns>
+  public CorrelationId? GetCorrelationId() {
+    return Hops[0].CorrelationId;
+  }
+
+  /// <summary>
+  /// Gets the causation ID from the first hop.
+  /// The first hop establishes what message caused this message to be created.
+  /// </summary>
+  /// <returns>The causation ID from the first hop, or null if not set</returns>
+  public MessageId? GetCausationId() {
+    return Hops[0].CausationId;
   }
 
   /// <summary>

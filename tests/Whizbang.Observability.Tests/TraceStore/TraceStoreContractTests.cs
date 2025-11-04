@@ -28,13 +28,11 @@ public abstract class TraceStoreContractTests {
     TMessage payload,
     MessageId? messageId = null,
     CorrelationId? correlationId = null,
-    CausationId? causationId = null,
+    MessageId? causationId = null,
     DateTimeOffset? timestamp = null
   ) {
     var envelope = new Whizbang.Core.Observability.MessageEnvelope<TMessage> {
       MessageId = messageId ?? MessageId.New(),
-      CorrelationId = correlationId ?? CorrelationId.New(),
-      CausationId = causationId ?? CausationId.New(),
       Payload = payload,
       Hops = new List<MessageHop>()
     };
@@ -42,7 +40,9 @@ public abstract class TraceStoreContractTests {
     envelope.AddHop(new MessageHop {
       Type = HopType.Current,
       ServiceName = "Test",
-      Timestamp = timestamp ?? DateTimeOffset.UtcNow
+      Timestamp = timestamp ?? DateTimeOffset.UtcNow,
+      CorrelationId = correlationId ?? CorrelationId.New(),
+      CausationId = causationId
     });
 
     return envelope;
@@ -62,8 +62,7 @@ public abstract class TraceStoreContractTests {
     // Assert
     await Assert.That(retrieved).IsNotNull();
     await Assert.That(retrieved!.MessageId).IsEqualTo(envelope.MessageId);
-    await Assert.That(retrieved.CorrelationId).IsEqualTo(envelope.CorrelationId);
-    await Assert.That(retrieved.CausationId).IsEqualTo(envelope.CausationId);
+    await Assert.That(retrieved.GetCorrelationId()).IsEqualTo(envelope.GetCorrelationId());
   }
 
   [Test]
@@ -138,7 +137,7 @@ public abstract class TraceStoreContractTests {
     var envelope2 = CreateTestEnvelope(
       message2,
       correlationId: correlationId,
-      causationId: CausationId.From(envelope1.MessageId.Value),
+      causationId: MessageId.From(envelope1.MessageId.Value),
       timestamp: DateTimeOffset.UtcNow.AddSeconds(-1)
     );
 
@@ -146,7 +145,7 @@ public abstract class TraceStoreContractTests {
     var envelope3 = CreateTestEnvelope(
       message3,
       correlationId: correlationId,
-      causationId: CausationId.From(envelope2.MessageId.Value),
+      causationId: MessageId.From(envelope2.MessageId.Value),
       timestamp: DateTimeOffset.UtcNow
     );
 

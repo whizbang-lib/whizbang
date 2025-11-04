@@ -1,0 +1,37 @@
+<Project>
+  <!-- Extract individual project registry -->
+  <Target Name="ExtractMessageRegistry" AfterTargets="Build">
+    <PropertyGroup>
+      <MessageRegistryFile>$(MSBuildProjectDirectory)/.whizbang-generated/Whizbang.Generators/Whizbang.Generators.MessageRegistryGenerator/MessageRegistry.g.cs</MessageRegistryFile>
+      <RegistryOutputDir>$(MSBuildProjectDirectory)/.whizbang</RegistryOutputDir>
+      <RegistryOutputFile>$(RegistryOutputDir)/message-registry.json</RegistryOutputFile>
+    </PropertyGroup>
+
+    <!-- Only run if the generated file exists -->
+    <Message Condition="Exists('$(MessageRegistryFile)')" Text="Extracting message registry to $(RegistryOutputFile)..." Importance="high" />
+
+    <!-- Create output directory -->
+    <MakeDir Condition="Exists('$(MessageRegistryFile)')" Directories="$(RegistryOutputDir)" />
+
+    <!-- Extract JSON from C# file using sed -->
+    <Exec Condition="Exists('$(MessageRegistryFile)')"
+          Command="sed -n '/internal const string Json = @&quot;/,/^&quot;/p' '$(MessageRegistryFile)' | sed '1s/.*@&quot;//' | sed '$s/&quot;.*//g' | sed 's/&quot;&quot;/&quot;/g' > '$(RegistryOutputFile)'" />
+
+    <Message Condition="Exists('$(MessageRegistryFile)')" Text="Message registry extracted successfully!" Importance="high" />
+  </Target>
+
+  <!-- Merge all registries into master registry (runs once per solution build) -->
+  <Target Name="MergeMessageRegistries" AfterTargets="Build" Condition="'$(MSBuildProjectName)' == 'ECommerce.OrderService.API'">
+    <PropertyGroup>
+      <SolutionDir>$(MSBuildThisFileDirectory)</SolutionDir>
+      <MergeScript>$(SolutionDir)merge-registries.mjs</MergeScript>
+    </PropertyGroup>
+
+    <Message Text="Merging message registries..." Importance="high" />
+
+    <!-- Run the Node.js merge script -->
+    <Exec Command="node &quot;$(MergeScript)&quot;"
+          WorkingDirectory="$(SolutionDir)"
+          ContinueOnError="true" />
+  </Target>
+</Project>

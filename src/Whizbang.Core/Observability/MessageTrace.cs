@@ -21,7 +21,7 @@ public class MessageTrace {
   /// <summary>
   /// The causation ID for parent-child relationships.
   /// </summary>
-  public CausationId? CausationId { get; init; }
+  public MessageId? CausationId { get; init; }
 
   /// <summary>
   /// All hops this message took through the system.

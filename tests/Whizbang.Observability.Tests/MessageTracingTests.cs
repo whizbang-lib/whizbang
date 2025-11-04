@@ -20,7 +20,7 @@ public class MessageTracingTests {
     // Arrange
     var messageId = MessageId.New();
     var correlationId = CorrelationId.New();
-    var causationId = CausationId.New();
+    var causationId = MessageId.New();
     var timestamp = DateTimeOffset.UtcNow;
     var payload = new TestMessage("test");
     var metadata = new Dictionary<string, object> { ["key"] = "value" };
@@ -28,22 +28,22 @@ public class MessageTracingTests {
     var firstHop = new MessageHop {
       ServiceName = "TestService",
       Timestamp = timestamp,
-      Metadata = metadata
+      Metadata = metadata,
+      CorrelationId = correlationId,
+      CausationId = causationId
     };
 
     // Act
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = messageId,
-      CorrelationId = correlationId,
-      CausationId = causationId,
       Payload = payload,
       Hops = new List<MessageHop> { firstHop }
     };
 
     // Assert
     await Assert.That(envelope.MessageId).IsEqualTo(messageId);
-    await Assert.That(envelope.CorrelationId).IsEqualTo(correlationId);
-    await Assert.That(envelope.CausationId).IsEqualTo(causationId);
+    await Assert.That(envelope.GetCorrelationId()).IsEqualTo(correlationId);
+    await Assert.That(envelope.GetCausationId()).IsEqualTo(causationId);
     await Assert.That(envelope.Payload).IsEqualTo(payload);
     await Assert.That(envelope.GetMessageTimestamp()).IsEqualTo(timestamp);
     await Assert.That(envelope.GetAllMetadata()).IsEquivalentTo(metadata);
@@ -795,14 +795,14 @@ public class MessageTracingTests {
     var hop = new MessageHop {
       ServiceName = "TestService",
       Type = HopType.Causation,
-      CausationMessageId = MessageId.New(),
-      CausationMessageType = "OrderCreated"
+      CausationId = MessageId.New(),
+      CausationType = "OrderCreated"
     };
 
     // Assert
     await Assert.That(hop.Type).IsEqualTo(HopType.Causation);
-    await Assert.That(hop.CausationMessageId).IsNotNull();
-    await Assert.That(hop.CausationMessageType).IsEqualTo("OrderCreated");
+    await Assert.That(hop.CausationId).IsNotNull();
+    await Assert.That(hop.CausationType).IsEqualTo("OrderCreated");
   }
 
   [Test]
@@ -814,8 +814,8 @@ public class MessageTracingTests {
     };
 
     // Assert
-    await Assert.That(hop.CausationMessageId).IsNull();
-    await Assert.That(hop.CausationMessageType).IsNull();
+    await Assert.That(hop.CausationId).IsNull();
+    await Assert.That(hop.CausationType).IsNull();
   }
 
   #endregion
@@ -851,9 +851,9 @@ public class MessageTracingTests {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
       Hops = new List<MessageHop> {
-        new MessageHop { ServiceName = "CausationHop1", Type = HopType.Causation, CausationMessageId = causationId1, CausationMessageType = "OrderCreated" },
+        new MessageHop { ServiceName = "CausationHop1", Type = HopType.Causation, CausationId = causationId1, CausationType = "OrderCreated" },
         new MessageHop { ServiceName = "CurrentHop1", Type = HopType.Current },
-        new MessageHop { ServiceName = "CausationHop2", Type = HopType.Causation, CausationMessageId = causationId2, CausationMessageType = "PaymentProcessed" },
+        new MessageHop { ServiceName = "CausationHop2", Type = HopType.Causation, CausationId = causationId2, CausationType = "PaymentProcessed" },
         new MessageHop { ServiceName = "CurrentHop2", Type = HopType.Current }
       }
     };
@@ -864,11 +864,11 @@ public class MessageTracingTests {
     // Assert
     await Assert.That(causationHops).HasCount().EqualTo(2);
     await Assert.That(causationHops[0].ServiceName).IsEqualTo("CausationHop1");
-    await Assert.That(causationHops[0].CausationMessageId).IsEqualTo(causationId1);
-    await Assert.That(causationHops[0].CausationMessageType).IsEqualTo("OrderCreated");
+    await Assert.That(causationHops[0].CausationId).IsEqualTo(causationId1);
+    await Assert.That(causationHops[0].CausationType).IsEqualTo("OrderCreated");
     await Assert.That(causationHops[1].ServiceName).IsEqualTo("CausationHop2");
-    await Assert.That(causationHops[1].CausationMessageId).IsEqualTo(causationId2);
-    await Assert.That(causationHops[1].CausationMessageType).IsEqualTo("PaymentProcessed");
+    await Assert.That(causationHops[1].CausationId).IsEqualTo(causationId2);
+    await Assert.That(causationHops[1].CausationType).IsEqualTo("PaymentProcessed");
   }
 
   [Test]

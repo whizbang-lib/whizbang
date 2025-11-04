@@ -36,14 +36,20 @@ public record MessageHop {
   /// The MessageId of the causation/parent message (only for Causation hops).
   /// Null for Current hops (the current message's ID is on the envelope).
   /// </summary>
-  public MessageId? CausationMessageId { get; init; }
+  public MessageId? CausationId { get; init; }
+
+  /// <summary>
+  /// The MessageId of the causation/parent message (only for Causation hops).
+  /// Null for Current hops (the current message's ID is on the envelope).
+  /// </summary>
+  public CorrelationId? CorrelationId { get; init; }
 
   /// <summary>
   /// The type name of the causation/parent message (only for Causation hops).
   /// Useful for debugging to understand what type of message led to this one.
   /// Null for Current hops.
   /// </summary>
-  public string? CausationMessageType { get; init; }
+  public string? CausationType { get; init; }
 
   /// <summary>
   /// The service that processed this message.
