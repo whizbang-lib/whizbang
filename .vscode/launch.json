@@ -9,7 +9,7 @@
       "program": "dotnet",
       "args": [
         "exec",
-        "${workspaceFolder}/tests/Whizbang.Core.Tests/bin/Debug/net9.0/Whizbang.Core.Tests.dll",
+        "${workspaceFolder}/tests/Whizbang.Core.Tests/bin/Debug/net10.0/Whizbang.Core.Tests.dll",
         "--maximum-parallel-tests",
         "1",
         "--fail-fast"
@@ -27,7 +27,7 @@
       "program": "dotnet",
       "args": [
         "exec",
-        "${workspaceFolder}/tests/Whizbang.Core.Tests/bin/Debug/net9.0/Whizbang.Core.Tests.dll"
+        "${workspaceFolder}/tests/Whizbang.Core.Tests/bin/Debug/net10.0/Whizbang.Core.Tests.dll"
       ],
       "cwd": "${workspaceFolder}",
       "stopAtEntry": false,
@@ -45,7 +45,7 @@
       "program": "dotnet",
       "args": [
         "exec",
-        "${workspaceFolder}/tests/Whizbang.Core.Tests/bin/Debug/net9.0/Whizbang.Core.Tests.dll",
+        "${workspaceFolder}/tests/Whizbang.Core.Tests/bin/Debug/net10.0/Whizbang.Core.Tests.dll",
         "--treenode-filter",
         "/*/*/*/${input:testFilter}"
       ],

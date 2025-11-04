@@ -100,14 +100,14 @@ public class TracingBenchmarks {
       Type = HopType.Causation,
       ServiceName = "Service2",
       Timestamp = DateTimeOffset.UtcNow.AddSeconds(-1),
-      MessageId = MessageId.New(),
+      CausationId = MessageId.New(),
       CausationType = "ParentCommand"
     });
     envelope.AddHop(new MessageHop {
       Type = HopType.Causation,
       ServiceName = "Service3",
       Timestamp = DateTimeOffset.UtcNow.AddSeconds(-2),
-      MessageId = MessageId.New(),
+      CausationId = MessageId.New(),
       CausationType = "GrandparentCommand"
     });
 

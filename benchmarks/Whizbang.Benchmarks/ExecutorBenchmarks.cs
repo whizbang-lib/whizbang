@@ -35,15 +35,15 @@ public class ExecutorBenchmarks {
     var message = new TestCommand("test-123", 42);
     _envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
-      CorrelationId = CorrelationId.New(),
-      CausationId = CausationId.New(),
       Payload = message,
       Hops = new List<MessageHop>()
     };
     _envelope.AddHop(new MessageHop {
       Type = HopType.Current,
       ServiceName = "Benchmark",
-      Timestamp = DateTimeOffset.UtcNow
+      Timestamp = DateTimeOffset.UtcNow,
+      CorrelationId = CorrelationId.New(),
+      CausationId = MessageId.New()
     });
 
     var services = new ServiceCollection();

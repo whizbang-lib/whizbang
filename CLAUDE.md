@@ -112,11 +112,14 @@ src/
 # Clean build
 dotnet clean && dotnet build
 
-# Run tests
+# Run ALL tests
 dotnet test
 
-# Run tests with no build (faster iteration)
+# Run tests without rebuilding
 dotnet test --no-build
+
+# Run a specific test project
+cd tests/Whizbang.Core.Tests && dotnet run
 
 # Format code (ALWAYS run before completion)
 dotnet format
@@ -125,11 +128,13 @@ dotnet format
 dotnet clean && dotnet build && dotnet test && dotnet format
 ```
 
+**Note**: .NET 10 uses Microsoft.Testing.Platform (configured via `global.json`) for native `dotnet test` support.
+
 ---
 
 ## Technology Stack
 
-- **.NET 9.0** - Target framework
+- **.NET 10.0 RC2** - Target framework
 - **Vogen** - Source-generated value objects (`MessageId`, etc.)
 - **TUnit v0.88** - Modern test framework with source generation
 - **TUnit.Assertions** - Fluent assertion library

@@ -63,12 +63,16 @@ public class PolicyEngineBenchmarks {
   private IMessageEnvelope CreateEnvelope<T>(T message) {
     var envelope = new MessageEnvelope<T> {
       MessageId = MessageId.New(),
-      CorrelationId = CorrelationId.New(),
-      CausationId = CausationId.New(),
       Payload = message,
       Hops = new List<MessageHop>()
     };
-    envelope.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "Benchmark", Timestamp = DateTimeOffset.UtcNow });
+    envelope.AddHop(new MessageHop {
+      Type = HopType.Current,
+      ServiceName = "Benchmark",
+      Timestamp = DateTimeOffset.UtcNow,
+      CorrelationId = CorrelationId.New(),
+      CausationId = MessageId.New()
+    });
     return envelope;
   }
 

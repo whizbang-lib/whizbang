@@ -1,5 +1,6 @@
 {
   "dotnet.testWindow.useTestingPlatformProtocol": true,
+  "dotnet.server.useOmnisharp": true,
   "editor.formatOnSave": true,
   "editor.formatOnSaveMode": "file",
   "files.eol": "\n",
