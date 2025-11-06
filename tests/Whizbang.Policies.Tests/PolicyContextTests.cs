@@ -1,4 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
+using Whizbang.Core;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.ValueObjects;
 
@@ -11,8 +13,33 @@ namespace Whizbang.Policies.Tests;
 public class PolicyContextTests {
   // Test message types
   private record TestMessage(string Value);
-  private record CreateOrder(Guid OrderId, string ProductName);
+
+  public record CreateOrder {
+    [AggregateId]
+    public Guid OrderId { get; init; }
+    public string ProductName { get; init; } = string.Empty;
+
+    public CreateOrder(Guid orderId, string productName) {
+      OrderId = orderId;
+      ProductName = productName;
+    }
+  }
+
   private record OrderCreated(Guid OrderId, DateTimeOffset CreatedAt);
+
+  // Test types for [AggregateId] attribute tests (must be public for generator)
+  public record CreateProduct {
+    [AggregateId]
+    public Guid ProductId { get; init; }
+    public string Name { get; init; } = string.Empty;
+
+    public CreateProduct(Guid productId, string name) {
+      ProductId = productId;
+      Name = name;
+    }
+  }
+
+  public record MessageWithoutAttribute(string Value);
 
   [Test]
   public async Task Constructor_InitializesWithMessage_SetsMessageAndMessageTypeAsync() {
@@ -305,6 +332,35 @@ public class PolicyContextTests {
   }
 
   [Test]
+  public async Task GetAggregateId_WithAggregateIdAttribute_UsesGeneratedExtractorAsync() {
+    // RED PHASE: This test will FAIL until generator is implemented
+    // Arrange
+    var productId = Guid.NewGuid();
+    var message = new CreateProduct(productId, "New Product");
+    var context = new PolicyContext(message);
+
+    // Act - Should use generated extractor, not reflection
+    var aggregateId = context.GetAggregateId();
+
+    // Assert
+    await Assert.That(aggregateId).IsEqualTo(productId);
+  }
+
+  [Test]
+  public async Task GetAggregateId_WithoutAggregateIdAttribute_ThrowsHelpfulExceptionAsync() {
+    // RED PHASE: This test will FAIL until generator is implemented
+    // Arrange
+    var message = new MessageWithoutAttribute("test");
+    var context = new PolicyContext(message);
+
+    // Act & Assert
+    var exception = await Assert.That(() => context.GetAggregateId())
+        .Throws<InvalidOperationException>();
+
+    await Assert.That(exception.Message).Contains("does not have a property marked with [AggregateId]");
+  }
+
+  [Test]
   public async Task GetAggregateId_ReturnsId_WhenMessageContainsAggregateIdAsync() {
     // Arrange
     var orderId = Guid.NewGuid();
@@ -359,11 +415,20 @@ public enum WhizbangFlags {
 
 /// <summary>
 /// Placeholder for MessageEnvelope (will be implemented in observability tests)
+/// Updated to implement IMessageEnvelope for PolicyContext compatibility.
 /// </summary>
-public class MessageEnvelope<TMessage> {
+public class MessageEnvelope<TMessage> : IMessageEnvelope {
   public MessageId MessageId { get; init; }
   public TMessage Payload { get; init; } = default!;
   public string Topic { get; init; } = string.Empty;
   public string StreamKey { get; init; } = string.Empty;
   public IReadOnlyDictionary<string, object> Metadata { get; init; } = new Dictionary<string, object>();
+
+  // IMessageEnvelope implementation
+  public List<MessageHop> Hops { get; init; } = new();
+  public void AddHop(MessageHop hop) => Hops.Add(hop);
+  public DateTimeOffset GetMessageTimestamp() => Hops.FirstOrDefault()?.Timestamp ?? DateTimeOffset.UtcNow;
+  public CorrelationId? GetCorrelationId() => Hops.FirstOrDefault()?.CorrelationId;
+  public MessageId? GetCausationId() => Hops.FirstOrDefault()?.CausationId;
+  public object? GetMetadata(string key) => Metadata.TryGetValue(key, out var value) ? value : null;
 }

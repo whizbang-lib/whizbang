@@ -1,3 +1,4 @@
+using System.Buffers;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Jobs;
 using Microsoft.Extensions.DependencyInjection;
@@ -12,7 +13,6 @@ namespace Whizbang.Benchmarks;
 /// Benchmarks for execution strategies (SerialExecutor vs ParallelExecutor).
 /// Measures throughput and overhead of different execution models.
 /// </summary>
-[SimpleJob(RuntimeMoniker.Net90)]
 [MemoryDiagnoser]
 [MarkdownExporter]
 public class ExecutorBenchmarks {
@@ -66,7 +66,7 @@ public class ExecutorBenchmarks {
   public async Task<int> SerialExecutor_SingleMessage() {
     return await _serialExecutor.ExecuteAsync<int>(
       _envelope,
-      (env, ctx) => Task.FromResult(((TestCommand)ctx.Message).Value),
+      (env, ctx) => ValueTask.FromResult(((TestCommand)ctx.Message).Value),
       _context
     );
   }
@@ -75,34 +75,54 @@ public class ExecutorBenchmarks {
   public async Task<int> ParallelExecutor_SingleMessage() {
     return await _parallelExecutor.ExecuteAsync<int>(
       _envelope,
-      (env, ctx) => Task.FromResult(((TestCommand)ctx.Message).Value),
+      (env, ctx) => ValueTask.FromResult(((TestCommand)ctx.Message).Value),
       _context
     );
   }
 
   [Benchmark]
+  public int ParallelExecutor_SingleMessage_Sync() {
+    // Call ExecuteAsync and get result synchronously to avoid benchmark async overhead
+    return _parallelExecutor.ExecuteAsync<int>(
+      _envelope,
+      (env, ctx) => ValueTask.FromResult(((TestCommand)ctx.Message).Value),
+      _context
+    ).GetAwaiter().GetResult();
+  }
+
+  [Benchmark]
   public async Task SerialExecutor_100Messages() {
-    var tasks = new List<Task<int>>();
-    for (int i = 0; i < 100; i++) {
-      tasks.Add(_serialExecutor.ExecuteAsync<int>(
-        _envelope,
-        (env, ctx) => Task.FromResult(i),
-        _context
-      ));
+    const int count = 100;
+    var tasks = ArrayPool<Task<int>>.Shared.Rent(count);
+    try {
+      for (int i = 0; i < count; i++) {
+        tasks[i] = _serialExecutor.ExecuteAsync<int>(
+          _envelope,
+          (env, ctx) => ValueTask.FromResult(i),
+          _context
+        ).AsTask();
+      }
+      await Task.WhenAll(tasks.AsSpan(0, count).ToArray());
+    } finally {
+      ArrayPool<Task<int>>.Shared.Return(tasks, clearArray: true);
     }
-    await Task.WhenAll(tasks);
   }
 
   [Benchmark]
   public async Task ParallelExecutor_100Messages() {
-    var tasks = new List<Task<int>>();
-    for (int i = 0; i < 100; i++) {
-      tasks.Add(_parallelExecutor.ExecuteAsync<int>(
-        _envelope,
-        (env, ctx) => Task.FromResult(i),
-        _context
-      ));
+    const int count = 100;
+    var tasks = ArrayPool<Task<int>>.Shared.Rent(count);
+    try {
+      for (int i = 0; i < count; i++) {
+        tasks[i] = _parallelExecutor.ExecuteAsync<int>(
+          _envelope,
+          (env, ctx) => ValueTask.FromResult(i),
+          _context
+        ).AsTask();
+      }
+      await Task.WhenAll(tasks.AsSpan(0, count).ToArray());
+    } finally {
+      ArrayPool<Task<int>>.Shared.Return(tasks, clearArray: true);
     }
-    await Task.WhenAll(tasks);
   }
 }

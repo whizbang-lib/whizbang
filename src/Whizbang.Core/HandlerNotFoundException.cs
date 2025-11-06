@@ -10,7 +10,6 @@ public class HandlerNotFoundException : Exception {
   /// <summary>
   /// The type of message that has no handler.
   /// </summary>
-  [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicProperties | DynamicallyAccessedMemberTypes.PublicFields)]
   public Type MessageType { get; }
 
   /// <summary>
@@ -18,11 +17,11 @@ public class HandlerNotFoundException : Exception {
   /// </summary>
   /// <param name="messageType">The message type that has no handler</param>
   public HandlerNotFoundException(Type messageType)
-      : base(FormatMessage(messageType)) {
+      : base(_formatMessage(messageType)) {
     MessageType = messageType;
   }
 
-  private static string FormatMessage(Type messageType) {
+  private static string _formatMessage(Type messageType) {
     return $@"No handler found for message type '{messageType.Name}'.
 
 To fix this:

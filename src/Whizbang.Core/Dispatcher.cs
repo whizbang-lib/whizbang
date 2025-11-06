@@ -27,11 +27,11 @@ public delegate Task ReceptorPublisher<in TEvent>(TEvent @event);
 /// This achieves zero-reflection while keeping functional logic in the base class.
 /// </summary>
 public abstract class Dispatcher : IDispatcher {
-  private readonly IServiceProvider _serviceProvider;
+  private readonly IServiceProvider _internalServiceProvider;
   private readonly ITraceStore? _traceStore;
 
   protected Dispatcher(IServiceProvider serviceProvider, ITraceStore? traceStore = null) {
-    _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
+    _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
     _traceStore = traceStore;
   }
 
@@ -39,14 +39,16 @@ public abstract class Dispatcher : IDispatcher {
   /// Gets the service provider for receptor resolution.
   /// Available to generated derived class.
   /// </summary>
-  protected IServiceProvider ServiceProvider => _serviceProvider;
+  protected IServiceProvider _serviceProvider => _internalServiceProvider;
 
   /// <summary>
   /// Sends a message and returns a typed result.
   /// Creates a new message context automatically.
   /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
   [StackTraceHidden]
+#endif
   [RequiresUnreferencedCode("Message types and handlers are resolved using runtime type information. For AOT compatibility, ensure all message types and handlers are registered at compile time.")]
   [RequiresDynamicCode("Message dispatching uses generic type parameters that may require runtime code generation. For AOT compatibility, use source-generated dispatcher.")]
   public Task<TResult> SendAsync<TResult>(object message) {
@@ -59,8 +61,10 @@ public abstract class Dispatcher : IDispatcher {
   /// Uses generated delegate to invoke receptor with zero reflection.
   /// Creates MessageEnvelope with hop for observability if trace store is configured.
   /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
   [StackTraceHidden]
+#endif
   [RequiresUnreferencedCode("Message types and handlers are resolved using runtime type information. For AOT compatibility, ensure all message types and handlers are registered at compile time.")]
   [RequiresDynamicCode("Message dispatching uses generic type parameters that may require runtime code generation. For AOT compatibility, use source-generated dispatcher.")]
   public async Task<TResult> SendAsync<TResult>(
@@ -87,7 +91,7 @@ public abstract class Dispatcher : IDispatcher {
 
     // Create envelope with hop for observability (v0.2.0)
     if (_traceStore != null) {
-      var envelope = CreateEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
+      var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
       await _traceStore.StoreAsync(envelope);
     }
 
@@ -99,7 +103,7 @@ public abstract class Dispatcher : IDispatcher {
   /// <summary>
   /// Creates a MessageEnvelope with initial hop containing caller information and context.
   /// </summary>
-  private IMessageEnvelope CreateEnvelope<TMessage>(
+  private IMessageEnvelope _createEnvelope<TMessage>(
     TMessage message,
     IMessageContext context,
     string callerMemberName,
@@ -131,8 +135,10 @@ public abstract class Dispatcher : IDispatcher {
   /// Publishes an event to all registered handlers.
   /// Uses generated delegate to invoke receptors with zero reflection.
   /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
   [StackTraceHidden]
+#endif
   [RequiresUnreferencedCode("Event types and handlers are resolved using runtime type information. For AOT compatibility, ensure all event types and handlers are registered at compile time.")]
   [RequiresDynamicCode("Event publishing uses generic type parameters that may require runtime code generation. For AOT compatibility, use source-generated dispatcher.")]
   public async Task PublishAsync<TEvent>(TEvent @event) {
@@ -152,8 +158,10 @@ public abstract class Dispatcher : IDispatcher {
   /// <summary>
   /// Sends multiple messages and returns all results.
   /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
   [StackTraceHidden]
+#endif
   [RequiresUnreferencedCode("Message types and handlers are resolved using runtime type information. For AOT compatibility, ensure all message types and handlers are registered at compile time.")]
   [RequiresDynamicCode("Message dispatching uses generic type parameters that may require runtime code generation. For AOT compatibility, use source-generated dispatcher.")]
   public async Task<IEnumerable<TResult>> SendManyAsync<TResult>(IEnumerable<object> messages) {

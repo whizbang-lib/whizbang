@@ -28,9 +28,9 @@ public class ParallelExecutor : IExecutionStrategy {
 
   public string Name => $"Parallel(max:{_maxConcurrency})";
 
-  public async Task<TResult> ExecuteAsync<TResult>(
+  public ValueTask<TResult> ExecuteAsync<TResult>(
     IMessageEnvelope envelope,
-    Func<IMessageEnvelope, PolicyContext, Task<TResult>> handler,
+    Func<IMessageEnvelope, PolicyContext, ValueTask<TResult>> handler,
     PolicyContext context,
     CancellationToken ct = default
   ) {
@@ -40,11 +40,49 @@ public class ParallelExecutor : IExecutionStrategy {
       }
     }
 
-    await _semaphore.WaitAsync(ct);
+    // Fast path: try synchronous acquire (zero allocation if successful)
+    if (_semaphore.Wait(0, ct)) {
+      try {
+        var result = handler(envelope, context);
 
+        // If handler completed synchronously, return directly (zero allocation)
+        if (result.IsCompleted) {
+          _semaphore.Release();
+          return result;
+        }
+
+        // Handler is async, await it
+        return AwaitAndReleaseAsync(result, _semaphore);
+      } catch {
+        _semaphore.Release();
+        throw;
+      }
+    }
+
+    // Slow path: async wait (allocates if we need to wait)
+    return SlowPathAsync(envelope, handler, context, ct);
+  }
+
+  private static async ValueTask<TResult> AwaitAndReleaseAsync<TResult>(
+    ValueTask<TResult> task,
+    SemaphoreSlim semaphore
+  ) {
     try {
-      var result = await handler(envelope, context);
-      return result;
+      return await task;
+    } finally {
+      semaphore.Release();
+    }
+  }
+
+  private async ValueTask<TResult> SlowPathAsync<TResult>(
+    IMessageEnvelope envelope,
+    Func<IMessageEnvelope, PolicyContext, ValueTask<TResult>> handler,
+    PolicyContext context,
+    CancellationToken ct
+  ) {
+    await _semaphore.WaitAsync(ct);
+    try {
+      return await handler(envelope, context);
     } finally {
       _semaphore.Release();
     }

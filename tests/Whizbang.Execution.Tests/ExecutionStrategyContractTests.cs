@@ -37,13 +37,19 @@ public abstract class ExecutionStrategyContractTests {
   /// Helper to create a test envelope
   /// </summary>
   protected IMessageEnvelope CreateTestEnvelope(string payload) {
-    return new MessageEnvelope<TestMessage> {
+    var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
-      CorrelationId = CorrelationId.New(),
-      CausationId = CausationId.New(),
       Payload = new TestMessage(payload),
-      Hops = new List<MessageHop> { new MessageHop { ServiceName = "Test" } }
+      Hops = new List<MessageHop>()
     };
+    envelope.AddHop(new MessageHop {
+      Type = HopType.Current,
+      ServiceName = "Test",
+      Timestamp = DateTimeOffset.UtcNow,
+      CorrelationId = CorrelationId.New(),
+      CausationId = MessageId.New()
+    });
+    return envelope;
   }
 
   private record TestMessage(string Content);
@@ -62,7 +68,7 @@ public abstract class ExecutionStrategyContractTests {
       envelope,
       (env, ctx) => {
         handlerCalled = true;
-        return Task.FromResult(42);
+        return ValueTask.FromResult(42);
       },
       context
     );
@@ -83,7 +89,7 @@ public abstract class ExecutionStrategyContractTests {
     // Act
     var result = await strategy.ExecuteAsync<int>(
       envelope,
-      (env, ctx) => Task.FromResult(42),
+      (env, ctx) => ValueTask.FromResult(42),
       context
     );
 
@@ -106,7 +112,7 @@ public abstract class ExecutionStrategyContractTests {
       envelope,
       (env, ctx) => {
         receivedEnvelope = env;
-        return Task.FromResult(0);
+        return ValueTask.FromResult(0);
       },
       context
     );
@@ -189,7 +195,7 @@ public abstract class ExecutionStrategyContractTests {
     await Assert.That(async () => {
       await strategy.ExecuteAsync<int>(
         envelope,
-        (env, ctx) => Task.FromResult(0),
+        (env, ctx) => ValueTask.FromResult(0),
         context
       );
     }).Throws<InvalidOperationException>();
@@ -276,7 +282,7 @@ public abstract class ExecutionStrategyContractTests {
         },
         context
       );
-      tasks.Add(task);
+      tasks.Add(task.AsTask());
     }
 
     await Task.WhenAll(tasks);

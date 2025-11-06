@@ -1,6 +1,7 @@
 using System.Threading.Channels;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
+using Whizbang.Core.Pooling;
 
 namespace Whizbang.Core.Execution;
 
@@ -18,19 +19,45 @@ public class SerialExecutor : IExecutionStrategy {
   private readonly object _stateLock = new();
   private bool _channelCompleted = false;
 
-  public SerialExecutor() {
-    // Unbounded channel for pending work
-    _channel = Channel.CreateUnbounded<WorkItem>(new UnboundedChannelOptions {
-      SingleReader = true, // Only one worker processes messages
-      SingleWriter = false // Multiple threads can enqueue
-    });
+  /// <summary>
+  /// Creates a new SerialExecutor with an unbounded channel.
+  /// </summary>
+  public SerialExecutor() : this(channelCapacity: null) {
+  }
+
+  /// <summary>
+  /// Creates a new SerialExecutor with a bounded or unbounded channel.
+  /// </summary>
+  /// <param name="channelCapacity">
+  /// The maximum number of pending messages. If null, uses an unbounded channel.
+  /// Bounded channels can reduce memory overhead but may block senders when full.
+  /// </param>
+  public SerialExecutor(int? channelCapacity) {
+    if (channelCapacity.HasValue) {
+      if (channelCapacity.Value <= 0) {
+        throw new ArgumentOutOfRangeException(nameof(channelCapacity), "Channel capacity must be greater than zero");
+      }
+
+      // Bounded channel with pre-allocated capacity (lower overhead)
+      _channel = Channel.CreateBounded<WorkItem>(new BoundedChannelOptions(channelCapacity.Value) {
+        SingleReader = true,  // Only one worker processes messages
+        SingleWriter = false, // Multiple threads can enqueue
+        FullMode = BoundedChannelFullMode.Wait // Block writers when full
+      });
+    } else {
+      // Unbounded channel for pending work (safer default)
+      _channel = Channel.CreateUnbounded<WorkItem>(new UnboundedChannelOptions {
+        SingleReader = true,  // Only one worker processes messages
+        SingleWriter = false  // Multiple threads can enqueue
+      });
+    }
   }
 
   public string Name => "Serial";
 
-  public async Task<TResult> ExecuteAsync<TResult>(
+  public async ValueTask<TResult> ExecuteAsync<TResult>(
     IMessageEnvelope envelope,
-    Func<IMessageEnvelope, PolicyContext, Task<TResult>> handler,
+    Func<IMessageEnvelope, PolicyContext, ValueTask<TResult>> handler,
     PolicyContext context,
     CancellationToken ct = default
   ) {
@@ -40,23 +67,25 @@ public class SerialExecutor : IExecutionStrategy {
       }
     }
 
-    var tcs = new TaskCompletionSource<TResult>();
+    // Create value task source - cannot be pooled due to lifetime spanning caller and worker contexts
+    // The source must remain valid until the caller calls GetResult on the ValueTask
+    var source = new PooledValueTaskSource<TResult>();
+    var token = source.Token;
+
+    // Rent pooled execution state to eliminate lambda closure allocation
+    var state = ExecutionStatePool<TResult>.Rent();
+    state.Initialize(envelope, context, handler, source);
+
     var workItem = new WorkItem(
-      envelope,
-      context,
-      async () => {
-        try {
-          var result = await handler(envelope, context);
-          tcs.SetResult(result);
-        } catch (Exception ex) {
-          tcs.SetException(ex);
-        }
-      },
-      ct
+      envelope: envelope,
+      context: context,
+      executeAsync: ExecuteWithPooledStateAsync<TResult>,
+      state: state,
+      cancellationToken: ct
     );
 
     await _channel.Writer.WriteAsync(workItem, ct);
-    return await tcs.Task;
+    return await new ValueTask<TResult>(source, token);
   }
 
   public Task StartAsync(CancellationToken ct = default) {
@@ -137,17 +166,51 @@ public class SerialExecutor : IExecutionStrategy {
       }
 
       try {
-        await workItem.ExecuteAsync();
+        await workItem.ExecuteAsync(workItem.State);
       } catch {
-        // Exceptions are captured in TaskCompletionSource
+        // Exceptions are captured in PooledValueTaskSource
       }
     }
   }
 
-  private record WorkItem(
-    IMessageEnvelope Envelope,
-    PolicyContext Context,
-    Func<Task> ExecuteAsync,
-    CancellationToken CancellationToken
-  );
+  /// <summary>
+  /// Static delegate method that executes handler with pooled state.
+  /// Eliminates lambda closure allocations.
+  /// </summary>
+  private static async ValueTask ExecuteWithPooledStateAsync<TResult>(object? stateObj) {
+    var state = (ExecutionState<TResult>)stateObj!;
+    try {
+      var result = await state.Handler(state.Envelope, state.Context);
+      state.Source.SetResult(result);
+    } catch (Exception ex) {
+      state.Source.SetException(ex);
+    } finally {
+      // Return state to pool after execution
+      // Note: Cannot pool PooledValueTaskSource - it must remain valid until GetResult is called
+      state.Reset();
+      ExecutionStatePool<TResult>.Return(state);
+    }
+  }
+
+  private readonly struct WorkItem {
+    public readonly IMessageEnvelope Envelope;
+    public readonly PolicyContext Context;
+    public readonly Func<object?, ValueTask> ExecuteAsync;
+    public readonly object? State;
+    public readonly CancellationToken CancellationToken;
+
+    public WorkItem(
+      IMessageEnvelope envelope,
+      PolicyContext context,
+      Func<object?, ValueTask> executeAsync,
+      object? state,
+      CancellationToken cancellationToken
+    ) {
+      Envelope = envelope;
+      Context = context;
+      ExecuteAsync = executeAsync;
+      State = state;
+      CancellationToken = cancellationToken;
+    }
+  }
 }

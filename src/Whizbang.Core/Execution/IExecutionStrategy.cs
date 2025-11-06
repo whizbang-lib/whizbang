@@ -15,10 +15,11 @@ public interface IExecutionStrategy {
 
   /// <summary>
   /// Executes a message handler with the given envelope and context.
+  /// Returns ValueTask for zero-allocation async when handlers complete synchronously.
   /// </summary>
-  Task<TResult> ExecuteAsync<TResult>(
+  ValueTask<TResult> ExecuteAsync<TResult>(
     IMessageEnvelope envelope,
-    Func<IMessageEnvelope, PolicyContext, Task<TResult>> handler,
+    Func<IMessageEnvelope, PolicyContext, ValueTask<TResult>> handler,
     PolicyContext context,
     CancellationToken ct = default
   );

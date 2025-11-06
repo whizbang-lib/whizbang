@@ -36,4 +36,13 @@ public interface IMessageEnvelope {
   /// Gets the causation ID from the first hop.
   /// </summary>
   MessageId? GetCausationId();
+
+  /// <summary>
+  /// Gets a metadata value by key from the most recent Current hop.
+  /// Searches backwards through hops to find the first HopType.Current hop
+  /// that contains the specified key.
+  /// </summary>
+  /// <param name="key">The metadata key to retrieve</param>
+  /// <returns>The metadata value if found, otherwise null</returns>
+  object? GetMetadata(string key);
 }

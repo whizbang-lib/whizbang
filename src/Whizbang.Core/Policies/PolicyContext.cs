@@ -1,4 +1,5 @@
-using System.Reflection;
+using System.Diagnostics.CodeAnalysis;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Policies;
 
@@ -7,50 +8,54 @@ namespace Whizbang.Core.Policies;
 /// Provides message information, runtime context, and helpers for policy evaluation.
 /// Accessible to both internal Whizbang code and user code.
 /// </summary>
+/// <remarks>
+/// This class is designed to be pooled to minimize heap allocations.
+/// Use PolicyContextPool to rent and return instances.
+/// </remarks>
 public class PolicyContext {
   /// <summary>
   /// The message being processed.
   /// </summary>
-  public object Message { get; }
+  public object Message { get; private set; }
 
   /// <summary>
   /// The runtime type of the message.
   /// </summary>
-  public Type MessageType { get; }
+  public Type MessageType { get; private set; }
 
   /// <summary>
   /// The message envelope containing metadata and routing information.
   /// May be null if message hasn't been wrapped yet.
   /// </summary>
-  public object? Envelope { get; }
+  public IMessageEnvelope? Envelope { get; private set; }
 
   /// <summary>
   /// The service provider for dependency injection.
   /// May be null if not configured.
   /// </summary>
-  public IServiceProvider? Services { get; }
+  public IServiceProvider? Services { get; private set; }
 
   /// <summary>
   /// The environment name (e.g., "development", "staging", "production").
   /// </summary>
-  public string Environment { get; }
+  public string Environment { get; private set; }
 
   /// <summary>
   /// When this context was created (approximately when message processing started).
   /// </summary>
-  public DateTimeOffset ExecutionTime { get; }
+  public DateTimeOffset ExecutionTime { get; private set; }
 
   /// <summary>
   /// Policy decision trail for recording all policy decisions made during processing.
   /// </summary>
-  public PolicyDecisionTrail Trail { get; }
+  public PolicyDecisionTrail Trail { get; private set; }
 
   /// <summary>
   /// Creates a new PolicyContext with the specified message.
   /// </summary>
   public PolicyContext(
       object message,
-      object? envelope = null,
+      IMessageEnvelope? envelope = null,
       IServiceProvider? services = null,
       string environment = "development"
   ) {
@@ -60,6 +65,46 @@ public class PolicyContext {
     Services = services;
     Environment = environment;
     ExecutionTime = DateTimeOffset.UtcNow;
+    Trail = new PolicyDecisionTrail();
+  }
+
+  /// <summary>
+  /// Internal parameterless constructor for pooling.
+  /// </summary>
+  internal PolicyContext() {
+    Message = null!;
+    MessageType = null!;
+    Environment = "development";
+    Trail = new PolicyDecisionTrail();
+  }
+
+  /// <summary>
+  /// Initializes the context with new values. Used by the pool.
+  /// </summary>
+  internal void Initialize(
+      object message,
+      IMessageEnvelope? envelope,
+      IServiceProvider? services,
+      string environment
+  ) {
+    Message = message ?? throw new ArgumentNullException(nameof(message));
+    MessageType = message.GetType();
+    Envelope = envelope;
+    Services = services;
+    Environment = environment;
+    ExecutionTime = DateTimeOffset.UtcNow;
+    Trail = new PolicyDecisionTrail();
+  }
+
+  /// <summary>
+  /// Resets the context for return to the pool.
+  /// </summary>
+  internal void Reset() {
+    Message = null!;
+    MessageType = null!;
+    Envelope = null;
+    Services = null;
+    Environment = "development";
     Trail = new PolicyDecisionTrail();
   }
 
@@ -89,22 +134,12 @@ public class PolicyContext {
 
   /// <summary>
   /// Gets metadata value from the message envelope.
+  /// Uses the envelope's GetMetadata method - zero reflection.
   /// </summary>
   /// <param name="key">The metadata key</param>
   /// <returns>The metadata value, or null if not found</returns>
   public object? GetMetadata(string key) {
-    if (Envelope is null) {
-      return null;
-    }
-
-    // Use reflection to get Metadata property from envelope
-    var metadataProperty = Envelope.GetType().GetProperty("Metadata");
-    if (metadataProperty is null) {
-      return null;
-    }
-
-    var metadata = metadataProperty.GetValue(Envelope) as IReadOnlyDictionary<string, object>;
-    return metadata?.TryGetValue(key, out var value) == true ? value : null;
+    return Envelope?.GetMetadata(key);
   }
 
   /// <summary>
@@ -160,35 +195,55 @@ public class PolicyContext {
   }
 
   /// <summary>
-  /// Gets the aggregate ID from the message.
-  /// Looks for a property named "{AggregateName}Id" (e.g., OrderId, CustomerId).
+  /// Gets the aggregate ID from the message using source-generated extractors.
+  /// The message type must have a property marked with [AggregateId] attribute.
+  /// Zero reflection - uses compile-time generated extractors for optimal performance.
   /// </summary>
   /// <returns>The aggregate ID</returns>
-  /// <exception cref="InvalidOperationException">If aggregate ID property is not found</exception>
+  /// <exception cref="InvalidOperationException">If aggregate ID property is not found or not marked with [AggregateId]</exception>
+  [RequiresUnreferencedCode("GetAggregateId uses reflection to extract aggregate ID from message types")]
   public Guid GetAggregateId() {
-    // Look for properties ending with "Id"
-    var idProperties = MessageType.GetProperties()
-        .Where(p => p.Name.EndsWith("Id", StringComparison.OrdinalIgnoreCase) &&
-                   (p.PropertyType == typeof(Guid) || p.PropertyType == typeof(Guid?)))
-        .ToList();
+    // Try to find extractor in the message's assembly first, then Core assembly
+    var aggregateId = TryExtractFromAssembly(Message, MessageType, MessageType.Assembly)
+                   ?? TryExtractFromAssembly(Message, MessageType, typeof(PolicyContext).Assembly);
 
-    if (!idProperties.Any()) {
+    if (!aggregateId.HasValue) {
       throw new InvalidOperationException(
-          $"Message type {MessageType.Name} does not contain an aggregate ID property. " +
-          $"Expected a property ending with 'Id' of type Guid."
+          $"Message type {MessageType.Name} does not have a property marked with [AggregateId] attribute. " +
+          $"Add [AggregateId] to a Guid property to enable aggregate ID extraction."
       );
     }
 
-    // Prefer the first property (most specific)
-    var idProperty = idProperties.First();
-    var value = idProperty.GetValue(Message);
+    return aggregateId.Value;
+  }
 
-    if (value is null) {
-      throw new InvalidOperationException(
-          $"Aggregate ID property {idProperty.Name} is null."
+  /// <summary>
+  /// Attempts to extract aggregate ID using the extractor in the specified assembly.
+  /// </summary>
+  [RequiresUnreferencedCode("Calls System.Reflection.Assembly.GetType(String)")]
+  private static Guid? TryExtractFromAssembly(object message, Type messageType, System.Reflection.Assembly assembly) {
+    try {
+      // Look for generated extractor in this assembly
+      var extractorType = assembly.GetType("Whizbang.Core.Generated.AggregateIdExtractors");
+      if (extractorType is null) {
+        return null;
+      }
+
+      // Get the ExtractAggregateId method
+      var extractMethod = extractorType.GetMethod(
+          "ExtractAggregateId",
+          System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static
       );
-    }
 
-    return value is Guid guid ? guid : (Guid)value;
+      if (extractMethod is null) {
+        return null;
+      }
+
+      // Invoke the method
+      var result = extractMethod.Invoke(null, new[] { message, messageType });
+      return result as Guid?;
+    } catch {
+      return null;
+    }
   }
 }

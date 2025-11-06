@@ -46,4 +46,43 @@ internal static class DiagnosticDescriptors {
       isEnabledByDefault: true,
       description: "The receptor implementation has errors and cannot be registered."
   );
+
+  /// <summary>
+  /// WHIZ004: Info - Aggregate ID property discovered.
+  /// </summary>
+  public static readonly DiagnosticDescriptor AggregateIdPropertyDiscovered = new(
+      id: "WHIZ004",
+      title: "Aggregate ID Property Discovered",
+      messageFormat: "Found [AggregateId] on {0}.{1}",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "An aggregate ID property was discovered and will be accessible via PolicyContext."
+  );
+
+  /// <summary>
+  /// WHIZ005: Error - [AggregateId] must be on Guid property.
+  /// </summary>
+  public static readonly DiagnosticDescriptor AggregateIdMustBeGuid = new(
+      id: "WHIZ005",
+      title: "Aggregate ID Must Be Guid",
+      messageFormat: "[AggregateId] on {0}.{1} must be of type Guid or Guid?",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "The [AggregateId] attribute can only be applied to properties of type Guid or Guid?."
+  );
+
+  /// <summary>
+  /// WHIZ006: Warning - Multiple [AggregateId] attributes on same type.
+  /// </summary>
+  public static readonly DiagnosticDescriptor MultipleAggregateIdAttributes = new(
+      id: "WHIZ006",
+      title: "Multiple Aggregate ID Attributes",
+      messageFormat: "Type {0} has multiple [AggregateId] attributes. Only the first property '{1}' will be used.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "A message type should only have one property marked with [AggregateId]. Additional attributes are ignored."
+  );
 }
