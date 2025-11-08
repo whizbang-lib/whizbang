@@ -26,7 +26,7 @@ public class ReceptorTests : DiagnosticTestBase {
 
   // Test receptor implementations (will be created when implementing)
   public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
-    public async Task<OrderCreated> HandleAsync(CreateOrder message, CancellationToken cancellationToken = default) {
+    public async ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken cancellationToken = default) {
       // Validation
       if (message.Items.Length == 0) {
         throw new InvalidOperationException("Order must have items");
@@ -202,7 +202,7 @@ public class ReceptorTests : DiagnosticTestBase {
   public record AuditEvent(string Action, Guid EntityId);
 
   public class OrderBusinessReceptor : IReceptor<CreateOrder, OrderCreated> {
-    public async Task<OrderCreated> HandleAsync(CreateOrder message, CancellationToken cancellationToken = default) {
+    public async ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken cancellationToken = default) {
       await Task.Delay(1);
 
       var total = message.Items.Sum(item => item.Quantity * item.Price);
@@ -217,7 +217,7 @@ public class ReceptorTests : DiagnosticTestBase {
   }
 
   public class OrderAuditReceptor : IReceptor<CreateOrder, AuditEvent> {
-    public async Task<AuditEvent> HandleAsync(CreateOrder message, CancellationToken cancellationToken = default) {
+    public async ValueTask<AuditEvent> HandleAsync(CreateOrder message, CancellationToken cancellationToken = default) {
       await Task.Delay(1);
 
       return new AuditEvent(
@@ -232,7 +232,7 @@ public class ReceptorTests : DiagnosticTestBase {
   public record PaymentProcessed(Guid PaymentId, decimal Amount);
 
   public class PaymentReceptor : IReceptor<ProcessPayment, (PaymentProcessed, AuditEvent)> {
-    public async Task<(PaymentProcessed, AuditEvent)> HandleAsync(ProcessPayment message, CancellationToken cancellationToken = default) {
+    public async ValueTask<(PaymentProcessed, AuditEvent)> HandleAsync(ProcessPayment message, CancellationToken cancellationToken = default) {
       await Task.Delay(1);
 
       var payment = new PaymentProcessed(
@@ -255,7 +255,7 @@ public class ReceptorTests : DiagnosticTestBase {
   public record HighValueAlert(Guid OrderId) : INotificationEvent;
 
   public class NotificationReceptor : IReceptor<OrderCreated, INotificationEvent[]> {
-    public async Task<INotificationEvent[]> HandleAsync(OrderCreated message, CancellationToken cancellationToken = default) {
+    public async ValueTask<INotificationEvent[]> HandleAsync(OrderCreated message, CancellationToken cancellationToken = default) {
       await Task.Delay(1);
 
       var notifications = new List<INotificationEvent>();

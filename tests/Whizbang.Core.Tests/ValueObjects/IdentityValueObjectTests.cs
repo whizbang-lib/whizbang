@@ -7,50 +7,59 @@ namespace Whizbang.Core.Tests.ValueObjects;
 /// These tests verify that IDs use UUIDv7 (time-ordered, database-friendly GUIDs).
 /// </summary>
 public class IdentityValueObjectTests {
-  #region MessageId Tests
+  // ==================== IDENTITY VALUE OBJECT TESTS ====================
+  // Tests for MessageId and CorrelationId using parameterized approach
+  // to eliminate duplication between identical test logic
+
+  /// <summary>
+  /// Data source for identity value object types.
+  /// Returns factory functions to create IDs and extract their Guid values.
+  /// </summary>
+  public static IEnumerable<(Func<Guid> createId, string typeName)> GetIdTypes() {
+    yield return (() => MessageId.New().Value, "MessageId");
+    yield return (() => CorrelationId.New().Value, "CorrelationId");
+  }
 
   [Test]
-  public async Task MessageId_New_GeneratesUniqueIdsAsync() {
+  [MethodDataSource(nameof(GetIdTypes))]
+  public async Task IdTypes_New_GeneratesUniqueIdsAsync(Func<Guid> createId, string typeName) {
     // Arrange & Act
-    var id1 = MessageId.New();
-    var id2 = MessageId.New();
+    var id1 = createId();
+    var id2 = createId();
 
     // Assert
     await Assert.That(id1).IsNotEqualTo(id2);
   }
 
   [Test]
-  public async Task MessageId_New_GeneratesTimeOrderedIdsAsync() {
+  [MethodDataSource(nameof(GetIdTypes))]
+  public async Task IdTypes_New_GeneratesTimeOrderedIdsAsync(Func<Guid> createId, string typeName) {
     // Arrange - Create IDs with small delay between them
-    var id1 = MessageId.New();
+    var id1 = createId();
     await Task.Delay(2); // Small delay to ensure different timestamp
-    var id2 = MessageId.New();
+    var id2 = createId();
     await Task.Delay(2);
-    var id3 = MessageId.New();
-
-    // Act - Extract the underlying Guid values
-    var guid1 = id1.Value;
-    var guid2 = id2.Value;
-    var guid3 = id3.Value;
+    var id3 = createId();
 
     // Assert - UUIDv7 should be sortable by creation time
     // When sorted, they should maintain creation order
-    var ids = new[] { guid3, guid1, guid2 };
+    var ids = new[] { id3, id1, id2 };
     var sortedIds = ids.OrderBy(g => g).ToArray();
 
-    await Assert.That(sortedIds[0]).IsEqualTo(guid1);
-    await Assert.That(sortedIds[1]).IsEqualTo(guid2);
-    await Assert.That(sortedIds[2]).IsEqualTo(guid3);
+    await Assert.That(sortedIds[0]).IsEqualTo(id1);
+    await Assert.That(sortedIds[1]).IsEqualTo(id2);
+    await Assert.That(sortedIds[2]).IsEqualTo(id3);
   }
 
   [Test]
-  public async Task MessageId_New_ProducesSequentialGuidsAsync() {
+  [MethodDataSource(nameof(GetIdTypes))]
+  public async Task IdTypes_New_ProducesSequentialGuidsAsync(Func<Guid> createId, string typeName) {
     // Arrange & Act - Generate multiple IDs
     var ids = Enumerable.Range(0, 100)
         .Select(_ => {
-          var id = MessageId.New();
+          var id = createId();
           Thread.Sleep(1); // Ensure timestamp progression
-          return id.Value;
+          return id;
         })
         .ToList();
 
@@ -58,61 +67,6 @@ public class IdentityValueObjectTests {
     var sortedIds = ids.OrderBy(g => g).ToList();
     await Assert.That(ids).IsEquivalentTo(sortedIds);
   }
-
-  #endregion
-
-  #region CorrelationId Tests
-
-  [Test]
-  public async Task CorrelationId_New_GeneratesUniqueIdsAsync() {
-    // Arrange & Act
-    var id1 = CorrelationId.New();
-    var id2 = CorrelationId.New();
-
-    // Assert
-    await Assert.That(id1).IsNotEqualTo(id2);
-  }
-
-  [Test]
-  public async Task CorrelationId_New_GeneratesTimeOrderedIdsAsync() {
-    // Arrange - Create IDs with small delay between them
-    var id1 = CorrelationId.New();
-    await Task.Delay(2);
-    var id2 = CorrelationId.New();
-    await Task.Delay(2);
-    var id3 = CorrelationId.New();
-
-    // Act - Extract the underlying Guid values
-    var guid1 = id1.Value;
-    var guid2 = id2.Value;
-    var guid3 = id3.Value;
-
-    // Assert - UUIDv7 should be sortable by creation time
-    var ids = new[] { guid3, guid1, guid2 };
-    var sortedIds = ids.OrderBy(g => g).ToArray();
-
-    await Assert.That(sortedIds[0]).IsEqualTo(guid1);
-    await Assert.That(sortedIds[1]).IsEqualTo(guid2);
-    await Assert.That(sortedIds[2]).IsEqualTo(guid3);
-  }
-
-  [Test]
-  public async Task CorrelationId_New_ProducesSequentialGuidsAsync() {
-    // Arrange & Act - Generate multiple IDs
-    var ids = Enumerable.Range(0, 100)
-        .Select(_ => {
-          var id = CorrelationId.New();
-          Thread.Sleep(1);
-          return id.Value;
-        })
-        .ToList();
-
-    // Assert - IDs should already be in ascending order
-    var sortedIds = ids.OrderBy(g => g).ToList();
-    await Assert.That(ids).IsEquivalentTo(sortedIds);
-  }
-
-  #endregion
 
   #region Cross-Type Consistency Tests
 

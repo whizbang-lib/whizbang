@@ -29,40 +29,20 @@ public class SecurityContextTests {
   }
 
   [Test]
-  public async Task Constructor_AllowsNullUserIdAsync() {
+  [Arguments("user-123", "tenant-abc", "Both values set")]
+  [Arguments(null, "tenant-abc", "Null UserId")]
+  [Arguments("user-123", null, "Null TenantId")]
+  [Arguments(null, null, "Both null")]
+  public async Task Constructor_VariousNullCombinations_HandlesCorrectlyAsync(string? userId, string? tenantId, string description) {
     // Arrange & Act
     var context = new SecurityContext {
-      UserId = null,
-      TenantId = "tenant-abc"
+      UserId = userId,
+      TenantId = tenantId
     };
 
     // Assert
-    await Assert.That(context.UserId).IsNull();
-  }
-
-  [Test]
-  public async Task Constructor_AllowsNullTenantIdAsync() {
-    // Arrange & Act
-    var context = new SecurityContext {
-      UserId = "user-123",
-      TenantId = null
-    };
-
-    // Assert
-    await Assert.That(context.TenantId).IsNull();
-  }
-
-  [Test]
-  public async Task Constructor_AllowsBothNullAsync() {
-    // Arrange & Act
-    var context = new SecurityContext {
-      UserId = null,
-      TenantId = null
-    };
-
-    // Assert
-    await Assert.That(context.UserId).IsNull();
-    await Assert.That(context.TenantId).IsNull();
+    await Assert.That(context.UserId).IsEqualTo(userId);
+    await Assert.That(context.TenantId).IsEqualTo(tenantId);
   }
 
   [Test]
@@ -83,7 +63,10 @@ public class SecurityContextTests {
   }
 
   [Test]
-  public async Task RecordEquality_DifferentUserId_AreNotEqualAsync() {
+  [Arguments("user-456", "tenant-abc", "Different UserId")]
+  [Arguments("user-123", "tenant-xyz", "Different TenantId")]
+  [Arguments("user-456", "tenant-xyz", "Both different")]
+  public async Task RecordEquality_DifferentValues_AreNotEqualAsync(string userId2, string tenantId2, string description) {
     // Arrange
     var context1 = new SecurityContext {
       UserId = "user-123",
@@ -91,33 +74,50 @@ public class SecurityContextTests {
     };
 
     var context2 = new SecurityContext {
-      UserId = "user-456",
-      TenantId = "tenant-abc"
+      UserId = userId2,
+      TenantId = tenantId2
     };
 
     // Assert
     await Assert.That(context1).IsNotEqualTo(context2);
   }
 
-  [Test]
-  public async Task RecordEquality_DifferentTenantId_AreNotEqualAsync() {
-    // Arrange
-    var context1 = new SecurityContext {
-      UserId = "user-123",
-      TenantId = "tenant-abc"
-    };
-
-    var context2 = new SecurityContext {
-      UserId = "user-123",
-      TenantId = "tenant-xyz"
-    };
-
-    // Assert
-    await Assert.That(context1).IsNotEqualTo(context2);
+  /// <summary>
+  /// Data source for 'with' expression tests.
+  /// Returns a function that applies the 'with' expression and the expected values.
+  /// </summary>
+  public static IEnumerable<(Func<SecurityContext, SecurityContext> withExpression, string expectedUserId, string expectedTenantId, string originalProperty, string description)> GetWithExpressions() {
+    yield return (
+      ctx => ctx with { UserId = "user-456" },
+      "user-456",
+      "tenant-abc",
+      "UserId",
+      "Update UserId"
+    );
+    yield return (
+      ctx => ctx with { TenantId = "tenant-xyz" },
+      "user-123",
+      "tenant-xyz",
+      "TenantId",
+      "Update TenantId"
+    );
+    yield return (
+      ctx => ctx with { UserId = "user-789", TenantId = "tenant-def" },
+      "user-789",
+      "tenant-def",
+      "Both",
+      "Update both"
+    );
   }
 
   [Test]
-  public async Task WithUserId_CreatesNewInstance_WithUpdatedUserIdAsync() {
+  [MethodDataSource(nameof(GetWithExpressions))]
+  public async Task WithExpression_CreatesNewInstance_WithUpdatedValuesAsync(
+      Func<SecurityContext, SecurityContext> withExpression,
+      string expectedUserId,
+      string expectedTenantId,
+      string originalProperty,
+      string description) {
     // Arrange
     var original = new SecurityContext {
       UserId = "user-123",
@@ -125,28 +125,14 @@ public class SecurityContextTests {
     };
 
     // Act
-    var updated = original with { UserId = "user-456" };
+    var updated = withExpression(original);
 
-    // Assert
-    await Assert.That(updated.UserId).IsEqualTo("user-456");
-    await Assert.That(updated.TenantId).IsEqualTo("tenant-abc");
-    await Assert.That(original.UserId).IsEqualTo("user-123"); // Original unchanged
-  }
+    // Assert - Updated instance has new values
+    await Assert.That(updated.UserId).IsEqualTo(expectedUserId);
+    await Assert.That(updated.TenantId).IsEqualTo(expectedTenantId);
 
-  [Test]
-  public async Task WithTenantId_CreatesNewInstance_WithUpdatedTenantIdAsync() {
-    // Arrange
-    var original = new SecurityContext {
-      UserId = "user-123",
-      TenantId = "tenant-abc"
-    };
-
-    // Act
-    var updated = original with { TenantId = "tenant-xyz" };
-
-    // Assert
-    await Assert.That(updated.UserId).IsEqualTo("user-123");
-    await Assert.That(updated.TenantId).IsEqualTo("tenant-xyz");
-    await Assert.That(original.TenantId).IsEqualTo("tenant-abc"); // Original unchanged
+    // Assert - Original instance is unchanged
+    await Assert.That(original.UserId).IsEqualTo("user-123");
+    await Assert.That(original.TenantId).IsEqualTo("tenant-abc");
   }
 }

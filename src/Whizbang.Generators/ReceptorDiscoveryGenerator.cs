@@ -31,6 +31,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Extracts receptor information from a class declaration.
   /// Returns null if the class doesn't implement IReceptor.
+  /// Supports both IReceptor&lt;TMessage, TResponse&gt; and IReceptor&lt;TMessage&gt; (void) patterns.
   /// </summary>
   private static ReceptorInfo? ExtractReceptorInfo(
       GeneratorSyntaxContext context,
@@ -45,28 +46,34 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Look for IReceptor<TMessage, TResponse> interface
+    // Look for IReceptor<TMessage, TResponse> interface (2 type arguments)
     var receptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
         i.OriginalDefinition.ToDisplayString() == RECEPTOR_INTERFACE_NAME + "<TMessage, TResponse>");
 
-    if (receptorInterface is null) {
-      return null;
+    if (receptorInterface is not null && receptorInterface.TypeArguments.Length == 2) {
+      // Found IReceptor<TMessage, TResponse> - regular receptor with response
+      return new ReceptorInfo(
+          ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          MessageType: receptorInterface.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          ResponseType: receptorInterface.TypeArguments[1].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+      );
     }
 
-    // Verify it has exactly 2 type arguments
-    if (receptorInterface.TypeArguments.Length != 2) {
-      // Can't report diagnostics here - will report in GenerateDispatcherRegistrations
-      return null;
+    // Look for IReceptor<TMessage> interface (1 type argument) - void receptor
+    var voidReceptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
+        i.OriginalDefinition.ToDisplayString() == RECEPTOR_INTERFACE_NAME + "<TMessage>");
+
+    if (voidReceptorInterface is not null && voidReceptorInterface.TypeArguments.Length == 1) {
+      // Found IReceptor<TMessage> - void receptor with no response
+      return new ReceptorInfo(
+          ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          MessageType: voidReceptorInterface.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          ResponseType: null  // Void receptor - no response type
+      );
     }
 
-    // Extract type information into value type (critical for performance)
-    var info = new ReceptorInfo(
-        ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        MessageType: receptorInterface.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        ResponseType: receptorInterface.TypeArguments[1].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
-    );
-
-    return info;
+    // No IReceptor interface found
+    return null;
   }
 
   /// <summary>
@@ -86,12 +93,13 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     // Report each discovered receptor
     foreach (var receptor in receptors) {
+      var responseTypeName = receptor.IsVoid ? "void" : GetSimpleName(receptor.ResponseType!);
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.ReceptorDiscovered,
           Location.None,
           GetSimpleName(receptor.ClassName),
           GetSimpleName(receptor.MessageType),
-          GetSimpleName(receptor.ResponseType)
+          responseTypeName
       ));
     }
 
@@ -108,6 +116,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates the C# source code for the registration extension method.
   /// Uses template-based generation for IDE support.
+  /// Handles both IReceptor&lt;TMessage, TResponse&gt; and IReceptor&lt;TMessage&gt; (void) patterns.
   /// </summary>
   private static string GenerateRegistrationSource(ImmutableArray<ReceptorInfo> receptors) {
     // Load template from embedded resource
@@ -116,21 +125,38 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         "DispatcherRegistrationsTemplate.cs"
     );
 
-    // Load registration snippet
+    // Load registration snippets
     var registrationSnippet = TemplateUtilities.ExtractSnippet(
         typeof(ReceptorDiscoveryGenerator).Assembly,
         "DispatcherSnippets.cs",
         "RECEPTOR_REGISTRATION_SNIPPET"
     );
 
-    // Generate registration calls using snippet
+    var voidRegistrationSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(ReceptorDiscoveryGenerator).Assembly,
+        "DispatcherSnippets.cs",
+        "VOID_RECEPTOR_REGISTRATION_SNIPPET"
+    );
+
+    // Generate registration calls using appropriate snippet
     var registrations = new StringBuilder();
     foreach (var receptor in receptors) {
-      var generatedCode = registrationSnippet
-          .Replace("__RECEPTOR_INTERFACE__", RECEPTOR_INTERFACE_NAME)
-          .Replace("__MESSAGE_TYPE__", receptor.MessageType)
-          .Replace("__RESPONSE_TYPE__", receptor.ResponseType)
-          .Replace("__RECEPTOR_CLASS__", receptor.ClassName);
+      string generatedCode;
+
+      if (receptor.IsVoid) {
+        // Void receptor: IReceptor<TMessage>
+        generatedCode = voidRegistrationSnippet
+            .Replace("__RECEPTOR_INTERFACE__", RECEPTOR_INTERFACE_NAME)
+            .Replace("__MESSAGE_TYPE__", receptor.MessageType)
+            .Replace("__RECEPTOR_CLASS__", receptor.ClassName);
+      } else {
+        // Regular receptor: IReceptor<TMessage, TResponse>
+        generatedCode = registrationSnippet
+            .Replace("__RECEPTOR_INTERFACE__", RECEPTOR_INTERFACE_NAME)
+            .Replace("__MESSAGE_TYPE__", receptor.MessageType)
+            .Replace("__RESPONSE_TYPE__", receptor.ResponseType!)
+            .Replace("__RECEPTOR_CLASS__", receptor.ClassName);
+      }
 
       registrations.AppendLine(TemplateUtilities.IndentCode(generatedCode, "            "));
     }
@@ -147,10 +173,20 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates a complete Dispatcher implementation with zero-reflection routing.
   /// Uses the DispatcherTemplate.cs file for full analyzer support.
+  /// Handles both IReceptor&lt;TMessage, TResponse&gt; and IReceptor&lt;TMessage&gt; (void) patterns.
   /// </summary>
   private static string GenerateDispatcherSource(ImmutableArray<ReceptorInfo> receptors) {
-    // Group receptors by message type to handle multi-destination routing
-    var receptorsByMessage = receptors
+    // Separate void receptors from regular receptors
+    var regularReceptors = receptors.Where(r => !r.IsVoid).ToImmutableArray();
+    var voidReceptors = receptors.Where(r => r.IsVoid).ToImmutableArray();
+
+    // Group regular receptors by message type to handle multi-destination routing
+    var regularReceptorsByMessage = regularReceptors
+        .GroupBy(r => r.MessageType)
+        .ToDictionary(g => g.Key, g => g.ToList());
+
+    // Group void receptors by message type
+    var voidReceptorsByMessage = voidReceptors
         .GroupBy(r => r.MessageType)
         .ToDictionary(g => g.Key, g => g.ToList());
 
@@ -167,19 +203,37 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         "SEND_ROUTING_SNIPPET"
     );
 
-    // Generate Send routing code using snippet template
+    // Generate Send routing code for regular receptors using snippet template
     var sendRouting = new StringBuilder();
-    foreach (var messageType in receptorsByMessage.Keys) {
-      var receptorList = receptorsByMessage[messageType];
+    foreach (var messageType in regularReceptorsByMessage.Keys) {
+      var receptorList = regularReceptorsByMessage[messageType];
       var firstReceptor = receptorList[0];
 
       // Replace placeholders with actual types
       var generatedCode = sendSnippet
           .Replace("__MESSAGE_TYPE__", messageType)
-          .Replace("__RESPONSE_TYPE__", firstReceptor.ResponseType)
+          .Replace("__RESPONSE_TYPE__", firstReceptor.ResponseType!)
           .Replace("__RECEPTOR_INTERFACE__", RECEPTOR_INTERFACE_NAME);
 
       sendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
+    }
+
+    // Load void Send routing snippet from template
+    var voidSendSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(ReceptorDiscoveryGenerator).Assembly,
+        "DispatcherSnippets.cs",
+        "VOID_SEND_ROUTING_SNIPPET"
+    );
+
+    // Generate void Send routing code for void receptors using snippet template
+    var voidSendRouting = new StringBuilder();
+    foreach (var messageType in voidReceptorsByMessage.Keys) {
+      // Replace placeholders with actual types
+      var generatedCode = voidSendSnippet
+          .Replace("__MESSAGE_TYPE__", messageType)
+          .Replace("__RECEPTOR_INTERFACE__", RECEPTOR_INTERFACE_NAME);
+
+      voidSendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
     }
 
     // Load Publish routing snippet from template
@@ -190,8 +244,14 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     );
 
     // Generate Publish routing code using snippet template
+    // Combine all message types from both regular and void receptors
+    var allMessageTypes = regularReceptorsByMessage.Keys
+        .Union(voidReceptorsByMessage.Keys)
+        .Distinct()
+        .ToList();
+
     var publishRouting = new StringBuilder();
-    foreach (var messageType in receptorsByMessage.Keys) {
+    foreach (var messageType in allMessageTypes) {
       // Replace placeholders with actual types
       var generatedCode = publishSnippet
           .Replace("__MESSAGE_TYPE__", messageType)
@@ -212,6 +272,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     // Replace #region markers using shared utilities (robust against whitespace)
     result = TemplateUtilities.ReplaceRegion(result, "SEND_ROUTING", sendRouting.ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "VOID_SEND_ROUTING", voidSendRouting.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "PUBLISH_ROUTING", publishRouting.ToString());
 
     return result;
@@ -242,11 +303,12 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var messages = new StringBuilder();
     for (int i = 0; i < receptors.Length; i++) {
       var receptor = receptors[i];
+      var responseTypeName = receptor.IsVoid ? "void" : GetSimpleName(receptor.ResponseType!);
       var generatedCode = messageSnippet
           .Replace("__INDEX__", (i + 1).ToString())
           .Replace("__RECEPTOR_NAME__", GetSimpleName(receptor.ClassName))
           .Replace("__MESSAGE_NAME__", GetSimpleName(receptor.MessageType))
-          .Replace("__RESPONSE_NAME__", GetSimpleName(receptor.ResponseType));
+          .Replace("__RESPONSE_NAME__", responseTypeName);
 
       messages.Append(TemplateUtilities.IndentCode(generatedCode, "            "));
 

@@ -1300,6 +1300,25 @@ public class MessageTracingTests {
     await Assert.That(trace.TotalDuration).IsEqualTo(TimeSpan.FromMilliseconds(500));
   }
 
+  [Test]
+  public async Task MessageTrace_WithCorrelationAndCausation_SetsPropertiesAsync() {
+    // Arrange
+    var messageId = MessageId.New();
+    var correlationId = CorrelationId.New();
+    var causationId = MessageId.New();
+
+    // Act
+    var trace = new MessageTrace(messageId) {
+      CorrelationId = correlationId,
+      CausationId = causationId
+    };
+
+    // Assert
+    await Assert.That(trace.MessageId).IsEqualTo(messageId);
+    await Assert.That(trace.CorrelationId).IsEqualTo(correlationId);
+    await Assert.That(trace.CausationId).IsEqualTo(causationId);
+  }
+
   #endregion
 
   // Helper methods for testing caller info capture

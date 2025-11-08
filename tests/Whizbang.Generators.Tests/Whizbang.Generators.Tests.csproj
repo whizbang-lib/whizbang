@@ -21,6 +21,7 @@
   </ItemGroup>
   <ItemGroup>
     <!-- Testing framework -->
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
     <PackageReference Include="TUnit" />
     <!-- Roslyn for source generator testing -->
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />

@@ -12,7 +12,6 @@ namespace Whizbang.Benchmarks;
 /// Benchmarks for policy engine.
 /// Measures policy matching performance with varying number of policies.
 /// </summary>
-[SimpleJob(RuntimeMoniker.Net90)]
 [MemoryDiagnoser]
 [MarkdownExporter]
 public class PolicyEngineBenchmarks {

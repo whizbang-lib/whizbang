@@ -8,7 +8,6 @@ namespace Whizbang.Benchmarks;
 /// Benchmarks for sequence providers.
 /// Measures throughput of sequence number generation, both single-threaded and concurrent.
 /// </summary>
-[SimpleJob(RuntimeMoniker.Net90)]
 [MemoryDiagnoser]
 [MarkdownExporter]
 public class SequenceProviderBenchmarks {

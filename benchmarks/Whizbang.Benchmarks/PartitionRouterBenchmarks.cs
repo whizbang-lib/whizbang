@@ -12,7 +12,6 @@ namespace Whizbang.Benchmarks;
 /// Benchmarks for partition routers.
 /// Measures partition assignment performance and distribution quality.
 /// </summary>
-[SimpleJob(RuntimeMoniker.Net90)]
 [MemoryDiagnoser]
 [MarkdownExporter]
 public class PartitionRouterBenchmarks {

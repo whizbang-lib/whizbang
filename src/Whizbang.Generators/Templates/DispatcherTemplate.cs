@@ -41,6 +41,20 @@ internal sealed class GeneratedDispatcher : Dispatcher {
   }
 
   /// <summary>
+  /// Generated lookup - returns a strongly-typed delegate that invokes the appropriate void receptor.
+  /// Zero reflection - uses compile-time type matching and lambda expressions.
+  /// </summary>
+  [DebuggerStepThrough]
+  protected override VoidReceptorInvoker? _getVoidReceptorInvoker(object message, Type messageType) {
+    // Generated routing - zero reflection!
+    #region VOID_SEND_ROUTING
+    // This region will be replaced with generated void receptor routing code
+    #endregion
+
+    return null;
+  }
+
+  /// <summary>
   /// Generated lookup - returns a strongly-typed delegate that publishes to all receptors.
   /// Zero reflection - uses compile-time type matching and lambda expressions.
   /// </summary>

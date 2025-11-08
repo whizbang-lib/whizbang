@@ -10,7 +10,6 @@ namespace Whizbang.Benchmarks;
 /// Simple benchmarks for core Whizbang components.
 /// Focuses on most important performance characteristics.
 /// </summary>
-[SimpleJob(RuntimeMoniker.Net90)]
 [MemoryDiagnoser]
 [MarkdownExporter]
 public class SimpleBenchmarks {

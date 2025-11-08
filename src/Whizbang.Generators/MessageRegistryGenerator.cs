@@ -170,16 +170,39 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Look for IReceptor<TMessage, TResponse> interface
+    // Look for IReceptor<TMessage, TResponse> interface (regular receptor)
     var receptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
         i.OriginalDefinition.ToDisplayString() == I_RECEPTOR + "<TMessage, TResponse>");
 
-    if (receptorInterface is null) {
+    // If not found, look for IReceptor<TMessage> interface (void receptor)
+    var voidReceptorInterface = receptorInterface is null
+        ? classSymbol.AllInterfaces.FirstOrDefault(i =>
+            i.OriginalDefinition.ToDisplayString() == I_RECEPTOR + "<TMessage>")
+        : null;
+
+    // Return null if neither interface is implemented
+    if (receptorInterface is null && voidReceptorInterface is null) {
       return null;
     }
 
-    if (receptorInterface.TypeArguments.Length != 2) {
-      return null;
+    // Determine message type and response type
+    string messageType;
+    string responseType;
+
+    if (receptorInterface is not null) {
+      // Regular receptor with response
+      if (receptorInterface.TypeArguments.Length != 2) {
+        return null;
+      }
+      messageType = receptorInterface.TypeArguments[0].ToDisplayString();
+      responseType = receptorInterface.TypeArguments[1].ToDisplayString();
+    } else {
+      // Void receptor
+      if (voidReceptorInterface!.TypeArguments.Length != 1) {
+        return null;
+      }
+      messageType = voidReceptorInterface.TypeArguments[0].ToDisplayString();
+      responseType = "void";
     }
 
     // Find the HandleAsync method
@@ -191,7 +214,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     var lineSpan = location.GetLineSpan();
 
     return new ReceptorLocationInfo(
-        MessageType: receptorInterface.TypeArguments[0].ToDisplayString(),
+        MessageType: messageType,
         ClassName: classSymbol.ToDisplayString(),
         MethodName: "HandleAsync",
         FilePath: lineSpan.Path,

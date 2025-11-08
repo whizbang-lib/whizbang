@@ -10,7 +10,6 @@ namespace Whizbang.Benchmarks;
 /// Benchmarks for tracing and observability overhead.
 /// Measures cost of hop creation, envelope construction, and metadata operations.
 /// </summary>
-[SimpleJob(RuntimeMoniker.Net90)]
 [MemoryDiagnoser]
 [MarkdownExporter]
 public class TracingBenchmarks {

@@ -30,10 +30,22 @@ public class DispatcherSnippets {
       }
 
       [System.Diagnostics.DebuggerStepThrough]
-      async Task<TResult> InvokeReceptor(object msg) {
+      ValueTask<TResult> InvokeReceptor(object msg) {
         var typedMsg = (__MESSAGE_TYPE__)msg;
-        var result = await receptor.HandleAsync(typedMsg);
-        return (TResult)(object)result!;
+        var task = receptor.HandleAsync(typedMsg);
+
+        // Fast path: Avoid async state machine for synchronously-completed tasks
+        if (task.IsCompletedSuccessfully) {
+          return new ValueTask<TResult>((TResult)(object)task.Result!);
+        }
+
+        // Slow path: Await asynchronously-completing tasks
+        return AwaitAndCast(task);
+
+        async ValueTask<TResult> AwaitAndCast(ValueTask<__RESPONSE_TYPE__> t) {
+          var result = await t;
+          return (TResult)(object)result!;
+        }
       }
 
       return InvokeReceptor;
@@ -74,6 +86,47 @@ public class DispatcherSnippets {
     #region RECEPTOR_REGISTRATION_SNIPPET
     services.AddTransient<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>, __RECEPTOR_CLASS__>();
     #endregion
+  }
+
+  /// <summary>
+  /// Example method showing snippet structure for void receptor registration.
+  /// </summary>
+  public void VoidReceptorRegistrationExample(IServiceCollection services) {
+    #region VOID_RECEPTOR_REGISTRATION_SNIPPET
+    services.AddTransient<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>, __RECEPTOR_CLASS__>();
+    #endregion
+  }
+
+  /// <summary>
+  /// Example method showing snippet structure for void receptor routing.
+  /// </summary>
+  protected VoidReceptorInvoker? VoidSendRoutingExample(object message, Type messageType) {
+    #region VOID_SEND_ROUTING_SNIPPET
+    if (messageType == typeof(__MESSAGE_TYPE__)) {
+      var receptor = _serviceProvider.GetService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
+      if (receptor == null) {
+        return null;
+      }
+
+      [System.Diagnostics.DebuggerStepThrough]
+      ValueTask InvokeReceptor(object msg) {
+        var typedMsg = (__MESSAGE_TYPE__)msg;
+        var task = receptor.HandleAsync(typedMsg);
+
+        // Fast path: Avoid async state machine for synchronously-completed tasks
+        if (task.IsCompletedSuccessfully) {
+          return ValueTask.CompletedTask;
+        }
+
+        // Slow path: Await asynchronously-completing tasks
+        return task;
+      }
+
+      return InvokeReceptor;
+    }
+    #endregion
+
+    return null;
   }
 
   /// <summary>

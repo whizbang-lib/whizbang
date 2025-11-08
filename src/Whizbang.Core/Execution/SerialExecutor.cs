@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Threading.Channels;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
@@ -137,6 +138,8 @@ public class SerialExecutor : IExecutionStrategy {
   }
 
   public async Task DrainAsync(CancellationToken ct = default) {
+    using var activity = WhizbangActivitySource.Execution.StartActivity("SerialExecutor.DrainAsync");
+
     lock (_stateLock) {
       if (_state != State.Running) {
         return; // Nothing to drain
@@ -154,21 +157,42 @@ public class SerialExecutor : IExecutionStrategy {
       try {
         await _workerTask;
       } catch (OperationCanceledException) {
-        // Expected if worker was cancelled
+        // DEFENSIVE: Should never happen - channel completes before worker cancellation
+        // Kept as safety net for unexpected cancellation timing edge cases
+        WhizbangActivitySource.RecordDefensiveCancellation(
+          activity,
+          "Worker cancelled during DrainAsync after channel completion"
+        );
+        // Note: We still swallow the exception but now it's observable via OpenTelemetry
       }
     }
   }
 
   private async Task ProcessWorkItemsAsync(CancellationToken ct) {
+    using var activity = WhizbangActivitySource.Execution.StartActivity("SerialExecutor.ProcessWorkItems");
+
     await foreach (var workItem in _channel.Reader.ReadAllAsync(ct)) {
+      // DEFENSIVE: Should never happen - WriteAsync throws before queueing cancelled work
+      // Kept as safety net if cancellation happens between WriteAsync and processing
       if (workItem.CancellationToken.IsCancellationRequested) {
+        WhizbangActivitySource.RecordDefensiveCancellation(
+          activity,
+          "Work item cancelled after queueing but before execution"
+        );
         continue; // Skip cancelled work
       }
 
       try {
         await workItem.ExecuteAsync(workItem.State);
-      } catch {
-        // Exceptions are captured in PooledValueTaskSource
+      } catch (Exception ex) {
+        // DEFENSIVE: Should never happen - exceptions captured in PooledValueTaskSource
+        // Kept as safety net for unexpected exception paths
+        WhizbangActivitySource.RecordDefensiveException(
+          activity,
+          ex,
+          "Unexpected exception escaped work item execution"
+        );
+        // Note: We still swallow the exception but now it's observable via OpenTelemetry
       }
     }
   }

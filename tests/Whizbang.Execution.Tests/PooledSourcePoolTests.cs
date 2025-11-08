@@ -98,21 +98,23 @@ public class PooledSourcePoolTests {
 
   [Test]
   public async Task GenericTypes_HaveSeparatePools_IntVsStringAsync() {
+    // NOTE: Using unique types (TestData3/TestData4) instead of int/string
+    // because static pools are shared across parallel tests
     // Arrange
-    var intSource = PooledSourcePool<int>.Rent();
-    var stringSource = PooledSourcePool<string>.Rent();
+    var source3 = PooledSourcePool<TestData3>.Rent();
+    var source4 = PooledSourcePool<TestData4>.Rent();
 
     // Return both
-    PooledSourcePool<int>.Return(intSource);
-    PooledSourcePool<string>.Return(stringSource);
+    PooledSourcePool<TestData3>.Return(source3);
+    PooledSourcePool<TestData4>.Return(source4);
 
     // Act - Rent from each pool
-    var rentedInt = PooledSourcePool<int>.Rent();
-    var rentedString = PooledSourcePool<string>.Rent();
+    var rented3 = PooledSourcePool<TestData3>.Rent();
+    var rented4 = PooledSourcePool<TestData4>.Rent();
 
     // Assert - Each should get back its own type's instance
-    await Assert.That(object.ReferenceEquals(intSource, rentedInt)).IsTrue();
-    await Assert.That(object.ReferenceEquals(stringSource, rentedString)).IsTrue();
+    await Assert.That(object.ReferenceEquals(source3, rented3)).IsTrue();
+    await Assert.That(object.ReferenceEquals(source4, rented4)).IsTrue();
   }
 
   [Test]
@@ -312,6 +314,8 @@ public class PooledSourcePoolTests {
 
   private record TestData1(int Value);
   private record TestData2(string Text);
+  private record TestData3(double Amount);
+  private record TestData4(bool Flag);
 
   private class ReferenceEqualityComparer : IEqualityComparer<PooledValueTaskSource<int>> {
     public bool Equals(PooledValueTaskSource<int>? x, PooledValueTaskSource<int>? y) {

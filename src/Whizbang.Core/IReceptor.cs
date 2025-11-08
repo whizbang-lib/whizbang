@@ -14,5 +14,22 @@ public interface IReceptor<in TMessage, TResponse> {
   /// <param name="message">The message to process</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>The response representing the decision made</returns>
-  Task<TResponse> HandleAsync(TMessage message, CancellationToken cancellationToken = default);
+  ValueTask<TResponse> HandleAsync(TMessage message, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Receptors receive messages (commands/events) without producing a typed response.
+/// This is the zero-allocation pattern for command/event handling where only side effects matter.
+/// Use this interface when you don't need to return a business result, enabling optimal performance.
+/// </summary>
+/// <typeparam name="TMessage">The type of message this receptor handles</typeparam>
+public interface IReceptor<in TMessage> {
+  /// <summary>
+  /// Handles a message and performs side effects without returning a result.
+  /// For synchronous operations, return ValueTask.CompletedTask for zero allocations.
+  /// </summary>
+  /// <param name="message">The message to process</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>A ValueTask representing the async operation (use CompletedTask for sync operations)</returns>
+  ValueTask HandleAsync(TMessage message, CancellationToken cancellationToken = default);
 }

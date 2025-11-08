@@ -36,7 +36,7 @@ public class DispatcherReceptorIntegrationTests {
 
   // Test Receptors
   public class OrderReceptor : IReceptor<PlaceOrder, OrderPlaced> {
-    public async Task<OrderPlaced> HandleAsync(PlaceOrder message, CancellationToken cancellationToken = default) {
+    public async ValueTask<OrderPlaced> HandleAsync(PlaceOrder message, CancellationToken cancellationToken = default) {
       if (message.Items.Length == 0) {
         throw new InvalidOperationException("Order must have items");
       }
@@ -53,7 +53,7 @@ public class DispatcherReceptorIntegrationTests {
   }
 
   public class ShippingReceptor : IReceptor<ShipOrder, OrderShipped> {
-    public async Task<OrderShipped> HandleAsync(ShipOrder message, CancellationToken cancellationToken = default) {
+    public async ValueTask<OrderShipped> HandleAsync(ShipOrder message, CancellationToken cancellationToken = default) {
       if (string.IsNullOrWhiteSpace(message.Address)) {
         throw new InvalidOperationException("Address is required");
       }
@@ -69,7 +69,7 @@ public class DispatcherReceptorIntegrationTests {
   }
 
   public class PaymentReceptor : IReceptor<ProcessPayment, PaymentProcessed> {
-    public async Task<PaymentProcessed> HandleAsync(ProcessPayment message, CancellationToken cancellationToken = default) {
+    public async ValueTask<PaymentProcessed> HandleAsync(ProcessPayment message, CancellationToken cancellationToken = default) {
       await Task.Delay(1);
 
       // Simulate payment validation
@@ -86,7 +86,7 @@ public class DispatcherReceptorIntegrationTests {
   }
 
   public class UserReceptor : IReceptor<CreateUser, UserCreated> {
-    public async Task<UserCreated> HandleAsync(CreateUser message, CancellationToken cancellationToken = default) {
+    public async ValueTask<UserCreated> HandleAsync(CreateUser message, CancellationToken cancellationToken = default) {
       if (string.IsNullOrWhiteSpace(message.Email)) {
         throw new InvalidOperationException("Email is required");
       }
@@ -101,7 +101,7 @@ public class DispatcherReceptorIntegrationTests {
   }
 
   public class EmailReceptor : IReceptor<SendWelcomeEmail, WelcomeEmailSent> {
-    public async Task<WelcomeEmailSent> HandleAsync(SendWelcomeEmail message, CancellationToken cancellationToken = default) {
+    public async ValueTask<WelcomeEmailSent> HandleAsync(SendWelcomeEmail message, CancellationToken cancellationToken = default) {
       await Task.Delay(1);
 
       return new WelcomeEmailSent(
@@ -133,7 +133,7 @@ public class DispatcherReceptorIntegrationTests {
     );
 
     // Act
-    var result = await dispatcher.SendAsync<OrderPlaced>(command);
+    var result = await dispatcher.LocalInvokeAsync<OrderPlaced>(command);
 
     // Assert
     await Assert.That(result).IsNotNull();
@@ -157,7 +157,7 @@ public class DispatcherReceptorIntegrationTests {
     var customerId = Guid.NewGuid();
 
     // Act - First command
-    var orderPlaced = await dispatcher.SendAsync<OrderPlaced>(
+    var orderPlaced = await dispatcher.LocalInvokeAsync<OrderPlaced>(
         new PlaceOrder(
             customerId,
             new[] { new OrderItem("SKU-001", 1, 10.00m) }
@@ -165,7 +165,7 @@ public class DispatcherReceptorIntegrationTests {
     );
 
     // Act - Second command using result from first
-    var orderShipped = await dispatcher.SendAsync<OrderShipped>(
+    var orderShipped = await dispatcher.LocalInvokeAsync<OrderShipped>(
         new ShipOrder(orderPlaced.OrderId, "123 Main St")
     );
 
@@ -192,18 +192,16 @@ public class DispatcherReceptorIntegrationTests {
     var orderId = Guid.NewGuid();
 
     // Act - Process multiple messages in parallel
-    var orderTask = dispatcher.SendAsync<OrderPlaced>(
+    var orderTask = dispatcher.LocalInvokeAsync<OrderPlaced>(
         new PlaceOrder(
             customerId,
             new[] { new OrderItem("SKU-001", 1, 100.00m) }
         )
     );
 
-    var paymentTask = dispatcher.SendAsync<PaymentProcessed>(
+    var paymentTask = dispatcher.LocalInvokeAsync<PaymentProcessed>(
         new ProcessPayment(orderId, 100.00m, "CreditCard")
     );
-
-    await Task.WhenAll(orderTask, paymentTask);
 
     var orderResult = await orderTask;
     var paymentResult = await paymentTask;
@@ -234,7 +232,7 @@ public class DispatcherReceptorIntegrationTests {
 
     // Act & Assert
     var exception = await Assert.That(async () =>
-        await dispatcher.SendAsync<OrderPlaced>(command))
+        await dispatcher.LocalInvokeAsync<OrderPlaced>(command))
         .ThrowsExactly<InvalidOperationException>();
 
     await Assert.That(exception!.Message).Contains("Order must have items");
@@ -259,7 +257,7 @@ public class DispatcherReceptorIntegrationTests {
 
     // Act & Assert
     var exception = await Assert.That(async () =>
-        await dispatcher.SendAsync<OrderPlaced>(command))
+        await dispatcher.LocalInvokeAsync<OrderPlaced>(command))
         .ThrowsExactly<HandlerNotFoundException>();
 
     await Assert.That(exception!.Message).Contains("PlaceOrder");
@@ -288,7 +286,7 @@ public class DispatcherReceptorIntegrationTests {
     );
 
     // Act
-    var result = await dispatcher.SendAsync<OrderPlaced>(command, context);
+    var result = await dispatcher.LocalInvokeAsync<OrderPlaced>(command, context);
 
     // Assert
     await Assert.That(result).IsNotNull();
@@ -312,12 +310,12 @@ public class DispatcherReceptorIntegrationTests {
     var email = "user@example.com";
 
     // Act - Step 1: Create user
-    var userCreated = await dispatcher.SendAsync<UserCreated>(
+    var userCreated = await dispatcher.LocalInvokeAsync<UserCreated>(
         new CreateUser(email, "John Doe")
     );
 
     // Act - Step 2: Send welcome email (triggered by user creation)
-    var emailSent = await dispatcher.SendAsync<WelcomeEmailSent>(
+    var emailSent = await dispatcher.LocalInvokeAsync<WelcomeEmailSent>(
         new SendWelcomeEmail(userCreated.UserId, userCreated.Email)
     );
 
@@ -344,15 +342,15 @@ public class DispatcherReceptorIntegrationTests {
     var orderId = Guid.NewGuid();
 
     // Act - Send different message types through the same dispatcher
-    var orderResult = await dispatcher.SendAsync<OrderPlaced>(
+    var orderResult = await dispatcher.LocalInvokeAsync<OrderPlaced>(
         new PlaceOrder(customerId, new[] { new OrderItem("SKU-001", 1, 50.00m) })
     );
 
-    var paymentResult = await dispatcher.SendAsync<PaymentProcessed>(
+    var paymentResult = await dispatcher.LocalInvokeAsync<PaymentProcessed>(
         new ProcessPayment(orderId, 50.00m, "CreditCard")
     );
 
-    var shippingResult = await dispatcher.SendAsync<OrderShipped>(
+    var shippingResult = await dispatcher.LocalInvokeAsync<OrderShipped>(
         new ShipOrder(orderId, "456 Oak Ave")
     );
 
@@ -386,7 +384,7 @@ public class DispatcherReceptorIntegrationTests {
     );
 
     // Act
-    var result = await dispatcher.SendAsync<OrderPlaced>(command);
+    var result = await dispatcher.LocalInvokeAsync<OrderPlaced>(command);
     var endTime = DateTimeOffset.UtcNow;
 
     // Assert
@@ -409,11 +407,11 @@ public class DispatcherReceptorIntegrationTests {
     var dispatcher = provider.GetRequiredService<IDispatcher>();
 
     // Verify dispatcher can handle both receptor types
-    var orderResult = await dispatcher.SendAsync<OrderPlaced>(
+    var orderResult = await dispatcher.LocalInvokeAsync<OrderPlaced>(
         new PlaceOrder(Guid.NewGuid(), new[] { new OrderItem("SKU-001", 1, 10.00m) })
     );
 
-    var userResult = await dispatcher.SendAsync<UserCreated>(
+    var userResult = await dispatcher.LocalInvokeAsync<UserCreated>(
         new CreateUser("test@example.com", "Test User")
     );
 
@@ -448,7 +446,7 @@ public class DispatcherReceptorIntegrationTests {
     );
 
     // Act
-    var result = await dispatcher.SendAsync<OrderPlaced>(command, context);
+    var result = await dispatcher.LocalInvokeAsync<OrderPlaced>(command, context);
 
     // Assert - Verify envelope was created and stored
     var envelopes = await traceStore.GetByCorrelationAsync(context.CorrelationId);
@@ -486,7 +484,7 @@ public class DispatcherReceptorIntegrationTests {
     );
 
     // Act - Note: The line number below should be captured!
-    var result = await dispatcher.SendAsync<OrderPlaced>(command, context);
+    var result = await dispatcher.LocalInvokeAsync<OrderPlaced>(command, context);
 
     // Assert
     var envelopes = await traceStore.GetByCorrelationAsync(context.CorrelationId);
@@ -515,14 +513,14 @@ public class DispatcherReceptorIntegrationTests {
     var context = MessageContext.Create(Whizbang.Core.ValueObjects.CorrelationId.New());
 
     // Act - Send two messages
-    var result1 = await dispatcher.SendAsync<OrderPlaced>(
+    var result1 = await dispatcher.LocalInvokeAsync<OrderPlaced>(
         new PlaceOrder(Guid.NewGuid(), new[] { new OrderItem("SKU-001", 1, 10.00m) }),
         context
     );
 
     await Task.Delay(10); // Small delay to ensure different timestamps
 
-    var result2 = await dispatcher.SendAsync<OrderPlaced>(
+    var result2 = await dispatcher.LocalInvokeAsync<OrderPlaced>(
         new PlaceOrder(Guid.NewGuid(), new[] { new OrderItem("SKU-002", 2, 20.00m) }),
         context
     );
@@ -557,7 +555,7 @@ public class DispatcherReceptorIntegrationTests {
     // Act - Create workflow: PlaceOrder → OrderPlaced → ShipOrder
     // Step 1: Place order
     var context1 = MessageContext.Create(correlationId);
-    var orderPlaced = await dispatcher.SendAsync<OrderPlaced>(
+    var orderPlaced = await dispatcher.LocalInvokeAsync<OrderPlaced>(
         new PlaceOrder(Guid.NewGuid(), new[] { new OrderItem("SKU-001", 1, 10.00m) }),
         context1
     );
@@ -567,7 +565,7 @@ public class DispatcherReceptorIntegrationTests {
     var orderPlacedEnvelopeId = envelopes1[0].MessageId;
 
     var context2 = MessageContext.Create(correlationId, orderPlacedEnvelopeId);
-    var orderShipped = await dispatcher.SendAsync<OrderShipped>(
+    var orderShipped = await dispatcher.LocalInvokeAsync<OrderShipped>(
         new ShipOrder(orderPlaced.OrderId, "123 Main St"),
         context2
     );
@@ -606,7 +604,7 @@ public class DispatcherReceptorIntegrationTests {
     );
 
     // Act
-    var result = await dispatcher.SendAsync<OrderPlaced>(command, context);
+    var result = await dispatcher.LocalInvokeAsync<OrderPlaced>(command, context);
 
     // Assert - Verify envelope was created (security context will be added in future)
     var envelopes = await traceStore.GetByCorrelationAsync(context.CorrelationId);
