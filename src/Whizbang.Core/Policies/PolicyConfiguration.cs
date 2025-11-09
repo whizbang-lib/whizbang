@@ -1,10 +1,22 @@
+using Whizbang.Core.Transports;
+
 namespace Whizbang.Core.Policies;
 
 /// <summary>
 /// Configuration for message processing determined by policy matching.
 /// Contains routing, execution strategy, and resource configuration.
+/// Includes transport publishing and subscription targets.
 /// </summary>
 public class PolicyConfiguration {
+  /// <summary>
+  /// Publishing targets (outbound) - where messages are published when created locally
+  /// </summary>
+  public List<PublishTarget> PublishTargets { get; } = new();
+
+  /// <summary>
+  /// Subscription targets (inbound) - where to subscribe for messages this service can handle
+  /// </summary>
+  public List<SubscriptionTarget> SubscriptionTargets { get; } = new();
   /// <summary>
   /// Topic to route the message to
   /// </summary>
@@ -99,6 +111,99 @@ public class PolicyConfiguration {
       throw new ArgumentOutOfRangeException(nameof(maxConcurrency), "Max concurrency must be greater than zero");
     }
     MaxConcurrency = maxConcurrency;
+    return this;
+  }
+
+  // ========================================
+  // PUBLISHING (Outbound)
+  // ========================================
+
+  /// <summary>
+  /// Publish to Kafka topic
+  /// </summary>
+  public PolicyConfiguration PublishToKafka(string topic) {
+    PublishTargets.Add(new PublishTarget {
+      TransportType = TransportType.Kafka,
+      Destination = topic
+    });
+    return this;
+  }
+
+  /// <summary>
+  /// Publish to Azure Service Bus topic
+  /// </summary>
+  public PolicyConfiguration PublishToServiceBus(string topic) {
+    PublishTargets.Add(new PublishTarget {
+      TransportType = TransportType.ServiceBus,
+      Destination = topic
+    });
+    return this;
+  }
+
+  /// <summary>
+  /// Publish to RabbitMQ exchange with routing key
+  /// </summary>
+  public PolicyConfiguration PublishToRabbitMQ(string exchange, string routingKey) {
+    PublishTargets.Add(new PublishTarget {
+      TransportType = TransportType.RabbitMQ,
+      Destination = exchange,
+      RoutingKey = routingKey
+    });
+    return this;
+  }
+
+  // ========================================
+  // SUBSCRIBING (Inbound)
+  // ========================================
+
+  /// <summary>
+  /// Subscribe from Kafka topic with consumer group
+  /// </summary>
+  public PolicyConfiguration SubscribeFromKafka(
+    string topic,
+    string consumerGroup,
+    int? partition = null
+  ) {
+    SubscriptionTargets.Add(new SubscriptionTarget {
+      TransportType = TransportType.Kafka,
+      Topic = topic,
+      ConsumerGroup = consumerGroup,
+      Partition = partition
+    });
+    return this;
+  }
+
+  /// <summary>
+  /// Subscribe from Azure Service Bus topic with subscription name
+  /// </summary>
+  public PolicyConfiguration SubscribeFromServiceBus(
+    string topic,
+    string subscriptionName,
+    string? sqlFilter = null
+  ) {
+    SubscriptionTargets.Add(new SubscriptionTarget {
+      TransportType = TransportType.ServiceBus,
+      Topic = topic,
+      SubscriptionName = subscriptionName,
+      SqlFilter = sqlFilter
+    });
+    return this;
+  }
+
+  /// <summary>
+  /// Subscribe from RabbitMQ exchange with queue and optional routing key
+  /// </summary>
+  public PolicyConfiguration SubscribeFromRabbitMQ(
+    string exchange,
+    string queueName,
+    string? routingKey = null
+  ) {
+    SubscriptionTargets.Add(new SubscriptionTarget {
+      TransportType = TransportType.RabbitMQ,
+      Topic = exchange,
+      QueueName = queueName,
+      RoutingKey = routingKey
+    });
     return this;
   }
 }

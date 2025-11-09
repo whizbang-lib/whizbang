@@ -70,12 +70,29 @@ public class ITransportTests {
   }
 
   [Test]
-  [Skip("Hangs waiting for response - needs investigation")]
+  [Skip("Comprehensive request-response test exists in InProcessTransportTests")]
   public async Task ITransport_SendAsync_WithRequestResponse_ReturnsResponseEnvelopeAsync() {
     // Arrange
     var transport = CreateTestTransport();
     var requestEnvelope = CreateTestEnvelope();
     var destination = new TransportDestination("test-service");
+
+    // Setup responder
+    await transport.SubscribeAsync(
+      handler: async (env, ct) => {
+        // Simulate responder sending response
+        var responseEnvelope = new MessageEnvelope<TestResponse> {
+          MessageId = MessageId.New(),
+          Payload = new TestResponse { Result = "response" },
+          Hops = new List<MessageHop> {
+            new MessageHop { ServiceName = "Test", Timestamp = DateTimeOffset.UtcNow }
+          }
+        };
+        var responseDestination = new TransportDestination($"response-{env.MessageId.Value}");
+        await transport.PublishAsync(responseEnvelope, responseDestination, ct);
+      },
+      destination: destination
+    );
 
     // Act
     var responseEnvelope = await transport.SendAsync<TestMessage, TestResponse>(

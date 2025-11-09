@@ -13,8 +13,7 @@ namespace Whizbang.Core.Transports;
 /// Useful for testing and single-process scenarios.
 /// </summary>
 public class InProcessTransport : ITransport {
-  private readonly ConcurrentDictionary<string, List<Func<IMessageEnvelope, CancellationToken, Task>>> _subscriptions = new();
-  private readonly ConcurrentDictionary<string, TaskCompletionSource<IMessageEnvelope>> _pendingRequests = new();
+  private readonly ConcurrentDictionary<string, List<(Func<IMessageEnvelope, CancellationToken, Task> handler, InProcessSubscription subscription)>> _subscriptions = new();
 
   /// <inheritdoc />
   public TransportCapabilities Capabilities =>
@@ -31,9 +30,12 @@ public class InProcessTransport : ITransport {
   ) {
     cancellationToken.ThrowIfCancellationRequested();
 
-    if (_subscriptions.TryGetValue(destination.Address, out var handlers)) {
-      foreach (var handler in handlers.ToArray()) {
-        await handler(envelope, cancellationToken);
+    if (_subscriptions.TryGetValue(destination.Address, out var subscriptionHandlers)) {
+      foreach (var (handler, subscription) in subscriptionHandlers.ToArray()) {
+        // Only invoke handler if subscription is active and not disposed
+        if (subscription.IsActive) {
+          await handler(envelope, cancellationToken);
+        }
       }
     }
   }
@@ -46,20 +48,20 @@ public class InProcessTransport : ITransport {
   ) {
     cancellationToken.ThrowIfCancellationRequested();
 
-    var handlers = _subscriptions.GetOrAdd(destination.Address, _ => new List<Func<IMessageEnvelope, CancellationToken, Task>>());
-    lock (handlers) {
-      handlers.Add(handler);
-    }
-
     var subscription = new InProcessSubscription(
       onDispose: () => {
-        if (_subscriptions.TryGetValue(destination.Address, out var h)) {
-          lock (h) {
-            h.Remove(handler);
+        if (_subscriptions.TryGetValue(destination.Address, out var subscriptionHandlers)) {
+          lock (subscriptionHandlers) {
+            subscriptionHandlers.RemoveAll(sh => sh.handler == handler);
           }
         }
       }
     );
+
+    var subscriptionHandlers = _subscriptions.GetOrAdd(destination.Address, _ => new List<(Func<IMessageEnvelope, CancellationToken, Task>, InProcessSubscription)>());
+    lock (subscriptionHandlers) {
+      subscriptionHandlers.Add((handler, subscription));
+    }
 
     return Task.FromResult<ISubscription>(subscription);
   }
@@ -72,9 +74,19 @@ public class InProcessTransport : ITransport {
   ) where TRequest : notnull where TResponse : notnull {
     cancellationToken.ThrowIfCancellationRequested();
 
-    var requestId = Guid.NewGuid().ToString();
+    // Create response destination based on request MessageId
+    var responseDestination = new TransportDestination($"response-{requestEnvelope.MessageId.Value}");
     var tcs = new TaskCompletionSource<IMessageEnvelope>();
-    _pendingRequests[requestId] = tcs;
+
+    // Subscribe to response destination before publishing request
+    var responseSubscription = await SubscribeAsync(
+      handler: (envelope, ct) => {
+        tcs.TrySetResult(envelope);
+        return Task.CompletedTask;
+      },
+      destination: responseDestination,
+      cancellationToken: cancellationToken
+    );
 
     try {
       // Publish the request
@@ -85,9 +97,8 @@ public class InProcessTransport : ITransport {
         return await tcs.Task;
       }
     } finally {
-      // DEFENSIVE: Always cleanup pending request (success, exception, or cancellation)
-      // Coverage: May appear uncovered due to coverage tool artifacts with finally blocks
-      _pendingRequests.TryRemove(requestId, out _);
+      // DEFENSIVE: Always cleanup response subscription (success, exception, or cancellation)
+      responseSubscription.Dispose();
     }
   }
 

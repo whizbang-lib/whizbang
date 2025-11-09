@@ -1,0 +1,24 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>Whizbang.Data.Tests</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Microsoft.Data.Sqlite" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Data.Dapper.Sqlite/Whizbang.Data.Dapper.Sqlite.csproj" />
+    <ProjectReference Include="../Whizbang.Core.Tests/Whizbang.Core.Tests.csproj" />
+    <ProjectReference Include="../Whizbang.Sequencing.Tests/Whizbang.Sequencing.Tests.csproj" />
+  </ItemGroup>
+
+</Project>

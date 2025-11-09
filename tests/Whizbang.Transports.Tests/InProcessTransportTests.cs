@@ -227,7 +227,6 @@ public class InProcessTransportTests {
 
   [Test]
   [MethodDataSource(nameof(GetSubscriptionStates))]
-  [Skip("Pause/Resume functionality not yet implemented in InProcessTransport")]
   public async Task Subscription_InVariousStates_BehavesCorrectlyAsync(
     SubscriptionLifecycleState state,
     bool shouldInvokeHandler) {
@@ -346,7 +345,6 @@ public class InProcessTransportTests {
   // ============================================================================
 
   [Test]
-  [Skip("Request-response pattern not yet fully implemented in InProcessTransport")]
   public async Task SendAsync_WithResponder_ReturnsResponseEnvelopeAsync() {
     // Arrange
     var transport = new InProcessTransport();

@@ -6,6 +6,7 @@
     <PackageVersion Include="Aspire.Hosting.AppHost" Version="8.2.2" />
     <PackageVersion Include="BenchmarkDotNet" Version="0.15.3" />
     <PackageVersion Include="Bogus" Version="35.6.1" />
+    <PackageVersion Include="Dapper" Version="2.1.66" />
     <PackageVersion Include="FastEndpoints" Version="7.1.0" />
     <PackageVersion Include="FastEndpoints.Swagger" Version="7.1.0" />
     <PackageVersion Include="HotChocolate.AspNetCore" Version="15.1.1" />
@@ -14,6 +15,8 @@
     <PackageVersion Include="Microsoft.CodeAnalysis.Analyzers" Version="3.11.0" />
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp" Version="4.8.0" />
     <PackageVersion Include="Microsoft.CodeAnalysis.CSharp.Workspaces" Version="4.8.0" />
+    <PackageVersion Include="Microsoft.Data.SqlClient" Version="6.0.1" />
+    <PackageVersion Include="Microsoft.Data.Sqlite" Version="9.0.0" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection" Version="9.0.0" />
     <PackageVersion Include="Microsoft.Extensions.DependencyInjection.Abstractions" Version="9.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="9.0.7" />
@@ -21,6 +24,7 @@
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.7" />
     <PackageVersion Include="Microsoft.Extensions.ServiceDiscovery" Version="8.2.2" />
     <PackageVersion Include="Microsoft.Testing.Extensions.CodeCoverage" Version="18.1.0" />
+    <PackageVersion Include="Npgsql" Version="9.0.2" />
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.9.0" />
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.9.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.9.0" />

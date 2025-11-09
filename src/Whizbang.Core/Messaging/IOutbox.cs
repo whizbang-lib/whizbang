@@ -1,0 +1,85 @@
+using System;
+using System.Collections.Generic;
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core.ValueObjects;
+
+namespace Whizbang.Core.Messaging;
+
+/// <summary>
+/// Transactional outbox for reliable message publishing.
+/// Stores messages to be published and tracks publication status.
+/// Enables exactly-once delivery semantics for transports that don't natively support it.
+/// </summary>
+public interface IOutbox {
+  /// <summary>
+  /// Stores a message in the outbox for later publication.
+  /// </summary>
+  /// <param name="messageId">The message ID</param>
+  /// <param name="destination">The destination to publish to</param>
+  /// <param name="payload">The serialized message payload</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>Task that completes when the message is stored</returns>
+  Task StoreAsync(MessageId messageId, string destination, byte[] payload, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Gets pending messages that have not yet been published.
+  /// </summary>
+  /// <param name="batchSize">Maximum number of messages to retrieve</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>List of pending messages to publish</returns>
+  Task<IReadOnlyList<OutboxMessage>> GetPendingAsync(int batchSize, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Marks a message as successfully published.
+  /// </summary>
+  /// <param name="messageId">The message ID to mark as published</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>Task that completes when the message is marked as published</returns>
+  Task MarkPublishedAsync(MessageId messageId, CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Represents a message stored in the outbox waiting to be published.
+/// </summary>
+/// <param name="MessageId">The unique message identifier</param>
+/// <param name="Destination">The destination to publish to (topic, queue, etc.)</param>
+/// <param name="Payload">The serialized message payload</param>
+/// <param name="CreatedAt">When the message was stored in the outbox</param>
+public record OutboxMessage(
+  MessageId MessageId,
+  string Destination,
+  byte[] Payload,
+  DateTimeOffset CreatedAt
+) {
+  /// <summary>
+  /// Custom equality to handle byte array comparison
+  /// </summary>
+  public virtual bool Equals(OutboxMessage? other) {
+    if (other is null) {
+      return false;
+    }
+
+    if (ReferenceEquals(this, other)) {
+      return true;
+    }
+
+    return MessageId.Equals(other.MessageId)
+      && Destination == other.Destination
+      && Payload.SequenceEqual(other.Payload)
+      && CreatedAt.Equals(other.CreatedAt);
+  }
+
+  /// <summary>
+  /// Custom hash code to match custom equality
+  /// </summary>
+  public override int GetHashCode() {
+    unchecked {
+      var hash = MessageId.GetHashCode();
+      hash = (hash * 397) ^ Destination.GetHashCode();
+      hash = (hash * 397) ^ Payload.Length.GetHashCode(); // Use length for hash performance
+      hash = (hash * 397) ^ CreatedAt.GetHashCode();
+      return hash;
+    }
+  }
+}
