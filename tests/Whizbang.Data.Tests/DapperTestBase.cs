@@ -41,7 +41,14 @@ public abstract class DapperTestBase : IDisposable, IAsyncDisposable {
 
   [After(Test)]
   public void Cleanup() {
-    Connection?.Dispose();
+    try {
+      if (Connection != null && Connection.State != ConnectionState.Closed) {
+        Connection.Close();
+      }
+      Connection?.Dispose();
+    } catch {
+      // Swallow exceptions during cleanup to prevent masking test failures
+    }
   }
 
   public void Dispose() {

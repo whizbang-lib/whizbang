@@ -6,6 +6,7 @@
     <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
   </PropertyGroup>
   <ItemGroup>
+    <PackageReference Include="Medo.Uuid7" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
     <PackageReference Include="Vogen" />
   </ItemGroup>

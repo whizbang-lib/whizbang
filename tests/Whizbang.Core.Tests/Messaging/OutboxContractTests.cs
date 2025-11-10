@@ -33,7 +33,7 @@ public abstract class OutboxContractTests {
     await Assert.That(pending).HasCount().EqualTo(1);
     await Assert.That(pending[0].MessageId).IsEqualTo(messageId);
     await Assert.That(pending[0].Destination).IsEqualTo(destination);
-    await Assert.That(pending[0].Payload).IsEqualTo(payload);
+    await Assert.That(pending[0].Payload.SequenceEqual(payload)).IsTrue();
   }
 
   [Test]

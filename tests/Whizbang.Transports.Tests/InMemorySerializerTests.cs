@@ -1,0 +1,105 @@
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Transports;
+using Whizbang.Core.ValueObjects;
+
+namespace Whizbang.Transports.Tests;
+
+/// <summary>
+/// Tests for InMemorySerializer.
+/// Note: InMemorySerializer uses GCHandle for in-process testing only.
+/// It does NOT perform actual serialization.
+/// </summary>
+public class InMemorySerializerTests {
+  [Test]
+  public async Task SerializeAsync_ShouldReturnByteArrayAsync() {
+    // Arrange
+    var serializer = new InMemorySerializer();
+    var envelope = CreateTestEnvelope();
+
+    // Act
+    var bytes = await serializer.SerializeAsync(envelope);
+
+    // Assert
+    await Assert.That(bytes).IsNotNull();
+    await Assert.That(bytes.Length).IsEqualTo(sizeof(long)); // IntPtr size
+  }
+
+  [Test]
+  public async Task DeserializeAsync_ShouldRetrieveOriginalEnvelopeAsync() {
+    // Arrange
+    var serializer = new InMemorySerializer();
+    var originalEnvelope = CreateTestEnvelope();
+
+    // Act - Serialize and then deserialize
+    var bytes = await serializer.SerializeAsync(originalEnvelope);
+    var deserializedEnvelope = await serializer.DeserializeAsync<TestMessage>(bytes);
+
+    // Assert
+    await Assert.That(deserializedEnvelope).IsSameReferenceAs(originalEnvelope);
+  }
+
+  [Test]
+  public async Task SerializeDeserialize_RoundTrip_PreservesAllDataAsync() {
+    // Arrange
+    var serializer = new InMemorySerializer();
+    var message = new TestMessage { Content = "test content", Value = 42 };
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = message,
+      Hops = new List<MessageHop> {
+        new MessageHop {
+          Type = HopType.Current,
+          ServiceName = "Test",
+          Timestamp = DateTimeOffset.UtcNow,
+          Metadata = new Dictionary<string, object> {
+            ["key1"] = "value1",
+            ["key2"] = 123
+          }
+        }
+      }
+    };
+
+    // Act - Round trip
+    var bytes = await serializer.SerializeAsync(envelope);
+    var deserialized = await serializer.DeserializeAsync<TestMessage>(bytes);
+
+    // Assert
+    await Assert.That(deserialized).IsSameReferenceAs(envelope);
+    var deserializedTyped = deserialized as MessageEnvelope<TestMessage>;
+    await Assert.That(deserializedTyped).IsNotNull();
+    await Assert.That(deserializedTyped!.Payload.Content).IsEqualTo("test content");
+    await Assert.That(deserializedTyped.Payload.Value).IsEqualTo(42);
+    await Assert.That(deserializedTyped.Hops).HasCount().EqualTo(1);
+  }
+
+  [Test]
+  public async Task MultipleSerialization_ShouldProduceDifferentByteArraysAsync() {
+    // Arrange
+    var serializer = new InMemorySerializer();
+    var envelope1 = CreateTestEnvelope();
+    var envelope2 = CreateTestEnvelope();
+
+    // Act
+    var bytes1 = await serializer.SerializeAsync(envelope1);
+    var bytes2 = await serializer.SerializeAsync(envelope2);
+
+    // Assert - Different envelopes should have different pointer values
+    await Assert.That(bytes1.SequenceEqual(bytes2)).IsFalse();
+  }
+
+  private static MessageEnvelope<TestMessage> CreateTestEnvelope() {
+    return new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestMessage { Content = "test", Value = 1 },
+      Hops = new List<MessageHop> {
+        new MessageHop {
+          Type = HopType.Current,
+          ServiceName = "Test",
+          Timestamp = DateTimeOffset.UtcNow
+        }
+      }
+    };
+  }
+}

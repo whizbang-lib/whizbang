@@ -1,4 +1,5 @@
 using System.Data;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
@@ -75,6 +76,7 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
       cancellationToken: cancellationToken);
   }
 
+  [RequiresUnreferencedCode("JSON deserialization uses reflection")]
   public async Task<IMessageEnvelope?> WaitForResponseAsync(CorrelationId correlationId, CancellationToken cancellationToken = default) {
     try {
       var startTime = DateTimeOffset.UtcNow;
@@ -120,6 +122,7 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
     }
   }
 
+  [RequiresUnreferencedCode("JSON serialization uses reflection")]
   public async Task SaveResponseAsync(CorrelationId correlationId, IMessageEnvelope response, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(response);
 

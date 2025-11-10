@@ -1,4 +1,5 @@
 using System.Data;
+using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using Whizbang.Core.Data;
@@ -31,6 +32,9 @@ public abstract class DapperEventStoreBase : IEventStore {
     };
   }
 
+  protected IDbConnectionFactory ConnectionFactory => _connectionFactory;
+  protected IDbExecutor Executor => _executor;
+
   /// <summary>
   /// Gets the SQL command to append a new event to a stream.
   /// Parameters: @StreamKey (string), @SequenceNumber (long), @Envelope (string), @CreatedAt (DateTimeOffset)
@@ -51,7 +55,8 @@ public abstract class DapperEventStoreBase : IEventStore {
   /// </summary>
   protected abstract string GetLastSequenceSql();
 
-  public async Task AppendAsync(string streamKey, IMessageEnvelope envelope, CancellationToken cancellationToken = default) {
+  [RequiresUnreferencedCode("JSON serialization uses reflection")]
+  public virtual async Task AppendAsync(string streamKey, IMessageEnvelope envelope, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(streamKey);
     ArgumentNullException.ThrowIfNull(envelope);
 
@@ -78,6 +83,7 @@ public abstract class DapperEventStoreBase : IEventStore {
       cancellationToken: cancellationToken);
   }
 
+  [RequiresUnreferencedCode("JSON deserialization uses reflection")]
   public async IAsyncEnumerable<IMessageEnvelope> ReadAsync(
     string streamKey,
     long fromSequence,

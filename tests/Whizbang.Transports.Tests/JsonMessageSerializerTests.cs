@@ -1,0 +1,285 @@
+using System.Text;
+using System.Text.Json;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Transports;
+using Whizbang.Core.ValueObjects;
+
+namespace Whizbang.Transports.Tests;
+
+/// <summary>
+/// Tests for JsonMessageSerializer and its internal converters.
+/// Covers edge cases and error paths to achieve 100% coverage.
+/// </summary>
+[Category("Transports")]
+public class JsonMessageSerializerTests {
+  [Test]
+  public async Task SerializeAsync_WithValidEnvelope_ShouldSerializeAsync() {
+    // Arrange
+    var serializer = new JsonMessageSerializer();
+    var envelope = new MessageEnvelope<string> {
+      MessageId = MessageId.New(),
+      Payload = "test payload",
+      Hops = new List<MessageHop>()
+    };
+
+    // Act
+    var bytes = await serializer.SerializeAsync(envelope);
+
+    // Assert
+    await Assert.That(bytes).IsNotNull();
+    var json = Encoding.UTF8.GetString(bytes);
+    await Assert.That(json).Contains("test payload");
+  }
+
+  [Test]
+  public async Task SerializeAsync_WithMetadataContainingAllTypes_ShouldSerializeAsync() {
+    // Arrange
+    var serializer = new JsonMessageSerializer();
+    var metadata = new Dictionary<string, object> {
+      ["stringValue"] = "test",
+      ["intValue"] = 42,
+      ["longValue"] = 9999999999L,
+      ["doubleValue"] = 3.14,
+      ["boolTrue"] = true,
+      ["boolFalse"] = false,
+      ["nullValue"] = null!
+    };
+
+    var envelope = new MessageEnvelope<string> {
+      MessageId = MessageId.New(),
+      Payload = "test",
+      Hops = new List<MessageHop> {
+        new MessageHop {
+          Type = HopType.Current,
+          ServiceName = "Test",
+          Timestamp = DateTimeOffset.UtcNow,
+          Metadata = metadata
+        }
+      }
+    };
+
+    // Act
+    var bytes = await serializer.SerializeAsync(envelope);
+    var deserialized = await serializer.DeserializeAsync<string>(bytes);
+
+    // Assert
+    var hop = deserialized.Hops[0];
+    await Assert.That(hop.Metadata).IsNotNull();
+    await Assert.That(hop.Metadata!["stringValue"]).IsEqualTo("test");
+    await Assert.That(hop.Metadata["intValue"]).IsEqualTo(42);
+    await Assert.That(hop.Metadata["longValue"]).IsEqualTo(9999999999L);
+    await Assert.That(hop.Metadata["doubleValue"]).IsEqualTo(3.14);
+    await Assert.That(hop.Metadata["boolTrue"]).IsEqualTo(true);
+    await Assert.That(hop.Metadata["boolFalse"]).IsEqualTo(false);
+  }
+
+  [Test]
+  public async Task SerializeAsync_WithNullMetadata_ShouldHandleNullAsync() {
+    // Arrange
+    var serializer = new JsonMessageSerializer();
+    var envelope = new MessageEnvelope<string> {
+      MessageId = MessageId.New(),
+      Payload = "test",
+      Hops = new List<MessageHop> {
+        new MessageHop {
+          Type = HopType.Current,
+          ServiceName = "Test",
+          Timestamp = DateTimeOffset.UtcNow,
+          Metadata = null
+        }
+      }
+    };
+
+    // Act
+    var bytes = await serializer.SerializeAsync(envelope);
+    var deserialized = await serializer.DeserializeAsync<string>(bytes);
+
+    // Assert
+    await Assert.That(deserialized.Hops[0].Metadata).IsNull();
+  }
+
+  [Test]
+  public async Task DeserializeAsync_WithInvalidJson_ShouldThrowAsync() {
+    // Arrange
+    var serializer = new JsonMessageSerializer();
+    var invalidJson = Encoding.UTF8.GetBytes("{ invalid json }");
+
+    // Act & Assert
+    await Assert.That(async () => await serializer.DeserializeAsync<string>(invalidJson))
+      .ThrowsExactly<JsonException>();
+  }
+
+  [Test]
+  public async Task DeserializeAsync_WithInvalidMessageId_ShouldThrowAsync() {
+    // Arrange
+    var serializer = new JsonMessageSerializer();
+    var jsonWithInvalidMessageId = Encoding.UTF8.GetBytes(@"{
+        ""MessageId"": ""invalid-guid"",
+        ""Payload"": ""test"",
+        ""Hops"": []
+      }");
+
+    // Act & Assert
+    await Assert.That(async () => await serializer.DeserializeAsync<string>(jsonWithInvalidMessageId))
+      .ThrowsExactly<JsonException>();
+  }
+
+  [Test]
+  public async Task DeserializeAsync_WithNullMessageId_ShouldThrowAsync() {
+    // Arrange
+    var serializer = new JsonMessageSerializer();
+    var jsonWithNullMessageId = Encoding.UTF8.GetBytes(@"{
+        ""MessageId"": null,
+        ""Payload"": ""test"",
+        ""Hops"": []
+      }");
+
+    // Act & Assert
+    await Assert.That(async () => await serializer.DeserializeAsync<string>(jsonWithNullMessageId))
+      .ThrowsExactly<JsonException>();
+  }
+
+  // Note: CorrelationId is stored in Hops, not directly in MessageEnvelope
+  // Removed test for invalid CorrelationId since it's not a direct property
+
+  // Note: CorrelationId is stored in Hops, not directly in MessageEnvelope
+  // Removed test for null CorrelationId since it's not a direct property
+
+  [Test]
+  public async Task Metadata_WithInvalidStartToken_ShouldThrowAsync() {
+    // Arrange
+    var serializer = new JsonMessageSerializer();
+    var messageId = MessageId.New();
+    // Metadata is an array instead of object
+    var json = $@"{{
+        ""MessageId"": ""{messageId.Value}"",
+        ""Payload"": ""test"",
+        ""Hops"": [{{
+          ""Type"": 0,
+          ""ServiceName"": ""Test"",
+          ""Timestamp"": ""2025-01-01T00:00:00Z"",
+          ""Metadata"": []
+        }}]
+      }}";
+    var jsonWithInvalidMetadata = Encoding.UTF8.GetBytes(json);
+
+    // Act & Assert
+    var exception = await Assert.That(async () => await serializer.DeserializeAsync<string>(jsonWithInvalidMetadata))
+      .ThrowsExactly<JsonException>();
+    await Assert.That(exception.Message).Contains("Expected StartObject");
+  }
+
+  [Test]
+  public async Task Metadata_WithInvalidPropertyToken_ShouldThrowAsync() {
+    // Arrange
+    var serializer = new JsonMessageSerializer();
+    var messageId = MessageId.New();
+    // Malformed metadata - value without property name
+    var json = $@"{{
+        ""MessageId"": ""{messageId.Value}"",
+        ""Payload"": ""test"",
+        ""Hops"": [{{
+          ""Type"": 0,
+          ""ServiceName"": ""Test"",
+          ""Timestamp"": ""2025-01-01T00:00:00Z"",
+          ""Metadata"": {{ ""key"": ""value"", 123 }}
+        }}]
+      }}";
+    var jsonWithMalformedMetadata = Encoding.UTF8.GetBytes(json);
+
+    // Act & Assert
+    await Assert.That(async () => await serializer.DeserializeAsync<string>(jsonWithMalformedMetadata))
+      .ThrowsExactly<JsonException>();
+  }
+
+  [Test]
+  public async Task Metadata_WithUnsupportedValueType_ShouldThrowAsync() {
+    // Arrange
+    var serializer = new JsonMessageSerializer();
+    var messageId = MessageId.New();
+    // Array value in metadata (not supported)
+    var json = $@"{{
+        ""MessageId"": ""{messageId.Value}"",
+        ""Payload"": ""test"",
+        ""Hops"": [{{
+          ""Type"": 0,
+          ""ServiceName"": ""Test"",
+          ""Timestamp"": ""2025-01-01T00:00:00Z"",
+          ""Metadata"": {{ ""key"": [""array"", ""value""] }}
+        }}]
+      }}";
+    var jsonWithUnsupportedValue = Encoding.UTF8.GetBytes(json);
+
+    // Act & Assert
+    var exception = await Assert.That(async () => await serializer.DeserializeAsync<string>(jsonWithUnsupportedValue))
+      .ThrowsExactly<JsonException>();
+    await Assert.That(exception.Message).Contains("Unsupported JSON token type");
+  }
+
+  [Test]
+  public async Task Metadata_WithUnsupportedWriteType_ShouldThrowAsync() {
+    // Arrange
+    var serializer = new JsonMessageSerializer();
+    var metadata = new Dictionary<string, object> {
+      ["unsupportedType"] = new DateTime(2025, 1, 1) // DateTime is not supported
+    };
+
+    var envelope = new MessageEnvelope<string> {
+      MessageId = MessageId.New(),
+      Payload = "test",
+      Hops = new List<MessageHop> {
+        new MessageHop {
+          Type = HopType.Current,
+          ServiceName = "Test",
+          Timestamp = DateTimeOffset.UtcNow,
+          Metadata = metadata
+        }
+      }
+    };
+
+    // Act & Assert
+    var exception = await Assert.That(async () => await serializer.SerializeAsync(envelope))
+      .ThrowsExactly<JsonException>();
+    await Assert.That(exception.Message).Contains("Unsupported metadata value type");
+  }
+
+  [Test]
+  public async Task RoundTrip_WithComplexEnvelope_ShouldPreserveAllDataAsync() {
+    // Arrange
+    var serializer = new JsonMessageSerializer();
+    var original = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestMessage { Content = "test", Value = 42 },
+      Hops = new List<MessageHop> {
+        new MessageHop {
+          Type = HopType.Current,
+          ServiceName = "TestService",
+          Timestamp = DateTimeOffset.UtcNow,
+          Metadata = new Dictionary<string, object> {
+            ["string"] = "value",
+            ["int"] = 123,
+            ["bool"] = true
+          }
+        }
+      }
+    };
+
+    // Act
+    var bytes = await serializer.SerializeAsync(original);
+    var deserialized = await serializer.DeserializeAsync<TestMessage>(bytes);
+
+    // Assert
+    await Assert.That(deserialized.MessageId).IsEqualTo(original.MessageId);
+    var payload = (deserialized as MessageEnvelope<TestMessage>)!.Payload;
+    await Assert.That(payload.Content).IsEqualTo("test");
+    await Assert.That(payload.Value).IsEqualTo(42);
+    await Assert.That(deserialized.Hops).HasCount().EqualTo(1);
+  }
+
+  private record TestMessage {
+    public required string Content { get; init; }
+    public required int Value { get; init; }
+  }
+}

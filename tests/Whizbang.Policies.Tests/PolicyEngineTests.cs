@@ -311,4 +311,123 @@ public class PolicyEngineTests {
     // Assert
     await Assert.That(policyConfig!.MaxConcurrency).IsEqualTo(10);
   }
+
+  [Test]
+  public async Task AddPolicy_WithNullName_ShouldThrowAsync() {
+    // Arrange
+    var engine = new PolicyEngine();
+
+    // Act & Assert
+    var exception = await Assert.That(() => engine.AddPolicy(null!, ctx => true, config => { }))
+      .ThrowsExactly<ArgumentException>();
+    await Assert.That(exception.Message).Contains("Policy name cannot be null or empty");
+  }
+
+  [Test]
+  public async Task AddPolicy_WithEmptyName_ShouldThrowAsync() {
+    // Arrange
+    var engine = new PolicyEngine();
+
+    // Act & Assert
+    var exception = await Assert.That(() => engine.AddPolicy("", ctx => true, config => { }))
+      .ThrowsExactly<ArgumentException>();
+    await Assert.That(exception.Message).Contains("Policy name cannot be null or empty");
+  }
+
+  [Test]
+  public async Task AddPolicy_WithWhitespaceName_ShouldThrowAsync() {
+    // Arrange
+    var engine = new PolicyEngine();
+
+    // Act & Assert
+    var exception = await Assert.That(() => engine.AddPolicy("   ", ctx => true, config => { }))
+      .ThrowsExactly<ArgumentException>();
+    await Assert.That(exception.Message).Contains("Policy name cannot be null or empty");
+  }
+
+  [Test]
+  public async Task AddPolicy_WithNullPredicate_ShouldThrowAsync() {
+    // Arrange
+    var engine = new PolicyEngine();
+
+    // Act & Assert
+    await Assert.That(() => engine.AddPolicy("TestPolicy", null!, config => { }))
+      .ThrowsExactly<ArgumentNullException>()
+      .WithParameterName("predicate");
+  }
+
+  [Test]
+  public async Task AddPolicy_WithNullConfigure_ShouldThrowAsync() {
+    // Arrange
+    var engine = new PolicyEngine();
+
+    // Act & Assert
+    await Assert.That(() => engine.AddPolicy("TestPolicy", ctx => true, null!))
+      .ThrowsExactly<ArgumentNullException>()
+      .WithParameterName("configure");
+  }
+
+  [Test]
+  public async Task MatchAsync_WithNullContext_ShouldThrowAsync() {
+    // Arrange
+    var engine = new PolicyEngine();
+    engine.AddPolicy("TestPolicy", ctx => true, config => { });
+
+    // Act & Assert
+    await Assert.That(async () => await engine.MatchAsync(null!))
+      .ThrowsExactly<ArgumentNullException>()
+      .WithParameterName("context");
+  }
+
+  [Test]
+  public async Task MatchAsync_WithPredicateThrowingException_ShouldRecordFailureAsync() {
+    // Arrange
+    var engine = new PolicyEngine();
+    engine.AddPolicy("FailingPolicy", ctx => throw new InvalidOperationException("Test exception"), config => {
+      config.UseTopic("test");
+    });
+
+    var message = new OrderCommand("order-123", 100m);
+    var envelope = CreateTestEnvelope(message);
+    var context = CreateTestContext(message, envelope);
+
+    // Act
+    var policyConfig = await engine.MatchAsync(context);
+
+    // Assert - Should return null and record failure
+    await Assert.That(policyConfig).IsNull();
+    var decisions = context.Trail.Decisions;
+    await Assert.That(decisions).HasCount().EqualTo(1);
+    await Assert.That(decisions[0].PolicyName).IsEqualTo("FailingPolicy");
+    await Assert.That(decisions[0].Matched).IsFalse();
+    await Assert.That(decisions[0].Reason).Contains("Evaluation failed");
+    await Assert.That(decisions[0].Reason).Contains("Test exception");
+  }
+
+  [Test]
+  public async Task MatchAsync_WithPredicateThrowingException_ShouldContinueToNextPolicyAsync() {
+    // Arrange
+    var engine = new PolicyEngine();
+    engine.AddPolicy("FailingPolicy", ctx => throw new InvalidOperationException("Test exception"), config => {
+      config.UseTopic("test1");
+    });
+    engine.AddPolicy("SuccessPolicy", ctx => ctx.Message is OrderCommand, config => {
+      config.UseTopic("test2");
+    });
+
+    var message = new OrderCommand("order-123", 100m);
+    var envelope = CreateTestEnvelope(message);
+    var context = CreateTestContext(message, envelope);
+
+    // Act
+    var policyConfig = await engine.MatchAsync(context);
+
+    // Assert - Should skip failing policy and match the second one
+    await Assert.That(policyConfig).IsNotNull();
+    await Assert.That(policyConfig!.Topic).IsEqualTo("test2");
+    var decisions = context.Trail.Decisions;
+    await Assert.That(decisions).HasCount().EqualTo(2);
+    await Assert.That(decisions[0].Matched).IsFalse(); // FailingPolicy
+    await Assert.That(decisions[1].Matched).IsTrue(); // SuccessPolicy
+  }
 }
