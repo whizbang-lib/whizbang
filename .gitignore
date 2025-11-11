@@ -410,5 +410,5 @@ FodyWeavers.xsd
 *.sln.iml
 .DS_Store
 Migrations
-coverage-report[0-9]*
-coverage-report
+coverage[0-9\-a-zA-Z]*
+coverage
