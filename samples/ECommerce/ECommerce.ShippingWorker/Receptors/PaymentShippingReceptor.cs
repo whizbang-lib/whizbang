@@ -18,7 +18,7 @@ public class PaymentShippingReceptor : IReceptor<PaymentProcessedEvent, CreateSh
     _logger = logger;
   }
 
-  public async Task<CreateShipmentCommand> HandleAsync(
+  public async ValueTask<CreateShipmentCommand> HandleAsync(
     PaymentProcessedEvent message,
     CancellationToken cancellationToken = default) {
 
@@ -33,7 +33,7 @@ public class PaymentShippingReceptor : IReceptor<PaymentProcessedEvent, CreateSh
     };
 
     // Dispatch the command
-    await _dispatcher.SendAsync<ShipmentCreatedEvent>(createShipmentCommand);
+    await _dispatcher.SendAsync(createShipmentCommand);
 
     _logger.LogInformation(
       "Dispatched create shipment command for order {OrderId}",

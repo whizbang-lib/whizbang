@@ -33,6 +33,15 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
   }
 
   /// <summary>
+  /// Ensures the connection is open. Handles both pre-opened and closed connections.
+  /// </summary>
+  protected static void EnsureConnectionOpen(IDbConnection connection) {
+    if (connection.State != ConnectionState.Open) {
+      connection.Open();
+    }
+  }
+
+  /// <summary>
   /// Gets the SQL command to save a new request.
   /// Parameters: @CorrelationId (Guid), @RequestId (Guid), @ExpiresAt (DateTimeOffset), @CreatedAt (DateTimeOffset)
   /// </summary>
@@ -59,7 +68,7 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
 
   public async Task SaveRequestAsync(CorrelationId correlationId, MessageId requestId, TimeSpan timeout, CancellationToken cancellationToken = default) {
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-    connection.Open();
+    EnsureConnectionOpen(connection);
 
     var sql = GetSaveRequestSql();
     var expiresAt = DateTimeOffset.UtcNow + timeout;
@@ -83,7 +92,7 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
 
       while (!cancellationToken.IsCancellationRequested) {
         using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-        connection.Open();
+        EnsureConnectionOpen(connection);
 
         var sql = GetWaitForResponseSql();
 
@@ -127,7 +136,7 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
     ArgumentNullException.ThrowIfNull(response);
 
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-    connection.Open();
+    EnsureConnectionOpen(connection);
 
     // Serialize using the actual runtime type to preserve all properties
     var json = JsonSerializer.Serialize(response, response.GetType(), _jsonOptions);
@@ -145,7 +154,7 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
 
   public async Task CleanupExpiredAsync(CancellationToken cancellationToken = default) {
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-    connection.Open();
+    EnsureConnectionOpen(connection);
 
     var sql = GetCleanupExpiredSql();
 

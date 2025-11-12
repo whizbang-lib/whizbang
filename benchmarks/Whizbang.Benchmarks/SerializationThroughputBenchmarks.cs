@@ -36,15 +36,15 @@ public class SerializationThroughputBenchmarks {
 
     // Pre-generate test envelopes
     _tinyEnvelopes = Enumerable.Range(0, 100_000)
-      .Select(i => CreateEnvelope(new TinyMessage(i)))
+      .Select(i => _createEnvelope(new TinyMessage(i)))
       .ToList();
 
     _smallEnvelopes = Enumerable.Range(0, 100_000)
-      .Select(i => CreateEnvelope(new SmallMessage($"msg-{i}", i, $"name-{i}")))
+      .Select(i => _createEnvelope(new SmallMessage($"msg-{i}", i, $"name-{i}")))
       .ToList();
 
     _mediumEnvelopes = Enumerable.Range(0, 100_000)
-      .Select(i => CreateEnvelope(new MediumMessage(
+      .Select(i => _createEnvelope(new MediumMessage(
         $"msg-{i}",
         i,
         $"name-{i}",
@@ -53,7 +53,7 @@ public class SerializationThroughputBenchmarks {
       .ToList();
 
     _largeEnvelopes = Enumerable.Range(0, 10_000)
-      .Select(i => CreateEnvelope(new LargeMessage(
+      .Select(i => _createEnvelope(new LargeMessage(
         $"msg-{i}",
         i,
         $"name-{i}",
@@ -74,7 +74,7 @@ public class SerializationThroughputBenchmarks {
   /// </summary>
   [Benchmark(Baseline = true)]
   [Arguments(100_000)]
-  public async Task Serialize_100K_TinyMessages(int count) {
+  public async Task Serialize_100K_TinyMessagesAsync(int count) {
     for (int i = 0; i < count; i++) {
       var envelope = _tinyEnvelopes[i];
       await _serializer.SerializeAsync(envelope);
@@ -86,7 +86,7 @@ public class SerializationThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(100_000)]
-  public async Task Serialize_100K_SmallMessages(int count) {
+  public async Task Serialize_100K_SmallMessagesAsync(int count) {
     for (int i = 0; i < count; i++) {
       var envelope = _smallEnvelopes[i];
       await _serializer.SerializeAsync(envelope);
@@ -98,7 +98,7 @@ public class SerializationThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(100_000)]
-  public async Task Serialize_100K_MediumMessages(int count) {
+  public async Task Serialize_100K_MediumMessagesAsync(int count) {
     for (int i = 0; i < count; i++) {
       var envelope = _mediumEnvelopes[i];
       await _serializer.SerializeAsync(envelope);
@@ -110,7 +110,7 @@ public class SerializationThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(10_000)]
-  public async Task Serialize_10K_LargeMessages(int count) {
+  public async Task Serialize_10K_LargeMessagesAsync(int count) {
     for (int i = 0; i < count; i++) {
       var envelope = _largeEnvelopes[i];
       await _serializer.SerializeAsync(envelope);
@@ -122,7 +122,7 @@ public class SerializationThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(100_000)]
-  public async Task Deserialize_100K_TinyMessages(int count) {
+  public async Task Deserialize_100K_TinyMessagesAsync(int count) {
     for (int i = 0; i < count; i++) {
       var bytes = _serializedTiny[i];
       await _serializer.DeserializeAsync<TinyMessage>(bytes);
@@ -134,7 +134,7 @@ public class SerializationThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(100_000)]
-  public async Task Deserialize_100K_SmallMessages(int count) {
+  public async Task Deserialize_100K_SmallMessagesAsync(int count) {
     for (int i = 0; i < count; i++) {
       var bytes = _serializedSmall[i];
       await _serializer.DeserializeAsync<SmallMessage>(bytes);
@@ -146,7 +146,7 @@ public class SerializationThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(100_000)]
-  public async Task Deserialize_100K_MediumMessages(int count) {
+  public async Task Deserialize_100K_MediumMessagesAsync(int count) {
     for (int i = 0; i < count; i++) {
       var bytes = _serializedMedium[i];
       await _serializer.DeserializeAsync<MediumMessage>(bytes);
@@ -158,7 +158,7 @@ public class SerializationThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(10_000)]
-  public async Task Deserialize_10K_LargeMessages(int count) {
+  public async Task Deserialize_10K_LargeMessagesAsync(int count) {
     for (int i = 0; i < count; i++) {
       var bytes = _serializedLarge[i];
       await _serializer.DeserializeAsync<LargeMessage>(bytes);
@@ -171,7 +171,7 @@ public class SerializationThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(50_000)]
-  public async Task RoundTrip_50K_SmallMessages(int count) {
+  public async Task RoundTrip_50K_SmallMessagesAsync(int count) {
     for (int i = 0; i < count; i++) {
       var envelope = _smallEnvelopes[i];
       var bytes = await _serializer.SerializeAsync(envelope);
@@ -184,7 +184,7 @@ public class SerializationThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(50_000)]
-  public async Task RoundTrip_50K_MediumMessages(int count) {
+  public async Task RoundTrip_50K_MediumMessagesAsync(int count) {
     for (int i = 0; i < count; i++) {
       var envelope = _mediumEnvelopes[i];
       var bytes = await _serializer.SerializeAsync(envelope);
@@ -197,23 +197,35 @@ public class SerializationThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(50_000)]
-  public async Task Serialize_50K_WithComplexMetadata(int count) {
+  public async Task Serialize_50K_WithComplexMetadataAsync(int count) {
     var envelopes = Enumerable.Range(0, count)
       .Select(i => {
-        var envelope = CreateEnvelope(new SmallMessage($"msg-{i}", i, $"name-{i}"));
-        var hop = envelope.Hops.Last();
-        hop.Metadata = new Dictionary<string, object> {
-          ["key1"] = $"value1-{i}",
-          ["key2"] = i,
-          ["key3"] = DateTime.UtcNow,
-          ["key4"] = true,
-          ["key5"] = $"value5-{i}",
-          ["key6"] = i * 2,
-          ["key7"] = $"value7-{i}",
-          ["key8"] = i * 3,
-          ["key9"] = $"value9-{i}",
-          ["key10"] = i * 4
+        var envelope = new MessageEnvelope<SmallMessage> {
+          MessageId = MessageId.New(),
+          Payload = new SmallMessage($"msg-{i}", i, $"name-{i}"),
+          Hops = new List<MessageHop>()
         };
+
+        envelope.AddHop(new MessageHop {
+          Type = HopType.Current,
+          ServiceName = "BenchmarkService",
+          Timestamp = DateTimeOffset.UtcNow,
+          CorrelationId = CorrelationId.New(),
+          CausationId = MessageId.New(),
+          Metadata = new Dictionary<string, object> {
+            ["key1"] = $"value1-{i}",
+            ["key2"] = i,
+            ["key3"] = DateTime.UtcNow,
+            ["key4"] = true,
+            ["key5"] = $"value5-{i}",
+            ["key6"] = i * 2,
+            ["key7"] = $"value7-{i}",
+            ["key8"] = i * 3,
+            ["key9"] = $"value9-{i}",
+            ["key10"] = i * 4
+          }
+        });
+
         return envelope;
       })
       .ToList();
@@ -228,9 +240,9 @@ public class SerializationThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(50_000)]
-  public async Task Serialize_50K_WithMultipleHops(int count) {
+  public async Task Serialize_50K_WithMultipleHopsAsync(int count) {
     var envelopes = Enumerable.Range(0, count)
-      .Select(i => CreateEnvelopeWithMultipleHops(new SmallMessage($"msg-{i}", i, $"name-{i}")))
+      .Select(i => _createEnvelopeWithMultipleHops(new SmallMessage($"msg-{i}", i, $"name-{i}")))
       .ToList();
 
     for (int i = 0; i < count; i++) {
@@ -243,7 +255,7 @@ public class SerializationThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(100_000, 10)]
-  public async Task Serialize_Parallel_100K_Messages(int totalCount, int parallelism) {
+  public async Task Serialize_Parallel_100K_MessagesAsync(int totalCount, int parallelism) {
     var messagesPerThread = totalCount / parallelism;
 
     var tasks = Enumerable.Range(0, parallelism)
@@ -263,7 +275,7 @@ public class SerializationThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(100_000, 10)]
-  public async Task Deserialize_Parallel_100K_Messages(int totalCount, int parallelism) {
+  public async Task Deserialize_Parallel_100K_MessagesAsync(int totalCount, int parallelism) {
     var messagesPerThread = totalCount / parallelism;
 
     var tasks = Enumerable.Range(0, parallelism)
@@ -278,7 +290,7 @@ public class SerializationThroughputBenchmarks {
     await Task.WhenAll(tasks);
   }
 
-  private IMessageEnvelope CreateEnvelope<T>(T payload) {
+  private IMessageEnvelope _createEnvelope<T>(T payload) {
     var envelope = new MessageEnvelope<T> {
       MessageId = MessageId.New(),
       Payload = payload,
@@ -286,7 +298,7 @@ public class SerializationThroughputBenchmarks {
     };
 
     envelope.AddHop(new MessageHop {
-      Type = MessageHopType.Current,
+      Type = HopType.Current,
       ServiceName = "BenchmarkService",
       Timestamp = DateTimeOffset.UtcNow,
       CorrelationId = CorrelationId.New(),
@@ -296,7 +308,7 @@ public class SerializationThroughputBenchmarks {
     return envelope;
   }
 
-  private IMessageEnvelope CreateEnvelopeWithMultipleHops<T>(T payload) {
+  private IMessageEnvelope _createEnvelopeWithMultipleHops<T>(T payload) {
     var envelope = new MessageEnvelope<T> {
       MessageId = MessageId.New(),
       Payload = payload,
@@ -305,7 +317,7 @@ public class SerializationThroughputBenchmarks {
 
     // Add current hop
     envelope.AddHop(new MessageHop {
-      Type = MessageHopType.Current,
+      Type = HopType.Current,
       ServiceName = "CurrentService",
       Timestamp = DateTimeOffset.UtcNow,
       CorrelationId = CorrelationId.New(),
@@ -314,7 +326,7 @@ public class SerializationThroughputBenchmarks {
 
     // Add causation hops (simulating message chain)
     envelope.AddHop(new MessageHop {
-      Type = MessageHopType.Causation,
+      Type = HopType.Causation,
       ServiceName = "ParentService",
       Timestamp = DateTimeOffset.UtcNow.AddMilliseconds(-100),
       CorrelationId = CorrelationId.New(),
@@ -322,7 +334,7 @@ public class SerializationThroughputBenchmarks {
     });
 
     envelope.AddHop(new MessageHop {
-      Type = MessageHopType.Causation,
+      Type = HopType.Causation,
       ServiceName = "OriginService",
       Timestamp = DateTimeOffset.UtcNow.AddMilliseconds(-200),
       CorrelationId = CorrelationId.New(),

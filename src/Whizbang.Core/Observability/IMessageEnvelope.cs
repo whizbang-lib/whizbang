@@ -45,4 +45,10 @@ public interface IMessageEnvelope {
   /// <param name="key">The metadata key to retrieve</param>
   /// <returns>The metadata value if found, otherwise null</returns>
   object? GetMetadata(string key);
+
+  /// <summary>
+  /// Gets the message payload as an object.
+  /// </summary>
+  /// <returns>The message payload</returns>
+  object GetPayload();
 }

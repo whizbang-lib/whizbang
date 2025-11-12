@@ -16,7 +16,7 @@ public class SendNotificationReceptor : IReceptor<SendNotificationCommand, Notif
     _logger = logger;
   }
 
-  public async Task<NotificationSentEvent> HandleAsync(
+  public async ValueTask<NotificationSentEvent> HandleAsync(
     SendNotificationCommand message,
     CancellationToken cancellationToken = default) {
 

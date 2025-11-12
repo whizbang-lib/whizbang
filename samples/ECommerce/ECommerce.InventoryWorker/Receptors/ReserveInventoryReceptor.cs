@@ -16,7 +16,7 @@ public class ReserveInventoryReceptor : IReceptor<ReserveInventoryCommand, Inven
     _logger = logger;
   }
 
-  public async Task<InventoryReservedEvent> HandleAsync(
+  public async ValueTask<InventoryReservedEvent> HandleAsync(
     ReserveInventoryCommand message,
     CancellationToken cancellationToken = default) {
 

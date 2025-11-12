@@ -297,6 +297,62 @@ public class DispatcherTransportBridgeTests {
     }
   }
 
+  [Test]
+  public async Task SendToTransportAsync_WithExplicitContext_PreservesCorrelationIdAsync() {
+    // Arrange
+    var transport = new InProcessTransport();
+    var serializer = new JsonMessageSerializer();
+    var dispatcher = CreateTestDispatcher();
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer);
+    var destination = new TransportDestination("remote-calculator");
+    var correlationId = CorrelationId.New();
+
+    IMessageEnvelope? receivedRequest = null;
+
+    // Setup remote responder
+    await transport.SubscribeAsync(
+      handler: async (requestEnvelope, ct) => {
+        receivedRequest = requestEnvelope;
+        var request = ((MessageEnvelope<TestQuery>)requestEnvelope).Payload;
+        var response = new TestResult { Result = request.Value * 2 };
+
+        var responseEnvelope = new MessageEnvelope<TestResult> {
+          MessageId = MessageId.New(),
+          Payload = response,
+          Hops = new List<MessageHop> {
+            new MessageHop {
+              ServiceName = "RemoteCalculator",
+              Timestamp = DateTimeOffset.UtcNow,
+              CorrelationId = requestEnvelope.GetCorrelationId(),
+              CausationId = requestEnvelope.MessageId
+            }
+          }
+        };
+
+        var responseDestination = new TransportDestination($"response-{requestEnvelope.MessageId.Value}");
+        await transport.PublishAsync(responseEnvelope, responseDestination, ct);
+      },
+      destination: destination
+    );
+
+    var query = new TestQuery { Value = 21 };
+    var context = new MessageContext {
+      CorrelationId = correlationId,
+      CausationId = MessageId.New()
+    };
+
+    // Act - Send request with explicit context
+    var response = await bridge.SendToTransportAsync<TestQuery, TestResult>(query, destination, context);
+
+    // Assert - Got typed response and correlationId was preserved
+    await Assert.That(response).IsNotNull();
+    await Assert.That(response.Result).IsEqualTo(42);
+    await Assert.That(receivedRequest).IsNotNull();
+    if (receivedRequest != null) {
+      await Assert.That(receivedRequest.GetCorrelationId()).IsEqualTo(correlationId);
+    }
+  }
+
   // Helper methods
   private TestDispatcher CreateTestDispatcher() {
     var serviceProvider = new TestServiceProvider();

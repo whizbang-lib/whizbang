@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using BenchmarkDotNet.Attributes;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
@@ -72,24 +73,24 @@ public class ThroughputBenchmarks {
     var topic = "throughput-test";
 
     // Subscribe
-    await _transportManager.SubscribeAsync<SmallCommand>(topic, async envelope => {
+    var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
       Interlocked.Increment(ref receivedCount);
       if (receivedCount >= messageCount) {
         tcs.TrySetResult(true);
       }
       await Task.CompletedTask;
-    });
+    }, new TransportDestination(topic));
 
     // Publish messages
     for (int i = 0; i < messageCount; i++) {
       var envelope = CreateEnvelope(_smallMessages[i]);
-      await _transport.PublishAsync(envelope, new TransportDestination { Topic = topic });
+      await _transport.PublishAsync(envelope, new TransportDestination(topic));
     }
 
     // Wait for all messages to be received
     await tcs.Task;
 
-    await _transportManager.UnsubscribeAsync<SmallCommand>(topic);
+    subscription.Dispose();
   }
 
   /// <summary>
@@ -102,21 +103,21 @@ public class ThroughputBenchmarks {
     var tcs = new TaskCompletionSource<bool>();
     var topic = "throughput-medium";
 
-    await _transportManager.SubscribeAsync<MediumCommand>(topic, async envelope => {
+    var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
       Interlocked.Increment(ref receivedCount);
       if (receivedCount >= messageCount) {
         tcs.TrySetResult(true);
       }
       await Task.CompletedTask;
-    });
+    }, new TransportDestination(topic));
 
     for (int i = 0; i < messageCount; i++) {
       var envelope = CreateEnvelope(_mediumMessages[i]);
-      await _transport.PublishAsync(envelope, new TransportDestination { Topic = topic });
+      await _transport.PublishAsync(envelope, new TransportDestination(topic));
     }
 
     await tcs.Task;
-    await _transportManager.UnsubscribeAsync<MediumCommand>(topic);
+    subscription.Dispose();
   }
 
   /// <summary>
@@ -129,21 +130,21 @@ public class ThroughputBenchmarks {
     var tcs = new TaskCompletionSource<bool>();
     var topic = "throughput-large";
 
-    await _transportManager.SubscribeAsync<LargeCommand>(topic, async envelope => {
+    var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
       Interlocked.Increment(ref receivedCount);
       if (receivedCount >= messageCount) {
         tcs.TrySetResult(true);
       }
       await Task.CompletedTask;
-    });
+    }, new TransportDestination(topic));
 
     for (int i = 0; i < messageCount; i++) {
       var envelope = CreateEnvelope(_largeMessages[i]);
-      await _transport.PublishAsync(envelope, new TransportDestination { Topic = topic });
+      await _transport.PublishAsync(envelope, new TransportDestination(topic));
     }
 
     await tcs.Task;
-    await _transportManager.UnsubscribeAsync<LargeCommand>(topic);
+    subscription.Dispose();
   }
 
   /// <summary>
@@ -158,12 +159,12 @@ public class ThroughputBenchmarks {
     var tcs = new TaskCompletionSource<bool>();
     var topic = "throughput-concurrent";
 
-    await _transportManager.SubscribeAsync<SmallCommand>(topic, async envelope => {
+    var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
       if (Interlocked.Increment(ref receivedCount) >= totalMessages) {
         tcs.TrySetResult(true);
       }
       await Task.CompletedTask;
-    });
+    }, new TransportDestination(topic));
 
     // Start multiple publishers concurrently
     var publishTasks = Enumerable.Range(0, publisherCount)
@@ -171,13 +172,13 @@ public class ThroughputBenchmarks {
         for (int i = 0; i < messagesPerPublisher; i++) {
           var msgIndex = (publisherId * messagesPerPublisher) + i;
           var envelope = CreateEnvelope(_smallMessages[msgIndex % _smallMessages.Count]);
-          await _transport.PublishAsync(envelope, new TransportDestination { Topic = topic });
+          await _transport.PublishAsync(envelope, new TransportDestination(topic));
         }
       });
 
     await Task.WhenAll(publishTasks);
     await tcs.Task;
-    await _transportManager.UnsubscribeAsync<SmallCommand>(topic);
+    subscription.Dispose();
   }
 
   /// <summary>
@@ -196,13 +197,15 @@ public class ThroughputBenchmarks {
       .Select(i => $"throughput-topic-{i}")
       .ToList();
 
+    var subscriptions = new List<ISubscription>();
     foreach (var topic in topics) {
-      await _transportManager.SubscribeAsync<SmallCommand>(topic, async envelope => {
+      var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
         if (Interlocked.Increment(ref receivedCount) >= totalMessages) {
           tcs.TrySetResult(true);
         }
         await Task.CompletedTask;
-      });
+      }, new TransportDestination(topic));
+      subscriptions.Add(subscription);
     }
 
     // Publish to all topics concurrently
@@ -210,7 +213,7 @@ public class ThroughputBenchmarks {
       for (int i = 0; i < messagesPerTopic; i++) {
         var msgIndex = (topicIndex * messagesPerTopic) + i;
         var envelope = CreateEnvelope(_smallMessages[msgIndex % _smallMessages.Count]);
-        await _transport.PublishAsync(envelope, new TransportDestination { Topic = topic });
+        await _transport.PublishAsync(envelope, new TransportDestination(topic));
       }
     });
 
@@ -218,8 +221,8 @@ public class ThroughputBenchmarks {
     await tcs.Task;
 
     // Cleanup
-    foreach (var topic in topics) {
-      await _transportManager.UnsubscribeAsync<SmallCommand>(topic);
+    foreach (var subscription in subscriptions) {
+      subscription.Dispose();
     }
   }
 
@@ -234,17 +237,20 @@ public class ThroughputBenchmarks {
     var topic = "throughput-request-response";
 
     // Setup response handler
-    await _transportManager.SubscribeAsync<SmallCommand>(topic, async requestEnvelope => {
+    var subscription = await _transport.SubscribeAsync(async (requestEnvelope, ct) => {
       // Simulate processing and send response
-      var response = new SmallCommand($"response-{requestEnvelope.Payload.Id}", requestEnvelope.Payload.Value * 2);
+      var typedEnvelope = (MessageEnvelope<SmallCommand>)requestEnvelope;
+      var response = new SmallCommand($"response-{typedEnvelope.Payload.Id}", typedEnvelope.Payload.Value * 2);
       var responseEnvelope = CreateEnvelope(response);
 
       // Get correlation ID from request
       var correlationId = requestEnvelope.Hops.Last().CorrelationId;
-      await store.SaveResponseAsync(correlationId, responseEnvelope, CancellationToken.None);
+      if (correlationId.HasValue) {
+        await store.SaveResponseAsync(correlationId.Value, responseEnvelope, CancellationToken.None);
+      }
 
       await Task.CompletedTask;
-    });
+    }, new TransportDestination(topic));
 
     // Send requests and wait for responses
     var requestTasks = Enumerable.Range(0, requestCount).Select(async i => {
@@ -256,14 +262,14 @@ public class ThroughputBenchmarks {
       var request = _smallMessages[i % _smallMessages.Count];
       var envelope = CreateEnvelope(request, correlationId);
 
-      await _transport.PublishAsync(envelope, new TransportDestination { Topic = topic });
+      await _transport.PublishAsync(envelope, new TransportDestination(topic));
 
       var response = await store.WaitForResponseAsync(correlationId, CancellationToken.None);
       return response;
     });
 
     await Task.WhenAll(requestTasks);
-    await _transportManager.UnsubscribeAsync<SmallCommand>(topic);
+    subscription.Dispose();
   }
 
   /// <summary>
@@ -277,24 +283,23 @@ public class ThroughputBenchmarks {
     var topic = "throughput-tracing";
     var traceStore = new InMemoryTraceStore();
 
-    await _transportManager.SubscribeAsync<SmallCommand>(topic, async envelope => {
+    var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
       // Simulate tracing overhead
-      var trace = MessageTrace.FromEnvelope(envelope);
-      await traceStore.StoreAsync(trace);
+      await traceStore.StoreAsync(envelope, ct);
 
       if (Interlocked.Increment(ref receivedCount) >= messageCount) {
         tcs.TrySetResult(true);
       }
       await Task.CompletedTask;
-    });
+    }, new TransportDestination(topic));
 
     for (int i = 0; i < messageCount; i++) {
       var envelope = CreateEnvelopeWithTracing(_smallMessages[i]);
-      await _transport.PublishAsync(envelope, new TransportDestination { Topic = topic });
+      await _transport.PublishAsync(envelope, new TransportDestination(topic));
     }
 
     await tcs.Task;
-    await _transportManager.UnsubscribeAsync<SmallCommand>(topic);
+    subscription.Dispose();
   }
 
   private IMessageEnvelope CreateEnvelope<T>(T payload, CorrelationId? correlationId = null) {
@@ -305,7 +310,7 @@ public class ThroughputBenchmarks {
     };
 
     envelope.AddHop(new MessageHop {
-      Type = MessageHopType.Current,
+      Type = HopType.Current,
       ServiceName = "BenchmarkPublisher",
       Timestamp = DateTimeOffset.UtcNow,
       CorrelationId = correlationId ?? CorrelationId.New(),
@@ -323,7 +328,7 @@ public class ThroughputBenchmarks {
     };
 
     var hop = new MessageHop {
-      Type = MessageHopType.Current,
+      Type = HopType.Current,
       ServiceName = "BenchmarkPublisher",
       Timestamp = DateTimeOffset.UtcNow,
       CorrelationId = CorrelationId.New(),
@@ -338,5 +343,57 @@ public class ThroughputBenchmarks {
 
     envelope.AddHop(hop);
     return envelope;
+  }
+
+  // Helper classes for benchmarking
+  private class InMemoryTraceStore : ITraceStore {
+    public Task StoreAsync(IMessageEnvelope envelope, CancellationToken cancellationToken = default) {
+      // No-op storage for benchmarking
+      return Task.CompletedTask;
+    }
+
+    public Task<IMessageEnvelope?> GetByMessageIdAsync(MessageId messageId, CancellationToken cancellationToken = default) {
+      return Task.FromResult<IMessageEnvelope?>(null);
+    }
+
+    public Task<List<IMessageEnvelope>> GetByCorrelationAsync(CorrelationId correlationId, CancellationToken cancellationToken = default) {
+      return Task.FromResult(new List<IMessageEnvelope>());
+    }
+
+    public Task<List<IMessageEnvelope>> GetCausalChainAsync(MessageId messageId, CancellationToken cancellationToken = default) {
+      return Task.FromResult(new List<IMessageEnvelope>());
+    }
+
+    public Task<List<IMessageEnvelope>> GetByTimeRangeAsync(DateTimeOffset start, DateTimeOffset end, CancellationToken cancellationToken = default) {
+      return Task.FromResult(new List<IMessageEnvelope>());
+    }
+  }
+
+  private class InMemoryRequestResponseStore : IRequestResponseStore {
+    private readonly ConcurrentDictionary<CorrelationId, TaskCompletionSource<IMessageEnvelope>> _pending = new();
+
+    public Task SaveRequestAsync(CorrelationId correlationId, MessageId requestId, TimeSpan timeout, CancellationToken cancellationToken = default) {
+      _pending[correlationId] = new TaskCompletionSource<IMessageEnvelope>();
+      return Task.CompletedTask;
+    }
+
+    public Task SaveResponseAsync(CorrelationId correlationId, IMessageEnvelope responseEnvelope, CancellationToken cancellationToken = default) {
+      if (_pending.TryGetValue(correlationId, out var tcs)) {
+        tcs.TrySetResult(responseEnvelope);
+      }
+      return Task.CompletedTask;
+    }
+
+    public async Task<IMessageEnvelope?> WaitForResponseAsync(CorrelationId correlationId, CancellationToken cancellationToken = default) {
+      if (_pending.TryGetValue(correlationId, out var tcs)) {
+        return await tcs.Task;
+      }
+      return null;
+    }
+
+    public Task CleanupExpiredAsync(CancellationToken cancellationToken = default) {
+      // No-op for benchmarking
+      return Task.CompletedTask;
+    }
   }
 }

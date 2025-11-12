@@ -1,0 +1,201 @@
+using ECommerce.Contracts.Commands;
+using ECommerce.Contracts.Events;
+using ECommerce.OrderService.API.Receptors;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Whizbang.Core;
+using Whizbang.Core.Messaging;
+
+namespace ECommerce.OrderService.Tests;
+
+/// <summary>
+/// Unit tests for CreateOrderReceptor
+/// </summary>
+public class CreateOrderReceptorTests {
+  /// <summary>
+  /// Helper class to track dispatcher calls
+  /// </summary>
+  private class TestDispatcher : IDispatcher {
+    public List<object> PublishedMessages { get; } = new();
+    public int PublishCount => PublishedMessages.Count;
+
+    public Task PublishAsync<TEvent>(TEvent @event) {
+      PublishedMessages.Add(@event!);
+      return Task.CompletedTask;
+    }
+
+    public Task<IDeliveryReceipt> SendAsync(object message) => throw new NotImplementedException();
+    public Task<IDeliveryReceipt> SendAsync(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
+    public ValueTask<TResult> LocalInvokeAsync<TResult>(object message) => throw new NotImplementedException();
+    public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
+    public ValueTask LocalInvokeAsync(object message) => throw new NotImplementedException();
+    public ValueTask LocalInvokeAsync(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
+    public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages) => throw new NotImplementedException();
+    public ValueTask<IEnumerable<TResult>> LocalInvokeManyAsync<TResult>(IEnumerable<object> messages) => throw new NotImplementedException();
+  }
+
+  [Test]
+  public async Task CreateOrderReceptor_ValidOrder_PublishesEventAsync() {
+    // Arrange
+    var dispatcher = new TestDispatcher();
+    var logger = NullLogger<CreateOrderReceptor>.Instance;
+    var receptor = new CreateOrderReceptor(dispatcher, logger);
+
+    var command = new CreateOrderCommand {
+      OrderId = Guid.NewGuid().ToString(),
+      CustomerId = "CUST-001",
+      LineItems = new List<OrderLineItem> {
+        new OrderLineItem {
+          ProductId = "PROD-001",
+          ProductName = "Widget",
+          Quantity = 2,
+          UnitPrice = 19.99m
+        }
+      },
+      TotalAmount = 39.98m
+    };
+
+    // Act
+    var result = await receptor.HandleAsync(command);
+
+    // Assert
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result.OrderId).IsEqualTo(command.OrderId);
+    await Assert.That(result.CustomerId).IsEqualTo(command.CustomerId);
+    await Assert.That(result.LineItems).HasCount().EqualTo(1);
+    await Assert.That(result.TotalAmount).IsEqualTo(39.98m);
+
+    // Verify PublishAsync was called
+    await Assert.That(dispatcher.PublishCount).IsEqualTo(1);
+    await Assert.That(dispatcher.PublishedMessages[0]).IsTypeOf<OrderCreatedEvent>();
+  }
+
+  [Test]
+  public async Task CreateOrderReceptor_NegativeTotalAmount_ThrowsInvalidOperationExceptionAsync() {
+    // Arrange
+    var dispatcher = new TestDispatcher();
+    var logger = NullLogger<CreateOrderReceptor>.Instance;
+    var receptor = new CreateOrderReceptor(dispatcher, logger);
+
+    var command = new CreateOrderCommand {
+      OrderId = Guid.NewGuid().ToString(),
+      CustomerId = "CUST-001",
+      LineItems = new List<OrderLineItem> {
+        new OrderLineItem {
+          ProductId = "PROD-001",
+          ProductName = "Widget",
+          Quantity = 2,
+          UnitPrice = 19.99m
+        }
+      },
+      TotalAmount = -10.00m  // Invalid negative amount
+    };
+
+    // Act & Assert
+    await Assert.That(async () => await receptor.HandleAsync(command))
+      .Throws<InvalidOperationException>()
+      .WithMessage("Order total must be positive");
+  }
+
+  [Test]
+  public async Task CreateOrderReceptor_ZeroTotalAmount_ThrowsInvalidOperationExceptionAsync() {
+    // Arrange
+    var dispatcher = new TestDispatcher();
+    var logger = NullLogger<CreateOrderReceptor>.Instance;
+    var receptor = new CreateOrderReceptor(dispatcher, logger);
+
+    var command = new CreateOrderCommand {
+      OrderId = Guid.NewGuid().ToString(),
+      CustomerId = "CUST-001",
+      LineItems = new List<OrderLineItem> {
+        new OrderLineItem {
+          ProductId = "PROD-001",
+          ProductName = "Widget",
+          Quantity = 2,
+          UnitPrice = 19.99m
+        }
+      },
+      TotalAmount = 0.00m  // Invalid zero amount
+    };
+
+    // Act & Assert
+    await Assert.That(async () => await receptor.HandleAsync(command))
+      .Throws<InvalidOperationException>()
+      .WithMessage("Order total must be positive");
+  }
+
+  [Test]
+  public async Task CreateOrderReceptor_EmptyLineItems_ThrowsInvalidOperationExceptionAsync() {
+    // Arrange
+    var dispatcher = new TestDispatcher();
+    var logger = NullLogger<CreateOrderReceptor>.Instance;
+    var receptor = new CreateOrderReceptor(dispatcher, logger);
+
+    var command = new CreateOrderCommand {
+      OrderId = Guid.NewGuid().ToString(),
+      CustomerId = "CUST-001",
+      LineItems = new List<OrderLineItem>(),  // Empty list
+      TotalAmount = 39.98m
+    };
+
+    // Act & Assert
+    await Assert.That(async () => await receptor.HandleAsync(command))
+      .Throws<InvalidOperationException>()
+      .WithMessage("Order must contain at least one item");
+  }
+
+  [Test]
+  public async Task CreateOrderReceptor_ValidOrder_MapsAllPropertiesCorrectlyAsync() {
+    // Arrange
+    var dispatcher = new TestDispatcher();
+    var logger = NullLogger<CreateOrderReceptor>.Instance;
+    var receptor = new CreateOrderReceptor(dispatcher, logger);
+
+    var orderId = Guid.NewGuid().ToString();
+    var customerId = "CUST-123";
+    var command = new CreateOrderCommand {
+      OrderId = orderId,
+      CustomerId = customerId,
+      LineItems = new List<OrderLineItem> {
+        new OrderLineItem {
+          ProductId = "PROD-001",
+          ProductName = "Widget",
+          Quantity = 2,
+          UnitPrice = 19.99m
+        },
+        new OrderLineItem {
+          ProductId = "PROD-002",
+          ProductName = "Gadget",
+          Quantity = 1,
+          UnitPrice = 29.99m
+        }
+      },
+      TotalAmount = 69.97m
+    };
+
+    // Act
+    var result = await receptor.HandleAsync(command);
+
+    // Assert
+    await Assert.That(result.OrderId).IsEqualTo(orderId);
+    await Assert.That(result.CustomerId).IsEqualTo(customerId);
+    await Assert.That(result.LineItems).HasCount().EqualTo(2);
+    await Assert.That(result.TotalAmount).IsEqualTo(69.97m);
+    await Assert.That(result.CreatedAt).IsGreaterThan(DateTime.UtcNow.AddSeconds(-5));
+
+    // Verify first line item
+    var firstItem = result.LineItems[0];
+    await Assert.That(firstItem.ProductId).IsEqualTo("PROD-001");
+    await Assert.That(firstItem.ProductName).IsEqualTo("Widget");
+    await Assert.That(firstItem.Quantity).IsEqualTo(2);
+    await Assert.That(firstItem.UnitPrice).IsEqualTo(19.99m);
+
+    // Verify second line item
+    var secondItem = result.LineItems[1];
+    await Assert.That(secondItem.ProductId).IsEqualTo("PROD-002");
+    await Assert.That(secondItem.ProductName).IsEqualTo("Gadget");
+    await Assert.That(secondItem.Quantity).IsEqualTo(1);
+    await Assert.That(secondItem.UnitPrice).IsEqualTo(29.99m);
+  }
+}

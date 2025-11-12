@@ -1,4 +1,5 @@
 using ECommerce.Contracts.Commands;
+using ECommerce.Contracts.Events;
 using Whizbang.Core;
 
 namespace ECommerce.OrderService.API.GraphQL.Mutations;
@@ -36,11 +37,10 @@ public class OrderMutations {
       TotalAmount = totalAmount
     };
 
-    // Dispatch the command - for now we'll just dispatch and return the ID
-    // In a real system, you'd want to wait for confirmation or handle errors
-    await dispatcher.PublishAsync(command);
+    // Dispatch the command locally and wait for the result
+    var orderCreated = await dispatcher.LocalInvokeAsync<OrderCreatedEvent>(command);
 
-    return orderId;
+    return orderCreated.OrderId;
   }
 }
 

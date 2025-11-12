@@ -54,19 +54,19 @@ public class TransportThroughputBenchmarks {
     var tcs = new TaskCompletionSource<bool>();
     var topic = "transport-single";
 
-    await _transportManager.SubscribeAsync<TestCommand>(topic, async envelope => {
+    var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
       if (Interlocked.Increment(ref receivedCount) >= messageCount) {
         tcs.TrySetResult(true);
       }
       await Task.CompletedTask;
-    });
+    }, new TransportDestination(topic));
 
     for (int i = 0; i < messageCount; i++) {
-      await _transport.PublishAsync(_testEnvelopes[i], new TransportDestination { Topic = topic });
+      await _transport.PublishAsync(_testEnvelopes[i], new TransportDestination(topic));
     }
 
     await tcs.Task;
-    await _transportManager.UnsubscribeAsync<TestCommand>(topic);
+    subscription.Dispose();
   }
 
   /// <summary>
@@ -82,22 +82,26 @@ public class TransportThroughputBenchmarks {
     var tcs = new TaskCompletionSource<bool>();
 
     // Subscribe multiple handlers to same topic
+    var subscriptions = new List<ISubscription>();
     for (int i = 0; i < subscriberCount; i++) {
-      await _transportManager.SubscribeAsync<TestCommand>(topic, async envelope => {
+      var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
         if (Interlocked.Increment(ref receivedCount) >= expectedTotal) {
           tcs.TrySetResult(true);
         }
         await Task.CompletedTask;
-      });
+      }, new TransportDestination(topic));
+      subscriptions.Add(subscription);
     }
 
     // Publish messages
     for (int i = 0; i < messageCount; i++) {
-      await _transport.PublishAsync(_testEnvelopes[i], new TransportDestination { Topic = topic });
+      await _transport.PublishAsync(_testEnvelopes[i], new TransportDestination(topic));
     }
 
     await tcs.Task;
-    await _transportManager.UnsubscribeAsync<TestCommand>(topic);
+    foreach (var subscription in subscriptions) {
+      subscription.Dispose();
+    }
   }
 
   /// <summary>
@@ -116,26 +120,28 @@ public class TransportThroughputBenchmarks {
       .ToList();
 
     // Subscribe to each topic
+    var subscriptions = new List<ISubscription>();
     foreach (var topic in topics) {
-      await _transportManager.SubscribeAsync<TestCommand>(topic, async envelope => {
+      var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
         if (Interlocked.Increment(ref receivedCount) >= totalMessages) {
           tcs.TrySetResult(true);
         }
         await Task.CompletedTask;
-      });
+      }, new TransportDestination(topic));
+      subscriptions.Add(subscription);
     }
 
     // Publish round-robin to topics
     for (int i = 0; i < totalMessages; i++) {
       var topic = topics[i % topicCount];
       await _transport.PublishAsync(_testEnvelopes[i % _testEnvelopes.Count],
-        new TransportDestination { Topic = topic });
+        new TransportDestination(topic));
     }
 
     await tcs.Task;
 
-    foreach (var topic in topics) {
-      await _transportManager.UnsubscribeAsync<TestCommand>(topic);
+    foreach (var subscription in subscriptions) {
+      subscription.Dispose();
     }
   }
 
@@ -149,11 +155,11 @@ public class TransportThroughputBenchmarks {
     var topic = "transport-subscribe-test";
 
     for (int i = 0; i < operationCount; i++) {
-      await _transportManager.SubscribeAsync<TestCommand>(topic, async envelope => {
+      var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
         await Task.CompletedTask;
-      });
+      }, new TransportDestination(topic));
 
-      await _transportManager.UnsubscribeAsync<TestCommand>(topic);
+      subscription.Dispose();
     }
   }
 
@@ -169,12 +175,12 @@ public class TransportThroughputBenchmarks {
     var tcs = new TaskCompletionSource<bool>();
     var topic = "transport-concurrent-pub";
 
-    await _transportManager.SubscribeAsync<TestCommand>(topic, async envelope => {
+    var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
       if (Interlocked.Increment(ref receivedCount) >= totalMessages) {
         tcs.TrySetResult(true);
       }
       await Task.CompletedTask;
-    });
+    }, new TransportDestination(topic));
 
     // Concurrent publishers
     var publishTasks = Enumerable.Range(0, publisherCount)
@@ -183,13 +189,13 @@ public class TransportThroughputBenchmarks {
         for (int i = 0; i < messagesPerPublisher; i++) {
           var index = start + i;
           await _transport.PublishAsync(_testEnvelopes[index % _testEnvelopes.Count],
-            new TransportDestination { Topic = topic });
+            new TransportDestination(topic));
         }
       });
 
     await Task.WhenAll(publishTasks);
     await tcs.Task;
-    await _transportManager.UnsubscribeAsync<TestCommand>(topic);
+    subscription.Dispose();
   }
 
   /// <summary>
@@ -202,16 +208,16 @@ public class TransportThroughputBenchmarks {
     var topic = "transport-batched";
     var receivedCount = 0;
 
-    await _transportManager.SubscribeAsync<TestCommand>(topic, async envelope => {
+    var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
       Interlocked.Increment(ref receivedCount);
       await Task.CompletedTask;
-    });
+    }, new TransportDestination(topic));
 
     // Publish all messages without waiting
     var publishTasks = new List<Task>();
     for (int i = 0; i < messageCount; i++) {
       publishTasks.Add(_transport.PublishAsync(_testEnvelopes[i],
-        new TransportDestination { Topic = topic }));
+        new TransportDestination(topic)));
     }
 
     await Task.WhenAll(publishTasks);
@@ -221,7 +227,7 @@ public class TransportThroughputBenchmarks {
       await Task.Delay(1);
     }
 
-    await _transportManager.UnsubscribeAsync<TestCommand>(topic);
+    subscription.Dispose();
   }
 
   /// <summary>
@@ -234,22 +240,22 @@ public class TransportThroughputBenchmarks {
     var tcs = new TaskCompletionSource<bool>();
     var topic = "transport.routing.test";
 
-    await _transportManager.SubscribeAsync<TestCommand>(topic, async envelope => {
+    var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
       if (Interlocked.Increment(ref receivedCount) >= messageCount) {
         tcs.TrySetResult(true);
       }
       await Task.CompletedTask;
-    }, "*.routing.*");
+    }, new TransportDestination(topic, "*.routing.*"));
 
     for (int i = 0; i < messageCount; i++) {
-      await _transport.PublishAsync(_testEnvelopes[i], new TransportDestination {
-        Topic = topic,
-        RoutingKey = $"key.routing.{i % 10}"
-      });
+      await _transport.PublishAsync(_testEnvelopes[i], new TransportDestination(
+        topic,
+        $"key.routing.{i % 10}"
+      ));
     }
 
     await tcs.Task;
-    await _transportManager.UnsubscribeAsync<TestCommand>(topic);
+    subscription.Dispose();
   }
 
   /// <summary>
@@ -267,29 +273,31 @@ public class TransportThroughputBenchmarks {
       .ToList();
 
     // Subscribe to each topic with routing key pattern
+    var subscriptions = new List<ISubscription>();
     foreach (var topic in topics) {
-      await _transportManager.SubscribeAsync<TestCommand>(topic, async envelope => {
+      var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
         if (Interlocked.Increment(ref receivedCount) >= totalMessages) {
           tcs.TrySetResult(true);
         }
         await Task.CompletedTask;
-      }, "*.key.*");
+      }, new TransportDestination(topic, "*.key.*"));
+      subscriptions.Add(subscription);
     }
 
     // Publish with routing keys
     for (int i = 0; i < totalMessages; i++) {
       var topicIndex = i % topicCount;
       var topic = topics[topicIndex];
-      await _transport.PublishAsync(_testEnvelopes[i % _testEnvelopes.Count], new TransportDestination {
-        Topic = topic,
-        RoutingKey = $"prefix.key.{i % 5}"
-      });
+      await _transport.PublishAsync(_testEnvelopes[i % _testEnvelopes.Count], new TransportDestination(
+        topic,
+        $"prefix.key.{i % 5}"
+      ));
     }
 
     await tcs.Task;
 
-    foreach (var topic in topics) {
-      await _transportManager.UnsubscribeAsync<TestCommand>(topic);
+    foreach (var subscription in subscriptions) {
+      subscription.Dispose();
     }
   }
 
@@ -301,7 +309,7 @@ public class TransportThroughputBenchmarks {
     };
 
     envelope.AddHop(new MessageHop {
-      Type = MessageHopType.Current,
+      Type = HopType.Current,
       ServiceName = "TransportBenchmark",
       Timestamp = DateTimeOffset.UtcNow,
       CorrelationId = CorrelationId.New(),

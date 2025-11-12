@@ -3,6 +3,12 @@ using ECommerce.OrderService.API.GraphQL.Queries;
 using FastEndpoints;
 using FastEndpoints.Swagger;
 using Whizbang.Core;
+using Whizbang.Core.Generated;
+using Whizbang.Core.Observability;
+using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Workers;
+using Whizbang.Data.Dapper.Postgres;
+using Whizbang.Transports.AzureServiceBus;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -22,9 +28,29 @@ builder.Services.SwaggerDocument();
 // Add OpenAPI for traditional endpoints
 builder.Services.AddOpenApi();
 
-// TODO: Register Whizbang dispatcher implementation
-// For now, register a placeholder that will be implemented later
-builder.Services.AddScoped<IDispatcher, PlaceholderDispatcher>();
+// Get connection strings from Aspire configuration
+var postgresConnection = builder.Configuration.GetConnectionString("ordersdb")
+    ?? throw new InvalidOperationException("PostgreSQL connection string 'ordersdb' not found");
+var serviceBusConnection = builder.Configuration.GetConnectionString("servicebus")
+    ?? throw new InvalidOperationException("Azure Service Bus connection string 'servicebus' not found");
+
+// Register Whizbang Postgres stores
+builder.Services.AddWhizbangPostgres(postgresConnection);
+builder.Services.AddWhizbangPostgresHealthChecks();
+
+// Register Azure Service Bus transport
+builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
+builder.Services.AddAzureServiceBusHealthChecks();
+
+// Add trace store for observability
+builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
+
+// Register Whizbang dispatcher with source-generated receptors
+builder.Services.AddReceptors();
+builder.Services.AddWhizbangDispatcher();
+
+// Register outbox publisher worker for reliable event publishing
+builder.Services.AddHostedService<OutboxPublisherWorker>();
 
 var app = builder.Build();
 
@@ -70,40 +96,4 @@ app.Run();
 
 record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary) {
   public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}
-
-/// <summary>
-/// Placeholder dispatcher implementation for demonstration purposes
-/// TODO: Replace with actual Whizbang dispatcher when available
-/// </summary>
-class PlaceholderDispatcher : IDispatcher {
-  private readonly ILogger<PlaceholderDispatcher> _logger;
-
-  public PlaceholderDispatcher(ILogger<PlaceholderDispatcher> logger) {
-    _logger = logger;
-  }
-
-  public Task<TResult> SendAsync<TResult>(object message) {
-    _logger.LogInformation("Dispatching message: {MessageType}", message.GetType().Name);
-    // For now, just log and return default
-    // In a real implementation, this would route to the appropriate handler
-    return Task.FromResult(default(TResult)!);
-  }
-
-  public Task<TResult> SendAsync<TResult>(object message, IMessageContext context) {
-    _logger.LogInformation("Dispatching message with context: {MessageType}", message.GetType().Name);
-    return Task.FromResult(default(TResult)!);
-  }
-
-  public Task PublishAsync<TEvent>(TEvent @event) {
-    _logger.LogInformation("Publishing event: {EventType}", typeof(TEvent).Name);
-    // For now, just log
-    // In a real implementation, this would publish to all interested handlers
-    return Task.CompletedTask;
-  }
-
-  public Task<IEnumerable<TResult>> SendManyAsync<TResult>(IEnumerable<object> messages) {
-    _logger.LogInformation("Dispatching {Count} messages", messages.Count());
-    return Task.FromResult(Enumerable.Empty<TResult>());
-  }
 }

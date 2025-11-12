@@ -29,7 +29,7 @@ public class OrderNotificationPerspective : IPerspectiveOf<OrderCreatedEvent> {
       Type = NotificationType.Email
     };
 
-    await _dispatcher.SendAsync<NotificationSentEvent>(notificationCommand);
+    await _dispatcher.SendAsync(notificationCommand);
 
     _logger.LogInformation(
       "Order confirmation notification dispatched for order {OrderId}",

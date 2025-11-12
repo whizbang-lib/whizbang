@@ -22,6 +22,15 @@ public abstract class DapperOutboxBase : IOutbox {
   }
 
   /// <summary>
+  /// Ensures the connection is open. Handles both pre-opened and closed connections.
+  /// </summary>
+  protected static void EnsureConnectionOpen(IDbConnection connection) {
+    if (connection.State != ConnectionState.Open) {
+      connection.Open();
+    }
+  }
+
+  /// <summary>
   /// Gets the SQL command to store a new outbox message.
   /// Parameters: @MessageId (Guid), @Destination (string), @Payload (byte[]), @CreatedAt (DateTimeOffset)
   /// </summary>
@@ -45,7 +54,7 @@ public abstract class DapperOutboxBase : IOutbox {
     ArgumentNullException.ThrowIfNull(payload);
 
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-    connection.Open();
+    EnsureConnectionOpen(connection);
 
     var sql = GetStoreSql();
 
@@ -63,7 +72,7 @@ public abstract class DapperOutboxBase : IOutbox {
 
   public async Task<IReadOnlyList<OutboxMessage>> GetPendingAsync(int batchSize, CancellationToken cancellationToken = default) {
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-    connection.Open();
+    EnsureConnectionOpen(connection);
 
     var sql = GetPendingSql();
 
@@ -83,7 +92,7 @@ public abstract class DapperOutboxBase : IOutbox {
 
   public async Task MarkPublishedAsync(MessageId messageId, CancellationToken cancellationToken = default) {
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-    connection.Open();
+    EnsureConnectionOpen(connection);
 
     var sql = GetMarkPublishedSql();
 

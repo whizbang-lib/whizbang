@@ -1,4 +1,5 @@
 using ECommerce.Contracts.Commands;
+using ECommerce.Contracts.Events;
 using ECommerce.OrderService.API.Endpoints.Models;
 using FastEndpoints;
 using Whizbang.Core;
@@ -53,13 +54,13 @@ public class CreateOrderEndpoint : Endpoint<CreateOrderRequest, CreateOrderRespo
       TotalAmount = totalAmount
     };
 
-    // Dispatch the command via Whizbang
-    await _dispatcher.PublishAsync(command);
+    // Dispatch the command locally and wait for the result
+    var orderCreated = await _dispatcher.LocalInvokeAsync<OrderCreatedEvent>(command);
 
     Response = new CreateOrderResponse {
-      OrderId = orderId,
-      Status = "Pending",
-      TotalAmount = totalAmount
+      OrderId = orderCreated.OrderId,
+      Status = "Created",
+      TotalAmount = orderCreated.TotalAmount
     };
   }
 }

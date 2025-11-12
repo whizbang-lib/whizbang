@@ -80,6 +80,17 @@ public class StreamKeyResolutionTests {
   }
 
   [Test]
+  public async Task ResolveStreamKey_WithWhitespaceString_ThrowsAsync() {
+    // Arrange
+    var evt = new OrderCreated("   ", "John Doe");
+
+    // Act & Assert
+    var exception = await Assert.That(() => StreamKeyResolver.Resolve(evt))
+      .ThrowsExactly<InvalidOperationException>();
+    await Assert.That(exception!.Message).Contains("Stream key value cannot be empty");
+  }
+
+  [Test]
   public async Task ResolveStreamKey_DifferentEventsForSameStream_ReturnsSameKeyAsync() {
     // Arrange
     var created = new OrderCreated("ORD-123", "John Doe");
@@ -93,4 +104,26 @@ public class StreamKeyResolutionTests {
     await Assert.That(key1).IsEqualTo(key2);
     await Assert.That(key1).IsEqualTo("ORD-123");
   }
+
+  [Test]
+  public async Task ResolveStreamKey_WithConstructorParameter_ReturnsValueAsync() {
+    // Arrange - Event defined with parameter attribute (record constructor)
+    var inventoryId = Guid.NewGuid();
+    var evt = new InventoryAdjusted(inventoryId, 10);
+
+    // Act - Should resolve from constructor parameter attribute
+    var streamKey = StreamKeyResolver.Resolve(evt);
+
+    // Assert
+    await Assert.That(streamKey).IsEqualTo(inventoryId.ToString());
+  }
 }
+
+/// <summary>
+/// Test event with [StreamKey] on constructor parameter (record style).
+/// This tests the constructor parameter resolution path in StreamKeyResolver.
+/// </summary>
+public record InventoryAdjusted(
+  [StreamKey] Guid InventoryId,
+  int Quantity
+) : IEvent;

@@ -17,7 +17,7 @@ public class CreateShipmentReceptor : IReceptor<CreateShipmentCommand, ShipmentC
     _logger = logger;
   }
 
-  public async Task<ShipmentCreatedEvent> HandleAsync(
+  public async ValueTask<ShipmentCreatedEvent> HandleAsync(
     CreateShipmentCommand message,
     CancellationToken cancellationToken = default) {
 

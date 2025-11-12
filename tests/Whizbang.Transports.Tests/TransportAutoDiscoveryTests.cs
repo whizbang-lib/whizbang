@@ -119,6 +119,35 @@ public class TransportAutoDiscoveryTests {
     await Assert.That(matches).IsFalse();
   }
 
+  [Test]
+  public async Task NamespacePattern_Constructor_WithNullPattern_ShouldThrowAsync() {
+    // Act & Assert
+    await Assert.That(() => new NamespacePattern(null!))
+      .ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task NamespacePattern_Matches_WithNullMessageType_ShouldThrowAsync() {
+    // Arrange
+    var pattern = new NamespacePattern("MyApp.Orders.*");
+
+    // Act & Assert
+    await Assert.That(() => pattern.Matches(null!))
+      .ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task NamespacePattern_ToString_ShouldReturnPatternAsync() {
+    // Arrange
+    var pattern = new NamespacePattern("MyApp.Orders.*");
+
+    // Act
+    var result = pattern.ToString();
+
+    // Assert
+    await Assert.That(result).IsEqualTo("MyApp.Orders.*");
+  }
+
   // ========================================
   // PHASE 3: TransportAutoDiscovery Tests
   // ========================================
@@ -243,6 +272,19 @@ public class TransportAutoDiscoveryTests {
     await Assert.That(types).HasCount().EqualTo(2);
     await Assert.That(types).Contains(typeof(MyApp.Orders.OrderCreated));
     await Assert.That(types).Contains(typeof(MyApp.Payments.PaymentProcessed));
+  }
+
+  [Test]
+  public async Task TransportAutoDiscovery_DiscoverReceptors_ShouldNotThrowAsync() {
+    // Arrange
+    var discovery = new TransportAutoDiscovery();
+
+    // Act & Assert - DiscoverReceptors is a placeholder that does nothing for now
+    // Future: Will integrate with source generator to auto-discover IReceptor implementations
+    discovery.DiscoverReceptors();
+
+    // No exception should be thrown - this is a successful test
+    await Assert.That(true).IsTrue();
   }
 
 }

@@ -1,0 +1,320 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
+using Azure.Messaging.ServiceBus;
+using Microsoft.Extensions.Logging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Transports;
+
+namespace Whizbang.Transports.AzureServiceBus;
+
+/// <summary>
+/// Azure Service Bus implementation of ITransport.
+/// Provides reliable, ordered message delivery using Azure Service Bus topics and subscriptions.
+/// </summary>
+public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
+  private readonly ServiceBusClient _client;
+  private readonly ILogger<AzureServiceBusTransport> _logger;
+  private readonly Dictionary<string, ServiceBusSender> _senders = new();
+  private readonly SemaphoreSlim _senderLock = new(1, 1);
+  private readonly AzureServiceBusOptions _options;
+  private bool _disposed;
+
+  public AzureServiceBusTransport(
+    string connectionString,
+    AzureServiceBusOptions? options = null,
+    ILogger<AzureServiceBusTransport>? logger = null
+  ) {
+    ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+
+    _client = new ServiceBusClient(connectionString);
+    _options = options ?? new AzureServiceBusOptions();
+    _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<AzureServiceBusTransport>.Instance;
+  }
+
+  /// <inheritdoc />
+  public TransportCapabilities Capabilities =>
+    TransportCapabilities.PublishSubscribe |
+    TransportCapabilities.Reliable |
+    TransportCapabilities.Ordered;
+
+  /// <inheritdoc />
+  [RequiresUnreferencedCode("Uses JSON serialization which may require unreferenced code.")]
+  public async Task PublishAsync(
+    IMessageEnvelope envelope,
+    TransportDestination destination,
+    CancellationToken cancellationToken = default
+  ) {
+    ObjectDisposedException.ThrowIf(_disposed, this);
+    ArgumentNullException.ThrowIfNull(envelope);
+    ArgumentNullException.ThrowIfNull(destination);
+
+    try {
+      var sender = await GetOrCreateSenderAsync(destination.Address, cancellationToken);
+
+      // Get the envelope type to store as metadata for deserialization
+      var envelopeType = envelope.GetType();
+      var envelopeTypeName = envelopeType.AssemblyQualifiedName
+        ?? throw new InvalidOperationException("Envelope type must have an assembly qualified name");
+
+      // Serialize envelope to JSON
+      var json = JsonSerializer.Serialize(envelope, envelopeType, _options.JsonSerializerOptions);
+      var message = new ServiceBusMessage(json) {
+        MessageId = envelope.MessageId.Value.ToString(),
+        Subject = destination.RoutingKey ?? "message",
+        ContentType = "application/json"
+      };
+
+      // Add envelope type information for deserialization
+      message.ApplicationProperties["EnvelopeType"] = envelopeTypeName;
+
+      // Add correlation ID if present
+      var correlationId = envelope.GetCorrelationId();
+      if (correlationId != null) {
+        message.CorrelationId = correlationId.Value.Value.ToString();
+      }
+
+      // Add causation ID if present
+      var causationId = envelope.GetCausationId();
+      if (causationId != null) {
+        message.ApplicationProperties["CausationId"] = causationId.Value.Value.ToString();
+      }
+
+      // Add custom metadata
+      if (destination.Metadata != null) {
+        foreach (var (key, value) in destination.Metadata) {
+          message.ApplicationProperties[key] = value;
+        }
+      }
+
+      await sender.SendMessageAsync(message, cancellationToken);
+
+      _logger.LogDebug(
+        "Published message {MessageId} to topic {TopicName} with subject {Subject}",
+        envelope.MessageId,
+        destination.Address,
+        message.Subject
+      );
+    } catch (Exception ex) {
+      _logger.LogError(
+        ex,
+        "Failed to publish message {MessageId} to {Destination}",
+        envelope.MessageId,
+        destination.Address
+      );
+      throw;
+    }
+  }
+
+  /// <inheritdoc />
+  public async Task<ISubscription> SubscribeAsync(
+    Func<IMessageEnvelope, CancellationToken, Task> handler,
+    TransportDestination destination,
+    CancellationToken cancellationToken = default
+  ) {
+    ObjectDisposedException.ThrowIf(_disposed, this);
+    ArgumentNullException.ThrowIfNull(handler);
+    ArgumentNullException.ThrowIfNull(destination);
+
+    try {
+      // Create processor for the topic/subscription
+      var processorOptions = new ServiceBusProcessorOptions {
+        MaxConcurrentCalls = _options.MaxConcurrentCalls,
+        AutoCompleteMessages = false, // We'll complete manually after successful handling
+        MaxAutoLockRenewalDuration = _options.MaxAutoLockRenewalDuration
+      };
+
+      var processor = _client.CreateProcessor(
+        destination.Address,
+        destination.RoutingKey ?? _options.DefaultSubscriptionName,
+        processorOptions
+      );
+
+      var subscription = new AzureServiceBusSubscription(processor, _logger);
+
+      // Configure message handler
+      processor.ProcessMessageAsync += async args => {
+        if (!subscription.IsActive) {
+          // If paused, abandon the message so it can be reprocessed
+          await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+          return;
+        }
+
+        try {
+          // Get envelope type from message metadata
+          if (!args.Message.ApplicationProperties.TryGetValue("EnvelopeType", out var envelopeTypeObj) ||
+              envelopeTypeObj is not string envelopeTypeName) {
+            _logger.LogError("Message {MessageId} missing EnvelopeType metadata", args.Message.MessageId);
+            await args.DeadLetterMessageAsync(
+              args.Message,
+              "MissingEnvelopeType",
+              "Message does not contain EnvelopeType metadata",
+              cancellationToken: args.CancellationToken
+            );
+            return;
+          }
+
+          // Resolve the envelope type
+          var envelopeType = Type.GetType(envelopeTypeName);
+          if (envelopeType == null) {
+            _logger.LogError("Could not resolve envelope type {EnvelopeType}", envelopeTypeName);
+            await args.DeadLetterMessageAsync(
+              args.Message,
+              "UnresolvableEnvelopeType",
+              $"Could not resolve envelope type: {envelopeTypeName}",
+              cancellationToken: args.CancellationToken
+            );
+            return;
+          }
+
+          // Deserialize envelope using the resolved type
+          var json = args.Message.Body.ToString();
+          var envelope = JsonSerializer.Deserialize(json, envelopeType, _options.JsonSerializerOptions) as IMessageEnvelope;
+
+          if (envelope == null) {
+            _logger.LogError("Failed to deserialize message {MessageId} as {EnvelopeType}",
+              args.Message.MessageId, envelopeTypeName);
+            await args.DeadLetterMessageAsync(
+              args.Message,
+              "DeserializationFailed",
+              "Could not deserialize message envelope",
+              cancellationToken: args.CancellationToken
+            );
+            return;
+          }
+
+          // Invoke handler
+          await handler(envelope, args.CancellationToken);
+
+          // Complete the message
+          await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+
+          _logger.LogDebug(
+            "Processed message {MessageId} from {TopicName}/{SubscriptionName}",
+            args.Message.MessageId,
+            destination.Address,
+            destination.RoutingKey ?? _options.DefaultSubscriptionName
+          );
+        } catch (Exception ex) {
+          _logger.LogError(
+            ex,
+            "Error processing message {MessageId} from {TopicName}/{SubscriptionName}",
+            args.Message.MessageId,
+            destination.Address,
+            destination.RoutingKey ?? _options.DefaultSubscriptionName
+          );
+
+          // Check retry count
+          var deliveryCount = args.Message.DeliveryCount;
+          if (deliveryCount >= _options.MaxDeliveryAttempts) {
+            _logger.LogWarning(
+              "Message {MessageId} exceeded max delivery attempts ({MaxAttempts}), dead-lettering",
+              args.Message.MessageId,
+              _options.MaxDeliveryAttempts
+            );
+            await args.DeadLetterMessageAsync(
+              args.Message,
+              "MaxDeliveryAttemptsExceeded",
+              ex.Message,
+              cancellationToken: args.CancellationToken
+            );
+          } else {
+            // Abandon to retry
+            await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+          }
+        }
+      };
+
+      // Configure error handler
+      processor.ProcessErrorAsync += args => {
+        _logger.LogError(
+          args.Exception,
+          "Error in Service Bus processor for {TopicName}/{SubscriptionName}: {ErrorSource}",
+          destination.Address,
+          destination.RoutingKey ?? _options.DefaultSubscriptionName,
+          args.ErrorSource
+        );
+        return Task.CompletedTask;
+      };
+
+      // Start processing
+      await processor.StartProcessingAsync(cancellationToken);
+
+      _logger.LogInformation(
+        "Started subscription to {TopicName}/{SubscriptionName}",
+        destination.Address,
+        destination.RoutingKey ?? _options.DefaultSubscriptionName
+      );
+
+      return subscription;
+    } catch (Exception ex) {
+      _logger.LogError(
+        ex,
+        "Failed to create subscription to {TopicName}/{SubscriptionName}",
+        destination.Address,
+        destination.RoutingKey ?? _options.DefaultSubscriptionName
+      );
+      throw;
+    }
+  }
+
+  /// <inheritdoc />
+  public async Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
+    IMessageEnvelope requestEnvelope,
+    TransportDestination destination,
+    CancellationToken cancellationToken = default
+  ) where TRequest : notnull where TResponse : notnull {
+    ObjectDisposedException.ThrowIf(_disposed, this);
+
+    // Azure Service Bus doesn't natively support request/response pattern
+    // This would typically be implemented using sessions or request/response store
+    // For now, throw not supported
+    throw new NotSupportedException(
+      "Request/response pattern is not supported by Azure Service Bus transport. " +
+      "Use IRequestResponseStore with publish/subscribe instead."
+    );
+  }
+
+  private async Task<ServiceBusSender> GetOrCreateSenderAsync(string topicName, CancellationToken cancellationToken) {
+    if (_senders.TryGetValue(topicName, out var existingSender)) {
+      return existingSender;
+    }
+
+    await _senderLock.WaitAsync(cancellationToken);
+    try {
+      // Double-check after acquiring lock
+      if (_senders.TryGetValue(topicName, out existingSender)) {
+        return existingSender;
+      }
+
+      var sender = _client.CreateSender(topicName);
+      _senders[topicName] = sender;
+
+      _logger.LogDebug("Created sender for topic {TopicName}", topicName);
+
+      return sender;
+    } finally {
+      _senderLock.Release();
+    }
+  }
+
+  public async ValueTask DisposeAsync() {
+    if (_disposed) {
+      return;
+    }
+
+    _disposed = true;
+
+    // Dispose all senders
+    foreach (var sender in _senders.Values) {
+      await sender.DisposeAsync();
+    }
+    _senders.Clear();
+
+    // Dispose client
+    await _client.DisposeAsync();
+
+    _senderLock.Dispose();
+
+    _logger.LogInformation("Azure Service Bus transport disposed");
+  }
+}

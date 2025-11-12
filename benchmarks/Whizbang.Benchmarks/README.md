@@ -4,7 +4,26 @@ Performance benchmarks for Whizbang core components using BenchmarkDotNet.
 
 ## Running Benchmarks
 
-**Run all benchmarks with combined markdown report (RECOMMENDED):**
+**Using PowerShell Script (RECOMMENDED):**
+
+```powershell
+# From repository root
+./scripts/run-benchmarks.ps1
+
+# Quick validation run
+./scripts/run-benchmarks.ps1 -Quick
+
+# Filter specific benchmarks
+./scripts/run-benchmarks.ps1 -Filter "*Throughput*"
+```
+
+The script will:
+1. Run all benchmarks with combined report
+2. Display a summary of key metrics
+3. Ask if you want to add results to `docs/BENCHMARK_RESULTS.md`
+4. Format and append results with timestamp
+
+**Run all benchmarks manually with combined markdown report:**
 
 ```bash
 cd benchmarks/Whizbang.Benchmarks

@@ -41,7 +41,7 @@ public class OrderRetryService {
       TotalAmount = 59.98m
     };
 
-    await _dispatcher.SendAsync<OrderCreatedEvent>(command);
+    await _dispatcher.SendAsync(command);
 
     _logger.LogInformation(
       "Retry command dispatched for order {OrderId}",
@@ -64,7 +64,7 @@ public class OrderRetryService {
       Type = NotificationType.Email
     };
 
-    await _dispatcher.SendAsync<NotificationSentEvent>(command);
+    await _dispatcher.SendAsync(command);
 
     _logger.LogInformation(
       "Test notification command dispatched for customer {CustomerId}",

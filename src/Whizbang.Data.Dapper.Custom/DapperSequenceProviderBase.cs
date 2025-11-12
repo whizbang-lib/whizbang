@@ -21,6 +21,15 @@ public abstract class DapperSequenceProviderBase : ISequenceProvider {
   }
 
   /// <summary>
+  /// Ensures the connection is open. Handles both pre-opened and closed connections.
+  /// </summary>
+  protected static void EnsureConnectionOpen(IDbConnection connection) {
+    if (connection.State != ConnectionState.Open) {
+      connection.Open();
+    }
+  }
+
+  /// <summary>
   /// Gets the SQL command to update an existing sequence and return the new value.
   /// Should return the new current_value after increment.
   /// Parameters: @SequenceKey (string), @Now (DateTimeOffset)
@@ -54,7 +63,7 @@ public abstract class DapperSequenceProviderBase : ISequenceProvider {
 
     try {
       using var connection = await _connectionFactory.CreateConnectionAsync(ct);
-      connection.Open();
+      EnsureConnectionOpen(connection);
 
       using var transaction = connection.BeginTransaction();
 
@@ -107,7 +116,7 @@ public abstract class DapperSequenceProviderBase : ISequenceProvider {
 
     try {
       using var connection = await _connectionFactory.CreateConnectionAsync(ct);
-      connection.Open();
+      EnsureConnectionOpen(connection);
 
       var sql = GetCurrentSequenceSql();
 
@@ -129,7 +138,7 @@ public abstract class DapperSequenceProviderBase : ISequenceProvider {
 
     try {
       using var connection = await _connectionFactory.CreateConnectionAsync(ct);
-      connection.Open();
+      EnsureConnectionOpen(connection);
 
       var sql = GetResetSequenceSql();
 

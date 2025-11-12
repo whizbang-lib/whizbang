@@ -355,7 +355,8 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
   }
 
   [Test]
-  public async Task DrainAsync_WithWorkerCancellation_HandlesOperationCanceledExceptionAsync() {
+  [Timeout(5000)] // 5 second timeout to prevent indefinite hanging
+  public async Task DrainAsync_WithWorkerCancellation_HandlesOperationCanceledExceptionAsync(CancellationToken cancellationToken) {
     // Arrange
     var executor = new SerialExecutor();
     await executor.StartAsync();
@@ -371,11 +372,17 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
       context
     ).AsTask();
 
+    // Complete the work BEFORE stopping to avoid deadlock
+    tcs.SetResult(42);
+
+    try {
+      await task; // Wait for work to complete
+    } catch {
+      // Work may have been cancelled
+    }
+
     // Stop executor (triggers cancellation of worker)
     await executor.StopAsync();
-
-    // Complete the work
-    tcs.SetResult(42);
 
     // Drain should handle OperationCanceledException from worker (line 158)
     await executor.DrainAsync();

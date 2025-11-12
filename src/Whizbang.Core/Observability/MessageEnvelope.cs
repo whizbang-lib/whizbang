@@ -151,6 +151,12 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope {
   }
 
   /// <summary>
+  /// Gets the message payload as an object.
+  /// </summary>
+  /// <returns>The message payload</returns>
+  public object GetPayload() => Payload!;
+
+  /// <summary>
   /// Gets all metadata by stitching together metadata from all current message hops.
   /// Later hops override earlier hops for the same key (dictionary merge).
   /// Filters to only HopType.Current hops (ignores causation hops).

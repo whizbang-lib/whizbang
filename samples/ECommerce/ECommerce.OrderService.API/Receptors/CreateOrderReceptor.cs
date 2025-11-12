@@ -1,4 +1,7 @@
+using System.Text.Json;
 using Whizbang.Core;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.ValueObjects;
 using ECommerce.Contracts.Commands;
 using ECommerce.Contracts.Events;
 
@@ -16,7 +19,7 @@ public class CreateOrderReceptor : IReceptor<CreateOrderCommand, OrderCreatedEve
     _logger = logger;
   }
 
-  public async Task<OrderCreatedEvent> HandleAsync(
+  public async ValueTask<OrderCreatedEvent> HandleAsync(
     CreateOrderCommand message,
     CancellationToken cancellationToken = default) {
 
@@ -44,10 +47,11 @@ public class CreateOrderReceptor : IReceptor<CreateOrderCommand, OrderCreatedEve
       CreatedAt = DateTime.UtcNow
     };
 
-    // Publish the event
+    // Publish the event for cross-service delivery
+    // This will be sent to Azure Service Bus and consumed by other services
     await _dispatcher.PublishAsync(orderCreated);
 
-    _logger.LogInformation("Order {OrderId} created successfully", message.OrderId);
+    _logger.LogInformation("Order {OrderId} created and event published", message.OrderId);
 
     return orderCreated;
   }
@@ -55,18 +59,18 @@ public class CreateOrderReceptor : IReceptor<CreateOrderCommand, OrderCreatedEve
 
 
 /// <summary>
-/// Handles CreateOrderCommand and publishes OrderCreatedEvent
+/// Handles CreateOrderCommand and publishes OrderCreatedEvent (alternative implementation for testing)
 /// </summary>
 public class CreateOrderReceptor2 : IReceptor<CreateOrderCommand, OrderCreatedEvent> {
-  private readonly IDispatcher _dispatcher;
-  private readonly ILogger<CreateOrderReceptor> _logger;
+  private readonly IOutbox _outbox;
+  private readonly ILogger<CreateOrderReceptor2> _logger;
 
-  public CreateOrderReceptor2(IDispatcher dispatcher, ILogger<CreateOrderReceptor> logger) {
-    _dispatcher = dispatcher;
+  public CreateOrderReceptor2(IOutbox outbox, ILogger<CreateOrderReceptor2> logger) {
+    _outbox = outbox;
     _logger = logger;
   }
 
-  public async Task<OrderCreatedEvent> HandleAsync(
+  public async ValueTask<OrderCreatedEvent> HandleAsync(
     CreateOrderCommand message,
     CancellationToken cancellationToken = default) {
 
@@ -94,10 +98,12 @@ public class CreateOrderReceptor2 : IReceptor<CreateOrderCommand, OrderCreatedEv
       CreatedAt = DateTime.UtcNow
     };
 
-    // Publish the event
-    await _dispatcher.PublishAsync(orderCreated);
+    // Publish the event to the outbox for reliable cross-service delivery
+    var messageId = MessageId.New();
+    var payload = JsonSerializer.SerializeToUtf8Bytes(orderCreated);
+    await _outbox.StoreAsync(messageId, "orders/created", payload, cancellationToken);
 
-    _logger.LogInformation("Order {OrderId} created successfully", message.OrderId);
+    _logger.LogInformation("Order {OrderId} created and event stored in outbox (Receptor2)", message.OrderId);
 
     return orderCreated;
   }

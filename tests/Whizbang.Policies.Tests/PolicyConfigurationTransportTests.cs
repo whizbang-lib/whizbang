@@ -117,6 +117,80 @@ public class PolicyConfigurationTransportTests {
     await Assert.That(target.RoutingKey).IsNull();
   }
 
+  [Test]
+  public async Task PublishTarget_Equality_WithSameValues_ShouldBeEqualAsync() {
+    // Arrange
+    var target1 = new PublishTarget {
+      TransportType = TransportType.Kafka,
+      Destination = "orders-topic",
+      RoutingKey = "order.created"
+    };
+
+    var target2 = new PublishTarget {
+      TransportType = TransportType.Kafka,
+      Destination = "orders-topic",
+      RoutingKey = "order.created"
+    };
+
+    // Assert
+    await Assert.That(target1).IsEqualTo(target2);
+    await Assert.That(target1.GetHashCode()).IsEqualTo(target2.GetHashCode());
+  }
+
+  [Test]
+  public async Task PublishTarget_Equality_WithDifferentValues_ShouldNotBeEqualAsync() {
+    // Arrange
+    var target1 = new PublishTarget {
+      TransportType = TransportType.Kafka,
+      Destination = "orders-topic"
+    };
+
+    var target2 = new PublishTarget {
+      TransportType = TransportType.Kafka,
+      Destination = "inventory-topic"
+    };
+
+    // Assert
+    await Assert.That(target1).IsNotEqualTo(target2);
+  }
+
+  [Test]
+  public async Task PublishTarget_WithExpression_ShouldCreateNewInstanceAsync() {
+    // Arrange
+    var original = new PublishTarget {
+      TransportType = TransportType.Kafka,
+      Destination = "orders-topic",
+      RoutingKey = "order.created"
+    };
+
+    // Act
+    var modified = original with { Destination = "inventory-topic" };
+
+    // Assert
+    await Assert.That(modified.TransportType).IsEqualTo(TransportType.Kafka);
+    await Assert.That(modified.Destination).IsEqualTo("inventory-topic");
+    await Assert.That(modified.RoutingKey).IsEqualTo("order.created");
+    await Assert.That(modified).IsNotEqualTo(original);
+  }
+
+  [Test]
+  public async Task PublishTarget_ToString_ShouldContainPropertyValuesAsync() {
+    // Arrange
+    var target = new PublishTarget {
+      TransportType = TransportType.RabbitMQ,
+      Destination = "orders-exchange",
+      RoutingKey = "order.created"
+    };
+
+    // Act
+    var result = target.ToString();
+
+    // Assert
+    await Assert.That(result).Contains("RabbitMQ");
+    await Assert.That(result).Contains("orders-exchange");
+    await Assert.That(result).Contains("order.created");
+  }
+
   // ========================================
   // PHASE 1: SubscriptionTarget Record Tests
   // ========================================
@@ -226,6 +300,88 @@ public class PolicyConfigurationTransportTests {
 
     // Assert
     await Assert.That(target.Partition).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task SubscriptionTarget_Equality_WithSameValues_ShouldBeEqualAsync() {
+    // Arrange
+    var target1 = new SubscriptionTarget {
+      TransportType = TransportType.Kafka,
+      Topic = "orders-topic",
+      ConsumerGroup = "inventory-service",
+      Partition = 2
+    };
+
+    var target2 = new SubscriptionTarget {
+      TransportType = TransportType.Kafka,
+      Topic = "orders-topic",
+      ConsumerGroup = "inventory-service",
+      Partition = 2
+    };
+
+    // Assert
+    await Assert.That(target1).IsEqualTo(target2);
+    await Assert.That(target1.GetHashCode()).IsEqualTo(target2.GetHashCode());
+  }
+
+  [Test]
+  public async Task SubscriptionTarget_Equality_WithDifferentValues_ShouldNotBeEqualAsync() {
+    // Arrange
+    var target1 = new SubscriptionTarget {
+      TransportType = TransportType.Kafka,
+      Topic = "orders-topic",
+      ConsumerGroup = "inventory-service"
+    };
+
+    var target2 = new SubscriptionTarget {
+      TransportType = TransportType.Kafka,
+      Topic = "orders-topic",
+      ConsumerGroup = "shipping-service"
+    };
+
+    // Assert
+    await Assert.That(target1).IsNotEqualTo(target2);
+  }
+
+  [Test]
+  public async Task SubscriptionTarget_WithExpression_ShouldCreateNewInstanceAsync() {
+    // Arrange
+    var original = new SubscriptionTarget {
+      TransportType = TransportType.Kafka,
+      Topic = "orders-topic",
+      ConsumerGroup = "inventory-service",
+      Partition = 2
+    };
+
+    // Act
+    var modified = original with { ConsumerGroup = "shipping-service" };
+
+    // Assert
+    await Assert.That(modified.TransportType).IsEqualTo(TransportType.Kafka);
+    await Assert.That(modified.Topic).IsEqualTo("orders-topic");
+    await Assert.That(modified.ConsumerGroup).IsEqualTo("shipping-service");
+    await Assert.That(modified.Partition).IsEqualTo(2);
+    await Assert.That(modified).IsNotEqualTo(original);
+  }
+
+  [Test]
+  public async Task SubscriptionTarget_ToString_ShouldContainPropertyValuesAsync() {
+    // Arrange
+    var target = new SubscriptionTarget {
+      TransportType = TransportType.RabbitMQ,
+      Topic = "orders-exchange",
+      QueueName = "inventory-queue",
+      RoutingKey = "order.created"
+    };
+
+    // Act
+    var result = target.ToString();
+
+    // Assert
+    await Assert.That(result).Contains("RabbitMQ");
+    await Assert.That(result).Contains("orders-exchange");
+    await Assert.That(result).Contains("inventory-queue");
+    await Assert.That(result).Contains("order.created");
   }
 
   // ========================================

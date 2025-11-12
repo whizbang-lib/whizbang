@@ -36,6 +36,15 @@ public abstract class DapperEventStoreBase : IEventStore {
   protected IDbExecutor Executor => _executor;
 
   /// <summary>
+  /// Ensures the connection is open. Handles both pre-opened and closed connections.
+  /// </summary>
+  protected static void EnsureConnectionOpen(IDbConnection connection) {
+    if (connection.State != ConnectionState.Open) {
+      connection.Open();
+    }
+  }
+
+  /// <summary>
   /// Gets the SQL command to append a new event to a stream.
   /// Parameters: @StreamKey (string), @SequenceNumber (long), @Envelope (string), @CreatedAt (DateTimeOffset)
   /// </summary>
@@ -61,7 +70,7 @@ public abstract class DapperEventStoreBase : IEventStore {
     ArgumentNullException.ThrowIfNull(envelope);
 
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-    connection.Open();
+    EnsureConnectionOpen(connection);
 
     // Get next sequence number
     var lastSequence = await GetLastSequenceAsync(streamKey, cancellationToken);
@@ -91,7 +100,7 @@ public abstract class DapperEventStoreBase : IEventStore {
     ArgumentNullException.ThrowIfNull(streamKey);
 
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-    connection.Open();
+    EnsureConnectionOpen(connection);
 
     var sql = GetReadSql();
 
@@ -116,7 +125,7 @@ public abstract class DapperEventStoreBase : IEventStore {
     ArgumentNullException.ThrowIfNull(streamKey);
 
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-    connection.Open();
+    EnsureConnectionOpen(connection);
 
     var sql = GetLastSequenceSql();
 

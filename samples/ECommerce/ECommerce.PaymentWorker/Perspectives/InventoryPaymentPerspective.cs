@@ -33,7 +33,7 @@ public class InventoryPaymentPerspective : IPerspectiveOf<InventoryReservedEvent
       Amount = paymentAmount
     };
 
-    await _dispatcher.SendAsync<PaymentProcessedEvent>(processPaymentCommand);
+    await _dispatcher.SendAsync(processPaymentCommand);
 
     _logger.LogInformation(
       "Dispatched payment processing command for order {OrderId}",

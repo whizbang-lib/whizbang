@@ -156,6 +156,18 @@ public class PolicyContextTests {
   }
 
   [Test]
+  public async Task GetService_ThrowsException_WhenServiceNotRegisteredAsync() {
+    // Arrange
+    var message = new TestMessage("test");
+    var services = new TestServiceProvider(); // Empty provider
+    var context = new PolicyContext(message, services: services);
+
+    // Act & Assert - Service not registered
+    await Assert.That(() => context.GetService<ITestService>())
+        .Throws<InvalidOperationException>();
+  }
+
+  [Test]
   public async Task GetMetadata_ReturnsValue_WhenKeyExistsAsync() {
     // Arrange
     var message = new TestMessage("test");
@@ -256,6 +268,28 @@ public class PolicyContextTests {
 
     // Act & Assert
     await Assert.That(context.HasTag("any-tag")).IsFalse();
+  }
+
+  [Test]
+  public async Task HasTag_ReturnsTrue_WhenTagsAreIEnumerableAsync() {
+    // Arrange
+    var message = new TestMessage("test");
+    var metadata = new Dictionary<string, object> {
+      ["tags"] = new List<string> { "high-priority", "customer-vip", "region-us-west" }
+    };
+
+    var envelope = new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = message,
+      Metadata = metadata  // Tags in envelope metadata, not hop metadata
+    };
+
+    var context = new PolicyContext(message, envelope);
+
+    // Act & Assert - Test IEnumerable<string> path (not just string[])
+    await Assert.That(context.HasTag("high-priority")).IsTrue();
+    await Assert.That(context.HasTag("customer-vip")).IsTrue();
+    await Assert.That(context.HasTag("region-us-west")).IsTrue();
   }
 
   [Test]
@@ -388,6 +422,12 @@ public class PolicyContextTests {
   // Test helper types
   private interface ITestService { }
   private class TestService : ITestService { }
+
+  private class TestServiceProvider : IServiceProvider {
+    public object? GetService(Type serviceType) {
+      return null; // Returns null for all services (to test "not registered" path)
+    }
+  }
 
   // Mock aggregate types for testing MatchesAggregate
   private class Order { }

@@ -17,7 +17,7 @@ public class ProcessPaymentReceptor : IReceptor<ProcessPaymentCommand, PaymentPr
     _logger = logger;
   }
 
-  public async Task<PaymentProcessedEvent> HandleAsync(
+  public async ValueTask<PaymentProcessedEvent> HandleAsync(
     ProcessPaymentCommand message,
     CancellationToken cancellationToken = default) {
 

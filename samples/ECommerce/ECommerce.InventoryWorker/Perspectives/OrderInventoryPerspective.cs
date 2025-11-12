@@ -30,7 +30,7 @@ public class OrderInventoryPerspective : IPerspectiveOf<OrderCreatedEvent> {
         Quantity = lineItem.Quantity
       };
 
-      await _dispatcher.SendAsync<InventoryReservedEvent>(reserveCommand);
+      await _dispatcher.SendAsync(reserveCommand);
 
       _logger.LogInformation(
         "Dispatched inventory reservation for product {ProductId} in order {OrderId}",

@@ -22,6 +22,15 @@ public abstract class DapperInboxBase : IInbox {
   }
 
   /// <summary>
+  /// Ensures the connection is open. Handles both pre-opened and closed connections.
+  /// </summary>
+  protected static void EnsureConnectionOpen(IDbConnection connection) {
+    if (connection.State != ConnectionState.Open) {
+      connection.Open();
+    }
+  }
+
+  /// <summary>
   /// Gets the SQL query to check if a message has been processed.
   /// Should return count of matching records.
   /// Parameters: @MessageId (Guid)
@@ -43,7 +52,7 @@ public abstract class DapperInboxBase : IInbox {
 
   public async Task<bool> HasProcessedAsync(MessageId messageId, CancellationToken cancellationToken = default) {
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-    connection.Open();
+    EnsureConnectionOpen(connection);
 
     var sql = GetHasProcessedSql();
 
@@ -60,7 +69,7 @@ public abstract class DapperInboxBase : IInbox {
     ArgumentNullException.ThrowIfNull(handlerName);
 
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-    connection.Open();
+    EnsureConnectionOpen(connection);
 
     var sql = GetMarkProcessedSql();
 
@@ -77,7 +86,7 @@ public abstract class DapperInboxBase : IInbox {
 
   public async Task CleanupExpiredAsync(TimeSpan retention, CancellationToken cancellationToken = default) {
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-    connection.Open();
+    EnsureConnectionOpen(connection);
 
     var sql = GetCleanupExpiredSql();
     var cutoffDate = DateTimeOffset.UtcNow - retention;
