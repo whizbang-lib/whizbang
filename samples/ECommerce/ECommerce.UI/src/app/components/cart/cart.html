@@ -1,0 +1,103 @@
+<div class="cart-container">
+  <h2>Shopping Cart</h2>
+
+  <div *ngIf="cartStore.isEmpty()" class="empty-cart">
+    <clr-alert [clrAlertType]="'info'" [clrAlertClosable]="false">
+      <clr-alert-item>
+        <span class="alert-text">
+          <cds-icon shape="shopping-cart"></cds-icon>
+          Your cart is empty. Start shopping to add items!
+        </span>
+      </clr-alert-item>
+    </clr-alert>
+    <button class="btn btn-primary" (click)="continueShopping()">
+      Browse Products
+    </button>
+  </div>
+
+  <div *ngIf="!cartStore.isEmpty()" class="cart-content">
+    <div class="cart-items">
+      <clr-datagrid>
+        <clr-dg-column>Product</clr-dg-column>
+        <clr-dg-column>Price</clr-dg-column>
+        <clr-dg-column>Quantity</clr-dg-column>
+        <clr-dg-column>Subtotal</clr-dg-column>
+        <clr-dg-column>Actions</clr-dg-column>
+
+        <clr-dg-row *ngFor="let item of cartStore.items()">
+          <clr-dg-cell>
+            <div class="product-info">
+              <img [src]="item.product.imageUrl" [alt]="item.product.name" class="product-thumb" />
+              <div>
+                <div class="product-name">{{ item.product.name }}</div>
+                <div class="product-desc">{{ item.product.description }}</div>
+              </div>
+            </div>
+          </clr-dg-cell>
+          <clr-dg-cell>{{ item.product.price | currency }}</clr-dg-cell>
+          <clr-dg-cell>
+            <div class="quantity-controls">
+              <button
+                class="btn btn-sm btn-icon"
+                (click)="updateQuantity(item.product.productId, item.quantity - 1)"
+                [disabled]="item.quantity <= 1">
+                <cds-icon shape="minus"></cds-icon>
+              </button>
+              <span class="quantity">{{ item.quantity }}</span>
+              <button
+                class="btn btn-sm btn-icon"
+                (click)="updateQuantity(item.product.productId, item.quantity + 1)"
+                [disabled]="item.quantity >= item.product.stock">
+                <cds-icon shape="plus"></cds-icon>
+              </button>
+            </div>
+          </clr-dg-cell>
+          <clr-dg-cell>
+            <strong>{{ item.product.price * item.quantity | currency }}</strong>
+          </clr-dg-cell>
+          <clr-dg-cell>
+            <button
+              class="btn btn-sm btn-danger-outline"
+              (click)="removeItem(item.product.productId)">
+              <cds-icon shape="trash"></cds-icon>
+              Remove
+            </button>
+          </clr-dg-cell>
+        </clr-dg-row>
+
+        <clr-dg-footer>
+          {{ cartStore.totalItems() }} items
+        </clr-dg-footer>
+      </clr-datagrid>
+    </div>
+
+    <div class="cart-summary">
+      <div class="card">
+        <div class="card-block">
+          <h3 class="card-title">Order Summary</h3>
+          <div class="summary-row">
+            <span>Items ({{ cartStore.totalItems() }}):</span>
+            <span>{{ cartStore.totalPrice() | currency }}</span>
+          </div>
+          <div class="summary-row">
+            <span>Shipping:</span>
+            <span class="free">FREE</span>
+          </div>
+          <div class="summary-row total">
+            <span><strong>Total:</strong></span>
+            <span><strong>{{ cartStore.totalPrice() | currency }}</strong></span>
+          </div>
+        </div>
+        <div class="card-footer">
+          <button class="btn btn-success btn-block" (click)="checkout()">
+            <cds-icon shape="check"></cds-icon>
+            Proceed to Checkout
+          </button>
+          <button class="btn btn-link btn-block" (click)="continueShopping()">
+            Continue Shopping
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

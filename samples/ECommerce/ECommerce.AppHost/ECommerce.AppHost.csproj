@@ -19,6 +19,7 @@
     <ProjectReference Include="..\ECommerce.NotificationWorker\ECommerce.NotificationWorker.csproj" />
     <ProjectReference Include="..\ECommerce.PaymentWorker\ECommerce.PaymentWorker.csproj" />
     <ProjectReference Include="..\ECommerce.ShippingWorker\ECommerce.ShippingWorker.csproj" />
+    <ProjectReference Include="..\ECommerce.BFF.API\ECommerce.BFF.API.csproj" />
   </ItemGroup>
 
 </Project>

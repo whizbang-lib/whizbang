@@ -9,22 +9,34 @@ namespace Whizbang.Generators;
 /// <summary>
 /// Incremental source generator that discovers IReceptor implementations
 /// and generates dispatcher registration code.
+/// Also checks for IPerspectiveOf implementations to avoid false WHIZ002 warnings.
 /// </summary>
 [Generator]
 public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private const string RECEPTOR_INTERFACE_NAME = "Whizbang.Core.IReceptor";
+  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.IPerspectiveOf";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
-    // Filter for classes that have a base list (potential interface implementations)
+    // Pipeline 1: Discover IReceptor implementations
     var receptorCandidates = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
         transform: static (ctx, ct) => ExtractReceptorInfo(ctx, ct)
     ).Where(static info => info is not null);
 
-    // Collect all receptors and generate registration code
+    // Pipeline 2: Check for IPerspectiveOf implementations (for WHIZ002 diagnostic)
+    var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        transform: static (ctx, ct) => HasPerspectiveInterface(ctx, ct)
+    ).Where(static hasPerspective => hasPerspective);
+
+    // Combine both pipelines to determine if any message handlers exist
+    var combined = receptorCandidates.Collect()
+        .Combine(perspectiveCandidates.Collect());
+
+    // Generate registration code with awareness of both receptors and perspectives
     context.RegisterSourceOutput(
-        receptorCandidates.Collect(),
-        static (ctx, receptors) => GenerateDispatcherRegistrations(ctx, receptors!)
+        combined,
+        static (ctx, data) => GenerateDispatcherRegistrations(ctx, data.Left!, data.Right)
     );
   }
 
@@ -77,17 +89,51 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Checks if a class implements IPerspectiveOf&lt;TEvent&gt;.
+  /// Returns true if the class implements the perspective interface, false otherwise.
+  /// Used for WHIZ002 diagnostic - only warn if BOTH IReceptor and IPerspectiveOf are absent.
+  /// </summary>
+  private static bool HasPerspectiveInterface(
+      GeneratorSyntaxContext context,
+      System.Threading.CancellationToken cancellationToken) {
+
+    var classDeclaration = (ClassDeclarationSyntax)context.Node;
+    var semanticModel = context.SemanticModel;
+
+    // Get the symbol for the class
+    var classSymbol = semanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) as INamedTypeSymbol;
+    if (classSymbol is null) {
+      return false;
+    }
+
+    // Look for IPerspectiveOf<TEvent> interface
+    var hasPerspective = classSymbol.AllInterfaces.Any(i =>
+        i.OriginalDefinition.ToDisplayString() == PERSPECTIVE_INTERFACE_NAME + "<TEvent>");
+
+    return hasPerspective;
+  }
+
+  /// <summary>
   /// Generates the dispatcher registration code for all discovered receptors.
+  /// Only reports WHIZ002 warning if BOTH receptors and perspectives are absent.
   /// </summary>
   private static void GenerateDispatcherRegistrations(
       SourceProductionContext context,
-      ImmutableArray<ReceptorInfo> receptors) {
+      ImmutableArray<ReceptorInfo> receptors,
+      ImmutableArray<bool> hasPerspectives) {
 
-    if (receptors.IsEmpty) {
+    // Only warn if BOTH IReceptor and IPerspectiveOf implementations are missing
+    // Example: BFF with 5 IPerspectiveOf but no IReceptor should NOT warn
+    if (receptors.IsEmpty && hasPerspectives.IsEmpty) {
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.NoReceptorsFound,
           Location.None
       ));
+      return;
+    }
+
+    // If we have perspectives but no receptors, skip code generation but don't warn
+    if (receptors.IsEmpty) {
       return;
     }
 

@@ -35,6 +35,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ECommerce.NotificationWorke
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ECommerce.BFF.API", "ECommerce.BFF.API\ECommerce.BFF.API.csproj", "{0ED25F81-2750-40B8-A1C2-38E1DB506B87}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "ECommerce.UI", "ECommerce.UI\ECommerce.UI.csproj", "{D7F32DA2-9489-4BBE-9173-2214469D818D}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -225,6 +227,18 @@ Global
 		{0ED25F81-2750-40B8-A1C2-38E1DB506B87}.Release|x64.Build.0 = Release|Any CPU
 		{0ED25F81-2750-40B8-A1C2-38E1DB506B87}.Release|x86.ActiveCfg = Release|Any CPU
 		{0ED25F81-2750-40B8-A1C2-38E1DB506B87}.Release|x86.Build.0 = Release|Any CPU
+		{D7F32DA2-9489-4BBE-9173-2214469D818D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{D7F32DA2-9489-4BBE-9173-2214469D818D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{D7F32DA2-9489-4BBE-9173-2214469D818D}.Debug|x64.ActiveCfg = Debug|Any CPU
+		{D7F32DA2-9489-4BBE-9173-2214469D818D}.Debug|x64.Build.0 = Debug|Any CPU
+		{D7F32DA2-9489-4BBE-9173-2214469D818D}.Debug|x86.ActiveCfg = Debug|Any CPU
+		{D7F32DA2-9489-4BBE-9173-2214469D818D}.Debug|x86.Build.0 = Debug|Any CPU
+		{D7F32DA2-9489-4BBE-9173-2214469D818D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{D7F32DA2-9489-4BBE-9173-2214469D818D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{D7F32DA2-9489-4BBE-9173-2214469D818D}.Release|x64.ActiveCfg = Release|Any CPU
+		{D7F32DA2-9489-4BBE-9173-2214469D818D}.Release|x64.Build.0 = Release|Any CPU
+		{D7F32DA2-9489-4BBE-9173-2214469D818D}.Release|x86.ActiveCfg = Release|Any CPU
+		{D7F32DA2-9489-4BBE-9173-2214469D818D}.Release|x86.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE

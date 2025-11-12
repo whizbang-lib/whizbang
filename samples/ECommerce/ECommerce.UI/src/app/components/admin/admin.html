@@ -1,0 +1,190 @@
+<div class="admin-container">
+  <div class="admin-header">
+    <h2>Admin Portal</h2>
+    <div class="header-actions">
+      <span
+        [class]="(signalRConnected$ | async) ? 'badge badge-success' : 'badge badge-warning'">
+        <cds-icon shape="dot-circle"></cds-icon>
+        {{ (signalRConnected$ | async) ? 'Live' : 'Offline' }}
+      </span>
+      <button class="btn btn-sm btn-primary" (click)="refreshData()">
+        <cds-icon shape="refresh"></cds-icon>
+        Refresh
+      </button>
+    </div>
+  </div>
+
+  <clr-tabs>
+    <clr-tab>
+      <button clrTabLink (click)="setView('dashboard')">Dashboard</button>
+      <clr-tab-content *clrIfActive>
+        <div class="dashboard-view" *ngIf="stats$ | async as stats">
+          <!-- Statistics Cards -->
+          <div class="stats-grid">
+            <div class="card stat-card">
+              <div class="card-block">
+                <div class="stat-icon total-orders">
+                  <cds-icon shape="shopping-bag" size="48"></cds-icon>
+                </div>
+                <div class="stat-content">
+                  <div class="stat-value">{{ stats.totalOrders }}</div>
+                  <div class="stat-label">Total Orders</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card stat-card">
+              <div class="card-block">
+                <div class="stat-icon revenue">
+                  <cds-icon shape="dollar" size="48"></cds-icon>
+                </div>
+                <div class="stat-content">
+                  <div class="stat-value">{{ stats.totalRevenue | currency }}</div>
+                  <div class="stat-label">Total Revenue</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card stat-card">
+              <div class="card-block">
+                <div class="stat-icon pending">
+                  <cds-icon shape="clock" size="48"></cds-icon>
+                </div>
+                <div class="stat-content">
+                  <div class="stat-value">{{ stats.pendingOrders }}</div>
+                  <div class="stat-label">Pending Orders</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card stat-card">
+              <div class="card-block">
+                <div class="stat-icon completed">
+                  <cds-icon shape="check-circle" size="48"></cds-icon>
+                </div>
+                <div class="stat-content">
+                  <div class="stat-value">{{ stats.completedOrders }}</div>
+                  <div class="stat-label">Completed</div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card stat-card">
+              <div class="card-block">
+                <div class="stat-icon failed">
+                  <cds-icon shape="times-circle" size="48"></cds-icon>
+                </div>
+                <div class="stat-content">
+                  <div class="stat-value">{{ stats.failedOrders }}</div>
+                  <div class="stat-label">Failed/Cancelled</div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Recent Orders -->
+          <div class="recent-orders">
+            <h3>Recent Orders</h3>
+            <clr-datagrid>
+              <clr-dg-column>Order ID</clr-dg-column>
+              <clr-dg-column>Customer ID</clr-dg-column>
+              <clr-dg-column>Date</clr-dg-column>
+              <clr-dg-column>Amount</clr-dg-column>
+              <clr-dg-column>Status</clr-dg-column>
+
+              <clr-dg-row *ngFor="let order of (orders$ | async)?.slice(0, 10)">
+                <clr-dg-cell>{{ order.orderId }}</clr-dg-cell>
+                <clr-dg-cell>{{ order.customerId }}</clr-dg-cell>
+                <clr-dg-cell>{{ order.createdAt | date:'short' }}</clr-dg-cell>
+                <clr-dg-cell>{{ order.totalAmount | currency }}</clr-dg-cell>
+                <clr-dg-cell>
+                  <span [class]="'badge ' + getStatusBadgeClass(order.status)">
+                    {{ order.status }}
+                  </span>
+                </clr-dg-cell>
+              </clr-dg-row>
+
+              <clr-dg-footer>
+                Showing {{ ((orders$ | async)?.slice(0, 10) || []).length }} of {{ (orders$ | async)?.length || 0 }}
+              </clr-dg-footer>
+            </clr-datagrid>
+          </div>
+        </div>
+      </clr-tab-content>
+    </clr-tab>
+
+    <clr-tab>
+      <button clrTabLink (click)="setView('orders')">All Orders</button>
+      <clr-tab-content *clrIfActive>
+        <div class="orders-view">
+          <clr-datagrid>
+            <clr-dg-column>Order ID</clr-dg-column>
+            <clr-dg-column>Customer ID</clr-dg-column>
+            <clr-dg-column>Date</clr-dg-column>
+            <clr-dg-column>Items</clr-dg-column>
+            <clr-dg-column>Total</clr-dg-column>
+            <clr-dg-column>Status</clr-dg-column>
+            <clr-dg-column>Last Updated</clr-dg-column>
+
+            <clr-dg-row *ngFor="let order of orders$ | async">
+              <clr-dg-cell>{{ order.orderId }}</clr-dg-cell>
+              <clr-dg-cell>{{ order.customerId }}</clr-dg-cell>
+              <clr-dg-cell>{{ order.createdAt | date:'short' }}</clr-dg-cell>
+              <clr-dg-cell>{{ order.items.length }}</clr-dg-cell>
+              <clr-dg-cell>{{ order.totalAmount | currency }}</clr-dg-cell>
+              <clr-dg-cell>
+                <span [class]="'badge ' + getStatusBadgeClass(order.status)">
+                  {{ order.status }}
+                </span>
+              </clr-dg-cell>
+              <clr-dg-cell>{{ order.updatedAt | date:'short' }}</clr-dg-cell>
+            </clr-dg-row>
+
+            <clr-dg-footer>
+              {{ (orders$ | async)?.length || 0 }} total orders
+            </clr-dg-footer>
+          </clr-datagrid>
+        </div>
+      </clr-tab-content>
+    </clr-tab>
+
+    <clr-tab>
+      <button clrTabLink (click)="setView('inventory')">Inventory</button>
+      <clr-tab-content *clrIfActive>
+        <div class="inventory-view">
+          <clr-datagrid>
+            <clr-dg-column>Product ID</clr-dg-column>
+            <clr-dg-column>Product Name</clr-dg-column>
+            <clr-dg-column>Price</clr-dg-column>
+            <clr-dg-column>Stock</clr-dg-column>
+            <clr-dg-column>Status</clr-dg-column>
+
+            <clr-dg-row *ngFor="let product of products">
+              <clr-dg-cell>{{ product.productId }}</clr-dg-cell>
+              <clr-dg-cell>
+                <div class="product-cell">
+                  <img [src]="product.imageUrl" [alt]="product.name" class="product-thumb" />
+                  <div>
+                    <div class="product-name">{{ product.name }}</div>
+                    <div class="product-desc">{{ product.description }}</div>
+                  </div>
+                </div>
+              </clr-dg-cell>
+              <clr-dg-cell>{{ product.price | currency }}</clr-dg-cell>
+              <clr-dg-cell>{{ product.stock }}</clr-dg-cell>
+              <clr-dg-cell>
+                <span [class]="'badge ' + getStockBadgeClass(product.stock)">
+                  {{ product.stock > 50 ? 'In Stock' : product.stock > 20 ? 'Low Stock' : 'Very Low' }}
+                </span>
+              </clr-dg-cell>
+            </clr-dg-row>
+
+            <clr-dg-footer>
+              {{ products.length }} products
+            </clr-dg-footer>
+          </clr-datagrid>
+        </div>
+      </clr-tab-content>
+    </clr-tab>
+  </clr-tabs>
+</div>

@@ -10,6 +10,7 @@ var inventoryDb = postgres.AddDatabase("inventorydb");
 var paymentDb = postgres.AddDatabase("paymentdb");
 var shippingDb = postgres.AddDatabase("shippingdb");
 var notificationDb = postgres.AddDatabase("notificationdb");
+var bffDb = postgres.AddDatabase("bffdb");
 
 // Add Azure Service Bus
 // Note: For now using connection string from configuration
@@ -37,5 +38,16 @@ var shippingWorker = builder.AddProject("shippingworker", "../ECommerce.Shipping
 var notificationWorker = builder.AddProject("notificationworker", "../ECommerce.NotificationWorker/ECommerce.NotificationWorker.csproj")
     .WithReference(notificationDb)
     .WithReference(serviceBus);
+
+var bffService = builder.AddProject("bff", "../ECommerce.BFF.API/ECommerce.BFF.API.csproj")
+    .WithReference(bffDb)
+    .WithReference(serviceBus)
+    .WithExternalHttpEndpoints();  // BFF needs external access for Angular app
+
+// Add Angular UI
+var angularApp = builder.AddNpmApp("ui", "../ECommerce.UI", "start")
+    .WithHttpEndpoint(port: 4200, env: "PORT")
+    .WithExternalHttpEndpoints()
+    .WaitFor(bffService);  // Wait for BFF to be ready before starting UI
 
 builder.Build().Run();

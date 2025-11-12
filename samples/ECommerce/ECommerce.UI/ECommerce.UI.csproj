@@ -1,0 +1,38 @@
+<Project>
+
+  <PropertyGroup>
+    <!-- This is a container project for the Angular UI - no compilation -->
+    <TargetFramework>net10.0</TargetFramework>
+    <IsPackable>false</IsPackable>
+    <EnableDefaultItems>false</EnableDefaultItems>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <ProduceReferenceAssembly>false</ProduceReferenceAssembly>
+    <CopyBuildOutputToOutputDirectory>false</CopyBuildOutputToOutputDirectory>
+    <CopyOutputSymbolsToOutputDirectory>false</CopyOutputSymbolsToOutputDirectory>
+    <SkipCompilerExecution>true</SkipCompilerExecution>
+  </PropertyGroup>
+
+  <!-- Include Angular files for visibility in Solution Explorer -->
+  <ItemGroup>
+    <None Include="src\**\*.ts" Visible="true" />
+    <None Include="src\**\*.html" Visible="true" />
+    <None Include="src\**\*.scss" Visible="true" />
+    <None Include="*.json" Visible="true" />
+    <None Include="README.md" Visible="true" />
+    <None Include="public\images\**\*" Visible="true" />
+  </ItemGroup>
+
+  <!-- Completely disable all build/compile/restore targets -->
+  <Target Name="Build" />
+  <Target Name="Rebuild" />
+  <Target Name="Clean" />
+  <Target Name="Restore" />
+  <Target Name="Publish" />
+  <Target Name="CoreCompile" />
+  <Target Name="PrepareForBuild" />
+  <Target Name="GetTargetPath" Returns="$(TargetPath)" />
+  <Target Name="GetNativeManifest" Returns="" />
+  <Target Name="GetCopyToOutputDirectoryItems" Returns="@(AllItemsFullPathWithTargetPath)" />
+
+</Project>

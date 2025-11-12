@@ -4,38 +4,64 @@ A production-ready distributed e-commerce application demonstrating the Whizbang
 
 ## Architecture Overview
 
-This sample implements a microservices-based e-commerce system using event-driven architecture and CQRS patterns.
+This sample implements a microservices-based e-commerce system using event-driven architecture, CQRS patterns, and a Backend for Frontend (BFF) architecture for the user interface.
 
-### Services
+### Frontend
 
-1. **OrderService.API** (Port 5000)
+**ECommerce.UI** (Angular 20, Port 4200)
+- Modern Angular 20 application with Clarity Design System
+- Real-time order updates via SignalR WebSocket connection
+- State management: NgRx hybrid approach (Signal Store + traditional Store/Effects)
+- Features:
+  - Product catalog with 12 soccer team swag items
+  - Shopping cart with live total calculations
+  - Order tracking with real-time status updates
+  - Admin dashboard with statistics and inventory management
+
+### Backend Services
+
+1. **BFF.API** (Backend for Frontend, Port 7001)
+   - Dedicated API for the Angular UI
+   - SignalR hub at `/hubs/order-status` for real-time updates
+   - **Perspectives**: Event listeners that update denormalized read models
+     - `OrderSummaryPerspective`: Maintains order status snapshots
+     - `OrderStatsPerspective`: Calculates aggregate statistics
+     - `ProductInventoryPerspective`: Tracks real-time inventory
+   - **Lenses**: Query-optimized read repositories using Dapper
+     - `OrderLens`: Fast queries for order data
+     - `ProductLens`: Product catalog queries
+   - **Fire-and-forget Commands**: Returns correlation IDs immediately, processes async
+   - Real-time SignalR notifications pushed to connected clients via Perspectives
+
+2. **OrderService.API** (Port 5000)
    - REST API (FastEndpoints) at `/api/*`
    - GraphQL API (HotChocolate) at `/graphql`
    - Handles order creation and queries
    - Publishes `OrderCreatedEvent` to Azure Service Bus
 
-2. **InventoryWorker** (Background Service)
+3. **InventoryWorker** (Background Service)
    - Consumes `OrderCreatedEvent` from Azure Service Bus
    - Processes inventory reservations
    - Publishes `InventoryReservedEvent`
 
-3. **PaymentWorker** (Background Service)
+4. **PaymentWorker** (Background Service)
    - Consumes `Order Created Event` from Azure Service Bus
    - Processes payment transactions
    - Publishes `PaymentProcessedEvent`
 
-4. **ShippingWorker** (Background Service)
+5. **ShippingWorker** (Background Service)
    - Consumes `InventoryReservedEvent` and `PaymentProcessedEvent`
    - Coordinates shipping fulfillment
    - Publishes `ShipmentCreatedEvent`
 
-5. **NotificationWorker** (Background Service)
+6. **NotificationWorker** (Background Service)
    - Consumes all events from Azure Service Bus
    - Sends notifications (email, SMS, etc.)
 
 ### Infrastructure
 
 - **PostgreSQL**: Persistent storage for outbox/inbox patterns and message state
+  - `bffdb`: BFF API database (perspectives, read models)
   - `ordersdb`: Order service database
   - `inventorydb`: Inventory service database
   - `paymentdb`: Payment service database
@@ -46,7 +72,38 @@ This sample implements a microservices-based e-commerce system using event-drive
   - Topic: `orders` - For order-related events
   - Subscriptions: One per worker service for independent event consumption
 
+- **SignalR**: Real-time WebSocket communication
+  - BFF API hosts SignalR hub for pushing live updates to Angular UI
+  - Perspectives automatically trigger SignalR notifications on event handling
+
 ### Messaging Patterns
+
+#### BFF Architecture with Perspectives
+
+The **Backend for Frontend (BFF)** pattern provides a dedicated API layer optimized for the Angular UI:
+
+**Perspectives** - Event-driven read model updates:
+- Implement `IPerspectiveOf<TEvent>` to listen for specific events
+- Automatically update denormalized tables optimized for queries
+- Trigger SignalR notifications to push updates to connected UI clients
+- Examples:
+  - `OrderSummaryPerspective`: Updates order status table on every order event
+  - `OrderStatsPerspective`: Maintains aggregate statistics for dashboard
+  - `ProductInventoryPerspective`: Real-time inventory tracking
+
+**Lenses** - Query-optimized repositories:
+- Read-only repositories using Dapper for fast queries
+- Query denormalized data updated by Perspectives
+- No business logic - pure data access layer
+- Examples:
+  - `OrderLens`: Fast order lookups by ID, customer, status
+  - `ProductLens`: Product catalog queries
+
+**Fire-and-forget Commands**:
+- API immediately returns correlation ID to caller
+- Command processing happens asynchronously
+- UI polls or receives SignalR updates for status
+- Prevents long-running HTTP requests
 
 #### Outbox Pattern
 - Events are first stored in PostgreSQL outbox table
@@ -64,6 +121,22 @@ This sample implements a microservices-based e-commerce system using event-drive
 ECommerce/
 ├── ECommerce.AppHost/              # .NET Aspire orchestration
 ├── ECommerce.ServiceDefaults/       # Shared telemetry, health checks
+├── ECommerce.UI/                    # Angular 20 frontend application
+│   ├── src/app/
+│   │   ├── components/              # Catalog, Cart, Orders, Admin
+│   │   ├── services/                # ProductService, OrderService, SignalRService
+│   │   └── store/                   # NgRx state management
+│   │       ├── cart/                # Cart Signal Store
+│   │       └── orders/              # Orders Store, Effects, Actions
+│   └── public/images/               # Product images
+├── ECommerce.BFF.API/               # Backend for Frontend API
+│   ├── Endpoints/                   # BFF API endpoints
+│   ├── Hubs/                        # SignalR hubs (OrderStatusHub)
+│   ├── Lenses/                      # Read repositories (OrderLens, ProductLens)
+│   └── Perspectives/                # Event-driven read model updates
+│       ├── OrderSummaryPerspective
+│       ├── OrderStatsPerspective
+│       └── ProductInventoryPerspective
 ├── ECommerce.OrderService.API/      # REST/GraphQL API service
 │   ├── Endpoints/                   # FastEndpoints
 │   ├── GraphQL/                     # HotChocolate queries/mutations
@@ -85,6 +158,7 @@ ECommerce/
 ## Prerequisites
 
 - .NET 10.0 RC2 SDK or later
+- Node.js 20+ and pnpm 10+ (for Angular UI)
 - Docker Desktop (for PostgreSQL and Azure Service Bus emulator)
 - Azure CLI (optional, for real Azure Service Bus)
 
@@ -100,11 +174,18 @@ dotnet run
 ```
 
 This will:
-1. Start PostgreSQL containers for each service database
+1. Start PostgreSQL containers for all service databases (including bffdb)
 2. Start Azure Service Bus emulator (Azurite)
 3. Apply database migrations
-4. Start all 5 services
-5. Open Aspire Dashboard at https://localhost:17195
+4. Start all 6 backend services (OrderService, BFF, 4 workers)
+5. Start the Angular UI at http://localhost:4200
+6. Open Aspire Dashboard at https://localhost:17195
+
+Access the application:
+- **Angular UI**: http://localhost:4200 - Shopping interface with catalog, cart, orders, and admin
+- **BFF API**: Check Aspire Dashboard for assigned port
+- **OrderService API**: Check Aspire Dashboard for assigned port
+- **Aspire Dashboard**: Monitor all services, logs, and telemetry
 
 ### Option 2: Manual Setup
 
@@ -250,8 +331,20 @@ The solution automatically merges these into a master registry for the VSCode ex
 - **Source-Generated Dispatch**: Zero-reflection message routing
 - **Type-Safe Handlers**: Compile-time verified message handling
 - **Message Envelope**: Distributed tracing with hop-based metadata
+- **Perspectives**: Event-driven read model updates (`IPerspectiveOf<TEvent>`)
+- **Lenses**: Query-optimized read repositories
 - **Outbox Pattern**: Reliable cross-service event publishing
 - **Inbox Pattern**: Exactly-once message processing
+- **Fire-and-forget Commands**: Async processing with immediate response
+
+### Modern Frontend Architecture
+
+- **Angular 20**: Latest Angular with standalone components
+- **Clarity Design System**: VMware's enterprise UI component library
+- **NgRx Hybrid State**: Signal Store (cart) + traditional Store/Effects (orders)
+- **Real-time Updates**: SignalR WebSocket integration
+- **BFF Pattern**: Backend optimized for frontend needs
+- **Responsive Design**: Mobile-first UI with Clarity components
 
 ### .NET Aspire
 
@@ -259,6 +352,7 @@ The solution automatically merges these into a master registry for the VSCode ex
 - **Service Discovery**: Inter-service communication
 - **Resilience**: Built-in retry policies and circuit breakers
 - **Observability**: Unified telemetry and monitoring
+- **Node.js Integration**: Automatic Angular dev server orchestration
 
 ### ASP.NET Core
 

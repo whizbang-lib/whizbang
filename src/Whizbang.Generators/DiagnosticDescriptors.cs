@@ -22,16 +22,18 @@ internal static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ002: Warning - No receptors found in the compilation. 
+  /// WHIZ002: Warning - No receptors or perspectives found in the compilation.
+  /// Only shows if BOTH IReceptor AND IPerspectiveOf are absent.
+  /// Example: BFF with 5 IPerspectiveOf implementations but no IReceptor should NOT warn.
   /// </summary>
   public static readonly DiagnosticDescriptor NoReceptorsFound = new(
       id: "WHIZ002",
-      title: "No Receptors Found",
-      messageFormat: "No IReceptor implementations were found in the compilation",
+      title: "No Message Handlers Found",
+      messageFormat: "No IReceptor or IPerspectiveOf implementations were found in the compilation",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
-      description: "The source generator did not find any classes implementing IReceptor<TMessage, TResponse>."
+      description: "The source generator did not find any classes implementing IReceptor<TMessage, TResponse> or IPerspectiveOf<TEvent>."
   );
 
   /// <summary>
@@ -84,5 +86,18 @@ internal static class DiagnosticDescriptors {
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
       description: "A message type should only have one property marked with [AggregateId]. Additional attributes are ignored."
+  );
+
+  /// <summary>
+  /// WHIZ007: Info - Perspective discovered during source generation.
+  /// </summary>
+  public static readonly DiagnosticDescriptor PerspectiveDiscovered = new(
+      id: "WHIZ007",
+      title: "Perspective Discovered",
+      messageFormat: "Found perspective '{0}' listening to {1}",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "A perspective implementation was discovered and will be registered."
   );
 }
