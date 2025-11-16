@@ -381,12 +381,33 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         sb.AppendLine($"      ConstructorParameterMetadataInitializer = () => ctorParams");
         sb.AppendLine($"  }};");
       } else {
-        // Type has no parameterized constructor (e.g., record with required properties)
-        // For these types, use reflection to create instance without setting required members
-        // This is necessary because we can't call new T() without satisfying required members
+        // Type has no parameterized constructor but has init-only properties (e.g., record with required properties)
+        // Use object initializer syntax to set init-only properties during construction
+        // Generate constructor parameters
+        sb.AppendLine($"  var ctorParams = new JsonParameterInfoValues[{message.Properties.Length}];");
+        for (int i = 0; i < message.Properties.Length; i++) {
+          var prop = message.Properties[i];
+          sb.AppendLine($"  ctorParams[{i}] = new JsonParameterInfoValues {{");
+          sb.AppendLine($"      Name = \"{prop.Name}\",");
+          sb.AppendLine($"      ParameterType = typeof({prop.Type}),");
+          sb.AppendLine($"      Position = {i},");
+          sb.AppendLine($"      HasDefaultValue = false,");
+          sb.AppendLine($"      DefaultValue = null");
+          sb.AppendLine($"  }};");
+        }
+        sb.AppendLine();
+
+        // Create JsonObjectInfoValues with object initializer
         sb.AppendLine($"  var objectInfo = new JsonObjectInfoValues<{message.FullyQualifiedName}> {{");
-        sb.AppendLine($"      ObjectCreator = static () => (({message.FullyQualifiedName})System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof({message.FullyQualifiedName}))),");
-        sb.AppendLine($"      PropertyMetadataInitializer = _ => properties");
+        sb.AppendLine($"      ObjectWithParameterizedConstructorCreator = static args => new {message.FullyQualifiedName}() {{");
+        for (int i = 0; i < message.Properties.Length; i++) {
+          var prop = message.Properties[i];
+          var comma = i < message.Properties.Length - 1 ? "," : "";
+          sb.AppendLine($"          {prop.Name} = ({prop.Type})args[{i}]{comma}");
+        }
+        sb.AppendLine("      },");
+        sb.AppendLine($"      PropertyMetadataInitializer = _ => properties,");
+        sb.AppendLine($"      ConstructorParameterMetadataInitializer = () => ctorParams");
         sb.AppendLine($"  }};");
       }
       sb.AppendLine();
