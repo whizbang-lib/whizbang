@@ -1,5 +1,5 @@
-using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Azure.Messaging.ServiceBus;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Observability;
@@ -17,16 +17,20 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
   private readonly Dictionary<string, ServiceBusSender> _senders = new();
   private readonly SemaphoreSlim _senderLock = new(1, 1);
   private readonly AzureServiceBusOptions _options;
+  private readonly JsonSerializerContext _jsonContext;
   private bool _disposed;
 
   public AzureServiceBusTransport(
     string connectionString,
+    JsonSerializerContext jsonContext,
     AzureServiceBusOptions? options = null,
     ILogger<AzureServiceBusTransport>? logger = null
   ) {
     ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+    ArgumentNullException.ThrowIfNull(jsonContext);
 
     _client = new ServiceBusClient(connectionString);
+    _jsonContext = jsonContext;
     _options = options ?? new AzureServiceBusOptions();
     _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<AzureServiceBusTransport>.Instance;
   }
@@ -38,7 +42,6 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
     TransportCapabilities.Ordered;
 
   /// <inheritdoc />
-  [RequiresUnreferencedCode("Uses JSON serialization which may require unreferenced code.")]
   public async Task PublishAsync(
     IMessageEnvelope envelope,
     TransportDestination destination,
@@ -56,8 +59,10 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
       var envelopeTypeName = envelopeType.AssemblyQualifiedName
         ?? throw new InvalidOperationException("Envelope type must have an assembly qualified name");
 
-      // Serialize envelope to JSON
-      var json = JsonSerializer.Serialize(envelope, envelopeType, _options.JsonSerializerOptions);
+      // Serialize envelope to JSON using AOT-compatible context
+      var typeInfo = _jsonContext.GetTypeInfo(envelopeType)
+        ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
+      var json = JsonSerializer.Serialize(envelope, typeInfo);
       var message = new ServiceBusMessage(json) {
         MessageId = envelope.MessageId.Value.ToString(),
         Subject = destination.RoutingKey ?? "message",
@@ -166,9 +171,20 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
             return;
           }
 
-          // Deserialize envelope using the resolved type
+          // Deserialize envelope using the resolved type and AOT-compatible context
           var json = args.Message.Body.ToString();
-          var envelope = JsonSerializer.Deserialize(json, envelopeType, _options.JsonSerializerOptions) as IMessageEnvelope;
+          var typeInfo = _jsonContext.GetTypeInfo(envelopeType);
+          if (typeInfo == null) {
+            _logger.LogError("No JsonTypeInfo found for {EnvelopeType}", envelopeTypeName);
+            await args.DeadLetterMessageAsync(
+              args.Message,
+              "MissingJsonTypeInfo",
+              $"No JsonTypeInfo found for envelope type: {envelopeTypeName}",
+              cancellationToken: args.CancellationToken
+            );
+            return;
+          }
+          var envelope = JsonSerializer.Deserialize(json, typeInfo) as IMessageEnvelope;
 
           if (envelope == null) {
             _logger.LogError("Failed to deserialize message {MessageId} as {EnvelopeType}",

@@ -1,0 +1,221 @@
+using System;
+using System.Collections.Immutable;
+using System.Linq;
+using System.Reflection;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+
+namespace Whizbang.Generators;
+
+/// <summary>
+/// Source generator that creates a JsonSerializerContext with manual JsonTypeInfo objects
+/// for AOT-compatible serialization. Discovers message types (ICommand, IEvent) and generates
+/// WhizbangJsonContext with generic helper methods to minimize code repetition.
+/// </summary>
+[Generator]
+public class JsonTypeInfoGenerator : IIncrementalGenerator {
+  private const string I_COMMAND = "Whizbang.Core.ICommand";
+  private const string I_EVENT = "Whizbang.Core.IEvent";
+
+  public void Initialize(IncrementalGeneratorInitializationContext context) {
+    // Discover message types (commands and events)
+    var messageTypes = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) => node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 } ||
+                                       node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        transform: static (ctx, ct) => ExtractMessageTypeInfo(ctx, ct)
+    ).Where(static info => info is not null);
+
+    // Generate WhizbangJsonContext from collected message types
+    context.RegisterSourceOutput(
+        messageTypes.Collect(),
+        static (ctx, messages) => GenerateWhizbangJsonContext(ctx, messages!)
+    );
+  }
+
+  /// <summary>
+  /// Extracts message type information from syntax node using semantic analysis.
+  /// Returns null if the node is not a message type (ICommand or IEvent).
+  /// </summary>
+  private static JsonMessageTypeInfo? ExtractMessageTypeInfo(
+      GeneratorSyntaxContext context,
+      CancellationToken ct) {
+
+    // Predicate guarantees node is RecordDeclarationSyntax or ClassDeclarationSyntax (both inherit from TypeDeclarationSyntax)
+    // Defensive guard: throws if Roslyn returns null (indicates compiler bug)
+    // See RoslynGuards.cs for rationale - no branch created, eliminates coverage gap
+    var typeSymbol = context.Node switch {
+      RecordDeclarationSyntax record => RoslynGuards.GetRecordSymbolOrThrow(record, context.SemanticModel, ct),
+      ClassDeclarationSyntax @class => RoslynGuards.GetClassSymbolOrThrow(@class, context.SemanticModel, ct),
+      _ => throw new InvalidOperationException($"Unexpected node type: {context.Node.GetType().Name}")
+    };
+
+    // Check if implements ICommand or IEvent
+    bool isCommand = typeSymbol.AllInterfaces.Any(i =>
+        i.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{I_COMMAND}");
+
+    bool isEvent = typeSymbol.AllInterfaces.Any(i =>
+        i.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{I_EVENT}");
+
+    if (!isCommand && !isEvent) {
+      return null;
+    }
+
+    var fullyQualifiedName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var simpleName = typeSymbol.Name;
+
+    return new JsonMessageTypeInfo(
+        FullyQualifiedName: fullyQualifiedName,
+        SimpleName: simpleName,
+        IsCommand: isCommand,
+        IsEvent: isEvent
+    );
+  }
+
+  /// <summary>
+  /// Generates WhizbangJsonContext.g.cs with JsonTypeInfo objects for all discovered message types
+  /// and Whizbang core types (MessageId, CorrelationId, etc.).
+  /// </summary>
+  private static void GenerateWhizbangJsonContext(
+      SourceProductionContext context,
+      ImmutableArray<JsonMessageTypeInfo> messages) {
+
+    // Report diagnostics for discovered message types
+    foreach (var message in messages) {
+      var messageKind = message.IsCommand ? "command" : "event";
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.JsonSerializableTypeDiscovered,
+          Location.None,
+          message.SimpleName,
+          messageKind
+      ));
+    }
+
+    // Load template and snippets
+    var assembly = typeof(JsonTypeInfoGenerator).Assembly;
+    var template = TemplateUtilities.GetEmbeddedTemplate(assembly, "WhizbangJsonContextTemplate.cs");
+
+    // Build content for each region
+    var lazyFields = GenerateLazyFields(assembly, messages);
+    var lazyProperties = GenerateLazyProperties(assembly, messages);
+    var getTypeInfoSwitch = GenerateGetTypeInfoSwitch(assembly, messages);
+    var helperMethods = GenerateHelperMethods(assembly);
+    var coreTypeFactories = GenerateCoreTypeFactories(assembly);
+
+    // Replace regions
+    var code = template;
+    code = TemplateUtilities.ReplaceHeaderRegion(assembly, code);
+    code = TemplateUtilities.ReplaceRegion(code, "LAZY_FIELDS", lazyFields);
+    code = TemplateUtilities.ReplaceRegion(code, "LAZY_PROPERTIES", lazyProperties);
+    code = TemplateUtilities.ReplaceRegion(code, "GET_TYPE_INFO_SWITCH", getTypeInfoSwitch);
+    code = TemplateUtilities.ReplaceRegion(code, "HELPER_METHODS", helperMethods);
+    code = TemplateUtilities.ReplaceRegion(code, "CORE_TYPE_FACTORIES", coreTypeFactories);
+    code = TemplateUtilities.ReplaceRegion(code, "MESSAGE_TYPE_FACTORIES", "// No additional factories needed - CreateMessageEnvelope<T> handles all message types");
+
+    context.AddSource("WhizbangJsonContext.g.cs", code);
+  }
+
+  private static string GenerateLazyFields(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> messages) {
+    var sb = new System.Text.StringBuilder();
+
+    // Core types
+    sb.AppendLine("private JsonTypeInfo<MessageId>? _MessageId;");
+    sb.AppendLine("private JsonTypeInfo<CorrelationId>? _CorrelationId;");
+    sb.AppendLine();
+
+    // Message envelope types
+    var snippet = TemplateUtilities.ExtractSnippet(assembly, "JsonTypeInfoSnippets.cs", "MESSAGE_ENVELOPE_LAZY_FIELD");
+    foreach (var message in messages) {
+      var field = snippet
+          .Replace("__PAYLOAD_TYPE__", message.FullyQualifiedName)
+          .Replace("__PAYLOAD_NAME__", message.SimpleName);
+      sb.AppendLine(field.TrimEnd());
+    }
+
+    return sb.ToString();
+  }
+
+  private static string GenerateLazyProperties(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> messages) {
+    var sb = new System.Text.StringBuilder();
+
+    // Core types
+    sb.AppendLine("private JsonTypeInfo<MessageId> MessageId => _MessageId ??= Create_MessageId(Options);");
+    sb.AppendLine("private JsonTypeInfo<CorrelationId> CorrelationId => _CorrelationId ??= Create_CorrelationId(Options);");
+    sb.AppendLine();
+
+    // Message envelope types
+    var snippet = TemplateUtilities.ExtractSnippet(assembly, "JsonTypeInfoSnippets.cs", "MESSAGE_ENVELOPE_LAZY_PROPERTY");
+    foreach (var message in messages) {
+      var property = snippet
+          .Replace("__PAYLOAD_TYPE__", message.FullyQualifiedName)
+          .Replace("__PAYLOAD_NAME__", message.SimpleName);
+      sb.AppendLine(property.TrimEnd());
+    }
+
+    return sb.ToString();
+  }
+
+  private static string GenerateGetTypeInfoSwitch(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> messages) {
+    var sb = new System.Text.StringBuilder();
+
+    sb.AppendLine("public override JsonTypeInfo? GetTypeInfo(Type type) {");
+    sb.AppendLine("  // Core types");
+    sb.AppendLine("  if (type == typeof(MessageId)) return MessageId;");
+    sb.AppendLine("  if (type == typeof(CorrelationId)) return CorrelationId;");
+    sb.AppendLine();
+
+    // Message envelope types
+    sb.AppendLine("  // Message envelope types");
+    var snippet = TemplateUtilities.ExtractSnippet(assembly, "JsonTypeInfoSnippets.cs", "MESSAGE_ENVELOPE_GET_TYPE_INFO_CASE");
+    foreach (var message in messages) {
+      var caseStatement = snippet
+          .Replace("__PAYLOAD_TYPE__", message.FullyQualifiedName)
+          .Replace("__PAYLOAD_NAME__", message.SimpleName);
+      sb.AppendLine("  " + caseStatement.TrimEnd());
+    }
+
+    sb.AppendLine();
+    sb.AppendLine("  return null;");
+    sb.AppendLine("}");
+
+    return sb.ToString();
+  }
+
+  private static string GenerateHelperMethods(Assembly assembly) {
+    var sb = new System.Text.StringBuilder();
+
+    // Extract all helper method snippets
+    var createMessageEnvelope = TemplateUtilities.ExtractSnippet(assembly, "JsonTypeInfoSnippets.cs", "GENERIC_CREATE_MESSAGE_ENVELOPE");
+    var createProperty = TemplateUtilities.ExtractSnippet(assembly, "JsonTypeInfoSnippets.cs", "CREATE_PROPERTY_HELPER");
+    var createConstructorParam = TemplateUtilities.ExtractSnippet(assembly, "JsonTypeInfoSnippets.cs", "CREATE_CONSTRUCTOR_PARAMETER_HELPER");
+
+    sb.AppendLine(createMessageEnvelope);
+    sb.AppendLine();
+    sb.AppendLine(createProperty);
+    sb.AppendLine();
+    sb.AppendLine(createConstructorParam);
+
+    return sb.ToString();
+  }
+
+  private static string GenerateCoreTypeFactories(Assembly assembly) {
+    var sb = new System.Text.StringBuilder();
+    var snippet = TemplateUtilities.ExtractSnippet(assembly, "JsonTypeInfoSnippets.cs", "VALUE_OBJECT_FACTORY");
+
+    // MessageId
+    var messageIdFactory = snippet
+        .Replace("__TYPE__", "MessageId")
+        .Replace("__TYPE_METHOD__", "MessageId")
+        .Replace("__CONVERTER__", "MessageIdConverter");
+    sb.AppendLine(messageIdFactory);
+    sb.AppendLine();
+
+    // CorrelationId
+    var correlationIdFactory = snippet
+        .Replace("__TYPE__", "CorrelationId")
+        .Replace("__TYPE_METHOD__", "CorrelationId")
+        .Replace("__CONVERTER__", "CorrelationIdConverter");
+    sb.AppendLine(correlationIdFactory);
+
+    return sb.ToString();
+  }
+}

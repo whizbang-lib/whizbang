@@ -1,6 +1,9 @@
+using System.Diagnostics.CodeAnalysis;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using Whizbang.Core;
+using Whizbang.Core.Generated;
+using Whizbang.Core.Generated;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
@@ -24,7 +27,8 @@ public class DispatcherTransportBridgeTests {
   public async Task PublishToTransportAsync_WithMessage_DeliversToRemoteDestinationAsync() {
     // Arrange
     var transport = new InProcessTransport();
-    var serializer = new JsonMessageSerializer();
+    var options = Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
     var dispatcher = CreateTestDispatcher();
     var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer);
     var destination = new TransportDestination("remote-service");
@@ -62,7 +66,8 @@ public class DispatcherTransportBridgeTests {
   public async Task PublishToTransportAsync_AutomaticallySerializesMessageAsync() {
     // Arrange
     var transport = new InProcessTransport();
-    var serializer = new JsonMessageSerializer();
+    var options = Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
     var dispatcher = CreateTestDispatcher();
     var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer);
     var destination = new TransportDestination("remote-service");
@@ -93,7 +98,8 @@ public class DispatcherTransportBridgeTests {
   public async Task SendToTransportAsync_WithRequestResponse_ReturnsTypedResponseAsync() {
     // Arrange
     var transport = new InProcessTransport();
-    var serializer = new JsonMessageSerializer();
+    var options = Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
     var dispatcher = CreateTestDispatcher();
     var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer);
     var destination = new TransportDestination("remote-calculator");
@@ -137,7 +143,8 @@ public class DispatcherTransportBridgeTests {
   public async Task SubscribeFromTransportAsync_RoutesIncomingMessagesToDispatcherAsync() {
     // Arrange
     var transport = new InProcessTransport();
-    var serializer = new JsonMessageSerializer();
+    var options = Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
     var dispatcher = CreateTestDispatcher();
     var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer);
     var destination = new TransportDestination("local-commands");
@@ -185,7 +192,8 @@ public class DispatcherTransportBridgeTests {
   public async Task SubscribeFromTransportAsync_DeserializesAndInvokesLocalReceptorAsync() {
     // Arrange
     var transport = new InProcessTransport();
-    var serializer = new JsonMessageSerializer();
+    var options = Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
     var dispatcher = CreateTestDispatcher();
     var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer);
     var destination = new TransportDestination("local-commands");
@@ -235,7 +243,8 @@ public class DispatcherTransportBridgeTests {
   public async Task PublishToTransportAsync_PreservesCorrelationIdAsync() {
     // Arrange
     var transport = new InProcessTransport();
-    var serializer = new JsonMessageSerializer();
+    var options = Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
     var dispatcher = CreateTestDispatcher();
     var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer);
     var destination = new TransportDestination("remote-service");
@@ -270,7 +279,8 @@ public class DispatcherTransportBridgeTests {
   public async Task PublishToTransportAsync_CreatesEnvelopeWithHopAsync() {
     // Arrange
     var transport = new InProcessTransport();
-    var serializer = new JsonMessageSerializer();
+    var options = Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
     var dispatcher = CreateTestDispatcher();
     var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer);
     var destination = new TransportDestination("remote-service");
@@ -301,7 +311,8 @@ public class DispatcherTransportBridgeTests {
   public async Task SendToTransportAsync_WithExplicitContext_PreservesCorrelationIdAsync() {
     // Arrange
     var transport = new InProcessTransport();
-    var serializer = new JsonMessageSerializer();
+    var options = Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
     var dispatcher = CreateTestDispatcher();
     var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer);
     var destination = new TransportDestination("remote-calculator");
@@ -360,16 +371,16 @@ public class DispatcherTransportBridgeTests {
   }
 
   // Test message types
-  private record TestCommand {
+  public record TestCommand : IEvent {
     public int Value { get; init; }
     public string Name { get; init; } = string.Empty;
   }
 
-  private record TestQuery {
+  public record TestQuery : IEvent {
     public int Value { get; init; }
   }
 
-  private record TestResult {
+  public record TestResult : IEvent {
     public int Result { get; init; }
   }
 

@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
+using Whizbang.Core.Generated;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.ValueObjects;
@@ -367,13 +368,15 @@ public class PolicyContextTests {
 
   [Test]
   public async Task GetAggregateId_WithAggregateIdAttribute_UsesGeneratedExtractorAsync() {
-    // RED PHASE: This test will FAIL until generator is implemented
     // Arrange
+    var services = new ServiceCollection()
+        .AddWhizbangAggregateIdExtractor()
+        .BuildServiceProvider();
     var productId = Guid.NewGuid();
     var message = new CreateProduct(productId, "New Product");
-    var context = new PolicyContext(message);
+    var context = new PolicyContext(message, services: services);
 
-    // Act - Should use generated extractor, not reflection
+    // Act - Should use generated extractor via DI (zero reflection)
     var aggregateId = context.GetAggregateId();
 
     // Assert
@@ -382,10 +385,12 @@ public class PolicyContextTests {
 
   [Test]
   public async Task GetAggregateId_WithoutAggregateIdAttribute_ThrowsHelpfulExceptionAsync() {
-    // RED PHASE: This test will FAIL until generator is implemented
     // Arrange
+    var services = new ServiceCollection()
+        .AddWhizbangAggregateIdExtractor()
+        .BuildServiceProvider();
     var message = new MessageWithoutAttribute("test");
-    var context = new PolicyContext(message);
+    var context = new PolicyContext(message, services: services);
 
     // Act & Assert
     var exception = await Assert.That(() => context.GetAggregateId())
@@ -397,9 +402,12 @@ public class PolicyContextTests {
   [Test]
   public async Task GetAggregateId_ReturnsId_WhenMessageContainsAggregateIdAsync() {
     // Arrange
+    var services = new ServiceCollection()
+        .AddWhizbangAggregateIdExtractor()
+        .BuildServiceProvider();
     var orderId = Guid.NewGuid();
     var message = new CreateOrder(orderId, "Widget");
-    var context = new PolicyContext(message);
+    var context = new PolicyContext(message, services: services);
 
     // Act
     var aggregateId = context.GetAggregateId();
@@ -411,8 +419,11 @@ public class PolicyContextTests {
   [Test]
   public async Task GetAggregateId_ThrowsException_WhenMessageDoesNotContainAggregateIdAsync() {
     // Arrange
+    var services = new ServiceCollection()
+        .AddWhizbangAggregateIdExtractor()
+        .BuildServiceProvider();
     var message = new TestMessage("test");
-    var context = new PolicyContext(message);
+    var context = new PolicyContext(message, services: services);
 
     // Act & Assert
     await Assert.That(() => context.GetAggregateId())
@@ -471,4 +482,5 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope {
   public CorrelationId? GetCorrelationId() => Hops.FirstOrDefault()?.CorrelationId;
   public MessageId? GetCausationId() => Hops.FirstOrDefault()?.CausationId;
   public object? GetMetadata(string key) => Metadata.TryGetValue(key, out var value) ? value : null;
+  public object GetPayload() => Payload!;
 }

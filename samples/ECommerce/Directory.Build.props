@@ -8,5 +8,19 @@
     <!-- Enable source generator output to file system -->
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
     <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
+
+    <!-- AOT Compatibility - Zero Reflection Enforcement -->
+    <IsAotCompatible>true</IsAotCompatible>
+    <EnableAotAnalyzer>true</EnableAotAnalyzer>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+
+    <!-- Make AOT warnings errors to enforce zero reflection -->
+    <WarningsAsErrors>$(WarningsAsErrors);IL2026;IL2046;IL2075;IL3050</WarningsAsErrors>
   </PropertyGroup>
+
+  <!-- BannedApiAnalyzers - Ban reflection attributes -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all" />
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" />
+  </ItemGroup>
 </Project>

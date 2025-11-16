@@ -2,6 +2,7 @@ using System.Data;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -15,21 +16,20 @@ namespace Whizbang.Data.Dapper.Custom;
 public abstract class DapperEventStoreBase : IEventStore {
   protected readonly IDbConnectionFactory _connectionFactory;
   protected readonly IDbExecutor _executor;
-  protected readonly JsonSerializerOptions _jsonOptions;
+  protected readonly JsonSerializerContext _jsonContext;
 
-  protected DapperEventStoreBase(IDbConnectionFactory connectionFactory, IDbExecutor executor) {
+  protected DapperEventStoreBase(
+    IDbConnectionFactory connectionFactory,
+    IDbExecutor executor,
+    JsonSerializerContext jsonContext
+  ) {
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentNullException.ThrowIfNull(executor);
+    ArgumentNullException.ThrowIfNull(jsonContext);
 
     _connectionFactory = connectionFactory;
     _executor = executor;
-    _jsonOptions = new JsonSerializerOptions {
-      PropertyNameCaseInsensitive = true,
-      PropertyNamingPolicy = null, // Preserve PascalCase property names
-      WriteIndented = false,
-      DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never, // Include all properties
-      IncludeFields = true // Include fields as well as properties
-    };
+    _jsonContext = jsonContext;
   }
 
   protected IDbConnectionFactory ConnectionFactory => _connectionFactory;
@@ -46,84 +46,37 @@ public abstract class DapperEventStoreBase : IEventStore {
 
   /// <summary>
   /// Gets the SQL command to append a new event to a stream.
-  /// Parameters: @StreamKey (string), @SequenceNumber (long), @Envelope (string), @CreatedAt (DateTimeOffset)
+  /// Parameters: @EventId (Guid), @StreamId (Guid), @SequenceNumber (long),
+  ///             @EventType (string), @EventData (string), @Metadata (string),
+  ///             @Scope (string), @CreatedAt (DateTimeOffset)
   /// </summary>
   protected abstract string GetAppendSql();
 
   /// <summary>
   /// Gets the SQL query to read events from a stream.
-  /// Should return: Envelope (string)
-  /// Parameters: @StreamKey (string), @FromSequence (long)
+  /// Should return: EventData, Metadata, Scope (all as JSONB/string)
+  /// Parameters: @StreamId (Guid), @FromSequence (long)
   /// </summary>
   protected abstract string GetReadSql();
 
   /// <summary>
   /// Gets the SQL query to get the last sequence number for a stream.
   /// Should return MAX(sequence_number) or -1 if stream doesn't exist.
-  /// Parameters: @StreamKey (string)
+  /// Parameters: @StreamId (Guid)
   /// </summary>
   protected abstract string GetLastSequenceSql();
 
-  [RequiresUnreferencedCode("JSON serialization uses reflection")]
-  public virtual async Task AppendAsync(string streamKey, IMessageEnvelope envelope, CancellationToken cancellationToken = default) {
-    ArgumentNullException.ThrowIfNull(streamKey);
-    ArgumentNullException.ThrowIfNull(envelope);
+  /// <summary>
+  /// AOT-compatible append with explicit stream ID.
+  /// </summary>
+  public abstract Task AppendAsync(Guid streamId, IMessageEnvelope envelope, CancellationToken cancellationToken = default);
 
-    using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-    EnsureConnectionOpen(connection);
-
-    // Get next sequence number
-    var lastSequence = await GetLastSequenceAsync(streamKey, cancellationToken);
-    var nextSequence = lastSequence + 1;
-
-    // Serialize using the actual runtime type to preserve all properties
-    var json = JsonSerializer.Serialize(envelope, envelope.GetType(), _jsonOptions);
-    var sql = GetAppendSql();
-
-    await _executor.ExecuteAsync(
-      connection,
-      sql,
-      new {
-        StreamKey = streamKey,
-        SequenceNumber = nextSequence,
-        Envelope = json,
-        CreatedAt = DateTimeOffset.UtcNow
-      },
-      cancellationToken: cancellationToken);
-  }
-
-  [RequiresUnreferencedCode("JSON deserialization uses reflection")]
-  public async IAsyncEnumerable<IMessageEnvelope> ReadAsync(
-    string streamKey,
+  public abstract IAsyncEnumerable<IMessageEnvelope> ReadAsync(
+    Guid streamId,
     long fromSequence,
-    [EnumeratorCancellation] CancellationToken cancellationToken = default) {
-    ArgumentNullException.ThrowIfNull(streamKey);
+    CancellationToken cancellationToken = default);
 
-    using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-    EnsureConnectionOpen(connection);
-
-    var sql = GetReadSql();
-
-    var rows = await _executor.QueryAsync<EventRow>(
-      connection,
-      sql,
-      new {
-        StreamKey = streamKey,
-        FromSequence = fromSequence
-      },
-      cancellationToken: cancellationToken);
-
-    foreach (var row in rows) {
-      var envelope = JsonSerializer.Deserialize<MessageEnvelope<object>>(row.Envelope, _jsonOptions);
-      if (envelope != null) {
-        yield return envelope;
-      }
-    }
-  }
-
-  public async Task<long> GetLastSequenceAsync(string streamKey, CancellationToken cancellationToken = default) {
-    ArgumentNullException.ThrowIfNull(streamKey);
-
+  public async Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) {
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
 
@@ -132,16 +85,18 @@ public abstract class DapperEventStoreBase : IEventStore {
     var lastSequence = await _executor.ExecuteScalarAsync<long?>(
       connection,
       sql,
-      new { StreamKey = streamKey },
+      new { StreamId = streamId },
       cancellationToken: cancellationToken);
 
     return lastSequence ?? -1;
   }
 
   /// <summary>
-  /// Internal row structure for Dapper mapping.
+  /// Internal row structure for Dapper mapping (3-column JSONB pattern).
   /// </summary>
   protected class EventRow {
-    public string Envelope { get; set; } = string.Empty;
+    public string EventData { get; set; } = string.Empty;
+    public string Metadata { get; set; } = string.Empty;
+    public string? Scope { get; set; }
   }
 }

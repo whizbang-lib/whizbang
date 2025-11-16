@@ -1,12 +1,24 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text;
 using System.Text.Json;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
+using Whizbang.Core;
+using Whizbang.Core.Generated;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Transports.Tests;
+
+/// <summary>
+/// Test message for JSON serializer tests.
+/// </summary>
+public record TestMessage : IEvent {
+  public required string Content { get; init; }
+  public required int Value { get; init; }
+}
 
 /// <summary>
 /// Tests for JsonMessageSerializer and its internal converters.
@@ -17,10 +29,11 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task SerializeAsync_WithValidEnvelope_ShouldSerializeAsync() {
     // Arrange
-    var serializer = new JsonMessageSerializer();
-    var envelope = new MessageEnvelope<string> {
+    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
+    var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
-      Payload = "test payload",
+      Payload = new TestMessage { Content = "test payload", Value = 1 },
       Hops = new List<MessageHop>()
     };
 
@@ -36,7 +49,8 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task SerializeAsync_WithMetadataContainingAllTypes_ShouldSerializeAsync() {
     // Arrange
-    var serializer = new JsonMessageSerializer();
+    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
     var metadata = new Dictionary<string, object> {
       ["stringValue"] = "test",
       ["intValue"] = 42,
@@ -47,9 +61,9 @@ public class JsonMessageSerializerTests {
       ["nullValue"] = null!
     };
 
-    var envelope = new MessageEnvelope<string> {
+    var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
-      Payload = "test",
+      Payload = new TestMessage { Content = "test", Value = 1 },
       Hops = new List<MessageHop> {
         new MessageHop {
           Type = HopType.Current,
@@ -62,7 +76,7 @@ public class JsonMessageSerializerTests {
 
     // Act
     var bytes = await serializer.SerializeAsync(envelope);
-    var deserialized = await serializer.DeserializeAsync<string>(bytes);
+    var deserialized = await serializer.DeserializeAsync<TestMessage>(bytes);
 
     // Assert
     var hop = deserialized.Hops[0];
@@ -78,10 +92,11 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task SerializeAsync_WithNullMetadata_ShouldHandleNullAsync() {
     // Arrange
-    var serializer = new JsonMessageSerializer();
-    var envelope = new MessageEnvelope<string> {
+    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
+    var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
-      Payload = "test",
+      Payload = new TestMessage { Content = "test", Value = 1 },
       Hops = new List<MessageHop> {
         new MessageHop {
           Type = HopType.Current,
@@ -94,7 +109,7 @@ public class JsonMessageSerializerTests {
 
     // Act
     var bytes = await serializer.SerializeAsync(envelope);
-    var deserialized = await serializer.DeserializeAsync<string>(bytes);
+    var deserialized = await serializer.DeserializeAsync<TestMessage>(bytes);
 
     // Assert
     await Assert.That(deserialized.Hops[0].Metadata).IsNull();
@@ -103,18 +118,20 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task DeserializeAsync_WithInvalidJson_ShouldThrowAsync() {
     // Arrange
-    var serializer = new JsonMessageSerializer();
+    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
     var invalidJson = Encoding.UTF8.GetBytes("{ invalid json }");
 
     // Act & Assert
-    await Assert.That(async () => await serializer.DeserializeAsync<string>(invalidJson))
+    await Assert.That(async () => await serializer.DeserializeAsync<TestMessage>(invalidJson))
       .ThrowsExactly<JsonException>();
   }
 
   [Test]
   public async Task DeserializeAsync_WithInvalidMessageId_ShouldThrowAsync() {
     // Arrange
-    var serializer = new JsonMessageSerializer();
+    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
     var jsonWithInvalidMessageId = Encoding.UTF8.GetBytes(@"{
         ""MessageId"": ""invalid-guid"",
         ""Payload"": ""test"",
@@ -122,14 +139,15 @@ public class JsonMessageSerializerTests {
       }");
 
     // Act & Assert
-    await Assert.That(async () => await serializer.DeserializeAsync<string>(jsonWithInvalidMessageId))
+    await Assert.That(async () => await serializer.DeserializeAsync<TestMessage>(jsonWithInvalidMessageId))
       .ThrowsExactly<JsonException>();
   }
 
   [Test]
   public async Task DeserializeAsync_WithNullMessageId_ShouldThrowAsync() {
     // Arrange
-    var serializer = new JsonMessageSerializer();
+    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
     var jsonWithNullMessageId = Encoding.UTF8.GetBytes(@"{
         ""MessageId"": null,
         ""Payload"": ""test"",
@@ -137,14 +155,15 @@ public class JsonMessageSerializerTests {
       }");
 
     // Act & Assert
-    await Assert.That(async () => await serializer.DeserializeAsync<string>(jsonWithNullMessageId))
+    await Assert.That(async () => await serializer.DeserializeAsync<TestMessage>(jsonWithNullMessageId))
       .ThrowsExactly<JsonException>();
   }
 
   [Test]
   public async Task DeserializeAsync_WithInvalidCorrelationId_ShouldThrowAsync() {
     // Arrange
-    var serializer = new JsonMessageSerializer();
+    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
     var jsonWithInvalidCorrelationId = Encoding.UTF8.GetBytes($@"{{
         ""MessageId"": ""{messageId.Value}"",
@@ -158,14 +177,15 @@ public class JsonMessageSerializerTests {
       }}");
 
     // Act & Assert
-    await Assert.That(async () => await serializer.DeserializeAsync<string>(jsonWithInvalidCorrelationId))
+    await Assert.That(async () => await serializer.DeserializeAsync<TestMessage>(jsonWithInvalidCorrelationId))
       .ThrowsExactly<JsonException>();
   }
 
   [Test]
   public async Task DeserializeAsync_WithNullCorrelationId_ShouldHandleGracefullyAsync() {
     // Arrange
-    var serializer = new JsonMessageSerializer();
+    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
     var jsonWithNullCorrelationId = Encoding.UTF8.GetBytes($@"{{
         ""MessageId"": ""{messageId.Value}"",
@@ -179,7 +199,7 @@ public class JsonMessageSerializerTests {
       }}");
 
     // Act
-    var deserialized = await serializer.DeserializeAsync<string>(jsonWithNullCorrelationId);
+    var deserialized = await serializer.DeserializeAsync<TestMessage>(jsonWithNullCorrelationId);
 
     // Assert
     await Assert.That(deserialized.Hops[0].CorrelationId).IsNull();
@@ -188,17 +208,18 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task SerializeAsync_WithValidMessageId_ShouldSerializeAsync() {
     // Arrange
-    var serializer = new JsonMessageSerializer();
+    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
-    var envelope = new MessageEnvelope<string> {
+    var envelope = new MessageEnvelope<TestMessage> {
       MessageId = messageId,
-      Payload = "test payload",
+      Payload = new TestMessage { Content = "test payload", Value = 1 },
       Hops = new List<MessageHop>()
     };
 
     // Act
     var bytes = await serializer.SerializeAsync(envelope);
-    var deserialized = await serializer.DeserializeAsync<string>(bytes);
+    var deserialized = await serializer.DeserializeAsync<TestMessage>(bytes);
 
     // Assert - MessageId should round-trip correctly
     await Assert.That(deserialized.MessageId).IsEqualTo(messageId);
@@ -207,12 +228,13 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task SerializeAsync_WithValidCorrelationId_ShouldSerializeAsync() {
     // Arrange
-    var serializer = new JsonMessageSerializer();
+    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
     var correlationId = CorrelationId.New();
-    var envelope = new MessageEnvelope<string> {
+    var envelope = new MessageEnvelope<TestMessage> {
       MessageId = messageId,
-      Payload = "test payload",
+      Payload = new TestMessage { Content = "test payload", Value = 1 },
       Hops = new List<MessageHop> {
         new MessageHop {
           Type = HopType.Current,
@@ -225,7 +247,7 @@ public class JsonMessageSerializerTests {
 
     // Act
     var bytes = await serializer.SerializeAsync(envelope);
-    var deserialized = await serializer.DeserializeAsync<string>(bytes);
+    var deserialized = await serializer.DeserializeAsync<TestMessage>(bytes);
 
     // Assert - CorrelationId should round-trip correctly using Write converter
     await Assert.That(deserialized.Hops[0].CorrelationId).IsEqualTo(correlationId);
@@ -234,7 +256,8 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task Metadata_WithInvalidStartToken_ShouldThrowAsync() {
     // Arrange
-    var serializer = new JsonMessageSerializer();
+    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
     // Metadata is an array instead of object
     var json = $@"{{
@@ -250,7 +273,7 @@ public class JsonMessageSerializerTests {
     var jsonWithInvalidMetadata = Encoding.UTF8.GetBytes(json);
 
     // Act & Assert
-    var exception = await Assert.That(async () => await serializer.DeserializeAsync<string>(jsonWithInvalidMetadata))
+    var exception = await Assert.That(async () => await serializer.DeserializeAsync<TestMessage>(jsonWithInvalidMetadata))
       .ThrowsExactly<JsonException>();
     await Assert.That(exception.Message).Contains("Expected StartObject");
   }
@@ -258,7 +281,8 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task Metadata_WithInvalidPropertyToken_ShouldThrowAsync() {
     // Arrange
-    var serializer = new JsonMessageSerializer();
+    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
     // Malformed metadata - value without property name
     var json = $@"{{
@@ -274,14 +298,15 @@ public class JsonMessageSerializerTests {
     var jsonWithMalformedMetadata = Encoding.UTF8.GetBytes(json);
 
     // Act & Assert
-    await Assert.That(async () => await serializer.DeserializeAsync<string>(jsonWithMalformedMetadata))
+    await Assert.That(async () => await serializer.DeserializeAsync<TestMessage>(jsonWithMalformedMetadata))
       .ThrowsExactly<JsonException>();
   }
 
   [Test]
   public async Task Metadata_WithUnsupportedValueType_ShouldThrowAsync() {
     // Arrange
-    var serializer = new JsonMessageSerializer();
+    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
     // Array value in metadata (not supported)
     var json = $@"{{
@@ -297,7 +322,7 @@ public class JsonMessageSerializerTests {
     var jsonWithUnsupportedValue = Encoding.UTF8.GetBytes(json);
 
     // Act & Assert
-    var exception = await Assert.That(async () => await serializer.DeserializeAsync<string>(jsonWithUnsupportedValue))
+    var exception = await Assert.That(async () => await serializer.DeserializeAsync<TestMessage>(jsonWithUnsupportedValue))
       .ThrowsExactly<JsonException>();
     await Assert.That(exception.Message).Contains("Unsupported JSON token type");
   }
@@ -305,14 +330,15 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task Metadata_WithUnsupportedWriteType_ShouldThrowAsync() {
     // Arrange
-    var serializer = new JsonMessageSerializer();
+    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
     var metadata = new Dictionary<string, object> {
       ["unsupportedType"] = new DateTime(2025, 1, 1) // DateTime is not supported
     };
 
-    var envelope = new MessageEnvelope<string> {
+    var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
-      Payload = "test",
+      Payload = new TestMessage { Content = "test", Value = 1 },
       Hops = new List<MessageHop> {
         new MessageHop {
           Type = HopType.Current,
@@ -332,7 +358,8 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task Metadata_WithNullPropertyName_ShouldThrowAsync() {
     // Arrange
-    var serializer = new JsonMessageSerializer();
+    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
     // Malformed JSON with null property name (this is unlikely in practice but tests the null check)
     // We'll test the ReadValue path for null by using a valid metadata with null value
@@ -349,7 +376,7 @@ public class JsonMessageSerializerTests {
     var jsonWithNullMetadataValue = Encoding.UTF8.GetBytes(json);
 
     // Act - This should succeed (null is a valid metadata value)
-    var deserialized = await serializer.DeserializeAsync<string>(jsonWithNullMetadataValue);
+    var deserialized = await serializer.DeserializeAsync<TestMessage>(jsonWithNullMetadataValue);
 
     // Assert - Metadata with null value should be present
     await Assert.That(deserialized.Hops[0].Metadata).IsNotNull();
@@ -358,15 +385,16 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task Metadata_WithDoubleValue_ShouldRoundTripAsync() {
     // Arrange
-    var serializer = new JsonMessageSerializer();
+    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
     var metadata = new Dictionary<string, object> {
       ["pi"] = 3.14159265359,
       ["negativeFloat"] = -42.5
     };
 
-    var envelope = new MessageEnvelope<string> {
+    var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
-      Payload = "test",
+      Payload = new TestMessage { Content = "test", Value = 1 },
       Hops = new List<MessageHop> {
         new MessageHop {
           Type = HopType.Current,
@@ -379,7 +407,7 @@ public class JsonMessageSerializerTests {
 
     // Act
     var bytes = await serializer.SerializeAsync(envelope);
-    var deserialized = await serializer.DeserializeAsync<string>(bytes);
+    var deserialized = await serializer.DeserializeAsync<TestMessage>(bytes);
 
     // Assert
     var hop = deserialized.Hops[0];
@@ -391,16 +419,17 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task Metadata_WithLargeInt64Value_ShouldRoundTripAsync() {
     // Arrange
-    var serializer = new JsonMessageSerializer();
+    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
     // Use a value larger than int32.MaxValue to ensure it's read as long
     var largeValue = (long)int.MaxValue + 1000L;
     var metadata = new Dictionary<string, object> {
       ["largeNumber"] = largeValue
     };
 
-    var envelope = new MessageEnvelope<string> {
+    var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
-      Payload = "test",
+      Payload = new TestMessage { Content = "test", Value = 1 },
       Hops = new List<MessageHop> {
         new MessageHop {
           Type = HopType.Current,
@@ -413,7 +442,7 @@ public class JsonMessageSerializerTests {
 
     // Act
     var bytes = await serializer.SerializeAsync(envelope);
-    var deserialized = await serializer.DeserializeAsync<string>(bytes);
+    var deserialized = await serializer.DeserializeAsync<TestMessage>(bytes);
 
     // Assert
     var hop = deserialized.Hops[0];
@@ -424,7 +453,8 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task RoundTrip_WithComplexEnvelope_ShouldPreserveAllDataAsync() {
     // Arrange
-    var serializer = new JsonMessageSerializer();
+    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var serializer = new JsonMessageSerializer(options);
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "test", Value = 42 },
@@ -452,10 +482,5 @@ public class JsonMessageSerializerTests {
     await Assert.That(payload.Content).IsEqualTo("test");
     await Assert.That(payload.Value).IsEqualTo(42);
     await Assert.That(deserialized.Hops).HasCount().EqualTo(1);
-  }
-
-  private record TestMessage {
-    public required string Content { get; init; }
-    public required int Value { get; init; }
   }
 }

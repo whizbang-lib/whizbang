@@ -25,6 +25,10 @@ public static class ServiceCollectionExtensions {
       new PostgresConnectionFactory(connectionString));
     services.AddSingleton<IDbExecutor, DapperDbExecutor>();
 
+    // Register JSONB persistence infrastructure
+    services.AddSingleton<IJsonbPersistenceAdapter<Whizbang.Core.Observability.IMessageEnvelope>, EventEnvelopeJsonbAdapter>();
+    services.AddSingleton<JsonbSizeValidator>();
+
     // Register Whizbang stores
     services.AddSingleton<IEventStore, DapperPostgresEventStore>();
     services.AddSingleton<IInbox, DapperPostgresInbox>();

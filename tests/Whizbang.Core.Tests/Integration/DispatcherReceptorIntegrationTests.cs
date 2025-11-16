@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -232,7 +233,7 @@ public class DispatcherReceptorIntegrationTests {
 
     // Act & Assert
     var exception = await Assert.That(async () =>
-        await dispatcher.LocalInvokeAsync<OrderPlaced>(command))
+        await dispatcher.LocalInvokeAsync<PlaceOrder, OrderPlaced>(command))
         .ThrowsExactly<InvalidOperationException>();
 
     await Assert.That(exception!.Message).Contains("Order must have items");
@@ -257,7 +258,7 @@ public class DispatcherReceptorIntegrationTests {
 
     // Act & Assert
     var exception = await Assert.That(async () =>
-        await dispatcher.LocalInvokeAsync<OrderPlaced>(command))
+        await dispatcher.LocalInvokeAsync<PlaceOrder, OrderPlaced>(command))
         .ThrowsExactly<HandlerNotFoundException>();
 
     await Assert.That(exception!.Message).Contains("PlaceOrder");

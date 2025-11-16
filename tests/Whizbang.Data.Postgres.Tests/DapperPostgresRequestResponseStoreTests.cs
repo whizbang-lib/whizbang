@@ -1,3 +1,4 @@
+using Whizbang.Core.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Tests.Messaging;
 using Whizbang.Data.Dapper.Postgres;
@@ -7,8 +8,8 @@ namespace Whizbang.Data.Postgres.Tests;
 /// <summary>
 /// Integration tests for DapperPostgresRequestResponseStore using PostgreSQL.
 /// Inherits all contract tests from RequestResponseStoreContractTests.
+/// Each test gets its own isolated PostgreSQL container for parallel execution.
 /// </summary>
-[NotInParallel]
 [InheritsTests]
 public class DapperPostgresRequestResponseStoreTests : RequestResponseStoreContractTests {
   private PostgresTestBase _testBase = null!;
@@ -27,7 +28,8 @@ public class DapperPostgresRequestResponseStoreTests : RequestResponseStoreContr
   }
 
   protected override Task<IRequestResponseStore> CreateStoreAsync() {
-    var store = new DapperPostgresRequestResponseStore(_testBase.ConnectionFactory, _testBase.Executor);
+    var jsonContext = new WhizbangJsonContext();
+    var store = new DapperPostgresRequestResponseStore(_testBase.ConnectionFactory, _testBase.Executor, jsonContext);
     return Task.FromResult<IRequestResponseStore>(store);
   }
 

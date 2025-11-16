@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -301,7 +302,11 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     await Task.WhenAll(tasks);
 
     // Assert - Execution order should be 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
-    await Assert.That(executionOrder).IsEquivalentTo(Enumerable.Range(0, 10));
+    var expected = Enumerable.Range(0, 10).ToList();
+    await Assert.That(executionOrder).HasCount().EqualTo(expected.Count);
+    for (int i = 0; i < executionOrder.Count; i++) {
+      await Assert.That(executionOrder[i]).IsEqualTo(expected[i]);
+    }
 
     await executor.StopAsync();
   }

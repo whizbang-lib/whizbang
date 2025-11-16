@@ -1,11 +1,17 @@
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Messaging;
+
+/// <summary>
+/// Test response type for request/response store tests.
+/// </summary>
+public record TestResponse(string Message) : IEvent;
 
 /// <summary>
 /// Contract tests for IRequestResponseStore interface.
@@ -132,9 +138,9 @@ public abstract class RequestResponseStoreContractTests {
   /// Helper method to create a test message envelope.
   /// </summary>
   private static IMessageEnvelope CreateTestEnvelope() {
-    return new MessageEnvelope<string> {
+    return new MessageEnvelope<TestResponse> {
       MessageId = MessageId.New(),
-      Payload = "test response",
+      Payload = new TestResponse("test response"),
       Hops = new List<MessageHop>()
     };
   }

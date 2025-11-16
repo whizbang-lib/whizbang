@@ -100,4 +100,56 @@ internal static class DiagnosticDescriptors {
       isEnabledByDefault: true,
       description: "A perspective implementation was discovered and will be registered."
   );
+
+  /// <summary>
+  /// WHIZ008: Warning - Perspective model may exceed JSONB size thresholds.
+  /// </summary>
+  public static readonly DiagnosticDescriptor PerspectiveSizeWarning = new(
+      id: "WHIZ008",
+      title: "Perspective Model Size Warning",
+      messageFormat: "Perspective '{0}' model estimated at ~{1} bytes. Consider splitting if approaching 2KB (compression) or 7KB (externalization) thresholds.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "Static analysis estimates the perspective model may be large. PostgreSQL JSONB columns have performance cliffs at 2KB (compression) and 7KB (externalization)."
+  );
+
+  /// <summary>
+  /// WHIZ009: Warning - IEvent implementation missing [StreamKey] attribute.
+  /// </summary>
+  public static readonly DiagnosticDescriptor MissingStreamKeyAttribute = new(
+      id: "WHIZ009",
+      title: "Missing StreamKey Attribute",
+      messageFormat: "Event type '{0}' implements IEvent but has no property or parameter marked with [StreamKey]. Stream key resolution will fail at runtime.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "All IEvent implementations should have exactly one property or constructor parameter marked with [StreamKey] to identify the event stream."
+  );
+
+  /// <summary>
+  /// WHIZ010: Info - StreamKey property discovered during source generation.
+  /// </summary>
+  public static readonly DiagnosticDescriptor StreamKeyDiscovered = new(
+      id: "WHIZ010",
+      title: "StreamKey Discovered",
+      messageFormat: "Found [StreamKey] on {0}.{1}",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "A stream key property was discovered and an extractor method will be generated."
+  );
+
+  /// <summary>
+  /// WHIZ011: Info - Message type discovered for JSON serialization.
+  /// </summary>
+  public static readonly DiagnosticDescriptor JsonSerializableTypeDiscovered = new(
+      id: "WHIZ011",
+      title: "JSON Serializable Type Discovered",
+      messageFormat: "Found {1} type '{0}' - adding to JsonSerializerContext for AOT-compatible serialization",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "A message type (ICommand or IEvent) was discovered and will be included in the generated JsonSerializerContext."
+  );
 }

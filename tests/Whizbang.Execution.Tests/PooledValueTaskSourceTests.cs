@@ -1,4 +1,5 @@
 using System.Buffers;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading.Tasks.Sources;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -199,7 +200,7 @@ public class PooledValueTaskSourceTests {
   [Arguments(typeof(ArgumentException))]
   [Arguments(typeof(InvalidOperationException))]
   [Arguments(typeof(NotSupportedException))]
-  public async Task PooledValueTaskSource_SetException_VariousExceptionTypes_PreservesExceptionTypeAsync(Type exceptionType) {
+  public async Task PooledValueTaskSource_SetException_VariousExceptionTypes_PreservesExceptionTypeAsync([DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] Type exceptionType) {
     // Arrange
     var source = new PooledValueTaskSource<int>();
     var valueTask = new ValueTask<int>(source, source.Token);

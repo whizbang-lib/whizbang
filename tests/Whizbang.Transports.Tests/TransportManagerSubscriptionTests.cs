@@ -1,5 +1,6 @@
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
+using Whizbang.Core.Generated;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
@@ -15,7 +16,7 @@ public class TransportManagerSubscriptionTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WithSingleTarget_ShouldCreateSubscriptionAsync() {
     // Arrange
-    var manager = new TransportManager();
+    var manager = new TransportManager(new JsonMessageSerializer(Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 
@@ -54,7 +55,7 @@ public class TransportManagerSubscriptionTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WithMultipleTargets_ShouldCreateMultipleSubscriptionsAsync() {
     // Arrange
-    var manager = new TransportManager();
+    var manager = new TransportManager(new JsonMessageSerializer(Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext()));
     var transport1 = new InProcessTransport();
     var transport2 = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport1);
@@ -83,7 +84,7 @@ public class TransportManagerSubscriptionTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WithKafkaConsumerGroup_ShouldIncludeInMetadataAsync() {
     // Arrange
-    var manager = new TransportManager();
+    var manager = new TransportManager(new JsonMessageSerializer(Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.Kafka, transport);
 
@@ -108,7 +109,7 @@ public class TransportManagerSubscriptionTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WithServiceBusSubscriptionName_ShouldIncludeInMetadataAsync() {
     // Arrange
-    var manager = new TransportManager();
+    var manager = new TransportManager(new JsonMessageSerializer(Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.ServiceBus, transport);
 
@@ -132,7 +133,7 @@ public class TransportManagerSubscriptionTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WithServiceBusSqlFilter_ShouldIncludeInMetadataAsync() {
     // Arrange
-    var manager = new TransportManager();
+    var manager = new TransportManager(new JsonMessageSerializer(Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.ServiceBus, transport);
 
@@ -157,7 +158,7 @@ public class TransportManagerSubscriptionTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WithRabbitMQQueueName_ShouldIncludeInMetadataAsync() {
     // Arrange
-    var manager = new TransportManager();
+    var manager = new TransportManager(new JsonMessageSerializer(Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.RabbitMQ, transport);
 
@@ -181,7 +182,7 @@ public class TransportManagerSubscriptionTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WithKafkaPartition_ShouldIncludeInMetadataAsync() {
     // Arrange
-    var manager = new TransportManager();
+    var manager = new TransportManager(new JsonMessageSerializer(Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.Kafka, transport);
 
@@ -205,7 +206,7 @@ public class TransportManagerSubscriptionTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WithRoutingKey_ShouldIncludeInDestinationAsync() {
     // Arrange
-    var manager = new TransportManager();
+    var manager = new TransportManager(new JsonMessageSerializer(Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.RabbitMQ, transport);
 
@@ -229,7 +230,7 @@ public class TransportManagerSubscriptionTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WithAllMetadata_ShouldIncludeAllInDestinationAsync() {
     // Arrange
-    var manager = new TransportManager();
+    var manager = new TransportManager(new JsonMessageSerializer(Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.Kafka, transport);
 
@@ -255,7 +256,7 @@ public class TransportManagerSubscriptionTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_HandlerReceivesEnvelope_ShouldWorkAsync() {
     // Arrange
-    var manager = new TransportManager();
+    var manager = new TransportManager(new JsonMessageSerializer(Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 
@@ -294,7 +295,7 @@ public class TransportManagerSubscriptionTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WhenTransportNotRegistered_ShouldThrowAsync() {
     // Arrange
-    var manager = new TransportManager();
+    var manager = new TransportManager(new JsonMessageSerializer(Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext()));
     var targets = new List<SubscriptionTarget> {
       new SubscriptionTarget {
         TransportType = TransportType.Kafka, // Not registered
@@ -312,7 +313,7 @@ public class TransportManagerSubscriptionTests {
   [Test]
   public async Task SubscribeFromTargetsAsync_WithEmptyStringsInMetadata_ShouldNotIncludeThemAsync() {
     // Arrange
-    var manager = new TransportManager();
+    var manager = new TransportManager(new JsonMessageSerializer(Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.Kafka, transport);
 

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -70,7 +71,7 @@ public class DispatcherTests {
     var unknownCommand = new UnknownCommand();
 
     // Act & Assert
-    var exception = await Assert.That(async () => await dispatcher.LocalInvokeAsync<object>(unknownCommand))
+    var exception = await Assert.That(async () => await dispatcher.LocalInvokeAsync<UnknownCommand, object>(unknownCommand))
         .ThrowsExactly<HandlerNotFoundException>();
 
     await Assert.That(exception?.Message).Contains("UnknownCommand");
@@ -411,7 +412,7 @@ public class DispatcherTests {
     var command = new CreateOrder(Guid.NewGuid(), new[] { "item1" });
 
     // Act & Assert
-    var exception = await Assert.That(async () => await dispatcher.LocalInvokeAsync<OrderCreated>(command, null!))
+    var exception = await Assert.That(async () => await dispatcher.LocalInvokeAsync<CreateOrder, OrderCreated>(command, null!))
       .ThrowsExactly<ArgumentNullException>();
 
     await Assert.That(exception.ParamName).IsEqualTo("context");
@@ -424,7 +425,7 @@ public class DispatcherTests {
     var command = new LogCommand("test");
 
     // Act & Assert
-    var exception = await Assert.That(async () => await dispatcher.LocalInvokeAsync(command, null!))
+    var exception = await Assert.That(async () => await dispatcher.LocalInvokeAsync<LogCommand>(command, null!))
       .ThrowsExactly<ArgumentNullException>();
 
     await Assert.That(exception.ParamName).IsEqualTo("context");

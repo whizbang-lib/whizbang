@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
@@ -14,13 +15,6 @@ namespace Whizbang.Core.Transports;
 public class TransportManager : ITransportManager {
   private readonly Dictionary<TransportType, ITransport> _transports = new();
   private readonly IMessageSerializer _serializer;
-
-  /// <summary>
-  /// Creates a new TransportManager with the default JSON serializer.
-  /// </summary>
-  public TransportManager() {
-    _serializer = new JsonMessageSerializer();
-  }
 
   /// <summary>
   /// Creates a new TransportManager with a custom serializer.

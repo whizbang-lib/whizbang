@@ -1,11 +1,13 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Policies;
 
 namespace Whizbang.Core.Messaging;
 
@@ -13,16 +15,21 @@ namespace Whizbang.Core.Messaging;
 /// In-memory implementation of IEventStore for testing and single-process scenarios.
 /// Thread-safe using ConcurrentDictionary and sorted event storage.
 /// NOT suitable for production use across multiple processes.
+/// Stream ID is inferred from event's [AggregateId] property.
 /// </summary>
 public class InMemoryEventStore : IEventStore {
-  private readonly ConcurrentDictionary<string, StreamData> _streams = new();
+  private readonly ConcurrentDictionary<Guid, StreamData> _streams = new();
+  private readonly IPolicyEngine _policyEngine;
+
+  public InMemoryEventStore(IPolicyEngine policyEngine) {
+    _policyEngine = policyEngine ?? throw new ArgumentNullException(nameof(policyEngine));
+  }
 
   /// <inheritdoc />
-  public Task AppendAsync(string streamKey, IMessageEnvelope envelope, CancellationToken cancellationToken = default) {
-    ArgumentNullException.ThrowIfNull(streamKey);
+  public Task AppendAsync(Guid streamId, IMessageEnvelope envelope, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
 
-    var stream = _streams.GetOrAdd(streamKey, _ => new StreamData());
+    var stream = _streams.GetOrAdd(streamId, _ => new StreamData());
     stream.Append(envelope);
 
     return Task.CompletedTask;
@@ -30,13 +37,11 @@ public class InMemoryEventStore : IEventStore {
 
   /// <inheritdoc />
   public async IAsyncEnumerable<IMessageEnvelope> ReadAsync(
-    string streamKey,
+    Guid streamId,
     long fromSequence,
     [EnumeratorCancellation] CancellationToken cancellationToken = default
   ) {
-    ArgumentNullException.ThrowIfNull(streamKey);
-
-    if (!_streams.TryGetValue(streamKey, out var stream)) {
+    if (!_streams.TryGetValue(streamId, out var stream)) {
       yield break;
     }
 
@@ -49,10 +54,8 @@ public class InMemoryEventStore : IEventStore {
   }
 
   /// <inheritdoc />
-  public Task<long> GetLastSequenceAsync(string streamKey, CancellationToken cancellationToken = default) {
-    ArgumentNullException.ThrowIfNull(streamKey);
-
-    if (!_streams.TryGetValue(streamKey, out var stream)) {
+  public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) {
+    if (!_streams.TryGetValue(streamId, out var stream)) {
       return Task.FromResult(-1L);
     }
 

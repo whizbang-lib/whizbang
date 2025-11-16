@@ -1,6 +1,7 @@
 using System.Data;
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -15,21 +16,20 @@ namespace Whizbang.Data.Dapper.Custom;
 public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
   protected readonly IDbConnectionFactory _connectionFactory;
   protected readonly IDbExecutor _executor;
-  protected readonly JsonSerializerOptions _jsonOptions;
+  protected readonly JsonSerializerContext _jsonContext;
 
-  protected DapperRequestResponseStoreBase(IDbConnectionFactory connectionFactory, IDbExecutor executor) {
+  protected DapperRequestResponseStoreBase(
+    IDbConnectionFactory connectionFactory,
+    IDbExecutor executor,
+    JsonSerializerContext jsonContext
+  ) {
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentNullException.ThrowIfNull(executor);
+    ArgumentNullException.ThrowIfNull(jsonContext);
 
     _connectionFactory = connectionFactory;
     _executor = executor;
-    _jsonOptions = new JsonSerializerOptions {
-      PropertyNameCaseInsensitive = true,
-      PropertyNamingPolicy = null, // Preserve PascalCase property names
-      WriteIndented = false,
-      DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never, // Include all properties
-      IncludeFields = true // Include fields as well as properties
-    };
+    _jsonContext = jsonContext;
   }
 
   /// <summary>
@@ -85,7 +85,6 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
       cancellationToken: cancellationToken);
   }
 
-  [RequiresUnreferencedCode("JSON deserialization uses reflection")]
   public async Task<IMessageEnvelope?> WaitForResponseAsync(CorrelationId correlationId, CancellationToken cancellationToken = default) {
     try {
       var startTime = DateTimeOffset.UtcNow;
@@ -113,8 +112,13 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
         }
 
         if (!string.IsNullOrEmpty(row.ResponseEnvelope)) {
-          // Response is available
-          return JsonSerializer.Deserialize<MessageEnvelope<object>>(row.ResponseEnvelope, _jsonOptions);
+          // Response is available - deserialize using AOT-compatible context
+          var envelopeType = typeof(MessageEnvelope<object>);
+          var typeInfo = _jsonContext.GetTypeInfo(envelopeType);
+          if (typeInfo == null) {
+            throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
+          }
+          return JsonSerializer.Deserialize(row.ResponseEnvelope, typeInfo) as IMessageEnvelope;
         }
 
         // Wait a bit before polling again
@@ -131,15 +135,19 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
     }
   }
 
-  [RequiresUnreferencedCode("JSON serialization uses reflection")]
   public async Task SaveResponseAsync(CorrelationId correlationId, IMessageEnvelope response, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(response);
 
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
 
-    // Serialize using the actual runtime type to preserve all properties
-    var json = JsonSerializer.Serialize(response, response.GetType(), _jsonOptions);
+    // Serialize using the actual runtime type to preserve all properties (AOT-compatible)
+    var responseType = response.GetType();
+    var typeInfo = _jsonContext.GetTypeInfo(responseType);
+    if (typeInfo == null) {
+      throw new InvalidOperationException($"No JsonTypeInfo found for {responseType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
+    }
+    var json = JsonSerializer.Serialize(response, typeInfo);
     var sql = GetSaveResponseSql();
 
     await _executor.ExecuteAsync(

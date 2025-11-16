@@ -53,15 +53,28 @@ public abstract class Dispatcher : IDispatcher {
   // ========================================
 
   /// <summary>
-  /// Sends a message and returns a delivery receipt (not the business result).
-  /// Creates a new message context automatically.
+  /// Sends a typed message and returns a delivery receipt (AOT-compatible).
+  /// Use this for async workflows, remote execution, or inbox pattern.
+  /// Type information is preserved at compile time, avoiding reflection.
   /// </summary>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  [RequiresUnreferencedCode("Message types and handlers are resolved using runtime type information. For AOT compatibility, ensure all message types and handlers are registered at compile time.")]
-  [RequiresDynamicCode("Message dispatching uses generic type parameters that may require runtime code generation. For AOT compatibility, use source-generated dispatcher.")]
+  public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message) where TMessage : notnull {
+    var context = MessageContext.New();
+    return SendAsync((object)message, context);
+  }
+
+  /// <summary>
+  /// Sends a message and returns a delivery receipt (not the business result).
+  /// Creates a new message context automatically.
+  /// For AOT compatibility, use the generic overload SendAsync&lt;TMessage&gt;.
+  /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
   public Task<IDeliveryReceipt> SendAsync(object message) {
     var context = MessageContext.New();
     return SendAsync(message, context);
@@ -76,8 +89,6 @@ public abstract class Dispatcher : IDispatcher {
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  [RequiresUnreferencedCode("Message types and handlers are resolved using runtime type information. For AOT compatibility, ensure all message types and handlers are registered at compile time.")]
-  [RequiresDynamicCode("Message dispatching uses generic type parameters that may require runtime code generation. For AOT compatibility, use source-generated dispatcher.")]
   public async Task<IDeliveryReceipt> SendAsync(
     object message,
     IMessageContext context,
@@ -127,19 +138,51 @@ public abstract class Dispatcher : IDispatcher {
   // ========================================
 
   /// <summary>
-  /// Invokes a receptor in-process and returns the typed business result.
-  /// Creates a new message context automatically.
-  /// PERFORMANCE: Zero allocation when trace store is null, target &lt; 20ns per invocation.
+  /// Invokes a receptor in-process with typed message and returns the typed business result (AOT-compatible).
+  /// PERFORMANCE: Zero allocation, target &lt; 20ns per invocation.
+  /// RESTRICTION: In-process only - throws InvalidOperationException if used with remote transport.
+  /// Type information is preserved at compile time, avoiding reflection.
   /// </summary>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  [RequiresUnreferencedCode("Message types and handlers are resolved using runtime type information. For AOT compatibility, ensure all message types and handlers are registered at compile time.")]
-  [RequiresDynamicCode("Message dispatching uses generic type parameters that may require runtime code generation. For AOT compatibility, use source-generated dispatcher.")]
+  public ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(TMessage message) where TMessage : notnull {
+    var context = MessageContext.New();
+    return LocalInvokeAsync<TResult>((object)message, context);
+  }
+
+  /// <summary>
+  /// Invokes a receptor in-process and returns the typed business result.
+  /// Creates a new message context automatically.
+  /// PERFORMANCE: Zero allocation when trace store is null, target &lt; 20ns per invocation.
+  /// For AOT compatibility, use the generic overload LocalInvokeAsync&lt;TMessage, TResult&gt;.
+  /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
   public ValueTask<TResult> LocalInvokeAsync<TResult>(object message) {
     var context = MessageContext.New();
     return LocalInvokeAsync<TResult>(message, context);
+  }
+
+  /// <summary>
+  /// Invokes a receptor in-process with typed message and explicit context, returning the typed business result (AOT-compatible).
+  /// Type information is preserved at compile time, avoiding reflection.
+  /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(
+    TMessage message,
+    IMessageContext context,
+    [CallerMemberName] string callerMemberName = "",
+    [CallerFilePath] string callerFilePath = "",
+    [CallerLineNumber] int callerLineNumber = 0
+  ) where TMessage : notnull {
+    return LocalInvokeAsync<TResult>((object)message, context, callerMemberName, callerFilePath, callerLineNumber);
   }
 
   /// <summary>
@@ -147,13 +190,12 @@ public abstract class Dispatcher : IDispatcher {
   /// Uses generated delegate to invoke receptor with zero reflection.
   /// Skips envelope creation when trace store is null for optimal performance.
   /// PERFORMANCE: Zero allocation fast path for synchronously-completed receptors (no async/await overhead).
+  /// For AOT compatibility, use the generic overload LocalInvokeAsync&lt;TMessage, TResult&gt;.
   /// </summary>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  [RequiresUnreferencedCode("Message types and handlers are resolved using runtime type information. For AOT compatibility, ensure all message types and handlers are registered at compile time.")]
-  [RequiresDynamicCode("Message dispatching uses generic type parameters that may require runtime code generation. For AOT compatibility, use source-generated dispatcher.")]
   public ValueTask<TResult> LocalInvokeAsync<TResult>(
     object message,
     IMessageContext context,
@@ -213,19 +255,51 @@ public abstract class Dispatcher : IDispatcher {
   // ========================================
 
   /// <summary>
-  /// Invokes a void receptor in-process without returning a business result.
-  /// Creates a new message context automatically.
+  /// Invokes a void receptor in-process with typed message without returning a business result (AOT-compatible).
   /// PERFORMANCE: Zero allocation target for command/event patterns.
+  /// RESTRICTION: In-process only - throws InvalidOperationException if used with remote transport.
+  /// Type information is preserved at compile time, avoiding reflection.
   /// </summary>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  [RequiresUnreferencedCode("Message types and handlers are resolved using runtime type information. For AOT compatibility, ensure all message types and handlers are registered at compile time.")]
-  [RequiresDynamicCode("Message dispatching uses generic type parameters that may require runtime code generation. For AOT compatibility, use source-generated dispatcher.")]
+  public ValueTask LocalInvokeAsync<TMessage>(TMessage message) where TMessage : notnull {
+    var context = MessageContext.New();
+    return LocalInvokeAsync((object)message, context);
+  }
+
+  /// <summary>
+  /// Invokes a void receptor in-process without returning a business result.
+  /// Creates a new message context automatically.
+  /// PERFORMANCE: Zero allocation target for command/event patterns.
+  /// For AOT compatibility, use the generic overload LocalInvokeAsync&lt;TMessage&gt;.
+  /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
   public ValueTask LocalInvokeAsync(object message) {
     var context = MessageContext.New();
     return LocalInvokeAsync(message, context);
+  }
+
+  /// <summary>
+  /// Invokes a void receptor in-process with typed message and explicit context without returning a business result (AOT-compatible).
+  /// Type information is preserved at compile time, avoiding reflection.
+  /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public ValueTask LocalInvokeAsync<TMessage>(
+    TMessage message,
+    IMessageContext context,
+    [CallerMemberName] string callerMemberName = "",
+    [CallerFilePath] string callerFilePath = "",
+    [CallerLineNumber] int callerLineNumber = 0
+  ) where TMessage : notnull {
+    return LocalInvokeAsync((object)message, context, callerMemberName, callerFilePath, callerLineNumber);
   }
 
   /// <summary>
@@ -233,13 +307,12 @@ public abstract class Dispatcher : IDispatcher {
   /// Uses generated delegate to invoke receptor with zero reflection.
   /// Skips envelope creation when trace store is null for optimal performance.
   /// PERFORMANCE: Zero allocation fast path for synchronously-completed receptors.
+  /// For AOT compatibility, use the generic overload LocalInvokeAsync&lt;TMessage&gt;.
   /// </summary>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  [RequiresUnreferencedCode("Message types and handlers are resolved using runtime type information. For AOT compatibility, ensure all message types and handlers are registered at compile time.")]
-  [RequiresDynamicCode("Message dispatching uses generic type parameters that may require runtime code generation. For AOT compatibility, use source-generated dispatcher.")]
   public ValueTask LocalInvokeAsync(
     object message,
     IMessageContext context,
@@ -332,8 +405,6 @@ public abstract class Dispatcher : IDispatcher {
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  [RequiresUnreferencedCode("Event types and handlers are resolved using runtime type information. For AOT compatibility, ensure all event types and handlers are registered at compile time.")]
-  [RequiresDynamicCode("Event publishing uses generic type parameters that may require runtime code generation. For AOT compatibility, use source-generated dispatcher.")]
   public async Task PublishAsync<TEvent>(TEvent @event) {
     if (@event == null) {
       throw new ArgumentNullException(nameof(@event));
@@ -359,8 +430,6 @@ public abstract class Dispatcher : IDispatcher {
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  [RequiresUnreferencedCode("Message types and handlers are resolved using runtime type information. For AOT compatibility, ensure all message types and handlers are registered at compile time.")]
-  [RequiresDynamicCode("Message dispatching uses generic type parameters that may require runtime code generation. For AOT compatibility, use source-generated dispatcher.")]
   public async Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages) {
     ArgumentNullException.ThrowIfNull(messages);
 
@@ -380,8 +449,6 @@ public abstract class Dispatcher : IDispatcher {
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  [RequiresUnreferencedCode("Message types and handlers are resolved using runtime type information. For AOT compatibility, ensure all message types and handlers are registered at compile time.")]
-  [RequiresDynamicCode("Message dispatching uses generic type parameters that may require runtime code generation. For AOT compatibility, use source-generated dispatcher.")]
   public async ValueTask<IEnumerable<TResult>> LocalInvokeManyAsync<TResult>(IEnumerable<object> messages) {
     ArgumentNullException.ThrowIfNull(messages);
 
@@ -397,8 +464,6 @@ public abstract class Dispatcher : IDispatcher {
   /// Implemented by generated code - returns a strongly-typed delegate for invoking a receptor.
   /// The delegate encapsulates the receptor lookup and invocation with zero reflection.
   /// </summary>
-  [UnconditionalSuppressMessage("AOT", "IL2026", Justification = "Generated code uses compile-time type resolution with no reflection.")]
-  [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Generated code uses compile-time type resolution with no dynamic code generation.")]
   protected abstract ReceptorInvoker<TResult>? _getReceptorInvoker<TResult>(object message, Type messageType);
 
   /// <summary>
@@ -406,15 +471,11 @@ public abstract class Dispatcher : IDispatcher {
   /// The delegate encapsulates the receptor lookup and invocation with zero reflection.
   /// Returns null if no void receptor is registered for the message type.
   /// </summary>
-  [UnconditionalSuppressMessage("AOT", "IL2026", Justification = "Generated code uses compile-time type resolution with no reflection.")]
-  [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Generated code uses compile-time type resolution with no dynamic code generation.")]
   protected abstract VoidReceptorInvoker? _getVoidReceptorInvoker(object message, Type messageType);
 
   /// <summary>
   /// Implemented by generated code - returns a strongly-typed delegate for publishing to receptors.
   /// The delegate encapsulates finding all receptors and invoking them with zero reflection.
   /// </summary>
-  [UnconditionalSuppressMessage("AOT", "IL2026", Justification = "Generated code uses compile-time type resolution with no reflection.")]
-  [UnconditionalSuppressMessage("AOT", "IL3050", Justification = "Generated code uses compile-time type resolution with no dynamic code generation.")]
   protected abstract ReceptorPublisher<TEvent> _getReceptorPublisher<TEvent>(TEvent @event, Type eventType);
 }

@@ -100,14 +100,14 @@ CREATE INDEX IF NOT EXISTS ix_whizbang_request_response_expires_at ON whizbang_r
 -- Event store for streaming/replay capability
 CREATE TABLE IF NOT EXISTS whizbang_event_store (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    stream_key TEXT NOT NULL,
+    stream_id TEXT NOT NULL,
     sequence_number INTEGER NOT NULL,
     envelope TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    CONSTRAINT uq_whizbang_event_store_stream_sequence UNIQUE (stream_key, sequence_number)
+    CONSTRAINT uq_whizbang_event_store_stream_sequence UNIQUE (stream_id, sequence_number)
 );
 
-CREATE INDEX IF NOT EXISTS ix_whizbang_event_store_stream_key ON whizbang_event_store(stream_key, sequence_number);
+CREATE INDEX IF NOT EXISTS ix_whizbang_event_store_stream_id ON whizbang_event_store(stream_id, sequence_number);
 
 -- Sequence provider for monotonic sequence generation
 CREATE TABLE IF NOT EXISTS whizbang_sequences (

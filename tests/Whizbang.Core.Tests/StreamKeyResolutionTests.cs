@@ -2,8 +2,17 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Generated;
 
 namespace Whizbang.Core.Tests;
+
+// Test events with stream key properties
+public record OrderCreated([StreamKey] string OrderId, string CustomerName) : IEvent;
+public record OrderShipped([StreamKey] string OrderId, string TrackingNumber) : IEvent;
+public record UserRegistered([StreamKey] Guid UserId, string Email) : IEvent;
+
+// Event without stream key (should fail resolution)
+public record InvalidEvent(string Data) : IEvent;
 
 /// <summary>
 /// Tests for stream key resolution from events.
@@ -13,13 +22,6 @@ namespace Whizbang.Core.Tests;
 [Category("Core")]
 [Category("StreamKey")]
 public class StreamKeyResolutionTests {
-  // Test events with stream key properties
-  private record OrderCreated([StreamKey] string OrderId, string CustomerName) : IEvent;
-  private record OrderShipped([StreamKey] string OrderId, string TrackingNumber) : IEvent;
-  private record UserRegistered([StreamKey] Guid UserId, string Email) : IEvent;
-
-  // Event without stream key (should fail resolution)
-  private record InvalidEvent(string Data) : IEvent;
 
   [Test]
   public async Task ResolveStreamKey_WithStringProperty_ReturnsValueAsync() {
@@ -27,7 +29,7 @@ public class StreamKeyResolutionTests {
     var evt = new OrderCreated("ORD-123", "John Doe");
 
     // Act
-    var streamKey = StreamKeyResolver.Resolve(evt);
+    var streamKey = StreamKeyExtractors.Resolve(evt);
 
     // Assert
     await Assert.That(streamKey).IsEqualTo("ORD-123");
@@ -40,7 +42,7 @@ public class StreamKeyResolutionTests {
     var evt = new UserRegistered(userId, "user@example.com");
 
     // Act
-    var streamKey = StreamKeyResolver.Resolve(evt);
+    var streamKey = StreamKeyExtractors.Resolve(evt);
 
     // Assert
     await Assert.That(streamKey).IsEqualTo(userId.ToString());
@@ -52,9 +54,9 @@ public class StreamKeyResolutionTests {
     var evt = new InvalidEvent("test");
 
     // Act & Assert
-    var exception = await Assert.That(() => StreamKeyResolver.Resolve(evt))
+    var exception = await Assert.That(() => StreamKeyExtractors.Resolve(evt))
       .ThrowsExactly<InvalidOperationException>();
-    await Assert.That(exception!.Message).Contains("No [StreamKey] attribute found");
+    await Assert.That(exception!.Message).Contains("No stream key extractor found");
   }
 
   [Test]
@@ -63,9 +65,9 @@ public class StreamKeyResolutionTests {
     var evt = new OrderCreated(null!, "John Doe");
 
     // Act & Assert
-    var exception = await Assert.That(() => StreamKeyResolver.Resolve(evt))
+    var exception = await Assert.That(() => StreamKeyExtractors.Resolve(evt))
       .ThrowsExactly<InvalidOperationException>();
-    await Assert.That(exception!.Message).Contains("Stream key value cannot be null");
+    await Assert.That(exception!.Message).Contains("Stream key 'OrderId' on OrderCreated cannot be null");
   }
 
   [Test]
@@ -74,9 +76,9 @@ public class StreamKeyResolutionTests {
     var evt = new OrderCreated("", "John Doe");
 
     // Act & Assert
-    var exception = await Assert.That(() => StreamKeyResolver.Resolve(evt))
+    var exception = await Assert.That(() => StreamKeyExtractors.Resolve(evt))
       .ThrowsExactly<InvalidOperationException>();
-    await Assert.That(exception!.Message).Contains("Stream key value cannot be empty");
+    await Assert.That(exception!.Message).Contains("Stream key 'OrderId' on OrderCreated cannot be empty");
   }
 
   [Test]
@@ -85,9 +87,9 @@ public class StreamKeyResolutionTests {
     var evt = new OrderCreated("   ", "John Doe");
 
     // Act & Assert
-    var exception = await Assert.That(() => StreamKeyResolver.Resolve(evt))
+    var exception = await Assert.That(() => StreamKeyExtractors.Resolve(evt))
       .ThrowsExactly<InvalidOperationException>();
-    await Assert.That(exception!.Message).Contains("Stream key value cannot be empty");
+    await Assert.That(exception!.Message).Contains("Stream key 'OrderId' on OrderCreated cannot be empty");
   }
 
   [Test]
@@ -97,8 +99,8 @@ public class StreamKeyResolutionTests {
     var shipped = new OrderShipped("ORD-123", "TRACK-456");
 
     // Act
-    var key1 = StreamKeyResolver.Resolve(created);
-    var key2 = StreamKeyResolver.Resolve(shipped);
+    var key1 = StreamKeyExtractors.Resolve(created);
+    var key2 = StreamKeyExtractors.Resolve(shipped);
 
     // Assert
     await Assert.That(key1).IsEqualTo(key2);
@@ -112,7 +114,7 @@ public class StreamKeyResolutionTests {
     var evt = new InventoryAdjusted(inventoryId, 10);
 
     // Act - Should resolve from constructor parameter attribute
-    var streamKey = StreamKeyResolver.Resolve(evt);
+    var streamKey = StreamKeyExtractors.Resolve(evt);
 
     // Assert
     await Assert.That(streamKey).IsEqualTo(inventoryId.ToString());

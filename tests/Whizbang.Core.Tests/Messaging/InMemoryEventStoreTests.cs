@@ -1,4 +1,5 @@
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Policies;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -9,6 +10,8 @@ namespace Whizbang.Core.Tests.Messaging;
 [InheritsTests]
 public class InMemoryEventStoreTests : EventStoreContractTests {
   protected override Task<IEventStore> CreateEventStoreAsync() {
-    return Task.FromResult<IEventStore>(new InMemoryEventStore());
+    // Create policy engine with default configuration
+    var policyEngine = new PolicyEngine();
+    return Task.FromResult<IEventStore>(new InMemoryEventStore(policyEngine));
   }
 }

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.ValueObjects;
@@ -46,7 +47,12 @@ public class MessageTracingTests {
     await Assert.That(envelope.GetCausationId()).IsEqualTo(causationId);
     await Assert.That(envelope.Payload).IsEqualTo(payload);
     await Assert.That(envelope.GetMessageTimestamp()).IsEqualTo(timestamp);
-    await Assert.That(envelope.GetAllMetadata()).IsEquivalentTo(metadata);
+    var allMetadata = envelope.GetAllMetadata();
+    await Assert.That(allMetadata).HasCount().EqualTo(metadata.Count);
+    foreach (var kvp in metadata) {
+      await Assert.That(allMetadata.ContainsKey(kvp.Key)).IsTrue();
+      await Assert.That(allMetadata[kvp.Key]).IsEqualTo(kvp.Value);
+    }
   }
 
   [Test]

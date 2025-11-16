@@ -33,16 +33,32 @@ CREATE TABLE IF NOT EXISTS whizbang_request_response (
 CREATE INDEX IF NOT EXISTS ix_whizbang_request_response_expires_at ON whizbang_request_response(expires_at);
 
 -- Event store for streaming/replay capability
+-- Uses 3-column JSONB pattern (event_data, metadata, scope)
+-- Stream ID inferred from event's [AggregateId] property (UUID)
 CREATE TABLE IF NOT EXISTS whizbang_event_store (
-  id BIGSERIAL,
-  stream_key VARCHAR(500) NOT NULL,
+  seq_id BIGSERIAL PRIMARY KEY,
+  event_id UUID NOT NULL UNIQUE,
+  stream_id UUID NOT NULL,
   sequence_number BIGINT NOT NULL,
-  envelope TEXT NOT NULL,
+  event_type VARCHAR(500) NOT NULL,
+  event_data JSONB NOT NULL,
+  metadata JSONB NOT NULL,
+  scope JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT uq_whizbang_event_store_stream_sequence UNIQUE (stream_key, sequence_number)
+  CONSTRAINT uq_whizbang_event_store_stream_sequence UNIQUE (stream_id, sequence_number)
 );
 
-CREATE INDEX IF NOT EXISTS ix_whizbang_event_store_stream_key ON whizbang_event_store(stream_key, sequence_number);
+-- Indexes
+CREATE INDEX IF NOT EXISTS ix_whizbang_event_store_stream ON whizbang_event_store(stream_id, sequence_number);
+CREATE INDEX IF NOT EXISTS ix_whizbang_event_store_type ON whizbang_event_store(event_type);
+CREATE INDEX IF NOT EXISTS ix_whizbang_event_store_created ON whizbang_event_store(created_at);
+
+-- Selective GIN index on metadata only (for searching correlation IDs, etc.)
+CREATE INDEX IF NOT EXISTS ix_whizbang_event_store_metadata_gin ON whizbang_event_store USING GIN (metadata jsonb_path_ops);
+
+-- Expression indexes for common queries
+CREATE INDEX IF NOT EXISTS ix_whizbang_event_store_tenant ON whizbang_event_store((scope->>'tenant_id')) WHERE scope IS NOT NULL;
+CREATE INDEX IF NOT EXISTS ix_whizbang_event_store_correlation ON whizbang_event_store((metadata->>'correlation_id'));
 
 -- Sequence provider for monotonic sequence generation
 CREATE TABLE IF NOT EXISTS whizbang_sequences (

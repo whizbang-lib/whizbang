@@ -132,6 +132,52 @@ dotnet clean && dotnet build && dotnet test && dotnet format
 
 ---
 
+## Code Coverage
+
+### Collecting Coverage
+
+The project uses **Microsoft.Testing.Extensions.CodeCoverage** (built-in .NET coverage) with the Microsoft Testing Platform.
+
+**Important**: Use `dotnet run` (NOT `dotnet test`) for coverage with TUnit/MTP:
+
+```bash
+# Navigate to test project directory
+cd tests/Whizbang.Generators.Tests
+
+# Run tests with coverage collection
+dotnet run -- --coverage --coverage-output-format cobertura --coverage-output coverage.xml
+
+# Coverage report will be generated at:
+# bin/Debug/net10.0/TestResults/coverage.xml
+```
+
+### Coverage Options
+
+- `--coverage` - Enable coverage collection using dotnet-coverage
+- `--coverage-output-format` - Format: `coverage` (default), `xml`, or `cobertura`
+- `--coverage-output` - Output file path (default: `coverage.xml`)
+
+### Coverage Formats
+
+- **Cobertura**: XML format compatible with most CI/CD tools and coverage viewers
+- **XML**: Microsoft coverage XML format
+- **Coverage**: Binary .coverage format for Visual Studio
+
+### Viewing Coverage Results
+
+```bash
+# Read coverage summary from Cobertura XML
+grep "line-rate" bin/Debug/net10.0/TestResults/coverage.xml | head -5
+```
+
+### Coverage Targets
+
+**Current Status** (as of Phase 6 completion):
+- **Whizbang.Generators**: 68.4% line coverage, 58.6% branch coverage
+- **Whizbang.Core**: TBD (run coverage from Core.Tests)
+
+---
+
 ## Technology Stack
 
 - **.NET 10.0 RC2** - Target framework

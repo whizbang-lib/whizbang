@@ -7,8 +7,8 @@ namespace Whizbang.Data.Postgres.Tests;
 /// <summary>
 /// Integration tests for DapperPostgresInbox using PostgreSQL.
 /// Inherits all contract tests from InboxContractTests.
+/// Each test gets its own isolated PostgreSQL container for parallel execution.
 /// </summary>
-[NotInParallel]
 [InheritsTests]
 public class DapperPostgresInboxTests : InboxContractTests {
   private PostgresTestBase _testBase = null!;

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Threading.Tasks;
@@ -14,33 +15,101 @@ namespace Whizbang.Core.Transports;
 /// Preserves all MessageEnvelope metadata including hops, IDs, and routing information.
 /// </summary>
 public class JsonMessageSerializer : IMessageSerializer {
-  private static readonly JsonSerializerOptions _options = new() {
-    PropertyNameCaseInsensitive = true,
-    WriteIndented = false,
-    DefaultIgnoreCondition = JsonIgnoreCondition.Never,
-    Converters = {
-      new MessageIdConverter(),
-      new CorrelationIdConverter(),
-      new MetadataConverter(),
-      new JsonStringEnumConverter()
+  private readonly JsonSerializerContext? _context;
+  private readonly JsonSerializerOptions? _options;
+
+  /// <summary>
+  /// Creates an AOT-compatible JsonMessageSerializer using the provided JsonSerializerContext.
+  /// This constructor enables zero-reflection serialization for native AOT compilation.
+  /// </summary>
+  /// <param name="context">JsonSerializerContext containing JsonTypeInfo for all message types.</param>
+  public JsonMessageSerializer(JsonSerializerContext context) {
+    _context = context ?? throw new ArgumentNullException(nameof(context));
+  }
+
+  /// <summary>
+  /// Creates an AOT-compatible JsonMessageSerializer using the provided JsonSerializerOptions.
+  /// Use this constructor when combining WhizbangJsonContext with user-defined contexts.
+  /// </summary>
+  /// <param name="options">JsonSerializerOptions with TypeInfoResolver configured.</param>
+  public JsonMessageSerializer(JsonSerializerOptions options) {
+    ArgumentNullException.ThrowIfNull(options);
+
+    if (options.TypeInfoResolver is null) {
+      throw new ArgumentException("JsonSerializerOptions must have a TypeInfoResolver configured.", nameof(options));
     }
-  };
+
+    _options = options;
+    EnsureRequiredConverters(_options);
+  }
+
+  /// <summary>
+  /// Ensures required converters are present in the options.
+  /// Adds converters only if they are not already present.
+  /// </summary>
+  private static void EnsureRequiredConverters(JsonSerializerOptions options) {
+    // Check if converters are already present before adding
+    if (!HasConverter<MessageId>(options)) {
+      options.Converters.Add(new MessageIdConverter());
+    }
+
+    if (!HasConverter<CorrelationId>(options)) {
+      options.Converters.Add(new CorrelationIdConverter());
+    }
+
+    if (!HasConverter<IReadOnlyDictionary<string, object>>(options)) {
+      options.Converters.Add(new MetadataConverter());
+    }
+
+    // Add JsonStringEnumConverter if not present
+    if (!options.Converters.Any(c => c is JsonStringEnumConverter)) {
+      options.Converters.Add(new JsonStringEnumConverter());
+    }
+  }
+
+  /// <summary>
+  /// Checks if a converter for the specified type is already present in the options.
+  /// </summary>
+  private static bool HasConverter<T>(JsonSerializerOptions options) {
+    return options.Converters.Any(c => c.CanConvert(typeof(T)));
+  }
 
   /// <inheritdoc />
-  [RequiresUnreferencedCode("JSON serialization may require types that cannot be statically analyzed")]
   public Task<byte[]> SerializeAsync(IMessageEnvelope envelope) {
-    // Serialize the envelope directly
-    // System.Text.Json will handle the derived type (MessageEnvelope<T>)
-    var json = JsonSerializer.Serialize(envelope, envelope.GetType(), _options);
+    string json;
+
+    if (_context is not null) {
+      // Use JsonSerializerContext path - AOT-compatible
+      var typeInfo = _context.GetTypeInfo(envelope.GetType());
+      if (typeInfo is null) {
+        throw new InvalidOperationException($"No JsonTypeInfo found for {envelope.GetType().Name}. Ensure the message type is registered in WhizbangJsonContext.");
+      }
+      json = JsonSerializer.Serialize(envelope, typeInfo);
+    } else {
+      // Use JsonSerializerOptions path with combined resolvers
+      json = JsonSerializer.Serialize(envelope, envelope.GetType(), _options!);
+    }
+
     return Task.FromResult(System.Text.Encoding.UTF8.GetBytes(json));
   }
 
   /// <inheritdoc />
-  [RequiresUnreferencedCode("JSON deserialization may require types that cannot be statically analyzed")]
   public Task<IMessageEnvelope> DeserializeAsync<TMessage>(byte[] bytes) where TMessage : notnull {
     var json = System.Text.Encoding.UTF8.GetString(bytes);
     var envelopeType = typeof(MessageEnvelope<TMessage>);
-    var envelope = JsonSerializer.Deserialize(json, envelopeType, _options) as IMessageEnvelope;
+    IMessageEnvelope? envelope;
+
+    if (_context is not null) {
+      // Use JsonSerializerContext path - AOT-compatible
+      var typeInfo = _context.GetTypeInfo(envelopeType);
+      if (typeInfo is null) {
+        throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
+      }
+      envelope = JsonSerializer.Deserialize(json, typeInfo) as IMessageEnvelope;
+    } else {
+      // Use JsonSerializerOptions path with combined resolvers
+      envelope = JsonSerializer.Deserialize(json, envelopeType, _options!) as IMessageEnvelope;
+    }
 
     if (envelope is null) {
       throw new InvalidOperationException($"Failed to deserialize envelope for message type {typeof(TMessage).Name}");
@@ -53,7 +122,7 @@ public class JsonMessageSerializer : IMessageSerializer {
 /// <summary>
 /// JSON converter for MessageId value object.
 /// </summary>
-internal class MessageIdConverter : JsonConverter<MessageId> {
+public class MessageIdConverter : JsonConverter<MessageId> {
   public override MessageId Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {
     var guidString = reader.GetString();
     if (guidString is null || !Guid.TryParse(guidString, out var guid)) {
@@ -70,7 +139,7 @@ internal class MessageIdConverter : JsonConverter<MessageId> {
 /// <summary>
 /// JSON converter for CorrelationId value object.
 /// </summary>
-internal class CorrelationIdConverter : JsonConverter<CorrelationId> {
+public class CorrelationIdConverter : JsonConverter<CorrelationId> {
   public override CorrelationId Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {
     var guidString = reader.GetString();
     if (guidString is null || !Guid.TryParse(guidString, out var guid)) {

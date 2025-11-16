@@ -18,6 +18,7 @@
   <ItemGroup>
     <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
     <ProjectReference Include="../../src/Whizbang.Data.Dapper.Postgres/Whizbang.Data.Dapper.Postgres.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     <ProjectReference Include="../Whizbang.Core.Tests/Whizbang.Core.Tests.csproj" />
     <ProjectReference Include="../Whizbang.Sequencing.Tests/Whizbang.Sequencing.Tests.csproj" />
   </ItemGroup>

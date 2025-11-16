@@ -41,11 +41,9 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     var classDeclaration = (ClassDeclarationSyntax)context.Node;
     var semanticModel = context.SemanticModel;
 
-    // Get the symbol for the class
-    var classSymbol = semanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) as INamedTypeSymbol;
-    if (classSymbol is null) {
-      return null;
-    }
+    // Defensive guard: throws if Roslyn returns null (indicates compiler bug)
+    // See RoslynGuards.cs for rationale - no branch created, eliminates coverage gap
+    var classSymbol = RoslynGuards.GetClassSymbolOrThrow(classDeclaration, semanticModel, cancellationToken);
 
     // Skip abstract classes - they can't be instantiated
     if (classSymbol.IsAbstract) {

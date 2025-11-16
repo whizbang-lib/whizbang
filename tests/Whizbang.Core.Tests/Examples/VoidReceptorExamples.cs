@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.Examples;

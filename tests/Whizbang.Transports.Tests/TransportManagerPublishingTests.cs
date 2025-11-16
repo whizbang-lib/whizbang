@@ -1,6 +1,7 @@
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using Whizbang.Core;
+using Whizbang.Core.Generated;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
@@ -16,7 +17,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task PublishToTargetsAsync_WithSingleTarget_ShouldPublishAsync() {
     // Arrange
-    var manager = new TransportManager();
+    var manager = new TransportManager(new JsonMessageSerializer(Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 
@@ -54,7 +55,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task PublishToTargetsAsync_WithMultipleTargets_ShouldPublishToAllAsync() {
     // Arrange
-    var manager = new TransportManager();
+    var manager = new TransportManager(new JsonMessageSerializer(Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext()));
     var transport1 = new InProcessTransport();
     var transport2 = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport1);
@@ -106,7 +107,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task PublishToTargetsAsync_WithRoutingKey_ShouldIncludeInDestinationAsync() {
     // Arrange
-    var manager = new TransportManager();
+    var manager = new TransportManager(new JsonMessageSerializer(Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 
@@ -137,7 +138,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task PublishToTargetsAsync_WithCustomContext_ShouldUseProvidedContextAsync() {
     // Arrange
-    var manager = new TransportManager();
+    var manager = new TransportManager(new JsonMessageSerializer(Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 
@@ -182,7 +183,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task PublishToTargetsAsync_CreatesEnvelopeWithHopsAsync() {
     // Arrange
-    var manager = new TransportManager();
+    var manager = new TransportManager(new JsonMessageSerializer(Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 
@@ -222,7 +223,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task PublishToTargetsAsync_WhenTransportNotRegistered_ShouldThrowAsync() {
     // Arrange
-    var manager = new TransportManager();
+    var manager = new TransportManager(new JsonMessageSerializer(Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext()));
     var message = new TestMessage { Content = "fail", Value = 1 };
     var targets = new List<PublishTarget> {
       new PublishTarget {
@@ -258,7 +259,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task Constructor_Default_ShouldCreateWithJsonSerializerAsync() {
     // Arrange & Act
-    var manager = new TransportManager();
+    var manager = new TransportManager(new JsonMessageSerializer(Whizbang.Core.Serialization.JsonSerializerOptionsExtensions.CreateWithWhizbangContext()));
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 

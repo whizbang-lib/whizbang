@@ -52,11 +52,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var classDeclaration = (ClassDeclarationSyntax)context.Node;
     var semanticModel = context.SemanticModel;
 
-    // Get the symbol for the class
-    var classSymbol = semanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) as INamedTypeSymbol;
-    if (classSymbol is null) {
-      return null;
-    }
+    // Defensive guard: throws if Roslyn returns null (indicates compiler bug)
+    // See RoslynGuards.cs for rationale - no branch created, eliminates coverage gap
+    var classSymbol = RoslynGuards.GetClassSymbolOrThrow(classDeclaration, semanticModel, cancellationToken);
 
     // Look for IReceptor<TMessage, TResponse> interface (2 type arguments)
     var receptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
@@ -100,11 +98,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var classDeclaration = (ClassDeclarationSyntax)context.Node;
     var semanticModel = context.SemanticModel;
 
-    // Get the symbol for the class
-    var classSymbol = semanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) as INamedTypeSymbol;
-    if (classSymbol is null) {
-      return false;
-    }
+    // Defensive guard: throws if Roslyn returns null (indicates compiler bug)
+    // See RoslynGuards.cs for rationale - no branch created, eliminates coverage gap
+    var classSymbol = RoslynGuards.GetClassSymbolOrThrow(classDeclaration, semanticModel, cancellationToken);
 
     // Look for IPerspectiveOf<TEvent> interface
     var hasPerspective = classSymbol.AllInterfaces.Any(i =>

@@ -1,37 +1,39 @@
 using System.Data;
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Policies;
 using Whizbang.Data.Dapper.Custom;
 
 namespace Whizbang.Data.Dapper.Sqlite;
 
 /// <summary>
 /// SQLite-specific implementation of IEventStore using Dapper.
-/// Overrides AppendAsync to use transactions for thread-safe sequence number generation.
+/// Stream ID is inferred from event's [AggregateId] property.
+/// Uses retry logic with UNIQUE constraint for thread-safe sequence number generation.
 /// </summary>
 public class DapperSqliteEventStore : DapperEventStoreBase {
-  private static readonly JsonSerializerOptions _sqliteJsonOptions = new() {
-    PropertyNameCaseInsensitive = true,
-    PropertyNamingPolicy = null,
-    WriteIndented = false,
-    DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.Never,
-    IncludeFields = true
-  };
+  private readonly IPolicyEngine _policyEngine;
 
-  public DapperSqliteEventStore(IDbConnectionFactory connectionFactory, IDbExecutor executor)
-    : base(connectionFactory, executor) {
+  public DapperSqliteEventStore(
+    IDbConnectionFactory connectionFactory,
+    IDbExecutor executor,
+    JsonSerializerContext jsonContext,
+    IPolicyEngine policyEngine)
+    : base(connectionFactory, executor, jsonContext) {
+    _policyEngine = policyEngine ?? throw new ArgumentNullException(nameof(policyEngine));
   }
 
   /// <summary>
-  /// Appends an event to a stream with thread-safe sequence number generation.
+  /// Appends an event to the specified stream (AOT-compatible).
+  /// Stream ID is provided explicitly, avoiding reflection.
   /// Uses retry logic with the UNIQUE constraint to handle concurrent writes.
   /// </summary>
-  [RequiresUnreferencedCode("JSON serialization uses reflection")]
-  public override async Task AppendAsync(string streamKey, IMessageEnvelope envelope, CancellationToken cancellationToken = default) {
-    ArgumentNullException.ThrowIfNull(streamKey);
+  public override async Task AppendAsync(Guid streamId, IMessageEnvelope envelope, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
 
     const int maxRetries = 10;
@@ -43,23 +45,23 @@ public class DapperSqliteEventStore : DapperEventStoreBase {
         connection.Open();
 
         // Get next sequence number
-        var lastSequence = await Executor.ExecuteScalarAsync<long?>(
-          connection,
-          GetLastSequenceSql(),
-          new { StreamKey = streamKey },
-          cancellationToken: cancellationToken);
+        var lastSequence = await GetLastSequenceAsync(streamId, cancellationToken);
+        var nextSequence = lastSequence + 1;
 
-        var nextSequence = (lastSequence ?? -1) + 1;
-
-        // Serialize envelope
-        var json = JsonSerializer.Serialize(envelope, envelope.GetType(), _sqliteJsonOptions);
+        // Serialize envelope (AOT-compatible)
+        var envelopeType = envelope.GetType();
+        var typeInfo = _jsonContext.GetTypeInfo(envelopeType);
+        if (typeInfo == null) {
+          throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
+        }
+        var json = JsonSerializer.Serialize(envelope, typeInfo);
 
         // Try to insert with sequence number
         await Executor.ExecuteAsync(
           connection,
           GetAppendSql(),
           new {
-            StreamKey = streamKey,
+            StreamId = streamId,
             SequenceNumber = nextSequence,
             Envelope = json,
             CreatedAt = DateTimeOffset.UtcNow
@@ -78,8 +80,42 @@ public class DapperSqliteEventStore : DapperEventStoreBase {
 
     // Max retries exceeded
     throw new InvalidOperationException(
-      $"Failed to append event to stream '{streamKey}' after {maxRetries} attempts due to concurrent writes.",
+      $"Failed to append event to stream '{streamId}' after {maxRetries} attempts due to concurrent writes.",
       lastException);
+  }
+
+  /// <summary>
+  /// Reads events from a stream by stream ID (UUID).
+  /// </summary>
+  public override async IAsyncEnumerable<IMessageEnvelope> ReadAsync(
+    Guid streamId,
+    long fromSequence,
+    [EnumeratorCancellation] CancellationToken cancellationToken = default) {
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+
+    var rows = await Executor.QueryAsync<EnvelopeRow>(
+      connection,
+      GetReadSql(),
+      new {
+        StreamId = streamId,
+        FromSequence = fromSequence
+      },
+      cancellationToken: cancellationToken);
+
+    foreach (var row in rows) {
+      // Deserialize as concrete type since we can't deserialize interfaces (AOT-compatible)
+      var envelopeType = typeof(MessageEnvelope<object>);
+      var typeInfo = _jsonContext.GetTypeInfo(envelopeType);
+      if (typeInfo == null) {
+        throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
+      }
+      var envelope = JsonSerializer.Deserialize(row.Envelope, typeInfo) as IMessageEnvelope;
+      if (envelope != null) {
+        yield return envelope;
+      }
+    }
   }
 
   private static bool IsUniqueConstraintViolation(Exception ex) {
@@ -94,17 +130,24 @@ public class DapperSqliteEventStore : DapperEventStoreBase {
   }
 
   protected override string GetAppendSql() => @"
-    INSERT INTO whizbang_event_store (stream_key, sequence_number, envelope, created_at)
-    VALUES (@StreamKey, @SequenceNumber, @Envelope, @CreatedAt)";
+    INSERT INTO whizbang_event_store (stream_id, sequence_number, envelope, created_at)
+    VALUES (@StreamId, @SequenceNumber, @Envelope, @CreatedAt)";
 
   protected override string GetReadSql() => @"
     SELECT envelope AS Envelope
     FROM whizbang_event_store
-    WHERE stream_key = @StreamKey AND sequence_number >= @FromSequence
+    WHERE stream_id = @StreamId AND sequence_number >= @FromSequence
     ORDER BY sequence_number";
 
   protected override string GetLastSequenceSql() => @"
     SELECT COALESCE(MAX(sequence_number), -1)
     FROM whizbang_event_store
-    WHERE stream_key = @StreamKey";
+    WHERE stream_id = @StreamId";
+
+  /// <summary>
+  /// Internal row structure for Dapper mapping.
+  /// </summary>
+  private class EnvelopeRow {
+    public string Envelope { get; set; } = string.Empty;
+  }
 }

@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -16,6 +17,7 @@ public static class GeneratorTestHelper {
   /// <typeparam name="TGenerator">The type of generator to run</typeparam>
   /// <param name="source">The C# source code to compile</param>
   /// <returns>The generator driver result containing generated sources and diagnostics</returns>
+  [RequiresAssemblyFiles()]
   public static GeneratorDriverRunResult RunGenerator<TGenerator>(string source)
       where TGenerator : IIncrementalGenerator, new() {
 
@@ -71,8 +73,19 @@ public static class GeneratorTestHelper {
 
   /// <summary>
   /// Gets the generated source by file name from the generator result.
+  /// Checks both GeneratedSources (for all files including SQL, JSON, etc.) and GeneratedTrees (C# syntax trees).
   /// </summary>
   public static string? GetGeneratedSource(GeneratorDriverRunResult result, string fileName) {
+    // First try GeneratedSources (works for all file types including SQL, JSON, etc.)
+    foreach (var generatorResult in result.Results) {
+      var source = generatorResult.GeneratedSources
+          .FirstOrDefault(s => Path.GetFileName(s.HintName) == fileName);
+      if (source.SourceText != null) {
+        return source.SourceText.ToString();
+      }
+    }
+
+    // Fall back to GeneratedTrees (C# syntax trees only)
     return result.GeneratedTrees
         .FirstOrDefault(t => Path.GetFileName(t.FilePath) == fileName)
         ?.ToString();

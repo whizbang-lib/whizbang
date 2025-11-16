@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Transports;
@@ -13,14 +14,17 @@ public static class ServiceCollectionExtensions {
   /// </summary>
   /// <param name="services">The service collection to register with.</param>
   /// <param name="connectionString">The Azure Service Bus connection string.</param>
+  /// <param name="jsonContext">The JsonSerializerContext for AOT-compatible serialization.</param>
   /// <param name="configureOptions">Optional configuration callback for transport options.</param>
   /// <returns>The service collection for chaining.</returns>
   public static IServiceCollection AddAzureServiceBusTransport(
     this IServiceCollection services,
     string connectionString,
+    JsonSerializerContext jsonContext,
     Action<AzureServiceBusOptions>? configureOptions = null
   ) {
     ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+    ArgumentNullException.ThrowIfNull(jsonContext);
 
     // Configure options
     var options = new AzureServiceBusOptions();
@@ -29,7 +33,7 @@ public static class ServiceCollectionExtensions {
     // Register transport as singleton
     services.AddSingleton<ITransport>(sp => {
       var logger = sp.GetService<ILogger<AzureServiceBusTransport>>();
-      return new AzureServiceBusTransport(connectionString, options, logger);
+      return new AzureServiceBusTransport(connectionString, jsonContext, options, logger);
     });
 
     return services;

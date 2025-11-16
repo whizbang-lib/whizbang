@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Whizbang.Core.Data;
 using Whizbang.Data.Dapper.Custom;
 
@@ -7,8 +8,11 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// PostgreSQL-specific implementation of IRequestResponseStore using Dapper.
 /// </summary>
 public class DapperPostgresRequestResponseStore : DapperRequestResponseStoreBase {
-  public DapperPostgresRequestResponseStore(IDbConnectionFactory connectionFactory, IDbExecutor executor)
-    : base(connectionFactory, executor) {
+  public DapperPostgresRequestResponseStore(
+    IDbConnectionFactory connectionFactory,
+    IDbExecutor executor,
+    JsonSerializerContext jsonContext)
+    : base(connectionFactory, executor, jsonContext) {
   }
 
   protected override string GetSaveRequestSql() => @"

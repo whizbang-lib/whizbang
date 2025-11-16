@@ -1,4 +1,3 @@
-using System.Text.Json;
 using System.Text.Json.Serialization;
 
 namespace Whizbang.Transports.AzureServiceBus;
@@ -30,17 +29,4 @@ public class AzureServiceBusOptions {
   /// Default: "default"
   /// </summary>
   public string DefaultSubscriptionName { get; set; } = "default";
-
-  /// <summary>
-  /// JSON serializer options for message envelope serialization.
-  /// </summary>
-  public JsonSerializerOptions JsonSerializerOptions { get; set; } = new() {
-    PropertyNameCaseInsensitive = true,
-    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-    WriteIndented = false,
-    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    Converters = {
-      new JsonStringEnumConverter(JsonNamingPolicy.CamelCase)
-    }
-  };
 }

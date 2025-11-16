@@ -53,6 +53,24 @@ public class PolicyConfiguration {
   public int? MaxConcurrency { get; private set; }
 
   /// <summary>
+  /// Maximum allowed size for data JSONB column (bytes). Default: 7000 (7KB TOAST externalization threshold).
+  /// Used by JsonbSizeValidator to check event_data and model_data sizes.
+  /// </summary>
+  public int? MaxDataSizeBytes { get; private set; }
+
+  /// <summary>
+  /// Whether to suppress size warnings for this message/perspective type.
+  /// When true, size validation is skipped entirely.
+  /// </summary>
+  public bool SuppressSizeWarnings { get; private set; }
+
+  /// <summary>
+  /// Whether to throw exception if size exceeds threshold.
+  /// When true, persistence will fail if MaxDataSizeBytes is exceeded.
+  /// </summary>
+  public bool ThrowOnSizeExceeded { get; private set; }
+
+  /// <summary>
   /// Sets the topic for message routing
   /// </summary>
   public PolicyConfiguration UseTopic(string topic) {
@@ -111,6 +129,29 @@ public class PolicyConfiguration {
       throw new ArgumentOutOfRangeException(nameof(maxConcurrency), "Max concurrency must be greater than zero");
     }
     MaxConcurrency = maxConcurrency;
+    return this;
+  }
+
+  /// <summary>
+  /// Configures persistence size limits for JSONB columns.
+  /// Size is calculated in C# and validated before persistence.
+  /// Threshold violations are logged and optionally added to metadata.
+  /// </summary>
+  /// <param name="maxDataSizeBytes">Maximum size for data column (default: 7000 bytes = 7KB TOAST externalization threshold)</param>
+  /// <param name="suppressWarnings">Whether to suppress size validation warnings</param>
+  /// <param name="throwOnExceeded">Whether to throw exception if threshold exceeded</param>
+  /// <returns>This policy configuration for method chaining</returns>
+  public PolicyConfiguration WithPersistenceSize(
+    int maxDataSizeBytes = 7000,
+    bool suppressWarnings = false,
+    bool throwOnExceeded = false
+  ) {
+    if (maxDataSizeBytes <= 0) {
+      throw new ArgumentOutOfRangeException(nameof(maxDataSizeBytes), "Max data size must be greater than zero");
+    }
+    MaxDataSizeBytes = maxDataSizeBytes;
+    SuppressSizeWarnings = suppressWarnings;
+    ThrowOnSizeExceeded = throwOnExceeded;
     return this;
   }
 

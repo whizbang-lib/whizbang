@@ -1,6 +1,9 @@
+using System.Diagnostics.CodeAnalysis;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
+using Whizbang.Core;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
@@ -321,9 +324,10 @@ public class IMessageSerializerTests {
 
   // Helper methods
   private IMessageSerializer CreateTestSerializer() {
-    // This will use JsonMessageSerializer once implemented
-    // For now, this will fail compilation - that's expected in RED phase
-    return new JsonMessageSerializer();
+    // AOT-compatible serializer using WhizbangJsonContext
+    // Use CreateWithWhizbangContext to properly configure options
+    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    return new JsonMessageSerializer(options);
   }
 
   private IMessageEnvelope CreateTestEnvelope(TestMessage? message = null) {
@@ -363,11 +367,5 @@ public class IMessageSerializerTests {
       }
     };
     return envelope;
-  }
-
-  // Test message type
-  private record TestMessage {
-    public string Content { get; init; } = string.Empty;
-    public int Value { get; init; }
   }
 }

@@ -1,4 +1,3 @@
-using System.Diagnostics.CodeAnalysis;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Policies;
@@ -197,53 +196,37 @@ public class PolicyContext {
   /// <summary>
   /// Gets the aggregate ID from the message using source-generated extractors.
   /// The message type must have a property marked with [AggregateId] attribute.
-  /// Zero reflection - uses compile-time generated extractors for optimal performance.
+  /// Zero reflection - uses DI-injected extractor for optimal performance.
   /// </summary>
   /// <returns>The aggregate ID</returns>
-  /// <exception cref="InvalidOperationException">If aggregate ID property is not found or not marked with [AggregateId]</exception>
-  [RequiresUnreferencedCode("GetAggregateId uses reflection to extract aggregate ID from message types")]
+  /// <exception cref="InvalidOperationException">If aggregate ID extractor is not registered or aggregate ID is not found</exception>
   public Guid GetAggregateId() {
-    // Try to find extractor in the message's assembly first, then Core assembly
-    var aggregateId = TryExtractFromAssembly(Message, MessageType, MessageType.Assembly)
-                   ?? TryExtractFromAssembly(Message, MessageType, typeof(PolicyContext).Assembly);
-
-    if (!aggregateId.HasValue) {
+    // Get the DI-injected extractor (zero reflection)
+    if (Services is null) {
       throw new InvalidOperationException(
-          $"Message type {MessageType.Name} does not have a property marked with [AggregateId] attribute. " +
-          $"Add [AggregateId] to a Guid property to enable aggregate ID extraction."
+          "ServiceProvider is not configured. " +
+          "Ensure PolicyContext is created with a valid IServiceProvider that includes aggregate ID extraction. " +
+          "Call services.AddWhizbangAggregateIdExtractor() during startup."
       );
     }
 
-    return aggregateId.Value;
-  }
-
-  /// <summary>
-  /// Attempts to extract aggregate ID using the extractor in the specified assembly.
-  /// </summary>
-  [RequiresUnreferencedCode("Calls System.Reflection.Assembly.GetType(String)")]
-  private static Guid? TryExtractFromAssembly(object message, Type messageType, System.Reflection.Assembly assembly) {
-    try {
-      // Look for generated extractor in this assembly
-      var extractorType = assembly.GetType("Whizbang.Core.Generated.AggregateIdExtractors");
-      if (extractorType is null) {
-        return null;
-      }
-
-      // Get the ExtractAggregateId method
-      var extractMethod = extractorType.GetMethod(
-          "ExtractAggregateId",
-          System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static
+    var extractor = Services.GetService(typeof(IAggregateIdExtractor)) as IAggregateIdExtractor;
+    if (extractor is null) {
+      throw new InvalidOperationException(
+          "IAggregateIdExtractor is not registered in the ServiceProvider. " +
+          "Call services.AddWhizbangAggregateIdExtractor() during startup to register the source-generated extractor."
       );
-
-      if (extractMethod is null) {
-        return null;
-      }
-
-      // Invoke the method
-      var result = extractMethod.Invoke(null, new[] { message, messageType });
-      return result as Guid?;
-    } catch {
-      return null;
     }
+
+    // Use the source-generated extractor (zero reflection)
+    var aggregateId = extractor.ExtractAggregateId(Message, MessageType);
+    if (aggregateId.HasValue) {
+      return aggregateId.Value;
+    }
+
+    throw new InvalidOperationException(
+        $"Message type {MessageType.Name} does not have a property marked with [AggregateId] attribute. " +
+        $"Add [AggregateId] to a Guid property to enable aggregate ID extraction."
+    );
   }
 }

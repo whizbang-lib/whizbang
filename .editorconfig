@@ -329,6 +329,12 @@ csharp_style_prefer_pattern_matching = true:silent
 csharp_style_prefer_not_pattern = true:suggestion
 csharp_style_prefer_extended_property_pattern = true:suggestion
 
+###############################
+# Whizbang AOT Rules         #
+###############################
+# Ban reflection attributes via BannedApiAnalyzers (RS0030)
+dotnet_diagnostic.RS0030.severity = error
+
 # JSON files
 [*.json]
 indent_size = 2

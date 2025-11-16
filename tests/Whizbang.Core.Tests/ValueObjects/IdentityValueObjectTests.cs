@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.ValueObjects;
@@ -65,7 +66,10 @@ public class IdentityValueObjectTests {
 
     // Assert - IDs should already be in ascending order (time-ordered)
     var sortedIds = ids.OrderBy(g => g).ToList();
-    await Assert.That(ids).IsEquivalentTo(sortedIds);
+    await Assert.That(ids).HasCount().EqualTo(sortedIds.Count);
+    for (int i = 0; i < ids.Count; i++) {
+      await Assert.That(ids[i]).IsEqualTo(sortedIds[i]);
+    }
   }
 
   #region Cross-Type Consistency Tests
