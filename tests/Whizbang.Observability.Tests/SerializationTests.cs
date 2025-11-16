@@ -14,7 +14,7 @@ namespace Whizbang.Observability.Tests;
 public class SerializationTests {
   public record TestMessage(string Value, int Count) : ICommand;
 
-  private readonly WhizbangJsonContext _jsonContext = new();
+  private readonly JsonSerializerOptions _jsonOptions = WhizbangJsonContext.CreateOptions();
 
   #region MessageEnvelope Serialization Tests
 
@@ -34,7 +34,7 @@ public class SerializationTests {
     };
 
     // Act
-    var typeInfo = _jsonContext.GetTypeInfo(typeof(MessageEnvelope<TestMessage>));
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<TestMessage>));
     var json = JsonSerializer.Serialize(original, typeInfo);
     var deserialized = JsonSerializer.Deserialize(json, typeInfo) as MessageEnvelope<TestMessage>;
 
@@ -67,7 +67,7 @@ public class SerializationTests {
     };
 
     // Act
-    var typeInfo = _jsonContext.GetTypeInfo(typeof(MessageEnvelope<TestMessage>));
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<TestMessage>));
     var json = JsonSerializer.Serialize(original, typeInfo);
     var deserialized = JsonSerializer.Deserialize(json, typeInfo) as MessageEnvelope<TestMessage>;
 
@@ -101,7 +101,7 @@ public class SerializationTests {
     };
 
     // Act
-    var typeInfo = _jsonContext.GetTypeInfo(typeof(MessageEnvelope<TestMessage>));
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<TestMessage>));
     var json = JsonSerializer.Serialize(original, typeInfo);
     var deserialized = JsonSerializer.Deserialize(json, typeInfo) as MessageEnvelope<TestMessage>;
 
@@ -127,7 +127,7 @@ public class SerializationTests {
     };
 
     // Act
-    var typeInfo = _jsonContext.GetTypeInfo(typeof(MessageEnvelope<TestMessage>));
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<TestMessage>));
     var json = JsonSerializer.Serialize(original, typeInfo);
 
     // Assert - Should be relatively small (less than 700 bytes for this simple case)
@@ -153,7 +153,7 @@ public class SerializationTests {
     };
 
     // Act
-    var typeInfo = _jsonContext.GetTypeInfo(typeof(MessageEnvelope<TestMessage>));
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<TestMessage>));
     var json = JsonSerializer.Serialize(original, typeInfo);
 
     // Assert - No whitespace (WriteIndented = false)
@@ -199,7 +199,7 @@ public class SerializationTests {
     };
 
     // Act
-    var typeInfo = _jsonContext.GetTypeInfo(typeof(MessageEnvelope<TestMessage>));
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<TestMessage>));
     var json = JsonSerializer.Serialize(original, typeInfo);
     var deserialized = JsonSerializer.Deserialize(json, typeInfo) as MessageEnvelope<TestMessage>;
 

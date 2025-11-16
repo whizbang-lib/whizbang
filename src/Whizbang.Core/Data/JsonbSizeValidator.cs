@@ -26,11 +26,11 @@ public class JsonbSizeValidator {
   private const int TOAST_EXTERNALIZATION_THRESHOLD = 7_000;
 
   private readonly ILogger<JsonbSizeValidator> _logger;
-  private readonly JsonSerializerContext _jsonContext;
+  private readonly JsonSerializerOptions _jsonOptions;
 
-  public JsonbSizeValidator(ILogger<JsonbSizeValidator> logger, JsonSerializerContext jsonContext) {
+  public JsonbSizeValidator(ILogger<JsonbSizeValidator> logger, JsonSerializerOptions jsonOptions) {
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-    _jsonContext = jsonContext ?? throw new ArgumentNullException(nameof(jsonContext));
+    _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   }
 
   /// <summary>

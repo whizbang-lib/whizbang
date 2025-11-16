@@ -6,7 +6,7 @@ using TUnit.Assertions.Extensions;
 using Whizbang.Core;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Observability;
-using Whizbang.Core.Serialization;
+using Whizbang.Core.Generated;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
@@ -29,7 +29,7 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task SerializeAsync_WithValidEnvelope_ShouldSerializeAsync() {
     // Arrange
-    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
@@ -49,7 +49,7 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task SerializeAsync_WithMetadataContainingAllTypes_ShouldSerializeAsync() {
     // Arrange
-    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var metadata = new Dictionary<string, object> {
       ["stringValue"] = "test",
@@ -92,7 +92,7 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task SerializeAsync_WithNullMetadata_ShouldHandleNullAsync() {
     // Arrange
-    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
@@ -118,7 +118,7 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task DeserializeAsync_WithInvalidJson_ShouldThrowAsync() {
     // Arrange
-    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var invalidJson = Encoding.UTF8.GetBytes("{ invalid json }");
 
@@ -130,39 +130,39 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task DeserializeAsync_WithInvalidMessageId_ShouldThrowAsync() {
     // Arrange
-    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var jsonWithInvalidMessageId = Encoding.UTF8.GetBytes(@"{
         ""MessageId"": ""invalid-guid"",
-        ""Payload"": ""test"",
+        ""Payload"": { ""Content"": ""test"", ""Value"": 1 },
         ""Hops"": []
       }");
 
-    // Act & Assert
+    // Act & Assert - AOT serialization throws FormatException for invalid GUID
     await Assert.That(async () => await serializer.DeserializeAsync<TestMessage>(jsonWithInvalidMessageId))
-      .ThrowsExactly<JsonException>();
+      .ThrowsExactly<FormatException>();
   }
 
   [Test]
   public async Task DeserializeAsync_WithNullMessageId_ShouldThrowAsync() {
     // Arrange
-    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var jsonWithNullMessageId = Encoding.UTF8.GetBytes(@"{
         ""MessageId"": null,
-        ""Payload"": ""test"",
+        ""Payload"": { ""Content"": ""test"", ""Value"": 1 },
         ""Hops"": []
       }");
 
-    // Act & Assert
+    // Act & Assert - AOT serialization throws ArgumentNullException for null MessageId
     await Assert.That(async () => await serializer.DeserializeAsync<TestMessage>(jsonWithNullMessageId))
-      .ThrowsExactly<JsonException>();
+      .ThrowsExactly<ArgumentNullException>();
   }
 
   [Test]
   public async Task DeserializeAsync_WithInvalidCorrelationId_ShouldThrowAsync() {
     // Arrange
-    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
     var jsonWithInvalidCorrelationId = Encoding.UTF8.GetBytes($@"{{
@@ -184,12 +184,12 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task DeserializeAsync_WithNullCorrelationId_ShouldHandleGracefullyAsync() {
     // Arrange
-    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
     var jsonWithNullCorrelationId = Encoding.UTF8.GetBytes($@"{{
         ""MessageId"": ""{messageId.Value}"",
-        ""Payload"": ""test"",
+        ""Payload"": {{ ""Content"": ""test"", ""Value"": 1 }},
         ""Hops"": [{{
           ""Type"": 0,
           ""ServiceName"": ""Test"",
@@ -208,7 +208,7 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task SerializeAsync_WithValidMessageId_ShouldSerializeAsync() {
     // Arrange
-    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
     var envelope = new MessageEnvelope<TestMessage> {
@@ -228,7 +228,7 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task SerializeAsync_WithValidCorrelationId_ShouldSerializeAsync() {
     // Arrange
-    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
     var correlationId = CorrelationId.New();
@@ -256,13 +256,13 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task Metadata_WithInvalidStartToken_ShouldThrowAsync() {
     // Arrange
-    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
     // Metadata is an array instead of object
     var json = $@"{{
         ""MessageId"": ""{messageId.Value}"",
-        ""Payload"": ""test"",
+        ""Payload"": {{ ""Content"": ""test"", ""Value"": 1 }},
         ""Hops"": [{{
           ""Type"": 0,
           ""ServiceName"": ""Test"",
@@ -281,13 +281,13 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task Metadata_WithInvalidPropertyToken_ShouldThrowAsync() {
     // Arrange
-    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
     // Malformed metadata - value without property name
     var json = $@"{{
         ""MessageId"": ""{messageId.Value}"",
-        ""Payload"": ""test"",
+        ""Payload"": {{ ""Content"": ""test"", ""Value"": 1 }},
         ""Hops"": [{{
           ""Type"": 0,
           ""ServiceName"": ""Test"",
@@ -305,13 +305,13 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task Metadata_WithUnsupportedValueType_ShouldThrowAsync() {
     // Arrange
-    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
     // Array value in metadata (not supported)
     var json = $@"{{
         ""MessageId"": ""{messageId.Value}"",
-        ""Payload"": ""test"",
+        ""Payload"": {{ ""Content"": ""test"", ""Value"": 1 }},
         ""Hops"": [{{
           ""Type"": 0,
           ""ServiceName"": ""Test"",
@@ -330,7 +330,7 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task Metadata_WithUnsupportedWriteType_ShouldThrowAsync() {
     // Arrange
-    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var metadata = new Dictionary<string, object> {
       ["unsupportedType"] = new DateTime(2025, 1, 1) // DateTime is not supported
@@ -358,14 +358,14 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task Metadata_WithNullPropertyName_ShouldThrowAsync() {
     // Arrange
-    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
     // Malformed JSON with null property name (this is unlikely in practice but tests the null check)
     // We'll test the ReadValue path for null by using a valid metadata with null value
     var json = $@"{{
         ""MessageId"": ""{messageId.Value}"",
-        ""Payload"": ""test"",
+        ""Payload"": {{ ""Content"": ""test"", ""Value"": 1 }},
         ""Hops"": [{{
           ""Type"": 0,
           ""ServiceName"": ""Test"",
@@ -385,7 +385,7 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task Metadata_WithDoubleValue_ShouldRoundTripAsync() {
     // Arrange
-    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var metadata = new Dictionary<string, object> {
       ["pi"] = 3.14159265359,
@@ -419,7 +419,7 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task Metadata_WithLargeInt64Value_ShouldRoundTripAsync() {
     // Arrange
-    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     // Use a value larger than int32.MaxValue to ensure it's read as long
     var largeValue = (long)int.MaxValue + 1000L;
@@ -453,7 +453,7 @@ public class JsonMessageSerializerTests {
   [Test]
   public async Task RoundTrip_WithComplexEnvelope_ShouldPreserveAllDataAsync() {
     // Arrange
-    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),

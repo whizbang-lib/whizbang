@@ -16,20 +16,20 @@ namespace Whizbang.Data.Dapper.Custom;
 public abstract class DapperEventStoreBase : IEventStore {
   protected readonly IDbConnectionFactory _connectionFactory;
   protected readonly IDbExecutor _executor;
-  protected readonly JsonSerializerContext _jsonContext;
+  protected readonly JsonSerializerOptions _jsonOptions;
 
   protected DapperEventStoreBase(
     IDbConnectionFactory connectionFactory,
     IDbExecutor executor,
-    JsonSerializerContext jsonContext
+    JsonSerializerOptions jsonOptions
   ) {
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentNullException.ThrowIfNull(executor);
-    ArgumentNullException.ThrowIfNull(jsonContext);
+    ArgumentNullException.ThrowIfNull(jsonOptions);
 
     _connectionFactory = connectionFactory;
     _executor = executor;
-    _jsonContext = jsonContext;
+    _jsonOptions = jsonOptions;
   }
 
   protected IDbConnectionFactory ConnectionFactory => _connectionFactory;

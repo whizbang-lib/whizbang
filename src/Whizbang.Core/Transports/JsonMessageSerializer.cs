@@ -76,20 +76,15 @@ public class JsonMessageSerializer : IMessageSerializer {
 
   /// <inheritdoc />
   public Task<byte[]> SerializeAsync(IMessageEnvelope envelope) {
-    string json;
+    // Get JsonTypeInfo from options or context - fully AOT-compatible
+    var envelopeType = envelope.GetType();
+    var typeInfo = _options?.GetTypeInfo(envelopeType) ?? _context?.GetTypeInfo(envelopeType);
 
-    if (_context is not null) {
-      // Use JsonSerializerContext path - AOT-compatible
-      var typeInfo = _context.GetTypeInfo(envelope.GetType());
-      if (typeInfo is null) {
-        throw new InvalidOperationException($"No JsonTypeInfo found for {envelope.GetType().Name}. Ensure the message type is registered in WhizbangJsonContext.");
-      }
-      json = JsonSerializer.Serialize(envelope, typeInfo);
-    } else {
-      // Use JsonSerializerOptions path with combined resolvers
-      json = JsonSerializer.Serialize(envelope, envelope.GetType(), _options!);
+    if (typeInfo is null) {
+      throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
     }
 
+    var json = JsonSerializer.Serialize(envelope, typeInfo);
     return Task.FromResult(System.Text.Encoding.UTF8.GetBytes(json));
   }
 
@@ -97,19 +92,15 @@ public class JsonMessageSerializer : IMessageSerializer {
   public Task<IMessageEnvelope> DeserializeAsync<TMessage>(byte[] bytes) where TMessage : notnull {
     var json = System.Text.Encoding.UTF8.GetString(bytes);
     var envelopeType = typeof(MessageEnvelope<TMessage>);
-    IMessageEnvelope? envelope;
 
-    if (_context is not null) {
-      // Use JsonSerializerContext path - AOT-compatible
-      var typeInfo = _context.GetTypeInfo(envelopeType);
-      if (typeInfo is null) {
-        throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
-      }
-      envelope = JsonSerializer.Deserialize(json, typeInfo) as IMessageEnvelope;
-    } else {
-      // Use JsonSerializerOptions path with combined resolvers
-      envelope = JsonSerializer.Deserialize(json, envelopeType, _options!) as IMessageEnvelope;
+    // Get JsonTypeInfo from options or context - fully AOT-compatible
+    var typeInfo = _options?.GetTypeInfo(envelopeType) ?? _context?.GetTypeInfo(envelopeType);
+
+    if (typeInfo is null) {
+      throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
     }
+
+    var envelope = JsonSerializer.Deserialize(json, typeInfo) as IMessageEnvelope;
 
     if (envelope is null) {
       throw new InvalidOperationException($"Failed to deserialize envelope for message type {typeof(TMessage).Name}");

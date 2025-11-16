@@ -1,3 +1,4 @@
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using Whizbang.Core.Data;
 using Whizbang.Data.Dapper.Custom;
@@ -11,8 +12,8 @@ public class DapperSqliteRequestResponseStore : DapperRequestResponseStoreBase {
   public DapperSqliteRequestResponseStore(
     IDbConnectionFactory connectionFactory,
     IDbExecutor executor,
-    JsonSerializerContext jsonContext)
-    : base(connectionFactory, executor, jsonContext) {
+    JsonSerializerOptions jsonOptions)
+    : base(connectionFactory, executor, jsonOptions) {
   }
 
   protected override string GetSaveRequestSql() => @"

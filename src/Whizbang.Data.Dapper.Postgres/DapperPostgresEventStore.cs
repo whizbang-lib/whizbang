@@ -1,6 +1,7 @@
 using System.Data;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Data;
@@ -25,12 +26,12 @@ public class DapperPostgresEventStore : DapperEventStoreBase {
   public DapperPostgresEventStore(
     IDbConnectionFactory connectionFactory,
     IDbExecutor executor,
-    JsonSerializerContext jsonContext,
+    JsonSerializerOptions jsonOptions,
     IJsonbPersistenceAdapter<IMessageEnvelope> adapter,
     JsonbSizeValidator sizeValidator,
     IPolicyEngine policyEngine,
     ILogger<DapperPostgresEventStore> logger
-  ) : base(connectionFactory, executor, jsonContext) {
+  ) : base(connectionFactory, executor, jsonOptions) {
     _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
     _sizeValidator = sizeValidator ?? throw new ArgumentNullException(nameof(sizeValidator));
     _policyEngine = policyEngine ?? throw new ArgumentNullException(nameof(policyEngine));

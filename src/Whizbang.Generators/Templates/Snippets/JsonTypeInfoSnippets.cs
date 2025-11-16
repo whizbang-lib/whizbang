@@ -47,7 +47,7 @@ internal static class JsonTypeInfoSnippets {
         options,
         "MessageId",
         obj => ((MessageEnvelope<T>)obj).MessageId,
-        MessageId);
+        (JsonTypeInfo<MessageId>)options.GetTypeInfo(typeof(MessageId)));
 
     properties[1] = CreateProperty<T>(
         options,
@@ -59,15 +59,33 @@ internal static class JsonTypeInfoSnippets {
         options,
         "Hops",
         obj => ((MessageEnvelope<T>)obj).Hops,
-        ListMessageHop);
+        (JsonTypeInfo<List<MessageHop>>)options.GetTypeInfo(typeof(List<MessageHop>)));
 
     var ctorParams = new JsonParameterInfoValues[3];
-    ctorParams[0] = CreateConstructorParameter<MessageId>(options, "messageId", 0);
-    ctorParams[1] = CreateConstructorParameter<T>(options, "payload", 1);
-    ctorParams[2] = CreateConstructorParameter<List<MessageHop>>(options, "hops", 2);
+    ctorParams[0] = new JsonParameterInfoValues {
+      Name = "messageId",
+      ParameterType = typeof(MessageId),
+      Position = 0,
+      HasDefaultValue = false,
+      DefaultValue = null
+    };
+    ctorParams[1] = new JsonParameterInfoValues {
+      Name = "payload",
+      ParameterType = typeof(T),
+      Position = 1,
+      HasDefaultValue = false,
+      DefaultValue = null
+    };
+    ctorParams[2] = new JsonParameterInfoValues {
+      Name = "hops",
+      ParameterType = typeof(List<MessageHop>),
+      Position = 2,
+      HasDefaultValue = false,
+      DefaultValue = null
+    };
 
     var objectInfo = new JsonObjectInfoValues<MessageEnvelope<T>> {
-      ObjectCreator = null,  // Use constructor with parameters instead
+      ObjectCreator = null,
       PropertyMetadataInitializer = _ => properties,
       ConstructorParameterMetadataInitializer = () => ctorParams
     };
@@ -97,22 +115,6 @@ internal static class JsonTypeInfoSnippets {
     };
 
     return JsonMetadataServices.CreatePropertyInfo(options, propertyInfo);
-  }
-  #endregion
-
-  #region CREATE_CONSTRUCTOR_PARAMETER_HELPER
-  private JsonParameterInfoValues CreateConstructorParameter<TParam>(
-      JsonSerializerOptions options,
-      string parameterName,
-      int position) {
-
-    return new JsonParameterInfoValues {
-      Name = parameterName,
-      ParameterType = typeof(TParam),
-      Position = position,
-      HasDefaultValue = false,
-      DefaultValue = default(TParam)
-    };
   }
   #endregion
 }

@@ -9,6 +9,7 @@ using Whizbang.Core.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
+using Whizbang.Core.Generated;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Dapper.Custom;
 using Whizbang.Data.Dapper.Postgres;
@@ -38,16 +39,16 @@ public class DapperPostgresEventStoreRetryTests {
     _testBase = new TestFixture();
     await _testBase.SetupAsync();
 
-    var jsonContext = new WhizbangJsonContext();
-    var adapter = new EventEnvelopeJsonbAdapter(jsonContext);
-    var sizeValidator = new JsonbSizeValidator(NullLogger<JsonbSizeValidator>.Instance, jsonContext);
+    var jsonOptions = WhizbangJsonContext.CreateOptions();
+    var adapter = new EventEnvelopeJsonbAdapter(jsonOptions);
+    var sizeValidator = new JsonbSizeValidator(NullLogger<JsonbSizeValidator>.Instance, jsonOptions);
     var policyEngine = new PolicyEngine();
     var logger = NullLogger<DapperPostgresEventStore>.Instance;
 
     _store = new DapperPostgresEventStore(
       _testBase.ConnectionFactory,
       _testBase.Executor,
-      jsonContext,
+      jsonOptions,
       adapter,
       sizeValidator,
       policyEngine,

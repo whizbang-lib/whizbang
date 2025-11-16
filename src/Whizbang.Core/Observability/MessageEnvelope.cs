@@ -29,6 +29,22 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope {
   public required List<MessageHop> Hops { get; init; }
 
   /// <summary>
+  /// Parameterless constructor for object initializer syntax.
+  /// </summary>
+  public MessageEnvelope() {
+  }
+
+  /// <summary>
+  /// Constructor for JSON deserialization with all required properties.
+  /// </summary>
+  [System.Text.Json.Serialization.JsonConstructor]
+  public MessageEnvelope(MessageId messageId, TMessage payload, List<MessageHop> hops) {
+    MessageId = messageId;
+    Payload = payload;
+    Hops = hops;
+  }
+
+  /// <summary>
   /// Adds a hop to the message's journey.
   /// Called automatically during message processing to track where the message has been.
   /// </summary>

@@ -3,7 +3,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using Whizbang.Core;
 using Whizbang.Core.Observability;
-using Whizbang.Core.Serialization;
+using Whizbang.Core.Generated;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
@@ -325,8 +325,8 @@ public class IMessageSerializerTests {
   // Helper methods
   private IMessageSerializer CreateTestSerializer() {
     // AOT-compatible serializer using WhizbangJsonContext
-    // Use CreateWithWhizbangContext to properly configure options
-    var options = JsonSerializerOptionsExtensions.CreateWithWhizbangContext();
+    // Use CreateOptions to properly configure options with all contexts
+    var options = WhizbangJsonContext.CreateOptions();
     return new JsonMessageSerializer(options);
   }
 

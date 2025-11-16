@@ -8,12 +8,12 @@ using Whizbang.Generators;
 namespace Whizbang.Generators.Tests;
 
 /// <summary>
-/// Tests for JsonTypeInfoGenerator source generator.
+/// Tests for MessageJsonContextGenerator source generator.
 /// Verifies zero-reflection JSON serialization for AOT compatibility using manual JsonTypeInfo generation.
 /// </summary>
 [Category("SourceGenerators")]
 [Category("JsonSerialization")]
-public class JsonTypeInfoGeneratorTests {
+public class MessageJsonContextGeneratorTests {
 
   [Test]
   [RequiresAssemblyFiles()]
@@ -28,7 +28,7 @@ public record CreateOrder(string OrderId, string CustomerName) : ICommand;
 ";
 
     // Act
-    var result = GeneratorTestHelper.RunGenerator<JsonTypeInfoGenerator>(source);
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
     // Assert
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
@@ -52,7 +52,7 @@ public record CreateOrder(string OrderId, string CustomerName) : ICommand;
 ";
 
     // Act
-    var result = GeneratorTestHelper.RunGenerator<JsonTypeInfoGenerator>(source);
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
     // Assert
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
@@ -84,7 +84,7 @@ namespace MyApp.Events {
 ";
 
     // Act
-    var result = GeneratorTestHelper.RunGenerator<JsonTypeInfoGenerator>(source);
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
     // Assert
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
@@ -112,7 +112,7 @@ public record CreateOrder(string OrderId) : ICommand;
 ";
 
     // Act
-    var result = GeneratorTestHelper.RunGenerator<JsonTypeInfoGenerator>(source);
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
     // Assert
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
@@ -139,7 +139,7 @@ public record CreateOrder(string OrderId) : ICommand;
 ";
 
     // Act
-    var result = GeneratorTestHelper.RunGenerator<JsonTypeInfoGenerator>(source);
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
     // Assert
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
@@ -165,7 +165,7 @@ public record CreateOrder(string OrderId) : ICommand;
 ";
 
     // Act
-    var result = GeneratorTestHelper.RunGenerator<JsonTypeInfoGenerator>(source);
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
     // Assert
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
@@ -188,7 +188,7 @@ public class SomeClass { }
 ";
 
     // Act
-    var result = GeneratorTestHelper.RunGenerator<JsonTypeInfoGenerator>(source);
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
     // Assert
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
@@ -203,7 +203,7 @@ public class SomeClass { }
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task Generator_GeneratesLazyInitializationFieldsAsync() {
+  public async Task Generator_GeneratesGetTypeInfoInternalMethodAsync() {
     // Arrange
     var source = @"
 using Whizbang.Core;
@@ -214,7 +214,7 @@ public record CreateOrder(string OrderId) : ICommand;
 ";
 
     // Act
-    var result = GeneratorTestHelper.RunGenerator<JsonTypeInfoGenerator>(source);
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
     // Assert
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
@@ -222,15 +222,15 @@ public record CreateOrder(string OrderId) : ICommand;
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
-    // Should generate nullable fields for lazy initialization
-    await Assert.That(code!).Contains("private JsonTypeInfo<global::Whizbang.Core.ValueObjects.MessageId>? _MessageId;");
-    await Assert.That(code).Contains("private JsonTypeInfo<global::Whizbang.Core.ValueObjects.CorrelationId>? _CorrelationId;");
-    await Assert.That(code).Contains("private JsonTypeInfo<MessageEnvelope<");
+    // Should generate GetTypeInfoInternal that calls factory methods directly (no caching)
+    await Assert.That(code!).Contains("private JsonTypeInfo? GetTypeInfoInternal(Type type, JsonSerializerOptions options)");
+    await Assert.That(code).Contains("return Create_MessageId(options);");
+    await Assert.That(code).Contains("return Create_CorrelationId(options);");
   }
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task Generator_GeneratesPropertiesWithNullCoalescingAsync() {
+  public async Task Generator_ImplementsIJsonTypeInfoResolverAsync() {
     // Arrange
     var source = @"
 using Whizbang.Core;
@@ -241,7 +241,7 @@ public record CreateOrder(string OrderId) : ICommand;
 ";
 
     // Act
-    var result = GeneratorTestHelper.RunGenerator<JsonTypeInfoGenerator>(source);
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
     // Assert
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
@@ -249,8 +249,10 @@ public record CreateOrder(string OrderId) : ICommand;
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
-    // Should generate properties with ??= for lazy initialization
-    await Assert.That(code!).Contains("private JsonTypeInfo<global::Whizbang.Core.ValueObjects.MessageId> MessageId => _MessageId ??= Create_MessageId(Options);");
+    // Should implement IJsonTypeInfoResolver interface
+    await Assert.That(code!).Contains("IJsonTypeInfoResolver");
+    await Assert.That(code).Contains("GetTypeInfo(Type type, JsonSerializerOptions options)");
+    await Assert.That(code).Contains("GetTypeInfoInternal(type, options)");
   }
 
   [Test]
@@ -266,7 +268,7 @@ public record CreateOrder(string OrderId) : ICommand;
 ";
 
     // Act
-    var result = GeneratorTestHelper.RunGenerator<JsonTypeInfoGenerator>(source);
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
     // Assert - Should report WHIZ011 diagnostic
     var infos = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Info).ToArray();
@@ -287,7 +289,7 @@ public class SomeClass { }
 ";
 
     // Act
-    var result = GeneratorTestHelper.RunGenerator<JsonTypeInfoGenerator>(source);
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
     // Assert
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
@@ -317,7 +319,7 @@ public record CreateOrder(string OrderId) : ICommand;
 ";
 
     // Act
-    var result = GeneratorTestHelper.RunGenerator<JsonTypeInfoGenerator>(source);
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
     // Assert
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
@@ -344,7 +346,7 @@ public record OrderDto(string OrderId) : ICloneable {
 ";
 
     // Act
-    var result = GeneratorTestHelper.RunGenerator<JsonTypeInfoGenerator>(source);
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
     // Assert - Should generate context but not include OrderDto
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
@@ -365,7 +367,7 @@ public class SomeClass {
 ";
 
     // Act
-    var result = GeneratorTestHelper.RunGenerator<JsonTypeInfoGenerator>(source);
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
     // Assert - Should still generate context with core types
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
@@ -376,7 +378,7 @@ public class SomeClass {
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task JsonTypeInfoGenerator_TypeImplementingBothInterfaces_GeneratesAsCommandAsync() {
+  public async Task MessageJsonContextGenerator_TypeImplementingBothInterfaces_GeneratesAsCommandAsync() {
     // Arrange - Tests line 53-57, 84: Both isCommand and isEvent = true
     // messageKind ternary chooses "command" when both are true
     var source = """
@@ -390,7 +392,7 @@ public record HybridMessage : ICommand, IEvent {
 """;
 
     // Act
-    var result = GeneratorTestHelper.RunGenerator<JsonTypeInfoGenerator>(source);
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
     // Assert - Should generate as command (ternary picks command when both true)
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
@@ -405,7 +407,7 @@ public record HybridMessage : ICommand, IEvent {
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task JsonTypeInfoGenerator_ClassImplementingICommand_GeneratesJsonTypeInfoAsync() {
+  public async Task MessageJsonContextGenerator_ClassImplementingICommand_GeneratesJsonTypeInfoAsync() {
     // Arrange - Tests line 46-50: Class (not record) in switch expression
     var source = """
 using Whizbang.Core;
@@ -418,7 +420,7 @@ public class LegacyCommand : ICommand {
 """;
 
     // Act
-    var result = GeneratorTestHelper.RunGenerator<JsonTypeInfoGenerator>(source);
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
     // Assert - Should generate JsonTypeInfo for class-based command
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");

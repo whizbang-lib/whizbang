@@ -18,13 +18,12 @@ namespace Whizbang.Core.Generated;
 
 /// <summary>
 /// Generated JsonSerializerContext with manual JsonTypeInfo objects for AOT-compatible serialization.
-/// Uses generic helper methods to minimize code repetition.
+/// Implements IJsonTypeInfoResolver to properly handle options in resolver chains.
 /// </summary>
-public partial class WhizbangJsonContext : JsonSerializerContext {
+public partial class WhizbangJsonContext : JsonSerializerContext, IJsonTypeInfoResolver {
   /// <summary>
   /// Default singleton instance of WhizbangJsonContext.
   /// Use this in resolver chains: WhizbangJsonContext.Default
-  /// Follows standard .NET JsonSerializerContext pattern.
   /// </summary>
   public static WhizbangJsonContext Default { get; } = new();
 
@@ -39,6 +38,10 @@ public partial class WhizbangJsonContext : JsonSerializerContext {
 
   #region LAZY_PROPERTIES
   // Lazy-initialized properties for all JsonTypeInfo objects
+  #endregion
+
+  #region ASSEMBLY_AWARE_HELPER
+  // Assembly-aware helper method for creating JsonSerializerOptions with all contexts
   #endregion
 
   #region GET_DISCOVERED_TYPE_INFO

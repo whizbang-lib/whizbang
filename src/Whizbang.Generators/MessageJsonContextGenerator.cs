@@ -8,12 +8,13 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 namespace Whizbang.Generators;
 
 /// <summary>
-/// Source generator that creates a JsonSerializerContext with manual JsonTypeInfo objects
-/// for AOT-compatible serialization. Discovers message types (ICommand, IEvent) and generates
-/// WhizbangJsonContext with generic helper methods to minimize code repetition.
+/// Source generator that discovers message types (ICommand, IEvent) and generates
+/// WhizbangJsonContext with JsonTypeInfo for AOT-compatible serialization.
+/// This context handles message types discovered in the current assembly.
+/// Use with WhizbangInfrastructureJsonContext for complete Whizbang serialization support.
 /// </summary>
 [Generator]
-public class JsonTypeInfoGenerator : IIncrementalGenerator {
+public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string I_COMMAND = "Whizbang.Core.ICommand";
   private const string I_EVENT = "Whizbang.Core.IEvent";
 
@@ -103,7 +104,7 @@ public class JsonTypeInfoGenerator : IIncrementalGenerator {
     }
 
     // Load template
-    var assembly = typeof(JsonTypeInfoGenerator).Assembly;
+    var assembly = typeof(MessageJsonContextGenerator).Assembly;
     var template = TemplateUtilities.GetEmbeddedTemplate(assembly, "WhizbangJsonContextTemplate.cs");
 
     // Replace HEADER region with timestamp
@@ -112,6 +113,7 @@ public class JsonTypeInfoGenerator : IIncrementalGenerator {
     // Generate and replace each region
     template = TemplateUtilities.ReplaceRegion(template, "LAZY_FIELDS", GenerateLazyFields(assembly, messages));
     template = TemplateUtilities.ReplaceRegion(template, "LAZY_PROPERTIES", GenerateLazyProperties(assembly, messages));
+    template = TemplateUtilities.ReplaceRegion(template, "ASSEMBLY_AWARE_HELPER", GenerateAssemblyAwareHelper(assembly));
     template = TemplateUtilities.ReplaceRegion(template, "GET_DISCOVERED_TYPE_INFO", GenerateGetTypeInfo(assembly, messages));
     template = TemplateUtilities.ReplaceRegion(template, "HELPER_METHODS", GenerateHelperMethods(assembly));
     template = TemplateUtilities.ReplaceRegion(template, "CORE_TYPE_FACTORIES", GenerateCoreTypeFactories(assembly));
@@ -123,16 +125,12 @@ public class JsonTypeInfoGenerator : IIncrementalGenerator {
   private static string GenerateLazyFields(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> messages) {
     var sb = new System.Text.StringBuilder();
 
-    // Core Whizbang types
+    // Core Whizbang types that require custom converters (Vogen value objects)
     sb.AppendLine("private JsonTypeInfo<global::Whizbang.Core.ValueObjects.MessageId>? _MessageId;");
     sb.AppendLine("private JsonTypeInfo<global::Whizbang.Core.ValueObjects.CorrelationId>? _CorrelationId;");
-    sb.AppendLine("private JsonTypeInfo<global::Whizbang.Core.Observability.MessageHop>? _MessageHop;");
-    sb.AppendLine("private JsonTypeInfo<global::Whizbang.Core.Observability.SecurityContext>? _SecurityContext;");
-    sb.AppendLine("private JsonTypeInfo<global::Whizbang.Core.Policies.PolicyDecisionTrail>? _PolicyDecisionTrail;");
-    sb.AppendLine("private JsonTypeInfo<global::System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageHop>>? _ListMessageHop;");
     sb.AppendLine();
 
-    // Discovered message types (ICommand, IEvent) - need JsonTypeInfo with property metadata
+    // Discovered message types - need JsonTypeInfo for AOT
     foreach (var message in messages) {
       sb.AppendLine($"private JsonTypeInfo<{message.FullyQualifiedName}>? _{message.SimpleName};");
     }
@@ -153,29 +151,8 @@ public class JsonTypeInfoGenerator : IIncrementalGenerator {
   private static string GenerateLazyProperties(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> messages) {
     var sb = new System.Text.StringBuilder();
 
-    // Core Whizbang types
-    sb.AppendLine("private JsonTypeInfo<global::Whizbang.Core.ValueObjects.MessageId> MessageId => _MessageId ??= Create_MessageId(Options);");
-    sb.AppendLine("private JsonTypeInfo<global::Whizbang.Core.ValueObjects.CorrelationId> CorrelationId => _CorrelationId ??= Create_CorrelationId(Options);");
-    sb.AppendLine("private JsonTypeInfo<global::Whizbang.Core.Observability.MessageHop> MessageHop => _MessageHop ??= (JsonTypeInfo<global::Whizbang.Core.Observability.MessageHop>)Options.GetTypeInfo(typeof(global::Whizbang.Core.Observability.MessageHop));");
-    sb.AppendLine("private JsonTypeInfo<global::Whizbang.Core.Observability.SecurityContext> SecurityContext => _SecurityContext ??= (JsonTypeInfo<global::Whizbang.Core.Observability.SecurityContext>)Options.GetTypeInfo(typeof(global::Whizbang.Core.Observability.SecurityContext));");
-    sb.AppendLine("private JsonTypeInfo<global::Whizbang.Core.Policies.PolicyDecisionTrail> PolicyDecisionTrail => _PolicyDecisionTrail ??= (JsonTypeInfo<global::Whizbang.Core.Policies.PolicyDecisionTrail>)Options.GetTypeInfo(typeof(global::Whizbang.Core.Policies.PolicyDecisionTrail));");
-    sb.AppendLine("private JsonTypeInfo<global::System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageHop>> ListMessageHop => _ListMessageHop ??= (JsonTypeInfo<global::System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageHop>>)Options.GetTypeInfo(typeof(global::System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageHop>));");
-    sb.AppendLine();
-
-    // Discovered message types (ICommand, IEvent) - generate complete JsonTypeInfo with property metadata
-    foreach (var message in messages) {
-      sb.AppendLine($"private JsonTypeInfo<{message.FullyQualifiedName}> {message.SimpleName} => _{message.SimpleName} ??= Create_{message.SimpleName}(Options);");
-    }
-    sb.AppendLine();
-
-    // Message envelope types
-    var snippet = TemplateUtilities.ExtractSnippet(assembly, "JsonTypeInfoSnippets.cs", "MESSAGE_ENVELOPE_LAZY_PROPERTY");
-    foreach (var message in messages) {
-      var property = snippet
-          .Replace("__PAYLOAD_TYPE__", message.FullyQualifiedName)
-          .Replace("__PAYLOAD_NAME__", message.SimpleName);
-      sb.AppendLine(property.TrimEnd());
-    }
+    // Note: We don't use lazy properties anymore since we create in GetTypeInfo with provided options
+    sb.AppendLine("// JsonTypeInfo objects are created on-demand in GetTypeInfo() using provided options");
 
     return sb.ToString();
   }
@@ -183,49 +160,53 @@ public class JsonTypeInfoGenerator : IIncrementalGenerator {
   private static string GenerateGetTypeInfo(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> messages) {
     var sb = new System.Text.StringBuilder();
 
-    sb.AppendLine("public override JsonTypeInfo? GetTypeInfo(Type type) {");
+    // Implement IJsonTypeInfoResolver.GetTypeInfo(Type, JsonSerializerOptions)
+    // This is the method that gets called when used in a resolver chain
+    sb.AppendLine("JsonTypeInfo? IJsonTypeInfoResolver.GetTypeInfo(Type type, JsonSerializerOptions options) {");
+    sb.AppendLine("  return GetTypeInfoInternal(type, options);");
+    sb.AppendLine("}");
+    sb.AppendLine();
 
-    // Core types
-    sb.AppendLine("  // Core Whizbang types");
-    sb.AppendLine("  if (type == typeof(global::Whizbang.Core.ValueObjects.MessageId)) return MessageId;");
-    sb.AppendLine("  if (type == typeof(global::Whizbang.Core.ValueObjects.CorrelationId)) return CorrelationId;");
-    sb.AppendLine("  if (type == typeof(global::Whizbang.Core.Observability.MessageHop)) return MessageHop;");
-    sb.AppendLine("  if (type == typeof(global::Whizbang.Core.Observability.SecurityContext)) return SecurityContext;");
-    sb.AppendLine("  if (type == typeof(global::Whizbang.Core.Policies.PolicyDecisionTrail)) return PolicyDecisionTrail;");
-    sb.AppendLine("  if (type == typeof(global::System.Collections.Generic.List<global::Whizbang.Core.Observability.MessageHop>)) return ListMessageHop;");
+    // Override base GetTypeInfo(Type) for compatibility
+    sb.AppendLine("public override JsonTypeInfo? GetTypeInfo(Type type) {");
+    sb.AppendLine("  // When called directly (not in resolver chain), Options might be null");
+    sb.AppendLine("  if (Options == null) return null;");
+    sb.AppendLine("  return GetTypeInfoInternal(type, Options);");
+    sb.AppendLine("}");
+    sb.AppendLine();
+
+    // Shared implementation
+    sb.AppendLine("private JsonTypeInfo? GetTypeInfoInternal(Type type, JsonSerializerOptions options) {");
+    sb.AppendLine("  // Core Whizbang types with custom converters");
+    sb.AppendLine("  if (type == typeof(global::Whizbang.Core.ValueObjects.MessageId)) {");
+    sb.AppendLine("    return Create_MessageId(options);");
+    sb.AppendLine("  }");
+    sb.AppendLine();
+    sb.AppendLine("  if (type == typeof(global::Whizbang.Core.ValueObjects.CorrelationId)) {");
+    sb.AppendLine("    return Create_CorrelationId(options);");
+    sb.AppendLine("  }");
     sb.AppendLine();
 
     // Discovered message types
     sb.AppendLine("  // Discovered message types (ICommand, IEvent)");
     foreach (var message in messages) {
-      sb.AppendLine($"  if (type == typeof({message.FullyQualifiedName})) return {message.SimpleName};");
+      sb.AppendLine($"  if (type == typeof({message.FullyQualifiedName})) {{");
+      sb.AppendLine($"    return Create_{message.SimpleName}(options);");
+      sb.AppendLine($"  }}");
+      sb.AppendLine();
     }
-    sb.AppendLine();
 
     // Message envelope types
     sb.AppendLine("  // Message envelope types");
-    var snippet = TemplateUtilities.ExtractSnippet(assembly, "JsonTypeInfoSnippets.cs", "MESSAGE_ENVELOPE_GET_TYPE_INFO_CASE");
     foreach (var message in messages) {
-      var caseStatement = snippet
-          .Replace("__PAYLOAD_TYPE__", message.FullyQualifiedName)
-          .Replace("__PAYLOAD_NAME__", message.SimpleName);
-      sb.AppendLine("  " + caseStatement.TrimEnd());
+      sb.AppendLine($"  if (type == typeof(MessageEnvelope<{message.FullyQualifiedName}>)) {{");
+      sb.AppendLine($"    return CreateMessageEnvelope<{message.FullyQualifiedName}>(options, Create_{message.SimpleName}(options));");
+      sb.AppendLine($"  }}");
+      sb.AppendLine();
     }
 
     sb.AppendLine();
-
-    // Primitives
-    sb.AppendLine("  // Primitive types");
-    sb.AppendLine("  if (type == typeof(string)) return JsonMetadataServices.CreateValueInfo<string>(Options, JsonMetadataServices.StringConverter);");
-    sb.AppendLine("  if (type == typeof(int)) return JsonMetadataServices.CreateValueInfo<int>(Options, JsonMetadataServices.Int32Converter);");
-    sb.AppendLine("  if (type == typeof(long)) return JsonMetadataServices.CreateValueInfo<long>(Options, JsonMetadataServices.Int64Converter);");
-    sb.AppendLine("  if (type == typeof(bool)) return JsonMetadataServices.CreateValueInfo<bool>(Options, JsonMetadataServices.BooleanConverter);");
-    sb.AppendLine("  if (type == typeof(double)) return JsonMetadataServices.CreateValueInfo<double>(Options, JsonMetadataServices.DoubleConverter);");
-    sb.AppendLine("  if (type == typeof(decimal)) return JsonMetadataServices.CreateValueInfo<decimal>(Options, JsonMetadataServices.DecimalConverter);");
-    sb.AppendLine("  if (type == typeof(global::System.DateTime)) return JsonMetadataServices.CreateValueInfo<global::System.DateTime>(Options, JsonMetadataServices.DateTimeConverter);");
-    sb.AppendLine("  if (type == typeof(global::System.Guid)) return JsonMetadataServices.CreateValueInfo<global::System.Guid>(Options, JsonMetadataServices.GuidConverter);");
-    sb.AppendLine();
-
+    sb.AppendLine("  // Return null for types we don't handle - let next resolver in chain handle them");
     sb.AppendLine("  return null;");
     sb.AppendLine("}");
 
@@ -269,6 +250,7 @@ public class JsonTypeInfoGenerator : IIncrementalGenerator {
     sb.AppendLine("  jsonTypeInfo.OriginatingResolver = this;");
     sb.AppendLine("  return jsonTypeInfo;");
     sb.AppendLine("}");
+    sb.AppendLine();
 
     return sb.ToString();
   }
@@ -307,6 +289,37 @@ public class JsonTypeInfoGenerator : IIncrementalGenerator {
       sb.AppendLine($"}}");
       sb.AppendLine();
     }
+
+    return sb.ToString();
+  }
+
+  private static string GenerateAssemblyAwareHelper(Assembly assembly) {
+    var sb = new System.Text.StringBuilder();
+
+    // Generate assembly-aware helper that combines infrastructure + messages + user contexts
+    sb.AppendLine("/// <summary>");
+    sb.AppendLine("/// Creates JsonSerializerOptions with all required contexts for Whizbang serialization:");
+    sb.AppendLine("/// 1. WhizbangInfrastructureJsonContext - Core infrastructure types (MessageHop, SecurityContext, etc.)");
+    sb.AppendLine("/// 2. WhizbangJsonContext - This assembly's message types (ICommand, IEvent)");
+    sb.AppendLine("/// 3. User-provided custom contexts (optional)");
+    sb.AppendLine("/// </summary>");
+    sb.AppendLine("/// <param name=\"userResolvers\">Optional user JsonSerializerContext instances or custom resolvers</param>");
+    sb.AppendLine("/// <returns>Configured JsonSerializerOptions ready for use with JsonSerializer or JsonMessageSerializer</returns>");
+    sb.AppendLine("public static JsonSerializerOptions CreateOptions(params IJsonTypeInfoResolver[] userResolvers) {");
+    sb.AppendLine("  var resolvers = new List<IJsonTypeInfoResolver> {");
+    sb.AppendLine("    global::Whizbang.Core.Generated.WhizbangInfrastructureJsonContext.Default,  // Infrastructure types");
+    sb.AppendLine("    Default  // This assembly's message types");
+    sb.AppendLine("  };");
+    sb.AppendLine();
+    sb.AppendLine("  if (userResolvers.Length > 0) {");
+    sb.AppendLine("    resolvers.AddRange(userResolvers);  // User custom types");
+    sb.AppendLine("  }");
+    sb.AppendLine();
+    sb.AppendLine("  return new JsonSerializerOptions {");
+    sb.AppendLine("    TypeInfoResolver = JsonTypeInfoResolver.Combine(resolvers.ToArray()),");
+    sb.AppendLine("    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull");
+    sb.AppendLine("  };");
+    sb.AppendLine("}");
 
     return sb.ToString();
   }

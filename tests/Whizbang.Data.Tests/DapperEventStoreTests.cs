@@ -1,6 +1,7 @@
 using Whizbang.Core.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Policies;
+using Whizbang.Core.Generated;
 using Whizbang.Core.Tests.Messaging;
 using Whizbang.Data.Dapper.Sqlite;
 
@@ -26,9 +27,9 @@ public class DapperEventStoreTests : EventStoreContractTests {
   }
 
   protected override Task<IEventStore> CreateEventStoreAsync() {
-    var jsonContext = new WhizbangJsonContext();
+    var jsonOptions = WhizbangJsonContext.CreateOptions();
     var policyEngine = new PolicyEngine();
-    var eventStore = new DapperSqliteEventStore(_testBase.ConnectionFactory, _testBase.Executor, jsonContext, policyEngine);
+    var eventStore = new DapperSqliteEventStore(_testBase.ConnectionFactory, _testBase.Executor, jsonOptions, policyEngine);
     return Task.FromResult<IEventStore>(eventStore);
   }
 

@@ -22,9 +22,9 @@ public class DapperSqliteEventStore : DapperEventStoreBase {
   public DapperSqliteEventStore(
     IDbConnectionFactory connectionFactory,
     IDbExecutor executor,
-    JsonSerializerContext jsonContext,
+    JsonSerializerOptions jsonOptions,
     IPolicyEngine policyEngine)
-    : base(connectionFactory, executor, jsonContext) {
+    : base(connectionFactory, executor, jsonOptions) {
     _policyEngine = policyEngine ?? throw new ArgumentNullException(nameof(policyEngine));
   }
 
@@ -48,9 +48,9 @@ public class DapperSqliteEventStore : DapperEventStoreBase {
         var lastSequence = await GetLastSequenceAsync(streamId, cancellationToken);
         var nextSequence = lastSequence + 1;
 
-        // Serialize envelope (AOT-compatible)
+        // Serialize envelope (AOT-compatible via WhizbangJsonContext in resolver chain)
         var envelopeType = envelope.GetType();
-        var typeInfo = _jsonContext.GetTypeInfo(envelopeType);
+        var typeInfo = _jsonOptions.GetTypeInfo(envelopeType);
         if (typeInfo == null) {
           throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
         }
@@ -107,7 +107,7 @@ public class DapperSqliteEventStore : DapperEventStoreBase {
     foreach (var row in rows) {
       // Deserialize as concrete type since we can't deserialize interfaces (AOT-compatible)
       var envelopeType = typeof(MessageEnvelope<object>);
-      var typeInfo = _jsonContext.GetTypeInfo(envelopeType);
+      var typeInfo = _jsonOptions.GetTypeInfo(envelopeType);
       if (typeInfo == null) {
         throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
       }

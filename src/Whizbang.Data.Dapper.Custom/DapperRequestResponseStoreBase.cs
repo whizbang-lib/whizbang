@@ -16,20 +16,20 @@ namespace Whizbang.Data.Dapper.Custom;
 public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
   protected readonly IDbConnectionFactory _connectionFactory;
   protected readonly IDbExecutor _executor;
-  protected readonly JsonSerializerContext _jsonContext;
+  protected readonly JsonSerializerOptions _jsonOptions;
 
   protected DapperRequestResponseStoreBase(
     IDbConnectionFactory connectionFactory,
     IDbExecutor executor,
-    JsonSerializerContext jsonContext
+    JsonSerializerOptions jsonOptions
   ) {
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentNullException.ThrowIfNull(executor);
-    ArgumentNullException.ThrowIfNull(jsonContext);
+    ArgumentNullException.ThrowIfNull(jsonOptions);
 
     _connectionFactory = connectionFactory;
     _executor = executor;
-    _jsonContext = jsonContext;
+    _jsonOptions = jsonOptions;
   }
 
   /// <summary>
@@ -114,7 +114,7 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
         if (!string.IsNullOrEmpty(row.ResponseEnvelope)) {
           // Response is available - deserialize using AOT-compatible context
           var envelopeType = typeof(MessageEnvelope<object>);
-          var typeInfo = _jsonContext.GetTypeInfo(envelopeType);
+          var typeInfo = _jsonOptions.GetTypeInfo(envelopeType);
           if (typeInfo == null) {
             throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
           }
@@ -143,7 +143,7 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
 
     // Serialize using the actual runtime type to preserve all properties (AOT-compatible)
     var responseType = response.GetType();
-    var typeInfo = _jsonContext.GetTypeInfo(responseType);
+    var typeInfo = _jsonOptions.GetTypeInfo(responseType);
     if (typeInfo == null) {
       throw new InvalidOperationException($"No JsonTypeInfo found for {responseType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
     }

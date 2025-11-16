@@ -12,10 +12,10 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// Splits envelope into: event_data (payload), metadata (correlation/causation/hops), scope (tenant/user).
 /// </summary>
 internal class EventEnvelopeJsonbAdapter : IJsonbPersistenceAdapter<IMessageEnvelope> {
-  private readonly JsonSerializerContext _jsonContext;
+  private readonly JsonSerializerOptions _jsonOptions;
 
-  public EventEnvelopeJsonbAdapter(JsonSerializerContext jsonContext) {
-    _jsonContext = jsonContext ?? throw new ArgumentNullException(nameof(jsonContext));
+  public EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) {
+    _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   }
 
   public JsonbPersistenceModel ToJsonb(IMessageEnvelope source, PolicyConfiguration? policyConfig = null) {
@@ -26,7 +26,7 @@ internal class EventEnvelopeJsonbAdapter : IJsonbPersistenceAdapter<IMessageEnve
     // 1. Event data: The actual event payload (AOT-compatible)
     var payload = source.GetPayload();
     var payloadType = payload.GetType();
-    var payloadTypeInfo = _jsonContext.GetTypeInfo(payloadType);
+    var payloadTypeInfo = _jsonOptions.GetTypeInfo(payloadType);
     if (payloadTypeInfo == null) {
       throw new InvalidOperationException($"No JsonTypeInfo found for {payloadType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
     }
@@ -43,7 +43,7 @@ internal class EventEnvelopeJsonbAdapter : IJsonbPersistenceAdapter<IMessageEnve
       ["hops"] = source.Hops.ToList()  // Serialize full MessageHop objects to preserve all properties
     };
 
-    var metadataDictTypeInfo = _jsonContext.GetTypeInfo(typeof(Dictionary<string, object>));
+    var metadataDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, object>));
     if (metadataDictTypeInfo == null) {
       throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, object>. Ensure the type is registered in WhizbangJsonContext.");
     }
@@ -57,7 +57,7 @@ internal class EventEnvelopeJsonbAdapter : IJsonbPersistenceAdapter<IMessageEnve
         ["tenant_id"] = firstHop.SecurityContext.TenantId?.ToString(),
         ["user_id"] = firstHop.SecurityContext.UserId?.ToString()
       };
-      var scopeDictTypeInfo = _jsonContext.GetTypeInfo(typeof(Dictionary<string, object?>));
+      var scopeDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, object?>));
       if (scopeDictTypeInfo == null) {
         throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, object?>. Ensure the type is registered in WhizbangJsonContext.");
       }
@@ -77,7 +77,7 @@ internal class EventEnvelopeJsonbAdapter : IJsonbPersistenceAdapter<IMessageEnve
     }
 
     // Deserialize metadata to extract envelope properties (AOT-compatible)
-    var metadataDictTypeInfo = _jsonContext.GetTypeInfo(typeof(Dictionary<string, JsonElement>));
+    var metadataDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>));
     if (metadataDictTypeInfo == null) {
       throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement>. Ensure the type is registered in WhizbangJsonContext.");
     }
@@ -100,7 +100,7 @@ internal class EventEnvelopeJsonbAdapter : IJsonbPersistenceAdapter<IMessageEnve
     // Deserialize hops (AOT-compatible)
     List<MessageHop> hops;
     if (metadataDict.TryGetValue("hops", out var hopsElem)) {
-      var hopsTypeInfo = _jsonContext.GetTypeInfo(typeof(List<MessageHop>));
+      var hopsTypeInfo = _jsonOptions.GetTypeInfo(typeof(List<MessageHop>));
       if (hopsTypeInfo == null) {
         throw new InvalidOperationException("No JsonTypeInfo found for List<MessageHop>. Ensure the type is registered in WhizbangJsonContext.");
       }
@@ -111,7 +111,7 @@ internal class EventEnvelopeJsonbAdapter : IJsonbPersistenceAdapter<IMessageEnve
 
     // Deserialize payload (event data) - AOT-compatible
     // NOTE: This is simplified - real implementation needs type resolution
-    var objectTypeInfo = _jsonContext.GetTypeInfo(typeof(object));
+    var objectTypeInfo = _jsonOptions.GetTypeInfo(typeof(object));
     if (objectTypeInfo == null) {
       throw new InvalidOperationException("No JsonTypeInfo found for object. Ensure the type is registered in WhizbangJsonContext.");
     }
