@@ -35,7 +35,7 @@ public record CreateOrder(string OrderId, string CustomerName) : ICommand;
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("namespace Whizbang.Core.Generated");
+    await Assert.That(code!).Contains("namespace TestAssembly.Generated");
     await Assert.That(code).Contains("public partial class WhizbangJsonContext : JsonSerializerContext");
   }
 
@@ -128,7 +128,7 @@ public record CreateOrder(string OrderId) : ICommand;
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task Generator_GeneratesGenericMessageEnvelopeHelperAsync() {
+  public async Task Generator_GeneratesMessageEnvelopeFactoryMethodAsync() {
     // Arrange
     var source = @"
 using Whizbang.Core;
@@ -147,9 +147,9 @@ public record CreateOrder(string OrderId) : ICommand;
     var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
-    // Should generate generic CreateMessageEnvelope<T> helper
-    await Assert.That(code!).Contains("CreateMessageEnvelope<T>");
-    await Assert.That(code).Contains("where T : class");
+    // Should generate specific factory method for MessageEnvelope<CreateOrder>
+    await Assert.That(code!).Contains("CreateMessageEnvelope_CreateOrder");
+    await Assert.That(code).Contains("MessageEnvelope<global::MyApp.Commands.CreateOrder>");
   }
 
   [Test]

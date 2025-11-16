@@ -10,11 +10,15 @@ using Whizbang.Core.Policies;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Transports;
 
+#region NAMESPACE
 namespace Whizbang.Core.Generated;
+#endregion
 
 #region HEADER
 // This region will be replaced with auto-generated header
 #endregion
+
+#nullable enable
 
 /// <summary>
 /// Generated JsonSerializerContext with manual JsonTypeInfo objects for AOT-compatible serialization.
@@ -58,6 +62,10 @@ public partial class WhizbangJsonContext : JsonSerializerContext, IJsonTypeInfoR
   #endregion
 
   #region MESSAGE_TYPE_FACTORIES
-  // Factory methods for discovered message types (MessageEnvelope<T> instances)
+  // Factory methods for discovered message types (ICommand, IEvent)
+  #endregion
+
+  #region MESSAGE_ENVELOPE_FACTORIES
+  // Factory methods for MessageEnvelope<T> instances
   #endregion
 }

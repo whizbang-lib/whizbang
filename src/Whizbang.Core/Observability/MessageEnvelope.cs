@@ -38,6 +38,7 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope {
   /// Constructor for JSON deserialization with all required properties.
   /// </summary>
   [System.Text.Json.Serialization.JsonConstructor]
+  [System.Diagnostics.CodeAnalysis.SetsRequiredMembers]
   public MessageEnvelope(MessageId messageId, TMessage payload, List<MessageHop> hops) {
     MessageId = messageId;
     Payload = payload;

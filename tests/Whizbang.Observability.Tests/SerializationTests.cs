@@ -1,9 +1,9 @@
 using System.Text.Json;
 using Whizbang.Core;
-using Whizbang.Core.Generated;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Observability.Tests.Generated;
 
 namespace Whizbang.Observability.Tests;
 

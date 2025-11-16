@@ -9,12 +9,14 @@ namespace Whizbang.Generators;
 /// <param name="IsCommand">True if type implements ICommand</param>
 /// <param name="IsEvent">True if type implements IEvent</param>
 /// <param name="Properties">Array of property information (name and fully qualified type)</param>
+/// <param name="HasParameterizedConstructor">True if type has a public parameterized constructor matching properties</param>
 internal sealed record JsonMessageTypeInfo(
     string FullyQualifiedName,
     string SimpleName,
     bool IsCommand,
     bool IsEvent,
-    PropertyInfo[] Properties
+    PropertyInfo[] Properties,
+    bool HasParameterizedConstructor
 );
 
 /// <summary>
@@ -22,7 +24,9 @@ internal sealed record JsonMessageTypeInfo(
 /// </summary>
 /// <param name="Name">Property name</param>
 /// <param name="Type">Fully qualified type name</param>
+/// <param name="IsInitOnly">True if property has init-only setter</param>
 internal sealed record PropertyInfo(
     string Name,
-    string Type
+    string Type,
+    bool IsInitOnly
 );

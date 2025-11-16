@@ -4,9 +4,9 @@ using System.Text.Json;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using Whizbang.Core;
-using Whizbang.Core.Generated;
+using Whizbang.Transports.Tests.Generated;
 using Whizbang.Core.Observability;
-using Whizbang.Core.Generated;
+using Whizbang.Transports.Tests.Generated;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 

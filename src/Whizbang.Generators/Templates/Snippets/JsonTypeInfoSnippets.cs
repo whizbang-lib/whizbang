@@ -47,7 +47,7 @@ internal static class JsonTypeInfoSnippets {
         options,
         "MessageId",
         obj => ((MessageEnvelope<T>)obj).MessageId,
-        (JsonTypeInfo<MessageId>)options.GetTypeInfo(typeof(MessageId)));
+        GetOrCreateTypeInfo<MessageId>(options));
 
     properties[1] = CreateProperty<T>(
         options,
@@ -59,7 +59,7 @@ internal static class JsonTypeInfoSnippets {
         options,
         "Hops",
         obj => ((MessageEnvelope<T>)obj).Hops,
-        (JsonTypeInfo<List<MessageHop>>)options.GetTypeInfo(typeof(List<MessageHop>)));
+        GetOrCreateTypeInfo<List<MessageHop>>(options));
 
     var ctorParams = new JsonParameterInfoValues[3];
     ctorParams[0] = new JsonParameterInfoValues {
@@ -85,7 +85,7 @@ internal static class JsonTypeInfoSnippets {
     };
 
     var objectInfo = new JsonObjectInfoValues<MessageEnvelope<T>> {
-      ObjectCreator = null,
+      ObjectCreator = null,  // Let .NET use constructor parameters for deserialization
       PropertyMetadataInitializer = _ => properties,
       ConstructorParameterMetadataInitializer = () => ctorParams
     };

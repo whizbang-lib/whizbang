@@ -1,7 +1,6 @@
-using Whizbang.Core.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Policies;
-using Whizbang.Core.Generated;
+using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.Tests.Messaging;
 using Whizbang.Data.Dapper.Sqlite;
 
