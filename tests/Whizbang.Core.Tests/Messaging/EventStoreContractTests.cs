@@ -43,7 +43,7 @@ public abstract class EventStoreContractTests {
 
     // Assert - Read back the event
     var events = new List<IMessageEnvelope>();
-    await foreach (var evt in eventStore.ReadAsync(streamId, fromSequence: 0)) {
+    await foreach (var evt in eventStore.ReadAsync<TestEvent>(streamId, fromSequence: 0)) {
       events.Add(evt);
     }
     await Assert.That(events).HasCount().EqualTo(1);
@@ -69,7 +69,7 @@ public abstract class EventStoreContractTests {
 
     // Act
     var events = new List<IMessageEnvelope>();
-    await foreach (var evt in eventStore.ReadAsync(streamId, fromSequence: 0)) {
+    await foreach (var evt in eventStore.ReadAsync<TestEvent>(streamId, fromSequence: 0)) {
       events.Add(evt);
     }
 
@@ -92,7 +92,7 @@ public abstract class EventStoreContractTests {
 
     // Act
     var events = new List<IMessageEnvelope>();
-    await foreach (var evt in eventStore.ReadAsync(streamId, fromSequence: 0)) {
+    await foreach (var evt in eventStore.ReadAsync<TestEvent>(streamId, fromSequence: 0)) {
       events.Add(evt);
     }
 
@@ -115,7 +115,7 @@ public abstract class EventStoreContractTests {
 
     // Act - Read from sequence 2 (third event, 0-indexed)
     var events = new List<IMessageEnvelope>();
-    await foreach (var evt in eventStore.ReadAsync(streamId, fromSequence: 2)) {
+    await foreach (var evt in eventStore.ReadAsync<TestEvent>(streamId, fromSequence: 2)) {
       events.Add(evt);
     }
 
@@ -167,12 +167,12 @@ public abstract class EventStoreContractTests {
 
     // Act
     var stream1Events = new List<IMessageEnvelope>();
-    await foreach (var evt in eventStore.ReadAsync(streamId1, fromSequence: 0)) {
+    await foreach (var evt in eventStore.ReadAsync<TestEvent>(streamId1, fromSequence: 0)) {
       stream1Events.Add(evt);
     }
 
     var stream2Events = new List<IMessageEnvelope>();
-    await foreach (var evt in eventStore.ReadAsync(streamId2, fromSequence: 0)) {
+    await foreach (var evt in eventStore.ReadAsync<TestEvent>(streamId2, fromSequence: 0)) {
       stream2Events.Add(evt);
     }
 
@@ -197,7 +197,7 @@ public abstract class EventStoreContractTests {
 
     // Assert
     var events = new List<IMessageEnvelope>();
-    await foreach (var evt in eventStore.ReadAsync(streamId, fromSequence: 0)) {
+    await foreach (var evt in eventStore.ReadAsync<TestEvent>(streamId, fromSequence: 0)) {
       events.Add(evt);
     }
     await Assert.That(events).HasCount().EqualTo(10);

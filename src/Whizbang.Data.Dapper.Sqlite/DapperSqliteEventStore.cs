@@ -87,7 +87,7 @@ public class DapperSqliteEventStore : DapperEventStoreBase {
   /// <summary>
   /// Reads events from a stream by stream ID (UUID).
   /// </summary>
-  public override async IAsyncEnumerable<IMessageEnvelope> ReadAsync(
+  public override async IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
     Guid streamId,
     long fromSequence,
     [EnumeratorCancellation] CancellationToken cancellationToken = default) {
@@ -105,13 +105,13 @@ public class DapperSqliteEventStore : DapperEventStoreBase {
       cancellationToken: cancellationToken);
 
     foreach (var row in rows) {
-      // Deserialize as concrete type since we can't deserialize interfaces (AOT-compatible)
-      var envelopeType = typeof(MessageEnvelope<object>);
+      // Deserialize with concrete message type (AOT-compatible)
+      var envelopeType = typeof(MessageEnvelope<TMessage>);
       var typeInfo = _jsonOptions.GetTypeInfo(envelopeType);
       if (typeInfo == null) {
         throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
       }
-      var envelope = JsonSerializer.Deserialize(row.Envelope, typeInfo) as IMessageEnvelope;
+      var envelope = JsonSerializer.Deserialize(row.Envelope, typeInfo) as MessageEnvelope<TMessage>;
       if (envelope != null) {
         yield return envelope;
       }

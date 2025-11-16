@@ -1,4 +1,5 @@
 using System.Text;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 
 namespace Whizbang.Core.Data;
@@ -25,6 +26,15 @@ public interface IJsonbPersistenceAdapter<T> {
   /// <param name="jsonb">The JSONB persistence model to reconstruct from</param>
   /// <returns>The reconstructed domain object</returns>
   T FromJsonb(JsonbPersistenceModel jsonb);
+
+  /// <summary>
+  /// Reconstructs an object from JSONB components with strong typing.
+  /// Used for event stores where the message type needs to be specified for AOT-compatible deserialization.
+  /// </summary>
+  /// <typeparam name="TMessage">The message type to deserialize</typeparam>
+  /// <param name="jsonb">The JSONB persistence model to reconstruct from</param>
+  /// <returns>The reconstructed envelope with strongly-typed payload</returns>
+  MessageEnvelope<TMessage> FromJsonb<TMessage>(JsonbPersistenceModel jsonb);
 }
 
 /// <summary>

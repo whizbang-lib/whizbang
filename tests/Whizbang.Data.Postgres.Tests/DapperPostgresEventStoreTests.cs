@@ -1,9 +1,9 @@
 using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Data;
-using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
+using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.Tests.Messaging;
 using Whizbang.Data.Dapper.Custom;

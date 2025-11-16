@@ -5,10 +5,10 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Data;
-using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
+using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Dapper.Custom;
@@ -17,19 +17,20 @@ using Whizbang.Data.Dapper.Postgres;
 namespace Whizbang.Data.Postgres.Tests;
 
 /// <summary>
+/// Test event with AggregateId for stream ID inference.
+/// </summary>
+public record PostgresRetryTestEvent : IEvent {
+  [AggregateId]
+  public required Guid AggregateId { get; init; }
+  public required string Payload { get; init; }
+}
+
+/// <summary>
 /// PostgreSQL-specific tests for DapperPostgresEventStore retry logic and error handling.
 /// These tests cover implementation-specific paths not exercised by contract tests.
 /// Each test gets its own isolated PostgreSQL container for parallel execution.
 /// </summary>
 public class DapperPostgresEventStoreRetryTests {
-  /// <summary>
-  /// Test event with AggregateId for stream ID inference.
-  /// </summary>
-  public record TestEvent {
-    [AggregateId]
-    public required Guid AggregateId { get; init; }
-    public required string Payload { get; init; }
-  }
 
   private PostgresTestBase _testBase = null!;
   private DapperPostgresEventStore _store = null!;
@@ -80,7 +81,7 @@ public class DapperPostgresEventStoreRetryTests {
 
     // Verify all events were stored
     var events = new List<IMessageEnvelope>();
-    await foreach (var e in _store.ReadAsync(streamId, 0)) {
+    await foreach (var e in _store.ReadAsync<PostgresRetryTestEvent>(streamId, 0)) {
       events.Add(e);
     }
     await Assert.That(events).HasCount().EqualTo(concurrency);
@@ -123,7 +124,7 @@ public class DapperPostgresEventStoreRetryTests {
 
     // Assert - All 10 events should be stored with sequential sequence numbers
     var events = new List<IMessageEnvelope>();
-    await foreach (var e in _store.ReadAsync(streamId, 0)) {
+    await foreach (var e in _store.ReadAsync<PostgresRetryTestEvent>(streamId, 0)) {
       events.Add(e);
     }
     await Assert.That(events).HasCount().EqualTo(10);
@@ -203,10 +204,10 @@ public class DapperPostgresEventStoreRetryTests {
     await _testBase.Executor.ExecuteAsync(connection, schemaSql, new { });
   }
 
-  private static MessageEnvelope<TestEvent> CreateTestEnvelope(Guid aggregateId) {
-    var envelope = new MessageEnvelope<TestEvent> {
+  private static MessageEnvelope<PostgresRetryTestEvent> CreateTestEnvelope(Guid aggregateId) {
+    var envelope = new MessageEnvelope<PostgresRetryTestEvent> {
       MessageId = MessageId.New(),
-      Payload = new TestEvent {
+      Payload = new PostgresRetryTestEvent {
         AggregateId = aggregateId,
         Payload = $"test-payload-{Guid.NewGuid()}"
       },

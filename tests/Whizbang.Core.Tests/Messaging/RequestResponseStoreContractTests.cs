@@ -46,7 +46,7 @@ public abstract class RequestResponseStoreContractTests {
 
     // Act
     using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(500));
-    var response = await store.WaitForResponseAsync(correlationId, cts.Token);
+    var response = await store.WaitForResponseAsync<TestResponse>(correlationId, cts.Token);
 
     // Assert - Should return null after timeout
     await Assert.That(response).IsNull();
@@ -69,7 +69,7 @@ public abstract class RequestResponseStoreContractTests {
 
     // Wait for response
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-    var response = await store.WaitForResponseAsync(correlationId, cts.Token);
+    var response = await store.WaitForResponseAsync<TestResponse>(correlationId, cts.Token);
 
     // Assert
     await Assert.That(response).IsNotNull();
@@ -106,7 +106,7 @@ public abstract class RequestResponseStoreContractTests {
 
     // Act
     using var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(100));
-    var response = await store.WaitForResponseAsync(correlationId, cts.Token);
+    var response = await store.WaitForResponseAsync<TestResponse>(correlationId, cts.Token);
 
     // Assert - Should return null due to cancellation
     await Assert.That(response).IsNull();
@@ -128,7 +128,7 @@ public abstract class RequestResponseStoreContractTests {
 
     // Wait for response
     using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(1));
-    var response = await store.WaitForResponseAsync(correlationId, cts.Token);
+    var response = await store.WaitForResponseAsync<TestResponse>(correlationId, cts.Token);
 
     // Assert - Should get the response
     await Assert.That(response).IsNotNull();

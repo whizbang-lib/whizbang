@@ -36,7 +36,7 @@ public class InMemoryEventStore : IEventStore {
   }
 
   /// <inheritdoc />
-  public async IAsyncEnumerable<IMessageEnvelope> ReadAsync(
+  public async IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
     Guid streamId,
     long fromSequence,
     [EnumeratorCancellation] CancellationToken cancellationToken = default
@@ -47,7 +47,10 @@ public class InMemoryEventStore : IEventStore {
 
     foreach (var envelope in stream.Read(fromSequence)) {
       cancellationToken.ThrowIfCancellationRequested();
-      yield return envelope;
+      // Cast to strongly-typed envelope
+      if (envelope is MessageEnvelope<TMessage> typedEnvelope) {
+        yield return typedEnvelope;
+      }
     }
 
     await Task.CompletedTask;

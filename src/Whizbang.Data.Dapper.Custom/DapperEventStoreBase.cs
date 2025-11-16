@@ -71,7 +71,7 @@ public abstract class DapperEventStoreBase : IEventStore {
   /// </summary>
   public abstract Task AppendAsync(Guid streamId, IMessageEnvelope envelope, CancellationToken cancellationToken = default);
 
-  public abstract IAsyncEnumerable<IMessageEnvelope> ReadAsync(
+  public abstract IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
     Guid streamId,
     long fromSequence,
     CancellationToken cancellationToken = default);
@@ -95,6 +95,7 @@ public abstract class DapperEventStoreBase : IEventStore {
   /// Internal row structure for Dapper mapping (3-column JSONB pattern).
   /// </summary>
   protected class EventRow {
+    public string EventType { get; set; } = string.Empty;
     public string EventData { get; set; } = string.Empty;
     public string Metadata { get; set; } = string.Empty;
     public string? Scope { get; set; }

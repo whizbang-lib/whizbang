@@ -27,15 +27,17 @@ public interface IEventStore {
   Task AppendAsync(Guid streamId, IMessageEnvelope envelope, CancellationToken cancellationToken = default);
 
   /// <summary>
-  /// Reads events from a stream by stream ID (UUID).
+  /// Reads events from a stream by stream ID (UUID) with strong typing.
   /// Stream ID corresponds to the aggregate ID from events' [AggregateId] properties.
   /// Supports streaming and replay scenarios.
+  /// This generic version provides type-safe deserialization for AOT compatibility.
   /// </summary>
+  /// <typeparam name="TMessage">The message type to deserialize (must match stored event types)</typeparam>
   /// <param name="streamId">The stream identifier (aggregate ID as UUID)</param>
   /// <param name="fromSequence">The sequence number to start reading from (inclusive)</param>
   /// <param name="cancellationToken">Cancellation token</param>
-  /// <returns>Async enumerable of message envelopes in sequence order</returns>
-  IAsyncEnumerable<IMessageEnvelope> ReadAsync(Guid streamId, long fromSequence, CancellationToken cancellationToken = default);
+  /// <returns>Async enumerable of strongly-typed message envelopes in sequence order</returns>
+  IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default);
 
   /// <summary>
   /// Gets the last (highest) sequence number for a stream.

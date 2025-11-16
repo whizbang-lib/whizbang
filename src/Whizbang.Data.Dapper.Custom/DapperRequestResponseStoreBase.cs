@@ -85,7 +85,17 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
       cancellationToken: cancellationToken);
   }
 
-  public async Task<IMessageEnvelope?> WaitForResponseAsync(CorrelationId correlationId, CancellationToken cancellationToken = default) {
+  /// <summary>
+  /// Non-generic WaitForResponseAsync is not supported for AOT compatibility.
+  /// Use the generic WaitForResponseAsync&lt;TMessage&gt; method instead.
+  /// </summary>
+  public Task<IMessageEnvelope?> WaitForResponseAsync(CorrelationId correlationId, CancellationToken cancellationToken = default) {
+    throw new NotSupportedException(
+      "Non-generic WaitForResponseAsync is not supported for request/response stores in AOT scenarios. " +
+      "Use WaitForResponseAsync<TMessage> with the concrete message type instead.");
+  }
+
+  public async Task<MessageEnvelope<TMessage>?> WaitForResponseAsync<TMessage>(CorrelationId correlationId, CancellationToken cancellationToken = default) {
     try {
       var startTime = DateTimeOffset.UtcNow;
 
@@ -112,13 +122,13 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
         }
 
         if (!string.IsNullOrEmpty(row.ResponseEnvelope)) {
-          // Response is available - deserialize using AOT-compatible context
-          var envelopeType = typeof(MessageEnvelope<object>);
+          // Response is available - deserialize with concrete type (AOT-compatible)
+          var envelopeType = typeof(MessageEnvelope<TMessage>);
           var typeInfo = _jsonOptions.GetTypeInfo(envelopeType);
           if (typeInfo == null) {
             throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
           }
-          return JsonSerializer.Deserialize(row.ResponseEnvelope, typeInfo) as IMessageEnvelope;
+          return JsonSerializer.Deserialize(row.ResponseEnvelope, typeInfo) as MessageEnvelope<TMessage>;
         }
 
         // Wait a bit before polling again

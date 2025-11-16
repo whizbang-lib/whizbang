@@ -33,6 +33,17 @@ public interface IRequestResponseStore {
   Task<IMessageEnvelope?> WaitForResponseAsync(CorrelationId correlationId, CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Waits for a response to arrive for the given correlation ID with strong typing.
+  /// Returns null if the request times out.
+  /// This generic version provides type-safe deserialization for AOT compatibility.
+  /// </summary>
+  /// <typeparam name="TMessage">The response message type to deserialize</typeparam>
+  /// <param name="correlationId">The correlation ID to wait for</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>The strongly-typed response envelope, or null if timed out</returns>
+  Task<MessageEnvelope<TMessage>?> WaitForResponseAsync<TMessage>(CorrelationId correlationId, CancellationToken cancellationToken = default);
+
+  /// <summary>
   /// Saves a response and notifies any waiting request.
   /// </summary>
   /// <param name="correlationId">The correlation ID linking request and response</param>

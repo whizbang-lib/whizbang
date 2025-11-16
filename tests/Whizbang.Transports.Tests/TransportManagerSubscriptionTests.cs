@@ -1,9 +1,9 @@
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
-using Whizbang.Transports.Tests.Generated;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Transports.Tests.Generated;
 
 namespace Whizbang.Transports.Tests;
 

@@ -58,6 +58,25 @@ public class InMemoryRequestResponseStore : IRequestResponseStore {
   }
 
   /// <inheritdoc />
+  public async Task<MessageEnvelope<TMessage>?> WaitForResponseAsync<TMessage>(CorrelationId correlationId, CancellationToken cancellationToken = default) {
+
+    if (!_requests.TryGetValue(correlationId, out var record)) {
+      // Request not found, might have already completed or timed out
+      return null;
+    }
+
+    try {
+      // Wait for response or cancellation
+      using (cancellationToken.Register(() => record.CompletionSource.TrySetCanceled())) {
+        var response = await record.CompletionSource.Task;
+        return response as MessageEnvelope<TMessage>; // Cast to strongly-typed envelope
+      }
+    } catch (OperationCanceledException) {
+      return null;
+    }
+  }
+
+  /// <inheritdoc />
   public Task SaveResponseAsync(CorrelationId correlationId, IMessageEnvelope response, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(response);
 

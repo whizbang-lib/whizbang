@@ -392,6 +392,14 @@ public class ThroughputBenchmarks {
       return null;
     }
 
+    public async Task<MessageEnvelope<TMessage>?> WaitForResponseAsync<TMessage>(CorrelationId correlationId, CancellationToken cancellationToken = default) {
+      if (_pending.TryGetValue(correlationId, out var tcs)) {
+        var result = await tcs.Task;
+        return result as MessageEnvelope<TMessage>;
+      }
+      return null;
+    }
+
     public Task CleanupExpiredAsync(CancellationToken cancellationToken = default) {
       // No-op for benchmarking
       return Task.CompletedTask;

@@ -71,7 +71,17 @@ internal class EventEnvelopeJsonbAdapter : IJsonbPersistenceAdapter<IMessageEnve
     };
   }
 
+  /// <summary>
+  /// Non-generic FromJsonb is not supported for AOT compatibility.
+  /// Use the generic FromJsonb&lt;TMessage&gt; method instead.
+  /// </summary>
   public IMessageEnvelope FromJsonb(JsonbPersistenceModel jsonb) {
+    throw new NotSupportedException(
+      "Non-generic FromJsonb is not supported for event envelopes in AOT scenarios. " +
+      "Use FromJsonb<TMessage> with the concrete message type instead.");
+  }
+
+  public MessageEnvelope<TMessage> FromJsonb<TMessage>(JsonbPersistenceModel jsonb) {
     if (jsonb == null) {
       throw new ArgumentNullException(nameof(jsonb));
     }
@@ -109,19 +119,18 @@ internal class EventEnvelopeJsonbAdapter : IJsonbPersistenceAdapter<IMessageEnve
       hops = new List<MessageHop>();
     }
 
-    // Deserialize payload (event data) - AOT-compatible
-    // NOTE: This is simplified - real implementation needs type resolution
-    var objectTypeInfo = _jsonOptions.GetTypeInfo(typeof(object));
-    if (objectTypeInfo == null) {
-      throw new InvalidOperationException("No JsonTypeInfo found for object. Ensure the type is registered in WhizbangJsonContext.");
+    // Deserialize payload (event data) with concrete type - AOT-compatible
+    var payloadTypeInfo = _jsonOptions.GetTypeInfo(typeof(TMessage));
+    if (payloadTypeInfo == null) {
+      throw new InvalidOperationException($"No JsonTypeInfo found for {typeof(TMessage).FullName}. Ensure the type is registered in WhizbangJsonContext.");
     }
-    var payload = JsonSerializer.Deserialize(jsonb.DataJson, objectTypeInfo)
+    var payload = JsonSerializer.Deserialize(jsonb.DataJson, payloadTypeInfo)
                   ?? throw new InvalidOperationException("Failed to deserialize event data");
 
-    // Reconstruct envelope
-    return new MessageEnvelope<object> {
+    // Reconstruct envelope with strongly-typed payload
+    return new MessageEnvelope<TMessage> {
       MessageId = Core.ValueObjects.MessageId.From(messageId),
-      Payload = payload,
+      Payload = (TMessage)payload,
       Hops = hops
     };
   }

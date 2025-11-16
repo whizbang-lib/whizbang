@@ -101,10 +101,10 @@ public class DapperPostgresEventStore : DapperEventStoreBase {
   }
 
   /// <summary>
-  /// Reads events from a stream by stream ID (UUID).
+  /// Reads events from a stream by stream ID (UUID) with strong typing.
   /// Reconstructs envelope from 3 JSONB columns.
   /// </summary>
-  public override async IAsyncEnumerable<IMessageEnvelope> ReadAsync(
+  public override async IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
     Guid streamId,
     long fromSequence,
     [EnumeratorCancellation] CancellationToken cancellationToken = default) {
@@ -128,7 +128,7 @@ public class DapperPostgresEventStore : DapperEventStoreBase {
         ScopeJson = row.Scope
       };
 
-      var envelope = _adapter.FromJsonb(jsonb);
+      var envelope = _adapter.FromJsonb<TMessage>(jsonb);
       yield return envelope;
     }
   }
@@ -150,6 +150,7 @@ public class DapperPostgresEventStore : DapperEventStoreBase {
 
   protected override string GetReadSql() => @"
     SELECT
+      event_type AS EventType,
       event_data::text AS EventData,
       metadata::text AS Metadata,
       scope::text AS Scope
