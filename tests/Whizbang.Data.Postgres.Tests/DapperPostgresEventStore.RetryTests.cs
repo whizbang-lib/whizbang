@@ -40,7 +40,7 @@ public class DapperPostgresEventStoreRetryTests {
     _testBase = new TestFixture();
     await _testBase.SetupAsync();
 
-    var jsonOptions = WhizbangJsonContext.CreateOptions();
+    var jsonOptions = Whizbang.Data.Postgres.Tests.Generated.WhizbangJsonContext.CreateOptions();
     var adapter = new EventEnvelopeJsonbAdapter(jsonOptions);
     var sizeValidator = new JsonbSizeValidator(NullLogger<JsonbSizeValidator>.Instance, jsonOptions);
     var policyEngine = new PolicyEngine();
