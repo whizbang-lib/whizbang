@@ -133,6 +133,35 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       ));
     }
 
+    // Discover nested custom types used in message properties (e.g., OrderLineItem in List<OrderLineItem>)
+    var nestedTypes = DiscoverNestedTypes(messages, compilation);
+
+    // Report diagnostics for discovered nested types
+    foreach (var nestedType in nestedTypes) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.JsonSerializableTypeDiscovered,
+          Location.None,
+          nestedType.SimpleName,
+          "nested type"
+      ));
+    }
+
+    // Combine messages and nested types for code generation
+    var allTypes = messages.Concat(nestedTypes).ToImmutableArray();
+
+    // Discover List<T> types used in all messages and nested types
+    var listTypes = DiscoverListTypes(allTypes);
+
+    // Report diagnostics for discovered list types
+    foreach (var listType in listTypes) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.JsonSerializableTypeDiscovered,
+          Location.None,
+          $"List<{listType.ElementSimpleName}>",
+          "collection type"
+      ));
+    }
+
     // Determine namespace from assembly name
     var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
@@ -147,20 +176,30 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Replace HEADER region with timestamp
     template = TemplateUtilities.ReplaceHeaderRegion(assembly, template);
 
+    // Generate lazy fields (messages + nested types + lists)
+    var lazyFields = new System.Text.StringBuilder();
+    lazyFields.Append(GenerateLazyFields(assembly, allTypes));
+    lazyFields.Append(GenerateListLazyFields(assembly, listTypes));
+
+    // Generate factory methods (messages + lists)
+    var factories = new System.Text.StringBuilder();
+    factories.Append(GenerateMessageTypeFactories(assembly, allTypes));
+    factories.Append(GenerateListFactories(assembly, listTypes));
+
     // Generate and replace each region
-    template = TemplateUtilities.ReplaceRegion(template, "LAZY_FIELDS", GenerateLazyFields(assembly, messages));
-    template = TemplateUtilities.ReplaceRegion(template, "LAZY_PROPERTIES", GenerateLazyProperties(assembly, messages));
+    template = TemplateUtilities.ReplaceRegion(template, "LAZY_FIELDS", lazyFields.ToString());
+    template = TemplateUtilities.ReplaceRegion(template, "LAZY_PROPERTIES", GenerateLazyProperties(assembly, allTypes));
     template = TemplateUtilities.ReplaceRegion(template, "ASSEMBLY_AWARE_HELPER", GenerateAssemblyAwareHelper(assembly));
-    template = TemplateUtilities.ReplaceRegion(template, "GET_DISCOVERED_TYPE_INFO", GenerateGetTypeInfo(assembly, messages));
+    template = TemplateUtilities.ReplaceRegion(template, "GET_DISCOVERED_TYPE_INFO", GenerateGetTypeInfo(assembly, allTypes, listTypes));
     template = TemplateUtilities.ReplaceRegion(template, "HELPER_METHODS", GenerateHelperMethods(assembly));
     template = TemplateUtilities.ReplaceRegion(template, "CORE_TYPE_FACTORIES", GenerateCoreTypeFactories(assembly));
-    template = TemplateUtilities.ReplaceRegion(template, "MESSAGE_TYPE_FACTORIES", GenerateMessageTypeFactories(assembly, messages));
+    template = TemplateUtilities.ReplaceRegion(template, "MESSAGE_TYPE_FACTORIES", factories.ToString());
     template = TemplateUtilities.ReplaceRegion(template, "MESSAGE_ENVELOPE_FACTORIES", GenerateMessageEnvelopeFactories(assembly, messages));
 
     context.AddSource("WhizbangJsonContext.g.cs", template);
   }
 
-  private static string GenerateLazyFields(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> messages) {
+  private static string GenerateLazyFields(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes) {
     var sb = new System.Text.StringBuilder();
 
     // Load snippets
@@ -184,20 +223,20 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine(valueObjectFieldSnippet.Replace("__TYPE_NAME__", "CorrelationId"));
     sb.AppendLine();
 
-    // Discovered message types - need JsonTypeInfo for AOT
-    foreach (var message in messages) {
+    // Discovered types (messages + nested types) - need JsonTypeInfo for AOT
+    foreach (var type in allTypes) {
       var field = messageFieldSnippet
-          .Replace("__FULLY_QUALIFIED_NAME__", message.FullyQualifiedName)
-          .Replace("__SIMPLE_NAME__", message.SimpleName);
+          .Replace("__FULLY_QUALIFIED_NAME__", type.FullyQualifiedName)
+          .Replace("__SIMPLE_NAME__", type.SimpleName);
       sb.AppendLine(field);
     }
     sb.AppendLine();
 
-    // MessageEnvelope<T> for each discovered message type
-    foreach (var message in messages) {
+    // MessageEnvelope<T> ONLY for actual message types (commands/events), not nested types
+    foreach (var type in allTypes.Where(t => t.IsCommand || t.IsEvent)) {
       var field = envelopeFieldSnippet
-          .Replace("__FULLY_QUALIFIED_NAME__", message.FullyQualifiedName)
-          .Replace("__SIMPLE_NAME__", message.SimpleName);
+          .Replace("__FULLY_QUALIFIED_NAME__", type.FullyQualifiedName)
+          .Replace("__SIMPLE_NAME__", type.SimpleName);
       sb.AppendLine(field);
     }
 
@@ -213,7 +252,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     return sb.ToString();
   }
 
-  private static string GenerateGetTypeInfo(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> messages) {
+  private static string GenerateGetTypeInfo(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes, ImmutableArray<ListTypeInfo> listTypes) {
     var sb = new System.Text.StringBuilder();
 
     // Load snippets
@@ -231,6 +270,11 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         assembly,
         "JsonContextSnippets.cs",
         "GET_TYPE_INFO_MESSAGE_ENVELOPE");
+
+    var listCheckSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        "JsonContextSnippets.cs",
+        "GET_TYPE_INFO_LIST");
 
     // Implement IJsonTypeInfoResolver.GetTypeInfo(Type, JsonSerializerOptions)
     sb.AppendLine("JsonTypeInfo? IJsonTypeInfoResolver.GetTypeInfo(Type type, JsonSerializerOptions options) {");
@@ -253,24 +297,36 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine(valueObjectCheckSnippet.Replace("__TYPE_NAME__", "CorrelationId"));
     sb.AppendLine();
 
-    // Discovered message types
-    sb.AppendLine("  // Discovered message types (ICommand, IEvent)");
-    foreach (var message in messages) {
+    // All discovered types (messages + nested types)
+    sb.AppendLine("  // Discovered types (messages + nested types)");
+    foreach (var type in allTypes) {
       var check = messageCheckSnippet
-          .Replace("__FULLY_QUALIFIED_NAME__", message.FullyQualifiedName)
-          .Replace("__SIMPLE_NAME__", message.SimpleName);
+          .Replace("__FULLY_QUALIFIED_NAME__", type.FullyQualifiedName)
+          .Replace("__SIMPLE_NAME__", type.SimpleName);
       sb.AppendLine(check);
       sb.AppendLine();
     }
 
-    // MessageEnvelope<T> types
+    // MessageEnvelope<T> ONLY for actual message types (commands/events), not nested types
     sb.AppendLine("  // MessageEnvelope<T> for discovered message types");
-    foreach (var message in messages) {
+    foreach (var type in allTypes.Where(t => t.IsCommand || t.IsEvent)) {
       var check = envelopeCheckSnippet
-          .Replace("__FULLY_QUALIFIED_NAME__", message.FullyQualifiedName)
-          .Replace("__SIMPLE_NAME__", message.SimpleName);
+          .Replace("__FULLY_QUALIFIED_NAME__", type.FullyQualifiedName)
+          .Replace("__SIMPLE_NAME__", type.SimpleName);
       sb.AppendLine(check);
       sb.AppendLine();
+    }
+
+    // List<T> types discovered in messages
+    if (!listTypes.IsEmpty) {
+      sb.AppendLine("  // List<T> types discovered in messages");
+      foreach (var listType in listTypes) {
+        var check = listCheckSnippet
+            .Replace("__ELEMENT_TYPE__", listType.ElementTypeName)
+            .Replace("__ELEMENT_SIMPLE_NAME__", listType.ElementSimpleName);
+        sb.AppendLine(check);
+        sb.AppendLine();
+      }
     }
 
     sb.AppendLine("  // Return null for types we don't handle - let next resolver in chain handle them");
@@ -534,5 +590,217 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         "HELPER_CREATE_OPTIONS");
 
     return createOptionsSnippet;
+  }
+
+  /// <summary>
+  /// Discovers nested custom types used in message properties (e.g., OrderLineItem inside List&lt;OrderLineItem&gt;).
+  /// These types need JsonTypeInfo generated for AOT serialization to work properly.
+  /// </summary>
+  private static ImmutableArray<JsonMessageTypeInfo> DiscoverNestedTypes(
+      ImmutableArray<JsonMessageTypeInfo> messages,
+      Compilation compilation) {
+
+    var nestedTypes = new Dictionary<string, JsonMessageTypeInfo>();
+
+    foreach (var message in messages) {
+      foreach (var property in message.Properties) {
+        // Extract type symbol from the property's fully qualified type name
+        var elementTypeName = ExtractElementType(property.Type);
+        if (elementTypeName == null) continue;
+
+        // Skip if already discovered
+        if (nestedTypes.ContainsKey(elementTypeName)) continue;
+        if (messages.Any(m => m.FullyQualifiedName == elementTypeName)) continue;
+
+        // Skip primitive and framework types
+        if (IsPrimitiveOrFrameworkType(elementTypeName)) continue;
+
+        // Try to find the type symbol in the compilation
+        var typeSymbol = compilation.GetTypeByMetadataName(elementTypeName.Replace("global::", ""));
+        if (typeSymbol == null) continue;
+
+        // Skip non-public types
+        if (typeSymbol.DeclaredAccessibility != Accessibility.Public) continue;
+
+        // Extract property information
+        var nestedProperties = typeSymbol.GetMembers()
+            .OfType<IPropertySymbol>()
+            .Where(p => p.DeclaredAccessibility == Accessibility.Public && !p.IsStatic)
+            .Select(p => new PropertyInfo(
+                Name: p.Name,
+                Type: p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                IsInitOnly: p.SetMethod?.IsInitOnly ?? false
+            ))
+            .ToArray();
+
+        // Detect parameterized constructor
+        bool hasParameterizedConstructor = typeSymbol.Constructors.Any(c =>
+            c.DeclaredAccessibility == Accessibility.Public &&
+            c.Parameters.Length == nestedProperties.Length &&
+            c.Parameters.All(p => nestedProperties.Any(prop =>
+                prop.Name.Equals(p.Name, System.StringComparison.OrdinalIgnoreCase))));
+
+        var nestedTypeInfo = new JsonMessageTypeInfo(
+            FullyQualifiedName: elementTypeName,
+            SimpleName: typeSymbol.Name,
+            IsCommand: false,  // Nested types are not commands/events
+            IsEvent: false,
+            Properties: nestedProperties,
+            HasParameterizedConstructor: hasParameterizedConstructor
+        );
+
+        nestedTypes[elementTypeName] = nestedTypeInfo;
+      }
+    }
+
+    return nestedTypes.Values.ToImmutableArray();
+  }
+
+  /// <summary>
+  /// Extracts the element type from a generic collection type.
+  /// For example: "global::System.Collections.Generic.List&lt;global::MyApp.OrderLineItem&gt;" returns "global::MyApp.OrderLineItem"
+  /// </summary>
+  private static string? ExtractElementType(string fullyQualifiedTypeName) {
+    // Check for common generic collection types
+    var genericTypes = new[] {
+      "global::System.Collections.Generic.List<",
+      "global::System.Collections.Generic.IList<",
+      "global::System.Collections.Generic.IReadOnlyList<",
+      "global::System.Collections.Generic.ICollection<",
+      "global::System.Collections.Generic.IReadOnlyCollection<",
+      "global::System.Collections.Generic.IEnumerable<"
+    };
+
+    foreach (var genericPrefix in genericTypes) {
+      if (fullyQualifiedTypeName.StartsWith(genericPrefix)) {
+        // Extract the type argument between < and >
+        var startIndex = genericPrefix.Length;
+        var endIndex = fullyQualifiedTypeName.LastIndexOf('>');
+        if (endIndex > startIndex) {
+          return fullyQualifiedTypeName.Substring(startIndex, endIndex - startIndex);
+        }
+      }
+    }
+
+    return null;
+  }
+
+  /// <summary>
+  /// Checks if a type is a primitive or framework type that doesn't need custom JsonTypeInfo.
+  /// </summary>
+  private static bool IsPrimitiveOrFrameworkType(string fullyQualifiedTypeName) {
+    var frameworkTypes = new[] {
+      "global::System.String",
+      "global::System.Int32",
+      "global::System.Int64",
+      "global::System.Decimal",
+      "global::System.Double",
+      "global::System.Single",
+      "global::System.Boolean",
+      "global::System.DateTime",
+      "global::System.DateTimeOffset",
+      "global::System.TimeSpan",
+      "global::System.Guid",
+      "global::System.Byte",
+      "global::System.SByte",
+      "global::System.Int16",
+      "global::System.UInt16",
+      "global::System.UInt32",
+      "global::System.UInt64",
+      "global::System.Char"
+    };
+
+    return frameworkTypes.Contains(fullyQualifiedTypeName);
+  }
+
+  /// <summary>
+  /// Discovers List&lt;T&gt; types used in message properties.
+  /// Returns info needed to generate explicit List&lt;T&gt; JsonTypeInfo for AOT compatibility.
+  /// </summary>
+  private static ImmutableArray<ListTypeInfo> DiscoverListTypes(ImmutableArray<JsonMessageTypeInfo> allTypes) {
+    var listTypes = new Dictionary<string, ListTypeInfo>();
+
+    foreach (var type in allTypes) {
+      foreach (var property in type.Properties) {
+        var elementTypeName = ExtractElementType(property.Type);
+        if (elementTypeName == null) continue;
+
+        // Create key: List<ElementType>
+        var listTypeName = $"global::System.Collections.Generic.List<{elementTypeName}>";
+        if (listTypes.ContainsKey(listTypeName)) continue;
+
+        // Extract simple name from fully qualified element type
+        var parts = elementTypeName.Split('.');
+        var elementSimpleName = parts[parts.Length - 1].Replace("global::", "");
+
+        listTypes[listTypeName] = new ListTypeInfo(
+            ListTypeName: listTypeName,
+            ElementTypeName: elementTypeName,
+            ElementSimpleName: elementSimpleName
+        );
+      }
+    }
+
+    return listTypes.Values.ToImmutableArray();
+  }
+
+  /// <summary>
+  /// Generates lazy fields for List&lt;T&gt; types.
+  /// </summary>
+  private static string GenerateListLazyFields(Assembly assembly, ImmutableArray<ListTypeInfo> listTypes) {
+    if (listTypes.IsEmpty) return string.Empty;
+
+    var sb = new System.Text.StringBuilder();
+    var snippet = TemplateUtilities.ExtractSnippet(assembly, "JsonContextSnippets.cs", "LAZY_FIELD_LIST");
+
+    foreach (var listType in listTypes) {
+      var field = snippet
+          .Replace("__ELEMENT_TYPE__", listType.ElementTypeName)
+          .Replace("__ELEMENT_SIMPLE_NAME__", listType.ElementSimpleName);
+      sb.AppendLine(field);
+    }
+
+    return sb.ToString();
+  }
+
+  /// <summary>
+  /// Generates GetTypeInfo checks for List&lt;T&gt; types.
+  /// </summary>
+  private static string GenerateListGetTypeInfo(Assembly assembly, ImmutableArray<ListTypeInfo> listTypes) {
+    if (listTypes.IsEmpty) return string.Empty;
+
+    var sb = new System.Text.StringBuilder();
+    var snippet = TemplateUtilities.ExtractSnippet(assembly, "JsonContextSnippets.cs", "GET_TYPE_INFO_LIST");
+
+    sb.AppendLine("  // List<T> types discovered in messages");
+    foreach (var listType in listTypes) {
+      var check = snippet
+          .Replace("__ELEMENT_TYPE__", listType.ElementTypeName)
+          .Replace("__ELEMENT_SIMPLE_NAME__", listType.ElementSimpleName);
+      sb.AppendLine(check);
+      sb.AppendLine();
+    }
+
+    return sb.ToString();
+  }
+
+  /// <summary>
+  /// Generates factory methods for List&lt;T&gt; types.
+  /// </summary>
+  private static string GenerateListFactories(Assembly assembly, ImmutableArray<ListTypeInfo> listTypes) {
+    if (listTypes.IsEmpty) return string.Empty;
+
+    var sb = new System.Text.StringBuilder();
+    var snippet = TemplateUtilities.ExtractSnippet(assembly, "JsonContextSnippets.cs", "LIST_TYPE_FACTORY");
+
+    foreach (var listType in listTypes) {
+      var factory = snippet
+          .Replace("__ELEMENT_TYPE__", listType.ElementTypeName)
+          .Replace("__ELEMENT_SIMPLE_NAME__", listType.ElementSimpleName);
+      sb.AppendLine(factory);
+      sb.AppendLine();
+    }
+
+    return sb.ToString();
   }
 }

@@ -51,6 +51,28 @@ private JsonTypeInfo<global::Whizbang.Core.ValueObjects.__TYPE_NAME__> Create___
 }
 #endregion
 
+#region LAZY_FIELD_LIST
+private JsonTypeInfo<global::System.Collections.Generic.List<__ELEMENT_TYPE__>>? _List___ELEMENT_SIMPLE_NAME__;
+#endregion
+
+#region GET_TYPE_INFO_LIST
+if (type == typeof(global::System.Collections.Generic.List<__ELEMENT_TYPE__>)) {
+  return CreateList___ELEMENT_SIMPLE_NAME__(options);
+}
+#endregion
+
+#region LIST_TYPE_FACTORY
+private JsonTypeInfo<global::System.Collections.Generic.List<__ELEMENT_TYPE__>> CreateList___ELEMENT_SIMPLE_NAME__(JsonSerializerOptions options) {
+  var elementInfo = GetOrCreateTypeInfo<__ELEMENT_TYPE__>(options);
+  var collectionInfo = new JsonCollectionInfoValues<global::System.Collections.Generic.List<__ELEMENT_TYPE__>> {
+    ElementInfo = elementInfo
+  };
+  var jsonTypeInfo = JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<__ELEMENT_TYPE__>, __ELEMENT_TYPE__>(options, collectionInfo);
+  jsonTypeInfo.OriginatingResolver = this;
+  return jsonTypeInfo;
+}
+#endregion
+
 #region HELPER_CREATE_PROPERTY
 private JsonPropertyInfo CreateProperty<TProperty>(
     JsonSerializerOptions options,
@@ -117,7 +139,47 @@ private JsonTypeInfo<T> GetOrCreateTypeInfo<T>(JsonSerializerOptions options) {
     return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<Guid>(options, JsonMetadataServices.GuidConverter);
   }
 
-  // For complex types (List<T>, Dictionary<K,V>, etc.), query the full resolver chain
+  if (type == typeof(decimal)) {
+    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<decimal>(options, JsonMetadataServices.DecimalConverter);
+  }
+
+  if (type == typeof(double)) {
+    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<double>(options, JsonMetadataServices.DoubleConverter);
+  }
+
+  if (type == typeof(float)) {
+    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<float>(options, JsonMetadataServices.SingleConverter);
+  }
+
+  if (type == typeof(byte)) {
+    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<byte>(options, JsonMetadataServices.ByteConverter);
+  }
+
+  if (type == typeof(sbyte)) {
+    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<sbyte>(options, JsonMetadataServices.SByteConverter);
+  }
+
+  if (type == typeof(short)) {
+    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<short>(options, JsonMetadataServices.Int16Converter);
+  }
+
+  if (type == typeof(ushort)) {
+    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<ushort>(options, JsonMetadataServices.UInt16Converter);
+  }
+
+  if (type == typeof(uint)) {
+    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<uint>(options, JsonMetadataServices.UInt32Converter);
+  }
+
+  if (type == typeof(ulong)) {
+    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<ulong>(options, JsonMetadataServices.UInt64Converter);
+  }
+
+  if (type == typeof(char)) {
+    return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<char>(options, JsonMetadataServices.CharConverter);
+  }
+
+  // For complex types (List, Dictionary, etc.), query the full resolver chain
   // This will check InfrastructureJsonContext and user-provided resolvers
   var chainTypeInfo = options.GetTypeInfo(type);
   if (chainTypeInfo != null) {
@@ -126,7 +188,7 @@ private JsonTypeInfo<T> GetOrCreateTypeInfo<T>(JsonSerializerOptions options) {
 
   // If still null, type is not registered anywhere - throw helpful error
   throw new InvalidOperationException($"No JsonTypeInfo found for type {type.FullName}. " +
-    "Ensure you pass a resolver for this type to CreateOptions(), or add [JsonSerializable] to a JsonSerializerContext.");
+    "Ensure you pass a resolver for this type to CreateOptions(), or add [JsonSerializable] to a JsonSerializable attribute.");
 }
 #endregion
 

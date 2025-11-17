@@ -157,7 +157,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     schemaBuilder.AppendLine("}");
 
     // Add source file as C# code
-    context.AddSource("PerspectiveSchemas.g.cs", schemaBuilder.ToString());
+    context.AddSource("PerspectiveSchemas.g.sql.cs", schemaBuilder.ToString());
 
     // Report summary
     context.ReportDiagnostic(Diagnostic.Create(
