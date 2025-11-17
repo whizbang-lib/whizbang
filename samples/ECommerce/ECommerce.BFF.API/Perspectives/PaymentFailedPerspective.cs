@@ -7,6 +7,7 @@ using ECommerce.Contracts.Events;
 using ECommerce.Contracts.Generated;
 using Microsoft.AspNetCore.SignalR;
 using Whizbang.Core;
+using Whizbang.Core.Data;
 
 namespace ECommerce.BFF.API.Perspectives;
 
@@ -15,24 +16,28 @@ namespace ECommerce.BFF.API.Perspectives;
 /// Listens to PaymentFailedEvent.
 /// </summary>
 public class PaymentFailedPerspective : IPerspectiveOf<PaymentFailedEvent> {
-  private readonly IDbConnection _db;
+  private readonly IDbConnectionFactory _connectionFactory;
   private readonly IHubContext<OrderStatusHub> _hubContext;
   private readonly ILogger<PaymentFailedPerspective> _logger;
 
   public PaymentFailedPerspective(
-    IDbConnection db,
+    IDbConnectionFactory connectionFactory,
     IHubContext<OrderStatusHub> hubContext,
     ILogger<PaymentFailedPerspective> logger
   ) {
-    _db = db;
+    _connectionFactory = connectionFactory;
     _hubContext = hubContext;
     _logger = logger;
   }
 
   public async Task Update(PaymentFailedEvent @event, CancellationToken cancellationToken = default) {
     try {
+      // Create new connection for this operation
+      using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
+      EnsureConnectionOpen(connection);
+
       // 1. Update order status and payment information
-      await _db.ExecuteAsync(@"
+      await connection.ExecuteAsync(@"
         UPDATE bff.orders
         SET
           status = 'PaymentFailed',
@@ -45,7 +50,7 @@ public class PaymentFailedPerspective : IPerspectiveOf<PaymentFailedEvent> {
         });
 
       // 2. Add to status history
-      await _db.ExecuteAsync(@"
+      await connection.ExecuteAsync(@"
         INSERT INTO bff.order_status_history (
           order_id,
           status,
@@ -67,7 +72,7 @@ public class PaymentFailedPerspective : IPerspectiveOf<PaymentFailedEvent> {
             new PaymentFailedDetails {
               Reason = @event.Reason
             },
-            (JsonTypeInfo<PaymentFailedDetails>)WhizbangJsonContext.CreateOptions().GetTypeInfo(typeof(PaymentFailedDetails))!
+            PerspectiveJsonContext.Default.PaymentFailedDetails
           )
         });
 
@@ -96,6 +101,12 @@ public class PaymentFailedPerspective : IPerspectiveOf<PaymentFailedEvent> {
         @event.OrderId
       );
       throw;
+    }
+  }
+
+  private static void EnsureConnectionOpen(IDbConnection connection) {
+    if (connection.State != ConnectionState.Open) {
+      connection.Open();
     }
   }
 }

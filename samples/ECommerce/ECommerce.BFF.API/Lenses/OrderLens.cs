@@ -3,6 +3,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using Dapper;
 using ECommerce.Contracts.Generated;
+using Whizbang.Core.Data;
 
 namespace ECommerce.BFF.API.Lenses;
 
@@ -10,11 +11,11 @@ namespace ECommerce.BFF.API.Lenses;
 /// Dapper-based implementation of IOrderLens for fast readonly queries.
 /// </summary>
 public class OrderLens : IOrderLens {
-  private readonly IDbConnection _db;
+  private readonly IDbConnectionFactory _connectionFactory;
   private readonly ILogger<OrderLens> _logger;
 
-  public OrderLens(IDbConnection db, ILogger<OrderLens> logger) {
-    _db = db;
+  public OrderLens(IDbConnectionFactory connectionFactory, ILogger<OrderLens> logger) {
+    _connectionFactory = connectionFactory;
     _logger = logger;
   }
 
@@ -36,7 +37,9 @@ public class OrderLens : IOrderLens {
       FROM bff.orders
       WHERE order_id = @OrderId";
 
-    var result = await _db.QuerySingleOrDefaultAsync<OrderRow>(sql, new { OrderId = orderId });
+    using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+    var result = await connection.QuerySingleOrDefaultAsync<OrderRow>(sql, new { OrderId = orderId });
 
     return result == null ? null : MapToReadModel(result);
   }
@@ -60,7 +63,9 @@ public class OrderLens : IOrderLens {
       WHERE customer_id = @CustomerId
       ORDER BY created_at DESC";
 
-    var results = await _db.QueryAsync<OrderRow>(sql, new { CustomerId = customerId });
+    using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+    var results = await connection.QueryAsync<OrderRow>(sql, new { CustomerId = customerId });
 
     return results.Select(MapToReadModel);
   }
@@ -84,7 +89,9 @@ public class OrderLens : IOrderLens {
       WHERE tenant_id = @TenantId
       ORDER BY created_at DESC";
 
-    var results = await _db.QueryAsync<OrderRow>(sql, new { TenantId = tenantId });
+    using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+    var results = await connection.QueryAsync<OrderRow>(sql, new { TenantId = tenantId });
 
     return results.Select(MapToReadModel);
   }
@@ -108,7 +115,9 @@ public class OrderLens : IOrderLens {
       ORDER BY created_at DESC
       LIMIT @Limit";
 
-    var results = await _db.QueryAsync<OrderRow>(sql, new { Limit = limit });
+    using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+    var results = await connection.QueryAsync<OrderRow>(sql, new { Limit = limit });
 
     return results.Select(MapToReadModel);
   }
@@ -132,7 +141,9 @@ public class OrderLens : IOrderLens {
       WHERE tenant_id = @TenantId AND status = @Status
       ORDER BY created_at DESC";
 
-    var results = await _db.QueryAsync<OrderRow>(sql, new { TenantId = tenantId, Status = status });
+    using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+    var results = await connection.QueryAsync<OrderRow>(sql, new { TenantId = tenantId, Status = status });
 
     return results.Select(MapToReadModel);
   }
@@ -150,7 +161,9 @@ public class OrderLens : IOrderLens {
       WHERE order_id = @OrderId
       ORDER BY timestamp ASC";
 
-    var results = await _db.QueryAsync<OrderStatusHistory>(sql, new { OrderId = orderId });
+    using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+    var results = await connection.QueryAsync<OrderStatusHistory>(sql, new { OrderId = orderId });
 
     return results;
   }
@@ -178,6 +191,12 @@ public class OrderLens : IOrderLens {
       TrackingNumber = row.TrackingNumber,
       LineItems = lineItems
     };
+  }
+
+  private static void EnsureConnectionOpen(IDbConnection connection) {
+    if (connection.State != ConnectionState.Open) {
+      connection.Open();
+    }
   }
 
   // Database row DTO for Dapper mapping

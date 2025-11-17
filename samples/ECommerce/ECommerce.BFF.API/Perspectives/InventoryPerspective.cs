@@ -7,6 +7,7 @@ using ECommerce.Contracts.Events;
 using ECommerce.Contracts.Generated;
 using Microsoft.AspNetCore.SignalR;
 using Whizbang.Core;
+using Whizbang.Core.Data;
 
 namespace ECommerce.BFF.API.Perspectives;
 
@@ -15,24 +16,28 @@ namespace ECommerce.BFF.API.Perspectives;
 /// Listens to InventoryReservedEvent.
 /// </summary>
 public class InventoryPerspective : IPerspectiveOf<InventoryReservedEvent> {
-  private readonly IDbConnection _db;
+  private readonly IDbConnectionFactory _connectionFactory;
   private readonly IHubContext<OrderStatusHub> _hubContext;
   private readonly ILogger<InventoryPerspective> _logger;
 
   public InventoryPerspective(
-    IDbConnection db,
+    IDbConnectionFactory connectionFactory,
     IHubContext<OrderStatusHub> hubContext,
     ILogger<InventoryPerspective> logger
   ) {
-    _db = db;
+    _connectionFactory = connectionFactory;
     _hubContext = hubContext;
     _logger = logger;
   }
 
   public async Task Update(InventoryReservedEvent @event, CancellationToken cancellationToken = default) {
     try {
+      // Create new connection for this operation
+      using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
+      EnsureConnectionOpen(connection);
+
       // 1. Update order status in bff.orders
-      await _db.ExecuteAsync(@"
+      await connection.ExecuteAsync(@"
         UPDATE bff.orders
         SET
           status = 'InventoryReserved',
@@ -44,7 +49,7 @@ public class InventoryPerspective : IPerspectiveOf<InventoryReservedEvent> {
         });
 
       // 2. Add to status history
-      await _db.ExecuteAsync(@"
+      await connection.ExecuteAsync(@"
         INSERT INTO bff.order_status_history (
           order_id,
           status,
@@ -68,12 +73,12 @@ public class InventoryPerspective : IPerspectiveOf<InventoryReservedEvent> {
               Quantity = @event.Quantity,
               ReservedAt = @event.ReservedAt
             },
-            (JsonTypeInfo<InventoryReservedDetails>)WhizbangJsonContext.CreateOptions().GetTypeInfo(typeof(InventoryReservedDetails))!
+            PerspectiveJsonContext.Default.InventoryReservedDetails
           )
         });
 
       // 3. Push SignalR update
-      var customerId = await _db.QuerySingleOrDefaultAsync<string>(
+      var customerId = await connection.QuerySingleOrDefaultAsync<string>(
         "SELECT customer_id FROM bff.orders WHERE order_id = @OrderId",
         new { @event.OrderId }
       );
@@ -101,6 +106,12 @@ public class InventoryPerspective : IPerspectiveOf<InventoryReservedEvent> {
         @event.OrderId
       );
       throw;
+    }
+  }
+
+  private static void EnsureConnectionOpen(IDbConnection connection) {
+    if (connection.State != ConnectionState.Open) {
+      connection.Open();
     }
   }
 }

@@ -29,35 +29,45 @@ ordersTopic.AddServiceBusSubscription("notification-service");
 var orderService = builder.AddProject("orderservice", "../ECommerce.OrderService.API/ECommerce.OrderService.API.csproj")
     .WithReference(ordersDb)
     .WithReference(serviceBus)
+    .WaitFor(ordersDb)
+    .WaitFor(serviceBus)
     .WithExternalHttpEndpoints();
 
 var inventoryWorker = builder.AddProject("inventoryworker", "../ECommerce.InventoryWorker/ECommerce.InventoryWorker.csproj")
     .WithReference(inventoryDb)
-    .WithReference(serviceBus);
+    .WithReference(serviceBus)
+    .WaitFor(inventoryDb)
+    .WaitFor(serviceBus);
 
 var paymentWorker = builder.AddProject("paymentworker", "../ECommerce.PaymentWorker/ECommerce.PaymentWorker.csproj")
     .WithReference(paymentDb)
-    .WithReference(serviceBus);
+    .WithReference(serviceBus)
+    .WaitFor(paymentDb)
+    .WaitFor(serviceBus);
 
 var shippingWorker = builder.AddProject("shippingworker", "../ECommerce.ShippingWorker/ECommerce.ShippingWorker.csproj")
     .WithReference(shippingDb)
-    .WithReference(serviceBus);
+    .WithReference(serviceBus)
+    .WaitFor(shippingDb)
+    .WaitFor(serviceBus);
 
 var notificationWorker = builder.AddProject("notificationworker", "../ECommerce.NotificationWorker/ECommerce.NotificationWorker.csproj")
     .WithReference(notificationDb)
-    .WithReference(serviceBus);
+    .WithReference(serviceBus)
+    .WaitFor(notificationDb)
+    .WaitFor(serviceBus);
 
 var bffService = builder.AddProject("bff", "../ECommerce.BFF.API/ECommerce.BFF.API.csproj")
     .WithReference(bffDb)
     .WithReference(serviceBus)
+    .WaitFor(bffDb)
+    .WaitFor(serviceBus)
     .WithExternalHttpEndpoints();  // BFF needs external access for Angular app
 
-// NOTE: Angular UI integration commented out - requires Aspire.Hosting.NodeJs package
-// The Angular app can be run independently with 'npm start' in ECommerce.UI directory
-// TODO: Add Aspire.Hosting.NodeJs package reference to enable npm app hosting
-// var angularApp = builder.AddNpmApp("ui", "../ECommerce.UI", "start")
-//     .WithHttpEndpoint(port: 4200, env: "PORT")
-//     .WithExternalHttpEndpoints()
-//     .WaitFor(bffService);  // Wait for BFF to be ready before starting UI
+// Angular UI integration - let Angular choose its own port
+var angularApp = builder.AddNpmApp("ui", "../ECommerce.UI", "start")
+    .WithHttpEndpoint(env: "PORT")  // No port specified - Angular will use its default or find available
+    .WithExternalHttpEndpoints()
+    .WaitFor(bffService);  // Wait for BFF to be ready before starting UI
 
 builder.Build().Run();

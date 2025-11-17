@@ -8,6 +8,7 @@ using ECommerce.Contracts.Events;
 using ECommerce.Contracts.Generated;
 using Microsoft.AspNetCore.SignalR;
 using Whizbang.Core;
+using Whizbang.Core.Data;
 
 namespace ECommerce.BFF.API.Perspectives;
 
@@ -16,24 +17,28 @@ namespace ECommerce.BFF.API.Perspectives;
 /// Listens to OrderCreatedEvent and updates the denormalized bff.orders table.
 /// </summary>
 public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent> {
-  private readonly IDbConnection _db;
+  private readonly IDbConnectionFactory _connectionFactory;
   private readonly IHubContext<OrderStatusHub> _hubContext;
   private readonly ILogger<OrderPerspective> _logger;
 
   public OrderPerspective(
-    IDbConnection db,
+    IDbConnectionFactory connectionFactory,
     IHubContext<OrderStatusHub> hubContext,
     ILogger<OrderPerspective> logger
   ) {
-    _db = db;
+    _connectionFactory = connectionFactory;
     _hubContext = hubContext;
     _logger = logger;
   }
 
   public async Task Update(OrderCreatedEvent @event, CancellationToken cancellationToken = default) {
     try {
+      // Create new connection for this operation
+      using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
+      EnsureConnectionOpen(connection);
+
       // 1. Insert into bff.orders read model (denormalized)
-      await _db.ExecuteAsync(@"
+      await connection.ExecuteAsync(@"
         INSERT INTO bff.orders (
           order_id,
           customer_id,
@@ -71,7 +76,7 @@ public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent> {
         });
 
       // 2. Insert into order status history
-      await _db.ExecuteAsync(@"
+      await connection.ExecuteAsync(@"
         INSERT INTO bff.order_status_history (
           order_id,
           status,
@@ -94,7 +99,7 @@ public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent> {
               TotalAmount = @event.TotalAmount,
               ItemCount = @event.LineItems.Count
             },
-            (JsonTypeInfo<OrderCreatedDetails>)WhizbangJsonContext.CreateOptions().GetTypeInfo(typeof(OrderCreatedDetails))!
+            PerspectiveJsonContext.Default.OrderCreatedDetails
           )
         });
 
@@ -120,6 +125,12 @@ public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent> {
         @event.OrderId
       );
       throw;
+    }
+  }
+
+  private static void EnsureConnectionOpen(IDbConnection connection) {
+    if (connection.State != ConnectionState.Open) {
+      connection.Open();
     }
   }
 }

@@ -19,7 +19,8 @@ var serviceBusConnection = builder.Configuration.GetConnectionString("servicebus
     ?? throw new InvalidOperationException("Azure Service Bus connection string 'servicebus' not found");
 
 // Register Whizbang Postgres stores (with automatic schema initialization)
-builder.Services.AddWhizbangPostgres(postgresConnection, initializeSchema: true);
+var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
+builder.Services.AddWhizbangPostgres(postgresConnection, jsonOptions, initializeSchema: true);
 builder.Services.AddWhizbangPostgresHealthChecks();
 
 // Register Azure Service Bus transport
