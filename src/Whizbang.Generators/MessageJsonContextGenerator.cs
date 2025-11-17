@@ -2,6 +2,7 @@ using System;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Reflection;
+using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
 
@@ -162,20 +163,42 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private static string GenerateLazyFields(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> messages) {
     var sb = new System.Text.StringBuilder();
 
+    // Load snippets
+    var valueObjectFieldSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        "JsonContextSnippets.cs",
+        "LAZY_FIELD_VALUE_OBJECT");
+
+    var messageFieldSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        "JsonContextSnippets.cs",
+        "LAZY_FIELD_MESSAGE");
+
+    var envelopeFieldSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        "JsonContextSnippets.cs",
+        "LAZY_FIELD_MESSAGE_ENVELOPE");
+
     // Core Whizbang types that require custom converters (Vogen value objects)
-    sb.AppendLine("private JsonTypeInfo<global::Whizbang.Core.ValueObjects.MessageId>? _MessageId;");
-    sb.AppendLine("private JsonTypeInfo<global::Whizbang.Core.ValueObjects.CorrelationId>? _CorrelationId;");
+    sb.AppendLine(valueObjectFieldSnippet.Replace("__TYPE_NAME__", "MessageId"));
+    sb.AppendLine(valueObjectFieldSnippet.Replace("__TYPE_NAME__", "CorrelationId"));
     sb.AppendLine();
 
     // Discovered message types - need JsonTypeInfo for AOT
     foreach (var message in messages) {
-      sb.AppendLine($"private JsonTypeInfo<{message.FullyQualifiedName}>? _{message.SimpleName};");
+      var field = messageFieldSnippet
+          .Replace("__FULLY_QUALIFIED_NAME__", message.FullyQualifiedName)
+          .Replace("__SIMPLE_NAME__", message.SimpleName);
+      sb.AppendLine(field);
     }
     sb.AppendLine();
 
     // MessageEnvelope<T> for each discovered message type
     foreach (var message in messages) {
-      sb.AppendLine($"private JsonTypeInfo<MessageEnvelope<{message.FullyQualifiedName}>>? _MessageEnvelope_{message.SimpleName};");
+      var field = envelopeFieldSnippet
+          .Replace("__FULLY_QUALIFIED_NAME__", message.FullyQualifiedName)
+          .Replace("__SIMPLE_NAME__", message.SimpleName);
+      sb.AppendLine(field);
     }
 
     return sb.ToString();
@@ -193,8 +216,23 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private static string GenerateGetTypeInfo(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> messages) {
     var sb = new System.Text.StringBuilder();
 
+    // Load snippets
+    var valueObjectCheckSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        "JsonContextSnippets.cs",
+        "GET_TYPE_INFO_VALUE_OBJECT");
+
+    var messageCheckSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        "JsonContextSnippets.cs",
+        "GET_TYPE_INFO_MESSAGE");
+
+    var envelopeCheckSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        "JsonContextSnippets.cs",
+        "GET_TYPE_INFO_MESSAGE_ENVELOPE");
+
     // Implement IJsonTypeInfoResolver.GetTypeInfo(Type, JsonSerializerOptions)
-    // This is the method that gets called when used in a resolver chain
     sb.AppendLine("JsonTypeInfo? IJsonTypeInfoResolver.GetTypeInfo(Type type, JsonSerializerOptions options) {");
     sb.AppendLine("  return GetTypeInfoInternal(type, options);");
     sb.AppendLine("}");
@@ -211,25 +249,27 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Shared implementation
     sb.AppendLine("private JsonTypeInfo? GetTypeInfoInternal(Type type, JsonSerializerOptions options) {");
     sb.AppendLine("  // Core Whizbang value objects with custom converters");
-    sb.AppendLine("  if (type == typeof(global::Whizbang.Core.ValueObjects.MessageId)) return Create_MessageId(options);");
-    sb.AppendLine("  if (type == typeof(global::Whizbang.Core.ValueObjects.CorrelationId)) return Create_CorrelationId(options);");
+    sb.AppendLine(valueObjectCheckSnippet.Replace("__TYPE_NAME__", "MessageId"));
+    sb.AppendLine(valueObjectCheckSnippet.Replace("__TYPE_NAME__", "CorrelationId"));
     sb.AppendLine();
 
     // Discovered message types
     sb.AppendLine("  // Discovered message types (ICommand, IEvent)");
     foreach (var message in messages) {
-      sb.AppendLine($"  if (type == typeof({message.FullyQualifiedName})) {{");
-      sb.AppendLine($"    return Create_{message.SimpleName}(options);");
-      sb.AppendLine($"  }}");
+      var check = messageCheckSnippet
+          .Replace("__FULLY_QUALIFIED_NAME__", message.FullyQualifiedName)
+          .Replace("__SIMPLE_NAME__", message.SimpleName);
+      sb.AppendLine(check);
       sb.AppendLine();
     }
 
     // MessageEnvelope<T> types
     sb.AppendLine("  // MessageEnvelope<T> for discovered message types");
     foreach (var message in messages) {
-      sb.AppendLine($"  if (type == typeof(MessageEnvelope<{message.FullyQualifiedName}>)) {{");
-      sb.AppendLine($"    return CreateMessageEnvelope_{message.SimpleName}(options);");
-      sb.AppendLine($"  }}");
+      var check = envelopeCheckSnippet
+          .Replace("__FULLY_QUALIFIED_NAME__", message.FullyQualifiedName)
+          .Replace("__SIMPLE_NAME__", message.SimpleName);
+      sb.AppendLine(check);
       sb.AppendLine();
     }
 
@@ -241,61 +281,22 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   private static string GenerateHelperMethods(Assembly assembly) {
-    var sb = new System.Text.StringBuilder();
+    var sb = new StringBuilder();
 
-    // Generate CreateProperty helper for message type factories
-    sb.AppendLine("private JsonPropertyInfo CreateProperty<TProperty>(");
-    sb.AppendLine("    JsonSerializerOptions options,");
-    sb.AppendLine("    string propertyName,");
-    sb.AppendLine("    Func<object, TProperty> getter,");
-    sb.AppendLine("    Action<object, TProperty>? setter,");
-    sb.AppendLine("    JsonTypeInfo<TProperty> propertyTypeInfo) {");
-    sb.AppendLine();
-    sb.AppendLine("  var propertyInfo = new JsonPropertyInfoValues<TProperty> {");
-    sb.AppendLine("    IsProperty = true,");
-    sb.AppendLine("    IsPublic = true,");
-    sb.AppendLine("    DeclaringType = typeof(object),  // Generic - not specific to MessageEnvelope");
-    sb.AppendLine("    PropertyTypeInfo = propertyTypeInfo,");
-    sb.AppendLine("    Getter = getter,");
-    sb.AppendLine("    Setter = setter,");
-    sb.AppendLine("    PropertyName = propertyName,");
-    sb.AppendLine("    JsonPropertyName = propertyName");
-    sb.AppendLine("  };");
-    sb.AppendLine();
-    sb.AppendLine("  return JsonMetadataServices.CreatePropertyInfo(options, propertyInfo);");
-    sb.AppendLine("}");
-    sb.AppendLine();
+    // Load helper snippets
+    var createPropertySnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        "JsonContextSnippets.cs",
+        "HELPER_CREATE_PROPERTY");
 
-    // Add helper to get JsonTypeInfo for any type (primitives + custom)
-    sb.AppendLine("/// <summary>");
-    sb.AppendLine("/// Gets JsonTypeInfo for a type, handling primitives in AOT-compatible way.");
-    sb.AppendLine("/// For complex types, queries the full resolver chain.");
-    sb.AppendLine("/// </summary>");
-    sb.AppendLine("private JsonTypeInfo<T> GetOrCreateTypeInfo<T>(JsonSerializerOptions options) {");
-    sb.AppendLine("  var type = typeof(T);");
+    var getOrCreateTypeInfoSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        "JsonContextSnippets.cs",
+        "HELPER_GET_OR_CREATE_TYPE_INFO");
+
+    sb.AppendLine(createPropertySnippet);
     sb.AppendLine();
-    sb.AppendLine("  // Try our own resolver first (MessageId, CorrelationId, discovered types, etc.)");
-    sb.AppendLine("  var typeInfo = GetTypeInfoInternal(type, options);");
-    sb.AppendLine("  if (typeInfo != null) return (JsonTypeInfo<T>)typeInfo;");
-    sb.AppendLine();
-    sb.AppendLine("  // Handle common primitive types using JsonMetadataServices (AOT-compatible)");
-    sb.AppendLine("  if (type == typeof(string)) return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<string>(options, JsonMetadataServices.StringConverter);");
-    sb.AppendLine("  if (type == typeof(int)) return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<int>(options, JsonMetadataServices.Int32Converter);");
-    sb.AppendLine("  if (type == typeof(long)) return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<long>(options, JsonMetadataServices.Int64Converter);");
-    sb.AppendLine("  if (type == typeof(bool)) return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<bool>(options, JsonMetadataServices.BooleanConverter);");
-    sb.AppendLine("  if (type == typeof(DateTime)) return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<DateTime>(options, JsonMetadataServices.DateTimeConverter);");
-    sb.AppendLine("  if (type == typeof(DateTimeOffset)) return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<DateTimeOffset>(options, JsonMetadataServices.DateTimeOffsetConverter);");
-    sb.AppendLine("  if (type == typeof(Guid)) return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<Guid>(options, JsonMetadataServices.GuidConverter);");
-    sb.AppendLine();
-    sb.AppendLine("  // For complex types (List<T>, Dictionary<K,V>, etc.), query the full resolver chain");
-    sb.AppendLine("  // This will check InfrastructureJsonContext and user-provided resolvers");
-    sb.AppendLine("  var chainTypeInfo = options.GetTypeInfo(type);");
-    sb.AppendLine("  if (chainTypeInfo != null) return (JsonTypeInfo<T>)chainTypeInfo;");
-    sb.AppendLine();
-    sb.AppendLine("  // If still null, type is not registered anywhere - throw helpful error");
-    sb.AppendLine("  throw new InvalidOperationException($\"No JsonTypeInfo found for type {type.FullName}. \" +");
-    sb.AppendLine("    \"Ensure you pass a resolver for this type to CreateOptions(), or add [JsonSerializable] to a JsonSerializerContext.\");");
-    sb.AppendLine("}");
+    sb.AppendLine(getOrCreateTypeInfoSnippet);
 
     return sb.ToString();
   }
@@ -303,22 +304,18 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private static string GenerateCoreTypeFactories(Assembly assembly) {
     var sb = new System.Text.StringBuilder();
 
+    // Load snippet
+    var coreTypeFactorySnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        "JsonContextSnippets.cs",
+        "CORE_TYPE_FACTORY");
+
     // MessageId factory - use custom AOT-compatible converter
-    sb.AppendLine("private JsonTypeInfo<global::Whizbang.Core.ValueObjects.MessageId> Create_MessageId(JsonSerializerOptions options) {");
-    sb.AppendLine("  var converter = new global::Whizbang.Core.ValueObjects.MessageIdJsonConverter();");
-    sb.AppendLine("  var jsonTypeInfo = JsonMetadataServices.CreateValueInfo<global::Whizbang.Core.ValueObjects.MessageId>(options, converter);");
-    sb.AppendLine("  jsonTypeInfo.OriginatingResolver = this;");
-    sb.AppendLine("  return jsonTypeInfo;");
-    sb.AppendLine("}");
+    sb.AppendLine(coreTypeFactorySnippet.Replace("__TYPE_NAME__", "MessageId"));
     sb.AppendLine();
 
     // CorrelationId factory - use custom AOT-compatible converter
-    sb.AppendLine("private JsonTypeInfo<global::Whizbang.Core.ValueObjects.CorrelationId> Create_CorrelationId(JsonSerializerOptions options) {");
-    sb.AppendLine("  var converter = new global::Whizbang.Core.ValueObjects.CorrelationIdJsonConverter();");
-    sb.AppendLine("  var jsonTypeInfo = JsonMetadataServices.CreateValueInfo<global::Whizbang.Core.ValueObjects.CorrelationId>(options, converter);");
-    sb.AppendLine("  jsonTypeInfo.OriginatingResolver = this;");
-    sb.AppendLine("  return jsonTypeInfo;");
-    sb.AppendLine("}");
+    sb.AppendLine(coreTypeFactorySnippet.Replace("__TYPE_NAME__", "CorrelationId"));
     sb.AppendLine();
 
     // Infrastructure types will use default serialization - we only need special handling for MessageId and CorrelationId
@@ -327,7 +324,18 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   private static string GenerateMessageTypeFactories(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> messages) {
-    var sb = new System.Text.StringBuilder();
+    var sb = new StringBuilder();
+
+    // Load snippets
+    var propertyCreationSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        "JsonContextSnippets.cs",
+        "PROPERTY_CREATION_CALL");
+
+    var parameterInfoSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        "JsonContextSnippets.cs",
+        "PARAMETER_INFO_VALUES");
 
     foreach (var message in messages) {
       sb.AppendLine($"private JsonTypeInfo<{message.FullyQualifiedName}> Create_{message.SimpleName}(JsonSerializerOptions options) {{");
@@ -342,29 +350,30 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
             ? "null,  // Init-only property, STJ will use reflection"
             : $"(obj, value) => (({message.FullyQualifiedName})obj).{prop.Name} = value,";
 
-        sb.AppendLine($"  properties[{i}] = CreateProperty<{prop.Type}>(");
-        sb.AppendLine($"      options,");
-        sb.AppendLine($"      \"{prop.Name}\",");
-        sb.AppendLine($"      obj => (({message.FullyQualifiedName})obj).{prop.Name},");
-        sb.AppendLine($"      {setter}");
-        sb.AppendLine($"      GetOrCreateTypeInfo<{prop.Type}>(options));");
+        var propertyCode = propertyCreationSnippet
+            .Replace("__INDEX__", i.ToString())
+            .Replace("__PROPERTY_TYPE__", prop.Type)
+            .Replace("__PROPERTY_NAME__", prop.Name)
+            .Replace("__MESSAGE_TYPE__", message.FullyQualifiedName)
+            .Replace("__SETTER__", setter);
+
+        sb.AppendLine(propertyCode);
         sb.AppendLine();
       }
 
       // Generate different code based on constructor type
       if (message.HasParameterizedConstructor) {
         // Type has parameterized constructor (e.g., record with primary constructor)
-        // Generate constructor parameters
+        // Generate constructor parameters using snippet
         sb.AppendLine($"  var ctorParams = new JsonParameterInfoValues[{message.Properties.Length}];");
         for (int i = 0; i < message.Properties.Length; i++) {
           var prop = message.Properties[i];
-          sb.AppendLine($"  ctorParams[{i}] = new JsonParameterInfoValues {{");
-          sb.AppendLine($"      Name = \"{prop.Name}\",");
-          sb.AppendLine($"      ParameterType = typeof({prop.Type}),");
-          sb.AppendLine($"      Position = {i},");
-          sb.AppendLine($"      HasDefaultValue = false,");
-          sb.AppendLine($"      DefaultValue = null");
-          sb.AppendLine($"  }};");
+          var parameterCode = parameterInfoSnippet
+              .Replace("__INDEX__", i.ToString())
+              .Replace("__PARAMETER_NAME__", prop.Name)
+              .Replace("__PROPERTY_TYPE__", prop.Type);
+
+          sb.AppendLine(parameterCode);
         }
         sb.AppendLine();
 
@@ -383,17 +392,16 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       } else {
         // Type has no parameterized constructor but has init-only properties (e.g., record with required properties)
         // Use object initializer syntax to set init-only properties during construction
-        // Generate constructor parameters
+        // Generate constructor parameters using snippet
         sb.AppendLine($"  var ctorParams = new JsonParameterInfoValues[{message.Properties.Length}];");
         for (int i = 0; i < message.Properties.Length; i++) {
           var prop = message.Properties[i];
-          sb.AppendLine($"  ctorParams[{i}] = new JsonParameterInfoValues {{");
-          sb.AppendLine($"      Name = \"{prop.Name}\",");
-          sb.AppendLine($"      ParameterType = typeof({prop.Type}),");
-          sb.AppendLine($"      Position = {i},");
-          sb.AppendLine($"      HasDefaultValue = false,");
-          sb.AppendLine($"      DefaultValue = null");
-          sb.AppendLine($"  }};");
+          var parameterCode = parameterInfoSnippet
+              .Replace("__INDEX__", i.ToString())
+              .Replace("__PARAMETER_NAME__", prop.Name)
+              .Replace("__PROPERTY_TYPE__", prop.Type);
+
+          sb.AppendLine(parameterCode);
         }
         sb.AppendLine();
 
@@ -424,7 +432,18 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   private static string GenerateMessageEnvelopeFactories(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> messages) {
-    var sb = new System.Text.StringBuilder();
+    var sb = new StringBuilder();
+
+    // Load snippets
+    var propertyCreationSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        "JsonContextSnippets.cs",
+        "PROPERTY_CREATION_CALL");
+
+    var parameterInfoSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        "JsonContextSnippets.cs",
+        "PARAMETER_INFO_VALUES");
 
     foreach (var message in messages) {
       sb.AppendLine($"private JsonTypeInfo<MessageEnvelope<{message.FullyQualifiedName}>> CreateMessageEnvelope_{message.SimpleName}(JsonSerializerOptions options) {{");
@@ -433,56 +452,56 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       sb.AppendLine("  var properties = new JsonPropertyInfo[3];");
       sb.AppendLine();
 
-      // Property 0: MessageId
-      sb.AppendLine("  properties[0] = CreateProperty<MessageId>(");
-      sb.AppendLine("      options,");
-      sb.AppendLine("      \"MessageId\",");
-      sb.AppendLine($"      obj => ((MessageEnvelope<{message.FullyQualifiedName}>)obj).MessageId,");
-      sb.AppendLine("      null,  // MessageEnvelope uses constructor, no setter needed");
-      sb.AppendLine("      GetOrCreateTypeInfo<MessageId>(options));");
+      // Property 0: MessageId using snippet
+      var messageIdProperty = propertyCreationSnippet
+          .Replace("__INDEX__", "0")
+          .Replace("__PROPERTY_TYPE__", "MessageId")
+          .Replace("__PROPERTY_NAME__", "MessageId")
+          .Replace("__MESSAGE_TYPE__", $"MessageEnvelope<{message.FullyQualifiedName}>")
+          .Replace("__SETTER__", "null,  // MessageEnvelope uses constructor, no setter needed");
+      sb.AppendLine(messageIdProperty);
       sb.AppendLine();
 
-      // Property 1: Payload
-      sb.AppendLine($"  properties[1] = CreateProperty<{message.FullyQualifiedName}>(");
-      sb.AppendLine("      options,");
-      sb.AppendLine("      \"Payload\",");
-      sb.AppendLine($"      obj => ((MessageEnvelope<{message.FullyQualifiedName}>)obj).Payload,");
-      sb.AppendLine("      null,  // MessageEnvelope uses constructor, no setter needed");
-      sb.AppendLine($"      GetOrCreateTypeInfo<{message.FullyQualifiedName}>(options));");
+      // Property 1: Payload using snippet
+      var payloadProperty = propertyCreationSnippet
+          .Replace("__INDEX__", "1")
+          .Replace("__PROPERTY_TYPE__", message.FullyQualifiedName)
+          .Replace("__PROPERTY_NAME__", "Payload")
+          .Replace("__MESSAGE_TYPE__", $"MessageEnvelope<{message.FullyQualifiedName}>")
+          .Replace("__SETTER__", "null,  // MessageEnvelope uses constructor, no setter needed");
+      sb.AppendLine(payloadProperty);
       sb.AppendLine();
 
-      // Property 2: Hops
-      sb.AppendLine("  properties[2] = CreateProperty<List<MessageHop>>(");
-      sb.AppendLine("      options,");
-      sb.AppendLine("      \"Hops\",");
-      sb.AppendLine($"      obj => ((MessageEnvelope<{message.FullyQualifiedName}>)obj).Hops,");
-      sb.AppendLine("      null,  // MessageEnvelope uses constructor, no setter needed");
-      sb.AppendLine("      GetOrCreateTypeInfo<List<MessageHop>>(options));");
+      // Property 2: Hops using snippet
+      var hopsProperty = propertyCreationSnippet
+          .Replace("__INDEX__", "2")
+          .Replace("__PROPERTY_TYPE__", "List<MessageHop>")
+          .Replace("__PROPERTY_NAME__", "Hops")
+          .Replace("__MESSAGE_TYPE__", $"MessageEnvelope<{message.FullyQualifiedName}>")
+          .Replace("__SETTER__", "null,  // MessageEnvelope uses constructor, no setter needed");
+      sb.AppendLine(hopsProperty);
       sb.AppendLine();
 
-      // Constructor parameters (for deserialization)
+      // Constructor parameters using snippet
       sb.AppendLine("  var ctorParams = new JsonParameterInfoValues[3];");
-      sb.AppendLine("  ctorParams[0] = new JsonParameterInfoValues {");
-      sb.AppendLine("    Name = \"messageId\",");
-      sb.AppendLine("    ParameterType = typeof(MessageId),");
-      sb.AppendLine("    Position = 0,");
-      sb.AppendLine("    HasDefaultValue = false,");
-      sb.AppendLine("    DefaultValue = null");
-      sb.AppendLine("  };");
-      sb.AppendLine("  ctorParams[1] = new JsonParameterInfoValues {");
-      sb.AppendLine("    Name = \"payload\",");
-      sb.AppendLine($"    ParameterType = typeof({message.FullyQualifiedName}),");
-      sb.AppendLine("    Position = 1,");
-      sb.AppendLine("    HasDefaultValue = false,");
-      sb.AppendLine("    DefaultValue = null");
-      sb.AppendLine("  };");
-      sb.AppendLine("  ctorParams[2] = new JsonParameterInfoValues {");
-      sb.AppendLine("    Name = \"hops\",");
-      sb.AppendLine("    ParameterType = typeof(List<MessageHop>),");
-      sb.AppendLine("    Position = 2,");
-      sb.AppendLine("    HasDefaultValue = false,");
-      sb.AppendLine("    DefaultValue = null");
-      sb.AppendLine("  };");
+
+      var messageIdParam = parameterInfoSnippet
+          .Replace("__INDEX__", "0")
+          .Replace("__PARAMETER_NAME__", "messageId")
+          .Replace("__PROPERTY_TYPE__", "MessageId");
+      sb.AppendLine(messageIdParam);
+
+      var payloadParam = parameterInfoSnippet
+          .Replace("__INDEX__", "1")
+          .Replace("__PARAMETER_NAME__", "payload")
+          .Replace("__PROPERTY_TYPE__", message.FullyQualifiedName);
+      sb.AppendLine(payloadParam);
+
+      var hopsParam = parameterInfoSnippet
+          .Replace("__INDEX__", "2")
+          .Replace("__PARAMETER_NAME__", "hops")
+          .Replace("__PROPERTY_TYPE__", "List<MessageHop>");
+      sb.AppendLine(hopsParam);
       sb.AppendLine();
 
       // Create JsonObjectInfoValues
@@ -508,32 +527,12 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   private static string GenerateAssemblyAwareHelper(Assembly assembly) {
-    var sb = new System.Text.StringBuilder();
+    // Load snippet
+    var createOptionsSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        "JsonContextSnippets.cs",
+        "HELPER_CREATE_OPTIONS");
 
-    // Generate helper that combines this context + user contexts (fully AOT-compatible)
-    sb.AppendLine("/// <summary>");
-    sb.AppendLine("/// Creates JsonSerializerOptions with all required contexts for Whizbang serialization.");
-    sb.AppendLine("/// Includes Whizbang types (MessageId, CorrelationId, MessageEnvelope), discovered message types,");
-    sb.AppendLine("/// and primitive types (string, int, etc.). For complex types (List, Dictionary, custom classes),");
-    sb.AppendLine("/// pass a JsonSerializerContext with [JsonSerializable] attributes as userResolvers.");
-    sb.AppendLine("/// </summary>");
-    sb.AppendLine("/// <param name=\"userResolvers\">Optional user JsonSerializerContext instances for complex types</param>");
-    sb.AppendLine("/// <returns>AOT-compatible JsonSerializerOptions ready for use</returns>");
-    sb.AppendLine("public static JsonSerializerOptions CreateOptions(params IJsonTypeInfoResolver[] userResolvers) {");
-    sb.AppendLine("  // Create fully AOT-compatible resolver chain:");
-    sb.AppendLine("  // 1. WhizbangJsonContext (message types, MessageEnvelope<T>, MessageId, CorrelationId)");
-    sb.AppendLine("  // 2. User resolvers (custom application types)");
-    sb.AppendLine("  // 3. InfrastructureJsonContext (MessageHop, SecurityContext, etc.)");
-    sb.AppendLine("  var resolvers = new List<IJsonTypeInfoResolver> { Default };");
-    sb.AppendLine("  resolvers.AddRange(userResolvers);");
-    sb.AppendLine("  resolvers.Add(global::Whizbang.Core.Generated.InfrastructureJsonContext.Default);");
-    sb.AppendLine();
-    sb.AppendLine("  return new JsonSerializerOptions {");
-    sb.AppendLine("    TypeInfoResolver = JsonTypeInfoResolver.Combine(resolvers.ToArray()),");
-    sb.AppendLine("    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull");
-    sb.AppendLine("  };");
-    sb.AppendLine("}");
-
-    return sb.ToString();
+    return createOptionsSnippet;
   }
 }

@@ -247,30 +247,52 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
 
     var (((messages, dispatchers), receptors), perspectives) = data;
 
-    // Build message registry JSON
-    var sb = new StringBuilder();
-    sb.AppendLine("{");
-    sb.AppendLine("  \"messages\": [");
+    // Load snippets
+    var messageHeaderSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(MessageRegistryGenerator).Assembly,
+        "MessageRegistrySnippets.cs",
+        "MESSAGE_ENTRY_HEADER");
+
+    var messageFooterSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(MessageRegistryGenerator).Assembly,
+        "MessageRegistrySnippets.cs",
+        "MESSAGE_ENTRY_FOOTER");
+
+    var dispatcherSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(MessageRegistryGenerator).Assembly,
+        "MessageRegistrySnippets.cs",
+        "DISPATCHER_ENTRY");
+
+    var receptorSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(MessageRegistryGenerator).Assembly,
+        "MessageRegistrySnippets.cs",
+        "RECEPTOR_ENTRY");
+
+    var perspectiveSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(MessageRegistryGenerator).Assembly,
+        "MessageRegistrySnippets.cs",
+        "PERSPECTIVE_ENTRY");
+
+    var jsonWrapperSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(MessageRegistryGenerator).Assembly,
+        "MessageRegistrySnippets.cs",
+        "JSON_ARRAY_WRAPPER");
 
     // Collect all message type names from all sources
     var allMessageTypes = new HashSet<string>();
 
-    // Add explicitly defined message types
     foreach (var msg in messages) {
       allMessageTypes.Add(msg.TypeName);
     }
 
-    // Add message types referenced by dispatchers
     foreach (var dispatcher in dispatchers) {
       allMessageTypes.Add(dispatcher.MessageType);
     }
 
-    // Add message types referenced by receptors
     foreach (var receptor in receptors) {
       allMessageTypes.Add(receptor.MessageType);
     }
 
-    // Add message types referenced by perspectives
     foreach (var perspective in perspectives) {
       foreach (var eventType in perspective.EventTypes) {
         allMessageTypes.Add(eventType);
@@ -292,94 +314,108 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
         .Where(g => g.Message is not null || g.Dispatchers.Count > 0 || g.Receptors.Count > 0 || g.Perspectives.Count > 0)
         .ToList();
 
+    // Build message entries
+    var messageEntries = new StringBuilder();
+
     for (int i = 0; i < messageGroups.Count; i++) {
       var group = messageGroups[i];
       var msg = group.Message;
 
-      sb.AppendLine("    {");
-      sb.AppendLine($"      \"type\": \"{EscapeJson(group.TypeName)}\",");
+      // Build message header
+      var messageHeader = messageHeaderSnippet
+          .Replace("__MESSAGE_TYPE__", EscapeJson(group.TypeName));
 
       // If message is defined in this project, use its metadata; otherwise, infer from usage
       if (msg is not null) {
-        sb.AppendLine($"      \"isCommand\": {msg.IsCommand.ToString().ToLower()},");
-        sb.AppendLine($"      \"isEvent\": {msg.IsEvent.ToString().ToLower()},");
-        sb.AppendLine($"      \"filePath\": \"{EscapeJson(msg.FilePath)}\",");
-        sb.AppendLine($"      \"lineNumber\": {msg.LineNumber},");
+        messageHeader = messageHeader
+            .Replace("__IS_COMMAND__", msg.IsCommand.ToString().ToLower())
+            .Replace("__IS_EVENT__", msg.IsEvent.ToString().ToLower())
+            .Replace("__FILE_PATH__", EscapeJson(msg.FilePath))
+            .Replace("__LINE_NUMBER__", msg.LineNumber.ToString());
       } else {
         // Message is from a referenced assembly - infer type from handlers
-        var isCommand = group.Receptors.Count > 0; // Commands have receptors
-        var isEvent = group.Perspectives.Count > 0 || (group.Receptors.Count == 0 && group.Dispatchers.Count > 0); // Events have perspectives or are published
+        var isCommand = group.Receptors.Count > 0;
+        var isEvent = group.Perspectives.Count > 0 || (group.Receptors.Count == 0 && group.Dispatchers.Count > 0);
 
-        sb.AppendLine($"      \"isCommand\": {isCommand.ToString().ToLower()},");
-        sb.AppendLine($"      \"isEvent\": {isEvent.ToString().ToLower()},");
-        sb.AppendLine($"      \"filePath\": \"\","); // No file path for referenced types
-        sb.AppendLine($"      \"lineNumber\": 0,"); // No line number for referenced types
+        messageHeader = messageHeader
+            .Replace("__IS_COMMAND__", isCommand.ToString().ToLower())
+            .Replace("__IS_EVENT__", isEvent.ToString().ToLower())
+            .Replace("__FILE_PATH__", "")
+            .Replace("__LINE_NUMBER__", "0");
       }
 
-      // Dispatchers
-      sb.AppendLine("      \"dispatchers\": [");
+      // Build dispatchers
+      var dispatcherEntries = new StringBuilder();
       for (int j = 0; j < group.Dispatchers.Count; j++) {
         var d = group.Dispatchers[j];
-        sb.AppendLine("        {");
-        sb.AppendLine($"          \"class\": \"{EscapeJson(d.ClassName)}\",");
-        sb.AppendLine($"          \"method\": \"{EscapeJson(d.MethodName)}\",");
-        sb.AppendLine($"          \"filePath\": \"{EscapeJson(d.FilePath)}\",");
-        sb.Append($"          \"lineNumber\": {d.LineNumber}");
-        sb.AppendLine();
-        sb.Append(j < group.Dispatchers.Count - 1 ? "        }," : "        }");
-        sb.AppendLine();
-      }
-      sb.AppendLine("      ],");
+        var entry = dispatcherSnippet
+            .Replace("__CLASS_NAME__", EscapeJson(d.ClassName))
+            .Replace("__METHOD_NAME__", EscapeJson(d.MethodName))
+            .Replace("__FILE_PATH__", EscapeJson(d.FilePath))
+            .Replace("__LINE_NUMBER__", d.LineNumber.ToString());
 
-      // Receptors
-      sb.AppendLine("      \"receptors\": [");
+        dispatcherEntries.Append(entry);
+        if (j < group.Dispatchers.Count - 1) {
+          dispatcherEntries.AppendLine(",");
+        }
+      }
+
+      // Build receptors
+      var receptorEntries = new StringBuilder();
       for (int j = 0; j < group.Receptors.Count; j++) {
         var r = group.Receptors[j];
-        sb.AppendLine("        {");
-        sb.AppendLine($"          \"class\": \"{EscapeJson(r.ClassName)}\",");
-        sb.AppendLine($"          \"method\": \"{EscapeJson(r.MethodName)}\",");
-        sb.AppendLine($"          \"filePath\": \"{EscapeJson(r.FilePath)}\",");
-        sb.Append($"          \"lineNumber\": {r.LineNumber}");
-        sb.AppendLine();
-        sb.Append(j < group.Receptors.Count - 1 ? "        }," : "        }");
-        sb.AppendLine();
-      }
-      sb.AppendLine("      ],");
+        var entry = receptorSnippet
+            .Replace("__CLASS_NAME__", EscapeJson(r.ClassName))
+            .Replace("__METHOD_NAME__", EscapeJson(r.MethodName))
+            .Replace("__FILE_PATH__", EscapeJson(r.FilePath))
+            .Replace("__LINE_NUMBER__", r.LineNumber.ToString());
 
-      // Perspectives
-      sb.AppendLine("      \"perspectives\": [");
+        receptorEntries.Append(entry);
+        if (j < group.Receptors.Count - 1) {
+          receptorEntries.AppendLine(",");
+        }
+      }
+
+      // Build perspectives
+      var perspectiveEntries = new StringBuilder();
       for (int j = 0; j < group.Perspectives.Count; j++) {
         var p = group.Perspectives[j];
-        sb.AppendLine("        {");
-        sb.AppendLine($"          \"class\": \"{EscapeJson(p.ClassName)}\",");
-        sb.AppendLine($"          \"method\": \"Update\",");
-        sb.AppendLine($"          \"filePath\": \"{EscapeJson(p.FilePath)}\",");
-        sb.Append($"          \"lineNumber\": {p.LineNumber}");
-        sb.AppendLine();
-        sb.Append(j < group.Perspectives.Count - 1 ? "        }," : "        }");
-        sb.AppendLine();
-      }
-      sb.AppendLine("      ]");
+        var entry = perspectiveSnippet
+            .Replace("__CLASS_NAME__", EscapeJson(p.ClassName))
+            .Replace("__FILE_PATH__", EscapeJson(p.FilePath))
+            .Replace("__LINE_NUMBER__", p.LineNumber.ToString());
 
-      sb.Append(i < messageGroups.Count - 1 ? "    }," : "    }");
-      sb.AppendLine();
+        perspectiveEntries.Append(entry);
+        if (j < group.Perspectives.Count - 1) {
+          perspectiveEntries.AppendLine(",");
+        }
+      }
+
+      // Build message footer
+      var messageFooter = messageFooterSnippet
+          .Replace("__DISPATCHERS__", dispatcherEntries.ToString())
+          .Replace("__RECEPTORS__", receptorEntries.ToString())
+          .Replace("__PERSPECTIVES__", perspectiveEntries.ToString());
+
+      // Combine header and footer
+      messageEntries.Append(messageHeader);
+      messageEntries.Append(messageFooter);
+
+      if (i < messageGroups.Count - 1) {
+        messageEntries.AppendLine(",");
+      }
     }
 
-    sb.AppendLine("  ]");
-    sb.AppendLine("}");
+    // Build final JSON
+    var json = jsonWrapperSnippet.Replace("__MESSAGES__", messageEntries.ToString());
 
-    // Generate as C# file with JSON content as a string constant
-    // This allows MSBuild to extract and write it as a JSON file
-    var csharpSource = $$"""
-// <auto-generated/>
-#nullable enable
+    // Generate C# wrapper with embedded JSON using snippet
+    var wrapperSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(MessageRegistryGenerator).Assembly,
+        "MessageRegistrySnippets.cs",
+        "CSHARP_WRAPPER");
 
-namespace Whizbang.Generated {
-  internal static class MessageRegistry {
-    internal const string Json = @"{{sb.ToString().Replace("\"", "\"\"")}}";
-  }
-}
-""";
+    var csharpSource = wrapperSnippet.Replace("__JSON__", json.Replace("\"", "\"\""));
 
     context.AddSource("MessageRegistry.g.cs", csharpSource);
   }

@@ -91,6 +91,18 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
       return;
     }
 
+    // Load SQL snippets (SQL doesn't fit the C# template pattern, so we use snippets only)
+    var createTableSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(PerspectiveSchemaGenerator).Assembly,
+        "PerspectiveSchemaSnippets.sql",
+        "CREATE_TABLE_SNIPPET");
+
+    var createIndexesSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(PerspectiveSchemaGenerator).Assembly,
+        "PerspectiveSchemaSnippets.sql",
+        "CREATE_INDEXES_SNIPPET");
+
+    // Build SQL file
     var schemaBuilder = new StringBuilder();
     schemaBuilder.AppendLine("-- Whizbang Perspective Tables - Auto-Generated");
     schemaBuilder.AppendLine("-- 3-Column JSONB Pattern: model_data (projection state), metadata (correlation/causation), scope (tenant/user)");
@@ -107,25 +119,20 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         ));
       }
 
-      // Generate CREATE TABLE statement
-      schemaBuilder.AppendLine($"-- Perspective: {perspective.ClassName}");
-      schemaBuilder.AppendLine($"-- Estimated size: ~{perspective.EstimatedSizeBytes} bytes");
-      schemaBuilder.AppendLine($"CREATE TABLE IF NOT EXISTS {perspective.TableName} (");
-      schemaBuilder.AppendLine($"  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),");
-      schemaBuilder.AppendLine($"  model_data JSONB NOT NULL,");
-      schemaBuilder.AppendLine($"  metadata JSONB NOT NULL,");
-      schemaBuilder.AppendLine($"  scope JSONB,");
-      schemaBuilder.AppendLine($"  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),");
-      schemaBuilder.AppendLine($"  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),");
-      schemaBuilder.AppendLine($"  version BIGINT NOT NULL DEFAULT 0");
-      schemaBuilder.AppendLine($");");
+      // Generate CREATE TABLE from snippet
+      var tableCode = createTableSnippet
+          .Replace("__CLASS_NAME__", perspective.ClassName)
+          .Replace("__ESTIMATED_SIZE__", perspective.EstimatedSizeBytes.ToString())
+          .Replace("__TABLE_NAME__", perspective.TableName);
+
+      schemaBuilder.AppendLine(tableCode);
       schemaBuilder.AppendLine();
 
-      // Add indexes
-      schemaBuilder.AppendLine($"-- Indexes for {perspective.TableName}");
-      schemaBuilder.AppendLine($"CREATE INDEX IF NOT EXISTS ix_{perspective.TableName}_updated_at ON {perspective.TableName}(updated_at);");
-      schemaBuilder.AppendLine($"CREATE INDEX IF NOT EXISTS ix_{perspective.TableName}_metadata_gin ON {perspective.TableName} USING GIN (metadata jsonb_path_ops);");
-      schemaBuilder.AppendLine($"CREATE INDEX IF NOT EXISTS ix_{perspective.TableName}_tenant ON {perspective.TableName}((scope->>'tenant_id')) WHERE scope IS NOT NULL;");
+      // Generate indexes from snippet
+      var indexesCode = createIndexesSnippet
+          .Replace("__TABLE_NAME__", perspective.TableName);
+
+      schemaBuilder.AppendLine(indexesCode);
       schemaBuilder.AppendLine();
     }
 

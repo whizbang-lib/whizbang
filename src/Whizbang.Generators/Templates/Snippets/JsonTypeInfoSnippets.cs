@@ -1,10 +1,21 @@
+#pragma warning disable IDE1006 // Naming Styles
+
+using System;
+using System.Collections.Generic;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
+using Whizbang.Core;
+using Whizbang.Core.Observability;
+using Whizbang.Core.ValueObjects;
+
 namespace Whizbang.Generators.Templates.Snippets;
 
 /// <summary>
 /// Reusable code snippets for JsonTypeInfo generation.
 /// These snippets are extracted and used by the JsonTypeInfoGenerator.
 /// </summary>
-internal static class JsonTypeInfoSnippets {
+internal class JsonTypeInfoSnippets {
 
   #region LAZY_FIELD
   private JsonTypeInfo<__TYPE__>? ___TYPE_FIELD__;
@@ -117,4 +128,17 @@ internal static class JsonTypeInfoSnippets {
     return JsonMetadataServices.CreatePropertyInfo(options, propertyInfo);
   }
   #endregion
+
+  // Placeholder declarations for IDE validation
+  private JsonSerializerOptions Options => null!;
+
+  internal class __TYPE__ { }
+  internal class __TYPE_FIELD__ { }
+  internal class __TYPE_PROPERTY__ { }
+  internal class __TYPE_METHOD__ { }
+  internal class __CONVERTER__ { }
+  internal class __PAYLOAD_TYPE__ { }
+  internal class __PAYLOAD_NAME__ { }
 }
+
+#pragma warning restore IDE1006

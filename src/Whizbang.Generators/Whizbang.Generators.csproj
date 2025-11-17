@@ -29,5 +29,9 @@
     <None Include="Templates\**\*.cs" />
     <!-- Embed as resources so generator can read them at runtime -->
     <EmbeddedResource Include="Templates\**\*.cs" />
+
+    <!-- SQL template files - embedded as resources for generator access -->
+    <None Include="Templates\**\*.sql" />
+    <EmbeddedResource Include="Templates\**\*.sql" />
   </ItemGroup>
 </Project>

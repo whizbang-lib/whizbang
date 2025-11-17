@@ -1,3 +1,6 @@
+using Microsoft.Extensions.DependencyInjection;
+using Whizbang.Generators.Templates.Placeholders;
+
 namespace Whizbang.Generators.Templates.Snippets;
 
 /// <summary>
@@ -6,8 +9,10 @@ namespace Whizbang.Generators.Templates.Snippets;
 /// </summary>
 internal static class PerspectiveSnippets {
 
-  #region PERSPECTIVE_REGISTRATION_SNIPPET
-  services.AddScoped<__PERSPECTIVE_INTERFACE__<__EVENT_TYPE__>, __PERSPECTIVE_CLASS__>();
-  #endregion
-
+  // Example method showing snippet structure (for IDE support only)
+  private static void ExampleMethod(IServiceCollection services) {
+    #region PERSPECTIVE_REGISTRATION_SNIPPET
+    services.AddScoped<__PERSPECTIVE_INTERFACE__<__EVENT_TYPE__>, __PERSPECTIVE_CLASS__>();
+    #endregion
+  }
 }
