@@ -1,6 +1,8 @@
 using System.Data;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Dapper;
+using ECommerce.Contracts.Generated;
 
 namespace ECommerce.BFF.API.Lenses;
 
@@ -157,7 +159,10 @@ public class OrderLens : IOrderLens {
   private static OrderReadModel MapToReadModel(OrderRow row) {
     var lineItems = string.IsNullOrEmpty(row.LineItemsJson)
       ? new List<LineItemReadModel>()
-      : JsonSerializer.Deserialize<List<LineItemReadModel>>(row.LineItemsJson) ?? new List<LineItemReadModel>();
+      : JsonSerializer.Deserialize(
+          row.LineItemsJson,
+          (JsonTypeInfo<List<LineItemReadModel>>)WhizbangJsonContext.CreateOptions().GetTypeInfo(typeof(List<LineItemReadModel>))!
+        ) ?? new List<LineItemReadModel>();
 
     return new OrderReadModel {
       OrderId = row.OrderId,

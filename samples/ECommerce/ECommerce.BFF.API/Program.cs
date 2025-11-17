@@ -2,6 +2,9 @@ using ECommerce.BFF.API.Hubs;
 using ECommerce.BFF.API.Lenses;
 using ECommerce.BFF.API.Perspectives;
 using ECommerce.Contracts.Events;
+using ECommerce.Contracts.Generated;
+using FastEndpoints;
+using FastEndpoints.Swagger;
 using Whizbang.Core;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Observability;
@@ -25,7 +28,7 @@ builder.Services.AddWhizbangPostgres(postgresConnection);
 builder.Services.AddWhizbangPostgresHealthChecks();
 
 // Register Azure Service Bus transport
-builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
+builder.Services.AddAzureServiceBusTransport(serviceBusConnection, ECommerce.Contracts.Generated.WhizbangJsonContext.Default);
 builder.Services.AddAzureServiceBusHealthChecks();
 
 // Add trace store for observability
@@ -61,11 +64,16 @@ builder.Services.AddHostedService<OutboxPublisherWorker>();
 // builder.Services.AddSingleton(consumerOptions);
 // builder.Services.AddHostedService<ServiceBusConsumerWorker>();
 
-// Add SignalR for real-time client updates
-builder.Services.AddSignalR();
+// Add FastEndpoints for REST API (AOT-compatible)
+builder.Services.AddFastEndpoints();
+builder.Services.SwaggerDocument();
 
-// Add controllers for REST API
-builder.Services.AddControllers();
+// Add SignalR for real-time client updates (AOT-compatible with typed hub)
+builder.Services.AddSignalR()
+  .AddJsonProtocol(options => {
+    // Use source-generated JSON context for AOT compatibility
+    options.PayloadSerializerOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
+  });
 
 // Add CORS for Angular development
 builder.Services.AddCors(options => {
@@ -82,6 +90,7 @@ var app = builder.Build();
 // Configure the HTTP request pipeline
 if (app.Environment.IsDevelopment()) {
   app.UseDeveloperExceptionPage();
+  app.UseSwaggerGen(); // FastEndpoints Swagger UI
 }
 
 app.UseHttpsRedirection();
@@ -89,8 +98,10 @@ app.UseHttpsRedirection();
 // Enable CORS before other middleware
 app.UseCors();
 
-// Map controllers
-app.MapControllers();
+// FastEndpoints (REST API)
+app.UseFastEndpoints(config => {
+  config.Endpoints.RoutePrefix = "api";
+});
 
 // Map SignalR hub
 app.MapHub<OrderStatusHub>("/hubs/order-status");

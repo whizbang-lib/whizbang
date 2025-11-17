@@ -1,3 +1,4 @@
+using ECommerce.Contracts.Generated;
 using ECommerce.OrderService.API.GraphQL.Mutations;
 using ECommerce.OrderService.API.GraphQL.Queries;
 using FastEndpoints;
@@ -39,7 +40,7 @@ builder.Services.AddWhizbangPostgres(postgresConnection);
 builder.Services.AddWhizbangPostgresHealthChecks();
 
 // Register Azure Service Bus transport
-builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
+builder.Services.AddAzureServiceBusTransport(serviceBusConnection, ECommerce.Contracts.Generated.WhizbangJsonContext.Default);
 builder.Services.AddAzureServiceBusHealthChecks();
 
 // Add trace store for observability
@@ -70,30 +71,7 @@ app.UseFastEndpoints(config => {
 // HotChocolate GraphQL (at /graphql)
 app.MapGraphQL("/graphql");
 
-// Keep the WeatherForecast endpoint as a demo
-var summaries = new[]
-{
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
-
-app.MapGet("/weatherforecast", () => {
-  var forecast = Enumerable.Range(1, 5).Select(index =>
-      new WeatherForecast
-      (
-          DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-          Random.Shared.Next(-20, 55),
-          summaries[Random.Shared.Next(summaries.Length)]
-      ))
-      .ToArray();
-  return forecast;
-})
-.WithName("GetWeatherForecast");
-
 // Aspire health checks and diagnostics
 app.MapDefaultEndpoints();
 
 app.Run();
-
-record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary) {
-  public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}

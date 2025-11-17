@@ -5,6 +5,7 @@ namespace ECommerce.BFF.API.Hubs;
 /// <summary>
 /// SignalR hub for real-time order status updates.
 /// Clients connect and receive notifications when order status changes.
+/// AOT-compatible hub (untyped - strongly-typed hubs not supported with Native AOT).
 /// </summary>
 public class OrderStatusHub : Hub {
   private readonly ILogger<OrderStatusHub> _logger;

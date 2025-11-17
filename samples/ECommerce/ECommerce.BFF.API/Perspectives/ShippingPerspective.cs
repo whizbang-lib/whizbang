@@ -1,8 +1,10 @@
 using System.Data;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Dapper;
 using ECommerce.BFF.API.Hubs;
 using ECommerce.Contracts.Events;
+using ECommerce.Contracts.Generated;
 using Microsoft.AspNetCore.SignalR;
 using Whizbang.Core;
 
@@ -64,10 +66,13 @@ public class ShippingPerspective : IPerspectiveOf<ShipmentCreatedEvent> {
         new {
           @event.OrderId,
           Timestamp = DateTime.UtcNow,
-          Details = JsonSerializer.Serialize(new {
-            shipmentId = @event.ShipmentId,
-            trackingNumber = @event.TrackingNumber
-          })
+          Details = JsonSerializer.Serialize(
+            new OrderShippedDetails {
+              ShipmentId = @event.ShipmentId,
+              TrackingNumber = @event.TrackingNumber
+            },
+            (JsonTypeInfo<OrderShippedDetails>)WhizbangJsonContext.CreateOptions().GetTypeInfo(typeof(OrderShippedDetails))!
+          )
         });
 
       // 3. Push SignalR update

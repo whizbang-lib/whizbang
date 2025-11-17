@@ -1,8 +1,10 @@
 using System.Data;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Dapper;
 using ECommerce.BFF.API.Hubs;
 using ECommerce.Contracts.Events;
+using ECommerce.Contracts.Generated;
 using Microsoft.AspNetCore.SignalR;
 using Whizbang.Core;
 
@@ -60,11 +62,14 @@ public class InventoryPerspective : IPerspectiveOf<InventoryReservedEvent> {
         new {
           @event.OrderId,
           Timestamp = DateTime.UtcNow,
-          Details = JsonSerializer.Serialize(new {
-            productId = @event.ProductId,
-            quantity = @event.Quantity,
-            reservedAt = @event.ReservedAt
-          })
+          Details = JsonSerializer.Serialize(
+            new InventoryReservedDetails {
+              ProductId = @event.ProductId,
+              Quantity = @event.Quantity,
+              ReservedAt = @event.ReservedAt
+            },
+            (JsonTypeInfo<InventoryReservedDetails>)WhizbangJsonContext.CreateOptions().GetTypeInfo(typeof(InventoryReservedDetails))!
+          )
         });
 
       // 3. Push SignalR update

@@ -19,6 +19,8 @@
 
   <ItemGroup>
     <PackageReference Include="Dapper" />
+    <PackageReference Include="FastEndpoints" />
+    <PackageReference Include="FastEndpoints.Swagger" />
   </ItemGroup>
 
 </Project>

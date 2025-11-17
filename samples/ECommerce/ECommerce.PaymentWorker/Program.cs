@@ -1,3 +1,4 @@
+using ECommerce.Contracts.Generated;
 using Whizbang.Core;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Observability;
@@ -21,7 +22,7 @@ builder.Services.AddWhizbangPostgres(postgresConnection);
 builder.Services.AddWhizbangPostgresHealthChecks();
 
 // Register Azure Service Bus transport
-builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
+builder.Services.AddAzureServiceBusTransport(serviceBusConnection, ECommerce.Contracts.Generated.WhizbangJsonContext.Default);
 builder.Services.AddAzureServiceBusHealthChecks();
 
 // Add trace store for observability

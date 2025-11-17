@@ -44,10 +44,12 @@ var bffService = builder.AddProject("bff", "../ECommerce.BFF.API/ECommerce.BFF.A
     .WithReference(serviceBus)
     .WithExternalHttpEndpoints();  // BFF needs external access for Angular app
 
-// Add Angular UI
-var angularApp = builder.AddNpmApp("ui", "../ECommerce.UI", "start")
-    .WithHttpEndpoint(port: 4200, env: "PORT")
-    .WithExternalHttpEndpoints()
-    .WaitFor(bffService);  // Wait for BFF to be ready before starting UI
+// NOTE: Angular UI integration commented out - requires Aspire.Hosting.NodeJs package
+// The Angular app can be run independently with 'npm start' in ECommerce.UI directory
+// TODO: Add Aspire.Hosting.NodeJs package reference to enable npm app hosting
+// var angularApp = builder.AddNpmApp("ui", "../ECommerce.UI", "start")
+//     .WithHttpEndpoint(port: 4200, env: "PORT")
+//     .WithExternalHttpEndpoints()
+//     .WaitFor(bffService);  // Wait for BFF to be ready before starting UI
 
 builder.Build().Run();

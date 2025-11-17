@@ -1,8 +1,10 @@
 using System.Data;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Dapper;
 using ECommerce.BFF.API.Hubs;
 using ECommerce.Contracts.Events;
+using ECommerce.Contracts.Generated;
 using Microsoft.AspNetCore.SignalR;
 using Whizbang.Core;
 
@@ -61,9 +63,12 @@ public class PaymentFailedPerspective : IPerspectiveOf<PaymentFailedEvent> {
         new {
           @event.OrderId,
           Timestamp = DateTime.UtcNow,
-          Details = JsonSerializer.Serialize(new {
-            reason = @event.Reason
-          })
+          Details = JsonSerializer.Serialize(
+            new PaymentFailedDetails {
+              Reason = @event.Reason
+            },
+            (JsonTypeInfo<PaymentFailedDetails>)WhizbangJsonContext.CreateOptions().GetTypeInfo(typeof(PaymentFailedDetails))!
+          )
         });
 
       // 3. Push SignalR update

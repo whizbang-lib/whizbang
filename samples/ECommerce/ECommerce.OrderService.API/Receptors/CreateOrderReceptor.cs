@@ -1,9 +1,11 @@
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
+using ECommerce.Contracts.Commands;
+using ECommerce.Contracts.Events;
+using ECommerce.Contracts.Generated;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.ValueObjects;
-using ECommerce.Contracts.Commands;
-using ECommerce.Contracts.Events;
 
 namespace ECommerce.OrderService.API.Receptors;
 
@@ -100,7 +102,9 @@ public class CreateOrderReceptor2 : IReceptor<CreateOrderCommand, OrderCreatedEv
 
     // Publish the event to the outbox for reliable cross-service delivery
     var messageId = MessageId.New();
-    var payload = JsonSerializer.SerializeToUtf8Bytes(orderCreated);
+    var options = WhizbangJsonContext.CreateOptions();
+    var typeInfo = (JsonTypeInfo<OrderCreatedEvent>)options.GetTypeInfo(typeof(OrderCreatedEvent))!;
+    var payload = JsonSerializer.SerializeToUtf8Bytes(orderCreated, typeInfo);
     await _outbox.StoreAsync(messageId, "orders/created", payload, cancellationToken);
 
     _logger.LogInformation("Order {OrderId} created and event stored in outbox (Receptor2)", message.OrderId);

@@ -1,8 +1,11 @@
 using System.Data;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Dapper;
 using ECommerce.BFF.API.Hubs;
+using ECommerce.Contracts.Commands;
 using ECommerce.Contracts.Events;
+using ECommerce.Contracts.Generated;
 using Microsoft.AspNetCore.SignalR;
 using Whizbang.Core;
 
@@ -60,7 +63,10 @@ public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent> {
           @event.CustomerId,
           @event.TotalAmount,
           @event.CreatedAt,
-          LineItems = JsonSerializer.Serialize(@event.LineItems),
+          LineItems = JsonSerializer.Serialize(
+            @event.LineItems,
+            (JsonTypeInfo<List<OrderLineItem>>)WhizbangJsonContext.CreateOptions().GetTypeInfo(typeof(List<OrderLineItem>))!
+          ),
           ItemCount = @event.LineItems.Count
         });
 
@@ -83,10 +89,13 @@ public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent> {
         new {
           @event.OrderId,
           @event.CreatedAt,
-          Details = JsonSerializer.Serialize(new {
-            totalAmount = @event.TotalAmount,
-            itemCount = @event.LineItems.Count
-          })
+          Details = JsonSerializer.Serialize(
+            new OrderCreatedDetails {
+              TotalAmount = @event.TotalAmount,
+              ItemCount = @event.LineItems.Count
+            },
+            (JsonTypeInfo<OrderCreatedDetails>)WhizbangJsonContext.CreateOptions().GetTypeInfo(typeof(OrderCreatedDetails))!
+          )
         });
 
       // 3. Push real-time update via SignalR
