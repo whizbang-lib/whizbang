@@ -53,6 +53,38 @@
       "stopAtEntry": false,
       "console": "integratedTerminal",
       "justMyCode": false
+    },
+    {
+      "name": "Launch ECommerce Sample (Aspire)",
+      "type": "dotnet",
+      "request": "launch",
+      "projectPath": "${workspaceFolder}/samples/ECommerce/ECommerce.AppHost/ECommerce.AppHost.csproj"
+    },
+    {
+      "name": "Launch ECommerce Sample (Aspire - detailed)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "setup and build ECommerce AppHost",
+      "program": "${workspaceFolder}/samples/ECommerce/ECommerce.AppHost/bin/Debug/net10.0/ECommerce.AppHost.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/samples/ECommerce/ECommerce.AppHost",
+      "stopAtEntry": false,
+      "console": "internalConsole",
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "DOTNET_ENVIRONMENT": "Development",
+        "DOTNET_DASHBOARD_OTLP_ENDPOINT_URL": "https://localhost:21030",
+        "DOTNET_RESOURCE_SERVICE_ENDPOINT_URL": "https://localhost:22246",
+        "ASPNETCORE_URLS": "https://localhost:17286;http://localhost:15195",
+        "ASPIRE_ALLOW_UNSECURED_TRANSPORT": "true"
+      },
+      "launchBrowser": {
+        "enabled": true,
+        "args": "${auto-detect-url}",
+        "osx": {
+          "command": "open"
+        }
+      }
     }
   ],
   "inputs": [

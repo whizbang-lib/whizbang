@@ -87,6 +87,66 @@
         "panel": "shared",
         "focus": true
       }
+    },
+    {
+      "label": "build ECommerce AppHost",
+      "command": "dotnet",
+      "type": "process",
+      "args": [
+        "build",
+        "${workspaceFolder}/samples/ECommerce/ECommerce.AppHost/ECommerce.AppHost.csproj",
+        "/property:GenerateFullPaths=true",
+        "/consoleloggerparameters:NoSummary;ForceNoAlign"
+      ],
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "run ECommerce AppHost",
+      "command": "dotnet",
+      "type": "process",
+      "args": [
+        "run",
+        "--project",
+        "${workspaceFolder}/samples/ECommerce/ECommerce.AppHost/ECommerce.AppHost.csproj"
+      ],
+      "problemMatcher": "$msCompile",
+      "presentation": {
+        "reveal": "always",
+        "panel": "dedicated"
+      },
+      "isBackground": false
+    },
+    {
+      "label": "watch ECommerce AppHost",
+      "command": "dotnet",
+      "type": "process",
+      "args": [
+        "watch",
+        "run",
+        "--project",
+        "${workspaceFolder}/samples/ECommerce/ECommerce.AppHost/ECommerce.AppHost.csproj"
+      ],
+      "problemMatcher": "$msCompile",
+      "isBackground": true
+    },
+    {
+      "label": "setup ECommerce dev certs",
+      "type": "shell",
+      "command": "${workspaceFolder}/samples/ECommerce/.vscode/setup-dev-certs.sh",
+      "presentation": {
+        "reveal": "silent",
+        "panel": "shared"
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "setup and build ECommerce AppHost",
+      "dependsOrder": "sequence",
+      "dependsOn": [
+        "setup ECommerce dev certs",
+        "build ECommerce AppHost"
+      ],
+      "problemMatcher": []
     }
   ]
 }

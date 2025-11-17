@@ -12,10 +12,18 @@ var shippingDb = postgres.AddDatabase("shippingdb");
 var notificationDb = postgres.AddDatabase("notificationdb");
 var bffDb = postgres.AddDatabase("bffdb");
 
-// Add Azure Service Bus
-// Note: For now using connection string from configuration
-// In production, would use Azure Service Bus Emulator or real Azure Service Bus
-var serviceBus = builder.AddAzureServiceBus("servicebus");
+// Add Azure Service Bus Emulator for local development
+// The emulator runs in a Docker container and provides a local Service Bus instance
+// When publishing to production, Aspire generates the correct Bicep for real Azure Service Bus
+var serviceBus = builder.AddAzureServiceBus("servicebus")
+    .RunAsEmulator();
+
+// Configure the "orders" topic with subscriptions for each worker service
+var ordersTopic = serviceBus.AddServiceBusTopic("orders");
+ordersTopic.AddServiceBusSubscription("payment-service");
+ordersTopic.AddServiceBusSubscription("shipping-service");
+ordersTopic.AddServiceBusSubscription("inventory-service");
+ordersTopic.AddServiceBusSubscription("notification-service");
 
 // Add all ECommerce services with infrastructure dependencies
 var orderService = builder.AddProject("orderservice", "../ECommerce.OrderService.API/ECommerce.OrderService.API.csproj")

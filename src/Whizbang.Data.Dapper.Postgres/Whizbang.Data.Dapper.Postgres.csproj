@@ -19,4 +19,8 @@
     <ProjectReference Include="../Whizbang.Data.Dapper.Custom/Whizbang.Data.Dapper.Custom.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="whizbang-schema.sql" />
+  </ItemGroup>
+
 </Project>

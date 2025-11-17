@@ -16,9 +16,19 @@ public static class ServiceCollectionExtensions {
   /// </summary>
   /// <param name="services">The service collection to register services with.</param>
   /// <param name="connectionString">The PostgreSQL connection string.</param>
+  /// <param name="initializeSchema">Whether to automatically initialize the Whizbang schema on startup. Default is false.</param>
   /// <returns>The service collection for chaining.</returns>
-  public static IServiceCollection AddWhizbangPostgres(this IServiceCollection services, string connectionString) {
+  public static IServiceCollection AddWhizbangPostgres(
+    this IServiceCollection services,
+    string connectionString,
+    bool initializeSchema = false) {
     ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+
+    // Initialize schema if requested
+    if (initializeSchema) {
+      var initializer = new PostgresSchemaInitializer(connectionString);
+      initializer.InitializeSchema();
+    }
 
     // Register database infrastructure
     services.AddSingleton<IDbConnectionFactory>(sp =>

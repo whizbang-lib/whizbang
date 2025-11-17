@@ -12,7 +12,7 @@
       "type": "coreclr",
       "request": "launch",
       "preLaunchTask": "setup and build AppHost",
-      "program": "${workspaceFolder}/ECommerce.AppHost/bin/Debug/net9.0/ECommerce.AppHost.dll",
+      "program": "${workspaceFolder}/ECommerce.AppHost/bin/Debug/net10.0/ECommerce.AppHost.dll",
       "args": [],
       "cwd": "${workspaceFolder}/ECommerce.AppHost",
       "stopAtEntry": false,

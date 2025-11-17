@@ -17,8 +17,8 @@ var postgresConnection = builder.Configuration.GetConnectionString("paymentdb")
 var serviceBusConnection = builder.Configuration.GetConnectionString("servicebus")
     ?? throw new InvalidOperationException("Azure Service Bus connection string 'servicebus' not found");
 
-// Register Whizbang Postgres stores
-builder.Services.AddWhizbangPostgres(postgresConnection);
+// Register Whizbang Postgres stores (with automatic schema initialization)
+builder.Services.AddWhizbangPostgres(postgresConnection, initializeSchema: true);
 builder.Services.AddWhizbangPostgresHealthChecks();
 
 // Register Azure Service Bus transport
