@@ -1,12 +1,20 @@
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Data.Dapper.Postgres;
 
 namespace Whizbang.Core.Tests.Messaging;
+
+/// <summary>
+/// Test event for OutboxPublisher tests. Must be at namespace level for JSON source generation.
+/// </summary>
+public record OutboxPublisherTestEvent(string Value) : IEvent;
 
 /// <summary>
 /// Tests for OutboxPublisher - background service that publishes pending outbox messages.
@@ -18,12 +26,20 @@ public class OutboxPublisherTests {
   [Test]
   public async Task PublishPendingAsync_WithPendingMessages_PublishesAndMarksCompletedAsync() {
     // Arrange
-    var outbox = new InMemoryOutbox();
+    var jsonOptions = WhizbangJsonContext.CreateOptions();
+    var adapter = new EventEnvelopeJsonbAdapter(jsonOptions);
+    var outbox = new InMemoryOutbox(adapter);
     var transport = new FakeTransport();
     var publisher = new OutboxPublisher(outbox, transport);
 
     var messageId = MessageId.New();
-    await outbox.StoreAsync(messageId, "test-topic", new byte[] { 1, 2, 3 });
+    var envelope = new MessageEnvelope<OutboxPublisherTestEvent> {
+      MessageId = messageId,
+      Payload = new OutboxPublisherTestEvent("test-value"),
+      Hops = []
+    };
+    envelope.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxPublisherTests" });
+    await outbox.StoreAsync(envelope, "test-topic");
 
     // Act
     await publisher.PublishPendingAsync(batchSize: 10);
@@ -40,7 +56,9 @@ public class OutboxPublisherTests {
   [Test]
   public async Task PublishPendingAsync_WithNoPendingMessages_DoesNothingAsync() {
     // Arrange
-    var outbox = new InMemoryOutbox();
+    var jsonOptions = WhizbangJsonContext.CreateOptions();
+    var adapter = new EventEnvelopeJsonbAdapter(jsonOptions);
+    var outbox = new InMemoryOutbox(adapter);
     var transport = new FakeTransport();
     var publisher = new OutboxPublisher(outbox, transport);
 
@@ -54,13 +72,17 @@ public class OutboxPublisherTests {
   [Test]
   public async Task PublishPendingAsync_RespectsBatchSizeAsync() {
     // Arrange
-    var outbox = new InMemoryOutbox();
+    var jsonOptions = WhizbangJsonContext.CreateOptions();
+    var adapter = new EventEnvelopeJsonbAdapter(jsonOptions);
+    var outbox = new InMemoryOutbox(adapter);
     var transport = new FakeTransport();
     var publisher = new OutboxPublisher(outbox, transport);
 
     // Store 5 messages
     for (int i = 0; i < 5; i++) {
-      await outbox.StoreAsync(MessageId.New(), $"topic-{i}", new byte[] { (byte)i });
+      var envelope = new MessageEnvelope<OutboxPublisherTestEvent>(MessageId.New(), new OutboxPublisherTestEvent($"value-{i}"), []);
+      envelope.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxPublisherTests" });
+      await outbox.StoreAsync(envelope, $"topic-{i}");
     }
 
     // Act - Request only 3
@@ -77,12 +99,20 @@ public class OutboxPublisherTests {
   [Test]
   public async Task PublishPendingAsync_WhenTransportFails_DoesNotMarkAsPublishedAsync() {
     // Arrange
-    var outbox = new InMemoryOutbox();
+    var jsonOptions = WhizbangJsonContext.CreateOptions();
+    var adapter = new EventEnvelopeJsonbAdapter(jsonOptions);
+    var outbox = new InMemoryOutbox(adapter);
     var transport = new FakeTransport { ShouldFail = true };
     var publisher = new OutboxPublisher(outbox, transport);
 
     var messageId = MessageId.New();
-    await outbox.StoreAsync(messageId, "test-topic", new byte[] { 1, 2, 3 });
+    var envelope = new MessageEnvelope<OutboxPublisherTestEvent> {
+      MessageId = messageId,
+      Payload = new OutboxPublisherTestEvent("test-value"),
+      Hops = []
+    };
+    envelope.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxPublisherTests" });
+    await outbox.StoreAsync(envelope, "test-topic");
 
     // Act - Should not throw, but log/handle error
     await publisher.PublishPendingAsync(batchSize: 10);
@@ -96,7 +126,9 @@ public class OutboxPublisherTests {
   [Test]
   public async Task PublishPendingAsync_WithMultipleMessages_PublishesAllAsync() {
     // Arrange
-    var outbox = new InMemoryOutbox();
+    var jsonOptions = WhizbangJsonContext.CreateOptions();
+    var adapter = new EventEnvelopeJsonbAdapter(jsonOptions);
+    var outbox = new InMemoryOutbox(adapter);
     var transport = new FakeTransport();
     var publisher = new OutboxPublisher(outbox, transport);
 
@@ -104,9 +136,16 @@ public class OutboxPublisherTests {
     var id2 = MessageId.New();
     var id3 = MessageId.New();
 
-    await outbox.StoreAsync(id1, "topic-1", new byte[] { 1 });
-    await outbox.StoreAsync(id2, "topic-2", new byte[] { 2 });
-    await outbox.StoreAsync(id3, "topic-3", new byte[] { 3 });
+    var envelope1 = new MessageEnvelope<OutboxPublisherTestEvent>(id1, new OutboxPublisherTestEvent("value-1"), []);
+    envelope1.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxPublisherTests" });
+    var envelope2 = new MessageEnvelope<OutboxPublisherTestEvent>(id2, new OutboxPublisherTestEvent("value-2"), []);
+    envelope2.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxPublisherTests" });
+    var envelope3 = new MessageEnvelope<OutboxPublisherTestEvent>(id3, new OutboxPublisherTestEvent("value-3"), []);
+    envelope3.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxPublisherTests" });
+
+    await outbox.StoreAsync(envelope1, "topic-1");
+    await outbox.StoreAsync(envelope2, "topic-2");
+    await outbox.StoreAsync(envelope3, "topic-3");
 
     // Act
     await publisher.PublishPendingAsync(batchSize: 10);
@@ -122,7 +161,9 @@ public class OutboxPublisherTests {
   [Test]
   public async Task PublishPendingAsync_WithPartialFailure_OnlyMarksSuccessfulAsync() {
     // Arrange
-    var outbox = new InMemoryOutbox();
+    var jsonOptions = WhizbangJsonContext.CreateOptions();
+    var adapter = new EventEnvelopeJsonbAdapter(jsonOptions);
+    var outbox = new InMemoryOutbox(adapter);
     var transport = new FakeTransport();
     var publisher = new OutboxPublisher(outbox, transport);
 
@@ -130,9 +171,16 @@ public class OutboxPublisherTests {
     var id2 = MessageId.New();
     var id3 = MessageId.New();
 
-    await outbox.StoreAsync(id1, "topic-1", new byte[] { 1 });
-    await outbox.StoreAsync(id2, "fail-topic", new byte[] { 2 }); // This will fail
-    await outbox.StoreAsync(id3, "topic-3", new byte[] { 3 });
+    var envelope1 = new MessageEnvelope<OutboxPublisherTestEvent>(id1, new OutboxPublisherTestEvent("value-1"), []);
+    envelope1.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxPublisherTests" });
+    var envelope2 = new MessageEnvelope<OutboxPublisherTestEvent>(id2, new OutboxPublisherTestEvent("value-2"), []);
+    envelope2.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxPublisherTests" });
+    var envelope3 = new MessageEnvelope<OutboxPublisherTestEvent>(id3, new OutboxPublisherTestEvent("value-3"), []);
+    envelope3.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxPublisherTests" });
+
+    await outbox.StoreAsync(envelope1, "topic-1");
+    await outbox.StoreAsync(envelope2, "fail-topic"); // This will fail
+    await outbox.StoreAsync(envelope3, "topic-3");
 
     // Configure transport to fail on specific destination
     transport.FailOnDestination = "fail-topic";
