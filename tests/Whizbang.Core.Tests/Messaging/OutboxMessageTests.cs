@@ -39,11 +39,14 @@ public class OutboxMessageTests {
     // Arrange
     var messageId = MessageId.New();
     var destination = "test-destination";
-    var payload = new byte[] { 1, 2, 3, 4, 5 };
+    var eventType = "TestEvent";
+    var eventData = "{\"value\": 123}";
+    var metadata = "{\"hops\": []}";
+    var scope = null as string;
     var createdAt = DateTimeOffset.UtcNow;
 
-    var message1 = new OutboxMessage(messageId, destination, payload, createdAt);
-    var message2 = new OutboxMessage(messageId, destination, payload, createdAt);
+    var message1 = new OutboxMessage(messageId, destination, eventType, eventData, metadata, scope, createdAt);
+    var message2 = new OutboxMessage(messageId, destination, eventType, eventData, metadata, scope, createdAt);
 
     // Act
     var result = message1.Equals(message2);
@@ -56,11 +59,14 @@ public class OutboxMessageTests {
   public async Task OutboxMessage_Equals_WithDifferentMessageId_ShouldReturnFalseAsync() {
     // Arrange
     var destination = "test-destination";
-    var payload = new byte[] { 1, 2, 3, 4, 5 };
+    var eventType = "TestEvent";
+    var eventData = "{\"value\": 123}";
+    var metadata = "{\"hops\": []}";
+    var scope = null as string;
     var createdAt = DateTimeOffset.UtcNow;
 
-    var message1 = new OutboxMessage(MessageId.New(), destination, payload, createdAt);
-    var message2 = new OutboxMessage(MessageId.New(), destination, payload, createdAt);
+    var message1 = new OutboxMessage(MessageId.New(), destination, eventType, eventData, metadata, scope, createdAt);
+    var message2 = new OutboxMessage(MessageId.New(), destination, eventType, eventData, metadata, scope, createdAt);
 
     // Act
     var result = message1.Equals(message2);
@@ -73,11 +79,14 @@ public class OutboxMessageTests {
   public async Task OutboxMessage_Equals_WithDifferentDestination_ShouldReturnFalseAsync() {
     // Arrange
     var messageId = MessageId.New();
-    var payload = new byte[] { 1, 2, 3, 4, 5 };
+    var eventType = "TestEvent";
+    var eventData = "{\"value\": 123}";
+    var metadata = "{\"hops\": []}";
+    var scope = null as string;
     var createdAt = DateTimeOffset.UtcNow;
 
-    var message1 = new OutboxMessage(messageId, "destination1", payload, createdAt);
-    var message2 = new OutboxMessage(messageId, "destination2", payload, createdAt);
+    var message1 = new OutboxMessage(messageId, "destination1", eventType, eventData, metadata, scope, createdAt);
+    var message2 = new OutboxMessage(messageId, "destination2", eventType, eventData, metadata, scope, createdAt);
 
     // Act
     var result = message1.Equals(message2);
@@ -87,14 +96,17 @@ public class OutboxMessageTests {
   }
 
   [Test]
-  public async Task OutboxMessage_Equals_WithDifferentPayload_ShouldReturnFalseAsync() {
+  public async Task OutboxMessage_Equals_WithDifferentEventData_ShouldReturnFalseAsync() {
     // Arrange
     var messageId = MessageId.New();
     var destination = "test-destination";
+    var eventType = "TestEvent";
+    var metadata = "{\"hops\": []}";
+    var scope = null as string;
     var createdAt = DateTimeOffset.UtcNow;
 
-    var message1 = new OutboxMessage(messageId, destination, new byte[] { 1, 2, 3 }, createdAt);
-    var message2 = new OutboxMessage(messageId, destination, new byte[] { 4, 5, 6 }, createdAt);
+    var message1 = new OutboxMessage(messageId, destination, eventType, "{\"value\": 123}", metadata, scope, createdAt);
+    var message2 = new OutboxMessage(messageId, destination, eventType, "{\"value\": 456}", metadata, scope, createdAt);
 
     // Act
     var result = message1.Equals(message2);
@@ -104,14 +116,17 @@ public class OutboxMessageTests {
   }
 
   [Test]
-  public async Task OutboxMessage_Equals_WithDifferentPayloadLength_ShouldReturnFalseAsync() {
+  public async Task OutboxMessage_Equals_WithDifferentMetadata_ShouldReturnFalseAsync() {
     // Arrange
     var messageId = MessageId.New();
     var destination = "test-destination";
+    var eventType = "TestEvent";
+    var eventData = "{\"value\": 123}";
+    var scope = null as string;
     var createdAt = DateTimeOffset.UtcNow;
 
-    var message1 = new OutboxMessage(messageId, destination, new byte[] { 1, 2, 3 }, createdAt);
-    var message2 = new OutboxMessage(messageId, destination, new byte[] { 1, 2, 3, 4 }, createdAt);
+    var message1 = new OutboxMessage(messageId, destination, eventType, eventData, "{\"hops\": []}", scope, createdAt);
+    var message2 = new OutboxMessage(messageId, destination, eventType, eventData, "{\"hops\": [{\"type\": \"current\"}]}", scope, createdAt);
 
     // Act
     var result = message1.Equals(message2);
@@ -125,11 +140,14 @@ public class OutboxMessageTests {
     // Arrange
     var messageId = MessageId.New();
     var destination = "test-destination";
-    var payload = new byte[] { 1, 2, 3, 4, 5 };
+    var eventType = "TestEvent";
+    var eventData = "{\"value\": 123}";
+    var metadata = "{\"hops\": []}";
+    var scope = null as string;
 
-    var message1 = new OutboxMessage(messageId, destination, payload, DateTimeOffset.UtcNow);
+    var message1 = new OutboxMessage(messageId, destination, eventType, eventData, metadata, scope, DateTimeOffset.UtcNow);
     await Task.Delay(10); // Ensure different timestamps
-    var message2 = new OutboxMessage(messageId, destination, payload, DateTimeOffset.UtcNow);
+    var message2 = new OutboxMessage(messageId, destination, eventType, eventData, metadata, scope, DateTimeOffset.UtcNow);
 
     // Act
     var result = message1.Equals(message2);
@@ -143,11 +161,14 @@ public class OutboxMessageTests {
     // Arrange
     var messageId = MessageId.New();
     var destination = "test-destination";
-    var payload = new byte[] { 1, 2, 3, 4, 5 };
+    var eventType = "TestEvent";
+    var eventData = "{\"value\": 123}";
+    var metadata = "{\"hops\": []}";
+    var scope = null as string;
     var createdAt = DateTimeOffset.UtcNow;
 
-    var message1 = new OutboxMessage(messageId, destination, payload, createdAt);
-    var message2 = new OutboxMessage(messageId, destination, payload, createdAt);
+    var message1 = new OutboxMessage(messageId, destination, eventType, eventData, metadata, scope, createdAt);
+    var message2 = new OutboxMessage(messageId, destination, eventType, eventData, metadata, scope, createdAt);
 
     // Act
     var hash1 = message1.GetHashCode();
@@ -172,29 +193,30 @@ public class OutboxMessageTests {
   }
 
   [Test]
-  public async Task OutboxMessage_GetHashCode_UsesPayloadLength_ForPerformanceAsync() {
-    // Arrange
-    var messageId = MessageId.New();
-    var destination = "test-destination";
-    var createdAt = DateTimeOffset.UtcNow;
+  public async Task OutboxMessage_SupportsNullScope_ShouldAllowNullAsync() {
+    // Arrange & Act
+    var message = new OutboxMessage(
+      MessageId.New(),
+      "test-destination",
+      "TestEvent",
+      "{\"value\": 123}",
+      "{\"hops\": []}",
+      null,
+      DateTimeOffset.UtcNow
+    );
 
-    // Same length, different contents
-    var message1 = new OutboxMessage(messageId, destination, new byte[] { 1, 2, 3, 4, 5 }, createdAt);
-    var message2 = new OutboxMessage(messageId, destination, new byte[] { 5, 4, 3, 2, 1 }, createdAt);
-
-    // Act
-    var hash1 = message1.GetHashCode();
-    var hash2 = message2.GetHashCode();
-
-    // Assert - Same hash because same length is used for performance
-    await Assert.That(hash1).IsEqualTo(hash2);
+    // Assert
+    await Assert.That(message.Scope).IsNull();
   }
 
   private static OutboxMessage CreateTestMessage() {
     return new OutboxMessage(
       MessageId.New(),
       $"destination-{Guid.NewGuid()}",
-      new byte[] { 1, 2, 3, 4, 5 },
+      "TestEvent",
+      "{\"value\": 123}",
+      "{\"hops\": []}",
+      null,
       DateTimeOffset.UtcNow
     );
   }

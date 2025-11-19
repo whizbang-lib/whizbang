@@ -1,5 +1,7 @@
 using ECommerce.Contracts.Generated;
 using ECommerce.InventoryWorker;
+using ECommerce.InventoryWorker.Lenses;
+using ECommerce.InventoryWorker.Services;
 using Whizbang.Core;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Observability;
@@ -33,6 +35,13 @@ builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
 // Register Whizbang dispatcher with source-generated receptors
 builder.Services.AddReceptors();
 builder.Services.AddWhizbangDispatcher();
+
+// Register lenses for querying materialized views
+builder.Services.AddSingleton<IProductLens, ProductLens>();
+builder.Services.AddSingleton<IInventoryLens, InventoryLens>();
+
+// Register product seeding service (runs on startup)
+builder.Services.AddHostedService<ProductSeedService>();
 
 // Register outbox publisher worker for reliable event publishing
 builder.Services.AddHostedService<OutboxPublisherWorker>();

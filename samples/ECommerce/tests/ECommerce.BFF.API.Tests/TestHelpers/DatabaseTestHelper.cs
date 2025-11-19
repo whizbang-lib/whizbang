@@ -1,5 +1,5 @@
-using Npgsql;
 using System.Data;
+using Npgsql;
 using Testcontainers.PostgreSql;
 using Whizbang.Core.Data;
 using Whizbang.Data.Dapper.Postgres;
@@ -83,10 +83,33 @@ CREATE TABLE IF NOT EXISTS bff.order_status_history (
   FOREIGN KEY (order_id) REFERENCES bff.orders(order_id) ON DELETE CASCADE
 );
 
+-- Product catalog table (BFF)
+CREATE TABLE IF NOT EXISTS bff.product_catalog (
+  product_id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  description TEXT,
+  price DECIMAL(10, 2) NOT NULL,
+  image_url TEXT,
+  created_at TIMESTAMP NOT NULL,
+  updated_at TIMESTAMP,
+  deleted_at TIMESTAMP
+);
+
+-- Inventory levels table (BFF)
+CREATE TABLE IF NOT EXISTS bff.inventory_levels (
+  product_id TEXT PRIMARY KEY,
+  quantity INTEGER NOT NULL DEFAULT 0,
+  reserved INTEGER NOT NULL DEFAULT 0,
+  available INTEGER NOT NULL DEFAULT 0,
+  last_updated TIMESTAMP NOT NULL
+);
+
 -- Create indices
 CREATE INDEX IF NOT EXISTS idx_orders_customer_id ON bff.orders(customer_id);
 CREATE INDEX IF NOT EXISTS idx_orders_status ON bff.orders(status);
 CREATE INDEX IF NOT EXISTS idx_order_status_history_order_id ON bff.order_status_history(order_id);
+CREATE INDEX IF NOT EXISTS idx_product_catalog_created_at ON bff.product_catalog (created_at DESC) WHERE deleted_at IS NULL;
+CREATE INDEX IF NOT EXISTS idx_inventory_levels_available ON bff.inventory_levels (available);
 ";
 
     await using var command = connection.CreateCommand();
@@ -106,6 +129,8 @@ CREATE INDEX IF NOT EXISTS idx_order_status_history_order_id ON bff.order_status
     var cleanupSql = @"
 TRUNCATE TABLE bff.order_status_history CASCADE;
 TRUNCATE TABLE bff.orders CASCADE;
+TRUNCATE TABLE bff.product_catalog CASCADE;
+TRUNCATE TABLE bff.inventory_levels CASCADE;
 TRUNCATE TABLE whizbang_outbox CASCADE;
 TRUNCATE TABLE whizbang_inbox CASCADE;
 TRUNCATE TABLE whizbang_event_store CASCADE;

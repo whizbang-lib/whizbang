@@ -1,22 +1,34 @@
 using Whizbang.Core.Data;
+using Whizbang.Core.Observability;
 using Whizbang.Data.Dapper.Custom;
 
 namespace Whizbang.Data.Dapper.Sqlite;
 
 /// <summary>
 /// SQLite-specific implementation of IOutbox using Dapper.
+/// Uses JSONB columns (stored as TEXT in SQLite) for envelope persistence.
 /// </summary>
 public class DapperSqliteOutbox : DapperOutboxBase {
-  public DapperSqliteOutbox(IDbConnectionFactory connectionFactory, IDbExecutor executor)
-    : base(connectionFactory, executor) {
+  public DapperSqliteOutbox(
+    IDbConnectionFactory connectionFactory,
+    IDbExecutor executor,
+    IJsonbPersistenceAdapter<IMessageEnvelope> envelopeAdapter)
+    : base(connectionFactory, executor, envelopeAdapter) {
   }
 
   protected override string GetStoreSql() => @"
-    INSERT INTO whizbang_outbox (message_id, destination, payload, created_at, published_at)
-    VALUES (@MessageId, @Destination, @Payload, @CreatedAt, NULL)";
+    INSERT INTO whizbang_outbox (message_id, destination, event_type, event_data, metadata, scope, created_at, published_at)
+    VALUES (@MessageId, @Destination, @EventType, @EventData, @Metadata, @Scope, @CreatedAt, NULL)";
 
   protected override string GetPendingSql() => @"
-    SELECT message_id AS MessageId, destination AS Destination, payload AS Payload, created_at AS CreatedAt
+    SELECT
+      message_id AS MessageId,
+      destination AS Destination,
+      event_type AS EventType,
+      event_data AS EventData,
+      metadata AS Metadata,
+      scope AS Scope,
+      created_at AS CreatedAt
     FROM whizbang_outbox
     WHERE published_at IS NULL
     ORDER BY created_at

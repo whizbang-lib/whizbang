@@ -1,52 +1,83 @@
 import { Injectable } from '@angular/core';
-import { Observable, Subject, from } from 'rxjs';
-import * as signalR from '@microsoft/signalr';
-import { OrderStatusUpdate } from '../store/orders/order.actions';
+import { Observable, Subject } from 'rxjs';
+import { HubConnection, HubConnectionBuilder, LogLevel } from '@microsoft/signalr';
 import { environment } from '../../environments/environment';
+
+export interface ProductNotification {
+  productId: string;
+  name: string;
+  price: number;
+}
+
+export interface InventoryNotification {
+  productId: string;
+  quantity: number;
+}
 
 @Injectable({
   providedIn: 'root'
 })
 export class SignalRService {
-  private hubConnection: signalR.HubConnection | null = null;
-  private orderStatusSubject = new Subject<OrderStatusUpdate>();
+  private hubConnection: HubConnection | null = null;
+  private productUpdatedSubject = new Subject<ProductNotification>();
+  private inventoryUpdatedSubject = new Subject<InventoryNotification>();
 
-  connect(): Observable<void> {
-    this.hubConnection = new signalR.HubConnectionBuilder()
-      .withUrl(`${environment.apiUrl}/hubs/order-status`)
+  productUpdated$: Observable<ProductNotification> = this.productUpdatedSubject.asObservable();
+  inventoryUpdated$: Observable<InventoryNotification> = this.inventoryUpdatedSubject.asObservable();
+
+  constructor() {
+    this.buildConnection();
+  }
+
+  private buildConnection(): void {
+    this.hubConnection = new HubConnectionBuilder()
+      .withUrl(environment.signalRHubUrl)
       .withAutomaticReconnect()
+      .configureLogging(LogLevel.Information)
       .build();
 
-    // Listen for order status changes
-    this.hubConnection.on('OrderStatusChanged', (update: OrderStatusUpdate) => {
-      this.orderStatusSubject.next(update);
+    // Register event handlers
+    this.hubConnection.on('ProductUpdated', (notification: ProductNotification) => {
+      console.log('SignalR: ProductUpdated', notification);
+      this.productUpdatedSubject.next(notification);
     });
 
-    return from(this.hubConnection.start());
+    this.hubConnection.on('InventoryUpdated', (notification: InventoryNotification) => {
+      console.log('SignalR: InventoryUpdated', notification);
+      this.inventoryUpdatedSubject.next(notification);
+    });
   }
 
-  disconnect(): void {
+  async startConnection(): Promise<void> {
+    if (this.hubConnection?.state === 'Disconnected') {
+      try {
+        await this.hubConnection.start();
+        console.log('SignalR: Connection started');
+      } catch (err) {
+        console.error('SignalR: Connection failed', err);
+        throw err;
+      }
+    }
+  }
+
+  async stopConnection(): Promise<void> {
     if (this.hubConnection) {
-      this.hubConnection.stop();
-      this.hubConnection = null;
+      await this.hubConnection.stop();
+      console.log('SignalR: Connection stopped');
     }
   }
 
-  subscribeToOrder(orderId: string): Observable<void> {
-    if (!this.hubConnection) {
-      throw new Error('SignalR connection not established');
+  async subscribeToProduct(productId: string): Promise<void> {
+    if (this.hubConnection?.state === 'Connected') {
+      await this.hubConnection.invoke('SubscribeToProduct', productId);
+      console.log(`SignalR: Subscribed to product ${productId}`);
     }
-    return from(this.hubConnection.invoke('SubscribeToOrder', orderId));
   }
 
-  unsubscribeFromOrder(orderId: string): Observable<void> {
-    if (!this.hubConnection) {
-      throw new Error('SignalR connection not established');
+  async unsubscribeFromProduct(productId: string): Promise<void> {
+    if (this.hubConnection?.state === 'Connected') {
+      await this.hubConnection.invoke('UnsubscribeFromProduct', productId);
+      console.log(`SignalR: Unsubscribed from product ${productId}`);
     }
-    return from(this.hubConnection.invoke('UnsubscribeFromOrder', orderId));
-  }
-
-  onOrderStatusChanged(): Observable<OrderStatusUpdate> {
-    return this.orderStatusSubject.asObservable();
   }
 }

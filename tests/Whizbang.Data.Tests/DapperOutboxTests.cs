@@ -1,5 +1,8 @@
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.Tests.Messaging;
+using Whizbang.Data.Dapper.Postgres;
 using Whizbang.Data.Dapper.Sqlite;
 
 namespace Whizbang.Data.Tests;
@@ -24,7 +27,9 @@ public class DapperOutboxTests : OutboxContractTests {
   }
 
   protected override Task<IOutbox> CreateOutboxAsync() {
-    var outbox = new DapperSqliteOutbox(_testBase.ConnectionFactory, _testBase.Executor);
+    var jsonOptions = WhizbangJsonContext.CreateOptions();
+    var adapter = new EventEnvelopeJsonbAdapter(jsonOptions);
+    var outbox = new DapperSqliteOutbox(_testBase.ConnectionFactory, _testBase.Executor, adapter);
     return Task.FromResult<IOutbox>(outbox);
   }
 

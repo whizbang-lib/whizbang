@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
+using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Messaging;
@@ -13,14 +14,14 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 public interface IOutbox {
   /// <summary>
-  /// Stores a message in the outbox for later publication.
+  /// Stores a message envelope in the outbox for later publication.
+  /// Uses the same 3-column JSONB pattern as the event store (event_data, metadata, scope).
   /// </summary>
-  /// <param name="messageId">The message ID</param>
-  /// <param name="destination">The destination to publish to</param>
-  /// <param name="payload">The serialized message payload</param>
+  /// <param name="envelope">The message envelope to store</param>
+  /// <param name="destination">The destination to publish to (topic, queue, etc.)</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Task that completes when the message is stored</returns>
-  Task StoreAsync(MessageId messageId, string destination, byte[] payload, CancellationToken cancellationToken = default);
+  Task StoreAsync(IMessageEnvelope envelope, string destination, CancellationToken cancellationToken = default);
 
   /// <summary>
   /// Gets pending messages that have not yet been published.
@@ -40,46 +41,22 @@ public interface IOutbox {
 }
 
 /// <summary>
-/// Represents a message stored in the outbox waiting to be published.
+/// Represents a message envelope stored in the outbox waiting to be published.
+/// Uses 3-column JSONB storage pattern (event_data, metadata, scope) like event store.
 /// </summary>
 /// <param name="MessageId">The unique message identifier</param>
 /// <param name="Destination">The destination to publish to (topic, queue, etc.)</param>
-/// <param name="Payload">The serialized message payload</param>
+/// <param name="EventType">The fully-qualified type name of the event payload</param>
+/// <param name="EventData">The event payload as JSON string</param>
+/// <param name="Metadata">The envelope metadata (correlation, causation, hops) as JSON string</param>
+/// <param name="Scope">The security scope (tenant, user) as JSON string (nullable)</param>
 /// <param name="CreatedAt">When the message was stored in the outbox</param>
 public record OutboxMessage(
   MessageId MessageId,
   string Destination,
-  byte[] Payload,
+  string EventType,
+  string EventData,
+  string Metadata,
+  string? Scope,
   DateTimeOffset CreatedAt
-) {
-  /// <summary>
-  /// Custom equality to handle byte array comparison
-  /// </summary>
-  public virtual bool Equals(OutboxMessage? other) {
-    if (other is null) {
-      return false;
-    }
-
-    if (ReferenceEquals(this, other)) {
-      return true;
-    }
-
-    return MessageId.Equals(other.MessageId)
-      && Destination == other.Destination
-      && Payload.SequenceEqual(other.Payload)
-      && CreatedAt.Equals(other.CreatedAt);
-  }
-
-  /// <summary>
-  /// Custom hash code to match custom equality
-  /// </summary>
-  public override int GetHashCode() {
-    unchecked {
-      var hash = MessageId.GetHashCode();
-      hash = (hash * 397) ^ Destination.GetHashCode();
-      hash = (hash * 397) ^ Payload.Length.GetHashCode(); // Use length for hash performance
-      hash = (hash * 397) ^ CreatedAt.GetHashCode();
-      return hash;
-    }
-  }
-}
+);

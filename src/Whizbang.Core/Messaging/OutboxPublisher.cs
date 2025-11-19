@@ -43,19 +43,35 @@ public class OutboxPublisher {
       }
 
       try {
-        // Create envelope for transport
-        var envelope = new MessageEnvelope<byte[]> {
+        // Reconstruct envelope from JSONB columns
+        // Parse metadata to extract hops
+        using var metadataDoc = System.Text.Json.JsonDocument.Parse(message.Metadata);
+        var metadataRoot = metadataDoc.RootElement;
+
+        var hops = new List<MessageHop>();
+        if (metadataRoot.TryGetProperty("hops", out var hopsElem)) {
+          var hopsJson = hopsElem.GetRawText();
+          hops = System.Text.Json.JsonSerializer.Deserialize<List<MessageHop>>(hopsJson) ?? new List<MessageHop>();
+        }
+
+        // Deserialize event payload as JsonElement (type-agnostic)
+        using var eventDataDoc = System.Text.Json.JsonDocument.Parse(message.EventData);
+        var eventPayload = eventDataDoc.RootElement.Clone();
+
+        // Create envelope with original hops
+        var envelope = new MessageEnvelope<System.Text.Json.JsonElement> {
           MessageId = message.MessageId,
-          Payload = message.Payload,
-          Hops = new List<MessageHop> {
-            new MessageHop {
-              Type = HopType.Current,
-              ServiceName = "OutboxPublisher",
-              Topic = message.Destination,
-              Timestamp = message.CreatedAt
-            }
-          }
+          Payload = eventPayload,
+          Hops = hops
         };
+
+        // Add hop for this publishing action
+        envelope.AddHop(new MessageHop {
+          Type = HopType.Current,
+          ServiceName = "OutboxPublisher",
+          Topic = message.Destination,
+          Timestamp = DateTimeOffset.UtcNow
+        });
 
         var destination = new TransportDestination(message.Destination);
 

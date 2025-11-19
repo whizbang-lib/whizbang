@@ -1,0 +1,31 @@
+namespace ECommerce.InventoryWorker.Lenses;
+
+/// <summary>
+/// Read-only query interface for product catalog data.
+/// Queries the product_catalog table materialized by ProductCatalogPerspective.
+/// </summary>
+public interface IProductLens {
+  /// <summary>
+  /// Gets a single product by ID.
+  /// </summary>
+  /// <param name="productId">The product identifier</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>The product DTO if found and not deleted, null otherwise</returns>
+  Task<ProductDto?> GetByIdAsync(string productId, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Gets all products.
+  /// </summary>
+  /// <param name="includeDeleted">Whether to include soft-deleted products</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>List of products (empty if none found)</returns>
+  Task<IReadOnlyList<ProductDto>> GetAllAsync(bool includeDeleted = false, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Gets products by a list of IDs.
+  /// </summary>
+  /// <param name="productIds">Product identifiers to retrieve</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>List of matching products (only non-deleted, empty if none found)</returns>
+  Task<IReadOnlyList<ProductDto>> GetByIdsAsync(IEnumerable<string> productIds, CancellationToken cancellationToken = default);
+}

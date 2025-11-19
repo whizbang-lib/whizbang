@@ -1,6 +1,6 @@
-using Whizbang.Core;
 using ECommerce.Contracts.Commands;
 using ECommerce.Contracts.Events;
+using Whizbang.Core;
 
 namespace ECommerce.NotificationWorker.Receptors;
 

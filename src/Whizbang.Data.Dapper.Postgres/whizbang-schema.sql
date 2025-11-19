@@ -2,24 +2,36 @@
 -- Description: Schema for inbox, outbox, request/response store, event store, and sequences
 
 -- Inbox table for message deduplication (ExactlyOnce receiving)
+-- Uses 3-column JSONB pattern (event_data, metadata, scope) like event store
 CREATE TABLE IF NOT EXISTS whizbang_inbox (
   message_id UUID PRIMARY KEY,
   handler_name VARCHAR(500) NOT NULL,
+  event_type VARCHAR(500) NOT NULL,
+  event_data JSONB NOT NULL,
+  metadata JSONB NOT NULL,
+  scope JSONB,
   processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS ix_whizbang_inbox_processed_at ON whizbang_inbox(processed_at);
+CREATE INDEX IF NOT EXISTS ix_whizbang_inbox_event_type ON whizbang_inbox(event_type);
 
 -- Outbox table for transactional outbox pattern (ExactlyOnce sending)
+-- Uses 3-column JSONB pattern (event_data, metadata, scope) like event store
 CREATE TABLE IF NOT EXISTS whizbang_outbox (
   message_id UUID PRIMARY KEY,
   destination VARCHAR(500) NOT NULL,
-  payload BYTEA NOT NULL,
+  event_type VARCHAR(500) NOT NULL,
+  event_data JSONB NOT NULL,
+  metadata JSONB NOT NULL,
+  scope JSONB,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   published_at TIMESTAMPTZ NULL
 );
 
 CREATE INDEX IF NOT EXISTS ix_whizbang_outbox_published_at ON whizbang_outbox(published_at) WHERE published_at IS NULL;
+CREATE INDEX IF NOT EXISTS ix_whizbang_outbox_event_type ON whizbang_outbox(event_type);
+CREATE INDEX IF NOT EXISTS ix_whizbang_outbox_created ON whizbang_outbox(created_at);
 
 -- Request/Response store for request-response pattern on pub/sub transports
 CREATE TABLE IF NOT EXISTS whizbang_request_response (

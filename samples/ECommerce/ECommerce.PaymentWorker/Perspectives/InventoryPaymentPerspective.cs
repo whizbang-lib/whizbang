@@ -1,7 +1,7 @@
-using Microsoft.Extensions.Logging;
-using Whizbang.Core;
 using ECommerce.Contracts.Commands;
 using ECommerce.Contracts.Events;
+using Microsoft.Extensions.Logging;
+using Whizbang.Core;
 
 namespace ECommerce.PaymentWorker.Perspectives;
 

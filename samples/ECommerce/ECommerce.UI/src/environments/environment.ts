@@ -1,4 +1,5 @@
 export const environment = {
   production: false,
-  apiUrl: 'https://localhost:7001'  // BFF API URL
+  apiUrl: 'http://localhost:5000',
+  signalRHubUrl: 'http://localhost:5000/hubs/product-inventory'
 };

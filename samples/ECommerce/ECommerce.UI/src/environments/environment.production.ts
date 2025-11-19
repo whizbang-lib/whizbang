@@ -1,4 +1,5 @@
 export const environment = {
   production: true,
-  apiUrl: 'https://api.ecommerce.example.com'  // Production BFF API URL
+  apiUrl: 'https://api.ecommerce.example.com',
+  signalRHubUrl: 'https://api.ecommerce.example.com/hubs/product-inventory'
 };

@@ -1,6 +1,7 @@
 using System.Data;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Data.Dapper.Custom;
@@ -8,17 +9,24 @@ namespace Whizbang.Data.Dapper.Custom;
 /// <summary>
 /// Base class for Dapper-based IOutbox implementations.
 /// Provides common implementation logic while allowing derived classes to provide database-specific SQL.
+/// Uses JSONB adapter for envelope serialization.
 /// </summary>
 public abstract class DapperOutboxBase : IOutbox {
   protected readonly IDbConnectionFactory _connectionFactory;
   protected readonly IDbExecutor _executor;
+  protected readonly IJsonbPersistenceAdapter<IMessageEnvelope> _envelopeAdapter;
 
-  protected DapperOutboxBase(IDbConnectionFactory connectionFactory, IDbExecutor executor) {
+  protected DapperOutboxBase(
+    IDbConnectionFactory connectionFactory,
+    IDbExecutor executor,
+    IJsonbPersistenceAdapter<IMessageEnvelope> envelopeAdapter) {
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentNullException.ThrowIfNull(executor);
+    ArgumentNullException.ThrowIfNull(envelopeAdapter);
 
     _connectionFactory = connectionFactory;
     _executor = executor;
+    _envelopeAdapter = envelopeAdapter;
   }
 
   /// <summary>
@@ -31,14 +39,15 @@ public abstract class DapperOutboxBase : IOutbox {
   }
 
   /// <summary>
-  /// Gets the SQL command to store a new outbox message.
-  /// Parameters: @MessageId (Guid), @Destination (string), @Payload (byte[]), @CreatedAt (DateTimeOffset)
+  /// Gets the SQL command to store a new outbox message using JSONB pattern.
+  /// Parameters: @MessageId (Guid), @Destination (string), @EventType (string),
+  ///             @EventData (string), @Metadata (string), @Scope (string, nullable), @CreatedAt (DateTimeOffset)
   /// </summary>
   protected abstract string GetStoreSql();
 
   /// <summary>
-  /// Gets the SQL query to retrieve pending outbox messages.
-  /// Should return: MessageId, Destination, Payload, CreatedAt
+  /// Gets the SQL query to retrieve pending outbox messages using JSONB pattern.
+  /// Should return: MessageId, Destination, EventType, EventData, Metadata, Scope, CreatedAt
   /// Parameters: @BatchSize (int)
   /// </summary>
   protected abstract string GetPendingSql();
@@ -49,12 +58,19 @@ public abstract class DapperOutboxBase : IOutbox {
   /// </summary>
   protected abstract string GetMarkPublishedSql();
 
-  public async Task StoreAsync(MessageId messageId, string destination, byte[] payload, CancellationToken cancellationToken = default) {
+  public async Task StoreAsync(IMessageEnvelope envelope, string destination, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(envelope);
     ArgumentNullException.ThrowIfNull(destination);
-    ArgumentNullException.ThrowIfNull(payload);
 
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
+
+    // Convert envelope to JSONB format using adapter
+    var jsonbModel = _envelopeAdapter.ToJsonb(envelope);
+
+    // Get event type from payload
+    var payload = envelope.GetPayload();
+    var eventType = payload.GetType().FullName ?? throw new InvalidOperationException("Event type has no FullName");
 
     var sql = GetStoreSql();
 
@@ -62,9 +78,12 @@ public abstract class DapperOutboxBase : IOutbox {
       connection,
       sql,
       new {
-        MessageId = messageId.Value,
+        MessageId = envelope.MessageId.Value,
         Destination = destination,
-        Payload = payload,
+        EventType = eventType,
+        EventData = jsonbModel.DataJson,
+        Metadata = jsonbModel.MetadataJson,
+        Scope = jsonbModel.ScopeJson,
         CreatedAt = DateTimeOffset.UtcNow
       },
       cancellationToken: cancellationToken);
@@ -85,7 +104,10 @@ public abstract class DapperOutboxBase : IOutbox {
     return rows.Select(r => new OutboxMessage(
       MessageId.From(r.MessageId),
       r.Destination,
-      r.Payload,
+      r.EventType,
+      r.EventData,
+      r.Metadata,
+      r.Scope,
       r.CreatedAt
     )).ToList();
   }
@@ -108,11 +130,15 @@ public abstract class DapperOutboxBase : IOutbox {
 
   /// <summary>
   /// Internal row structure for Dapper mapping.
+  /// Maps to JSONB-based outbox schema.
   /// </summary>
   protected class OutboxRow {
     public Guid MessageId { get; set; }
     public string Destination { get; set; } = string.Empty;
-    public byte[] Payload { get; set; } = Array.Empty<byte>();
+    public string EventType { get; set; } = string.Empty;
+    public string EventData { get; set; } = string.Empty;
+    public string Metadata { get; set; } = string.Empty;
+    public string? Scope { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
   }
 }

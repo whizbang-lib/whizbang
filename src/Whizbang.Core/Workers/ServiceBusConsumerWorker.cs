@@ -84,12 +84,24 @@ public class ServiceBusConsumerWorker : BackgroundService {
         envelope.MessageId
       );
 
+      // Add hop indicating message was received from Service Bus
+      // This preserves the distributed trace from the sending service
+      var receivedHop = new MessageHop {
+        Type = HopType.Current,
+        ServiceName = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name ?? "Unknown",
+        Topic = _options.Subscriptions.FirstOrDefault()?.TopicName ?? "unknown-topic",
+        Timestamp = DateTimeOffset.UtcNow
+      };
+      envelope.AddHop(receivedHop);
+
       // Dispatch to local receptors
       // Note: We're using PublishAsync here because events from Service Bus
       // should be published to all local event handlers
+      // PublishAsync will create a new envelope for local dispatch, but we've already
+      // preserved the incoming hops by storing them in the inbox below
       await _dispatcher.PublishAsync(envelope.GetPayload());
 
-      // Mark as processed in inbox
+      // Mark as processed in inbox with the enriched envelope containing all hops
       await _inbox.MarkProcessedAsync(envelope.MessageId, "ServiceBusConsumerWorker", ct);
 
       _logger.LogInformation(

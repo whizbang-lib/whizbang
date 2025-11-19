@@ -11,9 +11,13 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// Adapts IMessageEnvelope to the 3-column JSONB pattern for Event Store persistence.
 /// Splits envelope into: event_data (payload), metadata (correlation/causation/hops), scope (tenant/user).
 /// </summary>
-internal class EventEnvelopeJsonbAdapter : IJsonbPersistenceAdapter<IMessageEnvelope> {
+public class EventEnvelopeJsonbAdapter : IJsonbPersistenceAdapter<IMessageEnvelope> {
   private readonly JsonSerializerOptions _jsonOptions;
 
+  /// <summary>
+  /// Constructor that accepts JsonSerializerOptions with a source-generated context.
+  /// This is the AOT-compatible way to use this adapter.
+  /// </summary>
   public EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) {
     _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   }

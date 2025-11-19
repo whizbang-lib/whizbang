@@ -606,21 +606,34 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       foreach (var property in message.Properties) {
         // Extract type symbol from the property's fully qualified type name
         var elementTypeName = ExtractElementType(property.Type);
-        if (elementTypeName == null) continue;
+        if (elementTypeName == null) {
+          continue;
+        }
 
         // Skip if already discovered
-        if (nestedTypes.ContainsKey(elementTypeName)) continue;
-        if (messages.Any(m => m.FullyQualifiedName == elementTypeName)) continue;
+        if (nestedTypes.ContainsKey(elementTypeName)) {
+          continue;
+        }
+
+        if (messages.Any(m => m.FullyQualifiedName == elementTypeName)) {
+          continue;
+        }
 
         // Skip primitive and framework types
-        if (IsPrimitiveOrFrameworkType(elementTypeName)) continue;
+        if (IsPrimitiveOrFrameworkType(elementTypeName)) {
+          continue;
+        }
 
         // Try to find the type symbol in the compilation
         var typeSymbol = compilation.GetTypeByMetadataName(elementTypeName.Replace("global::", ""));
-        if (typeSymbol == null) continue;
+        if (typeSymbol == null) {
+          continue;
+        }
 
         // Skip non-public types
-        if (typeSymbol.DeclaredAccessibility != Accessibility.Public) continue;
+        if (typeSymbol.DeclaredAccessibility != Accessibility.Public) {
+          continue;
+        }
 
         // Extract property information
         var nestedProperties = typeSymbol.GetMembers()
@@ -723,11 +736,15 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var type in allTypes) {
       foreach (var property in type.Properties) {
         var elementTypeName = ExtractElementType(property.Type);
-        if (elementTypeName == null) continue;
+        if (elementTypeName == null) {
+          continue;
+        }
 
         // Create key: List<ElementType>
         var listTypeName = $"global::System.Collections.Generic.List<{elementTypeName}>";
-        if (listTypes.ContainsKey(listTypeName)) continue;
+        if (listTypes.ContainsKey(listTypeName)) {
+          continue;
+        }
 
         // Extract simple name from fully qualified element type
         var parts = elementTypeName.Split('.');
@@ -748,7 +765,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Generates lazy fields for List&lt;T&gt; types.
   /// </summary>
   private static string GenerateListLazyFields(Assembly assembly, ImmutableArray<ListTypeInfo> listTypes) {
-    if (listTypes.IsEmpty) return string.Empty;
+    if (listTypes.IsEmpty) {
+      return string.Empty;
+    }
 
     var sb = new System.Text.StringBuilder();
     var snippet = TemplateUtilities.ExtractSnippet(assembly, "JsonContextSnippets.cs", "LAZY_FIELD_LIST");
@@ -767,7 +786,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Generates GetTypeInfo checks for List&lt;T&gt; types.
   /// </summary>
   private static string GenerateListGetTypeInfo(Assembly assembly, ImmutableArray<ListTypeInfo> listTypes) {
-    if (listTypes.IsEmpty) return string.Empty;
+    if (listTypes.IsEmpty) {
+      return string.Empty;
+    }
 
     var sb = new System.Text.StringBuilder();
     var snippet = TemplateUtilities.ExtractSnippet(assembly, "JsonContextSnippets.cs", "GET_TYPE_INFO_LIST");
@@ -788,7 +809,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Generates factory methods for List&lt;T&gt; types.
   /// </summary>
   private static string GenerateListFactories(Assembly assembly, ImmutableArray<ListTypeInfo> listTypes) {
-    if (listTypes.IsEmpty) return string.Empty;
+    if (listTypes.IsEmpty) {
+      return string.Empty;
+    }
 
     var sb = new System.Text.StringBuilder();
     var snippet = TemplateUtilities.ExtractSnippet(assembly, "JsonContextSnippets.cs", "LIST_TYPE_FACTORY");

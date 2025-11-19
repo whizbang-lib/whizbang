@@ -2,8 +2,11 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using Whizbang.Core.Data;
+using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Messaging;
@@ -12,24 +15,38 @@ namespace Whizbang.Core.Messaging;
 /// In-memory implementation of IOutbox for testing and single-process scenarios.
 /// Thread-safe using ConcurrentDictionary.
 /// NOT suitable for production use across multiple processes.
+/// Uses JSONB adapter for envelope serialization (matching PostgreSQL implementation).
 /// </summary>
 public class InMemoryOutbox : IOutbox {
   private readonly ConcurrentDictionary<MessageId, OutboxRecord> _messages = new();
+  private readonly IJsonbPersistenceAdapter<IMessageEnvelope> _envelopeAdapter;
+
+  public InMemoryOutbox(IJsonbPersistenceAdapter<IMessageEnvelope> envelopeAdapter) {
+    _envelopeAdapter = envelopeAdapter ?? throw new ArgumentNullException(nameof(envelopeAdapter));
+  }
 
   /// <inheritdoc />
-  public Task StoreAsync(MessageId messageId, string destination, byte[] payload, CancellationToken cancellationToken = default) {
+  public Task StoreAsync(IMessageEnvelope envelope, string destination, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(envelope);
     ArgumentNullException.ThrowIfNull(destination);
-    ArgumentNullException.ThrowIfNull(payload);
+
+    // Convert envelope to JSONB format
+    var jsonbModel = _envelopeAdapter.ToJsonb(envelope);
+    var payload = envelope.GetPayload();
+    var eventType = payload.GetType().FullName ?? throw new InvalidOperationException("Event type has no FullName");
 
     var record = new OutboxRecord(
-      MessageId: messageId,
+      MessageId: envelope.MessageId,
       Destination: destination,
-      Payload: payload,
+      EventType: eventType,
+      EventData: jsonbModel.DataJson,
+      Metadata: jsonbModel.MetadataJson,
+      Scope: jsonbModel.ScopeJson,
       CreatedAt: DateTimeOffset.UtcNow,
       PublishedAt: null
     );
 
-    _messages.TryAdd(messageId, record);
+    _messages.TryAdd(envelope.MessageId, record);
     return Task.CompletedTask;
   }
 
@@ -41,7 +58,10 @@ public class InMemoryOutbox : IOutbox {
       .Select(kvp => new OutboxMessage(
         kvp.Value.MessageId,
         kvp.Value.Destination,
-        kvp.Value.Payload,
+        kvp.Value.EventType,
+        kvp.Value.EventData,
+        kvp.Value.Metadata,
+        kvp.Value.Scope,
         kvp.Value.CreatedAt
       ))
       .ToList();
@@ -63,7 +83,10 @@ public class InMemoryOutbox : IOutbox {
   private record OutboxRecord(
     MessageId MessageId,
     string Destination,
-    byte[] Payload,
+    string EventType,
+    string EventData,
+    string Metadata,
+    string? Scope,
     DateTimeOffset CreatedAt,
     DateTimeOffset? PublishedAt
   );

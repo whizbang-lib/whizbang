@@ -3,8 +3,12 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
+using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using System.Threading.Tasks;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core;
@@ -36,10 +40,22 @@ public delegate Task ReceptorPublisher<in TEvent>(TEvent @event);
 public abstract class Dispatcher : IDispatcher {
   private readonly IServiceProvider _internalServiceProvider;
   private readonly ITraceStore? _traceStore;
+  private readonly IOutbox? _outbox;
+  private readonly ITransport? _transport;
+  private readonly JsonSerializerOptions? _jsonOptions;
 
-  protected Dispatcher(IServiceProvider serviceProvider, ITraceStore? traceStore = null) {
+  protected Dispatcher(
+    IServiceProvider serviceProvider,
+    ITraceStore? traceStore = null,
+    IOutbox? outbox = null,
+    ITransport? transport = null,
+    JsonSerializerOptions? jsonOptions = null
+  ) {
     _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
     _traceStore = traceStore;
+    _outbox = outbox;
+    _transport = transport;
+    _jsonOptions = jsonOptions;
   }
 
   /// <summary>
@@ -400,6 +416,7 @@ public abstract class Dispatcher : IDispatcher {
   /// <summary>
   /// Publishes an event to all registered handlers.
   /// Uses generated delegate to invoke receptors with zero reflection.
+  /// After local handlers complete, publishes to outbox for cross-service delivery (if configured).
   /// </summary>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
@@ -415,8 +432,68 @@ public abstract class Dispatcher : IDispatcher {
     // Get strongly-typed delegate from generated code
     var publisher = _getReceptorPublisher(@event, eventType);
 
-    // Invoke using delegate - zero reflection, strongly typed
+    // Invoke local handlers first - zero reflection, strongly typed
     await publisher(@event);
+
+    // If outbox is configured, publish event for cross-service delivery
+    if (_outbox != null && _jsonOptions != null) {
+      await PublishToOutboxAsync(@event, eventType);
+    }
+  }
+
+  /// <summary>
+  /// Publishes an event to the outbox for cross-service delivery.
+  /// The OutboxPublisherWorker will poll the outbox and publish to the transport.
+  /// Creates a complete MessageEnvelope with a hop indicating "stored to outbox".
+  /// </summary>
+  private async Task PublishToOutboxAsync<TEvent>(TEvent @event, Type eventType) {
+    // Determine destination topic from event type name
+    // TODO: Make this configurable via IEventRoutingConfiguration
+    var destination = DetermineEventTopic(eventType);
+
+    // Create MessageEnvelope wrapping the event
+    var messageId = MessageId.New();
+    var envelope = new MessageEnvelope<TEvent> {
+      MessageId = messageId,
+      Payload = @event,
+      Hops = new List<MessageHop>()
+    };
+
+    // Add hop indicating message is being stored to outbox
+    var hop = new MessageHop {
+      Type = HopType.Current,
+      ServiceName = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name ?? "Unknown",
+      Topic = destination,
+      Timestamp = DateTimeOffset.UtcNow
+    };
+    envelope.AddHop(hop);
+
+    // Store complete envelope in outbox (will be serialized to JSONB)
+    await _outbox!.StoreAsync(envelope, destination);
+  }
+
+  /// <summary>
+  /// Determines the Service Bus topic for an event type.
+  /// Convention: ProductCreatedEvent → "products", InventoryRestockedEvent → "inventory"
+  /// </summary>
+  private static string DetermineEventTopic(Type eventType) {
+    var typeName = eventType.Name;
+
+    // Convention-based routing: ProductXxxEvent → "products", InventoryXxxEvent → "inventory"
+    if (typeName.StartsWith("Product")) {
+      return "products";
+    }
+
+    if (typeName.StartsWith("Inventory")) {
+      return "inventory";
+    }
+
+    if (typeName.StartsWith("Order")) {
+      return "orders";
+    }
+
+    // Default: use lowercase type name without "Event" suffix
+    return typeName.Replace("Event", "").ToLowerInvariant();
   }
 
   // ========================================

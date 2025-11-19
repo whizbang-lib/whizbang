@@ -54,6 +54,8 @@ builder.Services.AddWhizbangPerspectives();
 
 // Register lenses (readonly repositories)
 builder.Services.AddScoped<IOrderLens, OrderLens>();
+builder.Services.AddScoped<IProductCatalogLens, ProductCatalogLens>();
+builder.Services.AddScoped<IInventoryLevelsLens, InventoryLevelsLens>();
 
 // Register outbox publisher worker for reliable event publishing
 builder.Services.AddHostedService<OutboxPublisherWorker>();
@@ -104,8 +106,9 @@ app.UseFastEndpoints(config => {
   config.Endpoints.RoutePrefix = "api";
 });
 
-// Map SignalR hub
+// Map SignalR hubs
 app.MapHub<OrderStatusHub>("/hubs/order-status");
+app.MapHub<ProductInventoryHub>("/hubs/product-inventory");
 
 // Aspire health checks and diagnostics
 app.MapDefaultEndpoints();

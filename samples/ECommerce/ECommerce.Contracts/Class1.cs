@@ -1,6 +1,5 @@
-﻿namespace ECommerce.Contracts;
+namespace ECommerce.Contracts;
 
-public class Class1
-{
+public class Class1 {
 
 }

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
@@ -106,20 +107,45 @@ public class OutboxPublisherWorker : BackgroundService {
   }
 
   private async Task PublishMessageAsync(OutboxMessage outboxMessage, CancellationToken cancellationToken) {
-    // TODO: Deserialize the payload to IMessageEnvelope
-    // For now, this requires knowing the message type which should be stored in the outbox
-    // This is a placeholder that needs proper implementation
+    // Reconstruct the envelope from JSONB columns
+    // The envelope was stored as event_data (payload), metadata (envelope properties), scope (security)
 
-    throw new NotImplementedException(
-      "Outbox message publishing requires message type metadata. " +
-      "This will be implemented with the outbox schema update to include type information."
-    );
+    // Deserialize metadata to extract envelope properties
+    using var metadataDoc = JsonDocument.Parse(outboxMessage.Metadata);
+    var metadataRoot = metadataDoc.RootElement;
 
-    // The proper implementation would be:
-    // 1. Get message type from outbox metadata
-    // 2. Deserialize payload to that type
-    // 3. Create destination from outboxMessage.Destination
-    // 4. Call _transport.PublishAsync(envelope, destination, cancellationToken)
+    // Extract hops from metadata
+    var hops = new List<MessageHop>();
+    if (metadataRoot.TryGetProperty("hops", out var hopsElem)) {
+      var hopsJson = hopsElem.GetRawText();
+      hops = JsonSerializer.Deserialize<List<MessageHop>>(hopsJson) ?? new List<MessageHop>();
+    }
+
+    // Deserialize event payload as JsonElement (type-agnostic)
+    using var eventDataDoc = JsonDocument.Parse(outboxMessage.EventData);
+    var eventPayload = eventDataDoc.RootElement.Clone();
+
+    // Reconstruct envelope with original message ID and hops
+    var envelope = new MessageEnvelope<JsonElement> {
+      MessageId = outboxMessage.MessageId,
+      Payload = eventPayload,
+      Hops = hops
+    };
+
+    // Add hop indicating message is being published from outbox
+    var publishHop = new MessageHop {
+      Type = HopType.Current,
+      ServiceName = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name ?? "OutboxPublisher",
+      Topic = outboxMessage.Destination,
+      Timestamp = DateTimeOffset.UtcNow
+    };
+    envelope.AddHop(publishHop);
+
+    // Parse destination (format: "topic" or "topic/subscription")
+    var destination = new TransportDestination(outboxMessage.Destination);
+
+    // Publish to transport
+    await _transport.PublishAsync(envelope, destination, cancellationToken);
   }
 }
 

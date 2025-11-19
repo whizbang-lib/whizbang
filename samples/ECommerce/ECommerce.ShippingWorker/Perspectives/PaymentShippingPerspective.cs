@@ -1,6 +1,6 @@
+using ECommerce.Contracts.Events;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core;
-using ECommerce.Contracts.Events;
 
 namespace ECommerce.ShippingWorker.Perspectives;
 
