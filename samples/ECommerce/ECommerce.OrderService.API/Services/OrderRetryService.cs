@@ -28,11 +28,11 @@ public class OrderRetryService {
 
     // Explicitly dispatch CreateOrderCommand
     var command = new CreateOrderCommand {
-      OrderId = orderId,
-      CustomerId = customerId,
+      OrderId = OrderId.From(Guid.Parse(orderId)),
+      CustomerId = CustomerId.From(Guid.Parse(customerId)),
       LineItems = new List<OrderLineItem> {
         new() {
-          ProductId = "PROD-001",
+          ProductId = ProductId.From(Guid.Parse("PROD-001")),
           ProductName = "Test Product",
           Quantity = 2,
           UnitPrice = 29.99m
@@ -81,12 +81,12 @@ public class OrderRetryService {
 
     // Explicitly publish OrderCreatedEvent
     var @event = new OrderCreatedEvent {
-      OrderId = orderId,
-      CustomerId = "CUST-TEST",
+      OrderId = OrderId.From(Guid.Parse(orderId)),
+      CustomerId = CustomerId.From(Guid.Parse("CUST-TEST")),
       CreatedAt = DateTime.UtcNow,
       LineItems = new List<OrderLineItem> {
         new() {
-          ProductId = "PROD-TEST",
+          ProductId = ProductId.From(Guid.Parse("PROD-TEST")),
           ProductName = "Test Product",
           Quantity = 1,
           UnitPrice = 9.99m

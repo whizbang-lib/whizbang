@@ -1,6 +1,7 @@
 using System.Data;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Data.Dapper.Custom;
@@ -8,17 +9,24 @@ namespace Whizbang.Data.Dapper.Custom;
 /// <summary>
 /// Base class for Dapper-based IInbox implementations.
 /// Provides common implementation logic while allowing derived classes to provide database-specific SQL.
+/// Uses JSONB adapter for envelope serialization - mirrors DapperOutboxBase.
 /// </summary>
 public abstract class DapperInboxBase : IInbox {
   protected readonly IDbConnectionFactory _connectionFactory;
   protected readonly IDbExecutor _executor;
+  protected readonly IJsonbPersistenceAdapter<IMessageEnvelope> _envelopeAdapter;
 
-  protected DapperInboxBase(IDbConnectionFactory connectionFactory, IDbExecutor executor) {
+  protected DapperInboxBase(
+    IDbConnectionFactory connectionFactory,
+    IDbExecutor executor,
+    IJsonbPersistenceAdapter<IMessageEnvelope> envelopeAdapter) {
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentNullException.ThrowIfNull(executor);
+    ArgumentNullException.ThrowIfNull(envelopeAdapter);
 
     _connectionFactory = connectionFactory;
     _executor = executor;
+    _envelopeAdapter = envelopeAdapter;
   }
 
   /// <summary>
@@ -31,24 +39,107 @@ public abstract class DapperInboxBase : IInbox {
   }
 
   /// <summary>
-  /// Gets the SQL query to check if a message has been processed.
-  /// Should return count of matching records.
-  /// Parameters: @MessageId (Guid)
+  /// Gets the SQL command to store a new inbox message using JSONB pattern.
+  /// Parameters: @MessageId (Guid), @HandlerName (string), @EventType (string),
+  ///             @EventData (string), @Metadata (string), @Scope (string, nullable), @ReceivedAt (DateTimeOffset)
   /// </summary>
-  protected abstract string GetHasProcessedSql();
+  protected abstract string GetStoreSql();
+
+  /// <summary>
+  /// Gets the SQL query to retrieve pending inbox messages using JSONB pattern.
+  /// Should return: MessageId, HandlerName, EventType, EventData, Metadata, Scope, ReceivedAt
+  /// Parameters: @BatchSize (int)
+  /// </summary>
+  protected abstract string GetPendingSql();
 
   /// <summary>
   /// Gets the SQL command to mark a message as processed.
-  /// Should handle duplicate message IDs gracefully (upsert/ignore).
-  /// Parameters: @MessageId (Guid), @HandlerName (string), @ProcessedAt (DateTimeOffset)
+  /// Parameters: @MessageId (Guid), @ProcessedAt (DateTimeOffset)
   /// </summary>
   protected abstract string GetMarkProcessedSql();
+
+  /// <summary>
+  /// Gets the SQL query to check if a message has been processed.
+  /// Should return count of matching records where processed_at is not null.
+  /// Parameters: @MessageId (Guid)
+  /// </summary>
+  protected abstract string GetHasProcessedSql();
 
   /// <summary>
   /// Gets the SQL command to delete expired inbox records.
   /// Parameters: @CutoffDate (DateTimeOffset)
   /// </summary>
   protected abstract string GetCleanupExpiredSql();
+
+  public async Task StoreAsync(IMessageEnvelope envelope, string handlerName, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(envelope);
+    ArgumentNullException.ThrowIfNull(handlerName);
+
+    using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+
+    // Convert envelope to JSONB format using adapter
+    var jsonbModel = _envelopeAdapter.ToJsonb(envelope);
+
+    // Get event type from payload
+    var payload = envelope.GetPayload();
+    var eventType = payload.GetType().FullName ?? throw new InvalidOperationException("Event type has no FullName");
+
+    var sql = GetStoreSql();
+
+    await _executor.ExecuteAsync(
+      connection,
+      sql,
+      new {
+        MessageId = envelope.MessageId.Value,
+        HandlerName = handlerName,
+        EventType = eventType,
+        EventData = jsonbModel.DataJson,
+        Metadata = jsonbModel.MetadataJson,
+        Scope = jsonbModel.ScopeJson,
+        ReceivedAt = DateTimeOffset.UtcNow
+      },
+      cancellationToken: cancellationToken);
+  }
+
+  public async Task<IReadOnlyList<InboxMessage>> GetPendingAsync(int batchSize, CancellationToken cancellationToken = default) {
+    using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+
+    var sql = GetPendingSql();
+
+    var rows = await _executor.QueryAsync<InboxRow>(
+      connection,
+      sql,
+      new { BatchSize = batchSize },
+      cancellationToken: cancellationToken);
+
+    return rows.Select(r => new InboxMessage(
+      MessageId.From(r.MessageId),
+      r.HandlerName,
+      r.EventType,
+      r.EventData,
+      r.Metadata,
+      r.Scope,
+      r.ReceivedAt
+    )).ToList();
+  }
+
+  public async Task MarkProcessedAsync(MessageId messageId, CancellationToken cancellationToken = default) {
+    using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+
+    var sql = GetMarkProcessedSql();
+
+    await _executor.ExecuteAsync(
+      connection,
+      sql,
+      new {
+        MessageId = messageId.Value,
+        ProcessedAt = DateTimeOffset.UtcNow
+      },
+      cancellationToken: cancellationToken);
+  }
 
   public async Task<bool> HasProcessedAsync(MessageId messageId, CancellationToken cancellationToken = default) {
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
@@ -65,25 +156,6 @@ public abstract class DapperInboxBase : IInbox {
     return count > 0;
   }
 
-  public async Task MarkProcessedAsync(MessageId messageId, string handlerName, CancellationToken cancellationToken = default) {
-    ArgumentNullException.ThrowIfNull(handlerName);
-
-    using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-    EnsureConnectionOpen(connection);
-
-    var sql = GetMarkProcessedSql();
-
-    await _executor.ExecuteAsync(
-      connection,
-      sql,
-      new {
-        MessageId = messageId.Value,
-        HandlerName = handlerName,
-        ProcessedAt = DateTimeOffset.UtcNow
-      },
-      cancellationToken: cancellationToken);
-  }
-
   public async Task CleanupExpiredAsync(TimeSpan retention, CancellationToken cancellationToken = default) {
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
@@ -96,5 +168,19 @@ public abstract class DapperInboxBase : IInbox {
       sql,
       new { CutoffDate = cutoffDate },
       cancellationToken: cancellationToken);
+  }
+
+  /// <summary>
+  /// Internal row structure for Dapper mapping.
+  /// Maps to JSONB-based inbox schema.
+  /// </summary>
+  protected class InboxRow {
+    public Guid MessageId { get; set; }
+    public string HandlerName { get; set; } = string.Empty;
+    public string EventType { get; set; } = string.Empty;
+    public string EventData { get; set; } = string.Empty;
+    public string Metadata { get; set; } = string.Empty;
+    public string? Scope { get; set; }
+    public DateTimeOffset ReceivedAt { get; set; }
   }
 }

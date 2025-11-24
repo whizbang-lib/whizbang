@@ -30,3 +30,17 @@ internal sealed record PropertyInfo(
     string Type,
     bool IsInitOnly
 );
+
+/// <summary>
+/// Value type containing information about a discovered WhizbangId type for JSON serialization.
+/// WhizbangId types are strongly-typed ID value objects with corresponding JSON converters.
+/// This record uses value equality which is critical for incremental generator performance.
+/// </summary>
+/// <param name="TypeName">Fully qualified type name with global:: prefix (e.g., "global::ECommerce.Contracts.Commands.ProductId")</param>
+/// <param name="SimpleName">Simple type name without namespace (e.g., "ProductId")</param>
+/// <param name="ConverterName">Fully qualified converter name with global:: prefix (e.g., "global::ECommerce.Contracts.Commands.ProductIdJsonConverter")</param>
+internal sealed record JsonWhizbangIdInfo(
+    string TypeName,
+    string SimpleName,
+    string ConverterName
+);

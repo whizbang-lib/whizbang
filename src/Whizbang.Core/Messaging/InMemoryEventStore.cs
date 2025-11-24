@@ -7,6 +7,7 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
 using Whizbang.Core.Policies;
 
 namespace Whizbang.Core.Messaging;
@@ -20,9 +21,13 @@ namespace Whizbang.Core.Messaging;
 public class InMemoryEventStore : IEventStore {
   private readonly ConcurrentDictionary<Guid, StreamData> _streams = new();
   private readonly IPolicyEngine _policyEngine;
+  private readonly IPerspectiveInvoker? _perspectiveInvoker;
 
-  public InMemoryEventStore(IPolicyEngine policyEngine) {
+  public InMemoryEventStore(
+    IPolicyEngine policyEngine,
+    IPerspectiveInvoker? perspectiveInvoker = null) {
     _policyEngine = policyEngine ?? throw new ArgumentNullException(nameof(policyEngine));
+    _perspectiveInvoker = perspectiveInvoker;
   }
 
   /// <inheritdoc />
@@ -31,6 +36,11 @@ public class InMemoryEventStore : IEventStore {
 
     var stream = _streams.GetOrAdd(streamId, _ => new StreamData());
     stream.Append(envelope);
+
+    // Queue event for perspective invocation at scope disposal
+    if (_perspectiveInvoker != null && envelope.GetPayload() is IEvent @event) {
+      _perspectiveInvoker.QueueEvent(@event);
+    }
 
     return Task.CompletedTask;
   }

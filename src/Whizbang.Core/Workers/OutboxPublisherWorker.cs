@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -16,15 +17,18 @@ public class OutboxPublisherWorker : BackgroundService {
   private readonly ITransport _transport;
   private readonly ILogger<OutboxPublisherWorker> _logger;
   private readonly OutboxPublisherOptions _options;
+  private readonly JsonSerializerOptions _jsonOptions;
 
   public OutboxPublisherWorker(
     IOutbox outbox,
     ITransport transport,
+    JsonSerializerOptions jsonOptions,
     OutboxPublisherOptions? options = null,
     ILogger<OutboxPublisherWorker>? logger = null
   ) {
     _outbox = outbox ?? throw new ArgumentNullException(nameof(outbox));
     _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+    _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
     _options = options ?? new OutboxPublisherOptions();
     _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<OutboxPublisherWorker>.Instance;
   }
@@ -114,11 +118,14 @@ public class OutboxPublisherWorker : BackgroundService {
     using var metadataDoc = JsonDocument.Parse(outboxMessage.Metadata);
     var metadataRoot = metadataDoc.RootElement;
 
-    // Extract hops from metadata
+    // Extract hops from metadata using AOT-compatible deserialization
     var hops = new List<MessageHop>();
     if (metadataRoot.TryGetProperty("hops", out var hopsElem)) {
       var hopsJson = hopsElem.GetRawText();
-      hops = JsonSerializer.Deserialize<List<MessageHop>>(hopsJson) ?? new List<MessageHop>();
+      var hopsTypeInfo = _jsonOptions.GetTypeInfo(typeof(List<MessageHop>));
+      if (hopsTypeInfo != null) {
+        hops = JsonSerializer.Deserialize(hopsJson, hopsTypeInfo) as List<MessageHop> ?? new List<MessageHop>();
+      }
     }
 
     // Deserialize event payload as JsonElement (type-agnostic)

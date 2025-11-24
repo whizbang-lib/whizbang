@@ -22,8 +22,10 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
     var logger = new TestLogger<ProductCatalogPerspective>();
     var perspective = new ProductCatalogPerspective(connectionFactory, logger, null!);
 
+    var productId = Guid.CreateVersion7();
     var @event = new ProductCreatedEvent {
-      ProductId = "prod-123",
+
+      ProductId = productId,
       Name = "Test Widget",
       Description = "A test widget",
       Price = 29.99m,
@@ -41,10 +43,10 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
 
     var product = await connection.QuerySingleOrDefaultAsync<ProductRow>(
       "SELECT product_id, name, description, price, image_url, created_at, updated_at, deleted_at FROM bff.product_catalog WHERE product_id = @ProductId",
-      new { ProductId = "prod-123" });
+      new { ProductId = productId });
 
     await Assert.That(product).IsNotNull();
-    await Assert.That(product!.product_id).IsEqualTo("prod-123");
+    await Assert.That(product!.product_id).IsEqualTo(productId);
     await Assert.That(product.name).IsEqualTo("Test Widget");
     await Assert.That(product.description).IsEqualTo("A test widget");
     await Assert.That(product.price).IsEqualTo(29.99m);
@@ -61,8 +63,10 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
     var perspective = new ProductCatalogPerspective(connectionFactory, logger, null!);
 
     // Create initial product
+    var productId = Guid.CreateVersion7();
     var createdEvent = new ProductCreatedEvent {
-      ProductId = "prod-update",
+
+      ProductId = productId,
       Name = "Original Name",
       Description = "Original Description",
       Price = 10.00m,
@@ -73,7 +77,8 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
 
     // Act - Update the product
     var updatedEvent = new ProductUpdatedEvent {
-      ProductId = "prod-update",
+
+      ProductId = productId,
       Name = "Updated Name",
       Description = null, // Partial update
       Price = 19.99m,
@@ -89,7 +94,7 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
 
     var product = await connection.QuerySingleOrDefaultAsync<ProductRow>(
       "SELECT product_id, name, description, price, image_url, updated_at FROM bff.product_catalog WHERE product_id = @ProductId",
-      new { ProductId = "prod-update" });
+      new { ProductId = productId });
 
     await Assert.That(product).IsNotNull();
     await Assert.That(product!.name).IsEqualTo("Updated Name");
@@ -107,8 +112,10 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
     var perspective = new ProductCatalogPerspective(connectionFactory, logger, null!);
 
     // Create initial product
+    var productId = Guid.CreateVersion7();
     var createdEvent = new ProductCreatedEvent {
-      ProductId = "prod-delete",
+
+      ProductId = productId,
       Name = "To Be Deleted",
       Description = "Will be soft deleted",
       Price = 10.00m,
@@ -119,7 +126,8 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
 
     // Act - Delete the product
     var deletedEvent = new ProductDeletedEvent {
-      ProductId = "prod-delete",
+
+      ProductId = productId,
       DeletedAt = DateTime.UtcNow
     };
     await perspective.Update(deletedEvent, CancellationToken.None);
@@ -131,10 +139,10 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
 
     var product = await connection.QuerySingleOrDefaultAsync<ProductRow>(
       "SELECT product_id, name, deleted_at FROM bff.product_catalog WHERE product_id = @ProductId",
-      new { ProductId = "prod-delete" });
+      new { ProductId = productId });
 
     await Assert.That(product).IsNotNull(); // Should still exist
-    await Assert.That(product!.product_id).IsEqualTo("prod-delete");
+    await Assert.That(product!.product_id).IsEqualTo(productId);
     await Assert.That(product.name).IsEqualTo("To Be Deleted"); // Data intact
     await Assert.That(product.deleted_at).IsNotNull(); // Soft deleted
   }
@@ -146,8 +154,10 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
     var logger = new TestLogger<ProductCatalogPerspective>();
     var perspective = new ProductCatalogPerspective(connectionFactory, logger, null!);
 
+    var productId = Guid.CreateVersion7();
     var @event = new ProductCreatedEvent {
-      ProductId = "prod-dup",
+
+      ProductId = productId,
       Name = "Test Widget",
       Description = "Test",
       Price = 10.00m,
@@ -182,7 +192,7 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
 /// DTO for reading product_catalog rows from database
 /// </summary>
 internal record ProductRow {
-  public string product_id { get; init; } = string.Empty;
+  public Guid product_id { get; init; }
   public string name { get; init; } = string.Empty;
   public string? description { get; init; }
   public decimal price { get; init; }

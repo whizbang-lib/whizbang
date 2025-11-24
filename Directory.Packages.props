@@ -44,6 +44,7 @@
     <PackageVersion Include="PolySharp" Version="1.15.0" />
     <PackageVersion Include="Rocks" Version="8.3.0" />
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.8.1" />
+    <PackageVersion Include="Testcontainers.ServiceBus" Version="4.8.1" />
     <PackageVersion Include="Testcontainers.Azurite" Version="4.8.1" />
     <PackageVersion Include="TUnit" Version="0.88.0" />
     <PackageVersion Include="TUnit.Assertions" Version="0.88.0" />

@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core.Observability;
@@ -14,10 +15,12 @@ namespace Whizbang.Core.Messaging;
 public class OutboxPublisher {
   private readonly IOutbox _outbox;
   private readonly ITransport _transport;
+  private readonly System.Text.Json.JsonSerializerOptions _jsonOptions;
 
-  public OutboxPublisher(IOutbox outbox, ITransport transport) {
+  public OutboxPublisher(IOutbox outbox, ITransport transport, System.Text.Json.JsonSerializerOptions jsonOptions) {
     _outbox = outbox ?? throw new ArgumentNullException(nameof(outbox));
     _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+    _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   }
 
   /// <summary>
@@ -51,7 +54,11 @@ public class OutboxPublisher {
         var hops = new List<MessageHop>();
         if (metadataRoot.TryGetProperty("hops", out var hopsElem)) {
           var hopsJson = hopsElem.GetRawText();
-          hops = System.Text.Json.JsonSerializer.Deserialize<List<MessageHop>>(hopsJson) ?? new List<MessageHop>();
+          // Use AOT-compatible deserialization with WhizbangJsonContext
+          var hopsTypeInfo = _jsonOptions.GetTypeInfo(typeof(List<MessageHop>));
+          if (hopsTypeInfo != null) {
+            hops = System.Text.Json.JsonSerializer.Deserialize(hopsJson, hopsTypeInfo) as List<MessageHop> ?? new List<MessageHop>();
+          }
         }
 
         // Deserialize event payload as JsonElement (type-agnostic)

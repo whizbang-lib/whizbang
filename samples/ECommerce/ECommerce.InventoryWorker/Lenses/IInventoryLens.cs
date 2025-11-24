@@ -11,7 +11,7 @@ public interface IInventoryLens {
   /// <param name="productId">The product identifier</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>The inventory levels if found, null otherwise</returns>
-  Task<InventoryLevelDto?> GetByProductIdAsync(string productId, CancellationToken cancellationToken = default);
+  Task<InventoryLevelDto?> GetByProductIdAsync(Guid productId, CancellationToken cancellationToken = default);
 
   /// <summary>
   /// Gets all inventory levels.

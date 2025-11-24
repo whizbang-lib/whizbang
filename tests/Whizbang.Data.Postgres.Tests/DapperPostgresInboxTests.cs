@@ -1,4 +1,6 @@
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.Tests.Messaging;
 using Whizbang.Data.Dapper.Postgres;
 
@@ -27,7 +29,9 @@ public class DapperPostgresInboxTests : InboxContractTests {
   }
 
   protected override Task<IInbox> CreateInboxAsync() {
-    var inbox = new DapperPostgresInbox(_testBase.ConnectionFactory, _testBase.Executor);
+    var jsonOptions = WhizbangJsonContext.CreateOptions();
+    var adapter = new EventEnvelopeJsonbAdapter(jsonOptions);
+    var inbox = new DapperPostgresInbox(_testBase.ConnectionFactory, _testBase.Executor, adapter);
     return Task.FromResult<IInbox>(inbox);
   }
 

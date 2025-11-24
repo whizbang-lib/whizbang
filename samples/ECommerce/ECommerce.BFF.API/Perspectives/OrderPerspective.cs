@@ -104,9 +104,9 @@ public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent> {
         });
 
       // 3. Push real-time update via SignalR
-      await _hubContext.Clients.User(@event.CustomerId)
+      await _hubContext.Clients.User(@event.CustomerId.Value.ToString())
         .SendAsync("OrderStatusChanged", new OrderStatusUpdate {
-          OrderId = @event.OrderId,
+          OrderId = @event.OrderId.Value.ToString(),
           Status = "Created",
           Timestamp = @event.CreatedAt,
           Message = $"Order created with total amount ${@event.TotalAmount:F2}"

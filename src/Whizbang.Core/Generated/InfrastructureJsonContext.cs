@@ -21,7 +21,6 @@ namespace Whizbang.Core.Generated;
 [JsonSerializable(typeof(List<PolicyDecision>))]
 [JsonSerializable(typeof(PolicyDecision))]
 [JsonSourceGenerationOptions(
-    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
-    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase)]
+    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 public partial class InfrastructureJsonContext : JsonSerializerContext {
 }

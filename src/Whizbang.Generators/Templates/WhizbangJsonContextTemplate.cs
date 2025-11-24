@@ -24,15 +24,15 @@ namespace Whizbang.Core.Generated;
 /// Generated JsonSerializerContext with manual JsonTypeInfo objects for AOT-compatible serialization.
 /// Implements IJsonTypeInfoResolver to properly handle options in resolver chains.
 /// </summary>
-public partial class WhizbangJsonContext : JsonSerializerContext, IJsonTypeInfoResolver {
+public partial class MessageJsonContext : JsonSerializerContext, IJsonTypeInfoResolver {
   /// <summary>
-  /// Default singleton instance of WhizbangJsonContext.
-  /// Use this in resolver chains: WhizbangJsonContext.Default
+  /// Default singleton instance of MessageJsonContext.
+  /// Use this in resolver chains: MessageJsonContext.Default
   /// </summary>
-  public static WhizbangJsonContext Default { get; } = new();
+  public static MessageJsonContext Default { get; } = new();
 
-  public WhizbangJsonContext() : base(null) { }
-  public WhizbangJsonContext(JsonSerializerOptions options) : base(options) { }
+  public MessageJsonContext() : base(null) { }
+  public MessageJsonContext(JsonSerializerOptions options) : base(options) { }
 
   protected override JsonSerializerOptions? GeneratedSerializerOptions => null;
 

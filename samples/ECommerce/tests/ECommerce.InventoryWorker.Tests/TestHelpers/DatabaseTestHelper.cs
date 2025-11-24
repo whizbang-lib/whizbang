@@ -58,7 +58,7 @@ CREATE SCHEMA IF NOT EXISTS inventoryworker;
 
 -- ProductCatalog table - stores product information
 CREATE TABLE IF NOT EXISTS inventoryworker.product_catalog (
-  product_id VARCHAR(50) PRIMARY KEY,
+  product_id UUID PRIMARY KEY,
   name VARCHAR(200) NOT NULL,
   description TEXT,
   price DECIMAL(18, 2) NOT NULL,
@@ -70,7 +70,7 @@ CREATE TABLE IF NOT EXISTS inventoryworker.product_catalog (
 
 -- InventoryLevels table - tracks inventory quantities
 CREATE TABLE IF NOT EXISTS inventoryworker.inventory_levels (
-  product_id VARCHAR(50) PRIMARY KEY,
+  product_id UUID PRIMARY KEY,
   quantity INTEGER NOT NULL DEFAULT 0,
   reserved INTEGER NOT NULL DEFAULT 0,
   available INTEGER GENERATED ALWAYS AS (quantity - reserved) STORED,

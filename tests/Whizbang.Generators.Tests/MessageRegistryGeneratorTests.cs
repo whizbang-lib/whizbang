@@ -1524,4 +1524,36 @@ public class DualReceptor : IReceptor<DualCommand, string>, IReceptor<DualComman
     await Assert.That(generatedJson).Contains("isEvent");
     await Assert.That(generatedJson).Contains(": true");
   }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task MessageRegistryGenerator_DispatcherInFieldInitializer_HandlesNullContainingMethodAsync() {
+    // Arrange - Tests line 140: containingMethod null check where fallback to "<unknown>" happens
+    // This scenario creates a dispatcher call in a context where the containing method might not be identified
+    var source = """
+            using Whizbang.Core;
+            using System.Threading.Tasks;
+
+            namespace MyApp {
+              public record TestCommand : ICommand;
+
+              public class ServiceWithFieldDispatch {
+                private readonly Task _initTask;
+
+                public ServiceWithFieldDispatch(IDispatcher dispatcher) {
+                  _initTask = dispatcher.SendAsync(new TestCommand());
+                }
+              }
+            }
+            """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageRegistryGenerator>(source);
+
+    // Assert - Should discover dispatcher and handle gracefully if containingMethod is null
+    var generatedJson = GeneratorTestHelper.GetGeneratedSource(result, "MessageRegistry.g.cs");
+    await Assert.That(generatedJson).IsNotNull();
+    await Assert.That(generatedJson!).Contains("ServiceWithFieldDispatch");
+    await Assert.That(generatedJson).Contains("TestCommand");
+  }
 }

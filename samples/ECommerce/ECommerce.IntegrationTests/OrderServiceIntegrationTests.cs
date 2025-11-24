@@ -13,12 +13,15 @@ public class OrderServiceIntegrationTests {
   [Test]
   public async Task CreateOrderCommand_HasRequiredPropertiesAsync() {
     // Arrange & Act
+    var orderId = OrderId.New();
+    var customerId = CustomerId.New();
+    var productId = ProductId.New();
     var command = new CreateOrderCommand {
-      OrderId = Guid.NewGuid().ToString(),
-      CustomerId = "CUST-001",
+      OrderId = orderId,
+      CustomerId = customerId,
       LineItems = new List<OrderLineItem> {
         new OrderLineItem {
-          ProductId = "PROD-001",
+          ProductId = productId,
           ProductName = "Widget",
           Quantity = 2,
           UnitPrice = 19.99m
@@ -28,8 +31,8 @@ public class OrderServiceIntegrationTests {
     };
 
     // Assert - Verify command structure
-    await Assert.That(command.OrderId).IsNotNull();
-    await Assert.That(command.CustomerId).IsEqualTo("CUST-001");
+    await Assert.That(command.OrderId).IsEqualTo(orderId);
+    await Assert.That(command.CustomerId).IsEqualTo(customerId);
     await Assert.That(command.LineItems).HasCount().EqualTo(1);
     await Assert.That(command.TotalAmount).IsEqualTo(39.98m);
   }
@@ -38,7 +41,7 @@ public class OrderServiceIntegrationTests {
   public async Task OrderLineItem_CalculatesTotalCorrectlyAsync() {
     // Arrange
     var lineItem = new OrderLineItem {
-      ProductId = "PROD-001",
+      ProductId = ProductId.New(),
       ProductName = "Widget",
       Quantity = 3,
       UnitPrice = 10.00m

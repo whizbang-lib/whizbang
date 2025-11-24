@@ -17,8 +17,10 @@ public class UpdateProductReceptorTests {
     var logger = new TestLogger<UpdateProductReceptor>();
     var receptor = new UpdateProductReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new UpdateProductCommand {
-      ProductId = "prod-123",
+
+      ProductId = productId,
       Name = "Updated Widget",
       Description = "Updated description",
       Price = 39.99m,
@@ -30,7 +32,7 @@ public class UpdateProductReceptorTests {
 
     // Assert
     await Assert.That(result).IsNotNull();
-    await Assert.That(result.ProductId).IsEqualTo("prod-123");
+    await Assert.That(result.ProductId).IsEqualTo(productId);
     await Assert.That(result.Name).IsEqualTo("Updated Widget");
     await Assert.That(result.Description).IsEqualTo("Updated description");
     await Assert.That(result.Price).IsEqualTo(39.99m);
@@ -44,8 +46,10 @@ public class UpdateProductReceptorTests {
     var logger = new TestLogger<UpdateProductReceptor>();
     var receptor = new UpdateProductReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new UpdateProductCommand {
-      ProductId = "prod-456",
+
+      ProductId = productId,
       Name = "New Name",
       Description = null,
       Price = null,
@@ -56,7 +60,7 @@ public class UpdateProductReceptorTests {
     var result = await receptor.HandleAsync(command);
 
     // Assert
-    await Assert.That(result.ProductId).IsEqualTo("prod-456");
+    await Assert.That(result.ProductId).IsEqualTo(productId);
     await Assert.That(result.Name).IsEqualTo("New Name");
     await Assert.That(result.Description).IsNull();
     await Assert.That(result.Price).IsNull();
@@ -70,8 +74,10 @@ public class UpdateProductReceptorTests {
     var logger = new TestLogger<UpdateProductReceptor>();
     var receptor = new UpdateProductReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new UpdateProductCommand {
-      ProductId = "prod-789",
+
+      ProductId = productId,
       Name = null,
       Description = null,
       Price = null,
@@ -82,7 +88,7 @@ public class UpdateProductReceptorTests {
     var result = await receptor.HandleAsync(command);
 
     // Assert
-    await Assert.That(result.ProductId).IsEqualTo("prod-789");
+    await Assert.That(result.ProductId).IsEqualTo(productId);
     await Assert.That(result.Name).IsNull();
     await Assert.That(result.Description).IsNull();
     await Assert.That(result.Price).IsNull();
@@ -96,8 +102,10 @@ public class UpdateProductReceptorTests {
     var logger = new TestLogger<UpdateProductReceptor>();
     var receptor = new UpdateProductReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new UpdateProductCommand {
-      ProductId = "prod-publish",
+
+      ProductId = productId,
       Name = "Published",
       Description = null,
       Price = 29.99m,
@@ -112,7 +120,7 @@ public class UpdateProductReceptorTests {
     await Assert.That(dispatcher.PublishedEvents[0]).IsTypeOf<ProductUpdatedEvent>();
 
     var publishedEvent = (ProductUpdatedEvent)dispatcher.PublishedEvents[0];
-    await Assert.That(publishedEvent.ProductId).IsEqualTo("prod-publish");
+    await Assert.That(publishedEvent.ProductId).IsEqualTo(productId);
     await Assert.That(publishedEvent.Name).IsEqualTo("Published");
   }
 
@@ -125,8 +133,10 @@ public class UpdateProductReceptorTests {
 
     var beforeCall = DateTime.UtcNow;
 
+    var productId = Guid.CreateVersion7();
     var command = new UpdateProductCommand {
-      ProductId = "prod-time",
+
+      ProductId = productId,
       Name = "Time Test",
       Description = null,
       Price = null,
@@ -150,8 +160,10 @@ public class UpdateProductReceptorTests {
     var logger = new TestLogger<UpdateProductReceptor>();
     var receptor = new UpdateProductReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new UpdateProductCommand {
-      ProductId = "prod-log",
+
+      ProductId = productId,
       Name = null,
       Description = "Updated description",
       Price = null,
@@ -172,8 +184,10 @@ public class UpdateProductReceptorTests {
     var logger = new TestLogger<UpdateProductReceptor>();
     var receptor = new UpdateProductReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new UpdateProductCommand {
-      ProductId = "prod-cancel",
+
+      ProductId = productId,
       Name = "Cancel Test",
       Description = null,
       Price = null,
@@ -196,8 +210,10 @@ public class UpdateProductReceptorTests {
     var logger = new TestLogger<UpdateProductReceptor>();
     var receptor = new UpdateProductReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new UpdateProductCommand {
-      ProductId = "prod-price",
+
+      ProductId = productId,
       Name = null,
       Description = null,
       Price = 99.99m,

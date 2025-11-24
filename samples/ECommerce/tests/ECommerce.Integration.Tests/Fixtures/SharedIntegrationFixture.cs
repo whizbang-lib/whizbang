@@ -45,6 +45,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
 
   /// <summary>
   /// Gets the IDispatcher instance for sending commands (from InventoryWorker host).
+  /// The Dispatcher creates its own scope internally when publishing events.
   /// </summary>
   public IDispatcher Dispatcher => _inventoryHost?.Services.GetRequiredService<IDispatcher>()
     ?? throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
@@ -142,6 +143,9 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     // Register Whizbang dispatcher with source-generated receptors
     builder.Services.AddReceptors();
 
+    // Register perspective invoker for scoped event processing
+    builder.Services.AddWhizbangPerspectiveInvoker();
+
     // Register Whizbang dispatcher with outbox and transport support
     builder.Services.AddWhizbangDispatcher();
 
@@ -181,6 +185,9 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
 
     // Add trace store for observability
     builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
+
+    // Register perspective invoker for scoped event processing
+    builder.Services.AddWhizbangPerspectiveInvoker();
 
     // Register Whizbang dispatcher (needed by ServiceBusConsumerWorker)
     // Note: BFF doesn't send commands in production, but needs dispatcher for event consumption
@@ -224,7 +231,7 @@ CREATE SCHEMA IF NOT EXISTS inventoryworker;
 
 -- ProductCatalog table - stores product information
 CREATE TABLE IF NOT EXISTS inventoryworker.product_catalog (
-  product_id VARCHAR(50) PRIMARY KEY,
+  product_id UUID PRIMARY KEY,
   name VARCHAR(200) NOT NULL,
   description TEXT,
   price DECIMAL(18, 2) NOT NULL,
@@ -236,7 +243,7 @@ CREATE TABLE IF NOT EXISTS inventoryworker.product_catalog (
 
 -- InventoryLevels table - tracks inventory quantities
 CREATE TABLE IF NOT EXISTS inventoryworker.inventory_levels (
-  product_id VARCHAR(50) PRIMARY KEY,
+  product_id UUID PRIMARY KEY,
   quantity INTEGER NOT NULL DEFAULT 0,
   reserved INTEGER NOT NULL DEFAULT 0,
   available INTEGER GENERATED ALWAYS AS (quantity - reserved) STORED,
@@ -252,7 +259,7 @@ CREATE SCHEMA IF NOT EXISTS bff;
 
 -- BFF ProductCatalog perspective
 CREATE TABLE IF NOT EXISTS bff.product_catalog (
-  product_id VARCHAR(50) PRIMARY KEY,
+  product_id UUID PRIMARY KEY,
   name VARCHAR(200) NOT NULL,
   description TEXT,
   price DECIMAL(18, 2) NOT NULL,
@@ -264,7 +271,7 @@ CREATE TABLE IF NOT EXISTS bff.product_catalog (
 
 -- BFF InventoryLevels perspective
 CREATE TABLE IF NOT EXISTS bff.inventory_levels (
-  product_id VARCHAR(50) PRIMARY KEY,
+  product_id UUID PRIMARY KEY,
   quantity INTEGER NOT NULL DEFAULT 0,
   reserved INTEGER NOT NULL DEFAULT 0,
   available INTEGER GENERATED ALWAYS AS (quantity - reserved) STORED,

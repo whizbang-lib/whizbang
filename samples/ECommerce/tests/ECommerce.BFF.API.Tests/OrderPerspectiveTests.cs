@@ -1,6 +1,7 @@
 using Dapper;
 using ECommerce.BFF.API.Perspectives;
 using ECommerce.BFF.API.Tests.TestHelpers;
+using ECommerce.Contracts.Commands;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
 using TUnit.Assertions;
@@ -114,9 +115,9 @@ public class OrderPerspectiveTests : IAsyncDisposable {
     var perspective = new OrderPerspective(connectionFactory, hubContext, logger);
 
     var lineItems = new List<ECommerce.Contracts.Commands.OrderLineItem> {
-      new() { ProductId = "prod-1", ProductName = "Item 1", Quantity = 2, UnitPrice = 10.00m },
-      new() { ProductId = "prod-2", ProductName = "Item 2", Quantity = 1, UnitPrice = 20.00m },
-      new() { ProductId = "prod-3", ProductName = "Item 3", Quantity = 3, UnitPrice = 5.00m }
+      new() { ProductId = ProductId.New(), ProductName = "Item 1", Quantity = 2, UnitPrice = 10.00m },
+      new() { ProductId = ProductId.New(), ProductName = "Item 2", Quantity = 1, UnitPrice = 20.00m },
+      new() { ProductId = ProductId.New(), ProductName = "Item 3", Quantity = 3, UnitPrice = 5.00m }
     };
 
     var @event = EventBuilder.CreateOrderCreatedEvent(

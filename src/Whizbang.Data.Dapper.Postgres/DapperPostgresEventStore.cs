@@ -4,9 +4,11 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.Logging;
+using Whizbang.Core;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
 using Whizbang.Core.Policies;
 using Whizbang.Data.Dapper.Custom;
 
@@ -21,6 +23,7 @@ public class DapperPostgresEventStore : DapperEventStoreBase {
   private readonly IJsonbPersistenceAdapter<IMessageEnvelope> _adapter;
   private readonly JsonbSizeValidator _sizeValidator;
   private readonly IPolicyEngine _policyEngine;
+  private readonly IPerspectiveInvoker? _perspectiveInvoker;
   private readonly ILogger<DapperPostgresEventStore> _logger;
 
   public DapperPostgresEventStore(
@@ -30,11 +33,13 @@ public class DapperPostgresEventStore : DapperEventStoreBase {
     IJsonbPersistenceAdapter<IMessageEnvelope> adapter,
     JsonbSizeValidator sizeValidator,
     IPolicyEngine policyEngine,
+    IPerspectiveInvoker? perspectiveInvoker,
     ILogger<DapperPostgresEventStore> logger
   ) : base(connectionFactory, executor, jsonOptions) {
     _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
     _sizeValidator = sizeValidator ?? throw new ArgumentNullException(nameof(sizeValidator));
     _policyEngine = policyEngine ?? throw new ArgumentNullException(nameof(policyEngine));
+    _perspectiveInvoker = perspectiveInvoker;
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   }
 
@@ -84,6 +89,11 @@ public class DapperPostgresEventStore : DapperEventStoreBase {
             CreatedAt = DateTimeOffset.UtcNow
           },
           cancellationToken: cancellationToken);
+
+        // Queue event for perspective invocation at scope disposal
+        if (_perspectiveInvoker != null && payload is IEvent @event) {
+          _perspectiveInvoker.QueueEvent(@event);
+        }
 
         // Success - exit retry loop
         return;

@@ -11,7 +11,7 @@ public interface IProductLens {
   /// <param name="productId">The product identifier</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>The product DTO if found and not deleted, null otherwise</returns>
-  Task<ProductDto?> GetByIdAsync(string productId, CancellationToken cancellationToken = default);
+  Task<ProductDto?> GetByIdAsync(Guid productId, CancellationToken cancellationToken = default);
 
   /// <summary>
   /// Gets all products.
@@ -27,5 +27,5 @@ public interface IProductLens {
   /// <param name="productIds">Product identifiers to retrieve</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>List of matching products (only non-deleted, empty if none found)</returns>
-  Task<IReadOnlyList<ProductDto>> GetByIdsAsync(IEnumerable<string> productIds, CancellationToken cancellationToken = default);
+  Task<IReadOnlyList<ProductDto>> GetByIdsAsync(IEnumerable<Guid> productIds, CancellationToken cancellationToken = default);
 }

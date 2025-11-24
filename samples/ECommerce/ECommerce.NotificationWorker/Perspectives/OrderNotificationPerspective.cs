@@ -23,9 +23,9 @@ public class OrderNotificationPerspective : IPerspectiveOf<OrderCreatedEvent> {
       @event.CustomerId);
 
     var notificationCommand = new SendNotificationCommand {
-      CustomerId = @event.CustomerId,
-      Subject = $"Order Confirmation - Order #{@event.OrderId}",
-      Message = $"Thank you for your order! Your order #{@event.OrderId} totaling ${@event.TotalAmount:F2} has been received and is being processed.",
+      CustomerId = @event.CustomerId.Value.ToString(),
+      Subject = $"Order Confirmation - Order #{@event.OrderId.Value}",
+      Message = $"Thank you for your order! Your order #{@event.OrderId.Value} totaling ${@event.TotalAmount:F2} has been received and is being processed.",
       Type = NotificationType.Email
     };
 

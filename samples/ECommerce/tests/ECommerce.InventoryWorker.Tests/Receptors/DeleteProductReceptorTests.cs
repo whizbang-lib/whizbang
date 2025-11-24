@@ -17,8 +17,10 @@ public class DeleteProductReceptorTests {
     var logger = new TestLogger<DeleteProductReceptor>();
     var receptor = new DeleteProductReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new DeleteProductCommand {
-      ProductId = "prod-123"
+
+      ProductId = productId,
     };
 
     // Act
@@ -26,7 +28,7 @@ public class DeleteProductReceptorTests {
 
     // Assert
     await Assert.That(result).IsNotNull();
-    await Assert.That(result.ProductId).IsEqualTo("prod-123");
+    await Assert.That(result.ProductId).IsEqualTo(productId);
   }
 
   [Test]
@@ -36,8 +38,10 @@ public class DeleteProductReceptorTests {
     var logger = new TestLogger<DeleteProductReceptor>();
     var receptor = new DeleteProductReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new DeleteProductCommand {
-      ProductId = "prod-456"
+
+      ProductId = productId,
     };
 
     // Act
@@ -48,7 +52,7 @@ public class DeleteProductReceptorTests {
     await Assert.That(dispatcher.PublishedEvents[0]).IsTypeOf<ProductDeletedEvent>();
 
     var publishedEvent = (ProductDeletedEvent)dispatcher.PublishedEvents[0];
-    await Assert.That(publishedEvent.ProductId).IsEqualTo("prod-456");
+    await Assert.That(publishedEvent.ProductId).IsEqualTo(productId);
   }
 
   [Test]
@@ -60,8 +64,10 @@ public class DeleteProductReceptorTests {
 
     var beforeCall = DateTime.UtcNow;
 
+    var productId = Guid.CreateVersion7();
     var command = new DeleteProductCommand {
-      ProductId = "prod-time"
+
+      ProductId = productId,
     };
 
     // Act
@@ -81,8 +87,10 @@ public class DeleteProductReceptorTests {
     var logger = new TestLogger<DeleteProductReceptor>();
     var receptor = new DeleteProductReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new DeleteProductCommand {
-      ProductId = "prod-log"
+
+      ProductId = productId,
     };
 
     // Act
@@ -99,8 +107,10 @@ public class DeleteProductReceptorTests {
     var logger = new TestLogger<DeleteProductReceptor>();
     var receptor = new DeleteProductReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new DeleteProductCommand {
-      ProductId = "prod-cancel"
+
+      ProductId = productId,
     };
 
     var cts = new CancellationTokenSource();
@@ -119,16 +129,18 @@ public class DeleteProductReceptorTests {
     var logger = new TestLogger<DeleteProductReceptor>();
     var receptor = new DeleteProductReceptor(dispatcher, logger);
 
-    var command1 = new DeleteProductCommand { ProductId = "prod-001" };
-    var command2 = new DeleteProductCommand { ProductId = "prod-002" };
+    var productId1 = Guid.CreateVersion7();
+    var command1 = new DeleteProductCommand { ProductId = productId1 };
+    var productId2 = Guid.CreateVersion7();
+    var command2 = new DeleteProductCommand { ProductId = productId2 };
 
     // Act
     var result1 = await receptor.HandleAsync(command1);
     var result2 = await receptor.HandleAsync(command2);
 
     // Assert
-    await Assert.That(result1.ProductId).IsEqualTo("prod-001");
-    await Assert.That(result2.ProductId).IsEqualTo("prod-002");
+    await Assert.That(result1.ProductId).IsEqualTo(productId1);
+    await Assert.That(result2.ProductId).IsEqualTo(productId2);
     await Assert.That(dispatcher.PublishedEvents).HasCount().EqualTo(2);
   }
 }

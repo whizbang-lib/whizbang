@@ -17,8 +17,10 @@ public class RestockInventoryReceptorTests {
     var logger = new TestLogger<RestockInventoryReceptor>();
     var receptor = new RestockInventoryReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new RestockInventoryCommand {
-      ProductId = "prod-123",
+
+      ProductId = productId,
       QuantityToAdd = 50
     };
 
@@ -27,7 +29,7 @@ public class RestockInventoryReceptorTests {
 
     // Assert
     await Assert.That(result).IsNotNull();
-    await Assert.That(result.ProductId).IsEqualTo("prod-123");
+    await Assert.That(result.ProductId).IsEqualTo(productId);
     await Assert.That(result.QuantityAdded).IsEqualTo(50);
   }
 
@@ -38,8 +40,10 @@ public class RestockInventoryReceptorTests {
     var logger = new TestLogger<RestockInventoryReceptor>();
     var receptor = new RestockInventoryReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new RestockInventoryCommand {
-      ProductId = "prod-456",
+
+      ProductId = productId,
       QuantityToAdd = 100
     };
 
@@ -51,7 +55,7 @@ public class RestockInventoryReceptorTests {
     await Assert.That(dispatcher.PublishedEvents[0]).IsTypeOf<InventoryRestockedEvent>();
 
     var publishedEvent = (InventoryRestockedEvent)dispatcher.PublishedEvents[0];
-    await Assert.That(publishedEvent.ProductId).IsEqualTo("prod-456");
+    await Assert.That(publishedEvent.ProductId).IsEqualTo(productId);
     await Assert.That(publishedEvent.QuantityAdded).IsEqualTo(100);
   }
 
@@ -64,8 +68,10 @@ public class RestockInventoryReceptorTests {
 
     var beforeCall = DateTime.UtcNow;
 
+    var productId = Guid.CreateVersion7();
     var command = new RestockInventoryCommand {
-      ProductId = "prod-time",
+
+      ProductId = productId,
       QuantityToAdd = 25
     };
 
@@ -86,8 +92,10 @@ public class RestockInventoryReceptorTests {
     var logger = new TestLogger<RestockInventoryReceptor>();
     var receptor = new RestockInventoryReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new RestockInventoryCommand {
-      ProductId = "prod-log",
+
+      ProductId = productId,
       QuantityToAdd = 10
     };
 
@@ -105,8 +113,10 @@ public class RestockInventoryReceptorTests {
     var logger = new TestLogger<RestockInventoryReceptor>();
     var receptor = new RestockInventoryReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new RestockInventoryCommand {
-      ProductId = "prod-cancel",
+
+      ProductId = productId,
       QuantityToAdd = 5
     };
 
@@ -126,8 +136,10 @@ public class RestockInventoryReceptorTests {
     var logger = new TestLogger<RestockInventoryReceptor>();
     var receptor = new RestockInventoryReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new RestockInventoryCommand {
-      ProductId = "prod-large",
+
+      ProductId = productId,
       QuantityToAdd = 10000
     };
 
@@ -145,8 +157,10 @@ public class RestockInventoryReceptorTests {
     var logger = new TestLogger<RestockInventoryReceptor>();
     var receptor = new RestockInventoryReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new RestockInventoryCommand {
-      ProductId = "prod-zero",
+
+      ProductId = productId,
       QuantityToAdd = 0
     };
 
@@ -164,8 +178,10 @@ public class RestockInventoryReceptorTests {
     var logger = new TestLogger<RestockInventoryReceptor>();
     var receptor = new RestockInventoryReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new RestockInventoryCommand {
-      ProductId = "prod-total",
+
+      ProductId = productId,
       QuantityToAdd = 50
     };
 

@@ -4,6 +4,7 @@ using ECommerce.OrderService.API.Receptors;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 
 namespace ECommerce.OrderService.Tests;
@@ -16,11 +17,11 @@ public class CreateOrderReceptor2Tests {
   /// Helper class to track outbox calls
   /// </summary>
   private class TestOutbox : IOutbox {
-    public List<(MessageId messageId, string topic, byte[] payload)> StoredMessages { get; } = new();
+    public List<(IMessageEnvelope envelope, string destination)> StoredMessages { get; } = new();
     public int StoreCount => StoredMessages.Count;
 
-    public Task StoreAsync(MessageId messageId, string topic, byte[] payload, CancellationToken cancellationToken = default) {
-      StoredMessages.Add((messageId, topic, payload));
+    public Task StoreAsync(IMessageEnvelope envelope, string destination, CancellationToken cancellationToken = default) {
+      StoredMessages.Add((envelope, destination));
       return Task.CompletedTask;
     }
 
@@ -40,12 +41,15 @@ public class CreateOrderReceptor2Tests {
     var logger = NullLogger<CreateOrderReceptor2>.Instance;
     var receptor = new CreateOrderReceptor2(outbox, logger);
 
+    var orderId = OrderId.New();
+    var customerId = CustomerId.New();
+    var productId = ProductId.New();
     var command = new CreateOrderCommand {
-      OrderId = Guid.NewGuid().ToString(),
-      CustomerId = "CUST-001",
+      OrderId = orderId,
+      CustomerId = customerId,
       LineItems = new List<OrderLineItem> {
         new OrderLineItem {
-          ProductId = "PROD-001",
+          ProductId = productId,
           ProductName = "Widget",
           Quantity = 2,
           UnitPrice = 19.99m
@@ -64,9 +68,9 @@ public class CreateOrderReceptor2Tests {
     await Assert.That(result.LineItems).HasCount().EqualTo(1);
     await Assert.That(result.TotalAmount).IsEqualTo(39.98m);
 
-    // Verify StoreAsync was called with correct topic
+    // Verify StoreAsync was called with correct destination
     await Assert.That(outbox.StoreCount).IsEqualTo(1);
-    await Assert.That(outbox.StoredMessages[0].topic).IsEqualTo("orders/created");
+    await Assert.That(outbox.StoredMessages[0].destination).IsEqualTo("orders/created");
   }
 
   [Test]
@@ -77,11 +81,11 @@ public class CreateOrderReceptor2Tests {
     var receptor = new CreateOrderReceptor2(outbox, logger);
 
     var command = new CreateOrderCommand {
-      OrderId = Guid.NewGuid().ToString(),
-      CustomerId = "CUST-001",
+      OrderId = OrderId.New(),
+      CustomerId = CustomerId.New(),
       LineItems = new List<OrderLineItem> {
         new OrderLineItem {
-          ProductId = "PROD-001",
+          ProductId = ProductId.New(),
           ProductName = "Widget",
           Quantity = 2,
           UnitPrice = 19.99m
@@ -104,11 +108,11 @@ public class CreateOrderReceptor2Tests {
     var receptor = new CreateOrderReceptor2(outbox, logger);
 
     var command = new CreateOrderCommand {
-      OrderId = Guid.NewGuid().ToString(),
-      CustomerId = "CUST-001",
+      OrderId = OrderId.New(),
+      CustomerId = CustomerId.New(),
       LineItems = new List<OrderLineItem> {
         new OrderLineItem {
-          ProductId = "PROD-001",
+          ProductId = ProductId.New(),
           ProductName = "Widget",
           Quantity = 2,
           UnitPrice = 19.99m
@@ -131,8 +135,8 @@ public class CreateOrderReceptor2Tests {
     var receptor = new CreateOrderReceptor2(outbox, logger);
 
     var command = new CreateOrderCommand {
-      OrderId = Guid.NewGuid().ToString(),
-      CustomerId = "CUST-001",
+      OrderId = OrderId.New(),
+      CustomerId = CustomerId.New(),
       LineItems = new List<OrderLineItem>(),  // Empty list
       TotalAmount = 39.98m
     };
@@ -150,20 +154,22 @@ public class CreateOrderReceptor2Tests {
     var logger = NullLogger<CreateOrderReceptor2>.Instance;
     var receptor = new CreateOrderReceptor2(outbox, logger);
 
-    var orderId = Guid.NewGuid().ToString();
-    var customerId = "CUST-123";
+    var orderId = OrderId.New();
+    var customerId = CustomerId.New();
+    var productId1 = ProductId.New();
+    var productId2 = ProductId.New();
     var command = new CreateOrderCommand {
       OrderId = orderId,
       CustomerId = customerId,
       LineItems = new List<OrderLineItem> {
         new OrderLineItem {
-          ProductId = "PROD-001",
+          ProductId = productId1,
           ProductName = "Widget",
           Quantity = 2,
           UnitPrice = 19.99m
         },
         new OrderLineItem {
-          ProductId = "PROD-002",
+          ProductId = productId2,
           ProductName = "Gadget",
           Quantity = 1,
           UnitPrice = 29.99m

@@ -1,8 +1,8 @@
 -- Whizbang Messaging Infrastructure - PostgreSQL Schema
 -- Description: Schema for inbox, outbox, request/response store, event store, and sequences
 
--- Inbox table for message deduplication (ExactlyOnce receiving)
--- Uses 3-column JSONB pattern (event_data, metadata, scope) like event store
+-- Inbox table for message ingestion staging (receives from remote outbox)
+-- Uses 3-column JSONB pattern (event_data, metadata, scope) like event store and outbox
 CREATE TABLE IF NOT EXISTS whizbang_inbox (
   message_id UUID PRIMARY KEY,
   handler_name VARCHAR(500) NOT NULL,
@@ -10,11 +10,13 @@ CREATE TABLE IF NOT EXISTS whizbang_inbox (
   event_data JSONB NOT NULL,
   metadata JSONB NOT NULL,
   scope JSONB,
-  processed_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  received_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  processed_at TIMESTAMPTZ NULL
 );
 
-CREATE INDEX IF NOT EXISTS ix_whizbang_inbox_processed_at ON whizbang_inbox(processed_at);
+CREATE INDEX IF NOT EXISTS ix_whizbang_inbox_processed_at ON whizbang_inbox(processed_at) WHERE processed_at IS NULL;
 CREATE INDEX IF NOT EXISTS ix_whizbang_inbox_event_type ON whizbang_inbox(event_type);
+CREATE INDEX IF NOT EXISTS ix_whizbang_inbox_received_at ON whizbang_inbox(received_at);
 
 -- Outbox table for transactional outbox pattern (ExactlyOnce sending)
 -- Uses 3-column JSONB pattern (event_data, metadata, scope) like event store

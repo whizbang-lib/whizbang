@@ -30,7 +30,7 @@ public class OutboxPublisherTests {
     var adapter = new EventEnvelopeJsonbAdapter(jsonOptions);
     var outbox = new InMemoryOutbox(adapter);
     var transport = new FakeTransport();
-    var publisher = new OutboxPublisher(outbox, transport);
+    var publisher = new OutboxPublisher(outbox, transport, jsonOptions);
 
     var messageId = MessageId.New();
     var envelope = new MessageEnvelope<OutboxPublisherTestEvent> {
@@ -60,7 +60,7 @@ public class OutboxPublisherTests {
     var adapter = new EventEnvelopeJsonbAdapter(jsonOptions);
     var outbox = new InMemoryOutbox(adapter);
     var transport = new FakeTransport();
-    var publisher = new OutboxPublisher(outbox, transport);
+    var publisher = new OutboxPublisher(outbox, transport, jsonOptions);
 
     // Act
     await publisher.PublishPendingAsync(batchSize: 10);
@@ -76,7 +76,7 @@ public class OutboxPublisherTests {
     var adapter = new EventEnvelopeJsonbAdapter(jsonOptions);
     var outbox = new InMemoryOutbox(adapter);
     var transport = new FakeTransport();
-    var publisher = new OutboxPublisher(outbox, transport);
+    var publisher = new OutboxPublisher(outbox, transport, jsonOptions);
 
     // Store 5 messages
     for (int i = 0; i < 5; i++) {
@@ -103,7 +103,7 @@ public class OutboxPublisherTests {
     var adapter = new EventEnvelopeJsonbAdapter(jsonOptions);
     var outbox = new InMemoryOutbox(adapter);
     var transport = new FakeTransport { ShouldFail = true };
-    var publisher = new OutboxPublisher(outbox, transport);
+    var publisher = new OutboxPublisher(outbox, transport, jsonOptions);
 
     var messageId = MessageId.New();
     var envelope = new MessageEnvelope<OutboxPublisherTestEvent> {
@@ -130,7 +130,7 @@ public class OutboxPublisherTests {
     var adapter = new EventEnvelopeJsonbAdapter(jsonOptions);
     var outbox = new InMemoryOutbox(adapter);
     var transport = new FakeTransport();
-    var publisher = new OutboxPublisher(outbox, transport);
+    var publisher = new OutboxPublisher(outbox, transport, jsonOptions);
 
     var id1 = MessageId.New();
     var id2 = MessageId.New();
@@ -165,7 +165,7 @@ public class OutboxPublisherTests {
     var adapter = new EventEnvelopeJsonbAdapter(jsonOptions);
     var outbox = new InMemoryOutbox(adapter);
     var transport = new FakeTransport();
-    var publisher = new OutboxPublisher(outbox, transport);
+    var publisher = new OutboxPublisher(outbox, transport, jsonOptions);
 
     var id1 = MessageId.New();
     var id2 = MessageId.New();

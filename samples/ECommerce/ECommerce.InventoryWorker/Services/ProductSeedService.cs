@@ -27,11 +27,25 @@ public class ProductSeedService : IHostedService {
   public async Task StartAsync(CancellationToken cancellationToken) {
     _logger.LogInformation("ProductSeedService: Checking if seeding is needed...");
 
+    // Generate deterministic UUIDv7 IDs for the 12 products
+    var prod1 = Guid.CreateVersion7();
+    var prod2 = Guid.CreateVersion7();
+    var prod3 = Guid.CreateVersion7();
+    var prod4 = Guid.CreateVersion7();
+    var prod5 = Guid.CreateVersion7();
+    var prod6 = Guid.CreateVersion7();
+    var prod7 = Guid.CreateVersion7();
+    var prod8 = Guid.CreateVersion7();
+    var prod9 = Guid.CreateVersion7();
+    var prod10 = Guid.CreateVersion7();
+    var prod11 = Guid.CreateVersion7();
+    var prod12 = Guid.CreateVersion7();
+
     // Check if any of the 12 products already exist (idempotency check)
     var productIds = new[] {
-      "prod-1", "prod-2", "prod-3", "prod-4",
-      "prod-5", "prod-6", "prod-7", "prod-8",
-      "prod-9", "prod-10", "prod-11", "prod-12"
+      prod1, prod2, prod3, prod4,
+      prod5, prod6, prod7, prod8,
+      prod9, prod10, prod11, prod12
     };
 
     var existingProducts = await _productLens.GetByIdsAsync(productIds, cancellationToken);
@@ -48,7 +62,7 @@ public class ProductSeedService : IHostedService {
     // Seed all 12 products with stock levels matching frontend mocks
     var createProductCommands = new[] {
       new CreateProductCommand {
-        ProductId = "prod-1",
+        ProductId = ProductId.From(prod1),
         Name = "Team Sweatshirt",
         Description = "Premium heavyweight hoodie with embroidered team logo and school colors",
         Price = 45.99m,
@@ -56,7 +70,7 @@ public class ProductSeedService : IHostedService {
         InitialStock = 75
       },
       new CreateProductCommand {
-        ProductId = "prod-2",
+        ProductId = ProductId.From(prod2),
         Name = "Team T-Shirt",
         Description = "Moisture-wicking performance tee with screen-printed team name",
         Price = 24.99m,
@@ -64,7 +78,7 @@ public class ProductSeedService : IHostedService {
         InitialStock = 120
       },
       new CreateProductCommand {
-        ProductId = "prod-3",
+        ProductId = ProductId.From(prod3),
         Name = "Official Match Soccer Ball",
         Description = "Size 5 competition soccer ball with team logo, FIFA quality approved",
         Price = 34.99m,
@@ -72,7 +86,7 @@ public class ProductSeedService : IHostedService {
         InitialStock = 45
       },
       new CreateProductCommand {
-        ProductId = "prod-4",
+        ProductId = ProductId.From(prod4),
         Name = "Team Baseball Cap",
         Description = "Adjustable snapback cap with embroidered logo and moisture-wicking band",
         Price = 19.99m,
@@ -80,7 +94,7 @@ public class ProductSeedService : IHostedService {
         InitialStock = 90
       },
       new CreateProductCommand {
-        ProductId = "prod-5",
+        ProductId = ProductId.From(prod5),
         Name = "Foam #1 Finger",
         Description = "Giant foam finger in school colors - perfect for game day!",
         Price = 12.99m,
@@ -88,7 +102,7 @@ public class ProductSeedService : IHostedService {
         InitialStock = 150
       },
       new CreateProductCommand {
-        ProductId = "prod-6",
+        ProductId = ProductId.From(prod6),
         Name = "Team Golf Umbrella",
         Description = "62-inch vented canopy umbrella with team colors and logo",
         Price = 29.99m,
@@ -96,7 +110,7 @@ public class ProductSeedService : IHostedService {
         InitialStock = 35
       },
       new CreateProductCommand {
-        ProductId = "prod-7",
+        ProductId = ProductId.From(prod7),
         Name = "Portable Stadium Seat",
         Description = "Padded bleacher cushion with backrest in team colors",
         Price = 32.99m,
@@ -104,7 +118,7 @@ public class ProductSeedService : IHostedService {
         InitialStock = 60
       },
       new CreateProductCommand {
-        ProductId = "prod-8",
+        ProductId = ProductId.From(prod8),
         Name = "Team Beanie",
         Description = "Warm knit beanie with embroidered team logo for cold game days",
         Price = 16.99m,
@@ -112,7 +126,7 @@ public class ProductSeedService : IHostedService {
         InitialStock = 85
       },
       new CreateProductCommand {
-        ProductId = "prod-9",
+        ProductId = ProductId.From(prod9),
         Name = "Team Scarf",
         Description = "Knitted supporter scarf with team name and colors - 60 inches long",
         Price = 22.99m,
@@ -120,7 +134,7 @@ public class ProductSeedService : IHostedService {
         InitialStock = 70
       },
       new CreateProductCommand {
-        ProductId = "prod-10",
+        ProductId = ProductId.From(prod10),
         Name = "Water Bottle",
         Description = "32oz insulated stainless steel bottle with team logo",
         Price = 27.99m,
@@ -128,7 +142,7 @@ public class ProductSeedService : IHostedService {
         InitialStock = 100
       },
       new CreateProductCommand {
-        ProductId = "prod-11",
+        ProductId = ProductId.From(prod11),
         Name = "Team Pennant",
         Description = "Felt pennant flag 12x30 inches - perfect for bedroom or locker decoration",
         Price = 14.99m,
@@ -136,7 +150,7 @@ public class ProductSeedService : IHostedService {
         InitialStock = 125
       },
       new CreateProductCommand {
-        ProductId = "prod-12",
+        ProductId = ProductId.From(prod12),
         Name = "Team Drawstring Bag",
         Description = "Lightweight cinch sack with zippered pocket - great for gym or practice",
         Price = 18.99m,

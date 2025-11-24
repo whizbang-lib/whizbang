@@ -54,7 +54,8 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton<JsonbSizeValidator>();
 
     // Register Whizbang stores
-    services.AddSingleton<IEventStore, DapperPostgresEventStore>();
+    // IEventStore is registered as Scoped to allow injection of scoped IPerspectiveInvoker
+    services.AddScoped<IEventStore, DapperPostgresEventStore>();
     services.AddSingleton<IInbox, DapperPostgresInbox>();
     services.AddSingleton<IOutbox, DapperPostgresOutbox>();
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();

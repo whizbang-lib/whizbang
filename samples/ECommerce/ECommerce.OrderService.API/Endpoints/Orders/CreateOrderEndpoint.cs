@@ -37,9 +37,9 @@ public class CreateOrderEndpoint : Endpoint<CreateOrderRequest, CreateOrderRespo
   }
 
   public override async Task HandleAsync(CreateOrderRequest req, CancellationToken ct) {
-    var orderId = Guid.NewGuid().ToString();
+    var orderId = OrderId.New();
     var items = req.LineItems.Select(li => new OrderLineItem {
-      ProductId = li.ProductId,
+      ProductId = ProductId.From(Guid.Parse(li.ProductId)),
       ProductName = li.ProductName,
       Quantity = li.Quantity,
       UnitPrice = li.UnitPrice
@@ -49,7 +49,7 @@ public class CreateOrderEndpoint : Endpoint<CreateOrderRequest, CreateOrderRespo
 
     var command = new CreateOrderCommand {
       OrderId = orderId,
-      CustomerId = req.CustomerId,
+      CustomerId = CustomerId.From(Guid.Parse(req.CustomerId)),
       LineItems = items,
       TotalAmount = totalAmount
     };
@@ -58,7 +58,7 @@ public class CreateOrderEndpoint : Endpoint<CreateOrderRequest, CreateOrderRespo
     var orderCreated = await _dispatcher.LocalInvokeAsync<OrderCreatedEvent>(command);
 
     Response = new CreateOrderResponse {
-      OrderId = orderCreated.OrderId,
+      OrderId = orderCreated.OrderId.Value.ToString(),
       Status = "Created",
       TotalAmount = orderCreated.TotalAmount
     };

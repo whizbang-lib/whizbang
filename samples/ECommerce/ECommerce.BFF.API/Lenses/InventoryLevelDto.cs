@@ -8,7 +8,7 @@ public record InventoryLevelDto {
   /// <summary>
   /// Product identifier
   /// </summary>
-  public string ProductId { get; init; } = string.Empty;
+  public Guid ProductId { get; init; }
 
   /// <summary>
   /// Total quantity in inventory

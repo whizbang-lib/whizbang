@@ -8,9 +8,12 @@ using System;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Transports;
 
 namespace Whizbang.Core.Generated;
 
@@ -22,8 +25,13 @@ namespace Whizbang.Core.Generated;
 [ExcludeFromCodeCoverage]
 [DebuggerNonUserCode]
 internal sealed class GeneratedDispatcher : Dispatcher {
-  public GeneratedDispatcher(IServiceProvider serviceProvider, ITraceStore? traceStore = null)
-    : base(serviceProvider, traceStore) {
+  public GeneratedDispatcher(
+    IServiceProvider serviceProvider,
+    ITraceStore? traceStore = null,
+    IOutbox? outbox = null,
+    ITransport? transport = null,
+    JsonSerializerOptions? jsonOptions = null
+  ) : base(serviceProvider, traceStore, outbox, transport, jsonOptions) {
   }
 
   /// <summary>

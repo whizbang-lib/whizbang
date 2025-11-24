@@ -53,6 +53,7 @@ public class DapperPostgresEventStoreRetryTests {
       adapter,
       sizeValidator,
       policyEngine,
+      null, // perspectiveInvoker
       logger
     );
   }

@@ -6,5 +6,5 @@ namespace ECommerce.Contracts.Commands;
 /// Command to soft-delete a product from catalog
 /// </summary>
 public record DeleteProductCommand : ICommand {
-  public required string ProductId { get; init; }
+  public required Guid ProductId { get; init; }
 }

@@ -6,14 +6,19 @@
 
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Whizbang.Core;
+using Whizbang.Core.Data;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
+using Whizbang.Core.Transports;
 
 namespace Whizbang.Core.Generated {
   /// <summary>
-  /// Auto-generated registrations for receptors and dispatcher.
+  /// Auto-generated registrations for receptors, dispatcher, and perspective invoker.
   /// </summary>
   [ExcludeFromCodeCoverage]
   [DebuggerNonUserCode]
@@ -31,15 +36,33 @@ namespace Whizbang.Core.Generated {
     }
 
     /// <summary>
+    /// Registers the generated IPerspectiveInvoker as a Scoped service.
+    /// One instance per HTTP request or message batch for proper unit of work scoping.
+    /// </summary>
+    [ExcludeFromCodeCoverage]
+    [DebuggerNonUserCode]
+    public static IServiceCollection AddWhizbangPerspectiveInvoker(this IServiceCollection services) {
+      services.AddScoped<IPerspectiveInvoker, GeneratedPerspectiveInvoker>();
+      return services;
+    }
+
+    /// <summary>
     /// Registers the generated zero-reflection dispatcher.
-    /// Automatically uses ITraceStore if registered for envelope observability.
+    /// Automatically resolves optional Singleton dependencies: ITraceStore, IOutbox, ITransport, JsonSerializerOptions.
+    /// NOTE: IEventStore and IAggregateIdExtractor are resolved per-call from the active scope, not captured in constructor.
     /// </summary>
     [ExcludeFromCodeCoverage]
     [DebuggerNonUserCode]
     public static IServiceCollection AddWhizbangDispatcher(this IServiceCollection services) {
       services.AddSingleton<IDispatcher>(sp => {
         var traceStore = sp.GetService<ITraceStore>();
-        return new GeneratedDispatcher(sp, traceStore);
+        var outbox = sp.GetService<IOutbox>();
+        var transport = sp.GetService<ITransport>();
+        var jsonOptions = sp.GetService<JsonSerializerOptions>();
+
+        // Do NOT resolve IEventStore or IAggregateIdExtractor here - they may be Scoped
+        // The Dispatcher will resolve them per-call from the active service provider
+        return new GeneratedDispatcher(sp, traceStore, outbox, transport, jsonOptions);
       });
       services.AddSingleton<Dispatcher>(sp => (GeneratedDispatcher)sp.GetRequiredService<IDispatcher>());
       return services;

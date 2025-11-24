@@ -1,0 +1,633 @@
+using System.Collections.Immutable;
+using System.Linq;
+using System.Text;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+
+namespace Whizbang.Generators;
+
+/// <summary>
+/// Source generator that discovers [WhizbangId] attributes and generates strongly-typed ID value objects.
+/// Supports three discovery patterns: explicit type, property-based, and parameter-based.
+/// Generated IDs include UUIDv7 support, equality, JSON converters, and auto-registration.
+/// </summary>
+[Generator]
+public class WhizbangIdGenerator : IIncrementalGenerator {
+  private const string WHIZBANGID_ATTRIBUTE = "Whizbang.Core.WhizbangIdAttribute";
+
+  public void Initialize(IncrementalGeneratorInitializationContext context) {
+    // Phase 2.1: Type-based discovery - [WhizbangId] on struct declarations
+    var typeBasedIds = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) => node is StructDeclarationSyntax { AttributeLists.Count: > 0 },
+        transform: static (ctx, ct) => ExtractTypeBasedId(ctx, ct)
+    ).Where(static info => info is not null);
+
+    // Phase 2.2: Property-based discovery - [WhizbangId] on property types
+    var propertyBasedIds = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) => node is PropertyDeclarationSyntax { AttributeLists.Count: > 0 },
+        transform: static (ctx, ct) => ExtractPropertyBasedId(ctx, ct)
+    ).Where(static info => info is not null);
+
+    // Phase 2.3: Parameter-based discovery - [WhizbangId] on primary constructor parameters
+    var parameterBasedIds = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) => node is ParameterSyntax { AttributeLists.Count: > 0 },
+        transform: static (ctx, ct) => ExtractParameterBasedId(ctx, ct)
+    ).Where(static info => info is not null);
+
+    // Combine all discovery sources
+    var allIds = typeBasedIds.Collect()
+        .Combine(propertyBasedIds.Collect())
+        .Combine(parameterBasedIds.Collect());
+
+    // Generate code from discovered IDs and emit diagnostics
+    context.RegisterSourceOutput(
+        allIds,
+        static (ctx, data) => {
+          var typeIds = data.Left.Left;
+          var propertyIds = data.Left.Right;
+          var parameterIds = data.Right;
+
+          // Flatten all IDs into single array
+          var builder = ImmutableArray.CreateBuilder<(WhizbangIdInfo?, Location?, string?)?>();
+          builder.AddRange(typeIds);
+          builder.AddRange(propertyIds);
+          builder.AddRange(parameterIds);
+
+          GenerateWhizbangIds(ctx, builder.ToImmutable());
+        }
+    );
+
+    // Generate WhizbangIdJsonContext for JSON serialization
+    context.RegisterSourceOutput(
+        allIds,
+        static (ctx, data) => {
+          var typeIds = data.Left.Left;
+          var propertyIds = data.Left.Right;
+          var parameterIds = data.Right;
+
+          // Flatten all IDs into single array
+          var builder = ImmutableArray.CreateBuilder<(WhizbangIdInfo?, Location?, string?)?>();
+          builder.AddRange(typeIds);
+          builder.AddRange(propertyIds);
+          builder.AddRange(parameterIds);
+
+          GenerateWhizbangIdJsonContext(ctx, builder.ToImmutable());
+        }
+    );
+  }
+
+  /// <summary>
+  /// Extracts WhizbangIdInfo from a struct declaration with [WhizbangId] attribute.
+  /// Returns a tuple of (WhizbangIdInfo, DiagnosticInfo) where DiagnosticInfo can be null or an error.
+  /// </summary>
+  private static (WhizbangIdInfo?, Location?, string?)? ExtractTypeBasedId(
+      GeneratorSyntaxContext context,
+      CancellationToken ct) {
+
+    var structDecl = (StructDeclarationSyntax)context.Node;
+    var structSymbol = context.SemanticModel.GetDeclaredSymbol(structDecl, ct);
+
+    if (structSymbol is null) {
+      return null;
+    }
+
+    // Check for [WhizbangId] attribute
+    var whizbangIdAttr = structSymbol.GetAttributes().FirstOrDefault(a =>
+        a.AttributeClass?.Name == "WhizbangIdAttribute" ||
+        a.AttributeClass?.Name == "WhizbangId" ||
+        a.AttributeClass?.ToDisplayString() == WHIZBANGID_ATTRIBUTE ||
+        a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{WHIZBANGID_ATTRIBUTE}");
+
+    if (whizbangIdAttr is null) {
+      return null;
+    }
+
+    // Check if struct is partial (required for source generation)
+    if (!structDecl.Modifiers.Any(m => m.Text == "partial")) {
+      // Emit WHIZ021 diagnostic - return location and type name for diagnostic
+      return (null, structDecl.GetLocation(), structSymbol.Name);
+    }
+
+    // Extract namespace - either from attribute or containing namespace
+    var targetNamespace = structSymbol.ContainingNamespace?.ToDisplayString() ?? "Global";
+
+    // Check for Namespace property in attribute
+    var namespaceArg = whizbangIdAttr.NamedArguments.FirstOrDefault(kvp => kvp.Key == "Namespace");
+    if (namespaceArg.Value.Value is string customNamespace && !string.IsNullOrWhiteSpace(customNamespace)) {
+      targetNamespace = customNamespace;
+    }
+
+    // Check for constructor argument with namespace
+    if (whizbangIdAttr.ConstructorArguments.Length > 0) {
+      var constructorNamespace = whizbangIdAttr.ConstructorArguments[0].Value as string;
+      if (!string.IsNullOrWhiteSpace(constructorNamespace)) {
+        targetNamespace = constructorNamespace;
+      }
+    }
+
+    // Extract SuppressDuplicateWarning property
+    var suppressWarning = false;
+    var suppressArg = whizbangIdAttr.NamedArguments.FirstOrDefault(kvp => kvp.Key == "SuppressDuplicateWarning");
+    if (suppressArg.Value.Value is bool suppress) {
+      suppressWarning = suppress;
+    }
+
+    var idInfo = new WhizbangIdInfo(
+        TypeName: structSymbol.Name,
+        Namespace: targetNamespace,
+        Source: DiscoverySource.ExplicitType,
+        SuppressDuplicateWarning: suppressWarning
+    );
+
+    return (idInfo, null, null);
+  }
+
+  /// <summary>
+  /// Extracts WhizbangIdInfo from a property with [WhizbangId] attribute.
+  /// The type of the property becomes the generated ID type.
+  /// </summary>
+  private static (WhizbangIdInfo?, Location?, string?)? ExtractPropertyBasedId(
+      GeneratorSyntaxContext context,
+      CancellationToken ct) {
+
+    var propertyDecl = (PropertyDeclarationSyntax)context.Node;
+    var propertySymbol = context.SemanticModel.GetDeclaredSymbol(propertyDecl, ct) as IPropertySymbol;
+
+    if (propertySymbol is null) {
+      return null;
+    }
+
+    // Check for [WhizbangId] attribute
+    var whizbangIdAttr = propertySymbol.GetAttributes().FirstOrDefault(a =>
+        a.AttributeClass?.Name == "WhizbangIdAttribute" ||
+        a.AttributeClass?.Name == "WhizbangId" ||
+        a.AttributeClass?.ToDisplayString() == WHIZBANGID_ATTRIBUTE ||
+        a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{WHIZBANGID_ATTRIBUTE}");
+
+    if (whizbangIdAttr is null) {
+      return null;
+    }
+
+    // Extract the property type name (e.g., "ProductId" from "public ProductId Id { get; set; }")
+    var typeName = propertySymbol.Type.Name;
+
+    // Extract namespace - either from attribute or containing type's namespace
+    var containingType = propertySymbol.ContainingType;
+    var targetNamespace = containingType?.ContainingNamespace?.ToDisplayString() ?? "Global";
+
+    // Check for Namespace property in attribute
+    var namespaceArg = whizbangIdAttr.NamedArguments.FirstOrDefault(kvp => kvp.Key == "Namespace");
+    if (namespaceArg.Value.Value is string customNamespace && !string.IsNullOrWhiteSpace(customNamespace)) {
+      targetNamespace = customNamespace;
+    }
+
+    // Check for constructor argument with namespace
+    if (whizbangIdAttr.ConstructorArguments.Length > 0) {
+      var constructorNamespace = whizbangIdAttr.ConstructorArguments[0].Value as string;
+      if (!string.IsNullOrWhiteSpace(constructorNamespace)) {
+        targetNamespace = constructorNamespace;
+      }
+    }
+
+    // Extract SuppressDuplicateWarning property
+    var suppressWarning = false;
+    var suppressArg = whizbangIdAttr.NamedArguments.FirstOrDefault(kvp => kvp.Key == "SuppressDuplicateWarning");
+    if (suppressArg.Value.Value is bool suppress) {
+      suppressWarning = suppress;
+    }
+
+    var idInfo = new WhizbangIdInfo(
+        TypeName: typeName,
+        Namespace: targetNamespace,
+        Source: DiscoverySource.Property,
+        SuppressDuplicateWarning: suppressWarning
+    );
+
+    return (idInfo, null, null);
+  }
+
+  /// <summary>
+  /// Extracts WhizbangIdInfo from a parameter with [WhizbangId] attribute.
+  /// The type of the parameter becomes the generated ID type.
+  /// </summary>
+  private static (WhizbangIdInfo?, Location?, string?)? ExtractParameterBasedId(
+      GeneratorSyntaxContext context,
+      CancellationToken ct) {
+
+    var parameterDecl = (ParameterSyntax)context.Node;
+    var parameterSymbol = context.SemanticModel.GetDeclaredSymbol(parameterDecl, ct) as IParameterSymbol;
+
+    if (parameterSymbol is null) {
+      return null;
+    }
+
+    // Check for [WhizbangId] attribute
+    var whizbangIdAttr = parameterSymbol.GetAttributes().FirstOrDefault(a =>
+        a.AttributeClass?.Name == "WhizbangIdAttribute" ||
+        a.AttributeClass?.Name == "WhizbangId" ||
+        a.AttributeClass?.ToDisplayString() == WHIZBANGID_ATTRIBUTE ||
+        a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{WHIZBANGID_ATTRIBUTE}");
+
+    if (whizbangIdAttr is null) {
+      return null;
+    }
+
+    // Extract the parameter type name (e.g., "ProductId" from "[WhizbangId] ProductId Id")
+    var typeName = parameterSymbol.Type.Name;
+
+    // Extract namespace - either from attribute or containing type's namespace
+    var containingMethod = parameterSymbol.ContainingSymbol as IMethodSymbol;
+    var containingType = containingMethod?.ContainingType;
+    var targetNamespace = containingType?.ContainingNamespace?.ToDisplayString() ?? "Global";
+
+    // Check for Namespace property in attribute
+    var namespaceArg = whizbangIdAttr.NamedArguments.FirstOrDefault(kvp => kvp.Key == "Namespace");
+    if (namespaceArg.Value.Value is string customNamespace && !string.IsNullOrWhiteSpace(customNamespace)) {
+      targetNamespace = customNamespace;
+    }
+
+    // Check for constructor argument with namespace
+    if (whizbangIdAttr.ConstructorArguments.Length > 0) {
+      var constructorNamespace = whizbangIdAttr.ConstructorArguments[0].Value as string;
+      if (!string.IsNullOrWhiteSpace(constructorNamespace)) {
+        targetNamespace = constructorNamespace;
+      }
+    }
+
+    // Extract SuppressDuplicateWarning property
+    var suppressWarning = false;
+    var suppressArg = whizbangIdAttr.NamedArguments.FirstOrDefault(kvp => kvp.Key == "SuppressDuplicateWarning");
+    if (suppressArg.Value.Value is bool suppress) {
+      suppressWarning = suppress;
+    }
+
+    var idInfo = new WhizbangIdInfo(
+        TypeName: typeName,
+        Namespace: targetNamespace,
+        Source: DiscoverySource.Parameter,
+        SuppressDuplicateWarning: suppressWarning
+    );
+
+    return (idInfo, null, null);
+  }
+
+  /// <summary>
+  /// Generates value object code for all discovered WhizbangIds and emits diagnostics.
+  /// Handles deduplication and collision detection.
+  /// </summary>
+  private static void GenerateWhizbangIds(
+      SourceProductionContext context,
+      ImmutableArray<(WhizbangIdInfo?, Location?, string?)?> results) {
+
+    if (results.IsEmpty) {
+      return;
+    }
+
+    var validIds = new List<WhizbangIdInfo>();
+    var errors = new List<(Location, string)>();
+
+    // Separate valid IDs from errors
+    foreach (var result in results) {
+      if (result is null) {
+        continue;
+      }
+
+      var (idInfo, errorLocation, errorTypeName) = result.Value;
+
+      if (idInfo is null && errorLocation is not null && errorTypeName is not null) {
+        errors.Add((errorLocation, errorTypeName));
+      } else if (idInfo is not null) {
+        validIds.Add(idInfo);
+      }
+    }
+
+    // Emit error diagnostics
+    foreach (var (location, typeName) in errors) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.WhizbangIdMustBePartial,
+          location,
+          typeName
+      ));
+    }
+
+    if (validIds.Count == 0) {
+      return;
+    }
+
+    // Phase 3: Deduplication and collision detection
+    // Group by fully qualified name to deduplicate
+    var deduplicated = validIds
+        .GroupBy(id => id.FullyQualifiedName)
+        .Select(group => group.First())  // Take first occurrence
+        .ToList();
+
+    // Detect collisions (same type name in different namespaces)
+    var collisionGroups = deduplicated
+        .GroupBy(id => id.TypeName)
+        .Where(group => group.Count() > 1)
+        .ToList();
+
+    // Build set of types that have collisions (need namespace-qualified hint names)
+    var collidingTypeNames = new HashSet<string>();
+    foreach (var collisionGroup in collisionGroups) {
+      collidingTypeNames.Add(collisionGroup.Key);
+    }
+
+    // Emit collision warnings
+    foreach (var collisionGroup in collisionGroups) {
+      var ids = collisionGroup.ToList();
+      for (int i = 0; i < ids.Count; i++) {
+        for (int j = i + 1; j < ids.Count; j++) {
+          var id1 = ids[i];
+          var id2 = ids[j];
+
+          // Emit warning unless suppressed by either ID
+          if (!id1.SuppressDuplicateWarning && !id2.SuppressDuplicateWarning) {
+            context.ReportDiagnostic(Diagnostic.Create(
+                DiagnosticDescriptors.WhizbangIdDuplicateName,
+                Location.None,
+                id1.TypeName,
+                id1.Namespace,
+                id2.Namespace
+            ));
+          }
+        }
+      }
+    }
+
+    // Generate code for each deduplicated ID
+    foreach (var id in deduplicated) {
+      // Use namespace-qualified hint name if this type has collisions
+      var hintNamePrefix = collidingTypeNames.Contains(id.TypeName)
+          ? $"{id.Namespace.Replace(".", "")}."  // e.g., "MyAppDomain.ProductId.g.cs"
+          : "";
+
+      // Generate value object
+      var valueObjectCode = GenerateValueObject(id);
+      context.AddSource($"{hintNamePrefix}{id.TypeName}.g.cs", valueObjectCode);
+
+      // Generate JSON converter
+      var converterCode = GenerateJsonConverter(id);
+      context.AddSource($"{hintNamePrefix}{id.TypeName}JsonConverter.g.cs", converterCode);
+
+      // Generate factory for DI scenarios
+      var factoryCode = GenerateFactory(id);
+      context.AddSource($"{hintNamePrefix}{id.TypeName}Factory.g.cs", factoryCode);
+    }
+  }
+
+  /// <summary>
+  /// Generates the complete value object implementation for a WhizbangId.
+  /// </summary>
+  private static string GenerateValueObject(WhizbangIdInfo id) {
+    var sb = new StringBuilder();
+
+    // Header
+    sb.AppendLine("// <auto-generated/>");
+    sb.AppendLine($"// Generated by Whizbang.Generators.WhizbangIdGenerator");
+    sb.AppendLine("// DO NOT EDIT - Changes will be overwritten");
+    sb.AppendLine("#nullable enable");
+    sb.AppendLine();
+
+    sb.AppendLine("using System;");
+    sb.AppendLine();
+
+    sb.AppendLine($"namespace {id.Namespace};");
+    sb.AppendLine();
+
+    // Struct declaration
+    sb.AppendLine($"public readonly partial struct {id.TypeName} : IEquatable<{id.TypeName}>, IComparable<{id.TypeName}> {{");
+
+    // Private backing field
+    sb.AppendLine("  private readonly Guid _value;");
+    sb.AppendLine();
+
+    // Value property
+    sb.AppendLine("  /// <summary>Gets the underlying Guid value.</summary>");
+    sb.AppendLine("  public Guid Value => _value;");
+    sb.AppendLine();
+
+    // Private constructor
+    sb.AppendLine("  /// <summary>Private constructor for creating instances.</summary>");
+    sb.AppendLine($"  private {id.TypeName}(Guid value) => _value = value;");
+    sb.AppendLine();
+
+    // From factory method
+    sb.AppendLine("  /// <summary>Creates an instance from a Guid value.</summary>");
+    sb.AppendLine($"  public static {id.TypeName} From(Guid value) => new(value);");
+    sb.AppendLine();
+
+    // New factory method using configurable provider
+    sb.AppendLine("  /// <summary>Creates a new instance using the configured WhizbangIdProvider.</summary>");
+    sb.AppendLine($"  public static {id.TypeName} New() => new(global::Whizbang.Core.WhizbangIdProvider.NewGuid());");
+    sb.AppendLine();
+
+    // Equality members
+    sb.AppendLine("  /// <summary>Determines whether two instances are equal.</summary>");
+    sb.AppendLine($"  public bool Equals({id.TypeName} other) => _value.Equals(other._value);");
+    sb.AppendLine();
+
+    sb.AppendLine("  /// <summary>Determines whether this instance equals the specified object.</summary>");
+    sb.AppendLine("  public override bool Equals(object? obj) => obj is " + id.TypeName + " other && Equals(other);");
+    sb.AppendLine();
+
+    sb.AppendLine("  /// <summary>Returns the hash code for this instance.</summary>");
+    sb.AppendLine("  public override int GetHashCode() => _value.GetHashCode();");
+    sb.AppendLine();
+
+    // Comparison
+    sb.AppendLine("  /// <summary>Compares this instance to another.</summary>");
+    sb.AppendLine($"  public int CompareTo({id.TypeName} other) => _value.CompareTo(other._value);");
+    sb.AppendLine();
+
+    // Operators
+    sb.AppendLine("  /// <summary>Equality operator.</summary>");
+    sb.AppendLine($"  public static bool operator ==({id.TypeName} left, {id.TypeName} right) => left.Equals(right);");
+    sb.AppendLine();
+
+    sb.AppendLine("  /// <summary>Inequality operator.</summary>");
+    sb.AppendLine($"  public static bool operator !=({id.TypeName} left, {id.TypeName} right) => !left.Equals(right);");
+    sb.AppendLine();
+
+    // ToString
+    sb.AppendLine("  /// <summary>Returns the string representation of the underlying Guid.</summary>");
+    sb.AppendLine("  public override string ToString() => _value.ToString();");
+    sb.AppendLine();
+
+    // Implicit conversion to Guid
+    sb.AppendLine("  /// <summary>Implicitly converts to Guid.</summary>");
+    sb.AppendLine($"  public static implicit operator Guid({id.TypeName} id) => id._value;");
+    sb.AppendLine();
+
+    // Explicit conversion from Guid
+    sb.AppendLine("  /// <summary>Explicitly converts from Guid.</summary>");
+    sb.AppendLine($"  public static explicit operator {id.TypeName}(Guid value) => new(value);");
+
+    sb.AppendLine("}");
+
+    return sb.ToString();
+  }
+
+  /// <summary>
+  /// Generates a System.Text.Json converter for the WhizbangId.
+  /// </summary>
+  private static string GenerateJsonConverter(WhizbangIdInfo id) {
+    var sb = new StringBuilder();
+
+    // Header
+    sb.AppendLine("// <auto-generated/>");
+    sb.AppendLine($"// Generated by Whizbang.Generators.WhizbangIdGenerator");
+    sb.AppendLine("// DO NOT EDIT - Changes will be overwritten");
+    sb.AppendLine("#nullable enable");
+    sb.AppendLine();
+
+    sb.AppendLine("using System;");
+    sb.AppendLine("using System.Text.Json;");
+    sb.AppendLine("using System.Text.Json.Serialization;");
+    sb.AppendLine("using Medo;");
+    sb.AppendLine();
+
+    sb.AppendLine($"namespace {id.Namespace};");
+    sb.AppendLine();
+
+    // Converter class
+    sb.AppendLine($"/// <summary>");
+    sb.AppendLine($"/// AOT-compatible JSON converter for {id.TypeName}.");
+    sb.AppendLine($"/// Serializes {id.TypeName} using Medo.Uuid7 format for time-ordered UUIDs.");
+    sb.AppendLine($"/// </summary>");
+    sb.AppendLine($"public sealed class {id.TypeName}JsonConverter : JsonConverter<{id.TypeName}> {{");
+
+    // Read method
+    sb.AppendLine($"  public override {id.TypeName} Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {{");
+    sb.AppendLine("    var uuid7String = reader.GetString()!;");
+    sb.AppendLine("    var uuid7 = Uuid7.Parse(uuid7String);");
+    sb.AppendLine($"    return {id.TypeName}.From(uuid7.ToGuid());");
+    sb.AppendLine("  }");
+    sb.AppendLine();
+
+    // Write method
+    sb.AppendLine($"  public override void Write(Utf8JsonWriter writer, {id.TypeName} value, JsonSerializerOptions options) {{");
+    sb.AppendLine("    var uuid7 = new Uuid7(value.Value);");
+    sb.AppendLine("    writer.WriteStringValue(uuid7.ToString());");
+    sb.AppendLine("  }");
+
+    sb.AppendLine("}");
+
+    return sb.ToString();
+  }
+
+  /// <summary>
+  /// Generates a factory class for creating WhizbangId instances through dependency injection.
+  /// </summary>
+  private static string GenerateFactory(WhizbangIdInfo id) {
+    var sb = new StringBuilder();
+
+    // Header
+    sb.AppendLine("// <auto-generated/>");
+    sb.AppendLine($"// Generated by Whizbang.Generators.WhizbangIdGenerator");
+    sb.AppendLine("// DO NOT EDIT - Changes will be overwritten");
+    sb.AppendLine("#nullable enable");
+    sb.AppendLine();
+
+    sb.AppendLine($"namespace {id.Namespace};");
+    sb.AppendLine();
+
+    // Factory class
+    sb.AppendLine($"/// <summary>");
+    sb.AppendLine($"/// Factory for creating {id.TypeName} instances through dependency injection.");
+    sb.AppendLine($"/// Implements <see cref=\"global::Whizbang.Core.IWhizbangIdFactory{{T}}\" /> for {id.TypeName}.");
+    sb.AppendLine($"/// </summary>");
+    sb.AppendLine($"public sealed class {id.TypeName}Factory : global::Whizbang.Core.IWhizbangIdFactory<{id.TypeName}> {{");
+
+    // Create method
+    sb.AppendLine($"  /// <summary>");
+    sb.AppendLine($"  /// Creates a new {id.TypeName} instance using the configured WhizbangIdProvider.");
+    sb.AppendLine($"  /// </summary>");
+    sb.AppendLine($"  /// <returns>A new {id.TypeName} instance.</returns>");
+    sb.AppendLine($"  public {id.TypeName} Create() => {id.TypeName}.New();");
+
+    sb.AppendLine("}");
+
+    return sb.ToString();
+  }
+
+  /// <summary>
+  /// Generates WhizbangIdJsonContext with [JsonSerializable] attributes for all discovered WhizbangId types.
+  /// Always generates the context (even if empty) to ensure consistent availability across all projects.
+  /// </summary>
+  private static void GenerateWhizbangIdJsonContext(
+      SourceProductionContext context,
+      ImmutableArray<(WhizbangIdInfo?, Location?, string?)?> results) {
+
+    // Extract only valid IDs (filter out errors and nulls)
+    var validIds = results.IsDefaultOrEmpty
+        ? new List<WhizbangIdInfo>()
+        : results
+            .Where(r => r.HasValue && r.Value.Item1 is not null)
+            .Select(r => r!.Value.Item1!)
+            .ToList();
+
+    // Deduplicate by fully qualified name
+    var deduplicated = validIds.Count == 0
+        ? new List<WhizbangIdInfo>()
+        : validIds
+            .GroupBy(id => id.FullyQualifiedName)
+            .Select(group => group.First())
+            .ToList();
+
+    var sb = new StringBuilder();
+
+    // Header
+    sb.AppendLine("// <auto-generated/>");
+    sb.AppendLine("// Generated by Whizbang.Generators.WhizbangIdGenerator");
+    sb.AppendLine("// DO NOT EDIT - Changes will be overwritten");
+    sb.AppendLine("#nullable enable");
+    sb.AppendLine();
+
+    sb.AppendLine("using System.Text.Json.Serialization;");
+    sb.AppendLine();
+
+    sb.AppendLine("namespace Whizbang.Core.Generated;");
+    sb.AppendLine();
+
+    // Generate class that implements IJsonTypeInfoResolver
+    // Note: We implement IJsonTypeInfoResolver directly instead of using JsonSerializerContext
+    // because [JsonSerializable] attributes only work on source files, not generated files.
+    sb.AppendLine("public class WhizbangIdJsonContext : System.Text.Json.Serialization.Metadata.IJsonTypeInfoResolver {");
+    sb.AppendLine("  /// <summary>");
+    sb.AppendLine("  /// Default singleton instance of WhizbangIdJsonContext.");
+    sb.AppendLine("  /// </summary>");
+    sb.AppendLine("  public static WhizbangIdJsonContext Default { get; } = new();");
+    sb.AppendLine();
+    sb.AppendLine("  /// <summary>");
+    sb.AppendLine("  /// Resolves JsonTypeInfo for discovered WhizbangId types in this assembly.");
+    sb.AppendLine("  /// </summary>");
+    sb.AppendLine("  public System.Text.Json.Serialization.Metadata.JsonTypeInfo? GetTypeInfo(System.Type type, System.Text.Json.JsonSerializerOptions options) {");
+
+    if (deduplicated.Count == 0) {
+      // No WhizbangId types discovered - return null for all types
+      sb.AppendLine("    // No WhizbangId types discovered in this assembly");
+      sb.AppendLine("    // Return null to let next resolver in chain handle the type");
+      sb.AppendLine("    return null;");
+    } else {
+      // Generate type checks for each discovered WhizbangId
+      sb.AppendLine("    // Check for discovered WhizbangId types");
+      foreach (var id in deduplicated) {
+        sb.AppendLine($"    if (type == typeof({id.FullyQualifiedName})) {{");
+        sb.AppendLine($"      // WhizbangId types use custom JSON converters, return null");
+        sb.AppendLine($"      // The converter will be registered separately");
+        sb.AppendLine("      return null;");
+        sb.AppendLine("    }");
+        sb.AppendLine();
+      }
+      sb.AppendLine("    // Type not handled by this resolver");
+      sb.AppendLine("    return null;");
+    }
+
+    sb.AppendLine("  }");
+    sb.AppendLine("}");
+
+    // ALWAYS generate this context, even if empty, to ensure it's available for reference
+    context.AddSource("WhizbangIdJsonContext.g.cs", sb.ToString());
+  }
+}

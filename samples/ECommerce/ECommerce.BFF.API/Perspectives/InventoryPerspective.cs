@@ -69,7 +69,7 @@ public class InventoryPerspective : IPerspectiveOf<InventoryReservedEvent> {
           Timestamp = DateTime.UtcNow,
           Details = JsonSerializer.Serialize(
             new InventoryReservedDetails {
-              ProductId = @event.ProductId,
+              ProductId = @event.ProductId.ToString(),
               Quantity = @event.Quantity,
               ReservedAt = @event.ReservedAt
             },

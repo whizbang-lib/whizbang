@@ -31,8 +31,8 @@ public class ReserveInventoryReceptor : IReceptor<ReserveInventoryCommand, Inven
 
     // Reserve the inventory
     var inventoryReserved = new InventoryReservedEvent {
-      OrderId = message.OrderId,
-      ProductId = message.ProductId,
+      OrderId = message.OrderId.Value.ToString(),
+      ProductId = message.ProductId.Value,
       Quantity = message.Quantity,
       ReservedAt = DateTime.UtcNow
     };

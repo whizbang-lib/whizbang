@@ -16,7 +16,7 @@ public class InventoryLevelsLens : IInventoryLevelsLens {
   }
 
   /// <inheritdoc />
-  public async Task<InventoryLevelDto?> GetByProductIdAsync(string productId, CancellationToken cancellationToken = default) {
+  public async Task<InventoryLevelDto?> GetByProductIdAsync(Guid productId, CancellationToken cancellationToken = default) {
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
 

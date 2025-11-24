@@ -33,10 +33,16 @@ public record CreateOrder(string OrderId, string CustomerName) : ICommand;
     // Assert
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
 
-    var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
-    await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("namespace TestAssembly.Generated");
-    await Assert.That(code).Contains("public partial class WhizbangJsonContext : JsonSerializerContext");
+    // Should generate MessageJsonContext for message-specific serialization
+    var messageCode = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(messageCode).IsNotNull();
+    await Assert.That(messageCode!).Contains("namespace TestAssembly.Generated");
+    await Assert.That(messageCode).Contains("public partial class MessageJsonContext : JsonSerializerContext");
+
+    // Should also generate WhizbangJsonContext facade since there are messages
+    var facadeCode = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
+    await Assert.That(facadeCode).IsNotNull();
+    await Assert.That(facadeCode!).Contains("public class WhizbangJsonContext : IJsonTypeInfoResolver");
   }
 
   [Test]
@@ -57,7 +63,7 @@ public record CreateOrder(string OrderId, string CustomerName) : ICommand;
     // Assert
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
 
-    var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
     // Should generate factory for MessageEnvelope<CreateOrder>
@@ -89,7 +95,7 @@ namespace MyApp.Events {
     // Assert
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
 
-    var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
     // Should generate factories for all MessageEnvelope<T> types
@@ -117,7 +123,7 @@ public record CreateOrder(string OrderId) : ICommand;
     // Assert
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
 
-    var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
     // Should override GetTypeInfo with switch
@@ -144,7 +150,7 @@ public record CreateOrder(string OrderId) : ICommand;
     // Assert
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
 
-    var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
     // Should generate specific factory method for MessageEnvelope<CreateOrder>
@@ -170,7 +176,7 @@ public record CreateOrder(string OrderId) : ICommand;
     // Assert
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
 
-    var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
     // Should generate CreateProperty helper
@@ -193,7 +199,7 @@ public class SomeClass { }
     // Assert
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
 
-    var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
     // Should always generate factories for core Whizbang types
@@ -219,7 +225,7 @@ public record CreateOrder(string OrderId) : ICommand;
     // Assert
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
 
-    var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
     // Should generate GetTypeInfoInternal that calls factory methods directly (no caching)
@@ -246,7 +252,7 @@ public record CreateOrder(string OrderId) : ICommand;
     // Assert
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
 
-    var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
     // Should implement IJsonTypeInfoResolver interface
@@ -294,16 +300,20 @@ public class SomeClass { }
     // Assert
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
 
-    var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
-    // Should generate WhizbangJsonContext with only core types
-    await Assert.That(code!).Contains("public partial class WhizbangJsonContext");
+    // Should generate MessageJsonContext with only core types
+    await Assert.That(code!).Contains("public partial class MessageJsonContext");
     await Assert.That(code).Contains("MessageId");
     await Assert.That(code).Contains("CorrelationId");
 
     // Should NOT contain any user message types
     await Assert.That(code).DoesNotContain("MyApp");
+
+    // Should NOT generate WhizbangJsonContext facade since there are no messages
+    var facadeCode = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
+    await Assert.That(facadeCode).IsNull();
   }
 
   [Test]
@@ -324,7 +334,7 @@ public record CreateOrder(string OrderId) : ICommand;
     // Assert
     await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
 
-    var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
 
     // Should use fully qualified names with global:: prefix
@@ -349,7 +359,7 @@ public record OrderDto(string OrderId) : ICloneable {
     var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
     // Assert - Should generate context but not include OrderDto
-    var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
     await Assert.That(code!).DoesNotContain("OrderDto");
   }
@@ -369,11 +379,15 @@ public class SomeClass {
     // Act
     var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
-    // Assert - Should still generate context with core types
-    var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
+    // Assert - Should still generate MessageJsonContext with core types
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("WhizbangJsonContext");
+    await Assert.That(code!).Contains("public partial class MessageJsonContext");
     await Assert.That(code).Contains("MessageId"); // Core type should be present
+
+    // Should NOT generate WhizbangJsonContext facade since there are no messages
+    var facadeCode = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
+    await Assert.That(facadeCode).IsNull();
   }
 
   [Test]
@@ -395,7 +409,7 @@ public record HybridMessage : ICommand, IEvent {
     var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
     // Assert - Should generate as command (ternary picks command when both true)
-    var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
     await Assert.That(code!).Contains("HybridMessage");
 
@@ -423,7 +437,7 @@ public class LegacyCommand : ICommand {
     var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
 
     // Assert - Should generate JsonTypeInfo for class-based command
-    var code = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
     await Assert.That(code).IsNotNull();
     await Assert.That(code!).Contains("LegacyCommand");
 
@@ -431,5 +445,173 @@ public class LegacyCommand : ICommand {
     var diagnostic = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ011");
     await Assert.That(diagnostic).IsNotNull();
     await Assert.That(diagnostic!.GetMessage()).Contains("command");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_NoMessageTypes_ReportsDiagnosticWithZeroCountAsync() {
+    // Arrange - No ICommand or IEvent types
+    var source = """
+using System;
+
+namespace MyApp;
+
+public class RegularClass {
+  public string Name { get; set; } = string.Empty;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - Should still generate context
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Should report diagnostic with 0 message types (WHIZ099 is the generator invocation diagnostic)
+    var diagnostic = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ099");
+    await Assert.That(diagnostic).IsNotNull();
+    await Assert.That(diagnostic!.GetMessage()).Contains("with 0 message type(s)");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_MessageWithMultipleProperties_GeneratesValidJsonObjectCreatorAsync() {
+    // Arrange - Message with multiple properties to test trailing comma logic
+    var source = """
+using Whizbang.Core;
+
+namespace MyApp;
+
+public record MultiPropertyCommand(string Prop1, int Prop2, bool Prop3) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Verify no trailing comma on last property in constructor
+    await Assert.That(code!).Contains("MultiPropertyCommand");
+    await Assert.That(code).Contains("(bool)args[2]"); // Last property without trailing comma
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_InternalCommand_SkipsNonPublicTypeAsync() {
+    // Arrange - Tests line 54: DeclaredAccessibility != Public check
+    // Internal types should be skipped as generated code can't access them
+    var source = """
+using Whizbang.Core;
+
+namespace MyApp;
+
+public record PublicCommand(string Data) : ICommand;
+internal record InternalCommand(string Data) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - Should generate context with only public command
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("PublicCommand");
+    await Assert.That(code).DoesNotContain("InternalCommand");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_MessageWithNestedCustomType_DiscoversAndGeneratesForBothAsync() {
+    // Arrange - Tests nested type discovery (lines 599-670)
+    // Message with List<OrderLineItem> where OrderLineItem is a custom type
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace MyApp;
+
+public record OrderLineItem(string ProductId, int Quantity);
+
+public record CreateOrder(string OrderId, List<OrderLineItem> LineItems) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - Should discover both CreateOrder and nested OrderLineItem type
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("CreateOrder");
+    await Assert.That(code).Contains("OrderLineItem");  // Nested type discovered
+    await Assert.That(code).Contains("List<global::MyApp.OrderLineItem>");  // List<T> type generated
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_MessageWithPrimitiveListProperty_SkipsNestedTypeDiscoveryAsync() {
+    // Arrange - Tests line 623-625: IsPrimitiveOrFrameworkType check
+    // List<string> should not trigger nested type discovery (string is primitive)
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace MyApp;
+
+public record CreateOrder(string OrderId, List<string> Tags) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - Should not discover string as nested type, and should skip List<primitive> generation
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("CreateOrder");
+    // Generator skips List<primitive> generation - handled by framework
+    await Assert.That(code).DoesNotContain("_List_String");  // No List<string> lazy field
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_MessageWithInternalNestedType_IncludesReferenceButSkipsFactoryAsync() {
+    // Arrange - Tests line 634-636: Skip factory generation for non-public nested types
+    // Note: Internal types may still appear in List<T> type references but won't have factories generated
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace MyApp;
+
+internal record InternalDetail(string Info);
+public record PublicDetail(string Data);
+
+public record CreateOrder(string OrderId, List<PublicDetail> PublicItems) : ICommand;
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - Should discover and generate for PublicDetail
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("CreateOrder");
+    await Assert.That(code).Contains("PublicDetail");
+    // PublicDetail should have factory method
+    await Assert.That(code).Contains("Create_PublicDetail");
   }
 }

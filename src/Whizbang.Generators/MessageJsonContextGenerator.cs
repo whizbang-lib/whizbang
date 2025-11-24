@@ -196,7 +196,18 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     template = TemplateUtilities.ReplaceRegion(template, "MESSAGE_TYPE_FACTORIES", factories.ToString());
     template = TemplateUtilities.ReplaceRegion(template, "MESSAGE_ENVELOPE_FACTORIES", GenerateMessageEnvelopeFactories(assembly, messages));
 
-    context.AddSource("WhizbangJsonContext.g.cs", template);
+    context.AddSource("MessageJsonContext.g.cs", template);
+
+    // Only generate WhizbangJsonContext facade if there are messages
+    // (Whizbang.Core has a hand-written version since it has no messages)
+    if (messages.Length > 0) {
+      var facadeTemplate = TemplateUtilities.GetEmbeddedTemplate(assembly, "WhizbangJsonContextFacadeTemplate.cs");
+      facadeTemplate = TemplateUtilities.ReplaceHeaderRegion(assembly, facadeTemplate);
+      facadeTemplate = facadeTemplate.Replace("__ASSEMBLY_NAME__", assemblyName);
+      facadeTemplate = facadeTemplate.Replace("__NAMESPACE__", namespaceName);
+
+      context.AddSource("WhizbangJsonContext.g.cs", facadeTemplate);
+    }
   }
 
   private static string GenerateLazyFields(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes) {

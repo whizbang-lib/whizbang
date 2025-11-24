@@ -20,9 +20,9 @@ public class OrderMutations {
     List<OrderLineItemInput> lineItems,
     [Service] IDispatcher dispatcher) {
 
-    var orderId = Guid.NewGuid().ToString();
+    var orderId = OrderId.New();
     var items = lineItems.Select(li => new OrderLineItem {
-      ProductId = li.ProductId,
+      ProductId = ProductId.From(Guid.Parse(li.ProductId)),
       ProductName = li.ProductName,
       Quantity = li.Quantity,
       UnitPrice = li.UnitPrice
@@ -32,7 +32,7 @@ public class OrderMutations {
 
     var command = new CreateOrderCommand {
       OrderId = orderId,
-      CustomerId = customerId,
+      CustomerId = CustomerId.From(Guid.Parse(customerId)),
       LineItems = items,
       TotalAmount = totalAmount
     };
@@ -40,7 +40,7 @@ public class OrderMutations {
     // Dispatch the command locally and wait for the result
     var orderCreated = await dispatcher.LocalInvokeAsync<OrderCreatedEvent>(command);
 
-    return orderCreated.OrderId;
+    return orderCreated.OrderId.Value.ToString();
   }
 }
 

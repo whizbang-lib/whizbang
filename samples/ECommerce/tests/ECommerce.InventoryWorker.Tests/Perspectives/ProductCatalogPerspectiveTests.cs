@@ -18,12 +18,14 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
   [Test]
   public async Task Update_WithProductCreatedEvent_InsertsProductRecordAsync() {
     // Arrange
+    var productId = Guid.CreateVersion7();
     var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
     var logger = new TestLogger<ProductCatalogPerspective>();
     var perspective = new ProductCatalogPerspective(connectionFactory, logger);
 
     var @event = new ProductCreatedEvent {
-      ProductId = "prod-123",
+
+      ProductId = productId,
       Name = "Test Widget",
       Description = "A test widget",
       Price = 29.99m,
@@ -41,10 +43,10 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
 
     var product = await connection.QuerySingleOrDefaultAsync<ProductRow>(
       "SELECT product_id, name, description, price, image_url, created_at, updated_at, deleted_at FROM inventoryworker.product_catalog WHERE product_id = @ProductId",
-      new { ProductId = "prod-123" });
+      new { ProductId = productId });
 
     await Assert.That(product).IsNotNull();
-    await Assert.That(product!.product_id).IsEqualTo("prod-123");
+    await Assert.That(product!.product_id).IsEqualTo(productId);
     await Assert.That(product.name).IsEqualTo("Test Widget");
     await Assert.That(product.description).IsEqualTo("A test widget");
     await Assert.That(product.price).IsEqualTo(29.99m);
@@ -56,12 +58,14 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
   [Test]
   public async Task Update_WithProductCreatedEvent_HandlesNullImageUrlAsync() {
     // Arrange
+    var productId = Guid.CreateVersion7();
     var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
     var logger = new TestLogger<ProductCatalogPerspective>();
     var perspective = new ProductCatalogPerspective(connectionFactory, logger);
 
     var @event = new ProductCreatedEvent {
-      ProductId = "prod-no-img",
+
+      ProductId = productId,
       Name = "No Image Widget",
       Description = "Widget without image",
       Price = 14.99m,
@@ -79,7 +83,7 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
 
     var product = await connection.QuerySingleOrDefaultAsync<ProductRow>(
       "SELECT product_id, image_url FROM inventoryworker.product_catalog WHERE product_id = @ProductId",
-      new { ProductId = "prod-no-img" });
+      new { ProductId = productId });
 
     await Assert.That(product).IsNotNull();
     await Assert.That(product!.image_url).IsNull();
@@ -93,7 +97,8 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
     var perspective = new ProductCatalogPerspective(connectionFactory, logger);
 
     var @event = new ProductCreatedEvent {
-      ProductId = "prod-log",
+
+      ProductId = Guid.CreateVersion7(),
       Name = "Log Widget",
       Description = "Test logging",
       Price = 5.99m,
@@ -111,13 +116,15 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
   [Test]
   public async Task Update_WithProductUpdatedEvent_UpdatesExistingProductAsync() {
     // Arrange
+    var productId = Guid.CreateVersion7();
     var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
     var logger = new TestLogger<ProductCatalogPerspective>();
     var perspective = new ProductCatalogPerspective(connectionFactory, logger);
 
     // Create initial product
     var createdEvent = new ProductCreatedEvent {
-      ProductId = "prod-update",
+
+      ProductId = productId,
       Name = "Original Name",
       Description = "Original Description",
       Price = 10.00m,
@@ -128,7 +135,8 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
 
     // Act - Update the product
     var updatedEvent = new ProductUpdatedEvent {
-      ProductId = "prod-update",
+
+      ProductId = productId,
       Name = "Updated Name",
       Description = null, // Partial update - don't change description
       Price = 19.99m,
@@ -144,7 +152,7 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
 
     var product = await connection.QuerySingleOrDefaultAsync<ProductRow>(
       "SELECT product_id, name, description, price, image_url, updated_at FROM inventoryworker.product_catalog WHERE product_id = @ProductId",
-      new { ProductId = "prod-update" });
+      new { ProductId = productId });
 
     await Assert.That(product).IsNotNull();
     await Assert.That(product!.name).IsEqualTo("Updated Name");
@@ -157,13 +165,15 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
   [Test]
   public async Task Update_WithProductUpdatedEvent_HandlesPartialUpdatesAsync() {
     // Arrange
+    var productId = Guid.CreateVersion7();
     var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
     var logger = new TestLogger<ProductCatalogPerspective>();
     var perspective = new ProductCatalogPerspective(connectionFactory, logger);
 
     // Create initial product
     var createdEvent = new ProductCreatedEvent {
-      ProductId = "prod-partial",
+
+      ProductId = productId,
       Name = "Original Name",
       Description = "Original Description",
       Price = 10.00m,
@@ -174,7 +184,8 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
 
     // Act - Update only name
     var updatedEvent = new ProductUpdatedEvent {
-      ProductId = "prod-partial",
+
+      ProductId = productId,
       Name = "New Name",
       Description = null, // Don't change
       Price = null,       // Don't change
@@ -190,7 +201,7 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
 
     var product = await connection.QuerySingleOrDefaultAsync<ProductRow>(
       "SELECT product_id, name, description, price, image_url FROM inventoryworker.product_catalog WHERE product_id = @ProductId",
-      new { ProductId = "prod-partial" });
+      new { ProductId = productId });
 
     await Assert.That(product).IsNotNull();
     await Assert.That(product!.name).IsEqualTo("New Name");
@@ -202,13 +213,15 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
   [Test]
   public async Task Update_WithProductUpdatedEvent_SetsUpdatedAtTimestampAsync() {
     // Arrange
+    var productId = Guid.CreateVersion7();
     var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
     var logger = new TestLogger<ProductCatalogPerspective>();
     var perspective = new ProductCatalogPerspective(connectionFactory, logger);
 
     // Create initial product
     var createdEvent = new ProductCreatedEvent {
-      ProductId = "prod-timestamp",
+
+      ProductId = productId,
       Name = "Test Widget",
       Description = "Test",
       Price = 10.00m,
@@ -220,7 +233,8 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
     // Act - Update the product
     var updateTime = DateTime.UtcNow;
     var updatedEvent = new ProductUpdatedEvent {
-      ProductId = "prod-timestamp",
+
+      ProductId = productId,
       Name = "Updated Widget",
       Description = null,
       Price = null,
@@ -236,7 +250,7 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
 
     var product = await connection.QuerySingleOrDefaultAsync<ProductRow>(
       "SELECT updated_at FROM inventoryworker.product_catalog WHERE product_id = @ProductId",
-      new { ProductId = "prod-timestamp" });
+      new { ProductId = productId });
 
     await Assert.That(product).IsNotNull();
     await Assert.That(product!.updated_at).IsNotNull();
@@ -251,7 +265,8 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
 
     // Create initial product
     var createdEvent = new ProductCreatedEvent {
-      ProductId = "prod-log-update",
+
+      ProductId = Guid.CreateVersion7(),
       Name = "Test",
       Description = "Test",
       Price = 10.00m,
@@ -262,7 +277,8 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
 
     // Act
     var updatedEvent = new ProductUpdatedEvent {
-      ProductId = "prod-log-update",
+
+      ProductId = Guid.CreateVersion7(),
       Name = "Updated",
       Description = null,
       Price = null,
@@ -278,13 +294,15 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
   [Test]
   public async Task Update_WithProductDeletedEvent_SoftDeletesProductAsync() {
     // Arrange
+    var productId = Guid.CreateVersion7();
     var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
     var logger = new TestLogger<ProductCatalogPerspective>();
     var perspective = new ProductCatalogPerspective(connectionFactory, logger);
 
     // Create initial product
     var createdEvent = new ProductCreatedEvent {
-      ProductId = "prod-delete",
+
+      ProductId = productId,
       Name = "To Be Deleted",
       Description = "Will be soft deleted",
       Price = 10.00m,
@@ -296,7 +314,8 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
     // Act - Delete the product
     var deleteTime = DateTime.UtcNow;
     var deletedEvent = new ProductDeletedEvent {
-      ProductId = "prod-delete",
+
+      ProductId = productId,
       DeletedAt = deleteTime
     };
     await perspective.Update(deletedEvent, CancellationToken.None);
@@ -308,10 +327,10 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
 
     var product = await connection.QuerySingleOrDefaultAsync<ProductRow>(
       "SELECT product_id, name, deleted_at FROM inventoryworker.product_catalog WHERE product_id = @ProductId",
-      new { ProductId = "prod-delete" });
+      new { ProductId = productId });
 
     await Assert.That(product).IsNotNull(); // Should still exist
-    await Assert.That(product!.product_id).IsEqualTo("prod-delete");
+    await Assert.That(product!.product_id).IsEqualTo(productId);
     await Assert.That(product.name).IsEqualTo("To Be Deleted"); // Data intact
     await Assert.That(product.deleted_at).IsNotNull(); // Soft deleted
   }
@@ -319,13 +338,15 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
   [Test]
   public async Task Update_WithProductDeletedEvent_DoesNotHardDeleteAsync() {
     // Arrange
+    var productId = Guid.CreateVersion7();
     var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
     var logger = new TestLogger<ProductCatalogPerspective>();
     var perspective = new ProductCatalogPerspective(connectionFactory, logger);
 
     // Create initial product
     var createdEvent = new ProductCreatedEvent {
-      ProductId = "prod-not-hard-deleted",
+
+      ProductId = productId,
       Name = "Test Widget",
       Description = "Test",
       Price = 10.00m,
@@ -336,7 +357,8 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
 
     // Act - Delete the product
     var deletedEvent = new ProductDeletedEvent {
-      ProductId = "prod-not-hard-deleted",
+
+      ProductId = productId,
       DeletedAt = DateTime.UtcNow
     };
     await perspective.Update(deletedEvent, CancellationToken.None);
@@ -348,7 +370,7 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
 
     var count = await connection.ExecuteScalarAsync<int>(
       "SELECT COUNT(*) FROM inventoryworker.product_catalog WHERE product_id = @ProductId",
-      new { ProductId = "prod-not-hard-deleted" });
+      new { ProductId = productId });
 
     await Assert.That(count).IsEqualTo(1); // Should still exist
   }
@@ -362,7 +384,8 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
 
     // Create initial product
     var createdEvent = new ProductCreatedEvent {
-      ProductId = "prod-log-delete",
+
+      ProductId = Guid.CreateVersion7(),
       Name = "Test",
       Description = "Test",
       Price = 10.00m,
@@ -373,7 +396,8 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
 
     // Act
     var deletedEvent = new ProductDeletedEvent {
-      ProductId = "prod-log-delete",
+
+      ProductId = Guid.CreateVersion7(),
       DeletedAt = DateTime.UtcNow
     };
     await perspective.Update(deletedEvent, CancellationToken.None);
@@ -396,7 +420,7 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
 /// DTO for reading product_catalog rows from database
 /// </summary>
 internal record ProductRow {
-  public string product_id { get; init; } = string.Empty;
+  public Guid product_id { get; init; }
   public string name { get; init; } = string.Empty;
   public string? description { get; init; }
   public decimal price { get; init; }

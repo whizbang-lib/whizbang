@@ -152,4 +152,56 @@ internal static class DiagnosticDescriptors {
       isEnabledByDefault: true,
       description: "A message type (ICommand or IEvent) was discovered and will be included in the generated JsonSerializerContext."
   );
+
+  /// <summary>
+  /// WHIZ012: Info - Perspective invoker routing generated for event type.
+  /// </summary>
+  public static readonly DiagnosticDescriptor PerspectiveInvokerGenerated = new(
+      id: "WHIZ012",
+      title: "Perspective Invoker Routing Generated",
+      messageFormat: "Generated perspective invoker routing for '{0}' → {1}",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "AOT-compatible routing code was generated to invoke perspectives when events are queued."
+  );
+
+  /// <summary>
+  /// WHIZ020: Info - WhizbangId discovered during source generation.
+  /// </summary>
+  public static readonly DiagnosticDescriptor WhizbangIdDiscovered = new(
+      id: "WHIZ020",
+      title: "WhizbangId Discovered",
+      messageFormat: "Found [WhizbangId] on {0} in namespace {1}",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "A strongly-typed ID was discovered and will be generated with UUIDv7 support."
+  );
+
+  /// <summary>
+  /// WHIZ021: Warning - [WhizbangId] on non-partial struct.
+  /// </summary>
+  public static readonly DiagnosticDescriptor WhizbangIdMustBePartial = new(
+      id: "WHIZ021",
+      title: "WhizbangId Must Be Partial",
+      messageFormat: "[WhizbangId] on {0} requires the struct to be declared as 'partial'",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "The [WhizbangId] attribute can only be used on partial structs to allow source generation."
+  );
+
+  /// <summary>
+  /// WHIZ024: Warning - Duplicate WhizbangId type name in different namespace.
+  /// </summary>
+  public static readonly DiagnosticDescriptor WhizbangIdDuplicateName = new(
+      id: "WHIZ024",
+      title: "Duplicate WhizbangId Type Name",
+      messageFormat: "WhizbangId type '{0}' exists in multiple namespaces ({1} and {2}). This may cause confusion. Set SuppressDuplicateWarning = true to suppress.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "Multiple WhizbangId types with the same name exist in different namespaces."
+  );
 }

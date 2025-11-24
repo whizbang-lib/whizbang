@@ -34,6 +34,8 @@ builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
 
 // Register Whizbang dispatcher with source-generated receptors
 builder.Services.AddReceptors();
+builder.Services.AddWhizbangAggregateIdExtractor(); // For extracting aggregate IDs from events
+builder.Services.AddWhizbangPerspectiveInvoker(); // For invoking perspectives on events
 builder.Services.AddWhizbangDispatcher();
 
 // Register lenses for querying materialized views

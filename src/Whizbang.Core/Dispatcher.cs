@@ -6,8 +6,10 @@ using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using System.Threading.Tasks;
+using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
@@ -39,6 +41,7 @@ public delegate Task ReceptorPublisher<in TEvent>(TEvent @event);
 /// </summary>
 public abstract class Dispatcher : IDispatcher {
   private readonly IServiceProvider _internalServiceProvider;
+  private readonly IServiceScopeFactory _scopeFactory;
   private readonly ITraceStore? _traceStore;
   private readonly IOutbox? _outbox;
   private readonly ITransport? _transport;
@@ -52,6 +55,7 @@ public abstract class Dispatcher : IDispatcher {
     JsonSerializerOptions? jsonOptions = null
   ) {
     _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
+    _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
     _traceStore = traceStore;
     _outbox = outbox;
     _transport = transport;
@@ -429,10 +433,48 @@ public abstract class Dispatcher : IDispatcher {
 
     var eventType = @event.GetType();
 
+    // If this is an IEvent, write to Event Store FIRST (which queues to IPerspectiveInvoker)
+    // Create a scope to resolve scoped services (IEventStore, IPerspectiveInvoker)
+    var scope = _scopeFactory.CreateScope();
+    try {
+      var eventStore = scope.ServiceProvider.GetService<IEventStore>();
+      var aggregateIdExtractor = scope.ServiceProvider.GetService<IAggregateIdExtractor>();
+      var perspectiveInvoker = scope.ServiceProvider.GetService<IPerspectiveInvoker>();
+
+      if (@event is IEvent && eventStore != null && aggregateIdExtractor != null) {
+        var aggregateId = aggregateIdExtractor.ExtractAggregateId(@event, eventType);
+        if (aggregateId.HasValue) {
+          // Create envelope with event
+          var messageId = MessageId.New();
+          var envelope = new MessageEnvelope<TEvent> {
+            MessageId = messageId,
+            Payload = @event,
+            Hops = new List<MessageHop>()
+          };
+
+          // Write to Event Store (this queues event to IPerspectiveInvoker)
+          await eventStore.AppendAsync(aggregateId.Value, envelope);
+        }
+      }
+
+      // Manually dispose the perspective invoker to invoke perspectives
+      // Must call DisposeAsync since IPerspectiveInvoker only implements IAsyncDisposable
+      if (perspectiveInvoker != null) {
+        await perspectiveInvoker.DisposeAsync();
+      }
+    } finally {
+      // Dispose scope asynchronously to properly handle services that only implement IAsyncDisposable
+      if (scope is IAsyncDisposable asyncDisposable) {
+        await asyncDisposable.DisposeAsync();
+      } else {
+        scope.Dispose();
+      }
+    }
+
     // Get strongly-typed delegate from generated code
     var publisher = _getReceptorPublisher(@event, eventType);
 
-    // Invoke local handlers first - zero reflection, strongly typed
+    // Invoke local handlers - zero reflection, strongly typed
     await publisher(@event);
 
     // If outbox is configured, publish event for cross-service delivery

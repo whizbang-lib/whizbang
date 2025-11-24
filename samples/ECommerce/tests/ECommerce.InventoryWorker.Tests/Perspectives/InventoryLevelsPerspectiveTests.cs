@@ -22,8 +22,10 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     var logger = new TestLogger<InventoryLevelsPerspective>();
     var perspective = new InventoryLevelsPerspective(connectionFactory, logger);
 
+    var productId = Guid.CreateVersion7();
     var @event = new InventoryRestockedEvent {
-      ProductId = "prod-123",
+
+      ProductId = productId,
       QuantityAdded = 100,
       NewTotalQuantity = 100,
       RestockedAt = DateTime.UtcNow
@@ -39,10 +41,10 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
 
     var inventory = await connection.QuerySingleOrDefaultAsync<InventoryRow>(
       "SELECT product_id, quantity, reserved, available, last_updated FROM inventoryworker.inventory_levels WHERE product_id = @ProductId",
-      new { ProductId = "prod-123" });
+      new { ProductId = productId });
 
     await Assert.That(inventory).IsNotNull();
-    await Assert.That(inventory!.product_id).IsEqualTo("prod-123");
+    await Assert.That(inventory!.product_id).IsEqualTo(productId);
     await Assert.That(inventory.quantity).IsEqualTo(100);
     await Assert.That(inventory.reserved).IsEqualTo(0);
     await Assert.That(inventory.available).IsEqualTo(100); // Computed column: quantity - reserved
@@ -55,9 +57,12 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     var logger = new TestLogger<InventoryLevelsPerspective>();
     var perspective = new InventoryLevelsPerspective(connectionFactory, logger);
 
+    var productId = Guid.CreateVersion7();
+
     // Create initial inventory
     var initialEvent = new InventoryRestockedEvent {
-      ProductId = "prod-update",
+
+      ProductId = productId,
       QuantityAdded = 50,
       NewTotalQuantity = 50,
       RestockedAt = DateTime.UtcNow
@@ -66,7 +71,8 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
 
     // Act - Restock again
     var restockEvent = new InventoryRestockedEvent {
-      ProductId = "prod-update",
+
+      ProductId = productId,
       QuantityAdded = 75,
       NewTotalQuantity = 125,
       RestockedAt = DateTime.UtcNow
@@ -80,7 +86,7 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
 
     var inventory = await connection.QuerySingleOrDefaultAsync<InventoryRow>(
       "SELECT quantity, reserved, available FROM inventoryworker.inventory_levels WHERE product_id = @ProductId",
-      new { ProductId = "prod-update" });
+      new { ProductId = productId });
 
     await Assert.That(inventory).IsNotNull();
     await Assert.That(inventory!.quantity).IsEqualTo(125);
@@ -95,9 +101,11 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     var logger = new TestLogger<InventoryLevelsPerspective>();
     var perspective = new InventoryLevelsPerspective(connectionFactory, logger);
 
+    var productId = Guid.CreateVersion7();
     var restockTime = DateTime.UtcNow;
     var @event = new InventoryRestockedEvent {
-      ProductId = "prod-timestamp",
+
+      ProductId = productId,
       QuantityAdded = 50,
       NewTotalQuantity = 50,
       RestockedAt = restockTime
@@ -113,7 +121,7 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
 
     var inventory = await connection.QuerySingleOrDefaultAsync<InventoryRow>(
       "SELECT last_updated FROM inventoryworker.inventory_levels WHERE product_id = @ProductId",
-      new { ProductId = "prod-timestamp" });
+      new { ProductId = productId });
 
     await Assert.That(inventory).IsNotNull();
   }
@@ -126,7 +134,8 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     var perspective = new InventoryLevelsPerspective(connectionFactory, logger);
 
     var @event = new InventoryRestockedEvent {
-      ProductId = "prod-log",
+
+      ProductId = Guid.CreateVersion7(),
       QuantityAdded = 100,
       NewTotalQuantity = 100,
       RestockedAt = DateTime.UtcNow
@@ -146,9 +155,12 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     var logger = new TestLogger<InventoryLevelsPerspective>();
     var perspective = new InventoryLevelsPerspective(connectionFactory, logger);
 
+    var productId = Guid.CreateVersion7();
+
     // Create initial inventory
     var restockEvent = new InventoryRestockedEvent {
-      ProductId = "prod-reserve",
+
+      ProductId = productId,
       QuantityAdded = 100,
       NewTotalQuantity = 100,
       RestockedAt = DateTime.UtcNow
@@ -158,7 +170,8 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     // Act - Reserve some inventory
     var reservedEvent = new InventoryReservedEvent {
       OrderId = "order-123",
-      ProductId = "prod-reserve",
+
+      ProductId = productId,
       Quantity = 25,
       ReservedAt = DateTime.UtcNow
     };
@@ -171,7 +184,7 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
 
     var inventory = await connection.QuerySingleOrDefaultAsync<InventoryRow>(
       "SELECT quantity, reserved, available FROM inventoryworker.inventory_levels WHERE product_id = @ProductId",
-      new { ProductId = "prod-reserve" });
+      new { ProductId = productId });
 
     await Assert.That(inventory).IsNotNull();
     await Assert.That(inventory!.quantity).IsEqualTo(100);
@@ -186,9 +199,12 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     var logger = new TestLogger<InventoryLevelsPerspective>();
     var perspective = new InventoryLevelsPerspective(connectionFactory, logger);
 
+    var productId = Guid.CreateVersion7();
+
     // Create initial inventory
     var restockEvent = new InventoryRestockedEvent {
-      ProductId = "prod-multi-reserve",
+
+      ProductId = productId,
       QuantityAdded = 100,
       NewTotalQuantity = 100,
       RestockedAt = DateTime.UtcNow
@@ -198,7 +214,8 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     // Act - Reserve multiple times
     var reservation1 = new InventoryReservedEvent {
       OrderId = "order-1",
-      ProductId = "prod-multi-reserve",
+
+      ProductId = productId,
       Quantity = 10,
       ReservedAt = DateTime.UtcNow
     };
@@ -206,7 +223,8 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
 
     var reservation2 = new InventoryReservedEvent {
       OrderId = "order-2",
-      ProductId = "prod-multi-reserve",
+
+      ProductId = productId,
       Quantity = 15,
       ReservedAt = DateTime.UtcNow
     };
@@ -219,7 +237,7 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
 
     var inventory = await connection.QuerySingleOrDefaultAsync<InventoryRow>(
       "SELECT quantity, reserved, available FROM inventoryworker.inventory_levels WHERE product_id = @ProductId",
-      new { ProductId = "prod-multi-reserve" });
+      new { ProductId = productId });
 
     await Assert.That(inventory).IsNotNull();
     await Assert.That(inventory!.quantity).IsEqualTo(100);
@@ -234,9 +252,12 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     var logger = new TestLogger<InventoryLevelsPerspective>();
     var perspective = new InventoryLevelsPerspective(connectionFactory, logger);
 
+    var productId = Guid.CreateVersion7();
+
     // Create initial inventory
     var restockEvent = new InventoryRestockedEvent {
-      ProductId = "prod-reserve-time",
+
+      ProductId = productId,
       QuantityAdded = 100,
       NewTotalQuantity = 100,
       RestockedAt = DateTime.UtcNow
@@ -247,7 +268,8 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     var reserveTime = DateTime.UtcNow;
     var reservedEvent = new InventoryReservedEvent {
       OrderId = "order-time",
-      ProductId = "prod-reserve-time",
+
+      ProductId = productId,
       Quantity = 25,
       ReservedAt = reserveTime
     };
@@ -260,7 +282,7 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
 
     var inventory = await connection.QuerySingleOrDefaultAsync<InventoryRow>(
       "SELECT last_updated FROM inventoryworker.inventory_levels WHERE product_id = @ProductId",
-      new { ProductId = "prod-reserve-time" });
+      new { ProductId = productId });
 
     await Assert.That(inventory).IsNotNull();
   }
@@ -274,7 +296,8 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
 
     // Create initial inventory
     var restockEvent = new InventoryRestockedEvent {
-      ProductId = "prod-log-reserve",
+
+      ProductId = Guid.CreateVersion7(),
       QuantityAdded = 100,
       NewTotalQuantity = 100,
       RestockedAt = DateTime.UtcNow
@@ -284,7 +307,8 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     // Act
     var reservedEvent = new InventoryReservedEvent {
       OrderId = "order-log",
-      ProductId = "prod-log-reserve",
+
+      ProductId = Guid.CreateVersion7(),
       Quantity = 25,
       ReservedAt = DateTime.UtcNow
     };
@@ -301,9 +325,12 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     var logger = new TestLogger<InventoryLevelsPerspective>();
     var perspective = new InventoryLevelsPerspective(connectionFactory, logger);
 
+    var productId = Guid.CreateVersion7();
+
     // Create initial inventory
     var restockEvent = new InventoryRestockedEvent {
-      ProductId = "prod-adjust",
+
+      ProductId = productId,
       QuantityAdded = 100,
       NewTotalQuantity = 100,
       RestockedAt = DateTime.UtcNow
@@ -312,7 +339,8 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
 
     // Act - Adjust inventory (e.g., correcting count)
     var adjustedEvent = new InventoryAdjustedEvent {
-      ProductId = "prod-adjust",
+
+      ProductId = productId,
       QuantityChange = -10, // Found 10 damaged items
       NewTotalQuantity = 90,
       Reason = "Damaged items removed",
@@ -327,7 +355,7 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
 
     var inventory = await connection.QuerySingleOrDefaultAsync<InventoryRow>(
       "SELECT quantity, available FROM inventoryworker.inventory_levels WHERE product_id = @ProductId",
-      new { ProductId = "prod-adjust" });
+      new { ProductId = productId });
 
     await Assert.That(inventory).IsNotNull();
     await Assert.That(inventory!.quantity).IsEqualTo(90);
@@ -341,9 +369,12 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     var logger = new TestLogger<InventoryLevelsPerspective>();
     var perspective = new InventoryLevelsPerspective(connectionFactory, logger);
 
+    var productId = Guid.CreateVersion7();
+
     // Create initial inventory
     var restockEvent = new InventoryRestockedEvent {
-      ProductId = "prod-adjust-pos",
+
+      ProductId = productId,
       QuantityAdded = 100,
       NewTotalQuantity = 100,
       RestockedAt = DateTime.UtcNow
@@ -352,7 +383,8 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
 
     // Act - Positive adjustment (found extra items)
     var adjustedEvent = new InventoryAdjustedEvent {
-      ProductId = "prod-adjust-pos",
+
+      ProductId = productId,
       QuantityChange = 15,
       NewTotalQuantity = 115,
       Reason = "Found extra items during audit",
@@ -367,7 +399,7 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
 
     var inventory = await connection.QuerySingleOrDefaultAsync<InventoryRow>(
       "SELECT quantity FROM inventoryworker.inventory_levels WHERE product_id = @ProductId",
-      new { ProductId = "prod-adjust-pos" });
+      new { ProductId = productId });
 
     await Assert.That(inventory).IsNotNull();
     await Assert.That(inventory!.quantity).IsEqualTo(115);
@@ -380,9 +412,12 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     var logger = new TestLogger<InventoryLevelsPerspective>();
     var perspective = new InventoryLevelsPerspective(connectionFactory, logger);
 
+    var productId = Guid.CreateVersion7();
+
     // Create initial inventory
     var restockEvent = new InventoryRestockedEvent {
-      ProductId = "prod-adjust-time",
+
+      ProductId = productId,
       QuantityAdded = 100,
       NewTotalQuantity = 100,
       RestockedAt = DateTime.UtcNow
@@ -392,7 +427,8 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     // Act - Adjust inventory
     var adjustTime = DateTime.UtcNow;
     var adjustedEvent = new InventoryAdjustedEvent {
-      ProductId = "prod-adjust-time",
+
+      ProductId = productId,
       QuantityChange = -5,
       NewTotalQuantity = 95,
       Reason = "Adjustment",
@@ -407,7 +443,7 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
 
     var inventory = await connection.QuerySingleOrDefaultAsync<InventoryRow>(
       "SELECT last_updated FROM inventoryworker.inventory_levels WHERE product_id = @ProductId",
-      new { ProductId = "prod-adjust-time" });
+      new { ProductId = productId });
 
     await Assert.That(inventory).IsNotNull();
   }
@@ -421,7 +457,8 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
 
     // Create initial inventory
     var restockEvent = new InventoryRestockedEvent {
-      ProductId = "prod-log-adjust",
+
+      ProductId = Guid.CreateVersion7(),
       QuantityAdded = 100,
       NewTotalQuantity = 100,
       RestockedAt = DateTime.UtcNow
@@ -430,7 +467,8 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
 
     // Act
     var adjustedEvent = new InventoryAdjustedEvent {
-      ProductId = "prod-log-adjust",
+
+      ProductId = Guid.CreateVersion7(),
       QuantityChange = -5,
       NewTotalQuantity = 95,
       Reason = "Test",
@@ -456,7 +494,7 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
 /// DTO for reading inventory_levels rows from database
 /// </summary>
 internal record InventoryRow {
-  public string product_id { get; init; } = string.Empty;
+  public Guid product_id { get; init; }
   public int quantity { get; init; }
   public int reserved { get; init; }
   public int available { get; init; }

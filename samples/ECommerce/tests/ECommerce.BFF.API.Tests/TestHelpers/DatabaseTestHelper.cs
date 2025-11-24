@@ -85,7 +85,7 @@ CREATE TABLE IF NOT EXISTS bff.order_status_history (
 
 -- Product catalog table (BFF)
 CREATE TABLE IF NOT EXISTS bff.product_catalog (
-  product_id TEXT PRIMARY KEY,
+  product_id UUID PRIMARY KEY,
   name TEXT NOT NULL,
   description TEXT,
   price DECIMAL(10, 2) NOT NULL,
@@ -97,7 +97,7 @@ CREATE TABLE IF NOT EXISTS bff.product_catalog (
 
 -- Inventory levels table (BFF)
 CREATE TABLE IF NOT EXISTS bff.inventory_levels (
-  product_id TEXT PRIMARY KEY,
+  product_id UUID PRIMARY KEY,
   quantity INTEGER NOT NULL DEFAULT 0,
   reserved INTEGER NOT NULL DEFAULT 0,
   available INTEGER NOT NULL DEFAULT 0,

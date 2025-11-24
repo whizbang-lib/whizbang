@@ -24,19 +24,20 @@ public class InventoryLensTests : IAsyncDisposable {
 
     // Create inventory via perspective
     var perspective = new InventoryLevelsPerspective(connectionFactory, NullLogger<InventoryLevelsPerspective>.Instance);
+    var productId = Guid.CreateVersion7();
     var restockEvent = new InventoryRestockedEvent {
-      ProductId = "prod-123",
+      ProductId = productId,
       NewTotalQuantity = 100,
       RestockedAt = DateTime.UtcNow
     };
     await perspective.Update(restockEvent, CancellationToken.None);
 
     // Act
-    var result = await lens.GetByProductIdAsync("prod-123");
+    var result = await lens.GetByProductIdAsync(productId);
 
     // Assert
     await Assert.That(result).IsNotNull();
-    await Assert.That(result!.ProductId).IsEqualTo("prod-123");
+    await Assert.That(result!.ProductId).IsEqualTo(productId);
     await Assert.That(result.Quantity).IsEqualTo(100);
     await Assert.That(result.Reserved).IsEqualTo(0);
     await Assert.That(result.Available).IsEqualTo(100);
@@ -49,7 +50,7 @@ public class InventoryLensTests : IAsyncDisposable {
     var lens = new InventoryLens(connectionFactory);
 
     // Act
-    var result = await lens.GetByProductIdAsync("non-existent");
+    var result = await lens.GetByProductIdAsync(Guid.CreateVersion7());
 
     // Assert
     await Assert.That(result).IsNull();
@@ -77,20 +78,23 @@ public class InventoryLensTests : IAsyncDisposable {
     var perspective = new InventoryLevelsPerspective(connectionFactory, NullLogger<InventoryLevelsPerspective>.Instance);
 
     // Create 3 inventory entries
+    var productId1 = Guid.CreateVersion7();
     await perspective.Update(new InventoryRestockedEvent {
-      ProductId = "prod-1",
+      ProductId = productId1,
       NewTotalQuantity = 100,
       RestockedAt = DateTime.UtcNow
     }, CancellationToken.None);
 
+    var productId2 = Guid.CreateVersion7();
     await perspective.Update(new InventoryRestockedEvent {
-      ProductId = "prod-2",
+      ProductId = productId2,
       NewTotalQuantity = 50,
       RestockedAt = DateTime.UtcNow
     }, CancellationToken.None);
 
+    var productId3 = Guid.CreateVersion7();
     await perspective.Update(new InventoryRestockedEvent {
-      ProductId = "prod-3",
+      ProductId = productId3,
       NewTotalQuantity = 200,
       RestockedAt = DateTime.UtcNow
     }, CancellationToken.None);
@@ -100,9 +104,9 @@ public class InventoryLensTests : IAsyncDisposable {
 
     // Assert
     await Assert.That(result).HasCount().EqualTo(3);
-    await Assert.That(result.Any(i => i.ProductId == "prod-1")).IsTrue();
-    await Assert.That(result.Any(i => i.ProductId == "prod-2")).IsTrue();
-    await Assert.That(result.Any(i => i.ProductId == "prod-3")).IsTrue();
+    await Assert.That(result.Any(i => i.ProductId == productId1)).IsTrue();
+    await Assert.That(result.Any(i => i.ProductId == productId2)).IsTrue();
+    await Assert.That(result.Any(i => i.ProductId == productId3)).IsTrue();
   }
 
   [Test]
@@ -113,14 +117,15 @@ public class InventoryLensTests : IAsyncDisposable {
     var perspective = new InventoryLevelsPerspective(connectionFactory, NullLogger<InventoryLevelsPerspective>.Instance);
 
     // Create inventory and reserve some
+    var productId = Guid.CreateVersion7();
     await perspective.Update(new InventoryRestockedEvent {
-      ProductId = "prod-1",
+      ProductId = productId,
       NewTotalQuantity = 100,
       RestockedAt = DateTime.UtcNow
     }, CancellationToken.None);
 
     await perspective.Update(new InventoryReservedEvent {
-      ProductId = "prod-1",
+      ProductId = productId,
       OrderId = "order-1",
       Quantity = 30,
       ReservedAt = DateTime.UtcNow
@@ -145,20 +150,21 @@ public class InventoryLensTests : IAsyncDisposable {
     var perspective = new InventoryLevelsPerspective(connectionFactory, NullLogger<InventoryLevelsPerspective>.Instance);
 
     // Create products with varying stock levels
+    var lowStockProductId = Guid.CreateVersion7();
     await perspective.Update(new InventoryRestockedEvent {
-      ProductId = "prod-low",
+      ProductId = lowStockProductId,
       NewTotalQuantity = 5,
       RestockedAt = DateTime.UtcNow
     }, CancellationToken.None);
 
     await perspective.Update(new InventoryRestockedEvent {
-      ProductId = "prod-medium",
+      ProductId = Guid.CreateVersion7(),
       NewTotalQuantity = 50,
       RestockedAt = DateTime.UtcNow
     }, CancellationToken.None);
 
     await perspective.Update(new InventoryRestockedEvent {
-      ProductId = "prod-high",
+      ProductId = Guid.CreateVersion7(),
       NewTotalQuantity = 200,
       RestockedAt = DateTime.UtcNow
     }, CancellationToken.None);
@@ -168,7 +174,7 @@ public class InventoryLensTests : IAsyncDisposable {
 
     // Assert
     await Assert.That(result).HasCount().EqualTo(1);
-    await Assert.That(result.First().ProductId).IsEqualTo("prod-low");
+    await Assert.That(result.First().ProductId).IsEqualTo(lowStockProductId);
   }
 
   [Test]
@@ -179,20 +185,22 @@ public class InventoryLensTests : IAsyncDisposable {
     var perspective = new InventoryLevelsPerspective(connectionFactory, NullLogger<InventoryLevelsPerspective>.Instance);
 
     // Create products with varying stock levels
+    var lowStockProductId = Guid.CreateVersion7();
     await perspective.Update(new InventoryRestockedEvent {
-      ProductId = "prod-low",
+      ProductId = lowStockProductId,
       NewTotalQuantity = 5,
       RestockedAt = DateTime.UtcNow
     }, CancellationToken.None);
 
+    var mediumStockProductId = Guid.CreateVersion7();
     await perspective.Update(new InventoryRestockedEvent {
-      ProductId = "prod-medium",
+      ProductId = mediumStockProductId,
       NewTotalQuantity = 50,
       RestockedAt = DateTime.UtcNow
     }, CancellationToken.None);
 
     await perspective.Update(new InventoryRestockedEvent {
-      ProductId = "prod-high",
+      ProductId = Guid.CreateVersion7(),
       NewTotalQuantity = 200,
       RestockedAt = DateTime.UtcNow
     }, CancellationToken.None);
@@ -202,8 +210,8 @@ public class InventoryLensTests : IAsyncDisposable {
 
     // Assert
     await Assert.That(result).HasCount().EqualTo(2);
-    await Assert.That(result.Any(i => i.ProductId == "prod-low")).IsTrue();
-    await Assert.That(result.Any(i => i.ProductId == "prod-medium")).IsTrue();
+    await Assert.That(result.Any(i => i.ProductId == lowStockProductId)).IsTrue();
+    await Assert.That(result.Any(i => i.ProductId == mediumStockProductId)).IsTrue();
   }
 
   [Test]
@@ -215,13 +223,13 @@ public class InventoryLensTests : IAsyncDisposable {
 
     // Create only high-stock products
     await perspective.Update(new InventoryRestockedEvent {
-      ProductId = "prod-1",
+      ProductId = Guid.CreateVersion7(),
       NewTotalQuantity = 100,
       RestockedAt = DateTime.UtcNow
     }, CancellationToken.None);
 
     await perspective.Update(new InventoryRestockedEvent {
-      ProductId = "prod-2",
+      ProductId = Guid.CreateVersion7(),
       NewTotalQuantity = 200,
       RestockedAt = DateTime.UtcNow
     }, CancellationToken.None);

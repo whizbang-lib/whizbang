@@ -19,8 +19,10 @@ public class CreateProductReceptorTests {
     var logger = new TestLogger<CreateProductReceptor>();
     var receptor = new CreateProductReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new CreateProductCommand {
-      ProductId = "prod-123",
+
+      ProductId = ProductId.From(productId),
       Name = "Test Widget",
       Description = "A test widget",
       Price = 29.99m,
@@ -33,7 +35,7 @@ public class CreateProductReceptorTests {
 
     // Assert
     await Assert.That(result).IsNotNull();
-    await Assert.That(result.ProductId).IsEqualTo("prod-123");
+    await Assert.That(result.ProductId).IsEqualTo(productId);
     await Assert.That(result.Name).IsEqualTo("Test Widget");
     await Assert.That(result.Description).IsEqualTo("A test widget");
     await Assert.That(result.Price).IsEqualTo(29.99m);
@@ -47,8 +49,10 @@ public class CreateProductReceptorTests {
     var logger = new TestLogger<CreateProductReceptor>();
     var receptor = new CreateProductReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new CreateProductCommand {
-      ProductId = "prod-456",
+
+      ProductId = ProductId.From(productId),
       Name = "Widget",
       Description = "Description",
       Price = 19.99m,
@@ -64,7 +68,7 @@ public class CreateProductReceptorTests {
     await Assert.That(dispatcher.PublishedEvents[0]).IsTypeOf<ProductCreatedEvent>();
 
     var publishedEvent = (ProductCreatedEvent)dispatcher.PublishedEvents[0];
-    await Assert.That(publishedEvent.ProductId).IsEqualTo("prod-456");
+    await Assert.That(publishedEvent.ProductId).IsEqualTo(productId);
     await Assert.That(publishedEvent.Name).IsEqualTo("Widget");
   }
 
@@ -75,8 +79,10 @@ public class CreateProductReceptorTests {
     var logger = new TestLogger<CreateProductReceptor>();
     var receptor = new CreateProductReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new CreateProductCommand {
-      ProductId = "prod-789",
+
+      ProductId = ProductId.From(productId),
       Name = "No Stock Widget",
       Description = "Widget without stock",
       Price = 9.99m,
@@ -99,8 +105,10 @@ public class CreateProductReceptorTests {
     var logger = new TestLogger<CreateProductReceptor>();
     var receptor = new CreateProductReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new CreateProductCommand {
-      ProductId = "prod-stock",
+
+      ProductId = ProductId.From(productId),
       Name = "Stocked Widget",
       Description = "Widget with stock",
       Price = 49.99m,
@@ -117,7 +125,7 @@ public class CreateProductReceptorTests {
     await Assert.That(dispatcher.PublishedEvents[1]).IsTypeOf<InventoryRestockedEvent>();
 
     var inventoryEvent = (InventoryRestockedEvent)dispatcher.PublishedEvents[1];
-    await Assert.That(inventoryEvent.ProductId).IsEqualTo("prod-stock");
+    await Assert.That(inventoryEvent.ProductId).IsEqualTo(productId);
     await Assert.That(inventoryEvent.QuantityAdded).IsEqualTo(100);
     await Assert.That(inventoryEvent.NewTotalQuantity).IsEqualTo(100);
   }
@@ -129,8 +137,10 @@ public class CreateProductReceptorTests {
     var logger = new TestLogger<CreateProductReceptor>();
     var receptor = new CreateProductReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new CreateProductCommand {
-      ProductId = "prod-no-img",
+
+      ProductId = ProductId.From(productId),
       Name = "No Image Widget",
       Description = "Widget without image",
       Price = 14.99m,
@@ -154,8 +164,10 @@ public class CreateProductReceptorTests {
 
     var beforeCall = DateTime.UtcNow;
 
+    var productId = Guid.CreateVersion7();
     var command = new CreateProductCommand {
-      ProductId = "prod-time",
+
+      ProductId = ProductId.From(productId),
       Name = "Timestamp Widget",
       Description = "Test timestamp",
       Price = 99.99m,
@@ -180,8 +192,10 @@ public class CreateProductReceptorTests {
     var logger = new TestLogger<CreateProductReceptor>();
     var receptor = new CreateProductReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new CreateProductCommand {
-      ProductId = "prod-log",
+
+      ProductId = ProductId.From(productId),
       Name = "Log Widget",
       Description = "Test logging",
       Price = 5.99m,
@@ -203,8 +217,10 @@ public class CreateProductReceptorTests {
     var logger = new TestLogger<CreateProductReceptor>();
     var receptor = new CreateProductReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new CreateProductCommand {
-      ProductId = "prod-cancel",
+
+      ProductId = ProductId.From(productId),
       Name = "Cancel Widget",
       Description = "Test cancellation",
       Price = 1.99m,

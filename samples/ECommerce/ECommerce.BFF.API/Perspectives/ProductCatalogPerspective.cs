@@ -62,7 +62,7 @@ public class ProductCatalogPerspective :
 
       // Send SignalR notification after successful database update
       await SendProductNotificationAsync(
-        @event.ProductId,
+        @event.ProductId.ToString(),
         "Created",
         @event.Name,
         @event.Description,
@@ -134,7 +134,7 @@ public class ProductCatalogPerspective :
       // Send SignalR notification after successful database update
       if (product is not null) {
         await SendProductNotificationAsync(
-          @event.ProductId,
+          @event.ProductId.ToString(),
           "Updated",
           product.name,
           product.description,
@@ -183,7 +183,7 @@ public class ProductCatalogPerspective :
       // Send SignalR notification after successful database update
       if (product is not null) {
         await SendProductNotificationAsync(
-          @event.ProductId,
+          @event.ProductId.ToString(),
           "Deleted",
           product.name,
           product.description,
@@ -252,7 +252,7 @@ public class ProductCatalogPerspective :
   /// Record for querying product details from database
   /// </summary>
   private record ProductRecord(
-    string product_id,
+    Guid product_id,
     string name,
     string? description,
     decimal? price,

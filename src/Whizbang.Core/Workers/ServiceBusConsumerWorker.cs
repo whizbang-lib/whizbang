@@ -101,8 +101,8 @@ public class ServiceBusConsumerWorker : BackgroundService {
       // preserved the incoming hops by storing them in the inbox below
       await _dispatcher.PublishAsync(envelope.GetPayload());
 
-      // Mark as processed in inbox with the enriched envelope containing all hops
-      await _inbox.MarkProcessedAsync(envelope.MessageId, "ServiceBusConsumerWorker", ct);
+      // Mark as processed in inbox
+      await _inbox.MarkProcessedAsync(envelope.MessageId, ct);
 
       _logger.LogInformation(
         "Successfully processed message {MessageId}",

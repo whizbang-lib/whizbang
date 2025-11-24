@@ -47,6 +47,7 @@ public class DapperPostgresEventStoreTests : EventStoreContractTests {
       adapter,
       sizeValidator,
       policyEngine,
+      null, // perspectiveInvoker
       logger
     );
     return Task.FromResult<IEventStore>(eventStore);

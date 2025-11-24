@@ -16,7 +16,7 @@ public class ProductCatalogLens : IProductCatalogLens {
   }
 
   /// <inheritdoc />
-  public async Task<ProductDto?> GetByIdAsync(string productId, CancellationToken cancellationToken = default) {
+  public async Task<ProductDto?> GetByIdAsync(Guid productId, CancellationToken cancellationToken = default) {
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
 
@@ -61,7 +61,7 @@ public class ProductCatalogLens : IProductCatalogLens {
   }
 
   /// <inheritdoc />
-  public async Task<IReadOnlyList<ProductDto>> GetByIdsAsync(IEnumerable<string> productIds, CancellationToken cancellationToken = default) {
+  public async Task<IReadOnlyList<ProductDto>> GetByIdsAsync(IEnumerable<Guid> productIds, CancellationToken cancellationToken = default) {
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
 

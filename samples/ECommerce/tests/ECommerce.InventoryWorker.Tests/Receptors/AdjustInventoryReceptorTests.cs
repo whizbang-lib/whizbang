@@ -17,8 +17,10 @@ public class AdjustInventoryReceptorTests {
     var logger = new TestLogger<AdjustInventoryReceptor>();
     var receptor = new AdjustInventoryReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new AdjustInventoryCommand {
-      ProductId = "prod-123",
+
+      ProductId = productId,
       QuantityChange = -5,
       Reason = "Damaged goods"
     };
@@ -28,7 +30,7 @@ public class AdjustInventoryReceptorTests {
 
     // Assert
     await Assert.That(result).IsNotNull();
-    await Assert.That(result.ProductId).IsEqualTo("prod-123");
+    await Assert.That(result.ProductId).IsEqualTo(productId);
     await Assert.That(result.QuantityChange).IsEqualTo(-5);
     await Assert.That(result.Reason).IsEqualTo("Damaged goods");
   }
@@ -40,8 +42,10 @@ public class AdjustInventoryReceptorTests {
     var logger = new TestLogger<AdjustInventoryReceptor>();
     var receptor = new AdjustInventoryReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new AdjustInventoryCommand {
-      ProductId = "prod-456",
+
+      ProductId = productId,
       QuantityChange = 10,
       Reason = "Inventory correction"
     };
@@ -54,7 +58,7 @@ public class AdjustInventoryReceptorTests {
     await Assert.That(dispatcher.PublishedEvents[0]).IsTypeOf<InventoryAdjustedEvent>();
 
     var publishedEvent = (InventoryAdjustedEvent)dispatcher.PublishedEvents[0];
-    await Assert.That(publishedEvent.ProductId).IsEqualTo("prod-456");
+    await Assert.That(publishedEvent.ProductId).IsEqualTo(productId);
     await Assert.That(publishedEvent.QuantityChange).IsEqualTo(10);
     await Assert.That(publishedEvent.Reason).IsEqualTo("Inventory correction");
   }
@@ -66,8 +70,10 @@ public class AdjustInventoryReceptorTests {
     var logger = new TestLogger<AdjustInventoryReceptor>();
     var receptor = new AdjustInventoryReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new AdjustInventoryCommand {
-      ProductId = "prod-negative",
+
+      ProductId = productId,
       QuantityChange = -25,
       Reason = "Lost inventory"
     };
@@ -86,8 +92,10 @@ public class AdjustInventoryReceptorTests {
     var logger = new TestLogger<AdjustInventoryReceptor>();
     var receptor = new AdjustInventoryReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new AdjustInventoryCommand {
-      ProductId = "prod-positive",
+
+      ProductId = productId,
       QuantityChange = 15,
       Reason = "Found inventory"
     };
@@ -108,8 +116,10 @@ public class AdjustInventoryReceptorTests {
 
     var beforeCall = DateTime.UtcNow;
 
+    var productId = Guid.CreateVersion7();
     var command = new AdjustInventoryCommand {
-      ProductId = "prod-time",
+
+      ProductId = productId,
       QuantityChange = 3,
       Reason = "Time test"
     };
@@ -131,8 +141,10 @@ public class AdjustInventoryReceptorTests {
     var logger = new TestLogger<AdjustInventoryReceptor>();
     var receptor = new AdjustInventoryReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new AdjustInventoryCommand {
-      ProductId = "prod-log",
+
+      ProductId = productId,
       QuantityChange = -2,
       Reason = "Test logging"
     };
@@ -151,8 +163,10 @@ public class AdjustInventoryReceptorTests {
     var logger = new TestLogger<AdjustInventoryReceptor>();
     var receptor = new AdjustInventoryReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new AdjustInventoryCommand {
-      ProductId = "prod-cancel",
+
+      ProductId = productId,
       QuantityChange = 1,
       Reason = "Cancel test"
     };
@@ -173,8 +187,10 @@ public class AdjustInventoryReceptorTests {
     var logger = new TestLogger<AdjustInventoryReceptor>();
     var receptor = new AdjustInventoryReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new AdjustInventoryCommand {
-      ProductId = "prod-total",
+
+      ProductId = productId,
       QuantityChange = -10,
       Reason = "Adjustment test"
     };
@@ -193,8 +209,10 @@ public class AdjustInventoryReceptorTests {
     var logger = new TestLogger<AdjustInventoryReceptor>();
     var receptor = new AdjustInventoryReceptor(dispatcher, logger);
 
+    var productId = Guid.CreateVersion7();
     var command = new AdjustInventoryCommand {
-      ProductId = "prod-zero",
+
+      ProductId = productId,
       QuantityChange = 0,
       Reason = "No change needed"
     };

@@ -15,6 +15,7 @@
   "dotnet.automaticallySyncWithActiveItem": true,
   "cSpell.words": [
     "Carbone",
-    "Diagnoser"
+    "Diagnoser",
+    "Npgsql"
   ]
 }

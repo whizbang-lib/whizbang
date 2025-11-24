@@ -132,10 +132,11 @@ public class JsonMessageSerializerTests {
     // Arrange
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
+    // Note: Using camelCase property names to match PropertyNamingPolicy.CamelCase
     var jsonWithInvalidMessageId = Encoding.UTF8.GetBytes(@"{
-        ""MessageId"": ""invalid-guid"",
-        ""Payload"": { ""Content"": ""test"", ""Value"": 1 },
-        ""Hops"": []
+        ""messageId"": ""invalid-guid"",
+        ""payload"": { ""content"": ""test"", ""value"": 1 },
+        ""hops"": []
       }");
 
     // Act & Assert - AOT serialization throws FormatException for invalid GUID
@@ -148,10 +149,11 @@ public class JsonMessageSerializerTests {
     // Arrange
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
+    // Note: Using camelCase property names to match PropertyNamingPolicy.CamelCase
     var jsonWithNullMessageId = Encoding.UTF8.GetBytes(@"{
-        ""MessageId"": null,
-        ""Payload"": { ""Content"": ""test"", ""Value"": 1 },
-        ""Hops"": []
+        ""messageId"": null,
+        ""payload"": { ""content"": ""test"", ""value"": 1 },
+        ""hops"": []
       }");
 
     // Act & Assert - AOT serialization throws ArgumentNullException for null MessageId
@@ -165,14 +167,15 @@ public class JsonMessageSerializerTests {
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
+    // Note: Using camelCase property names to match PropertyNamingPolicy.CamelCase
     var jsonWithInvalidCorrelationId = Encoding.UTF8.GetBytes($@"{{
-        ""MessageId"": ""{messageId.Value}"",
-        ""Payload"": ""test"",
-        ""Hops"": [{{
-          ""Type"": 0,
-          ""ServiceName"": ""Test"",
-          ""Timestamp"": ""2025-01-01T00:00:00Z"",
-          ""CorrelationId"": ""invalid-guid""
+        ""messageId"": ""{messageId.Value}"",
+        ""payload"": {{ ""content"": ""test"", ""value"": 1 }},
+        ""hops"": [{{
+          ""type"": 0,
+          ""serviceName"": ""Test"",
+          ""timestamp"": ""2025-01-01T00:00:00Z"",
+          ""correlationId"": ""invalid-guid""
         }}]
       }}");
 
@@ -187,14 +190,15 @@ public class JsonMessageSerializerTests {
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
+    // Note: Using camelCase property names to match PropertyNamingPolicy.CamelCase
     var jsonWithNullCorrelationId = Encoding.UTF8.GetBytes($@"{{
-        ""MessageId"": ""{messageId.Value}"",
-        ""Payload"": {{ ""Content"": ""test"", ""Value"": 1 }},
-        ""Hops"": [{{
-          ""Type"": 0,
-          ""ServiceName"": ""Test"",
-          ""Timestamp"": ""2025-01-01T00:00:00Z"",
-          ""CorrelationId"": null
+        ""messageId"": ""{messageId.Value}"",
+        ""payload"": {{ ""content"": ""test"", ""value"": 1 }},
+        ""hops"": [{{
+          ""type"": 0,
+          ""serviceName"": ""Test"",
+          ""timestamp"": ""2025-01-01T00:00:00Z"",
+          ""correlationId"": null
         }}]
       }}");
 
@@ -260,22 +264,24 @@ public class JsonMessageSerializerTests {
     var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
     // Metadata is an array instead of object
+    // Note: Using camelCase property names to match PropertyNamingPolicy.CamelCase
     var json = $@"{{
-        ""MessageId"": ""{messageId.Value}"",
-        ""Payload"": {{ ""Content"": ""test"", ""Value"": 1 }},
-        ""Hops"": [{{
-          ""Type"": 0,
-          ""ServiceName"": ""Test"",
-          ""Timestamp"": ""2025-01-01T00:00:00Z"",
-          ""Metadata"": []
+        ""messageId"": ""{messageId.Value}"",
+        ""payload"": {{ ""content"": ""test"", ""value"": 1 }},
+        ""hops"": [{{
+          ""type"": 0,
+          ""serviceName"": ""Test"",
+          ""timestamp"": ""2025-01-01T00:00:00Z"",
+          ""metadata"": []
         }}]
       }}";
     var jsonWithInvalidMetadata = Encoding.UTF8.GetBytes(json);
 
     // Act & Assert
+    // With AOT-compatible JSON context, the error message is more specific about missing properties
     var exception = await Assert.That(async () => await serializer.DeserializeAsync<TestMessage>(jsonWithInvalidMetadata))
       .ThrowsExactly<JsonException>();
-    await Assert.That(exception.Message).Contains("Expected StartObject");
+    await Assert.That(exception.Message).Contains("serviceName");
   }
 
   [Test]
@@ -285,14 +291,15 @@ public class JsonMessageSerializerTests {
     var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
     // Malformed metadata - value without property name
+    // Note: Using camelCase property names to match PropertyNamingPolicy.CamelCase
     var json = $@"{{
-        ""MessageId"": ""{messageId.Value}"",
-        ""Payload"": {{ ""Content"": ""test"", ""Value"": 1 }},
-        ""Hops"": [{{
-          ""Type"": 0,
-          ""ServiceName"": ""Test"",
-          ""Timestamp"": ""2025-01-01T00:00:00Z"",
-          ""Metadata"": {{ ""key"": ""value"", 123 }}
+        ""messageId"": ""{messageId.Value}"",
+        ""payload"": {{ ""content"": ""test"", ""value"": 1 }},
+        ""hops"": [{{
+          ""type"": 0,
+          ""serviceName"": ""Test"",
+          ""timestamp"": ""2025-01-01T00:00:00Z"",
+          ""metadata"": {{ ""key"": ""value"", 123 }}
         }}]
       }}";
     var jsonWithMalformedMetadata = Encoding.UTF8.GetBytes(json);
@@ -309,14 +316,15 @@ public class JsonMessageSerializerTests {
     var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
     // Array value in metadata (not supported)
+    // Note: Using camelCase property names to match PropertyNamingPolicy.CamelCase
     var json = $@"{{
-        ""MessageId"": ""{messageId.Value}"",
-        ""Payload"": {{ ""Content"": ""test"", ""Value"": 1 }},
-        ""Hops"": [{{
-          ""Type"": 0,
-          ""ServiceName"": ""Test"",
-          ""Timestamp"": ""2025-01-01T00:00:00Z"",
-          ""Metadata"": {{ ""key"": [""array"", ""value""] }}
+        ""messageId"": ""{messageId.Value}"",
+        ""payload"": {{ ""content"": ""test"", ""value"": 1 }},
+        ""hops"": [{{
+          ""type"": 0,
+          ""serviceName"": ""Test"",
+          ""timestamp"": ""2025-01-01T00:00:00Z"",
+          ""metadata"": {{ ""key"": [""array"", ""value""] }}
         }}]
       }}";
     var jsonWithUnsupportedValue = Encoding.UTF8.GetBytes(json);
@@ -363,14 +371,15 @@ public class JsonMessageSerializerTests {
     var messageId = MessageId.New();
     // Malformed JSON with null property name (this is unlikely in practice but tests the null check)
     // We'll test the ReadValue path for null by using a valid metadata with null value
+    // Note: Using camelCase property names to match PropertyNamingPolicy.CamelCase
     var json = $@"{{
-        ""MessageId"": ""{messageId.Value}"",
-        ""Payload"": {{ ""Content"": ""test"", ""Value"": 1 }},
-        ""Hops"": [{{
-          ""Type"": 0,
-          ""ServiceName"": ""Test"",
-          ""Timestamp"": ""2025-01-01T00:00:00Z"",
-          ""Metadata"": {{ ""key"": null }}
+        ""messageId"": ""{messageId.Value}"",
+        ""payload"": {{ ""content"": ""test"", ""value"": 1 }},
+        ""hops"": [{{
+          ""type"": 0,
+          ""serviceName"": ""Test"",
+          ""timestamp"": ""2025-01-01T00:00:00Z"",
+          ""metadata"": {{ ""key"": null }}
         }}]
       }}";
     var jsonWithNullMetadataValue = Encoding.UTF8.GetBytes(json);

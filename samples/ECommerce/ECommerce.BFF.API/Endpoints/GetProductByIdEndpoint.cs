@@ -19,7 +19,12 @@ public class GetProductByIdEndpoint : EndpointWithoutRequest<ProductDto> {
   }
 
   public override async Task HandleAsync(CancellationToken ct) {
-    var productId = Route<string>("productId")!;
+    var productIdString = Route<string>("productId")!;
+    if (!Guid.TryParse(productIdString, out var productId)) {
+      HttpContext.Response.StatusCode = 400; // Bad Request
+      return;
+    }
+
     var product = await _lens.GetByIdAsync(productId, ct);
 
     if (product == null) {

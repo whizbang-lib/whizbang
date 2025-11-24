@@ -68,7 +68,7 @@ public class InventoryLevelsPerspective :
       // Query current inventory state and send notification
       await SendInventoryNotificationAfterUpdateAsync(
         connection,
-        @event.ProductId,
+        @event.ProductId.ToString(),
         "Restocked",
         null,
         cancellationToken);
@@ -110,7 +110,7 @@ public class InventoryLevelsPerspective :
       // Query current inventory state and send notification
       await SendInventoryNotificationAfterUpdateAsync(
         connection,
-        @event.ProductId,
+        @event.ProductId.ToString(),
         "Reserved",
         null,
         cancellationToken);
@@ -191,7 +191,7 @@ public class InventoryLevelsPerspective :
       // Query current inventory state and send notification
       await SendInventoryNotificationAfterUpdateAsync(
         connection,
-        @event.ProductId,
+        @event.ProductId.ToString(),
         "Adjusted",
         @event.Reason,
         cancellationToken);
@@ -268,7 +268,7 @@ public class InventoryLevelsPerspective :
   /// Record for querying inventory details from database
   /// </summary>
   private record InventoryRecord(
-    string product_id,
+    Guid product_id,
     int quantity,
     int reserved,
     int available

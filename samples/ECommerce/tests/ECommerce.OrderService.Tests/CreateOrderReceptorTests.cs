@@ -60,12 +60,15 @@ public class CreateOrderReceptorTests {
     var logger = NullLogger<CreateOrderReceptor>.Instance;
     var receptor = new CreateOrderReceptor(dispatcher, logger);
 
+    var orderId = OrderId.New();
+    var customerId = CustomerId.New();
+    var productId = ProductId.New();
     var command = new CreateOrderCommand {
-      OrderId = Guid.NewGuid().ToString(),
-      CustomerId = "CUST-001",
+      OrderId = orderId,
+      CustomerId = customerId,
       LineItems = new List<OrderLineItem> {
         new OrderLineItem {
-          ProductId = "PROD-001",
+          ProductId = productId,
           ProductName = "Widget",
           Quantity = 2,
           UnitPrice = 19.99m
@@ -97,11 +100,11 @@ public class CreateOrderReceptorTests {
     var receptor = new CreateOrderReceptor(dispatcher, logger);
 
     var command = new CreateOrderCommand {
-      OrderId = Guid.NewGuid().ToString(),
-      CustomerId = "CUST-001",
+      OrderId = OrderId.New(),
+      CustomerId = CustomerId.New(),
       LineItems = new List<OrderLineItem> {
         new OrderLineItem {
-          ProductId = "PROD-001",
+          ProductId = ProductId.New(),
           ProductName = "Widget",
           Quantity = 2,
           UnitPrice = 19.99m
@@ -124,11 +127,11 @@ public class CreateOrderReceptorTests {
     var receptor = new CreateOrderReceptor(dispatcher, logger);
 
     var command = new CreateOrderCommand {
-      OrderId = Guid.NewGuid().ToString(),
-      CustomerId = "CUST-001",
+      OrderId = OrderId.New(),
+      CustomerId = CustomerId.New(),
       LineItems = new List<OrderLineItem> {
         new OrderLineItem {
-          ProductId = "PROD-001",
+          ProductId = ProductId.New(),
           ProductName = "Widget",
           Quantity = 2,
           UnitPrice = 19.99m
@@ -151,8 +154,8 @@ public class CreateOrderReceptorTests {
     var receptor = new CreateOrderReceptor(dispatcher, logger);
 
     var command = new CreateOrderCommand {
-      OrderId = Guid.NewGuid().ToString(),
-      CustomerId = "CUST-001",
+      OrderId = OrderId.New(),
+      CustomerId = CustomerId.New(),
       LineItems = new List<OrderLineItem>(),  // Empty list
       TotalAmount = 39.98m
     };
@@ -170,20 +173,22 @@ public class CreateOrderReceptorTests {
     var logger = NullLogger<CreateOrderReceptor>.Instance;
     var receptor = new CreateOrderReceptor(dispatcher, logger);
 
-    var orderId = Guid.NewGuid().ToString();
-    var customerId = "CUST-123";
+    var orderId = OrderId.New();
+    var customerId = CustomerId.New();
+    var productId1 = ProductId.New();
+    var productId2 = ProductId.New();
     var command = new CreateOrderCommand {
       OrderId = orderId,
       CustomerId = customerId,
       LineItems = new List<OrderLineItem> {
         new OrderLineItem {
-          ProductId = "PROD-001",
+          ProductId = productId1,
           ProductName = "Widget",
           Quantity = 2,
           UnitPrice = 19.99m
         },
         new OrderLineItem {
-          ProductId = "PROD-002",
+          ProductId = productId2,
           ProductName = "Gadget",
           Quantity = 1,
           UnitPrice = 29.99m
@@ -204,14 +209,14 @@ public class CreateOrderReceptorTests {
 
     // Verify first line item
     var firstItem = result.LineItems[0];
-    await Assert.That(firstItem.ProductId).IsEqualTo("PROD-001");
+    await Assert.That(firstItem.ProductId).IsEqualTo(productId1);
     await Assert.That(firstItem.ProductName).IsEqualTo("Widget");
     await Assert.That(firstItem.Quantity).IsEqualTo(2);
     await Assert.That(firstItem.UnitPrice).IsEqualTo(19.99m);
 
     // Verify second line item
     var secondItem = result.LineItems[1];
-    await Assert.That(secondItem.ProductId).IsEqualTo("PROD-002");
+    await Assert.That(secondItem.ProductId).IsEqualTo(productId2);
     await Assert.That(secondItem.ProductName).IsEqualTo("Gadget");
     await Assert.That(secondItem.Quantity).IsEqualTo(1);
     await Assert.That(secondItem.UnitPrice).IsEqualTo(29.99m);

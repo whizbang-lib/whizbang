@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using Whizbang.Core;
@@ -419,8 +420,31 @@ public class DispatcherTransportBridgeTests {
   }
 
   private class TestServiceProvider : IServiceProvider {
+    private readonly TestServiceScopeFactory _scopeFactory = new();
+
     public object? GetService(Type serviceType) {
+      if (serviceType == typeof(IServiceScopeFactory)) {
+        return _scopeFactory;
+      }
       return null;
+    }
+  }
+
+  private class TestServiceScopeFactory : IServiceScopeFactory {
+    public IServiceScope CreateScope() {
+      return new TestServiceScope(new TestServiceProvider());
+    }
+  }
+
+  private class TestServiceScope : IServiceScope {
+    public TestServiceScope(IServiceProvider serviceProvider) {
+      ServiceProvider = serviceProvider;
+    }
+
+    public IServiceProvider ServiceProvider { get; }
+
+    public void Dispose() {
+      // No-op for testing
     }
   }
 }
