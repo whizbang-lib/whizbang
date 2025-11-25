@@ -13,7 +13,7 @@ namespace ECommerce.BFF.API.Perspectives;
 
 /// <summary>
 /// Updates order read model when payment fails.
-/// Listens to PaymentFailedEvent.
+/// Listens to PaymentFailedEvent and updates order_perspective table (3-column JSONB pattern).
 /// </summary>
 public class PaymentFailedPerspective : IPerspectiveOf<PaymentFailedEvent> {
   private readonly IDbConnectionFactory _connectionFactory;
@@ -36,50 +36,30 @@ public class PaymentFailedPerspective : IPerspectiveOf<PaymentFailedEvent> {
       using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
       EnsureConnectionOpen(connection);
 
-      // 1. Update order status and payment information
+      // 1. Update order perspective - set Status and PaymentStatus in model_data JSONB
       await connection.ExecuteAsync(@"
-        UPDATE bff.orders
+        UPDATE order_perspective
         SET
-          status = 'PaymentFailed',
-          payment_status = 'Failed',
-          updated_at = @Timestamp
-        WHERE order_id = @OrderId",
+          model_data = jsonb_set(
+            jsonb_set(
+              jsonb_set(model_data, '{Status}', '""PaymentFailed""'),
+              '{PaymentStatus}', '""Failed""'
+            ),
+            '{UpdatedAt}', to_jsonb(@Timestamp::text)
+          ),
+          metadata = jsonb_set(metadata, '{EventType}', '""PaymentFailedEvent""'),
+          updated_at = @Timestamp,
+          version = version + 1
+        WHERE id = @OrderId::uuid",
         new {
-          @event.OrderId,
+          OrderId = @event.OrderId.Value.ToString(),
           Timestamp = DateTime.UtcNow
         });
 
-      // 2. Add to status history
-      await connection.ExecuteAsync(@"
-        INSERT INTO bff.order_status_history (
-          order_id,
-          status,
-          event_type,
-          timestamp,
-          details
-        )
-        VALUES (
-          @OrderId,
-          'PaymentFailed',
-          'PaymentFailedEvent',
-          @Timestamp,
-          @Details::jsonb
-        )",
-        new {
-          @event.OrderId,
-          Timestamp = DateTime.UtcNow,
-          Details = JsonSerializer.Serialize(
-            new PaymentFailedDetails {
-              Reason = @event.Reason
-            },
-            PerspectiveJsonContext.Default.PaymentFailedDetails
-          )
-        });
-
-      // 3. Push SignalR update
-      await _hubContext.Clients.User(@event.CustomerId)
+      // 2. Push SignalR update (PaymentFailedEvent has CustomerId directly)
+      await _hubContext.Clients.User(@event.CustomerId.Value.ToString())
         .SendAsync("OrderStatusChanged", new OrderStatusUpdate {
-          OrderId = @event.OrderId,
+          OrderId = @event.OrderId.Value.ToString(),
           Status = "PaymentFailed",
           Timestamp = DateTime.UtcNow,
           Message = $"Payment failed: {@event.Reason}",

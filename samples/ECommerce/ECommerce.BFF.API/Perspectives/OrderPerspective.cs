@@ -14,7 +14,7 @@ namespace ECommerce.BFF.API.Perspectives;
 
 /// <summary>
 /// Maintains BFF read model for orders and pushes real-time updates via SignalR.
-/// Listens to OrderCreatedEvent and updates the denormalized bff.orders table.
+/// Listens to OrderCreatedEvent and updates the order_perspective table (3-column JSONB pattern).
 /// </summary>
 public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent> {
   private readonly IDbConnectionFactory _connectionFactory;
@@ -37,73 +37,79 @@ public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent> {
       using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
       EnsureConnectionOpen(connection);
 
-      // 1. Insert into bff.orders read model (denormalized)
+      // Build OrderReadModel for model_data JSONB column
+      var orderReadModel = new {
+        OrderId = @event.OrderId.Value.ToString(),
+        CustomerId = @event.CustomerId.Value.ToString(),
+        TenantId = (string?)null,  // TODO: Add tenant_id when multi-tenancy implemented
+        Status = "Created",
+        TotalAmount = @event.TotalAmount,
+        CreatedAt = @event.CreatedAt,
+        UpdatedAt = @event.CreatedAt,
+        ItemCount = @event.LineItems.Count,
+        PaymentStatus = (string?)null,
+        ShipmentId = (string?)null,
+        TrackingNumber = (string?)null,
+        LineItems = @event.LineItems.Select(li => new {
+          ProductId = li.ProductId.Value.ToString(),
+          ProductName = li.ProductName,
+          Quantity = li.Quantity,
+          Price = li.UnitPrice
+        }).ToList()
+      };
+
+      // Build metadata JSONB column (correlation, causation, event type)
+      var metadata = new {
+        EventType = "OrderCreatedEvent",
+        EventId = @event.OrderId.Value.ToString(),
+        Timestamp = @event.CreatedAt,
+        Details = new OrderCreatedDetails {
+          TotalAmount = @event.TotalAmount,
+          ItemCount = @event.LineItems.Count
+        }
+      };
+
+      // Build scope JSONB column (tenant, user permissions)
+      var scope = new {
+        TenantId = (string?)null,
+        CustomerId = @event.CustomerId.Value.ToString()
+      };
+
+      // 1. Insert/Update order_perspective table (3-column JSONB pattern)
       await connection.ExecuteAsync(@"
-        INSERT INTO bff.orders (
-          order_id,
-          customer_id,
-          tenant_id,
-          status,
-          total_amount,
+        INSERT INTO order_perspective (
+          id,
+          model_data,
+          metadata,
+          scope,
           created_at,
           updated_at,
-          line_items,
-          item_count
+          version
         )
         VALUES (
-          @OrderId,
-          @CustomerId,
-          NULL,  -- TODO: Add tenant_id when multi-tenancy implemented
-          'Created',
-          @TotalAmount,
+          @Id::uuid,
+          @ModelData::jsonb,
+          @Metadata::jsonb,
+          @Scope::jsonb,
           @CreatedAt,
-          @CreatedAt,
-          @LineItems::jsonb,
-          @ItemCount
+          @UpdatedAt,
+          1
         )
-        ON CONFLICT (order_id) DO UPDATE SET
-          updated_at = EXCLUDED.updated_at",
+        ON CONFLICT (id) DO UPDATE SET
+          model_data = EXCLUDED.model_data,
+          metadata = EXCLUDED.metadata,
+          updated_at = EXCLUDED.updated_at,
+          version = order_perspective.version + 1",
         new {
-          @event.OrderId,
-          @event.CustomerId,
-          @event.TotalAmount,
-          @event.CreatedAt,
-          LineItems = JsonSerializer.Serialize(
-            @event.LineItems,
-            (JsonTypeInfo<List<OrderLineItem>>)WhizbangJsonContext.CreateOptions().GetTypeInfo(typeof(List<OrderLineItem>))!
-          ),
-          ItemCount = @event.LineItems.Count
+          Id = @event.OrderId.Value.ToString(),
+          ModelData = JsonSerializer.Serialize(orderReadModel, WhizbangJsonContext.CreateOptions()),
+          Metadata = JsonSerializer.Serialize(metadata, WhizbangJsonContext.CreateOptions()),
+          Scope = JsonSerializer.Serialize(scope, WhizbangJsonContext.CreateOptions()),
+          CreatedAt = @event.CreatedAt,
+          UpdatedAt = @event.CreatedAt
         });
 
-      // 2. Insert into order status history
-      await connection.ExecuteAsync(@"
-        INSERT INTO bff.order_status_history (
-          order_id,
-          status,
-          event_type,
-          timestamp,
-          details
-        )
-        VALUES (
-          @OrderId,
-          'Created',
-          'OrderCreatedEvent',
-          @CreatedAt,
-          @Details::jsonb
-        )",
-        new {
-          @event.OrderId,
-          @event.CreatedAt,
-          Details = JsonSerializer.Serialize(
-            new OrderCreatedDetails {
-              TotalAmount = @event.TotalAmount,
-              ItemCount = @event.LineItems.Count
-            },
-            PerspectiveJsonContext.Default.OrderCreatedDetails
-          )
-        });
-
-      // 3. Push real-time update via SignalR
+      // 2. Push real-time update via SignalR
       await _hubContext.Clients.User(@event.CustomerId.Value.ToString())
         .SendAsync("OrderStatusChanged", new OrderStatusUpdate {
           OrderId = @event.OrderId.Value.ToString(),

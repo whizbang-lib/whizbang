@@ -213,6 +213,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private static string GenerateLazyFields(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes) {
     var sb = new System.Text.StringBuilder();
 
+    // Suppress CS0169 warning for unused fields (fields are reserved for future lazy initialization)
+    sb.AppendLine("#pragma warning disable CS0169  // Field is never used");
+    sb.AppendLine();
+
     // Load snippets
     var valueObjectFieldSnippet = TemplateUtilities.ExtractSnippet(
         assembly,
@@ -250,6 +254,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
           .Replace("__SIMPLE_NAME__", type.SimpleName);
       sb.AppendLine(field);
     }
+
+    // Restore CS0169 warning
+    sb.AppendLine();
+    sb.AppendLine("#pragma warning restore CS0169");
 
     return sb.ToString();
   }
@@ -781,6 +789,11 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     var sb = new System.Text.StringBuilder();
+
+    // Suppress CS0169 warning for unused fields (fields are reserved for future lazy initialization)
+    sb.AppendLine("#pragma warning disable CS0169  // Field is never used");
+    sb.AppendLine();
+
     var snippet = TemplateUtilities.ExtractSnippet(assembly, "JsonContextSnippets.cs", "LAZY_FIELD_LIST");
 
     foreach (var listType in listTypes) {
@@ -789,6 +802,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
           .Replace("__ELEMENT_SIMPLE_NAME__", listType.ElementSimpleName);
       sb.AppendLine(field);
     }
+
+    // Restore CS0169 warning
+    sb.AppendLine();
+    sb.AppendLine("#pragma warning restore CS0169");
 
     return sb.ToString();
   }

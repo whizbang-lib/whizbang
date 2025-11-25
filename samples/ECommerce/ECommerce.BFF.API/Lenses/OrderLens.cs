@@ -9,6 +9,7 @@ namespace ECommerce.BFF.API.Lenses;
 
 /// <summary>
 /// Dapper-based implementation of IOrderLens for fast readonly queries.
+/// Queries order_perspective table using JSONB pattern (model_data, metadata, scope).
 /// </summary>
 public class OrderLens : IOrderLens {
   private readonly IDbConnectionFactory _connectionFactory;
@@ -22,196 +23,99 @@ public class OrderLens : IOrderLens {
   public async Task<OrderReadModel?> GetByIdAsync(string orderId, CancellationToken cancellationToken = default) {
     const string sql = @"
       SELECT
-        order_id AS OrderId,
-        customer_id AS CustomerId,
-        tenant_id AS TenantId,
-        status AS Status,
-        total_amount AS TotalAmount,
-        created_at AS CreatedAt,
-        updated_at AS UpdatedAt,
-        item_count AS ItemCount,
-        payment_status AS PaymentStatus,
-        shipment_id AS ShipmentId,
-        tracking_number AS TrackingNumber,
-        line_items AS LineItemsJson
-      FROM bff.orders
-      WHERE order_id = @OrderId";
+        model_data::text AS ModelDataJson
+      FROM order_perspective
+      WHERE id = @OrderId::uuid";
 
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
-    var result = await connection.QuerySingleOrDefaultAsync<OrderRow>(sql, new { OrderId = orderId });
+    var modelDataJson = await connection.QuerySingleOrDefaultAsync<string>(sql, new { OrderId = orderId });
 
-    return result == null ? null : MapToReadModel(result);
+    return modelDataJson == null ? null : DeserializeOrderReadModel(modelDataJson);
   }
 
   public async Task<IEnumerable<OrderReadModel>> GetByCustomerIdAsync(string customerId, CancellationToken cancellationToken = default) {
     const string sql = @"
       SELECT
-        order_id AS OrderId,
-        customer_id AS CustomerId,
-        tenant_id AS TenantId,
-        status AS Status,
-        total_amount AS TotalAmount,
-        created_at AS CreatedAt,
-        updated_at AS UpdatedAt,
-        item_count AS ItemCount,
-        payment_status AS PaymentStatus,
-        shipment_id AS ShipmentId,
-        tracking_number AS TrackingNumber,
-        line_items AS LineItemsJson
-      FROM bff.orders
-      WHERE customer_id = @CustomerId
+        model_data::text AS ModelDataJson
+      FROM order_perspective
+      WHERE scope->>'CustomerId' = @CustomerId
       ORDER BY created_at DESC";
 
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
-    var results = await connection.QueryAsync<OrderRow>(sql, new { CustomerId = customerId });
+    var results = await connection.QueryAsync<string>(sql, new { CustomerId = customerId });
 
-    return results.Select(MapToReadModel);
+    return results.Select(DeserializeOrderReadModel);
   }
 
   public async Task<IEnumerable<OrderReadModel>> GetByTenantIdAsync(string tenantId, CancellationToken cancellationToken = default) {
     const string sql = @"
       SELECT
-        order_id AS OrderId,
-        customer_id AS CustomerId,
-        tenant_id AS TenantId,
-        status AS Status,
-        total_amount AS TotalAmount,
-        created_at AS CreatedAt,
-        updated_at AS UpdatedAt,
-        item_count AS ItemCount,
-        payment_status AS PaymentStatus,
-        shipment_id AS ShipmentId,
-        tracking_number AS TrackingNumber,
-        line_items AS LineItemsJson
-      FROM bff.orders
-      WHERE tenant_id = @TenantId
+        model_data::text AS ModelDataJson
+      FROM order_perspective
+      WHERE scope->>'TenantId' = @TenantId
       ORDER BY created_at DESC";
 
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
-    var results = await connection.QueryAsync<OrderRow>(sql, new { TenantId = tenantId });
+    var results = await connection.QueryAsync<string>(sql, new { TenantId = tenantId });
 
-    return results.Select(MapToReadModel);
+    return results.Select(DeserializeOrderReadModel);
   }
 
   public async Task<IEnumerable<OrderReadModel>> GetRecentOrdersAsync(int limit = 100, CancellationToken cancellationToken = default) {
     const string sql = @"
       SELECT
-        order_id AS OrderId,
-        customer_id AS CustomerId,
-        tenant_id AS TenantId,
-        status AS Status,
-        total_amount AS TotalAmount,
-        created_at AS CreatedAt,
-        updated_at AS UpdatedAt,
-        item_count AS ItemCount,
-        payment_status AS PaymentStatus,
-        shipment_id AS ShipmentId,
-        tracking_number AS TrackingNumber,
-        line_items AS LineItemsJson
-      FROM bff.orders
+        model_data::text AS ModelDataJson
+      FROM order_perspective
       ORDER BY created_at DESC
       LIMIT @Limit";
 
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
-    var results = await connection.QueryAsync<OrderRow>(sql, new { Limit = limit });
+    var results = await connection.QueryAsync<string>(sql, new { Limit = limit });
 
-    return results.Select(MapToReadModel);
+    return results.Select(DeserializeOrderReadModel);
   }
 
   public async Task<IEnumerable<OrderReadModel>> GetByStatusAsync(string tenantId, string status, CancellationToken cancellationToken = default) {
     const string sql = @"
       SELECT
-        order_id AS OrderId,
-        customer_id AS CustomerId,
-        tenant_id AS TenantId,
-        status AS Status,
-        total_amount AS TotalAmount,
-        created_at AS CreatedAt,
-        updated_at AS UpdatedAt,
-        item_count AS ItemCount,
-        payment_status AS PaymentStatus,
-        shipment_id AS ShipmentId,
-        tracking_number AS TrackingNumber,
-        line_items AS LineItemsJson
-      FROM bff.orders
-      WHERE tenant_id = @TenantId AND status = @Status
+        model_data::text AS ModelDataJson
+      FROM order_perspective
+      WHERE scope->>'TenantId' = @TenantId
+        AND model_data->>'Status' = @Status
       ORDER BY created_at DESC";
 
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
-    var results = await connection.QueryAsync<OrderRow>(sql, new { TenantId = tenantId, Status = status });
+    var results = await connection.QueryAsync<string>(sql, new { TenantId = tenantId, Status = status });
 
-    return results.Select(MapToReadModel);
+    return results.Select(DeserializeOrderReadModel);
   }
 
   public async Task<IEnumerable<OrderStatusHistory>> GetStatusHistoryAsync(string orderId, CancellationToken cancellationToken = default) {
-    const string sql = @"
-      SELECT
-        id AS Id,
-        order_id AS OrderId,
-        status AS Status,
-        event_type AS EventType,
-        timestamp AS Timestamp,
-        details AS Details
-      FROM bff.order_status_history
-      WHERE order_id = @OrderId
-      ORDER BY timestamp ASC";
-
-    using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-    EnsureConnectionOpen(connection);
-    var results = await connection.QueryAsync<OrderStatusHistory>(sql, new { OrderId = orderId });
-
-    return results;
+    // NOTE: With JSONB pattern, we no longer have a separate status history table.
+    // The metadata column contains the EventType for each update.
+    // For now, return empty list. In the future, could query event store for full history.
+    _logger.LogWarning("GetStatusHistoryAsync called but status history table no longer exists with JSONB pattern. Returning empty list.");
+    return Enumerable.Empty<OrderStatusHistory>();
   }
 
-  // Helper method to map database row to read model
-  private static OrderReadModel MapToReadModel(OrderRow row) {
-    var lineItems = string.IsNullOrEmpty(row.LineItemsJson)
-      ? new List<LineItemReadModel>()
-      : JsonSerializer.Deserialize(
-          row.LineItemsJson,
-          (JsonTypeInfo<List<LineItemReadModel>>)WhizbangJsonContext.CreateOptions().GetTypeInfo(typeof(List<LineItemReadModel>))!
-        ) ?? new List<LineItemReadModel>();
+  // Helper method to deserialize JSONB model_data to OrderReadModel
+  private static OrderReadModel DeserializeOrderReadModel(string modelDataJson) {
+    var orderReadModel = JsonSerializer.Deserialize<OrderReadModel>(
+      modelDataJson,
+      WhizbangJsonContext.CreateOptions()
+    );
 
-    return new OrderReadModel {
-      OrderId = row.OrderId,
-      CustomerId = row.CustomerId,
-      TenantId = row.TenantId,
-      Status = row.Status,
-      TotalAmount = row.TotalAmount,
-      CreatedAt = row.CreatedAt,
-      UpdatedAt = row.UpdatedAt,
-      ItemCount = row.ItemCount,
-      PaymentStatus = row.PaymentStatus,
-      ShipmentId = row.ShipmentId,
-      TrackingNumber = row.TrackingNumber,
-      LineItems = lineItems
-    };
+    return orderReadModel ?? throw new InvalidOperationException("Failed to deserialize OrderReadModel from JSONB");
   }
 
   private static void EnsureConnectionOpen(IDbConnection connection) {
     if (connection.State != ConnectionState.Open) {
       connection.Open();
     }
-  }
-
-  // Database row DTO for Dapper mapping
-  private class OrderRow {
-    public required string OrderId { get; init; }
-    public required string CustomerId { get; init; }
-    public string? TenantId { get; init; }
-    public required string Status { get; init; }
-    public decimal TotalAmount { get; init; }
-    public DateTime CreatedAt { get; init; }
-    public DateTime UpdatedAt { get; init; }
-    public int ItemCount { get; init; }
-    public string? PaymentStatus { get; init; }
-    public string? ShipmentId { get; init; }
-    public string? TrackingNumber { get; init; }
-    public required string LineItemsJson { get; init; }
   }
 }

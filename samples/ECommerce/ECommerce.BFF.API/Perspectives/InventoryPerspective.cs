@@ -13,7 +13,7 @@ namespace ECommerce.BFF.API.Perspectives;
 
 /// <summary>
 /// Updates order read model when inventory is reserved.
-/// Listens to InventoryReservedEvent.
+/// Listens to InventoryReservedEvent and updates order_perspective table (3-column JSONB pattern).
 /// </summary>
 public class InventoryPerspective : IPerspectiveOf<InventoryReservedEvent> {
   private readonly IDbConnectionFactory _connectionFactory;
@@ -36,57 +36,34 @@ public class InventoryPerspective : IPerspectiveOf<InventoryReservedEvent> {
       using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
       EnsureConnectionOpen(connection);
 
-      // 1. Update order status in bff.orders
+      // 1. Read existing order perspective and update model_data
       await connection.ExecuteAsync(@"
-        UPDATE bff.orders
+        UPDATE order_perspective
         SET
-          status = 'InventoryReserved',
-          updated_at = @Timestamp
-        WHERE order_id = @OrderId",
+          model_data = jsonb_set(
+            jsonb_set(model_data, '{Status}', '""InventoryReserved""'),
+            '{UpdatedAt}', to_jsonb(@Timestamp::text)
+          ),
+          metadata = jsonb_set(metadata, '{EventType}', '""InventoryReservedEvent""'),
+          updated_at = @Timestamp,
+          version = version + 1
+        WHERE id = @OrderId::uuid",
         new {
-          @event.OrderId,
+          OrderId = @event.OrderId.Value.ToString(),
           Timestamp = DateTime.UtcNow
         });
 
-      // 2. Add to status history
-      await connection.ExecuteAsync(@"
-        INSERT INTO bff.order_status_history (
-          order_id,
-          status,
-          event_type,
-          timestamp,
-          details
-        )
-        VALUES (
-          @OrderId,
-          'InventoryReserved',
-          'InventoryReservedEvent',
-          @Timestamp,
-          @Details::jsonb
-        )",
-        new {
-          @event.OrderId,
-          Timestamp = DateTime.UtcNow,
-          Details = JsonSerializer.Serialize(
-            new InventoryReservedDetails {
-              ProductId = @event.ProductId.ToString(),
-              Quantity = @event.Quantity,
-              ReservedAt = @event.ReservedAt
-            },
-            PerspectiveJsonContext.Default.InventoryReservedDetails
-          )
-        });
-
-      // 3. Push SignalR update
+      // 2. Get customer ID for SignalR from scope JSONB
       var customerId = await connection.QuerySingleOrDefaultAsync<string>(
-        "SELECT customer_id FROM bff.orders WHERE order_id = @OrderId",
-        new { @event.OrderId }
+        "SELECT scope->>'CustomerId' FROM order_perspective WHERE id = @OrderId::uuid",
+        new { OrderId = @event.OrderId.Value.ToString() }
       );
 
+      // 3. Push SignalR update
       if (customerId != null) {
         await _hubContext.Clients.User(customerId)
           .SendAsync("OrderStatusChanged", new OrderStatusUpdate {
-            OrderId = @event.OrderId,
+            OrderId = @event.OrderId.Value.ToString(),
             Status = "InventoryReserved",
             Timestamp = DateTime.UtcNow,
             Message = "Inventory has been reserved for your order"

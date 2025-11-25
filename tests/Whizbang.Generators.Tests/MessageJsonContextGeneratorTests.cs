@@ -42,7 +42,7 @@ public record CreateOrder(string OrderId, string CustomerName) : ICommand;
     // Should also generate WhizbangJsonContext facade since there are messages
     var facadeCode = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangJsonContext.g.cs");
     await Assert.That(facadeCode).IsNotNull();
-    await Assert.That(facadeCode!).Contains("public class WhizbangJsonContext : IJsonTypeInfoResolver");
+    await Assert.That(facadeCode!).Contains("public class WhizbangJsonContext : JsonSerializerContext, IJsonTypeInfoResolver");
   }
 
   [Test]

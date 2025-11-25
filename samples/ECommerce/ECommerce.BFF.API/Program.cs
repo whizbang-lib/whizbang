@@ -25,7 +25,12 @@ var serviceBusConnection = builder.Configuration.GetConnectionString("servicebus
 
 // Register Whizbang Postgres stores (inbox, outbox, read models) with automatic schema initialization
 var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
-builder.Services.AddWhizbangPostgres(postgresConnection, jsonOptions, initializeSchema: true);
+builder.Services.AddWhizbangPostgres(
+  postgresConnection,
+  jsonOptions,
+  initializeSchema: true,
+  perspectiveSchemaSql: Whizbang.Generated.PerspectiveSchemas.Sql  // Auto-generated perspective tables
+);
 builder.Services.AddWhizbangPostgresHealthChecks();
 
 // Register Azure Service Bus transport
