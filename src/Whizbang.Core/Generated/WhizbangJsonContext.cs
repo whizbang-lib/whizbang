@@ -77,7 +77,10 @@ public class WhizbangJsonContext : JsonSerializerContext, IJsonTypeInfoResolver 
   /// </summary>
   public override JsonTypeInfo? GetTypeInfo(Type type) {
     // When called directly (not in resolver chain), Options might be null
-    if (Options == null) return null;
+    if (Options == null) {
+      return null;
+    }
+
     return _combinedResolver.GetTypeInfo(type, Options);
   }
 }

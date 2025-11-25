@@ -12,7 +12,7 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// </summary>
 [Generator]
 public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
-  private const string PERSPECTIVE_INTERFACE = "Whizbang.Core.Perspectives.IPerspectiveOf";
+  private const string PERSPECTIVE_INTERFACE = "Whizbang.Core.IPerspectiveOf";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover all classes that implement IPerspectiveOf<TEvent>

@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Whizbang.Core;
@@ -27,7 +28,7 @@ public static class WhizbangIdServiceCollectionExtensions {
   /// </code>
   /// </para>
   /// </remarks>
-  public static IServiceCollection AddWhizbangIdFactory<TId, TFactory>(this IServiceCollection services)
+  public static IServiceCollection AddWhizbangIdFactory<TId, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TFactory>(this IServiceCollection services)
       where TFactory : class, IWhizbangIdFactory<TId> {
     return services.AddSingleton<IWhizbangIdFactory<TId>, TFactory>();
   }
