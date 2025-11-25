@@ -21,6 +21,10 @@
     <Nullable>enable</Nullable>
     <!-- Suppress trimming warnings for test project using EF Core InMemory -->
     <NoWarn>$(NoWarn);IL2026;IL3050</NoWarn>
+
+    <!-- Enable viewing generated files from source generators -->
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)/generated</CompilerGeneratedFilesOutputPath>
   </PropertyGroup>
 
 </Project>

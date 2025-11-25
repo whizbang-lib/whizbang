@@ -12,7 +12,7 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// </summary>
 [Generator]
 public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
-  private const string PERSPECTIVE_INTERFACE = "Whizbang.Core.IPerspectiveOf";
+  private const string PERSPECTIVE_INTERFACE = "Whizbang.Core.IPerspectiveOf<TEvent>";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover all classes that implement IPerspectiveOf<TEvent>
@@ -45,8 +45,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     // Find IPerspectiveOf<TEvent> interface
     var perspectiveInterface = symbol.AllInterfaces.FirstOrDefault(i =>
-        i.IsGenericType &&
-        i.ConstructedFrom.ToDisplayString() == PERSPECTIVE_INTERFACE);
+        i.OriginalDefinition.ToDisplayString() == PERSPECTIVE_INTERFACE);
 
     if (perspectiveInterface is null) {
       return null;
@@ -66,8 +65,12 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Generate table name from model type name (e.g., "OrderSummary" -> "order_summary")
-    var tableName = ToSnakeCase(modelTypeName);
+    // Generate table name from simple model type name (e.g., "OrderSummary" -> "order_summary")
+    // Extract just the class name without namespace
+    var simpleTypeName = modelTypeName.Contains('.')
+        ? modelTypeName.Substring(modelTypeName.LastIndexOf('.') + 1)
+        : modelTypeName;
+    var tableName = ToSnakeCase(simpleTypeName);
 
     return new PerspectiveInfo(
         ModelTypeName: $"global::{modelTypeName}",
@@ -134,7 +137,28 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       SourceProductionContext context,
       ImmutableArray<PerspectiveInfo> perspectives) {
 
+    // ALWAYS report diagnostic to confirm generator is running (even if no perspectives found)
+    var runningDescriptor = new DiagnosticDescriptor(
+        id: "EFCORE000",
+        title: "EF Core Generator Executed",
+        messageFormat: "EF Core perspective generator executed and discovered {0} perspective(s). Looking for interface: '{1}'",
+        category: "Whizbang.Generator",
+        defaultSeverity: DiagnosticSeverity.Info,
+        isEnabledByDefault: true);
+
+    context.ReportDiagnostic(Diagnostic.Create(runningDescriptor, Location.None, perspectives.Length, PERSPECTIVE_INTERFACE));
+
     if (perspectives.IsEmpty) {
+      // Report warning if no perspectives found
+      var warningDescriptor = new DiagnosticDescriptor(
+          id: "EFCORE001",
+          title: "No Perspectives Found",
+          messageFormat: "EF Core perspective generator did not find any IPerspectiveOf implementations (searched for: '{0}')",
+          category: "Whizbang.Generator",
+          defaultSeverity: DiagnosticSeverity.Warning,
+          isEnabledByDefault: true);
+
+      context.ReportDiagnostic(Diagnostic.Create(warningDescriptor, Location.None, PERSPECTIVE_INTERFACE));
       return; // No perspectives found, nothing to generate
     }
 
