@@ -270,6 +270,29 @@ public class EFCorePostgresLensQueryTests {
     await Assert.That(results[0].Data.Name).IsEqualTo("Charlie");
     await Assert.That(results[0].Data.Value).IsEqualTo(200);
   }
+
+  [Test]
+  public async Task Constructor_WithNullContext_ThrowsArgumentNullExceptionAsync() {
+    // Act & Assert
+    var exception = await Assert.That(() =>
+        new EFCorePostgresLensQuery<TestModel>(null!, "test_perspective")
+    ).ThrowsException();
+
+    await Assert.That(exception).IsTypeOf<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task Constructor_WithNullTableName_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+
+    // Act & Assert
+    var exception = await Assert.That(() =>
+        new EFCorePostgresLensQuery<TestModel>(context, null!)
+    ).ThrowsException();
+
+    await Assert.That(exception).IsTypeOf<ArgumentNullException>();
+  }
 }
 
 /// <summary>
