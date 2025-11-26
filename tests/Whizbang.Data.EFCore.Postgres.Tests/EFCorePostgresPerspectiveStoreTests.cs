@@ -24,7 +24,8 @@ public class EFCorePostgresPerspectiveStoreTests {
   public async Task UpsertAsync_WhenRecordDoesNotExist_CreatesNewRecordAsync() {
     // Arrange
     var context = CreateInMemoryDbContext();
-    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective");
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
     var model = new StoreTestModel { Name = "Alice", Value = 100 };
 
     // Act
@@ -44,7 +45,8 @@ public class EFCorePostgresPerspectiveStoreTests {
   public async Task UpsertAsync_WhenRecordExists_UpdatesExistingRecordAsync() {
     // Arrange
     var context = CreateInMemoryDbContext();
-    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective");
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
 
     // Create initial record
     await store.UpsertAsync("test-id", new StoreTestModel { Name = "Alice", Value = 100 });
@@ -66,7 +68,8 @@ public class EFCorePostgresPerspectiveStoreTests {
   public async Task UpsertAsync_IncrementsVersionNumber_OnEachUpdateAsync() {
     // Arrange
     var context = CreateInMemoryDbContext();
-    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective");
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
 
     // Act - multiple updates
     await store.UpsertAsync("test-id", new StoreTestModel { Name = "V1", Value = 1 });
@@ -86,7 +89,8 @@ public class EFCorePostgresPerspectiveStoreTests {
   public async Task UpsertAsync_UpdatesUpdatedAtTimestamp_OnUpdateAsync() {
     // Arrange
     var context = CreateInMemoryDbContext();
-    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective");
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
 
     // Create initial record
     await store.UpsertAsync("test-id", new StoreTestModel { Name = "Alice", Value = 100 });
@@ -112,88 +116,26 @@ public class EFCorePostgresPerspectiveStoreTests {
   }
 
   [Test]
-  public async Task UpdateFieldsAsync_UpdatesSpecificFields_InDataColumnAsync() {
-    // Arrange
-    var context = CreateInMemoryDbContext();
-    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective");
-
-    // Create initial record
-    await store.UpsertAsync("test-id", new StoreTestModel { Name = "Alice", Value = 100 });
-
-    // Act - update only the Value field
-    await store.UpdateFieldsAsync("test-id", new Dictionary<string, object> {
-      ["Value"] = 999
-    });
-
-    // Assert - Value updated, Name unchanged
-    var row = await context.Set<PerspectiveRow<StoreTestModel>>()
-        .FirstOrDefaultAsync(r => r.Id == "test-id");
-
-    await Assert.That(row).IsNotNull();
-    await Assert.That(row!.Data.Name).IsEqualTo("Alice"); // Unchanged
-    await Assert.That(row.Data.Value).IsEqualTo(999); // Updated
-  }
-
-  [Test]
-  public async Task UpdateFieldsAsync_IncrementsVersionNumberAsync() {
-    // Arrange
-    var context = CreateInMemoryDbContext();
-    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective");
-
-    // Create initial record
-    await store.UpsertAsync("test-id", new StoreTestModel { Name = "Alice", Value = 100 });
-
-    // Act - update a field
-    await store.UpdateFieldsAsync("test-id", new Dictionary<string, object> {
-      ["Value"] = 200
-    });
-
-    // Assert - version incremented
-    var row = await context.Set<PerspectiveRow<StoreTestModel>>()
-        .FirstOrDefaultAsync(r => r.Id == "test-id");
-
-    await Assert.That(row).IsNotNull();
-    await Assert.That(row!.Version).IsEqualTo(2);
-  }
-
-  [Test]
-  public async Task UpdateFieldsAsync_WhenRecordDoesNotExist_ThrowsExceptionAsync() {
-    // Arrange
-    var context = CreateInMemoryDbContext();
-    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective");
-
-    // Act & Assert - should throw when record doesn't exist
-    var exception = await Assert.That(async () =>
-        await store.UpdateFieldsAsync("nonexistent-id", new Dictionary<string, object> {
-          ["Value"] = 999
-        })
+  public async Task Constructor_WithNullContext_ThrowsArgumentNullExceptionAsync() {
+    // Act & Assert
+    var exception = await Assert.That(() =>
+        new EFCorePostgresPerspectiveStore<StoreTestModel>(null!, "test_perspective", new InMemoryUpsertStrategy())
     ).ThrowsException();
 
-    await Assert.That(exception is InvalidOperationException).IsTrue();
+    await Assert.That(exception).IsTypeOf<ArgumentNullException>();
   }
 
   [Test]
-  public async Task UpdateFieldsAsync_UpdatesMultipleFields_InSingleOperationAsync() {
+  public async Task Constructor_WithNullTableName_ThrowsArgumentNullExceptionAsync() {
     // Arrange
     var context = CreateInMemoryDbContext();
-    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective");
 
-    // Create initial record
-    await store.UpsertAsync("test-id", new StoreTestModel { Name = "Alice", Value = 100 });
+    // Act & Assert
+    var exception = await Assert.That(() =>
+        new EFCorePostgresPerspectiveStore<StoreTestModel>(context, null!, new InMemoryUpsertStrategy())
+    ).ThrowsException();
 
-    // Act - update multiple fields
-    await store.UpdateFieldsAsync("test-id", new Dictionary<string, object> {
-      ["Name"] = "Bob",
-      ["Value"] = 999
-    });
-
-    // Assert - both fields updated
-    var row = await context.Set<PerspectiveRow<StoreTestModel>>()
-        .FirstOrDefaultAsync(r => r.Id == "test-id");
-
-    await Assert.That(row).IsNotNull();
-    await Assert.That(row!.Data.Name).IsEqualTo("Bob");
-    await Assert.That(row!.Data.Value).IsEqualTo(999);
+    await Assert.That(exception).IsTypeOf<ArgumentNullException>();
   }
 }
 
