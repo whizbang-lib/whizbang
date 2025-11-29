@@ -318,8 +318,8 @@ namespace TestNamespace {
     // Assert
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("return services;");
-    await Assert.That(generatedSource!).Contains("IServiceCollection AddWhizbangPerspectives(this IServiceCollection services)");
+    await Assert.That(generatedSource!).Contains("return new WhizbangPerspectiveBuilder(services);");
+    await Assert.That(generatedSource!).Contains("WhizbangPerspectiveBuilder AddWhizbangPerspectives(this IServiceCollection services)");
   }
 
   [Test]
