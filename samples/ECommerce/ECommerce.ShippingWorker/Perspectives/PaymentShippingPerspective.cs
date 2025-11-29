@@ -8,12 +8,8 @@ namespace ECommerce.ShippingWorker.Perspectives;
 /// Perspective that observes PaymentProcessedEvent for analytics/logging
 /// This demonstrates that PaymentProcessedEvent has BOTH a receptor AND a perspective
 /// </summary>
-public class PaymentShippingPerspective : IPerspectiveOf<PaymentProcessedEvent> {
-  private readonly ILogger<PaymentShippingPerspective> _logger;
-
-  public PaymentShippingPerspective(ILogger<PaymentShippingPerspective> logger) {
-    _logger = logger;
-  }
+public class PaymentShippingPerspective(ILogger<PaymentShippingPerspective> logger) : IPerspectiveOf<PaymentProcessedEvent> {
+  private readonly ILogger<PaymentShippingPerspective> _logger = logger;
 
   public async Task Update(PaymentProcessedEvent @event, CancellationToken cancellationToken = default) {
     _logger.LogInformation(

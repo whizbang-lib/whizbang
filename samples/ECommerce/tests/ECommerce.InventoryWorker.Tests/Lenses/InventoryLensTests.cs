@@ -136,7 +136,7 @@ public class InventoryLensTests : IAsyncDisposable {
 
     // Assert
     await Assert.That(result).HasCount().EqualTo(1);
-    var inventory = result.First();
+    var inventory = result[0];
     await Assert.That(inventory.Quantity).IsEqualTo(100);
     await Assert.That(inventory.Reserved).IsEqualTo(30);
     await Assert.That(inventory.Available).IsEqualTo(70); // 100 - 30
@@ -174,7 +174,7 @@ public class InventoryLensTests : IAsyncDisposable {
 
     // Assert
     await Assert.That(result).HasCount().EqualTo(1);
-    await Assert.That(result.First().ProductId).IsEqualTo(lowStockProductId);
+    await Assert.That(result[0].ProductId).IsEqualTo(lowStockProductId);
   }
 
   [Test]

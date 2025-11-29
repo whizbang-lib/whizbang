@@ -8,14 +8,9 @@ namespace ECommerce.ShippingWorker.Receptors;
 /// <summary>
 /// Handles CreateShipmentCommand and publishes ShipmentCreatedEvent
 /// </summary>
-public class CreateShipmentReceptor : IReceptor<CreateShipmentCommand, ShipmentCreatedEvent> {
-  private readonly IDispatcher _dispatcher;
-  private readonly ILogger<CreateShipmentReceptor> _logger;
-
-  public CreateShipmentReceptor(IDispatcher dispatcher, ILogger<CreateShipmentReceptor> logger) {
-    _dispatcher = dispatcher;
-    _logger = logger;
-  }
+public class CreateShipmentReceptor(IDispatcher dispatcher, ILogger<CreateShipmentReceptor> logger) : IReceptor<CreateShipmentCommand, ShipmentCreatedEvent> {
+  private readonly IDispatcher _dispatcher = dispatcher;
+  private readonly ILogger<CreateShipmentReceptor> _logger = logger;
 
   public async ValueTask<ShipmentCreatedEvent> HandleAsync(
     CreateShipmentCommand message,

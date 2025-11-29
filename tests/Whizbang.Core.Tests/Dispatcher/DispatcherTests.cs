@@ -23,7 +23,7 @@ public class DispatcherTests {
   public async Task Send_WithValidMessage_ShouldReturnDeliveryReceiptAsync() {
     // Arrange
     var dispatcher = CreateDispatcher();
-    var command = new CreateOrder(Guid.NewGuid(), new[] { "item1", "item2" });
+    var command = new CreateOrder(Guid.NewGuid(), ["item1", "item2"]);
 
     // Act
     var receipt = await dispatcher.SendAsync(command);
@@ -39,7 +39,7 @@ public class DispatcherTests {
   public async Task LocalInvoke_WithValidMessage_ShouldReturnBusinessResultAsync() {
     // Arrange
     var dispatcher = CreateDispatcher();
-    var command = new CreateOrder(Guid.NewGuid(), new[] { "item1", "item2" });
+    var command = new CreateOrder(Guid.NewGuid(), ["item1", "item2"]);
 
     // Act
     var result = await dispatcher.LocalInvokeAsync<OrderCreated>(command);
@@ -81,7 +81,7 @@ public class DispatcherTests {
   public async Task Send_WithContext_ShouldPreserveCorrelationIdInReceiptAsync() {
     // Arrange
     var dispatcher = CreateDispatcher();
-    var command = new CreateOrder(Guid.NewGuid(), new[] { "item1" });
+    var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
     var correlationId = CorrelationId.New();
     var causationId = MessageId.New();
     var context = MessageContext.Create(correlationId, causationId);
@@ -99,7 +99,7 @@ public class DispatcherTests {
   public async Task LocalInvoke_WithContext_ShouldPreserveContextAsync() {
     // Arrange
     var dispatcher = CreateDispatcher();
-    var command = new CreateOrder(Guid.NewGuid(), new[] { "item1" });
+    var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
     var context = MessageContext.Create(
         CorrelationId.New(),
         MessageId.New()
@@ -135,9 +135,9 @@ public class DispatcherTests {
     // Arrange
     var dispatcher = CreateDispatcher();
     var commands = new object[] {
-            new CreateOrder(Guid.NewGuid(), new[] { "item1" }),
-            new CreateOrder(Guid.NewGuid(), new[] { "item2" }),
-            new CreateOrder(Guid.NewGuid(), new[] { "item3" })
+            new CreateOrder(Guid.NewGuid(), ["item1"]),
+            new CreateOrder(Guid.NewGuid(), ["item2"]),
+            new CreateOrder(Guid.NewGuid(), ["item3"])
         };
 
     // Act
@@ -157,9 +157,9 @@ public class DispatcherTests {
     // Arrange
     var dispatcher = CreateDispatcher();
     var commands = new object[] {
-            new CreateOrder(Guid.NewGuid(), new[] { "item1" }),
-            new CreateOrder(Guid.NewGuid(), new[] { "item2" }),
-            new CreateOrder(Guid.NewGuid(), new[] { "item3" })
+            new CreateOrder(Guid.NewGuid(), ["item1"]),
+            new CreateOrder(Guid.NewGuid(), ["item2"]),
+            new CreateOrder(Guid.NewGuid(), ["item3"])
         };
 
     // Act
@@ -177,8 +177,8 @@ public class DispatcherTests {
   public async Task Dispatcher_MessageContext_ShouldGenerateUniqueMessageIdsAsync() {
     // Arrange
     var dispatcher = CreateDispatcher();
-    var command1 = new CreateOrder(Guid.NewGuid(), new[] { "item1" });
-    var command2 = new CreateOrder(Guid.NewGuid(), new[] { "item2" });
+    var command1 = new CreateOrder(Guid.NewGuid(), ["item1"]);
+    var command2 = new CreateOrder(Guid.NewGuid(), ["item2"]);
 
     // Act
     var receipt1 = await dispatcher.SendAsync(command1);
@@ -193,7 +193,7 @@ public class DispatcherTests {
   public async Task Dispatcher_ShouldRouteToCorrectHandlerAsync() {
     // Arrange
     var dispatcher = CreateDispatcher();
-    var createCommand = new CreateOrder(Guid.NewGuid(), new[] { "item1" });
+    var createCommand = new CreateOrder(Guid.NewGuid(), ["item1"]);
 
     // Act
     var result = await dispatcher.LocalInvokeAsync<OrderCreated>(createCommand);
@@ -211,7 +211,7 @@ public class DispatcherTests {
 
     // Arrange
     var dispatcher = CreateDispatcher();
-    var command = new CreateOrder(Guid.NewGuid(), new[] { "item1" });
+    var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
 
     // Act - LocalInvoke should complete
     // In full implementation with multi-destination support,
@@ -229,7 +229,7 @@ public class DispatcherTests {
     var causationId = MessageId.New();
     var correlationId = CorrelationId.New();
     var initialContext = MessageContext.Create(correlationId, causationId);
-    var command = new CreateOrder(Guid.NewGuid(), new[] { "item1" });
+    var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
 
     // Act
     var receipt = await dispatcher.SendAsync(command, initialContext);
@@ -243,7 +243,7 @@ public class DispatcherTests {
 
   // Helper method to create dispatcher
   // Will be implemented to return InMemoryDispatcher
-  private IDispatcher CreateDispatcher() {
+  private static IDispatcher CreateDispatcher() {
     var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
 
     // Register receptors
@@ -262,7 +262,7 @@ public class DispatcherTests {
   // Test receptor for DispatcherTests
   public class DispatcherTestOrderReceptor : IReceptor<CreateOrder, OrderCreated> {
     public async ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken cancellationToken = default) {
-      await Task.Delay(1);
+      await Task.Delay(1, cancellationToken);
 
       return new OrderCreated(
           OrderId: Guid.NewGuid(),
@@ -409,7 +409,7 @@ public class DispatcherTests {
   public async Task LocalInvokeAsync_WithNullContext_ThrowsArgumentNullExceptionAsync() {
     // Arrange
     var dispatcher = CreateDispatcher();
-    var command = new CreateOrder(Guid.NewGuid(), new[] { "item1" });
+    var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
 
     // Act & Assert
     var exception = await Assert.That(async () => await dispatcher.LocalInvokeAsync<CreateOrder, OrderCreated>(command, null!))

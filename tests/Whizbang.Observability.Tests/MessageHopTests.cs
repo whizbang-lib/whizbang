@@ -25,7 +25,7 @@ public class MessageHopTests {
     // Assert - Verify default values are accessible
     await Assert.That(hop.MachineName).IsNotNull();
     await Assert.That(hop.MachineName).IsNotEqualTo(string.Empty);
-    await Assert.That(hop.Timestamp).IsNotEqualTo(default(DateTimeOffset));
+    await Assert.That(hop.Timestamp).IsNotEqualTo(default);
     await Assert.That(hop.Topic).IsEqualTo(string.Empty);
     await Assert.That(hop.StreamKey).IsEqualTo(string.Empty);
     await Assert.That(hop.ExecutionStrategy).IsEqualTo(string.Empty);

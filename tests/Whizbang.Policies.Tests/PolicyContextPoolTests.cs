@@ -106,13 +106,13 @@ public class PolicyContextPoolTests {
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage(),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           ServiceName = "Test",
           Timestamp = DateTimeOffset.UtcNow
         }
-      }
+      ]
     };
   }
 

@@ -9,14 +9,9 @@ namespace ECommerce.PaymentWorker.Perspectives;
 /// Listens to InventoryReservedEvent and dispatches ProcessPaymentCommand
 /// This creates a chain: InventoryReserved → ProcessPayment
 /// </summary>
-public class InventoryPaymentPerspective : IPerspectiveOf<InventoryReservedEvent> {
-  private readonly IDispatcher _dispatcher;
-  private readonly ILogger<InventoryPaymentPerspective> _logger;
-
-  public InventoryPaymentPerspective(IDispatcher dispatcher, ILogger<InventoryPaymentPerspective> logger) {
-    _dispatcher = dispatcher;
-    _logger = logger;
-  }
+public class InventoryPaymentPerspective(IDispatcher dispatcher, ILogger<InventoryPaymentPerspective> logger) : IPerspectiveOf<InventoryReservedEvent> {
+  private readonly IDispatcher _dispatcher = dispatcher;
+  private readonly ILogger<InventoryPaymentPerspective> _logger = logger;
 
   public async Task Update(InventoryReservedEvent @event, CancellationToken cancellationToken = default) {
     _logger.LogInformation(

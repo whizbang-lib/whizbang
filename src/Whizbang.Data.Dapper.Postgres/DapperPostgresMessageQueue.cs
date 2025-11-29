@@ -12,16 +12,11 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// PostgreSQL implementation of IMessageQueue with atomic enqueue-and-lease.
 /// Provides distributed exactly-once processing via transactional queue + processed_messages table.
 /// </summary>
-public class DapperPostgresMessageQueue : IMessageQueue {
-  private readonly IDbConnectionFactory _connectionFactory;
-  private readonly ILogger<DapperPostgresMessageQueue> _logger;
-
-  public DapperPostgresMessageQueue(
-    IDbConnectionFactory connectionFactory,
-    ILogger<DapperPostgresMessageQueue> logger) {
-    _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-  }
+public class DapperPostgresMessageQueue(
+  IDbConnectionFactory connectionFactory,
+  ILogger<DapperPostgresMessageQueue> logger) : IMessageQueue {
+  private readonly IDbConnectionFactory _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
+  private readonly ILogger<DapperPostgresMessageQueue> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
   public async Task<bool> EnqueueAndLeaseAsync(
       QueuedMessage message,

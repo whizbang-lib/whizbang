@@ -16,17 +16,17 @@ public class TracingBenchmarks {
   private record TestCommand(string Id, int Value);
 
   [Benchmark(Baseline = true)]
-  public MessageId CreateMessageId() {
+  public static MessageId CreateMessageId() {
     return MessageId.New();
   }
 
   [Benchmark]
-  public CorrelationId CreateCorrelationId() {
+  public static CorrelationId CreateCorrelationId() {
     return CorrelationId.New();
   }
 
   [Benchmark]
-  public MessageHop CreateMessageHop() {
+  public static MessageHop CreateMessageHop() {
     return new MessageHop {
       Type = HopType.Current,
       ServiceName = "TestService",
@@ -39,12 +39,12 @@ public class TracingBenchmarks {
   }
 
   [Benchmark]
-  public IMessageEnvelope CreateMessageEnvelope() {
+  public static IMessageEnvelope CreateMessageEnvelope() {
     var message = new TestCommand("test-123", 42);
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
       Payload = message,
-      Hops = new List<MessageHop>()
+      Hops = []
     };
     envelope.AddHop(new MessageHop {
       Type = HopType.Current,
@@ -55,12 +55,12 @@ public class TracingBenchmarks {
   }
 
   [Benchmark]
-  public IMessageEnvelope CreateEnvelopeWithMetadata() {
+  public static IMessageEnvelope CreateEnvelopeWithMetadata() {
     var message = new TestCommand("test-123", 42);
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
       Payload = message,
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     var metadata = new Dictionary<string, object>();
@@ -81,12 +81,12 @@ public class TracingBenchmarks {
   }
 
   [Benchmark]
-  public IMessageEnvelope CreateEnvelopeWith3Hops() {
+  public static IMessageEnvelope CreateEnvelopeWith3Hops() {
     var message = new TestCommand("test-123", 42);
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
       Payload = message,
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     // Add 3 hops (current + 2 causation)
@@ -145,7 +145,7 @@ public class TracingBenchmarks {
   }
 
   [Benchmark]
-  public void PolicyDecisionTrail_Record100Decisions() {
+  public static void PolicyDecisionTrail_Record100Decisions() {
     var trail = new PolicyDecisionTrail();
 
     for (int i = 0; i < 100; i++) {
@@ -160,12 +160,12 @@ public class TracingBenchmarks {
   }
 
   // Helper methods to return typed envelopes for method access
-  private MessageEnvelope<TestCommand> CreateTypedEnvelope() {
+  private static MessageEnvelope<TestCommand> CreateTypedEnvelope() {
     var message = new TestCommand("test-123", 42);
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
       Payload = message,
-      Hops = new List<MessageHop>()
+      Hops = []
     };
     envelope.AddHop(new MessageHop {
       Type = HopType.Current,
@@ -176,12 +176,12 @@ public class TracingBenchmarks {
     return envelope;
   }
 
-  private MessageEnvelope<TestCommand> CreateEnvelopeWith3HopsTyped() {
+  private static MessageEnvelope<TestCommand> CreateEnvelopeWith3HopsTyped() {
     var message = new TestCommand("test-123", 42);
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
       Payload = message,
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     envelope.AddHop(new MessageHop {

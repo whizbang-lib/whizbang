@@ -96,12 +96,12 @@ public class InMemoryInboxTests : InboxContractTests {
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = message,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           ServiceName = "TestService",
           Timestamp = DateTimeOffset.UtcNow
         }
-      }
+      ]
     };
   }
 

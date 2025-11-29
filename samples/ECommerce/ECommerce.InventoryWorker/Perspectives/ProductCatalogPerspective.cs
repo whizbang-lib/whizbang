@@ -11,20 +11,15 @@ namespace ECommerce.InventoryWorker.Perspectives;
 /// Materializes product catalog events into product_catalog table.
 /// Handles ProductCreatedEvent, ProductUpdatedEvent, and ProductDeletedEvent.
 /// </summary>
-public class ProductCatalogPerspective :
+public class ProductCatalogPerspective(
+  IDbConnectionFactory connectionFactory,
+  ILogger<ProductCatalogPerspective> logger) :
   IPerspectiveOf<ProductCreatedEvent>,
   IPerspectiveOf<ProductUpdatedEvent>,
   IPerspectiveOf<ProductDeletedEvent> {
 
-  private readonly IDbConnectionFactory _connectionFactory;
-  private readonly ILogger<ProductCatalogPerspective> _logger;
-
-  public ProductCatalogPerspective(
-    IDbConnectionFactory connectionFactory,
-    ILogger<ProductCatalogPerspective> logger) {
-    _connectionFactory = connectionFactory;
-    _logger = logger;
-  }
+  private readonly IDbConnectionFactory _connectionFactory = connectionFactory;
+  private readonly ILogger<ProductCatalogPerspective> _logger = logger;
 
   /// <summary>
   /// Handles ProductCreatedEvent by inserting new product into product_catalog table.

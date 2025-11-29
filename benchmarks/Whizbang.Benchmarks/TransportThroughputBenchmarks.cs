@@ -34,9 +34,7 @@ public class TransportThroughputBenchmarks {
     _transport = _serviceProvider.GetRequiredService<ITransport>();
 
     // Pre-generate test envelopes
-    _testEnvelopes = Enumerable.Range(0, 100_000)
-      .Select(i => CreateEnvelope(new TestCommand($"cmd-{i}", i)))
-      .ToList();
+    _testEnvelopes = [.. Enumerable.Range(0, 100_000).Select(i => CreateEnvelope(new TestCommand($"cmd-{i}", i)))];
   }
 
   [GlobalCleanup]
@@ -302,11 +300,11 @@ public class TransportThroughputBenchmarks {
     }
   }
 
-  private IMessageEnvelope CreateEnvelope(TestCommand command) {
+  private static IMessageEnvelope CreateEnvelope(TestCommand command) {
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
       Payload = command,
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     envelope.AddHop(new MessageHop {

@@ -1,60 +1,51 @@
-using System.Data;
-using Dapper;
 using ECommerce.BFF.API.Hubs;
+using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Events;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.Extensions.Logging;
 using Whizbang.Core;
-using Whizbang.Core.Data;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
 
 namespace ECommerce.BFF.API.Perspectives;
 
 /// <summary>
-/// Materializes product catalog events into bff.product_catalog table.
+/// Materializes product catalog events into product_perspective table using EF Core.
 /// Handles ProductCreatedEvent, ProductUpdatedEvent, and ProductDeletedEvent.
 /// Sends real-time SignalR notifications after successful database updates.
+/// Uses EF Core with 3-column JSONB pattern - zero reflection, AOT compatible.
 /// </summary>
-public class ProductCatalogPerspective :
+public class ProductCatalogPerspective(
+  IPerspectiveStore<ProductDto> store,
+  ILensQuery<ProductDto> query,
+  ILogger<ProductCatalogPerspective> logger,
+  IHubContext<ProductInventoryHub> hubContext) :
   IPerspectiveOf<ProductCreatedEvent>,
   IPerspectiveOf<ProductUpdatedEvent>,
   IPerspectiveOf<ProductDeletedEvent> {
 
-  private readonly IDbConnectionFactory _connectionFactory;
-  private readonly ILogger<ProductCatalogPerspective> _logger;
-  private readonly IHubContext<ProductInventoryHub> _hubContext;
-
-  public ProductCatalogPerspective(
-    IDbConnectionFactory connectionFactory,
-    ILogger<ProductCatalogPerspective> logger,
-    IHubContext<ProductInventoryHub> hubContext) {
-    _connectionFactory = connectionFactory;
-    _logger = logger;
-    _hubContext = hubContext;
-  }
+  private readonly IPerspectiveStore<ProductDto> _store = store;
+  private readonly ILensQuery<ProductDto> _query = query;
+  private readonly ILogger<ProductCatalogPerspective> _logger = logger;
+  private readonly IHubContext<ProductInventoryHub> _hubContext = hubContext;
 
   /// <summary>
-  /// Handles ProductCreatedEvent by inserting new product into bff.product_catalog table.
+  /// Handles ProductCreatedEvent by creating new product in perspective store.
   /// Sends real-time SignalR notification after successful database update.
   /// </summary>
   public async Task Update(ProductCreatedEvent @event, CancellationToken cancellationToken = default) {
     try {
-      using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-      EnsureConnectionOpen(connection);
+      var product = new ProductDto {
+        ProductId = @event.ProductId,
+        Name = @event.Name,
+        Description = @event.Description,
+        Price = @event.Price,
+        ImageUrl = @event.ImageUrl,
+        CreatedAt = @event.CreatedAt,
+        UpdatedAt = null,
+        DeletedAt = null
+      };
 
-      await connection.ExecuteAsync(@"
-        INSERT INTO bff.product_catalog (
-          product_id, name, description, price, image_url, created_at
-        ) VALUES (
-          @ProductId, @Name, @Description, @Price, @ImageUrl, @CreatedAt
-        )",
-        new {
-          @event.ProductId,
-          @event.Name,
-          @event.Description,
-          @event.Price,
-          @event.ImageUrl,
-          @event.CreatedAt
-        });
+      await _store.UpsertAsync(@event.ProductId.ToString(), product, cancellationToken);
 
       _logger.LogInformation(
         "BFF product catalog updated: Product {ProductId} created",
@@ -78,70 +69,60 @@ public class ProductCatalogPerspective :
   }
 
   /// <summary>
-  /// Handles ProductUpdatedEvent by updating existing product in bff.product_catalog table.
+  /// Handles ProductUpdatedEvent by updating existing product in perspective store.
   /// Supports partial updates - only non-null properties are updated.
   /// Sends real-time SignalR notification after successful database update.
   /// </summary>
   public async Task Update(ProductUpdatedEvent @event, CancellationToken cancellationToken = default) {
     try {
-      using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-      EnsureConnectionOpen(connection);
+      // Get existing product to merge partial updates
+      var existing = await _query.GetByIdAsync(@event.ProductId.ToString(), cancellationToken);
 
-      // Build dynamic UPDATE statement with only non-null fields
-      var setClauses = new List<string> { "updated_at = @UpdatedAt" };
-      var parameters = new DynamicParameters();
-      parameters.Add("ProductId", @event.ProductId);
-      parameters.Add("UpdatedAt", @event.UpdatedAt);
+      if (existing is null) {
+        _logger.LogWarning(
+          "Product {ProductId} not found for update - creating new entry",
+          @event.ProductId);
 
-      if (@event.Name is not null) {
-        setClauses.Add("name = @Name");
-        parameters.Add("Name", @event.Name);
+        // If product doesn't exist, treat as create (defensive)
+        existing = new ProductDto {
+          ProductId = @event.ProductId,
+          Name = string.Empty,
+          Description = null,
+          Price = 0,
+          ImageUrl = null,
+          CreatedAt = @event.UpdatedAt,
+          UpdatedAt = null,
+          DeletedAt = null
+        };
       }
 
-      if (@event.Description is not null) {
-        setClauses.Add("description = @Description");
-        parameters.Add("Description", @event.Description);
-      }
+      // Merge partial updates
+      var updated = new ProductDto {
+        ProductId = @event.ProductId,
+        Name = @event.Name ?? existing.Name,
+        Description = @event.Description ?? existing.Description,
+        Price = @event.Price ?? existing.Price,
+        ImageUrl = @event.ImageUrl ?? existing.ImageUrl,
+        CreatedAt = existing.CreatedAt,
+        UpdatedAt = @event.UpdatedAt,
+        DeletedAt = existing.DeletedAt
+      };
 
-      if (@event.Price.HasValue) {
-        setClauses.Add("price = @Price");
-        parameters.Add("Price", @event.Price.Value);
-      }
-
-      if (@event.ImageUrl is not null) {
-        setClauses.Add("image_url = @ImageUrl");
-        parameters.Add("ImageUrl", @event.ImageUrl);
-      }
-
-      var sql = $@"
-        UPDATE bff.product_catalog
-        SET {string.Join(", ", setClauses)}
-        WHERE product_id = @ProductId";
-
-      await connection.ExecuteAsync(sql, parameters);
+      await _store.UpsertAsync(@event.ProductId.ToString(), updated, cancellationToken);
 
       _logger.LogInformation(
         "BFF product catalog updated: Product {ProductId} updated",
         @event.ProductId);
 
-      // Query updated product for notification (needed because update is partial)
-      var product = await connection.QuerySingleOrDefaultAsync<ProductRecord>(@"
-        SELECT product_id, name, description, price, image_url
-        FROM bff.product_catalog
-        WHERE product_id = @ProductId",
-        new { @event.ProductId });
-
       // Send SignalR notification after successful database update
-      if (product is not null) {
-        await SendProductNotificationAsync(
-          @event.ProductId.ToString(),
-          "Updated",
-          product.name,
-          product.description,
-          product.price,
-          product.image_url,
-          cancellationToken);
-      }
+      await SendProductNotificationAsync(
+        @event.ProductId.ToString(),
+        "Updated",
+        updated.Name,
+        updated.Description,
+        updated.Price,
+        updated.ImageUrl,
+        cancellationToken);
     } catch (Exception ex) {
       _logger.LogError(ex,
         "Failed to update BFF product catalog for ProductUpdatedEvent: {ProductId}",
@@ -151,46 +132,49 @@ public class ProductCatalogPerspective :
   }
 
   /// <summary>
-  /// Handles ProductDeletedEvent by soft deleting product in bff.product_catalog table.
+  /// Handles ProductDeletedEvent by soft deleting product in perspective store.
   /// Sets deleted_at timestamp without removing the record.
   /// Sends real-time SignalR notification after successful database update.
   /// </summary>
   public async Task Update(ProductDeletedEvent @event, CancellationToken cancellationToken = default) {
     try {
-      using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-      EnsureConnectionOpen(connection);
+      // Get existing product for notification
+      var existing = await _query.GetByIdAsync(@event.ProductId.ToString(), cancellationToken);
 
-      // Query product details before soft delete for notification
-      var product = await connection.QuerySingleOrDefaultAsync<ProductRecord>(@"
-        SELECT product_id, name, description, price, image_url
-        FROM bff.product_catalog
-        WHERE product_id = @ProductId",
-        new { @event.ProductId });
+      if (existing is null) {
+        _logger.LogWarning(
+          "Product {ProductId} not found for deletion",
+          @event.ProductId);
+        return;
+      }
 
-      await connection.ExecuteAsync(@"
-        UPDATE bff.product_catalog
-        SET deleted_at = @DeletedAt
-        WHERE product_id = @ProductId",
-        new {
-          @event.ProductId,
-          @event.DeletedAt
-        });
+      // Update with soft delete timestamp
+      var deleted = new ProductDto {
+        ProductId = existing.ProductId,
+        Name = existing.Name,
+        Description = existing.Description,
+        Price = existing.Price,
+        ImageUrl = existing.ImageUrl,
+        CreatedAt = existing.CreatedAt,
+        UpdatedAt = existing.UpdatedAt,
+        DeletedAt = @event.DeletedAt
+      };
+
+      await _store.UpsertAsync(@event.ProductId.ToString(), deleted, cancellationToken);
 
       _logger.LogInformation(
         "BFF product catalog updated: Product {ProductId} soft deleted",
         @event.ProductId);
 
       // Send SignalR notification after successful database update
-      if (product is not null) {
-        await SendProductNotificationAsync(
-          @event.ProductId.ToString(),
-          "Deleted",
-          product.name,
-          product.description,
-          product.price,
-          product.image_url,
-          cancellationToken);
-      }
+      await SendProductNotificationAsync(
+        @event.ProductId.ToString(),
+        "Deleted",
+        existing.Name,
+        existing.Description,
+        existing.Price,
+        existing.ImageUrl,
+        cancellationToken);
     } catch (Exception ex) {
       _logger.LogError(ex,
         "Failed to update BFF product catalog for ProductDeletedEvent: {ProductId}",
@@ -242,20 +226,4 @@ public class ProductCatalogPerspective :
     }
   }
 
-  private static void EnsureConnectionOpen(IDbConnection connection) {
-    if (connection.State != ConnectionState.Open) {
-      connection.Open();
-    }
-  }
-
-  /// <summary>
-  /// Record for querying product details from database
-  /// </summary>
-  private record ProductRecord(
-    Guid product_id,
-    string name,
-    string? description,
-    decimal? price,
-    string? image_url
-  );
 }

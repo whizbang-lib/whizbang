@@ -9,7 +9,7 @@ namespace Whizbang.Core.Pooling;
 /// </summary>
 /// <typeparam name="T">The result type for the value task sources</typeparam>
 public static class PooledSourcePool<T> {
-  private static readonly ConcurrentBag<PooledValueTaskSource<T>> _pool = new();
+  private static readonly ConcurrentBag<PooledValueTaskSource<T>> _pool = [];
 
   /// <summary>
   /// Gets a pooled PooledValueTaskSource{T} or creates a new one if pool is empty.

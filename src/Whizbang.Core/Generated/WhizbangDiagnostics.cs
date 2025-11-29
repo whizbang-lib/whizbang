@@ -13,8 +13,8 @@ namespace Whizbang.Core.Generated;
 [ExcludeFromCodeCoverage]
 [DebuggerNonUserCode]
 public static class WhizbangDiagnostics {
-  private static readonly List<DiagnosticEntry> _entries = new();
-  private static readonly object _lock = new();
+  private static readonly List<DiagnosticEntry> _entries = [];
+  private static readonly Lock _lock = new();
 
   /// <summary>
   /// Adds a diagnostic entry to the collection.

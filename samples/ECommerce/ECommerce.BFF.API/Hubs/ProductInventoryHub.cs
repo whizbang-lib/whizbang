@@ -7,12 +7,8 @@ namespace ECommerce.BFF.API.Hubs;
 /// Clients connect and receive notifications when products or inventory levels change.
 /// AOT-compatible hub (untyped - strongly-typed hubs not supported with Native AOT).
 /// </summary>
-public class ProductInventoryHub : Hub {
-  private readonly ILogger<ProductInventoryHub> _logger;
-
-  public ProductInventoryHub(ILogger<ProductInventoryHub> logger) {
-    _logger = logger;
-  }
+public class ProductInventoryHub(ILogger<ProductInventoryHub> logger) : Hub {
+  private readonly ILogger<ProductInventoryHub> _logger = logger;
 
   /// <summary>
   /// Called when a client connects to the hub

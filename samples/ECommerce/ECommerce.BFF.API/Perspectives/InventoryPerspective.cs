@@ -1,74 +1,55 @@
-using System.Data;
-using System.Text.Json;
-using System.Text.Json.Serialization.Metadata;
-using Dapper;
 using ECommerce.BFF.API.Hubs;
+using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Events;
-using ECommerce.Contracts.Generated;
 using Microsoft.AspNetCore.SignalR;
 using Whizbang.Core;
-using Whizbang.Core.Data;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
 
 namespace ECommerce.BFF.API.Perspectives;
 
 /// <summary>
 /// Updates order read model when inventory is reserved.
-/// Listens to InventoryReservedEvent and updates order_perspective table (3-column JSONB pattern).
+/// Uses IPerspectiveStore for zero-reflection, AOT-compatible updates with record 'with' expressions.
 /// </summary>
-public class InventoryPerspective : IPerspectiveOf<InventoryReservedEvent> {
-  private readonly IDbConnectionFactory _connectionFactory;
-  private readonly IHubContext<OrderStatusHub> _hubContext;
-  private readonly ILogger<InventoryPerspective> _logger;
-
-  public InventoryPerspective(
-    IDbConnectionFactory connectionFactory,
-    IHubContext<OrderStatusHub> hubContext,
-    ILogger<InventoryPerspective> logger
-  ) {
-    _connectionFactory = connectionFactory;
-    _hubContext = hubContext;
-    _logger = logger;
-  }
+public class InventoryPerspective(
+  IPerspectiveStore<OrderReadModel> store,
+  ILensQuery<OrderReadModel> query,
+  IHubContext<OrderStatusHub> hubContext,
+  ILogger<InventoryPerspective> logger
+  ) : IPerspectiveOf<InventoryReservedEvent> {
+  private readonly IPerspectiveStore<OrderReadModel> _store = store;
+  private readonly ILensQuery<OrderReadModel> _query = query;
+  private readonly IHubContext<OrderStatusHub> _hubContext = hubContext;
+  private readonly ILogger<InventoryPerspective> _logger = logger;
 
   public async Task Update(InventoryReservedEvent @event, CancellationToken cancellationToken = default) {
     try {
-      // Create new connection for this operation
-      using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-      EnsureConnectionOpen(connection);
+      // 1. Read existing order
+      var existing = await _query.GetByIdAsync(@event.OrderId, cancellationToken);
 
-      // 1. Read existing order perspective and update model_data
-      await connection.ExecuteAsync(@"
-        UPDATE order_perspective
-        SET
-          model_data = jsonb_set(
-            jsonb_set(model_data, '{Status}', '""InventoryReserved""'),
-            '{UpdatedAt}', to_jsonb(@Timestamp::text)
-          ),
-          metadata = jsonb_set(metadata, '{EventType}', '""InventoryReservedEvent""'),
-          updated_at = @Timestamp,
-          version = version + 1
-        WHERE id = @OrderId::uuid",
-        new {
-          OrderId = @event.OrderId.Value.ToString(),
-          Timestamp = DateTime.UtcNow
-        });
-
-      // 2. Get customer ID for SignalR from scope JSONB
-      var customerId = await connection.QuerySingleOrDefaultAsync<string>(
-        "SELECT scope->>'CustomerId' FROM order_perspective WHERE id = @OrderId::uuid",
-        new { OrderId = @event.OrderId.Value.ToString() }
-      );
-
-      // 3. Push SignalR update
-      if (customerId != null) {
-        await _hubContext.Clients.User(customerId)
-          .SendAsync("OrderStatusChanged", new OrderStatusUpdate {
-            OrderId = @event.OrderId.Value.ToString(),
-            Status = "InventoryReserved",
-            Timestamp = DateTime.UtcNow,
-            Message = "Inventory has been reserved for your order"
-          }, cancellationToken);
+      if (existing is null) {
+        _logger.LogWarning("Order {OrderId} not found for inventory update", @event.OrderId);
+        return;
       }
+
+      // 2. Update using record 'with' expression (type-safe, zero reflection)
+      var updated = existing with {
+        Status = "InventoryReserved",
+        UpdatedAt = DateTime.UtcNow
+      };
+
+      // 3. Write back to store
+      await _store.UpsertAsync(@event.OrderId, updated, cancellationToken);
+
+      // 4. Push SignalR update using existing CustomerId
+      await _hubContext.Clients.User(existing.CustomerId)
+        .SendAsync("OrderStatusChanged", new OrderStatusUpdate {
+          OrderId = @event.OrderId,
+          Status = "InventoryReserved",
+          Timestamp = DateTime.UtcNow,
+          Message = "Inventory has been reserved for your order"
+        }, cancellationToken);
 
       _logger.LogInformation(
         "Inventory reserved for order {OrderId}, ProductId={ProductId}, Quantity={Quantity}",
@@ -83,12 +64,6 @@ public class InventoryPerspective : IPerspectiveOf<InventoryReservedEvent> {
         @event.OrderId
       );
       throw;
-    }
-  }
-
-  private static void EnsureConnectionOpen(IDbConnection connection) {
-    if (connection.State != ConnectionState.Open) {
-      connection.Open();
     }
   }
 }

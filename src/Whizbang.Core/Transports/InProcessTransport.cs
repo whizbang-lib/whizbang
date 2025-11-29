@@ -58,7 +58,7 @@ public class InProcessTransport : ITransport {
       }
     );
 
-    var subscriptionHandlers = _subscriptions.GetOrAdd(destination.Address, _ => new List<(Func<IMessageEnvelope, CancellationToken, Task>, InProcessSubscription)>());
+    var subscriptionHandlers = _subscriptions.GetOrAdd(destination.Address, _ => []);
     lock (subscriptionHandlers) {
       subscriptionHandlers.Add((handler, subscription));
     }
@@ -105,13 +105,9 @@ public class InProcessTransport : ITransport {
   /// <summary>
   /// In-process subscription implementation.
   /// </summary>
-  private class InProcessSubscription : ISubscription {
-    private readonly Action _onDispose;
+  private class InProcessSubscription(Action onDispose) : ISubscription {
+    private readonly Action _onDispose = onDispose;
     private bool _isDisposed;
-
-    public InProcessSubscription(Action onDispose) {
-      _onDispose = onDispose;
-    }
 
     public bool IsActive { get; private set; } = true;
 

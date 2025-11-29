@@ -149,11 +149,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   private static (WhizbangIdInfo?, Location?, string?)? ExtractPropertyBasedId(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
-
     var propertyDecl = (PropertyDeclarationSyntax)context.Node;
-    var propertySymbol = context.SemanticModel.GetDeclaredSymbol(propertyDecl, ct) as IPropertySymbol;
 
-    if (propertySymbol is null) {
+    if (context.SemanticModel.GetDeclaredSymbol(propertyDecl, ct) is not IPropertySymbol propertySymbol) {
       return null;
     }
 
@@ -213,11 +211,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   private static (WhizbangIdInfo?, Location?, string?)? ExtractParameterBasedId(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
-
     var parameterDecl = (ParameterSyntax)context.Node;
-    var parameterSymbol = context.SemanticModel.GetDeclaredSymbol(parameterDecl, ct) as IParameterSymbol;
 
-    if (parameterSymbol is null) {
+    if (context.SemanticModel.GetDeclaredSymbol(parameterDecl, ct) is not IParameterSymbol parameterSymbol) {
       return null;
     }
 
@@ -562,18 +558,16 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     // Extract only valid IDs (filter out errors and nulls)
     var validIds = results.IsDefaultOrEmpty
         ? new List<WhizbangIdInfo>()
-        : results
+        : [.. results
             .Where(r => r.HasValue && r.Value.Item1 is not null)
-            .Select(r => r!.Value.Item1!)
-            .ToList();
+            .Select(r => r!.Value.Item1!)];
 
     // Deduplicate by fully qualified name
     var deduplicated = validIds.Count == 0
         ? new List<WhizbangIdInfo>()
-        : validIds
+        : [.. validIds
             .GroupBy(id => id.FullyQualifiedName)
-            .Select(group => group.First())
-            .ToList();
+            .Select(group => group.First())];
 
     var sb = new StringBuilder();
 

@@ -25,7 +25,7 @@ public class DapperDbExecutor : IDbExecutor {
       cancellationToken: cancellationToken);
 
     var results = await DapperExtensions.SqlMapper.QueryAsync<T>(connection, commandDefinition);
-    return results.ToList();
+    return [.. results];
   }
 
   public async Task<T?> QuerySingleOrDefaultAsync<T>(

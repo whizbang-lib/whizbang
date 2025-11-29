@@ -23,7 +23,7 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
   /// <summary>
   /// Helper to create a test envelope with specified properties.
   /// </summary>
-  private IMessageEnvelope CreateEnvelope(
+  private static IMessageEnvelope CreateEnvelope(
     MessageId? messageId = null,
     CorrelationId? correlationId = null,
     MessageId? causationId = null,
@@ -32,7 +32,7 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = messageId ?? MessageId.New(),
       Payload = new TestCommand($"test-{Guid.NewGuid()}", "data"),
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     envelope.AddHop(new MessageHop {
@@ -282,7 +282,7 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
       Payload = new TestCommand("test", "data"),
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     envelope.AddHop(new MessageHop {
@@ -310,7 +310,7 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
       Payload = new TestCommand("test", "data"),
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     await store.StoreAsync(envelope);

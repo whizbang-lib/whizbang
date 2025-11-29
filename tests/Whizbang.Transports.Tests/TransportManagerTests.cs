@@ -181,7 +181,7 @@ public class TransportManagerTests {
     var manager = new TransportManager(new JsonMessageSerializer(WhizbangJsonContext.CreateOptions()));
     var targets = new List<SubscriptionTarget>();
 
-    Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
+    static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
 
     // Act
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
@@ -195,7 +195,7 @@ public class TransportManagerTests {
     // Arrange
     var manager = new TransportManager(new JsonMessageSerializer(WhizbangJsonContext.CreateOptions()));
 
-    Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
+    static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
 
     // Act & Assert
     await Assert.That(() => manager.SubscribeFromTargetsAsync(null!, handler))

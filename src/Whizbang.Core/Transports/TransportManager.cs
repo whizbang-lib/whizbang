@@ -12,17 +12,13 @@ namespace Whizbang.Core.Transports;
 /// Default implementation of ITransportManager.
 /// Manages multiple transport instances and handles publishing/subscribing across them.
 /// </summary>
-public class TransportManager : ITransportManager {
-  private readonly Dictionary<TransportType, ITransport> _transports = new();
-  private readonly IMessageSerializer _serializer;
-
-  /// <summary>
-  /// Creates a new TransportManager with a custom serializer.
-  /// </summary>
-  /// <param name="serializer">The message serializer to use</param>
-  public TransportManager(IMessageSerializer serializer) {
-    _serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
-  }
+/// <remarks>
+/// Creates a new TransportManager with a custom serializer.
+/// </remarks>
+/// <param name="serializer">The message serializer to use</param>
+public class TransportManager(IMessageSerializer serializer) : ITransportManager {
+  private readonly Dictionary<TransportType, ITransport> _transports = [];
+  private readonly IMessageSerializer _serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
 
   /// <inheritdoc />
   public void AddTransport(TransportType type, ITransport transport) {
@@ -81,14 +77,14 @@ public class TransportManager : ITransportManager {
 
     // Early exit if no targets
     if (targets.Count == 0) {
-      return new List<ISubscription>();
+      return [];
     }
 
     // Subscribe to all targets in parallel
     var tasks = targets.Select(target => SubscribeFromTargetAsync(target, handler));
     var subscriptions = await Task.WhenAll(tasks);
 
-    return subscriptions.ToList();
+    return [.. subscriptions];
   }
 
   /// <summary>
@@ -165,14 +161,14 @@ public class TransportManager : ITransportManager {
   /// <summary>
   /// Creates a message envelope with hop for observability.
   /// </summary>
-  private MessageEnvelope<TMessage> CreateEnvelope<TMessage>(
+  private static MessageEnvelope<TMessage> CreateEnvelope<TMessage>(
     TMessage message,
     IMessageContext context
   ) {
     return new MessageEnvelope<TMessage> {
       MessageId = context.MessageId,
       Payload = message,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           ServiceName = "TransportManager", // TODO: Get from configuration
@@ -182,7 +178,7 @@ public class TransportManager : ITransportManager {
             ["CausationId"] = context.CausationId.ToString()
           }
         }
-      }
+      ]
     };
   }
 }

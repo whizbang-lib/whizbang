@@ -6,12 +6,8 @@ namespace ECommerce.BFF.API.Endpoints;
 /// <summary>
 /// Get all orders for the current customer
 /// </summary>
-public class GetMyOrdersEndpoint : EndpointWithoutRequest<IEnumerable<OrderReadModel>> {
-  private readonly IOrderLens _orderLens;
-
-  public GetMyOrdersEndpoint(IOrderLens orderLens) {
-    _orderLens = orderLens;
-  }
+public class GetMyOrdersEndpoint(IOrderLens orderLens) : EndpointWithoutRequest<IEnumerable<OrderReadModel>> {
+  private readonly IOrderLens _orderLens = orderLens;
 
   public override void Configure() {
     Get("/orders/my");
@@ -26,7 +22,7 @@ public class GetMyOrdersEndpoint : EndpointWithoutRequest<IEnumerable<OrderReadM
       ThrowError("CustomerId is required");
     }
 
-    var orders = await _orderLens.GetByCustomerIdAsync(customerId!);
+    var orders = await _orderLens.GetByCustomerIdAsync(customerId!, cancellationToken: ct);
     Response = orders;
   }
 }

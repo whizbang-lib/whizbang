@@ -6,12 +6,8 @@ namespace ECommerce.BFF.API.Endpoints;
 /// <summary>
 /// Get order status history (tracking timeline)
 /// </summary>
-public class GetOrderHistoryEndpoint : EndpointWithoutRequest<IEnumerable<OrderStatusHistory>> {
-  private readonly IOrderLens _orderLens;
-
-  public GetOrderHistoryEndpoint(IOrderLens orderLens) {
-    _orderLens = orderLens;
-  }
+public class GetOrderHistoryEndpoint(IOrderLens orderLens) : EndpointWithoutRequest<IEnumerable<OrderStatusHistory>> {
+  private readonly IOrderLens _orderLens = orderLens;
 
   public override void Configure() {
     Get("/orders/{orderId}/history");
@@ -20,7 +16,7 @@ public class GetOrderHistoryEndpoint : EndpointWithoutRequest<IEnumerable<OrderS
 
   public override async Task HandleAsync(CancellationToken ct) {
     var orderId = Route<string>("orderId")!;
-    var history = await _orderLens.GetStatusHistoryAsync(orderId);
+    var history = await _orderLens.GetStatusHistoryAsync(orderId, ct);
 
     // TODO: Check if user has permission to view this order
     Response = history;

@@ -8,14 +8,9 @@ namespace ECommerce.InventoryWorker.Receptors;
 /// <summary>
 /// Handles UpdateProductCommand and publishes ProductUpdatedEvent
 /// </summary>
-public class UpdateProductReceptor : IReceptor<UpdateProductCommand, ProductUpdatedEvent> {
-  private readonly IDispatcher _dispatcher;
-  private readonly ILogger<UpdateProductReceptor> _logger;
-
-  public UpdateProductReceptor(IDispatcher dispatcher, ILogger<UpdateProductReceptor> logger) {
-    _dispatcher = dispatcher;
-    _logger = logger;
-  }
+public class UpdateProductReceptor(IDispatcher dispatcher, ILogger<UpdateProductReceptor> logger) : IReceptor<UpdateProductCommand, ProductUpdatedEvent> {
+  private readonly IDispatcher _dispatcher = dispatcher;
+  private readonly ILogger<UpdateProductReceptor> _logger = logger;
 
   public async ValueTask<ProductUpdatedEvent> HandleAsync(
     UpdateProductCommand message,

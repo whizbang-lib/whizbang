@@ -8,12 +8,8 @@ namespace ECommerce.InventoryWorker.Lenses;
 /// Read-only query implementation for product catalog data.
 /// Queries the product_catalog table materialized by ProductCatalogPerspective.
 /// </summary>
-public class ProductLens : IProductLens {
-  private readonly IDbConnectionFactory _connectionFactory;
-
-  public ProductLens(IDbConnectionFactory connectionFactory) {
-    _connectionFactory = connectionFactory;
-  }
+public class ProductLens(IDbConnectionFactory connectionFactory) : IProductLens {
+  private readonly IDbConnectionFactory _connectionFactory = connectionFactory;
 
   /// <inheritdoc />
   public async Task<ProductDto?> GetByIdAsync(Guid productId, CancellationToken cancellationToken = default) {
@@ -66,7 +62,7 @@ public class ProductLens : IProductLens {
         WHERE deleted_at IS NULL";
 
     var results = await connection.QueryAsync<ProductDto>(sql);
-    return results.ToList();
+    return [.. results];
   }
 
   /// <inheritdoc />
@@ -93,7 +89,7 @@ public class ProductLens : IProductLens {
       WHERE product_id = ANY(@ProductIds) AND deleted_at IS NULL",
       new { ProductIds = idList.ToArray() });
 
-    return results.ToList();
+    return [.. results];
   }
 
   private static void EnsureConnectionOpen(IDbConnection connection) {

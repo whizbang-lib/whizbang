@@ -10,27 +10,19 @@ namespace Whizbang.Core.Workers;
 /// <summary>
 /// Background service that subscribes to messages from Azure Service Bus and dispatches them to local receptors.
 /// </summary>
-public class ServiceBusConsumerWorker : BackgroundService {
-  private readonly ITransport _transport;
-  private readonly IDispatcher _dispatcher;
-  private readonly IInbox _inbox;
-  private readonly ILogger<ServiceBusConsumerWorker> _logger;
-  private readonly List<ISubscription> _subscriptions = new();
-  private readonly ServiceBusConsumerOptions _options;
-
-  public ServiceBusConsumerWorker(
-    ITransport transport,
-    IDispatcher dispatcher,
-    IInbox inbox,
-    ILogger<ServiceBusConsumerWorker> logger,
-    ServiceBusConsumerOptions? options = null
-  ) {
-    _transport = transport ?? throw new ArgumentNullException(nameof(transport));
-    _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
-    _inbox = inbox ?? throw new ArgumentNullException(nameof(inbox));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-    _options = options ?? new ServiceBusConsumerOptions();
-  }
+public class ServiceBusConsumerWorker(
+  ITransport transport,
+  IDispatcher dispatcher,
+  IInbox inbox,
+  ILogger<ServiceBusConsumerWorker> logger,
+  ServiceBusConsumerOptions? options = null
+  ) : BackgroundService {
+  private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+  private readonly IDispatcher _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+  private readonly IInbox _inbox = inbox ?? throw new ArgumentNullException(nameof(inbox));
+  private readonly ILogger<ServiceBusConsumerWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly List<ISubscription> _subscriptions = [];
+  private readonly ServiceBusConsumerOptions _options = options ?? new ServiceBusConsumerOptions();
 
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     _logger.LogInformation("ServiceBusConsumerWorker starting...");
@@ -137,7 +129,7 @@ public class ServiceBusConsumerOptions {
   /// <summary>
   /// List of topic subscriptions to consume messages from.
   /// </summary>
-  public List<TopicSubscription> Subscriptions { get; set; } = new();
+  public List<TopicSubscription> Subscriptions { get; set; } = [];
 }
 
 /// <summary>

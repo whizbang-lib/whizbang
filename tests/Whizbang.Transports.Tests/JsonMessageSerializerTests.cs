@@ -34,7 +34,7 @@ public class JsonMessageSerializerTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "test payload", Value = 1 },
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     // Act
@@ -64,14 +64,14 @@ public class JsonMessageSerializerTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "test", Value = 1 },
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           ServiceName = "Test",
           Timestamp = DateTimeOffset.UtcNow,
           Metadata = metadata
         }
-      }
+      ]
     };
 
     // Act
@@ -97,14 +97,14 @@ public class JsonMessageSerializerTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "test", Value = 1 },
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           ServiceName = "Test",
           Timestamp = DateTimeOffset.UtcNow,
           Metadata = null
         }
-      }
+      ]
     };
 
     // Act
@@ -214,7 +214,7 @@ public class JsonMessageSerializerTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = messageId,
       Payload = new TestMessage { Content = "test payload", Value = 1 },
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     // Act
@@ -235,14 +235,14 @@ public class JsonMessageSerializerTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = messageId,
       Payload = new TestMessage { Content = "test payload", Value = 1 },
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           ServiceName = "Test",
           Timestamp = DateTimeOffset.UtcNow,
           CorrelationId = correlationId
         }
-      }
+      ]
     };
 
     // Act
@@ -338,14 +338,14 @@ public class JsonMessageSerializerTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "test", Value = 1 },
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           ServiceName = "Test",
           Timestamp = DateTimeOffset.UtcNow,
           Metadata = metadata
         }
-      }
+      ]
     };
 
     // Act & Assert
@@ -394,14 +394,14 @@ public class JsonMessageSerializerTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "test", Value = 1 },
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           ServiceName = "Test",
           Timestamp = DateTimeOffset.UtcNow,
           Metadata = metadata
         }
-      }
+      ]
     };
 
     // Act
@@ -429,14 +429,14 @@ public class JsonMessageSerializerTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "test", Value = 1 },
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           ServiceName = "Test",
           Timestamp = DateTimeOffset.UtcNow,
           Metadata = metadata
         }
-      }
+      ]
     };
 
     // Act
@@ -457,7 +457,7 @@ public class JsonMessageSerializerTests {
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "test", Value = 42 },
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           ServiceName = "TestService",
@@ -468,7 +468,7 @@ public class JsonMessageSerializerTests {
             ["bool"] = true
           }
         }
-      }
+      ]
     };
 
     // Act

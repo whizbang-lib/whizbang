@@ -8,12 +8,8 @@ namespace ECommerce.InventoryWorker.Lenses;
 /// Read-only query implementation for inventory level data.
 /// Queries the inventory_levels table materialized by InventoryLevelsPerspective.
 /// </summary>
-public class InventoryLens : IInventoryLens {
-  private readonly IDbConnectionFactory _connectionFactory;
-
-  public InventoryLens(IDbConnectionFactory connectionFactory) {
-    _connectionFactory = connectionFactory;
-  }
+public class InventoryLens(IDbConnectionFactory connectionFactory) : IInventoryLens {
+  private readonly IDbConnectionFactory _connectionFactory = connectionFactory;
 
   /// <inheritdoc />
   public async Task<InventoryLevelDto?> GetByProductIdAsync(Guid productId, CancellationToken cancellationToken = default) {
@@ -46,7 +42,7 @@ public class InventoryLens : IInventoryLens {
         last_updated AS LastUpdated
       FROM inventoryworker.inventory_levels");
 
-    return results.ToList();
+    return [.. results];
   }
 
   /// <inheritdoc />
@@ -65,7 +61,7 @@ public class InventoryLens : IInventoryLens {
       WHERE available <= @Threshold",
       new { Threshold = threshold });
 
-    return results.ToList();
+    return [.. results];
   }
 
   private static void EnsureConnectionOpen(IDbConnection connection) {

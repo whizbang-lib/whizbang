@@ -36,7 +36,7 @@ public class ExecutorBenchmarks {
     _envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
       Payload = message,
-      Hops = new List<MessageHop>()
+      Hops = []
     };
     _envelope.AddHop(new MessageHop {
       Type = HopType.Current,

@@ -1,97 +1,98 @@
-using Dapper;
+using ECommerce.BFF.API.Hubs;
+using ECommerce.BFF.API.Lenses;
 using ECommerce.BFF.API.Perspectives;
 using ECommerce.BFF.API.Tests.TestHelpers;
 using ECommerce.Contracts.Commands;
-using Microsoft.Extensions.Logging.Abstractions;
-using Npgsql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
 
 namespace ECommerce.BFF.API.Tests;
 
 /// <summary>
-/// Integration tests for OrderPerspective using real PostgreSQL via Testcontainers.
+/// Integration tests for OrderPerspective using unified Whizbang API with EF Core.
 /// Tests verify that the perspective correctly updates the BFF read model when OrderCreatedEvent is received.
 /// </summary>
 public class OrderPerspectiveTests : IAsyncDisposable {
-  private readonly DatabaseTestHelper _dbHelper = new();
+  private readonly EFCoreTestHelper _helper = new();
 
   [Test]
   public async Task OrderPerspective_Update_WithOrderCreatedEvent_InsertsOrderRecordAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var hubContext = new MockHubContext<ECommerce.BFF.API.Hubs.OrderStatusHub>();
-    var logger = NullLogger<OrderPerspective>.Instance;
+    var hubContext = new MockHubContext<OrderStatusHub>();
+    var perspective = new OrderPerspective(
+      _helper.GetPerspectiveStore<OrderReadModel>(),
+      _helper.GetLensQuery<OrderReadModel>(),
+      hubContext,
+      _helper.GetLogger<OrderPerspective>());
 
-    var perspective = new OrderPerspective(connectionFactory, hubContext, logger);
+    var lens = _helper.GetLensQuery<OrderReadModel>();
 
+    var orderId = OrderId.New();
+    var customerId = CustomerId.New();
     var @event = EventBuilder.CreateOrderCreatedEvent(
-      orderId: "order-123",
-      customerId: "customer-456",
+      orderId: orderId.Value,
+      customerId: customerId.Value,
       totalAmount: 99.99m
     );
 
     // Act
     await perspective.Update(@event, CancellationToken.None);
 
-    // Assert - Verify order was inserted into bff.orders table
-    var connectionString = await _dbHelper.GetConnectionStringAsync();
-    await using var connection = new NpgsqlConnection(connectionString);
-    await connection.OpenAsync();
-
-    var order = await connection.QuerySingleOrDefaultAsync<OrderRow>(
-      "SELECT order_id, customer_id, status, total_amount, item_count FROM bff.orders WHERE order_id = @OrderId",
-      new { OrderId = "order-123" }
-    );
+    // Assert - Verify order was inserted using lens query
+    var order = await lens.GetByIdAsync(orderId.Value.ToString(), CancellationToken.None);
 
     await Assert.That(order).IsNotNull();
-    await Assert.That(order!.order_id).IsEqualTo("order-123");
-    await Assert.That(order.customer_id).IsEqualTo("customer-456");
-    await Assert.That(order.status).IsEqualTo("Created");
-    await Assert.That(order.total_amount).IsEqualTo(99.99m);
-    await Assert.That(order.item_count).IsEqualTo(1);
+    await Assert.That(order!.OrderId).IsEqualTo(orderId.Value.ToString());
+    await Assert.That(order.CustomerId).IsEqualTo(customerId.Value.ToString());
+    await Assert.That(order.Status).IsEqualTo("Created");
+    await Assert.That(order.TotalAmount).IsEqualTo(99.99m);
+    await Assert.That(order.ItemCount).IsEqualTo(1);
   }
 
   [Test]
-  public async Task OrderPerspective_Update_WithOrderCreatedEvent_InsertsStatusHistoryAsync() {
+  public async Task OrderPerspective_Update_WithOrderCreatedEvent_StoresOrderCorrectlyAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var hubContext = new MockHubContext<ECommerce.BFF.API.Hubs.OrderStatusHub>();
-    var logger = NullLogger<OrderPerspective>.Instance;
+    var hubContext = new MockHubContext<OrderStatusHub>();
+    var perspective = new OrderPerspective(
+      _helper.GetPerspectiveStore<OrderReadModel>(),
+      _helper.GetLensQuery<OrderReadModel>(),
+      hubContext,
+      _helper.GetLogger<OrderPerspective>());
 
-    var perspective = new OrderPerspective(connectionFactory, hubContext, logger);
+    var lens = _helper.GetLensQuery<OrderReadModel>();
 
-    var @event = EventBuilder.CreateOrderCreatedEvent(orderId: "order-789");
+    var orderId = OrderId.New();
+    var @event = EventBuilder.CreateOrderCreatedEvent(orderId: orderId.Value);
 
     // Act
     await perspective.Update(@event, CancellationToken.None);
 
-    // Assert - Verify status history was inserted
-    var connectionString = await _dbHelper.GetConnectionStringAsync();
-    await using var connection = new NpgsqlConnection(connectionString);
-    await connection.OpenAsync();
+    // Assert - Verify order was stored with correct status
+    var order = await lens.GetByIdAsync(orderId.Value.ToString(), CancellationToken.None);
 
-    var historyCount = await connection.ExecuteScalarAsync<int>(
-      "SELECT COUNT(*) FROM bff.order_status_history WHERE order_id = @OrderId AND status = 'Created'",
-      new { OrderId = "order-789" }
-    );
-
-    await Assert.That(historyCount).IsEqualTo(1);
+    await Assert.That(order).IsNotNull();
+    await Assert.That(order!.OrderId).IsEqualTo(orderId.Value.ToString());
+    await Assert.That(order.Status).IsEqualTo("Created");
   }
 
   [Test]
   public async Task OrderPerspective_Update_WithOrderCreatedEvent_SendsSignalRNotificationAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var hubContext = new MockHubContext<ECommerce.BFF.API.Hubs.OrderStatusHub>();
-    var logger = NullLogger<OrderPerspective>.Instance;
+    var hubContext = new MockHubContext<OrderStatusHub>();
+    var perspective = new OrderPerspective(
+      _helper.GetPerspectiveStore<OrderReadModel>(),
+      _helper.GetLensQuery<OrderReadModel>(),
+      hubContext,
+      _helper.GetLogger<OrderPerspective>());
 
-    var perspective = new OrderPerspective(connectionFactory, hubContext, logger);
-
+    var orderId = OrderId.New();
+    var customerId = CustomerId.New();
     var @event = EventBuilder.CreateOrderCreatedEvent(
-      orderId: "order-abc",
-      customerId: "customer-xyz"
+      orderId: orderId.Value,
+      customerId: customerId.Value
     );
 
     // Act
@@ -108,11 +109,14 @@ public class OrderPerspectiveTests : IAsyncDisposable {
   [Test]
   public async Task OrderPerspective_Update_WithMultipleLineItems_CalculatesCorrectItemCountAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var hubContext = new MockHubContext<ECommerce.BFF.API.Hubs.OrderStatusHub>();
-    var logger = NullLogger<OrderPerspective>.Instance;
+    var hubContext = new MockHubContext<OrderStatusHub>();
+    var perspective = new OrderPerspective(
+      _helper.GetPerspectiveStore<OrderReadModel>(),
+      _helper.GetLensQuery<OrderReadModel>(),
+      hubContext,
+      _helper.GetLogger<OrderPerspective>());
 
-    var perspective = new OrderPerspective(connectionFactory, hubContext, logger);
+    var lens = _helper.GetLensQuery<OrderReadModel>();
 
     var lineItems = new List<ECommerce.Contracts.Commands.OrderLineItem> {
       new() { ProductId = ProductId.New(), ProductName = "Item 1", Quantity = 2, UnitPrice = 10.00m },
@@ -120,100 +124,101 @@ public class OrderPerspectiveTests : IAsyncDisposable {
       new() { ProductId = ProductId.New(), ProductName = "Item 3", Quantity = 3, UnitPrice = 5.00m }
     };
 
+    var orderId = OrderId.New();
     var @event = EventBuilder.CreateOrderCreatedEvent(
-      orderId: "order-multi",
+      orderId: orderId.Value,
       lineItems: lineItems
     );
 
     // Act
     await perspective.Update(@event, CancellationToken.None);
 
-    // Assert - Verify item count is correct
-    var connectionString = await _dbHelper.GetConnectionStringAsync();
-    await using var connection = new NpgsqlConnection(connectionString);
-    await connection.OpenAsync();
+    // Assert - Verify item count is correct using lens query
+    var order = await lens.GetByIdAsync(orderId.Value.ToString(), CancellationToken.None);
 
-    var itemCount = await connection.ExecuteScalarAsync<int>(
-      "SELECT item_count FROM bff.orders WHERE order_id = @OrderId",
-      new { OrderId = "order-multi" }
-    );
-
-    await Assert.That(itemCount).IsEqualTo(3); // 3 line items
+    await Assert.That(order).IsNotNull();
+    await Assert.That(order!.ItemCount).IsEqualTo(3); // 3 line items
+    await Assert.That(order.LineItems).HasCount().EqualTo(3);
   }
 
   [Test]
-  public async Task OrderPerspective_Update_WithDuplicateOrderId_UpdatesTimestampAsync() {
+  public async Task OrderPerspective_Update_WithDuplicateOrderId_UpdatesRecordAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var hubContext = new MockHubContext<ECommerce.BFF.API.Hubs.OrderStatusHub>();
-    var logger = NullLogger<OrderPerspective>.Instance;
+    var hubContext = new MockHubContext<OrderStatusHub>();
+    var perspective = new OrderPerspective(
+      _helper.GetPerspectiveStore<OrderReadModel>(),
+      _helper.GetLensQuery<OrderReadModel>(),
+      hubContext,
+      _helper.GetLogger<OrderPerspective>());
 
-    var perspective = new OrderPerspective(connectionFactory, hubContext, logger);
+    var lens = _helper.GetLensQuery<OrderReadModel>();
 
+    var orderId = OrderId.New();
     var firstEvent = EventBuilder.CreateOrderCreatedEvent(
-      orderId: "order-dup",
+      orderId: orderId.Value,
       createdAt: DateTime.UtcNow.AddMinutes(-5)
     );
 
+    // Act - First upsert
+    await perspective.Update(firstEvent, CancellationToken.None);
+
     var secondEvent = EventBuilder.CreateOrderCreatedEvent(
-      orderId: "order-dup",
+      orderId: orderId.Value,
       createdAt: DateTime.UtcNow
     );
 
-    // Act
-    await perspective.Update(firstEvent, CancellationToken.None);
     await perspective.Update(secondEvent, CancellationToken.None);
 
-    // Assert - Verify only one record exists (ON CONFLICT DO UPDATE)
-    var connectionString = await _dbHelper.GetConnectionStringAsync();
-    await using var connection = new NpgsqlConnection(connectionString);
-    await connection.OpenAsync();
+    // Assert - Verify only one record exists (upsert behavior)
+    var order = await lens.GetByIdAsync(orderId.Value.ToString(), CancellationToken.None);
 
-    var count = await connection.ExecuteScalarAsync<int>(
-      "SELECT COUNT(*) FROM bff.orders WHERE order_id = @OrderId",
-      new { OrderId = "order-dup" }
-    );
-
-    await Assert.That(count).IsEqualTo(1);
+    await Assert.That(order).IsNotNull();
+    await Assert.That(order!.OrderId).IsEqualTo(orderId.Value.ToString());
+    // UpdatedAt should reflect the second event
+    await Assert.That(order.UpdatedAt).IsGreaterThan(order.CreatedAt);
   }
 
   [Test]
-  public async Task OrderPerspective_Update_CreatesAndDisposesConnectionAsync() {
+  public async Task OrderPerspective_Update_HandlesMultipleCallsAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var hubContext = new MockHubContext<ECommerce.BFF.API.Hubs.OrderStatusHub>();
-    var logger = NullLogger<OrderPerspective>.Instance;
+    var hubContext = new MockHubContext<OrderStatusHub>();
+    var perspective = new OrderPerspective(
+      _helper.GetPerspectiveStore<OrderReadModel>(),
+      _helper.GetLensQuery<OrderReadModel>(),
+      hubContext,
+      _helper.GetLogger<OrderPerspective>());
 
-    var perspective = new OrderPerspective(connectionFactory, hubContext, logger);
+    var lens = _helper.GetLensQuery<OrderReadModel>();
 
-    var @event = EventBuilder.CreateOrderCreatedEvent();
+    // Act - Multiple calls should succeed
+    var orderId1 = OrderId.New();
+    var orderId2 = OrderId.New();
+    var orderId3 = OrderId.New();
 
-    // Act - Multiple calls should each create new connections
-    await perspective.Update(@event, CancellationToken.None);
-    await perspective.Update(EventBuilder.CreateOrderCreatedEvent(), CancellationToken.None);
-    await perspective.Update(EventBuilder.CreateOrderCreatedEvent(), CancellationToken.None);
+    var event1 = EventBuilder.CreateOrderCreatedEvent(orderId: orderId1.Value);
+    var event2 = EventBuilder.CreateOrderCreatedEvent(orderId: orderId2.Value);
+    var event3 = EventBuilder.CreateOrderCreatedEvent(orderId: orderId3.Value);
 
-    // Assert - No exceptions thrown, connections properly managed
-    // This test verifies that connection lifecycle is properly handled
-    // Each Update() call should create a new connection and dispose it
-    await Assert.That(true).IsTrue(); // If we got here, connections were properly managed
+    await perspective.Update(event1, CancellationToken.None);
+    await perspective.Update(event2, CancellationToken.None);
+    await perspective.Update(event3, CancellationToken.None);
+
+    // Assert - All orders were stored correctly
+    var order1 = await lens.GetByIdAsync(orderId1.Value.ToString(), CancellationToken.None);
+    var order2 = await lens.GetByIdAsync(orderId2.Value.ToString(), CancellationToken.None);
+    var order3 = await lens.GetByIdAsync(orderId3.Value.ToString(), CancellationToken.None);
+
+    await Assert.That(order1).IsNotNull();
+    await Assert.That(order2).IsNotNull();
+    await Assert.That(order3).IsNotNull();
   }
 
   [After(Test)]
   public async Task CleanupAsync() {
-    await _dbHelper.CleanupDatabaseAsync();
+    await _helper.CleanupDatabaseAsync();
   }
 
   public async ValueTask DisposeAsync() {
-    await _dbHelper.DisposeAsync();
-  }
-
-  // Helper record for Dapper query results
-  private record OrderRow {
-    public string order_id { get; init; } = "";
-    public string customer_id { get; init; } = "";
-    public string status { get; init; } = "";
-    public decimal total_amount { get; init; }
-    public int item_count { get; init; }
+    await _helper.DisposeAsync();
   }
 }

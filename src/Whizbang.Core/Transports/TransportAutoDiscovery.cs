@@ -16,8 +16,8 @@ namespace Whizbang.Core.Transports;
 /// });
 /// </summary>
 public class TransportAutoDiscovery {
-  private readonly List<NamespacePattern> _patterns = new();
-  private readonly List<Type> _explicitTypes = new();
+  private readonly List<NamespacePattern> _patterns = [];
+  private readonly List<Type> _explicitTypes = [];
 
   /// <summary>
   /// Subscribe to all message types matching a namespace pattern.
@@ -57,21 +57,21 @@ public class TransportAutoDiscovery {
   public List<Type> GetMessageTypesToSubscribe() {
     // For now, return explicit types
     // Future: Add receptor discovery using source generator
-    return new List<Type>(_explicitTypes);
+    return [.. _explicitTypes];
   }
 
   /// <summary>
   /// Gets all namespace patterns.
   /// </summary>
   public List<NamespacePattern> GetNamespacePatterns() {
-    return new List<NamespacePattern>(_patterns);
+    return [.. _patterns];
   }
 
   /// <summary>
   /// Gets all explicitly subscribed types.
   /// </summary>
   public List<Type> GetExplicitTypes() {
-    return new List<Type>(_explicitTypes);
+    return [.. _explicitTypes];
   }
 
   /// <summary>
@@ -79,7 +79,7 @@ public class TransportAutoDiscovery {
   /// NOTE: This requires source generator integration (future implementation).
   /// For now, this is a placeholder that does nothing.
   /// </summary>
-  public void DiscoverReceptors() {
+  public static void DiscoverReceptors() {
     // TODO: Integrate with source generator to get all IReceptor<TMessage> types
     // For each receptor found:
     //   - Extract TMessage type

@@ -1,37 +1,33 @@
-using System.Data;
-using Dapper;
 using ECommerce.BFF.API.Hubs;
+using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Events;
 using Microsoft.AspNetCore.SignalR;
-using Microsoft.Extensions.Logging;
 using Whizbang.Core;
-using Whizbang.Core.Data;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
 
 namespace ECommerce.BFF.API.Perspectives;
 
 /// <summary>
-/// Materializes inventory events into bff.inventory_levels table.
+/// Materializes inventory events into BFF read model.
 /// Handles InventoryRestockedEvent, InventoryReservedEvent, InventoryReleasedEvent, and InventoryAdjustedEvent.
 /// Sends real-time SignalR notifications after successful database updates.
+/// Uses EF Core with 3-column JSONB pattern - zero reflection, AOT compatible.
 /// </summary>
-public class InventoryLevelsPerspective :
+public class InventoryLevelsPerspective(
+  IPerspectiveStore<InventoryLevelDto> store,
+  ILensQuery<InventoryLevelDto> query,
+  ILogger<InventoryLevelsPerspective> logger,
+  IHubContext<ProductInventoryHub> hubContext) :
   IPerspectiveOf<InventoryRestockedEvent>,
   IPerspectiveOf<InventoryReservedEvent>,
   IPerspectiveOf<InventoryReleasedEvent>,
   IPerspectiveOf<InventoryAdjustedEvent> {
 
-  private readonly IDbConnectionFactory _connectionFactory;
-  private readonly ILogger<InventoryLevelsPerspective> _logger;
-  private readonly IHubContext<ProductInventoryHub> _hubContext;
-
-  public InventoryLevelsPerspective(
-    IDbConnectionFactory connectionFactory,
-    ILogger<InventoryLevelsPerspective> logger,
-    IHubContext<ProductInventoryHub> hubContext) {
-    _connectionFactory = connectionFactory;
-    _logger = logger;
-    _hubContext = hubContext;
-  }
+  private readonly IPerspectiveStore<InventoryLevelDto> _store = store;
+  private readonly ILensQuery<InventoryLevelDto> _query = query;
+  private readonly ILogger<InventoryLevelsPerspective> _logger = logger;
+  private readonly IHubContext<ProductInventoryHub> _hubContext = hubContext;
 
   /// <summary>
   /// Handles InventoryRestockedEvent by upserting inventory levels.
@@ -40,36 +36,27 @@ public class InventoryLevelsPerspective :
   /// </summary>
   public async Task Update(InventoryRestockedEvent @event, CancellationToken cancellationToken = default) {
     try {
-      using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-      EnsureConnectionOpen(connection);
+      var model = new InventoryLevelDto {
+        ProductId = @event.ProductId,
+        Quantity = @event.NewTotalQuantity,
+        Reserved = 0,
+        Available = @event.NewTotalQuantity,
+        LastUpdated = @event.RestockedAt
+      };
 
-      await connection.ExecuteAsync(@"
-        INSERT INTO bff.inventory_levels (
-          product_id, quantity, reserved, available, last_updated
-        ) VALUES (
-          @ProductId, @NewTotalQuantity, 0, @NewTotalQuantity, @RestockedAt
-        )
-        ON CONFLICT (product_id) DO UPDATE
-        SET
-          quantity = @NewTotalQuantity,
-          available = @NewTotalQuantity - bff.inventory_levels.reserved,
-          last_updated = @RestockedAt",
-        new {
-          @event.ProductId,
-          @event.NewTotalQuantity,
-          @event.RestockedAt
-        });
+      // Store handles JSON serialization, metadata, scope, timestamps
+      await _store.UpsertAsync(@event.ProductId.ToString(), model, cancellationToken);
 
       _logger.LogInformation(
         "BFF inventory levels updated: Product {ProductId} restocked to {Quantity}",
         @event.ProductId,
         @event.NewTotalQuantity);
 
-      // Query current inventory state and send notification
-      await SendInventoryNotificationAfterUpdateAsync(
-        connection,
+      // Send real-time notification
+      await SendInventoryNotificationAsync(
         @event.ProductId.ToString(),
         "Restocked",
+        model,
         null,
         cancellationToken);
     } catch (Exception ex) {
@@ -86,32 +73,44 @@ public class InventoryLevelsPerspective :
   /// </summary>
   public async Task Update(InventoryReservedEvent @event, CancellationToken cancellationToken = default) {
     try {
-      using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-      EnsureConnectionOpen(connection);
+      // Get existing inventory to increment reserved count
+      var existing = await _query.GetByIdAsync(@event.ProductId.ToString(), cancellationToken);
 
-      await connection.ExecuteAsync(@"
-        UPDATE bff.inventory_levels
-        SET
-          reserved = reserved + @Quantity,
-          available = quantity - (reserved + @Quantity),
-          last_updated = @ReservedAt
-        WHERE product_id = @ProductId",
-        new {
-          @event.ProductId,
-          @event.Quantity,
-          @event.ReservedAt
-        });
+      if (existing is null) {
+        _logger.LogWarning(
+          "Product {ProductId} not found for reservation - creating new entry with reserved quantity",
+          @event.ProductId);
+
+        // Defensive: create new entry with reserved quantity
+        existing = new InventoryLevelDto {
+          ProductId = @event.ProductId,
+          Quantity = 0,
+          Reserved = 0,
+          Available = 0,
+          LastUpdated = @event.ReservedAt
+        };
+      }
+
+      var updated = new InventoryLevelDto {
+        ProductId = @event.ProductId,
+        Quantity = existing.Quantity,
+        Reserved = existing.Reserved + @event.Quantity,
+        Available = existing.Quantity - (existing.Reserved + @event.Quantity),
+        LastUpdated = @event.ReservedAt
+      };
+
+      await _store.UpsertAsync(@event.ProductId.ToString(), updated, cancellationToken);
 
       _logger.LogInformation(
         "BFF inventory levels updated: Product {ProductId} reserved {Quantity} units",
         @event.ProductId,
         @event.Quantity);
 
-      // Query current inventory state and send notification
-      await SendInventoryNotificationAfterUpdateAsync(
-        connection,
+      // Send real-time notification
+      await SendInventoryNotificationAsync(
         @event.ProductId.ToString(),
         "Reserved",
+        updated,
         null,
         cancellationToken);
     } catch (Exception ex) {
@@ -124,33 +123,36 @@ public class InventoryLevelsPerspective :
 
   /// <summary>
   /// Handles InventoryReleasedEvent by decrementing reserved count and updating available.
-  /// Sends real-time SignalR notification after successful database update.
+  /// No SignalR notification sent - released events are internal operations.
   /// </summary>
   public async Task Update(InventoryReleasedEvent @event, CancellationToken cancellationToken = default) {
     try {
-      using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-      EnsureConnectionOpen(connection);
+      // Get existing inventory to decrement reserved count
+      var existing = await _query.GetByIdAsync(@event.ProductId.ToString(), cancellationToken);
 
-      await connection.ExecuteAsync(@"
-        UPDATE bff.inventory_levels
-        SET
-          reserved = reserved - @Quantity,
-          available = quantity - (reserved - @Quantity),
-          last_updated = @ReleasedAt
-        WHERE product_id = @ProductId",
-        new {
-          @event.ProductId,
-          @event.Quantity,
-          @event.ReleasedAt
-        });
+      if (existing is null) {
+        _logger.LogWarning(
+          "Product {ProductId} not found for release - ignoring event",
+          @event.ProductId);
+        return;
+      }
+
+      var updated = new InventoryLevelDto {
+        ProductId = @event.ProductId,
+        Quantity = existing.Quantity,
+        Reserved = existing.Reserved - @event.Quantity,
+        Available = existing.Quantity - (existing.Reserved - @event.Quantity),
+        LastUpdated = @event.ReleasedAt
+      };
+
+      await _store.UpsertAsync(@event.ProductId.ToString(), updated, cancellationToken);
 
       _logger.LogInformation(
         "BFF inventory levels updated: Product {ProductId} released {Quantity} units",
         @event.ProductId,
         @event.Quantity);
 
-      // Query current inventory state and send notification (NOT sending notification for Released events)
-      // Released events are internal operations, not customer-facing
+      // NOT sending notification for Released events - internal operations, not customer-facing
     } catch (Exception ex) {
       _logger.LogError(ex,
         "Failed to update BFF inventory levels for InventoryReleasedEvent: {ProductId}",
@@ -166,21 +168,33 @@ public class InventoryLevelsPerspective :
   /// </summary>
   public async Task Update(InventoryAdjustedEvent @event, CancellationToken cancellationToken = default) {
     try {
-      using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-      EnsureConnectionOpen(connection);
+      // Get existing inventory to preserve reserved count
+      var existing = await _query.GetByIdAsync(@event.ProductId.ToString(), cancellationToken);
 
-      await connection.ExecuteAsync(@"
-        UPDATE bff.inventory_levels
-        SET
-          quantity = @NewTotalQuantity,
-          available = @NewTotalQuantity - reserved,
-          last_updated = @AdjustedAt
-        WHERE product_id = @ProductId",
-        new {
-          @event.ProductId,
-          @event.NewTotalQuantity,
-          @event.AdjustedAt
-        });
+      if (existing is null) {
+        _logger.LogWarning(
+          "Product {ProductId} not found for adjustment - creating new entry",
+          @event.ProductId);
+
+        // Defensive: create new entry with adjusted quantity
+        existing = new InventoryLevelDto {
+          ProductId = @event.ProductId,
+          Quantity = 0,
+          Reserved = 0,
+          Available = 0,
+          LastUpdated = @event.AdjustedAt
+        };
+      }
+
+      var updated = new InventoryLevelDto {
+        ProductId = @event.ProductId,
+        Quantity = @event.NewTotalQuantity,
+        Reserved = existing.Reserved,
+        Available = @event.NewTotalQuantity - existing.Reserved,
+        LastUpdated = @event.AdjustedAt
+      };
+
+      await _store.UpsertAsync(@event.ProductId.ToString(), updated, cancellationToken);
 
       _logger.LogInformation(
         "BFF inventory levels updated: Product {ProductId} adjusted to {Quantity} (Reason: {Reason})",
@@ -188,11 +202,11 @@ public class InventoryLevelsPerspective :
         @event.NewTotalQuantity,
         @event.Reason);
 
-      // Query current inventory state and send notification
-      await SendInventoryNotificationAfterUpdateAsync(
-        connection,
+      // Send real-time notification
+      await SendInventoryNotificationAsync(
         @event.ProductId.ToString(),
         "Adjusted",
+        updated,
         @event.Reason,
         cancellationToken);
     } catch (Exception ex) {
@@ -204,35 +218,21 @@ public class InventoryLevelsPerspective :
   }
 
   /// <summary>
-  /// Queries current inventory state and sends SignalR notification
+  /// Sends SignalR notification to all-products group and product-specific group
   /// </summary>
-  private async Task SendInventoryNotificationAfterUpdateAsync(
-    IDbConnection connection,
+  private async Task SendInventoryNotificationAsync(
     string productId,
     string notificationType,
+    InventoryLevelDto inventory,
     string? reason,
     CancellationToken cancellationToken) {
     try {
-      // Query current inventory state
-      var inventory = await connection.QuerySingleOrDefaultAsync<InventoryRecord>(@"
-        SELECT product_id, quantity, reserved, available
-        FROM bff.inventory_levels
-        WHERE product_id = @ProductId",
-        new { ProductId = productId });
-
-      if (inventory is null) {
-        _logger.LogWarning(
-          "Cannot send inventory notification - product {ProductId} not found",
-          productId);
-        return;
-      }
-
       var notification = new InventoryNotification {
         ProductId = productId,
         NotificationType = notificationType,
-        Quantity = inventory.quantity,
-        Reserved = inventory.reserved,
-        Available = inventory.available,
+        Quantity = inventory.Quantity,
+        Reserved = inventory.Reserved,
+        Available = inventory.Available,
         Reason = reason
       };
 
@@ -257,20 +257,4 @@ public class InventoryLevelsPerspective :
         productId);
     }
   }
-
-  private static void EnsureConnectionOpen(IDbConnection connection) {
-    if (connection.State != ConnectionState.Open) {
-      connection.Open();
-    }
-  }
-
-  /// <summary>
-  /// Record for querying inventory details from database
-  /// </summary>
-  private record InventoryRecord(
-    Guid product_id,
-    int quantity,
-    int reserved,
-    int available
-  );
 }

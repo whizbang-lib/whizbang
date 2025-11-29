@@ -44,17 +44,11 @@ public class ThroughputBenchmarks {
     _serializer = _serviceProvider.GetRequiredService<IMessageSerializer>();
 
     // Pre-generate test messages
-    _smallMessages = Enumerable.Range(0, 100_000)
-      .Select(i => new SmallCommand($"cmd-{i}", i))
-      .ToList();
+    _smallMessages = [.. Enumerable.Range(0, 100_000).Select(i => new SmallCommand($"cmd-{i}", i))];
 
-    _mediumMessages = Enumerable.Range(0, 100_000)
-      .Select(i => new MediumCommand($"cmd-{i}", i, $"data1-{i}", $"data2-{i}", $"data3-{i}"))
-      .ToList();
+    _mediumMessages = [.. Enumerable.Range(0, 100_000).Select(i => new MediumCommand($"cmd-{i}", i, $"data1-{i}", $"data2-{i}", $"data3-{i}"))];
 
-    _largeMessages = Enumerable.Range(0, 10_000)
-      .Select(i => new LargeCommand($"cmd-{i}", i, new string('x', 10_000)))
-      .ToList();
+    _largeMessages = [.. Enumerable.Range(0, 10_000).Select(i => new LargeCommand($"cmd-{i}", i, new string('x', 10_000)))];
   }
 
   [GlobalCleanup]
@@ -303,11 +297,11 @@ public class ThroughputBenchmarks {
     subscription.Dispose();
   }
 
-  private IMessageEnvelope CreateEnvelope<T>(T payload, CorrelationId? correlationId = null) {
+  private static IMessageEnvelope CreateEnvelope<T>(T payload, CorrelationId? correlationId = null) {
     var envelope = new MessageEnvelope<T> {
       MessageId = MessageId.New(),
       Payload = payload,
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     envelope.AddHop(new MessageHop {
@@ -321,11 +315,11 @@ public class ThroughputBenchmarks {
     return envelope;
   }
 
-  private IMessageEnvelope CreateEnvelopeWithTracing<T>(T payload) {
+  private static IMessageEnvelope CreateEnvelopeWithTracing<T>(T payload) {
     var envelope = new MessageEnvelope<T> {
       MessageId = MessageId.New(),
       Payload = payload,
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     var hop = new MessageHop {

@@ -1,76 +1,38 @@
-using System.Data;
-using Dapper;
-using Whizbang.Core.Data;
+using Microsoft.EntityFrameworkCore;
+using Whizbang.Core.Lenses;
 
 namespace ECommerce.BFF.API.Lenses;
 
 /// <summary>
-/// Read-only query implementation for inventory level data.
-/// Queries the bff.inventory_levels table materialized by InventoryLevelsPerspective.
+/// EF Core implementation of IInventoryLevelsLens for fast readonly queries.
+/// Uses ILensQuery abstraction with LINQ for type-safe queries - zero reflection, AOT compatible.
 /// </summary>
-public class InventoryLevelsLens : IInventoryLevelsLens {
-  private readonly IDbConnectionFactory _connectionFactory;
-
-  public InventoryLevelsLens(IDbConnectionFactory connectionFactory) {
-    _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
-  }
+public class InventoryLevelsLens(ILensQuery<InventoryLevelDto> query) : IInventoryLevelsLens {
+  private readonly ILensQuery<InventoryLevelDto> _query = query;
 
   /// <inheritdoc />
   public async Task<InventoryLevelDto?> GetByProductIdAsync(Guid productId, CancellationToken cancellationToken = default) {
-    using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-    EnsureConnectionOpen(connection);
-
-    return await connection.QuerySingleOrDefaultAsync<InventoryLevelDto>(@"
-      SELECT
-        product_id AS ProductId,
-        quantity AS Quantity,
-        reserved AS Reserved,
-        available AS Available,
-        last_updated AS LastUpdated
-      FROM bff.inventory_levels
-      WHERE product_id = @ProductId",
-      new { ProductId = productId });
+    return await _query.GetByIdAsync(productId.ToString(), cancellationToken);
   }
 
   /// <inheritdoc />
   public async Task<IReadOnlyList<InventoryLevelDto>> GetAllAsync(CancellationToken cancellationToken = default) {
-    using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-    EnsureConnectionOpen(connection);
+    var results = await _query.Query
+      .AsNoTracking()
+      .Select(row => row.Data)
+      .ToListAsync(cancellationToken);
 
-    var results = await connection.QueryAsync<InventoryLevelDto>(@"
-      SELECT
-        product_id AS ProductId,
-        quantity AS Quantity,
-        reserved AS Reserved,
-        available AS Available,
-        last_updated AS LastUpdated
-      FROM bff.inventory_levels");
-
-    return results.ToList();
+    return results.AsReadOnly();
   }
 
   /// <inheritdoc />
   public async Task<IReadOnlyList<InventoryLevelDto>> GetLowStockAsync(int threshold = 10, CancellationToken cancellationToken = default) {
-    using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-    EnsureConnectionOpen(connection);
+    var results = await _query.Query
+      .AsNoTracking()
+      .Where(row => row.Data.Available <= threshold)
+      .Select(row => row.Data)
+      .ToListAsync(cancellationToken);
 
-    var results = await connection.QueryAsync<InventoryLevelDto>(@"
-      SELECT
-        product_id AS ProductId,
-        quantity AS Quantity,
-        reserved AS Reserved,
-        available AS Available,
-        last_updated AS LastUpdated
-      FROM bff.inventory_levels
-      WHERE available <= @Threshold",
-      new { Threshold = threshold });
-
-    return results.ToList();
-  }
-
-  private static void EnsureConnectionOpen(IDbConnection connection) {
-    if (connection.State != ConnectionState.Open) {
-      connection.Open();
-    }
+    return results.AsReadOnly();
   }
 }

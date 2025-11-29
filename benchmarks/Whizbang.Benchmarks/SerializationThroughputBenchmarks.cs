@@ -36,38 +36,32 @@ public class SerializationThroughputBenchmarks {
     _serializer = new JsonMessageSerializer(new Whizbang.Core.Generated.WhizbangJsonContext());
 
     // Pre-generate test envelopes
-    _tinyEnvelopes = Enumerable.Range(0, 100_000)
-      .Select(i => _createEnvelope(new TinyMessage(i)))
-      .ToList();
+    _tinyEnvelopes = [.. Enumerable.Range(0, 100_000).Select(i => _createEnvelope(new TinyMessage(i)))];
 
-    _smallEnvelopes = Enumerable.Range(0, 100_000)
-      .Select(i => _createEnvelope(new SmallMessage($"msg-{i}", i, $"name-{i}")))
-      .ToList();
+    _smallEnvelopes = [.. Enumerable.Range(0, 100_000).Select(i => _createEnvelope(new SmallMessage($"msg-{i}", i, $"name-{i}")))];
 
-    _mediumEnvelopes = Enumerable.Range(0, 100_000)
+    _mediumEnvelopes = [.. Enumerable.Range(0, 100_000)
       .Select(i => _createEnvelope(new MediumMessage(
         $"msg-{i}",
         i,
         $"name-{i}",
         $"This is a medium message with description {i}",
-        DateTime.UtcNow.AddSeconds(i))))
-      .ToList();
+        DateTime.UtcNow.AddSeconds(i))))];
 
-    _largeEnvelopes = Enumerable.Range(0, 10_000)
+    _largeEnvelopes = [.. Enumerable.Range(0, 10_000)
       .Select(i => _createEnvelope(new LargeMessage(
         $"msg-{i}",
         i,
         $"name-{i}",
         $"This is a large message with description {i}",
         DateTime.UtcNow.AddSeconds(i),
-        new string('x', 10_000)))) // 10KB payload
-      .ToList();
+        new string('x', 10_000))))];
 
     // Pre-serialize for deserialization benchmarks
-    _serializedTiny = _tinyEnvelopes.Select(e => _serializer.SerializeAsync(e).GetAwaiter().GetResult()).ToList();
-    _serializedSmall = _smallEnvelopes.Select(e => _serializer.SerializeAsync(e).GetAwaiter().GetResult()).ToList();
-    _serializedMedium = _mediumEnvelopes.Select(e => _serializer.SerializeAsync(e).GetAwaiter().GetResult()).ToList();
-    _serializedLarge = _largeEnvelopes.Select(e => _serializer.SerializeAsync(e).GetAwaiter().GetResult()).ToList();
+    _serializedTiny = [.. _tinyEnvelopes.Select(e => _serializer.SerializeAsync(e).GetAwaiter().GetResult())];
+    _serializedSmall = [.. _smallEnvelopes.Select(e => _serializer.SerializeAsync(e).GetAwaiter().GetResult())];
+    _serializedMedium = [.. _mediumEnvelopes.Select(e => _serializer.SerializeAsync(e).GetAwaiter().GetResult())];
+    _serializedLarge = [.. _largeEnvelopes.Select(e => _serializer.SerializeAsync(e).GetAwaiter().GetResult())];
   }
 
   /// <summary>
@@ -204,7 +198,7 @@ public class SerializationThroughputBenchmarks {
         var envelope = new MessageEnvelope<SmallMessage> {
           MessageId = MessageId.New(),
           Payload = new SmallMessage($"msg-{i}", i, $"name-{i}"),
-          Hops = new List<MessageHop>()
+          Hops = []
         };
 
         envelope.AddHop(new MessageHop {
@@ -291,11 +285,11 @@ public class SerializationThroughputBenchmarks {
     await Task.WhenAll(tasks);
   }
 
-  private IMessageEnvelope _createEnvelope<T>(T payload) {
+  private static IMessageEnvelope _createEnvelope<T>(T payload) {
     var envelope = new MessageEnvelope<T> {
       MessageId = MessageId.New(),
       Payload = payload,
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     envelope.AddHop(new MessageHop {
@@ -309,11 +303,11 @@ public class SerializationThroughputBenchmarks {
     return envelope;
   }
 
-  private IMessageEnvelope _createEnvelopeWithMultipleHops<T>(T payload) {
+  private static IMessageEnvelope _createEnvelopeWithMultipleHops<T>(T payload) {
     var envelope = new MessageEnvelope<T> {
       MessageId = MessageId.New(),
       Payload = payload,
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     // Add current hop

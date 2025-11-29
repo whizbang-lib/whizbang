@@ -39,28 +39,19 @@ public delegate Task ReceptorPublisher<in TEvent>(TEvent @event);
 /// that implements the abstract lookup methods, returning strongly-typed delegates.
 /// This achieves zero-reflection while keeping functional logic in the base class.
 /// </summary>
-public abstract class Dispatcher : IDispatcher {
-  private readonly IServiceProvider _internalServiceProvider;
-  private readonly IServiceScopeFactory _scopeFactory;
-  private readonly ITraceStore? _traceStore;
-  private readonly IOutbox? _outbox;
-  private readonly ITransport? _transport;
-  private readonly JsonSerializerOptions? _jsonOptions;
-
-  protected Dispatcher(
-    IServiceProvider serviceProvider,
-    ITraceStore? traceStore = null,
-    IOutbox? outbox = null,
-    ITransport? transport = null,
-    JsonSerializerOptions? jsonOptions = null
-  ) {
-    _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
-    _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
-    _traceStore = traceStore;
-    _outbox = outbox;
-    _transport = transport;
-    _jsonOptions = jsonOptions;
-  }
+public abstract class Dispatcher(
+  IServiceProvider serviceProvider,
+  ITraceStore? traceStore = null,
+  IOutbox? outbox = null,
+  ITransport? transport = null,
+  JsonSerializerOptions? jsonOptions = null
+  ) : IDispatcher {
+  private readonly IServiceProvider _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
+  private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
+  private readonly ITraceStore? _traceStore = traceStore;
+  private readonly IOutbox? _outbox = outbox;
+  private readonly ITransport? _transport = transport;
+  private readonly JsonSerializerOptions? _jsonOptions = jsonOptions;
 
   /// <summary>
   /// Gets the service provider for receptor resolution.
@@ -118,19 +109,13 @@ public abstract class Dispatcher : IDispatcher {
   ) {
     ArgumentNullException.ThrowIfNull(message);
 
-    if (context == null) {
-      throw new ArgumentNullException(nameof(context));
-    }
+    ArgumentNullException.ThrowIfNull(context);
 
     var messageType = message.GetType();
 
     // Get strongly-typed delegate from generated code
     // We need to use object as TResult since we don't know the actual result type
-    var invoker = _getReceptorInvoker<object>(message, messageType);
-
-    if (invoker == null) {
-      throw new HandlerNotFoundException(messageType);
-    }
+    var invoker = _getReceptorInvoker<object>(message, messageType) ?? throw new HandlerNotFoundException(messageType);
 
     // Create envelope with hop for observability
     var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
@@ -225,18 +210,12 @@ public abstract class Dispatcher : IDispatcher {
   ) {
     ArgumentNullException.ThrowIfNull(message);
 
-    if (context == null) {
-      throw new ArgumentNullException(nameof(context));
-    }
+    ArgumentNullException.ThrowIfNull(context);
 
     var messageType = message.GetType();
 
     // Get strongly-typed delegate from generated code
-    var invoker = _getReceptorInvoker<TResult>(message, messageType);
-
-    if (invoker == null) {
-      throw new HandlerNotFoundException(messageType);
-    }
+    var invoker = _getReceptorInvoker<TResult>(message, messageType) ?? throw new HandlerNotFoundException(messageType);
 
     // OPTIMIZATION: Skip envelope creation when trace store is null
     // This achieves zero allocation for high-throughput scenarios
@@ -342,18 +321,12 @@ public abstract class Dispatcher : IDispatcher {
   ) {
     ArgumentNullException.ThrowIfNull(message);
 
-    if (context == null) {
-      throw new ArgumentNullException(nameof(context));
-    }
+    ArgumentNullException.ThrowIfNull(context);
 
     var messageType = message.GetType();
 
     // Get strongly-typed void delegate from generated code
-    var invoker = _getVoidReceptorInvoker(message, messageType);
-
-    if (invoker == null) {
-      throw new HandlerNotFoundException(messageType);
-    }
+    var invoker = _getVoidReceptorInvoker(message, messageType) ?? throw new HandlerNotFoundException(messageType);
 
     // OPTIMIZATION: Skip envelope creation when trace store is null
     // This achieves zero allocation for high-throughput scenarios
@@ -389,7 +362,7 @@ public abstract class Dispatcher : IDispatcher {
   /// <summary>
   /// Creates a MessageEnvelope with initial hop containing caller information and context.
   /// </summary>
-  private IMessageEnvelope _createEnvelope<TMessage>(
+  private static IMessageEnvelope _createEnvelope<TMessage>(
     TMessage message,
     IMessageContext context,
     string callerMemberName,
@@ -399,7 +372,7 @@ public abstract class Dispatcher : IDispatcher {
     var envelope = new MessageEnvelope<TMessage> {
       MessageId = MessageId.New(),
       Payload = message!,
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     var hop = new MessageHop {
@@ -449,7 +422,7 @@ public abstract class Dispatcher : IDispatcher {
           var envelope = new MessageEnvelope<TEvent> {
             MessageId = messageId,
             Payload = @event,
-            Hops = new List<MessageHop>()
+            Hops = []
           };
 
           // Write to Event Store (this queues event to IPerspectiveInvoker)
@@ -498,7 +471,7 @@ public abstract class Dispatcher : IDispatcher {
     var envelope = new MessageEnvelope<TEvent> {
       MessageId = messageId,
       Payload = @event,
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     // Add hop indicating message is being stored to outbox

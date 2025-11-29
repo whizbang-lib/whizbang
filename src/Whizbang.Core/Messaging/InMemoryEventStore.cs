@@ -18,17 +18,12 @@ namespace Whizbang.Core.Messaging;
 /// NOT suitable for production use across multiple processes.
 /// Stream ID is inferred from event's [AggregateId] property.
 /// </summary>
-public class InMemoryEventStore : IEventStore {
+public class InMemoryEventStore(
+  IPolicyEngine policyEngine,
+  IPerspectiveInvoker? perspectiveInvoker = null) : IEventStore {
   private readonly ConcurrentDictionary<Guid, StreamData> _streams = new();
-  private readonly IPolicyEngine _policyEngine;
-  private readonly IPerspectiveInvoker? _perspectiveInvoker;
-
-  public InMemoryEventStore(
-    IPolicyEngine policyEngine,
-    IPerspectiveInvoker? perspectiveInvoker = null) {
-    _policyEngine = policyEngine ?? throw new ArgumentNullException(nameof(policyEngine));
-    _perspectiveInvoker = perspectiveInvoker;
-  }
+  private readonly IPolicyEngine _policyEngine = policyEngine ?? throw new ArgumentNullException(nameof(policyEngine));
+  private readonly IPerspectiveInvoker? _perspectiveInvoker = perspectiveInvoker;
 
   /// <inheritdoc />
   public Task AppendAsync(Guid streamId, IMessageEnvelope envelope, CancellationToken cancellationToken = default) {
@@ -79,8 +74,8 @@ public class InMemoryEventStore : IEventStore {
   /// Thread-safe stream data container.
   /// </summary>
   private class StreamData {
-    private readonly object _lock = new();
-    private readonly List<EventRecord> _events = new();
+    private readonly Lock _lock = new();
+    private readonly List<EventRecord> _events = [];
     private long _currentSequence = -1;
 
     public void Append(IMessageEnvelope envelope) {
@@ -92,11 +87,10 @@ public class InMemoryEventStore : IEventStore {
 
     public IEnumerable<IMessageEnvelope> Read(long fromSequence) {
       lock (_lock) {
-        return _events
+        return [.. _events
           .Where(e => e.Sequence >= fromSequence)
           .OrderBy(e => e.Sequence)
-          .Select(e => e.Envelope)
-          .ToList();
+          .Select(e => e.Envelope)];
       }
     }
 

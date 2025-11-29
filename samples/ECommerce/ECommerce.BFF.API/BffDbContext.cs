@@ -11,42 +11,43 @@ namespace ECommerce.BFF.API;
 /// Uses owned types for InMemory provider compatibility (production will use JSONB columns).
 /// </summary>
 public class BffDbContext : DbContext {
-  [RequiresUnreferencedCode()]
-  [RequiresDynamicCode()]
   public BffDbContext(DbContextOptions<BffDbContext> options) : base(options) { }
+
+  // DbSet properties for each perspective model
+  public DbSet<PerspectiveRow<OrderReadModel>> OrderReadModels => Set<PerspectiveRow<OrderReadModel>>();
+  public DbSet<PerspectiveRow<ProductDto>> ProductDtos => Set<PerspectiveRow<ProductDto>>();
+  public DbSet<PerspectiveRow<InventoryLevelDto>> InventoryLevelDtos => Set<PerspectiveRow<InventoryLevelDto>>();
 
   protected override void OnModelCreating(ModelBuilder modelBuilder) {
     // Configure PerspectiveRow<OrderReadModel>
-    ConfigurePerspectiveRow<OrderReadModel>(modelBuilder);
+    modelBuilder.Entity<PerspectiveRow<OrderReadModel>>(entity => {
+      entity.HasKey(e => e.Id);
+      entity.OwnsOne(e => e.Data, data => {
+        data.OwnsMany(d => d.LineItems, lineItems => {
+          // Shadow property as composite key part
+          lineItems.WithOwner().HasForeignKey("OrderReadModelId");
+          lineItems.Property<int>("Id");
+          lineItems.HasKey("OrderReadModelId", "Id");
+        });
+      });
+      entity.OwnsOne(e => e.Metadata);
+      entity.OwnsOne(e => e.Scope);
+    });
 
     // Configure PerspectiveRow<ProductDto>
-    ConfigurePerspectiveRow<ProductDto>(modelBuilder);
+    modelBuilder.Entity<PerspectiveRow<ProductDto>>(entity => {
+      entity.HasKey(e => e.Id);
+      entity.OwnsOne(e => e.Data);
+      entity.OwnsOne(e => e.Metadata);
+      entity.OwnsOne(e => e.Scope);
+    });
 
     // Configure PerspectiveRow<InventoryLevelDto>
-    ConfigurePerspectiveRow<InventoryLevelDto>(modelBuilder);
-  }
-
-  private static void ConfigurePerspectiveRow<TModel>(ModelBuilder modelBuilder)
-      where TModel : class {
-    modelBuilder.Entity<PerspectiveRow<TModel>>(entity => {
+    modelBuilder.Entity<PerspectiveRow<InventoryLevelDto>>(entity => {
       entity.HasKey(e => e.Id);
-
-      // Use owned types for InMemory provider (InMemory doesn't support JSON queries)
-      // Production PostgreSQL implementation will use .ToJson() instead
-      entity.OwnsOne(e => e.Data, data => {
-        data.WithOwner();
-      });
-
-      entity.OwnsOne(e => e.Metadata, metadata => {
-        metadata.WithOwner();
-        metadata.Property(m => m.EventType).IsRequired();
-        metadata.Property(m => m.EventId).IsRequired();
-        metadata.Property(m => m.Timestamp).IsRequired();
-      });
-
-      entity.OwnsOne(e => e.Scope, scope => {
-        scope.WithOwner();
-      });
+      entity.OwnsOne(e => e.Data);
+      entity.OwnsOne(e => e.Metadata);
+      entity.OwnsOne(e => e.Scope);
     });
   }
 }

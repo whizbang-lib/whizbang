@@ -42,7 +42,7 @@ public class DispatcherReceptorIntegrationTests {
         throw new InvalidOperationException("Order must have items");
       }
 
-      await Task.Delay(1); // Simulate async work
+      await Task.Delay(1, cancellationToken); // Simulate async work
 
       var total = message.Items.Sum(item => item.Quantity * item.Price);
       return new OrderPlaced(
@@ -59,7 +59,7 @@ public class DispatcherReceptorIntegrationTests {
         throw new InvalidOperationException("Address is required");
       }
 
-      await Task.Delay(1);
+      await Task.Delay(1, cancellationToken);
 
       return new OrderShipped(
           OrderId: message.OrderId,
@@ -71,7 +71,7 @@ public class DispatcherReceptorIntegrationTests {
 
   public class PaymentReceptor : IReceptor<ProcessPayment, PaymentProcessed> {
     public async ValueTask<PaymentProcessed> HandleAsync(ProcessPayment message, CancellationToken cancellationToken = default) {
-      await Task.Delay(1);
+      await Task.Delay(1, cancellationToken);
 
       // Simulate payment validation
       if (message.Amount <= 0) {
@@ -92,7 +92,7 @@ public class DispatcherReceptorIntegrationTests {
         throw new InvalidOperationException("Email is required");
       }
 
-      await Task.Delay(1);
+      await Task.Delay(1, cancellationToken);
 
       return new UserCreated(
           UserId: Guid.NewGuid(),
@@ -103,7 +103,7 @@ public class DispatcherReceptorIntegrationTests {
 
   public class EmailReceptor : IReceptor<SendWelcomeEmail, WelcomeEmailSent> {
     public async ValueTask<WelcomeEmailSent> HandleAsync(SendWelcomeEmail message, CancellationToken cancellationToken = default) {
-      await Task.Delay(1);
+      await Task.Delay(1, cancellationToken);
 
       return new WelcomeEmailSent(
           UserId: message.UserId,
@@ -127,10 +127,10 @@ public class DispatcherReceptorIntegrationTests {
     var customerId = Guid.NewGuid();
     var command = new PlaceOrder(
         customerId,
-        new[] {
+        [
             new OrderItem("SKU-001", 2, 10.00m),
             new OrderItem("SKU-002", 1, 25.00m)
-        }
+        ]
     );
 
     // Act
@@ -161,7 +161,7 @@ public class DispatcherReceptorIntegrationTests {
     var orderPlaced = await dispatcher.LocalInvokeAsync<OrderPlaced>(
         new PlaceOrder(
             customerId,
-            new[] { new OrderItem("SKU-001", 1, 10.00m) }
+            [new OrderItem("SKU-001", 1, 10.00m)]
         )
     );
 
@@ -196,7 +196,7 @@ public class DispatcherReceptorIntegrationTests {
     var orderTask = dispatcher.LocalInvokeAsync<OrderPlaced>(
         new PlaceOrder(
             customerId,
-            new[] { new OrderItem("SKU-001", 1, 100.00m) }
+            [new OrderItem("SKU-001", 1, 100.00m)]
         )
     );
 
@@ -228,7 +228,7 @@ public class DispatcherReceptorIntegrationTests {
 
     var command = new PlaceOrder(
         Guid.NewGuid(),
-        Array.Empty<OrderItem>() // Invalid - no items
+        [] // Invalid - no items
     );
 
     // Act & Assert
@@ -253,7 +253,7 @@ public class DispatcherReceptorIntegrationTests {
 
     var command = new PlaceOrder(
         Guid.NewGuid(),
-        new[] { new OrderItem("SKU-001", 1, 10.00m) }
+        [new OrderItem("SKU-001", 1, 10.00m)]
     );
 
     // Act & Assert
@@ -283,7 +283,7 @@ public class DispatcherReceptorIntegrationTests {
 
     var command = new PlaceOrder(
         Guid.NewGuid(),
-        new[] { new OrderItem("SKU-001", 1, 10.00m) }
+        [new OrderItem("SKU-001", 1, 10.00m)]
     );
 
     // Act
@@ -344,7 +344,7 @@ public class DispatcherReceptorIntegrationTests {
 
     // Act - Send different message types through the same dispatcher
     var orderResult = await dispatcher.LocalInvokeAsync<OrderPlaced>(
-        new PlaceOrder(customerId, new[] { new OrderItem("SKU-001", 1, 50.00m) })
+        new PlaceOrder(customerId, [new OrderItem("SKU-001", 1, 50.00m)])
     );
 
     var paymentResult = await dispatcher.LocalInvokeAsync<PaymentProcessed>(
@@ -381,7 +381,7 @@ public class DispatcherReceptorIntegrationTests {
     var startTime = DateTimeOffset.UtcNow;
     var command = new PlaceOrder(
         Guid.NewGuid(),
-        new[] { new OrderItem("SKU-001", 1, 10.00m) }
+        [new OrderItem("SKU-001", 1, 10.00m)]
     );
 
     // Act
@@ -409,7 +409,7 @@ public class DispatcherReceptorIntegrationTests {
 
     // Verify dispatcher can handle both receptor types
     var orderResult = await dispatcher.LocalInvokeAsync<OrderPlaced>(
-        new PlaceOrder(Guid.NewGuid(), new[] { new OrderItem("SKU-001", 1, 10.00m) })
+        new PlaceOrder(Guid.NewGuid(), [new OrderItem("SKU-001", 1, 10.00m)])
     );
 
     var userResult = await dispatcher.LocalInvokeAsync<UserCreated>(
@@ -443,7 +443,7 @@ public class DispatcherReceptorIntegrationTests {
     var context = MessageContext.Create(Whizbang.Core.ValueObjects.CorrelationId.New());
     var command = new PlaceOrder(
         Guid.NewGuid(),
-        new[] { new OrderItem("SKU-001", 1, 10.00m) }
+        [new OrderItem("SKU-001", 1, 10.00m)]
     );
 
     // Act
@@ -481,7 +481,7 @@ public class DispatcherReceptorIntegrationTests {
     var context = MessageContext.Create(Whizbang.Core.ValueObjects.CorrelationId.New());
     var command = new PlaceOrder(
         Guid.NewGuid(),
-        new[] { new OrderItem("SKU-001", 1, 10.00m) }
+        [new OrderItem("SKU-001", 1, 10.00m)]
     );
 
     // Act - Note: The line number below should be captured!
@@ -515,14 +515,14 @@ public class DispatcherReceptorIntegrationTests {
 
     // Act - Send two messages
     var result1 = await dispatcher.LocalInvokeAsync<OrderPlaced>(
-        new PlaceOrder(Guid.NewGuid(), new[] { new OrderItem("SKU-001", 1, 10.00m) }),
+        new PlaceOrder(Guid.NewGuid(), [new OrderItem("SKU-001", 1, 10.00m)]),
         context
     );
 
     await Task.Delay(10); // Small delay to ensure different timestamps
 
     var result2 = await dispatcher.LocalInvokeAsync<OrderPlaced>(
-        new PlaceOrder(Guid.NewGuid(), new[] { new OrderItem("SKU-002", 2, 20.00m) }),
+        new PlaceOrder(Guid.NewGuid(), [new OrderItem("SKU-002", 2, 20.00m)]),
         context
     );
 
@@ -557,7 +557,7 @@ public class DispatcherReceptorIntegrationTests {
     // Step 1: Place order
     var context1 = MessageContext.Create(correlationId);
     var orderPlaced = await dispatcher.LocalInvokeAsync<OrderPlaced>(
-        new PlaceOrder(Guid.NewGuid(), new[] { new OrderItem("SKU-001", 1, 10.00m) }),
+        new PlaceOrder(Guid.NewGuid(), [new OrderItem("SKU-001", 1, 10.00m)]),
         context1
     );
 
@@ -601,7 +601,7 @@ public class DispatcherReceptorIntegrationTests {
     var context = MessageContext.Create(Whizbang.Core.ValueObjects.CorrelationId.New());
     var command = new PlaceOrder(
         Guid.NewGuid(),
-        new[] { new OrderItem("SKU-001", 1, 10.00m) }
+        [new OrderItem("SKU-001", 1, 10.00m)]
     );
 
     // Act

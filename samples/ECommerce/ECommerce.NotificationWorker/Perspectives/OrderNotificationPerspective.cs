@@ -7,14 +7,9 @@ namespace ECommerce.NotificationWorker.Perspectives;
 /// <summary>
 /// Listens to OrderCreatedEvent and dispatches SendNotificationCommand
 /// </summary>
-public class OrderNotificationPerspective : IPerspectiveOf<OrderCreatedEvent> {
-  private readonly IDispatcher _dispatcher;
-  private readonly ILogger<OrderNotificationPerspective> _logger;
-
-  public OrderNotificationPerspective(IDispatcher dispatcher, ILogger<OrderNotificationPerspective> logger) {
-    _dispatcher = dispatcher;
-    _logger = logger;
-  }
+public class OrderNotificationPerspective(IDispatcher dispatcher, ILogger<OrderNotificationPerspective> logger) : IPerspectiveOf<OrderCreatedEvent> {
+  private readonly IDispatcher _dispatcher = dispatcher;
+  private readonly ILogger<OrderNotificationPerspective> _logger = logger;
 
   public async Task Update(OrderCreatedEvent @event, CancellationToken cancellationToken = default) {
     _logger.LogInformation(

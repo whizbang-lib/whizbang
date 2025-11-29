@@ -24,13 +24,13 @@ public class SerializationTests {
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test", 42),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           ServiceName = "Origin",
           Topic = "test-topic",
           Timestamp = DateTimeOffset.UtcNow
         }
-      }
+      ]
     };
 
     // Act
@@ -63,7 +63,7 @@ public class SerializationTests {
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test", 1),
-      Hops = new List<MessageHop> { hop1, hop2 }
+      Hops = [hop1, hop2]
     };
 
     // Act
@@ -97,7 +97,7 @@ public class SerializationTests {
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test", 1),
-      Hops = new List<MessageHop> { causationHop, currentHop }
+      Hops = [causationHop, currentHop]
     };
 
     // Act
@@ -121,9 +121,9 @@ public class SerializationTests {
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test", 1),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop { ServiceName = "Test" }
-      }
+      ]
     };
 
     // Act
@@ -143,13 +143,13 @@ public class SerializationTests {
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test", 1),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           ServiceName = "Test",
           Topic = "orders",
           StreamKey = "order-1"
         }
-      }
+      ]
     };
 
     // Act
@@ -174,7 +174,7 @@ public class SerializationTests {
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("complex test", 999),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           ServiceName = "Dispatcher",
           MachineName = "machine-1",
@@ -195,7 +195,7 @@ public class SerializationTests {
           CallerLineNumber = 42,
           Duration = TimeSpan.FromMilliseconds(150)
         }
-      }
+      ]
     };
 
     // Act

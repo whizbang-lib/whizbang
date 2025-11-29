@@ -7,12 +7,8 @@ namespace ECommerce.BFF.API.Hubs;
 /// Clients connect and receive notifications when order status changes.
 /// AOT-compatible hub (untyped - strongly-typed hubs not supported with Native AOT).
 /// </summary>
-public class OrderStatusHub : Hub {
-  private readonly ILogger<OrderStatusHub> _logger;
-
-  public OrderStatusHub(ILogger<OrderStatusHub> logger) {
-    _logger = logger;
-  }
+public class OrderStatusHub(ILogger<OrderStatusHub> logger) : Hub {
+  private readonly ILogger<OrderStatusHub> _logger = logger;
 
   /// <summary>
   /// Called when a client connects to the hub

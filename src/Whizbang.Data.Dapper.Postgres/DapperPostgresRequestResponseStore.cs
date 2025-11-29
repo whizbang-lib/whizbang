@@ -8,14 +8,10 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// <summary>
 /// PostgreSQL-specific implementation of IRequestResponseStore using Dapper.
 /// </summary>
-public class DapperPostgresRequestResponseStore : DapperRequestResponseStoreBase {
-  public DapperPostgresRequestResponseStore(
-    IDbConnectionFactory connectionFactory,
-    IDbExecutor executor,
-    JsonSerializerOptions jsonOptions)
-    : base(connectionFactory, executor, jsonOptions) {
-  }
-
+public class DapperPostgresRequestResponseStore(
+  IDbConnectionFactory connectionFactory,
+  IDbExecutor executor,
+  JsonSerializerOptions jsonOptions) : DapperRequestResponseStoreBase(connectionFactory, executor, jsonOptions) {
   protected override string GetSaveRequestSql() => @"
     INSERT INTO whizbang_request_response (correlation_id, request_id, response_envelope, expires_at, created_at)
     VALUES (@CorrelationId, @RequestId, NULL, @ExpiresAt, @CreatedAt)

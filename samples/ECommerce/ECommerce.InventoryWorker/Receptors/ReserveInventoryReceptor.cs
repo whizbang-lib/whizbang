@@ -7,14 +7,9 @@ namespace ECommerce.InventoryWorker.Receptors;
 /// <summary>
 /// Handles ReserveInventoryCommand and publishes InventoryReservedEvent
 /// </summary>
-public class ReserveInventoryReceptor : IReceptor<ReserveInventoryCommand, InventoryReservedEvent> {
-  private readonly IDispatcher _dispatcher;
-  private readonly ILogger<ReserveInventoryReceptor> _logger;
-
-  public ReserveInventoryReceptor(IDispatcher dispatcher, ILogger<ReserveInventoryReceptor> logger) {
-    _dispatcher = dispatcher;
-    _logger = logger;
-  }
+public class ReserveInventoryReceptor(IDispatcher dispatcher, ILogger<ReserveInventoryReceptor> logger) : IReceptor<ReserveInventoryCommand, InventoryReservedEvent> {
+  private readonly IDispatcher _dispatcher = dispatcher;
+  private readonly ILogger<ReserveInventoryReceptor> _logger = logger;
 
   public async ValueTask<InventoryReservedEvent> HandleAsync(
     ReserveInventoryCommand message,

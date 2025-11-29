@@ -13,14 +13,9 @@ namespace ECommerce.OrderService.API.Receptors;
 /// <summary>
 /// Handles CreateOrderCommand and publishes OrderCreatedEvent
 /// </summary>
-public class CreateOrderReceptor : IReceptor<CreateOrderCommand, OrderCreatedEvent> {
-  private readonly IDispatcher _dispatcher;
-  private readonly ILogger<CreateOrderReceptor> _logger;
-
-  public CreateOrderReceptor(IDispatcher dispatcher, ILogger<CreateOrderReceptor> logger) {
-    _dispatcher = dispatcher;
-    _logger = logger;
-  }
+public class CreateOrderReceptor(IDispatcher dispatcher, ILogger<CreateOrderReceptor> logger) : IReceptor<CreateOrderCommand, OrderCreatedEvent> {
+  private readonly IDispatcher _dispatcher = dispatcher;
+  private readonly ILogger<CreateOrderReceptor> _logger = logger;
 
   public async ValueTask<OrderCreatedEvent> HandleAsync(
     CreateOrderCommand message,
@@ -64,14 +59,9 @@ public class CreateOrderReceptor : IReceptor<CreateOrderCommand, OrderCreatedEve
 /// <summary>
 /// Handles CreateOrderCommand and publishes OrderCreatedEvent (alternative implementation for testing)
 /// </summary>
-public class CreateOrderReceptor2 : IReceptor<CreateOrderCommand, OrderCreatedEvent> {
-  private readonly IOutbox _outbox;
-  private readonly ILogger<CreateOrderReceptor2> _logger;
-
-  public CreateOrderReceptor2(IOutbox outbox, ILogger<CreateOrderReceptor2> logger) {
-    _outbox = outbox;
-    _logger = logger;
-  }
+public class CreateOrderReceptor2(IOutbox outbox, ILogger<CreateOrderReceptor2> logger) : IReceptor<CreateOrderCommand, OrderCreatedEvent> {
+  private readonly IOutbox _outbox = outbox;
+  private readonly ILogger<CreateOrderReceptor2> _logger = logger;
 
   public async ValueTask<OrderCreatedEvent> HandleAsync(
     CreateOrderCommand message,
@@ -105,7 +95,7 @@ public class CreateOrderReceptor2 : IReceptor<CreateOrderCommand, OrderCreatedEv
     var envelope = new MessageEnvelope<OrderCreatedEvent> {
       MessageId = MessageId.New(),
       Payload = orderCreated,
-      Hops = new List<MessageHop>()
+      Hops = []
     };
     await _outbox.StoreAsync(envelope, "orders/created", cancellationToken);
 

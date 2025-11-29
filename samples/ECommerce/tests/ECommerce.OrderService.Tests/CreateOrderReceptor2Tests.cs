@@ -17,7 +17,7 @@ public class CreateOrderReceptor2Tests {
   /// Helper class to track outbox calls
   /// </summary>
   private class TestOutbox : IOutbox {
-    public List<(IMessageEnvelope envelope, string destination)> StoredMessages { get; } = new();
+    public List<(IMessageEnvelope envelope, string destination)> StoredMessages { get; } = [];
     public int StoreCount => StoredMessages.Count;
 
     public Task StoreAsync(IMessageEnvelope envelope, string destination, CancellationToken cancellationToken = default) {
@@ -47,14 +47,14 @@ public class CreateOrderReceptor2Tests {
     var command = new CreateOrderCommand {
       OrderId = orderId,
       CustomerId = customerId,
-      LineItems = new List<OrderLineItem> {
+      LineItems = [
         new OrderLineItem {
           ProductId = productId,
           ProductName = "Widget",
           Quantity = 2,
           UnitPrice = 19.99m
         }
-      },
+      ],
       TotalAmount = 39.98m
     };
 
@@ -83,14 +83,14 @@ public class CreateOrderReceptor2Tests {
     var command = new CreateOrderCommand {
       OrderId = OrderId.New(),
       CustomerId = CustomerId.New(),
-      LineItems = new List<OrderLineItem> {
+      LineItems = [
         new OrderLineItem {
           ProductId = ProductId.New(),
           ProductName = "Widget",
           Quantity = 2,
           UnitPrice = 19.99m
         }
-      },
+      ],
       TotalAmount = -10.00m  // Invalid negative amount
     };
 
@@ -110,14 +110,14 @@ public class CreateOrderReceptor2Tests {
     var command = new CreateOrderCommand {
       OrderId = OrderId.New(),
       CustomerId = CustomerId.New(),
-      LineItems = new List<OrderLineItem> {
+      LineItems = [
         new OrderLineItem {
           ProductId = ProductId.New(),
           ProductName = "Widget",
           Quantity = 2,
           UnitPrice = 19.99m
         }
-      },
+      ],
       TotalAmount = 0.00m  // Invalid zero amount
     };
 
@@ -137,7 +137,7 @@ public class CreateOrderReceptor2Tests {
     var command = new CreateOrderCommand {
       OrderId = OrderId.New(),
       CustomerId = CustomerId.New(),
-      LineItems = new List<OrderLineItem>(),  // Empty list
+      LineItems = [],  // Empty list
       TotalAmount = 39.98m
     };
 
@@ -161,7 +161,7 @@ public class CreateOrderReceptor2Tests {
     var command = new CreateOrderCommand {
       OrderId = orderId,
       CustomerId = customerId,
-      LineItems = new List<OrderLineItem> {
+      LineItems = [
         new OrderLineItem {
           ProductId = productId1,
           ProductName = "Widget",
@@ -174,7 +174,7 @@ public class CreateOrderReceptor2Tests {
           Quantity = 1,
           UnitPrice = 29.99m
         }
-      },
+      ],
       TotalAmount = 69.97m
     };
 

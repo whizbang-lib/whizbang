@@ -10,19 +10,13 @@ namespace ECommerce.InventoryWorker.Services;
 /// Hosted service that seeds 12 products matching the frontend mock data on application startup.
 /// Idempotent - skips seeding if products already exist.
 /// </summary>
-public class ProductSeedService : IHostedService {
-  private readonly IDispatcher _dispatcher;
-  private readonly IProductLens _productLens;
-  private readonly ILogger<ProductSeedService> _logger;
-
-  public ProductSeedService(
-    IDispatcher dispatcher,
-    IProductLens productLens,
-    ILogger<ProductSeedService> logger) {
-    _dispatcher = dispatcher;
-    _productLens = productLens;
-    _logger = logger;
-  }
+public class ProductSeedService(
+  IDispatcher dispatcher,
+  IProductLens productLens,
+  ILogger<ProductSeedService> logger) : IHostedService {
+  private readonly IDispatcher _dispatcher = dispatcher;
+  private readonly IProductLens _productLens = productLens;
+  private readonly ILogger<ProductSeedService> _logger = logger;
 
   public async Task StartAsync(CancellationToken cancellationToken) {
     _logger.LogInformation("ProductSeedService: Checking if seeding is needed...");

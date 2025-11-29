@@ -380,7 +380,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private static string GetSimpleName(string fullyQualifiedName) {
     // Handle tuples: (Type1, Type2, ...)
     if (fullyQualifiedName.StartsWith("(") && fullyQualifiedName.EndsWith(")")) {
-      var inner = fullyQualifiedName.Substring(1, fullyQualifiedName.Length - 2);
+      var inner = fullyQualifiedName[1..^1];
       var parts = SplitTupleParts(inner);
       var simplifiedParts = new string[parts.Length];
       for (int i = 0; i < parts.Length; i++) {
@@ -391,13 +391,13 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     // Handle arrays: Type[]
     if (fullyQualifiedName.EndsWith("[]")) {
-      var baseType = fullyQualifiedName.Substring(0, fullyQualifiedName.Length - 2);
+      var baseType = fullyQualifiedName[..^2];
       return GetSimpleName(baseType) + "[]";
     }
 
     // Handle simple types
     var lastDot = fullyQualifiedName.LastIndexOf('.');
-    return lastDot >= 0 ? fullyQualifiedName.Substring(lastDot + 1) : fullyQualifiedName;
+    return lastDot >= 0 ? fullyQualifiedName[(lastDot + 1)..] : fullyQualifiedName;
   }
 
   /// <summary>
@@ -428,6 +428,6 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       parts.Add(currentPart.ToString());
     }
 
-    return parts.ToArray();
+    return [.. parts];
   }
 }

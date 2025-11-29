@@ -73,49 +73,40 @@ public enum DeliveryStatus {
 /// <summary>
 /// Concrete implementation of IDeliveryReceipt
 /// </summary>
-public sealed class DeliveryReceipt : IDeliveryReceipt {
-  /// <summary>
-  /// Creates a new delivery receipt
-  /// </summary>
-  public DeliveryReceipt(
-    MessageId messageId,
-    string destination,
-    DeliveryStatus status,
-    CorrelationId? correlationId = null,
-    MessageId? causationId = null,
-    Dictionary<string, object>? metadata = null
-  ) {
-    MessageId = messageId;
-    Destination = destination ?? throw new ArgumentNullException(nameof(destination));
-    Status = status;
-    CorrelationId = correlationId;
-    CausationId = causationId;
-    Timestamp = DateTimeOffset.UtcNow;
-    Metadata = metadata != null
+/// <remarks>
+/// Creates a new delivery receipt
+/// </remarks>
+public sealed class DeliveryReceipt(
+  MessageId messageId,
+  string destination,
+  DeliveryStatus status,
+  CorrelationId? correlationId = null,
+  MessageId? causationId = null,
+  Dictionary<string, object>? metadata = null
+  ) : IDeliveryReceipt {
+
+  /// <inheritdoc />
+  public MessageId MessageId { get; } = messageId;
+
+  /// <inheritdoc />
+  public DateTimeOffset Timestamp { get; } = DateTimeOffset.UtcNow;
+
+  /// <inheritdoc />
+  public string Destination { get; } = destination ?? throw new ArgumentNullException(nameof(destination));
+
+  /// <inheritdoc />
+  public DeliveryStatus Status { get; } = status;
+
+  /// <inheritdoc />
+  public IReadOnlyDictionary<string, object> Metadata { get; } = metadata != null
         ? new Dictionary<string, object>(metadata)
-        : new Dictionary<string, object>();
-  }
+        : [];
 
   /// <inheritdoc />
-  public MessageId MessageId { get; }
+  public CorrelationId? CorrelationId { get; } = correlationId;
 
   /// <inheritdoc />
-  public DateTimeOffset Timestamp { get; }
-
-  /// <inheritdoc />
-  public string Destination { get; }
-
-  /// <inheritdoc />
-  public DeliveryStatus Status { get; }
-
-  /// <inheritdoc />
-  public IReadOnlyDictionary<string, object> Metadata { get; }
-
-  /// <inheritdoc />
-  public CorrelationId? CorrelationId { get; }
-
-  /// <inheritdoc />
-  public MessageId? CausationId { get; }
+  public MessageId? CausationId { get; } = causationId;
 
   /// <summary>
   /// Creates a delivery receipt for an accepted message

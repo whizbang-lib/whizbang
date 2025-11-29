@@ -141,7 +141,7 @@ public abstract class RequestResponseStoreContractTests {
     return new MessageEnvelope<TestResponse> {
       MessageId = MessageId.New(),
       Payload = new TestResponse("test response"),
-      Hops = new List<MessageHop>()
+      Hops = []
     };
   }
 }

@@ -176,7 +176,7 @@ public class EventExtractorTests {
   [Test]
   public async Task ExtractEvents_WithEmptyEnumerable_ReturnsEmptyAsync() {
     // Arrange
-    IEnumerable<IEvent> emptyEnumerable = Enumerable.Empty<IEvent>();
+    IEnumerable<IEvent> emptyEnumerable = [];
 
     // Act
     var events = EventExtractor.ExtractEvents(emptyEnumerable);

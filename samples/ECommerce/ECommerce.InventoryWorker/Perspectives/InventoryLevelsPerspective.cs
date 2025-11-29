@@ -11,20 +11,15 @@ namespace ECommerce.InventoryWorker.Perspectives;
 /// Materializes inventory events into inventory_levels table.
 /// Handles InventoryRestockedEvent, InventoryReservedEvent, and InventoryAdjustedEvent.
 /// </summary>
-public class InventoryLevelsPerspective :
+public class InventoryLevelsPerspective(
+  IDbConnectionFactory connectionFactory,
+  ILogger<InventoryLevelsPerspective> logger) :
   IPerspectiveOf<InventoryRestockedEvent>,
   IPerspectiveOf<InventoryReservedEvent>,
   IPerspectiveOf<InventoryAdjustedEvent> {
 
-  private readonly IDbConnectionFactory _connectionFactory;
-  private readonly ILogger<InventoryLevelsPerspective> _logger;
-
-  public InventoryLevelsPerspective(
-    IDbConnectionFactory connectionFactory,
-    ILogger<InventoryLevelsPerspective> logger) {
-    _connectionFactory = connectionFactory;
-    _logger = logger;
-  }
+  private readonly IDbConnectionFactory _connectionFactory = connectionFactory;
+  private readonly ILogger<InventoryLevelsPerspective> _logger = logger;
 
   /// <summary>
   /// Handles InventoryRestockedEvent by upserting inventory levels.

@@ -38,7 +38,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = messageId,
       Payload = payload,
-      Hops = new List<MessageHop> { firstHop }
+      Hops = [firstHop]
     };
 
     // Assert
@@ -61,7 +61,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> { new MessageHop { ServiceName = "Test" } }
+      Hops = [new MessageHop { ServiceName = "Test" }]
     };
 
     // Assert
@@ -81,7 +81,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> { firstHop }
+      Hops = [firstHop]
     };
 
     // Assert
@@ -95,7 +95,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> { new MessageHop { ServiceName = "Origin" } }
+      Hops = [new MessageHop { ServiceName = "Origin" }]
     };
 
     var hop = new MessageHop {
@@ -126,7 +126,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> { hop0 }
+      Hops = [hop0]
     };
 
     var hop1 = new MessageHop {
@@ -158,9 +158,9 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop { ServiceName = "Origin", Topic = "" } // No topic
-      }
+      ]
     };
 
     // Act
@@ -176,7 +176,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> { new MessageHop { ServiceName = "Test" } }
+      Hops = [new MessageHop { ServiceName = "Test" }]
     };
 
     envelope.AddHop(new MessageHop {
@@ -207,7 +207,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> { new MessageHop { ServiceName = "Test" } }
+      Hops = [new MessageHop { ServiceName = "Test" }]
     };
 
     // Act
@@ -223,7 +223,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> { new MessageHop { ServiceName = "Test" } }
+      Hops = [new MessageHop { ServiceName = "Test" }]
     };
 
     envelope.AddHop(new MessageHop {
@@ -254,7 +254,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> { new MessageHop { ServiceName = "Test" } }
+      Hops = [new MessageHop { ServiceName = "Test" }]
     };
 
     // Act
@@ -270,7 +270,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> { new MessageHop { ServiceName = "Test" } }
+      Hops = [new MessageHop { ServiceName = "Test" }]
     };
 
     envelope.AddHop(new MessageHop {
@@ -301,7 +301,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> { new MessageHop { ServiceName = "Test" } }
+      Hops = [new MessageHop { ServiceName = "Test" }]
     };
 
     // Act
@@ -317,7 +317,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> { new MessageHop { ServiceName = "Test" } }
+      Hops = [new MessageHop { ServiceName = "Test" }]
     };
 
     envelope.AddHop(new MessageHop {
@@ -348,7 +348,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> { new MessageHop { ServiceName = "Test" } }
+      Hops = [new MessageHop { ServiceName = "Test" }]
     };
 
     // Act
@@ -364,7 +364,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> { new MessageHop { ServiceName = "Test" } }
+      Hops = [new MessageHop { ServiceName = "Test" }]
     };
 
     var context1 = new SecurityContext {
@@ -408,12 +408,12 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           ServiceName = "Origin",
           Timestamp = timestamp
         }
-      }
+      ]
     };
 
     // Act
@@ -429,12 +429,12 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           ServiceName = "Origin",
           Metadata = new Dictionary<string, object> { ["key1"] = "value1" }
         }
-      }
+      ]
     };
 
     // Act
@@ -450,12 +450,12 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           ServiceName = "Hop1",
           Metadata = new Dictionary<string, object> { ["priority"] = 5 }
         }
-      }
+      ]
     };
 
     envelope.AddHop(new MessageHop {
@@ -481,7 +481,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           ServiceName = "Hop1",
           Metadata = new Dictionary<string, object> {
@@ -489,7 +489,7 @@ public class MessageTracingTests {
             ["tenant"] = "acme"
           }
         }
-      }
+      ]
     };
 
     envelope.AddHop(new MessageHop {
@@ -521,12 +521,12 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           ServiceName = "Origin",
           Metadata = null
         }
-      }
+      ]
     };
 
     // Act
@@ -545,12 +545,12 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           ServiceName = "Origin",
           Trail = trail
         }
-      }
+      ]
     };
 
     // Act
@@ -577,9 +577,9 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop { ServiceName = "Origin", Trail = trail1 }
-      }
+      ]
     };
 
     envelope.AddHop(new MessageHop { ServiceName = "Router", Trail = trail2 });
@@ -610,9 +610,9 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop { ServiceName = "Hop1", Trail = trail1 }
-      }
+      ]
     };
 
     envelope.AddHop(new MessageHop { ServiceName = "Hop2", Trail = trail2 });
@@ -643,9 +643,9 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop { ServiceName = "Hop1", Trail = trail1 }
-      }
+      ]
     };
 
     envelope.AddHop(new MessageHop { ServiceName = "Hop2", Trail = null }); // No trail
@@ -834,10 +834,10 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop { ServiceName = "Service1", Type = HopType.Current },
         new MessageHop { ServiceName = "Service2", Type = HopType.Current }
-      }
+      ]
     };
 
     // Act
@@ -856,12 +856,12 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop { ServiceName = "CausationHop1", Type = HopType.Causation, CausationId = causationId1, CausationType = "OrderCreated" },
         new MessageHop { ServiceName = "CurrentHop1", Type = HopType.Current },
         new MessageHop { ServiceName = "CausationHop2", Type = HopType.Causation, CausationId = causationId2, CausationType = "PaymentProcessed" },
         new MessageHop { ServiceName = "CurrentHop2", Type = HopType.Current }
-      }
+      ]
     };
 
     // Act
@@ -883,12 +883,12 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop { ServiceName = "CausationHop1", Type = HopType.Causation },
         new MessageHop { ServiceName = "CurrentHop1", Type = HopType.Current },
         new MessageHop { ServiceName = "CausationHop2", Type = HopType.Causation },
         new MessageHop { ServiceName = "CurrentHop2", Type = HopType.Current }
-      }
+      ]
     };
 
     // Act
@@ -906,10 +906,10 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop { ServiceName = "CausationHop", Type = HopType.Causation, Topic = "old-topic" },
         new MessageHop { ServiceName = "CurrentHop", Type = HopType.Current, Topic = "current-topic" }
-      }
+      ]
     };
 
     // Act
@@ -925,10 +925,10 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop { ServiceName = "CausationHop", Type = HopType.Causation, StreamKey = "old-stream" },
         new MessageHop { ServiceName = "CurrentHop", Type = HopType.Current, StreamKey = "current-stream" }
-      }
+      ]
     };
 
     // Act
@@ -944,10 +944,10 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop { ServiceName = "CausationHop", Type = HopType.Causation, PartitionIndex = 5 },
         new MessageHop { ServiceName = "CurrentHop", Type = HopType.Current, PartitionIndex = 3 }
-      }
+      ]
     };
 
     // Act
@@ -963,10 +963,10 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop { ServiceName = "CausationHop", Type = HopType.Causation, SequenceNumber = 100 },
         new MessageHop { ServiceName = "CurrentHop", Type = HopType.Current, SequenceNumber = 200 }
-      }
+      ]
     };
 
     // Act
@@ -985,10 +985,10 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop { ServiceName = "CausationHop", Type = HopType.Causation, SecurityContext = causationContext },
         new MessageHop { ServiceName = "CurrentHop", Type = HopType.Current, SecurityContext = currentContext }
-      }
+      ]
     };
 
     // Act
@@ -1005,7 +1005,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           ServiceName = "CausationHop",
           Type = HopType.Causation,
@@ -1016,7 +1016,7 @@ public class MessageTracingTests {
           Type = HopType.Current,
           Metadata = new Dictionary<string, object> { ["key"] = "current-value" }
         }
-      }
+      ]
     };
 
     // Act
@@ -1032,7 +1032,7 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           ServiceName = "CausationHop",
           Type = HopType.Causation,
@@ -1043,7 +1043,7 @@ public class MessageTracingTests {
           Type = HopType.Current,
           Metadata = new Dictionary<string, object> { ["current-key"] = "current-value" }
         }
-      }
+      ]
     };
 
     // Act
@@ -1067,10 +1067,10 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop { ServiceName = "CausationHop", Type = HopType.Causation, Trail = causationTrail },
         new MessageHop { ServiceName = "CurrentHop", Type = HopType.Current, Trail = currentTrail }
-      }
+      ]
     };
 
     // Act
@@ -1297,10 +1297,10 @@ public class MessageTracingTests {
   [Test]
   public async Task MessageTrace_TotalDuration_CanBeSetAsync() {
     // Arrange
-    var trace = new MessageTrace(MessageId.New());
-
-    // Act
-    trace.TotalDuration = TimeSpan.FromMilliseconds(500);
+    var trace = new MessageTrace(MessageId.New()) {
+      // Act
+      TotalDuration = TimeSpan.FromMilliseconds(500)
+    };
 
     // Assert
     await Assert.That(trace.TotalDuration).IsEqualTo(TimeSpan.FromMilliseconds(500));
@@ -1328,11 +1328,11 @@ public class MessageTracingTests {
   #endregion
 
   // Helper methods for testing caller info capture
-  private MessageHop TestMethod_ThatRecordsHop() {
+  private static MessageHop TestMethod_ThatRecordsHop() {
     return MessageTracing.RecordHop("test-topic", "test-stream", "TestExecutor");
   }
 
-  private MessageHop AnotherTestMethod_ThatRecordsHop() {
+  private static MessageHop AnotherTestMethod_ThatRecordsHop() {
     return MessageTracing.RecordHop("test-topic", "test-stream", "TestExecutor");
   }
 }

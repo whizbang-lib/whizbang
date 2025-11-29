@@ -8,12 +8,8 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// Health check for PostgreSQL connectivity.
 /// Verifies that the database connection can be opened and a simple query executes successfully.
 /// </summary>
-public class PostgresHealthCheck : IHealthCheck {
-  private readonly IDbConnectionFactory _connectionFactory;
-
-  public PostgresHealthCheck(IDbConnectionFactory connectionFactory) {
-    _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
-  }
+public class PostgresHealthCheck(IDbConnectionFactory connectionFactory) : IHealthCheck {
+  private readonly IDbConnectionFactory _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
 
   public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default) {
     try {

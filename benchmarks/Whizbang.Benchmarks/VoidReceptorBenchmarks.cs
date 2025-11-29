@@ -226,7 +226,7 @@ public class VoidReceptorBenchmarks {
   // ============================================================================
 
   private class InMemoryTraceStore : ITraceStore {
-    private readonly List<IMessageEnvelope> _traces = new();
+    private readonly List<IMessageEnvelope> _traces = [];
 
     public Task StoreAsync(IMessageEnvelope envelope, CancellationToken ct = default) {
       _traces.Add(envelope);

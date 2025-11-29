@@ -281,7 +281,7 @@ public class TransportAutoDiscoveryTests {
 
     // Act & Assert - DiscoverReceptors is a placeholder that does nothing for now
     // Future: Will integrate with source generator to auto-discover IReceptor implementations
-    discovery.DiscoverReceptors();
+    TransportAutoDiscovery.DiscoverReceptors();
 
     // No exception should be thrown - this is a successful test
     await Assert.That(true).IsTrue();

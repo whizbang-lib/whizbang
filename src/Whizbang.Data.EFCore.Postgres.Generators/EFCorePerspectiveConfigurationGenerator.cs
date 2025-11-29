@@ -9,8 +9,9 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// <summary>
 /// Source generator that discovers perspectives and generates EF Core ModelBuilder configuration.
 /// Generates a ConfigureWhizbangPerspectives() extension method for ModelBuilder.
+/// DISABLED: Replaced by EFCoreServiceRegistrationGenerator with fluent API.
 /// </summary>
-[Generator]
+// [Generator] // Disabled - using fluent API with EFCoreServiceRegistrationGenerator instead
 public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   private const string PERSPECTIVE_INTERFACE = "Whizbang.Core.IPerspectiveOf<TEvent>";
 

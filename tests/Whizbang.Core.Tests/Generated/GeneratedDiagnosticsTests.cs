@@ -6,7 +6,7 @@ using Whizbang.Core.Tests.Common;
 namespace Whizbang.Core.Tests.Generated;
 
 [Category("Diagnostics")]
-public class GeneratedDiagnosticsTests : DiagnosticTestBase {
+public partial class GeneratedDiagnosticsTests : DiagnosticTestBase {
 
   [Test]
   public async Task Diagnostics_ShouldCollectReceptorDiscoveryInfoAsync() {
@@ -37,10 +37,7 @@ public class GeneratedDiagnosticsTests : DiagnosticTestBase {
 
     // Assert - timestamp should be in UTC format
     await Assert.That(output).Contains(" UTC");
-    await Assert.That(System.Text.RegularExpressions.Regex.IsMatch(
-        output,
-        @"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC"
-    )).IsTrue();
+    await Assert.That(MyRegex().IsMatch(output)).IsTrue();
   }
 
   [Test]
@@ -77,4 +74,8 @@ public class GeneratedDiagnosticsTests : DiagnosticTestBase {
     // Both should contain receptor info
     await Assert.That(receptorOnly).Contains($"Discovered {TestConstants.ExpectedReceptorCount} receptor(s)");
   }
+
+  [System.Text.RegularExpressions.GeneratedRegex(@"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC"
+  )]
+  private static partial System.Text.RegularExpressions.Regex MyRegex();
 }

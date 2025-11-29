@@ -476,7 +476,7 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope {
   public IReadOnlyDictionary<string, object> Metadata { get; init; } = new Dictionary<string, object>();
 
   // IMessageEnvelope implementation
-  public List<MessageHop> Hops { get; init; } = new();
+  public List<MessageHop> Hops { get; init; } = [];
   public void AddHop(MessageHop hop) => Hops.Add(hop);
   public DateTimeOffset GetMessageTimestamp() => Hops.FirstOrDefault()?.Timestamp ?? DateTimeOffset.UtcNow;
   public CorrelationId? GetCorrelationId() => Hops.FirstOrDefault()?.CorrelationId;

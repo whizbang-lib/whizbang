@@ -57,10 +57,10 @@ public class ITransportTests {
     var transport = CreateTestTransport();
     var destination = new TransportDestination("test-topic");
     var handlerCalled = false;
-    Func<IMessageEnvelope, CancellationToken, Task> handler = (env, ct) => {
+    Task handler(IMessageEnvelope env, CancellationToken ct) {
       handlerCalled = true;
       return Task.CompletedTask;
-    };
+    }
 
     // Act
     var subscription = await transport.SubscribeAsync(handler, destination, CancellationToken.None);
@@ -84,9 +84,9 @@ public class ITransportTests {
         var responseEnvelope = new MessageEnvelope<TestResponse> {
           MessageId = MessageId.New(),
           Payload = new TestResponse { Result = "response" },
-          Hops = new List<MessageHop> {
+          Hops = [
             new MessageHop { ServiceName = "Test", Timestamp = DateTimeOffset.UtcNow }
-          }
+          ]
         };
         var responseDestination = new TransportDestination($"response-{env.MessageId.Value}");
         await transport.PublishAsync(responseEnvelope, responseDestination, ct);
@@ -126,20 +126,20 @@ public class ITransportTests {
   }
 
   // Helper methods
-  private ITransport CreateTestTransport() {
+  private static ITransport CreateTestTransport() {
     // This will use InProcessTransport once implemented
     // For now, this will fail compilation - that's expected in RED phase
     return new InProcessTransport();
   }
 
-  private IMessageEnvelope CreateTestEnvelope() {
+  private static IMessageEnvelope CreateTestEnvelope() {
     var message = new TestMessage { Content = "Test" };
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = message,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop { ServiceName = "Test", Timestamp = DateTimeOffset.UtcNow }
-      }
+      ]
     };
   }
 

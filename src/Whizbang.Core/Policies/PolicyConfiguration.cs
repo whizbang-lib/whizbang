@@ -11,12 +11,12 @@ public class PolicyConfiguration {
   /// <summary>
   /// Publishing targets (outbound) - where messages are published when created locally
   /// </summary>
-  public List<PublishTarget> PublishTargets { get; } = new();
+  public List<PublishTarget> PublishTargets { get; } = [];
 
   /// <summary>
   /// Subscription targets (inbound) - where to subscribe for messages this service can handle
   /// </summary>
-  public List<SubscriptionTarget> SubscriptionTargets { get; } = new();
+  public List<SubscriptionTarget> SubscriptionTargets { get; } = [];
   /// <summary>
   /// Topic to route the message to
   /// </summary>

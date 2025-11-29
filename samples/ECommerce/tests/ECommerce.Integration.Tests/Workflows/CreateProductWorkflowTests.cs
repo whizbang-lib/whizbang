@@ -17,7 +17,7 @@ public class CreateProductWorkflowTests {
   }
 
   [After(Class)]
-  public static async Task CleanupAsync() {
+  public async Task CleanupAsync() {
     if (_fixture != null) {
       await _fixture.CleanupDatabaseAsync();
     }

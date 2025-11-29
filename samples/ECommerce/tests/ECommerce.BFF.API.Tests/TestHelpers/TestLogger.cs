@@ -6,7 +6,7 @@ namespace ECommerce.BFF.API.Tests.TestHelpers;
 /// Test implementation of ILogger for testing
 /// </summary>
 public class TestLogger<T> : ILogger<T> {
-  public List<string> LoggedMessages { get; } = new();
+  public List<string> LoggedMessages { get; } = [];
 
   public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 

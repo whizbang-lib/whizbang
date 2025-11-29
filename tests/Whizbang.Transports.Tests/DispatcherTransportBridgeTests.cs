@@ -114,14 +114,14 @@ public class DispatcherTransportBridgeTests {
         var responseEnvelope = new MessageEnvelope<TestResult> {
           MessageId = MessageId.New(),
           Payload = response,
-          Hops = new List<MessageHop> {
+          Hops = [
             new MessageHop {
               ServiceName = "RemoteCalculator",
               Timestamp = DateTimeOffset.UtcNow,
               CorrelationId = requestEnvelope.GetCorrelationId(),
               CausationId = requestEnvelope.MessageId
             }
-          }
+          ]
         };
 
         var responseDestination = new TransportDestination($"response-{requestEnvelope.MessageId.Value}");
@@ -171,12 +171,12 @@ public class DispatcherTransportBridgeTests {
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
       Payload = message,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           ServiceName = "RemoteSender",
           Timestamp = DateTimeOffset.UtcNow
         }
-      }
+      ]
     };
 
     // Act - Publish to transport (simulates remote send)
@@ -220,12 +220,12 @@ public class DispatcherTransportBridgeTests {
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
       Payload = message,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           ServiceName = "RemoteSender",
           Timestamp = DateTimeOffset.UtcNow
         }
-      }
+      ]
     };
 
     // Act - Publish serialized envelope to transport
@@ -331,14 +331,14 @@ public class DispatcherTransportBridgeTests {
         var responseEnvelope = new MessageEnvelope<TestResult> {
           MessageId = MessageId.New(),
           Payload = response,
-          Hops = new List<MessageHop> {
+          Hops = [
             new MessageHop {
               ServiceName = "RemoteCalculator",
               Timestamp = DateTimeOffset.UtcNow,
               CorrelationId = requestEnvelope.GetCorrelationId(),
               CausationId = requestEnvelope.MessageId
             }
-          }
+          ]
         };
 
         var responseDestination = new TransportDestination($"response-{requestEnvelope.MessageId.Value}");
@@ -366,7 +366,7 @@ public class DispatcherTransportBridgeTests {
   }
 
   // Helper methods
-  private TestDispatcher CreateTestDispatcher() {
+  private static TestDispatcher CreateTestDispatcher() {
     var serviceProvider = new TestServiceProvider();
     return new TestDispatcher(serviceProvider);
   }
@@ -386,10 +386,8 @@ public class DispatcherTransportBridgeTests {
   }
 
   // Test dispatcher with hooks for verification
-  private class TestDispatcher : Dispatcher {
+  private class TestDispatcher(IServiceProvider serviceProvider) : Dispatcher(serviceProvider) {
     public Func<object, Task<IDeliveryReceipt>>? OnSendAsync { get; set; }
-
-    public TestDispatcher(IServiceProvider serviceProvider) : base(serviceProvider) { }
 
     protected override ReceptorInvoker<TResult>? _getReceptorInvoker<TResult>(object message, Type messageType) {
       // For testing, we can hook into the receptor invocation
@@ -436,12 +434,8 @@ public class DispatcherTransportBridgeTests {
     }
   }
 
-  private class TestServiceScope : IServiceScope {
-    public TestServiceScope(IServiceProvider serviceProvider) {
-      ServiceProvider = serviceProvider;
-    }
-
-    public IServiceProvider ServiceProvider { get; }
+  private class TestServiceScope(IServiceProvider serviceProvider) : IServiceScope {
+    public IServiceProvider ServiceProvider { get; } = serviceProvider;
 
     public void Dispose() {
       // No-op for testing

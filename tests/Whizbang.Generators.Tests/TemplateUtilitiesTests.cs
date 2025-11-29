@@ -237,7 +237,7 @@ namespace Test;";
         "RemoveIndentation",
         System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
     );
-    var result = method!.Invoke(null, new object?[] { code, "  " }) as string;
+    var result = method!.Invoke(null, [code, "  "]) as string;
 
     // Assert
     await Assert.That(result).IsNull();
@@ -253,7 +253,7 @@ namespace Test;";
         "RemoveIndentation",
         System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
     );
-    var result = method!.Invoke(null, new object?[] { code, "" }) as string;
+    var result = method!.Invoke(null, [code, ""]) as string;
 
     // Assert
     await Assert.That(result).IsEqualTo(code);
@@ -269,7 +269,7 @@ namespace Test;";
         "RemoveIndentation",
         System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
     );
-    var result = method!.Invoke(null, new object?[] { code, "  " }) as string;
+    var result = method!.Invoke(null, [code, "  "]) as string;
 
     // Assert
     await Assert.That(result).Contains("\n   \n");
@@ -285,7 +285,7 @@ namespace Test;";
         "RemoveIndentation",
         System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
     );
-    var result = method!.Invoke(null, new object?[] { code, "  " }) as string;
+    var result = method!.Invoke(null, [code, "  "]) as string;
 
     // Assert
     await Assert.That(result).IsEqualTo("line1\nline2\nline3");
@@ -301,7 +301,7 @@ namespace Test;";
         "RemoveIndentation",
         System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
     );
-    var result = method!.Invoke(null, new object?[] { code, "  " }) as string;
+    var result = method!.Invoke(null, [code, "  "]) as string;
 
     // Assert
     await Assert.That(result).Contains("\nline2\n");

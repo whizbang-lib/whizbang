@@ -25,7 +25,7 @@ public class OrderReadModelTests {
       PaymentStatus = "Pending",
       ShipmentId = "SHIP-001",
       TrackingNumber = "TRACK-123",
-      LineItems = new List<LineItemReadModel> {
+      LineItems = [
         new LineItemReadModel {
           ProductId = "PROD-001",
           ProductName = "Product 1",
@@ -38,7 +38,7 @@ public class OrderReadModelTests {
           Quantity = 1,
           Price = 50.00m
         }
-      }
+      ]
     };
 
     // Assert
@@ -71,7 +71,7 @@ public class OrderReadModelTests {
       PaymentStatus = null,
       ShipmentId = null,
       TrackingNumber = null,
-      LineItems = new List<LineItemReadModel>()
+      LineItems = []
     };
 
     // Assert
@@ -169,7 +169,7 @@ public class OrderReadModelTests {
       CreatedAt = createdAt,
       UpdatedAt = createdAt,
       ItemCount = 2,
-      LineItems = new List<LineItemReadModel>()
+      LineItems = []
     };
 
     var order2 = new OrderReadModel {
@@ -181,7 +181,7 @@ public class OrderReadModelTests {
       CreatedAt = createdAt,
       UpdatedAt = createdAt,
       ItemCount = 1,
-      LineItems = new List<LineItemReadModel>()
+      LineItems = []
     };
 
     // Assert

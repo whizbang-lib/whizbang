@@ -213,7 +213,7 @@ public abstract class EventStoreContractTests {
         AggregateId = aggregateId,
         Payload = payload
       },
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     // Add the first hop (dispatch hop)

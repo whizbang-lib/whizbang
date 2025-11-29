@@ -5,7 +5,7 @@ namespace Whizbang.Core.Policies;
 /// Evaluates policies in order and returns configuration for the first match.
 /// </summary>
 public class PolicyEngine : IPolicyEngine {
-  private readonly List<Policy> _policies = new();
+  private readonly List<Policy> _policies = [];
 
   public void AddPolicy(
     string name,
@@ -16,21 +16,15 @@ public class PolicyEngine : IPolicyEngine {
       throw new ArgumentException("Policy name cannot be null or empty", nameof(name));
     }
 
-    if (predicate == null) {
-      throw new ArgumentNullException(nameof(predicate));
-    }
+    ArgumentNullException.ThrowIfNull(predicate);
 
-    if (configure == null) {
-      throw new ArgumentNullException(nameof(configure));
-    }
+    ArgumentNullException.ThrowIfNull(configure);
 
     _policies.Add(new Policy(name, predicate, configure));
   }
 
   public Task<PolicyConfiguration?> MatchAsync(PolicyContext context) {
-    if (context == null) {
-      throw new ArgumentNullException(nameof(context));
-    }
+    ArgumentNullException.ThrowIfNull(context);
 
     foreach (var policy in _policies) {
       bool matched;

@@ -25,11 +25,11 @@ public class PolicyEngineTests {
   /// <summary>
   /// Helper to create a test envelope
   /// </summary>
-  private IMessageEnvelope CreateTestEnvelope<TMessage>(TMessage payload) {
+  private static IMessageEnvelope CreateTestEnvelope<TMessage>(TMessage payload) {
     var envelope = new Whizbang.Core.Observability.MessageEnvelope<TMessage> {
       MessageId = MessageId.New(),
       Payload = payload,
-      Hops = new List<MessageHop>()
+      Hops = []
     };
     envelope.AddHop(new MessageHop {
       ServiceName = "Test",
@@ -43,7 +43,7 @@ public class PolicyEngineTests {
   /// <summary>
   /// Helper to create a test policy context
   /// </summary>
-  private PolicyContext CreateTestContext<TMessage>(TMessage message, IMessageEnvelope envelope) {
+  private static PolicyContext CreateTestContext<TMessage>(TMessage message, IMessageEnvelope envelope) {
     var services = new ServiceCollection().BuildServiceProvider();
     return new PolicyContext(
       message: message!,

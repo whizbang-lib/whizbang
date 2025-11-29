@@ -124,10 +124,7 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
         if (!string.IsNullOrEmpty(row.ResponseEnvelope)) {
           // Response is available - deserialize with concrete type (AOT-compatible)
           var envelopeType = typeof(MessageEnvelope<TMessage>);
-          var typeInfo = _jsonOptions.GetTypeInfo(envelopeType);
-          if (typeInfo == null) {
-            throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
-          }
+          var typeInfo = _jsonOptions.GetTypeInfo(envelopeType) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
           return JsonSerializer.Deserialize(row.ResponseEnvelope, typeInfo) as MessageEnvelope<TMessage>;
         }
 
@@ -153,10 +150,7 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
 
     // Serialize using the actual runtime type to preserve all properties (AOT-compatible)
     var responseType = response.GetType();
-    var typeInfo = _jsonOptions.GetTypeInfo(responseType);
-    if (typeInfo == null) {
-      throw new InvalidOperationException($"No JsonTypeInfo found for {responseType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
-    }
+    var typeInfo = _jsonOptions.GetTypeInfo(responseType) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {responseType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
     var json = JsonSerializer.Serialize(response, typeInfo);
     var sql = GetSaveResponseSql();
 

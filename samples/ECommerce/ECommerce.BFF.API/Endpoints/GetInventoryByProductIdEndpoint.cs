@@ -6,12 +6,8 @@ namespace ECommerce.BFF.API.Endpoints;
 /// <summary>
 /// Get inventory levels for a specific product
 /// </summary>
-public class GetInventoryByProductIdEndpoint : EndpointWithoutRequest<InventoryLevelDto> {
-  private readonly IInventoryLevelsLens _lens;
-
-  public GetInventoryByProductIdEndpoint(IInventoryLevelsLens lens) {
-    _lens = lens;
-  }
+public class GetInventoryByProductIdEndpoint(IInventoryLevelsLens lens) : EndpointWithoutRequest<InventoryLevelDto> {
+  private readonly IInventoryLevelsLens _lens = lens;
 
   public override void Configure() {
     Get("/inventory/{productId}");

@@ -220,7 +220,7 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope {
   /// </summary>
   /// <returns>A list containing all causation hops</returns>
   public IReadOnlyList<MessageHop> GetCausationHops() {
-    return Hops.Where(h => h.Type == HopType.Causation).ToList();
+    return [.. Hops.Where(h => h.Type == HopType.Causation)];
   }
 
   /// <summary>
@@ -229,6 +229,6 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope {
   /// </summary>
   /// <returns>A list containing all current message hops</returns>
   public IReadOnlyList<MessageHop> GetCurrentHops() {
-    return Hops.Where(h => h.Type == HopType.Current).ToList();
+    return [.. Hops.Where(h => h.Type == HopType.Current)];
   }
 }

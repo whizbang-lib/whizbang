@@ -21,7 +21,7 @@ public class TransportManagerSubscriptionTests {
     manager.AddTransport(TransportType.InProcess, transport);
 
     var targets = new List<SubscriptionTarget> {
-      new SubscriptionTarget {
+      new() {
         TransportType = TransportType.InProcess,
         Topic = "test-topic"
       }
@@ -44,7 +44,7 @@ public class TransportManagerSubscriptionTests {
     var testEnvelope = new MessageEnvelope<string> {
       MessageId = MessageId.New(),
       Payload = "test",
-      Hops = new List<MessageHop>()
+      Hops = []
     };
     await transport.PublishAsync(testEnvelope, new TransportDestination("test-topic"), CancellationToken.None);
     await Task.Delay(50); // Allow async processing
@@ -62,17 +62,17 @@ public class TransportManagerSubscriptionTests {
     manager.AddTransport(TransportType.Kafka, transport2); // Using InProcess as mock
 
     var targets = new List<SubscriptionTarget> {
-      new SubscriptionTarget {
+      new() {
         TransportType = TransportType.InProcess,
         Topic = "topic1"
       },
-      new SubscriptionTarget {
+      new() {
         TransportType = TransportType.Kafka,
         Topic = "topic2"
       }
     };
 
-    Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
+    static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
 
     // Act
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
@@ -89,14 +89,14 @@ public class TransportManagerSubscriptionTests {
     manager.AddTransport(TransportType.Kafka, transport);
 
     var targets = new List<SubscriptionTarget> {
-      new SubscriptionTarget {
+      new() {
         TransportType = TransportType.Kafka,
         Topic = "kafka-topic",
         ConsumerGroup = "my-consumer-group"
       }
     };
 
-    Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
+    static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
 
     // Act
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
@@ -114,14 +114,14 @@ public class TransportManagerSubscriptionTests {
     manager.AddTransport(TransportType.ServiceBus, transport);
 
     var targets = new List<SubscriptionTarget> {
-      new SubscriptionTarget {
+      new() {
         TransportType = TransportType.ServiceBus,
         Topic = "sb-topic",
         SubscriptionName = "my-subscription"
       }
     };
 
-    Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
+    static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
 
     // Act
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
@@ -138,7 +138,7 @@ public class TransportManagerSubscriptionTests {
     manager.AddTransport(TransportType.ServiceBus, transport);
 
     var targets = new List<SubscriptionTarget> {
-      new SubscriptionTarget {
+      new() {
         TransportType = TransportType.ServiceBus,
         Topic = "sb-topic",
         SubscriptionName = "filtered-sub",
@@ -146,7 +146,7 @@ public class TransportManagerSubscriptionTests {
       }
     };
 
-    Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
+    static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
 
     // Act
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
@@ -163,14 +163,14 @@ public class TransportManagerSubscriptionTests {
     manager.AddTransport(TransportType.RabbitMQ, transport);
 
     var targets = new List<SubscriptionTarget> {
-      new SubscriptionTarget {
+      new() {
         TransportType = TransportType.RabbitMQ,
         Topic = "exchange",
         QueueName = "my-queue"
       }
     };
 
-    Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
+    static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
 
     // Act
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
@@ -187,14 +187,14 @@ public class TransportManagerSubscriptionTests {
     manager.AddTransport(TransportType.Kafka, transport);
 
     var targets = new List<SubscriptionTarget> {
-      new SubscriptionTarget {
+      new() {
         TransportType = TransportType.Kafka,
         Topic = "partitioned-topic",
         Partition = 3
       }
     };
 
-    Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
+    static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
 
     // Act
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
@@ -211,14 +211,14 @@ public class TransportManagerSubscriptionTests {
     manager.AddTransport(TransportType.RabbitMQ, transport);
 
     var targets = new List<SubscriptionTarget> {
-      new SubscriptionTarget {
+      new() {
         TransportType = TransportType.RabbitMQ,
         Topic = "exchange",
         RoutingKey = "routing.key.pattern"
       }
     };
 
-    Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
+    static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
 
     // Act
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
@@ -235,7 +235,7 @@ public class TransportManagerSubscriptionTests {
     manager.AddTransport(TransportType.Kafka, transport);
 
     var targets = new List<SubscriptionTarget> {
-      new SubscriptionTarget {
+      new() {
         TransportType = TransportType.Kafka,
         Topic = "comprehensive-topic",
         ConsumerGroup = "group1",
@@ -244,7 +244,7 @@ public class TransportManagerSubscriptionTests {
       }
     };
 
-    Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
+    static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
 
     // Act
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
@@ -261,7 +261,7 @@ public class TransportManagerSubscriptionTests {
     manager.AddTransport(TransportType.InProcess, transport);
 
     var targets = new List<SubscriptionTarget> {
-      new SubscriptionTarget {
+      new() {
         TransportType = TransportType.InProcess,
         Topic = "handler-test"
       }
@@ -280,7 +280,7 @@ public class TransportManagerSubscriptionTests {
     var testEnvelope = new MessageEnvelope<string> {
       MessageId = MessageId.New(),
       Payload = "test-payload",
-      Hops = new List<MessageHop>()
+      Hops = []
     };
     await transport.PublishAsync(testEnvelope, new TransportDestination("handler-test"), CancellationToken.None);
     await Task.Delay(50); // Allow async processing
@@ -297,13 +297,13 @@ public class TransportManagerSubscriptionTests {
     // Arrange
     var manager = new TransportManager(new JsonMessageSerializer(WhizbangJsonContext.CreateOptions()));
     var targets = new List<SubscriptionTarget> {
-      new SubscriptionTarget {
+      new() {
         TransportType = TransportType.Kafka, // Not registered
         Topic = "topic"
       }
     };
 
-    Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
+    static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
 
     // Act & Assert
     await Assert.That(() => manager.SubscribeFromTargetsAsync(targets, handler))
@@ -318,7 +318,7 @@ public class TransportManagerSubscriptionTests {
     manager.AddTransport(TransportType.Kafka, transport);
 
     var targets = new List<SubscriptionTarget> {
-      new SubscriptionTarget {
+      new() {
         TransportType = TransportType.Kafka,
         Topic = "topic",
         ConsumerGroup = "",  // Empty strings should not be included
@@ -327,7 +327,7 @@ public class TransportManagerSubscriptionTests {
       }
     };
 
-    Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
+    static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
 
     // Act
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);

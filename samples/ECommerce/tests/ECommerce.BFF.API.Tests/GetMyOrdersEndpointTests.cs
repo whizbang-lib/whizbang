@@ -9,12 +9,8 @@ public class GetMyOrdersEndpointTests {
   /// <summary>
   /// Mock implementation of IOrderLens for testing
   /// </summary>
-  private class MockOrderLens : IOrderLens {
-    private readonly List<OrderReadModel> _orders;
-
-    public MockOrderLens(List<OrderReadModel> orders) {
-      _orders = orders;
-    }
+  private class MockOrderLens(List<OrderReadModel> orders) : IOrderLens {
+    private readonly List<OrderReadModel> _orders = orders;
 
     public Task<IEnumerable<OrderReadModel>> GetByCustomerIdAsync(string customerId, CancellationToken cancellationToken = default) {
       var result = _orders.Where(o => o.CustomerId == customerId);
@@ -49,23 +45,23 @@ public class GetMyOrdersEndpointTests {
   public async Task MockOrderLens_GetByCustomerId_ReturnsCorrectOrdersAsync() {
     // Arrange
     var testOrders = new List<OrderReadModel> {
-      new OrderReadModel {
+      new() {
         OrderId = "ORD-001",
         CustomerId = "CUST-001",
         TenantId = "TENANT-001",
         Status = "Pending",
         TotalAmount = 100.00m,
         CreatedAt = DateTime.UtcNow,
-        LineItems = new List<LineItemReadModel>()
+        LineItems = []
       },
-      new OrderReadModel {
+      new() {
         OrderId = "ORD-002",
         CustomerId = "CUST-002",
         TenantId = "TENANT-001",
         Status = "Completed",
         TotalAmount = 200.00m,
         CreatedAt = DateTime.UtcNow,
-        LineItems = new List<LineItemReadModel>()
+        LineItems = []
       }
     };
 
@@ -84,7 +80,7 @@ public class GetMyOrdersEndpointTests {
   [Test]
   public async Task MockOrderLens_GetByCustomerId_WithNoOrders_ReturnsEmptyAsync() {
     // Arrange
-    var mockLens = new MockOrderLens(new List<OrderReadModel>());
+    var mockLens = new MockOrderLens([]);
 
     // Act
     var result = await mockLens.GetByCustomerIdAsync("CUST-999");

@@ -5,21 +5,16 @@ namespace Whizbang.Core;
 /// <summary>
 /// Thrown when no handler is found for a given message type.
 /// </summary>
+/// <remarks>
+/// Initializes a new instance of the <see cref="HandlerNotFoundException"/> class.
+/// </remarks>
+/// <param name="messageType">The message type that has no handler</param>
 [Serializable]
-public class HandlerNotFoundException : Exception {
+public class HandlerNotFoundException(Type messageType) : Exception(_formatMessage(messageType)) {
   /// <summary>
   /// The type of message that has no handler.
   /// </summary>
-  public Type MessageType { get; }
-
-  /// <summary>
-  /// Initializes a new instance of the <see cref="HandlerNotFoundException"/> class.
-  /// </summary>
-  /// <param name="messageType">The message type that has no handler</param>
-  public HandlerNotFoundException(Type messageType)
-      : base(_formatMessage(messageType)) {
-    MessageType = messageType;
-  }
+  public Type MessageType { get; } = messageType;
 
   private static string _formatMessage(Type messageType) {
     return $@"No handler found for message type '{messageType.Name}'.

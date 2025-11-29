@@ -9,13 +9,15 @@
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
     <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
 
-    <!-- AOT Compatibility - Zero Reflection Enforcement -->
+    <!-- AOT Compatibility - Enabled but not enforced strictly for samples -->
+    <!-- NOTE: EF Core InMemory provider isn't fully AOT compatible -->
+    <!-- The library itself (Whizbang.Core, etc.) has strict enforcement -->
     <IsAotCompatible>true</IsAotCompatible>
     <EnableAotAnalyzer>true</EnableAotAnalyzer>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
 
-    <!-- Make AOT warnings errors to enforce zero reflection -->
-    <WarningsAsErrors>$(WarningsAsErrors);IL2026;IL2046;IL2075;IL3050</WarningsAsErrors>
+    <!-- Don't treat AOT warnings as errors for samples (EF Core InMemory limitations) -->
+    <!-- <WarningsAsErrors>$(WarningsAsErrors);IL2026;IL2046;IL2075;IL3050</WarningsAsErrors> -->
   </PropertyGroup>
 
   <!-- BannedApiAnalyzers - Ban reflection attributes -->

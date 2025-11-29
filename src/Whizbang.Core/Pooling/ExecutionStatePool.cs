@@ -9,7 +9,7 @@ namespace Whizbang.Core.Pooling;
 /// </summary>
 /// <typeparam name="T">The result type for the execution state</typeparam>
 public static class ExecutionStatePool<T> {
-  private static readonly ConcurrentBag<ExecutionState<T>> _pool = new();
+  private static readonly ConcurrentBag<ExecutionState<T>> _pool = [];
 
   /// <summary>
   /// Gets a pooled ExecutionState{T} or creates a new one if pool is empty.

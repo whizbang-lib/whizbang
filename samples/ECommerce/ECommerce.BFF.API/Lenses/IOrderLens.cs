@@ -53,7 +53,7 @@ public record OrderReadModel {
   public string? TrackingNumber { get; init; }
 
   // Line items stored as JSONB in database
-  public List<LineItemReadModel> LineItems { get; init; } = new();
+  public List<LineItemReadModel> LineItems { get; init; } = [];
 }
 
 /// <summary>

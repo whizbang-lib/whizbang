@@ -16,17 +16,12 @@ namespace Whizbang.Data.Dapper.Sqlite;
 /// Stream ID is inferred from event's [AggregateId] property.
 /// Uses retry logic with UNIQUE constraint for thread-safe sequence number generation.
 /// </summary>
-public class DapperSqliteEventStore : DapperEventStoreBase {
-  private readonly IPolicyEngine _policyEngine;
-
-  public DapperSqliteEventStore(
-    IDbConnectionFactory connectionFactory,
-    IDbExecutor executor,
-    JsonSerializerOptions jsonOptions,
-    IPolicyEngine policyEngine)
-    : base(connectionFactory, executor, jsonOptions) {
-    _policyEngine = policyEngine ?? throw new ArgumentNullException(nameof(policyEngine));
-  }
+public class DapperSqliteEventStore(
+  IDbConnectionFactory connectionFactory,
+  IDbExecutor executor,
+  JsonSerializerOptions jsonOptions,
+  IPolicyEngine policyEngine) : DapperEventStoreBase(connectionFactory, executor, jsonOptions) {
+  private readonly IPolicyEngine _policyEngine = policyEngine ?? throw new ArgumentNullException(nameof(policyEngine));
 
   /// <summary>
   /// Appends an event to the specified stream (AOT-compatible).
@@ -50,10 +45,7 @@ public class DapperSqliteEventStore : DapperEventStoreBase {
 
         // Serialize envelope (AOT-compatible via WhizbangJsonContext in resolver chain)
         var envelopeType = envelope.GetType();
-        var typeInfo = _jsonOptions.GetTypeInfo(envelopeType);
-        if (typeInfo == null) {
-          throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
-        }
+        var typeInfo = _jsonOptions.GetTypeInfo(envelopeType) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
         var json = JsonSerializer.Serialize(envelope, typeInfo);
 
         // Try to insert with sequence number
@@ -107,12 +99,8 @@ public class DapperSqliteEventStore : DapperEventStoreBase {
     foreach (var row in rows) {
       // Deserialize with concrete message type (AOT-compatible)
       var envelopeType = typeof(MessageEnvelope<TMessage>);
-      var typeInfo = _jsonOptions.GetTypeInfo(envelopeType);
-      if (typeInfo == null) {
-        throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
-      }
-      var envelope = JsonSerializer.Deserialize(row.Envelope, typeInfo) as MessageEnvelope<TMessage>;
-      if (envelope != null) {
+      var typeInfo = _jsonOptions.GetTypeInfo(envelopeType) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
+      if (JsonSerializer.Deserialize(row.Envelope, typeInfo) is MessageEnvelope<TMessage> envelope) {
         yield return envelope;
       }
     }

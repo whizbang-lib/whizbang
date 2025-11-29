@@ -14,7 +14,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
   private readonly ServiceBusClient _client;
   private readonly ILogger<AzureServiceBusTransport> _logger;
-  private readonly Dictionary<string, ServiceBusSender> _senders = new();
+  private readonly Dictionary<string, ServiceBusSender> _senders = [];
   private readonly SemaphoreSlim _senderLock = new(1, 1);
   private readonly AzureServiceBusOptions _options;
   private readonly JsonSerializerContext _jsonContext;
@@ -184,9 +184,8 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
             );
             return;
           }
-          var envelope = JsonSerializer.Deserialize(json, typeInfo) as IMessageEnvelope;
 
-          if (envelope == null) {
+          if (JsonSerializer.Deserialize(json, typeInfo) is not IMessageEnvelope envelope) {
             _logger.LogError("Failed to deserialize message {MessageId} as {EnvelopeType}",
               args.Message.MessageId, envelopeTypeName);
             await args.DeadLetterMessageAsync(

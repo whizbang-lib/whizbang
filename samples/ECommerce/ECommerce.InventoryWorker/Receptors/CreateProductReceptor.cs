@@ -8,14 +8,9 @@ namespace ECommerce.InventoryWorker.Receptors;
 /// <summary>
 /// Handles CreateProductCommand and publishes ProductCreatedEvent (and optionally InventoryRestockedEvent)
 /// </summary>
-public class CreateProductReceptor : IReceptor<CreateProductCommand, ProductCreatedEvent> {
-  private readonly IDispatcher _dispatcher;
-  private readonly ILogger<CreateProductReceptor> _logger;
-
-  public CreateProductReceptor(IDispatcher dispatcher, ILogger<CreateProductReceptor> logger) {
-    _dispatcher = dispatcher;
-    _logger = logger;
-  }
+public class CreateProductReceptor(IDispatcher dispatcher, ILogger<CreateProductReceptor> logger) : IReceptor<CreateProductCommand, ProductCreatedEvent> {
+  private readonly IDispatcher _dispatcher = dispatcher;
+  private readonly ILogger<CreateProductReceptor> _logger = logger;
 
   public async ValueTask<ProductCreatedEvent> HandleAsync(
     CreateProductCommand message,

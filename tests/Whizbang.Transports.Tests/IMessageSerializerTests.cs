@@ -121,13 +121,13 @@ public class IMessageSerializerTests {
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "Test", Value = 1 },
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           ServiceName = "TestService",
           Timestamp = DateTimeOffset.UtcNow,
           CorrelationId = correlationId
         }
-      }
+      ]
     };
 
     // Act
@@ -146,13 +146,13 @@ public class IMessageSerializerTests {
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "Test", Value = 1 },
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           ServiceName = "TestService",
           Timestamp = DateTimeOffset.UtcNow,
           CausationId = causationId
         }
-      }
+      ]
     };
 
     // Act
@@ -170,7 +170,7 @@ public class IMessageSerializerTests {
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "Test", Value = 1 },
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           ServiceName = "TestService",
           Timestamp = DateTimeOffset.UtcNow,
@@ -180,7 +180,7 @@ public class IMessageSerializerTests {
             ["timeout-ms"] = 5000
           }
         }
-      }
+      ]
     };
 
     // Act
@@ -200,12 +200,12 @@ public class IMessageSerializerTests {
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "Test", Value = 1 },
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           ServiceName = "OrderService",
           Timestamp = DateTimeOffset.UtcNow
         }
-      }
+      ]
     };
 
     // Act
@@ -223,7 +223,7 @@ public class IMessageSerializerTests {
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "Test", Value = 1 },
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           ServiceName = "TestService",
           Timestamp = DateTimeOffset.UtcNow,
@@ -231,7 +231,7 @@ public class IMessageSerializerTests {
           StreamKey = "order-123",
           PartitionIndex = 5
         }
-      }
+      ]
     };
 
     // Act
@@ -252,13 +252,13 @@ public class IMessageSerializerTests {
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "Test", Value = 1 },
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           ServiceName = "TestService",
           Timestamp = DateTimeOffset.UtcNow,
           SequenceNumber = 42
         }
-      }
+      ]
     };
 
     // Act
@@ -278,12 +278,12 @@ public class IMessageSerializerTests {
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "Test", Value = 1 },
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           ServiceName = "TestService",
           Timestamp = timestamp
         }
-      }
+      ]
     };
 
     // Act
@@ -301,7 +301,7 @@ public class IMessageSerializerTests {
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "Test", Value = 1 },
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           ServiceName = "TestService",
           Timestamp = DateTimeOffset.UtcNow,
@@ -309,7 +309,7 @@ public class IMessageSerializerTests {
           StreamKey = null,
           Metadata = null
         }
-      }
+      ]
     };
 
     // Act
@@ -323,32 +323,32 @@ public class IMessageSerializerTests {
   }
 
   // Helper methods
-  private IMessageSerializer CreateTestSerializer() {
+  private static IMessageSerializer CreateTestSerializer() {
     // AOT-compatible serializer using WhizbangJsonContext
     // Use CreateOptions to properly configure options with all contexts
     var options = WhizbangJsonContext.CreateOptions();
     return new JsonMessageSerializer(options);
   }
 
-  private IMessageEnvelope CreateTestEnvelope(TestMessage? message = null) {
+  private static IMessageEnvelope CreateTestEnvelope(TestMessage? message = null) {
     var msg = message ?? new TestMessage { Content = "Test", Value = 1 };
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = msg,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           ServiceName = "TestService",
           Timestamp = DateTimeOffset.UtcNow
         }
-      }
+      ]
     };
   }
 
-  private IMessageEnvelope CreateEnvelopeWithMultipleHops() {
+  private static IMessageEnvelope CreateEnvelopeWithMultipleHops() {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "Test", Value = 1 },
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           ServiceName = "CurrentService",
@@ -364,7 +364,7 @@ public class IMessageSerializerTests {
           ServiceName = "GrandparentService",
           Timestamp = DateTimeOffset.UtcNow.AddSeconds(-2)
         }
-      }
+      ]
     };
     return envelope;
   }

@@ -21,7 +21,7 @@ public abstract class PartitionRouterContractTests {
   /// Helper to create a minimal PolicyContext for testing.
   /// Partition routing doesn't use context currently, so we pass null for simplicity.
   /// </summary>
-  protected PolicyContext CreateTestContext() {
+  protected static PolicyContext CreateTestContext() {
     return null!; // Partition routers don't currently use PolicyContext
   }
 

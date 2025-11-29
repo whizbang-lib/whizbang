@@ -23,7 +23,7 @@ public class TransportManagerPublishingTests {
 
     var message = new TestMessage { Content = "test", Value = 42 };
     var targets = new List<PublishTarget> {
-      new PublishTarget {
+      new() {
         TransportType = TransportType.InProcess,
         Destination = "test-destination"
       }
@@ -63,11 +63,11 @@ public class TransportManagerPublishingTests {
 
     var message = new TestMessage { Content = "multi", Value = 99 };
     var targets = new List<PublishTarget> {
-      new PublishTarget {
+      new() {
         TransportType = TransportType.InProcess,
         Destination = "dest1"
       },
-      new PublishTarget {
+      new() {
         TransportType = TransportType.Kafka,
         Destination = "dest2"
       }
@@ -113,7 +113,7 @@ public class TransportManagerPublishingTests {
 
     var message = new TestMessage { Content = "routed", Value = 123 };
     var targets = new List<PublishTarget> {
-      new PublishTarget {
+      new() {
         TransportType = TransportType.InProcess,
         Destination = "dest",
         RoutingKey = "routing.key.test"
@@ -154,7 +154,7 @@ public class TransportManagerPublishingTests {
     };
 
     var targets = new List<PublishTarget> {
-      new PublishTarget {
+      new() {
         TransportType = TransportType.InProcess,
         Destination = "dest"
       }
@@ -189,7 +189,7 @@ public class TransportManagerPublishingTests {
 
     var message = new TestMessage { Content = "hops", Value = 789 };
     var targets = new List<PublishTarget> {
-      new PublishTarget {
+      new() {
         TransportType = TransportType.InProcess,
         Destination = "dest"
       }
@@ -226,7 +226,7 @@ public class TransportManagerPublishingTests {
     var manager = new TransportManager(new JsonMessageSerializer(WhizbangJsonContext.CreateOptions()));
     var message = new TestMessage { Content = "fail", Value = 1 };
     var targets = new List<PublishTarget> {
-      new PublishTarget {
+      new() {
         TransportType = TransportType.Kafka, // Not registered
         Destination = "dest"
       }

@@ -198,7 +198,7 @@ public class OutboxPublisherTests {
   /// Fake transport for testing outbox publisher.
   /// </summary>
   private class FakeTransport : ITransport {
-    public List<PublishedMessage> PublishedMessages { get; } = new();
+    public List<PublishedMessage> PublishedMessages { get; } = [];
     public bool ShouldFail { get; set; }
     public string? FailOnDestination { get; set; }
 

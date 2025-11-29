@@ -53,14 +53,9 @@ internal static class RoslynGuards {
       SemanticModel semanticModel,
       System.Threading.CancellationToken cancellationToken) {
 
-    var symbol = semanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) as INamedTypeSymbol;
-
-    if (symbol is null) {
-      throw new InvalidOperationException(
+    var symbol = semanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) as INamedTypeSymbol ?? throw new InvalidOperationException(
           $"Roslyn returned null symbol for class declaration '{classDeclaration.Identifier.Text}'. " +
           "This indicates a Roslyn compiler bug or malformed compilation unit.");
-    }
-
     return symbol;
   }
 
@@ -79,14 +74,9 @@ internal static class RoslynGuards {
       SemanticModel semanticModel,
       System.Threading.CancellationToken cancellationToken) {
 
-    var symbol = semanticModel.GetDeclaredSymbol(recordDeclaration, cancellationToken) as INamedTypeSymbol;
-
-    if (symbol is null) {
-      throw new InvalidOperationException(
+    var symbol = semanticModel.GetDeclaredSymbol(recordDeclaration, cancellationToken) as INamedTypeSymbol ?? throw new InvalidOperationException(
           $"Roslyn returned null symbol for record declaration '{recordDeclaration.Identifier.Text}'. " +
           "This indicates a Roslyn compiler bug or malformed compilation unit.");
-    }
-
     return symbol;
   }
 
@@ -106,14 +96,9 @@ internal static class RoslynGuards {
       System.Threading.CancellationToken cancellationToken) {
 
     var symbolInfo = semanticModel.GetSymbolInfo(invocation, cancellationToken);
-    var methodSymbol = symbolInfo.Symbol as IMethodSymbol;
-
-    if (methodSymbol is null) {
-      throw new InvalidOperationException(
+    var methodSymbol = symbolInfo.Symbol as IMethodSymbol ?? throw new InvalidOperationException(
           $"Roslyn returned null or non-method symbol for invocation expression at {invocation.GetLocation()}. " +
           "This indicates a Roslyn compiler bug or malformed compilation unit.");
-    }
-
     return methodSymbol;
   }
 
@@ -133,14 +118,9 @@ internal static class RoslynGuards {
       System.Threading.CancellationToken cancellationToken) {
 
     var typeInfo = semanticModel.GetTypeInfo(expression, cancellationToken);
-    var typeSymbol = typeInfo.Type;
-
-    if (typeSymbol is null) {
-      throw new InvalidOperationException(
+    var typeSymbol = typeInfo.Type ?? throw new InvalidOperationException(
           $"Roslyn returned null type info for expression at {expression.GetLocation()}. " +
           "This indicates a Roslyn compiler bug or malformed compilation unit.");
-    }
-
     return typeSymbol;
   }
 
@@ -211,14 +191,9 @@ internal static class RoslynGuards {
   /// If Roslyn reports a node without a containing class, it indicates invalid syntax.
   /// </remarks>
   public static ClassDeclarationSyntax GetContainingClassOrThrow(SyntaxNode node) {
-    var containingClass = node.Ancestors().OfType<ClassDeclarationSyntax>().FirstOrDefault();
-
-    if (containingClass is null) {
-      throw new InvalidOperationException(
+    var containingClass = node.Ancestors().OfType<ClassDeclarationSyntax>().FirstOrDefault() ?? throw new InvalidOperationException(
           $"Node at {node.GetLocation()} is not contained within a class declaration. " +
           "This indicates invalid C# syntax or a Roslyn parsing error.");
-    }
-
     return containingClass;
   }
 
@@ -242,12 +217,9 @@ internal static class RoslynGuards {
     }
 
     // Should be INamedTypeSymbol with type arguments
-    var namedType = type as INamedTypeSymbol;
-    if (namedType is null) {
-      throw new InvalidOperationException(
+    var namedType = type as INamedTypeSymbol ?? throw new InvalidOperationException(
           $"Type '{type}' has SpecialType.System_Nullable_T but is not INamedTypeSymbol. " +
           "This indicates a Roslyn type system inconsistency.");
-    }
 
     // Check if Nullable<expectedType>
     return namedType.TypeArguments.Length > 0 &&

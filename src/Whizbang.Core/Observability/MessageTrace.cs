@@ -7,11 +7,15 @@ namespace Whizbang.Core.Observability;
 /// Tracks the complete journey of a message through the system.
 /// Used for time-travel debugging, performance analysis, and policy visualization.
 /// </summary>
-public class MessageTrace {
+/// <remarks>
+/// Creates a new message trace.
+/// </remarks>
+/// <param name="messageId">The message ID being traced</param>
+public class MessageTrace(MessageId messageId) {
   /// <summary>
   /// The unique identifier of the message being traced.
   /// </summary>
-  public MessageId MessageId { get; }
+  public MessageId MessageId { get; } = messageId;
 
   /// <summary>
   /// The correlation ID for workflow grouping.
@@ -27,12 +31,12 @@ public class MessageTrace {
   /// All hops this message took through the system.
   /// Each hop records where the message was processed with caller information.
   /// </summary>
-  public List<MessageHop> Hops { get; } = new();
+  public List<MessageHop> Hops { get; } = [];
 
   /// <summary>
   /// All policy decision trails from each stage of processing.
   /// </summary>
-  public List<PolicyDecisionTrail> PolicyTrails { get; } = new();
+  public List<PolicyDecisionTrail> PolicyTrails { get; } = [];
 
   /// <summary>
   /// Whether the message processing succeeded.
@@ -53,15 +57,7 @@ public class MessageTrace {
   /// Timings for different stages of processing.
   /// Keys are stage names (e.g., "policy-evaluation", "handler-execution").
   /// </summary>
-  public Dictionary<string, TimeSpan> Timings { get; } = new();
-
-  /// <summary>
-  /// Creates a new message trace.
-  /// </summary>
-  /// <param name="messageId">The message ID being traced</param>
-  public MessageTrace(MessageId messageId) {
-    MessageId = messageId;
-  }
+  public Dictionary<string, TimeSpan> Timings { get; } = [];
 
   /// <summary>
   /// Adds a hop to the trace.

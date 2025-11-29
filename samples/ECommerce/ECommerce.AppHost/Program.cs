@@ -1,8 +1,12 @@
 var builder = DistributedApplication.CreateBuilder(args);
 
-// Add PostgreSQL database
+// Add PostgreSQL database with pgAdmin (persistent across restarts)
+// Password configured via Parameters section in appsettings.json
 var postgres = builder.AddPostgres("postgres")
-    .WithDataVolume();  // Persist data
+    .WithDataVolume("postgres-data")  // Named volume for persistent PostgreSQL data at /var/lib/postgresql/data
+    .WithLifetime(ContainerLifetime.Persistent)  // Keep container running
+    .WithPgAdmin(pgadmin => pgadmin
+        .WithLifetime(ContainerLifetime.Persistent));  // Keep pgAdmin running (settings in container)
 
 // Create databases for each service (or use a shared database)
 var ordersDb = postgres.AddDatabase("ordersdb");
@@ -12,11 +16,12 @@ var shippingDb = postgres.AddDatabase("shippingdb");
 var notificationDb = postgres.AddDatabase("notificationdb");
 var bffDb = postgres.AddDatabase("bffdb");
 
-// Add Azure Service Bus Emulator for local development
+// Add Azure Service Bus Emulator for local development (persistent container)
 // The emulator runs in a Docker container and provides a local Service Bus instance
 // When publishing to production, Aspire generates the correct Bicep for real Azure Service Bus
 var serviceBus = builder.AddAzureServiceBus("servicebus")
-    .RunAsEmulator();
+    .RunAsEmulator(configureContainer => configureContainer
+        .WithLifetime(ContainerLifetime.Persistent));  // Keep container running (data in container)
 
 // Configure the "orders" topic with subscriptions for each worker service
 var ordersTopic = serviceBus.AddServiceBusTopic("orders");
@@ -57,17 +62,30 @@ var notificationWorker = builder.AddProject("notificationworker", "../ECommerce.
     .WaitFor(notificationDb)
     .WaitFor(serviceBus);
 
+// Angular UI integration - Fixed port 4200 via PORT environment variable
+// Uses run-script-os in package.json to pass $PORT to ng serve
+var angularApp = builder.AddNpmApp("ui", "../ECommerce.UI", "start")
+    .WithHttpEndpoint(port: 4200, env: "PORT")
+    .WithExternalHttpEndpoints();
+
 var bffService = builder.AddProject("bff", "../ECommerce.BFF.API/ECommerce.BFF.API.csproj")
     .WithReference(bffDb)
     .WithReference(serviceBus)
+    .WithReference(angularApp)  // BFF can discover Angular URL for CORS
     .WaitFor(bffDb)
     .WaitFor(serviceBus)
-    .WithExternalHttpEndpoints();  // BFF needs external access for Angular app
+    .WaitFor(angularApp)  // Wait for Angular to be ready
+    .WithExternalHttpEndpoints();
 
-// Angular UI integration - let Angular choose its own port
-var angularApp = builder.AddNpmApp("ui", "../ECommerce.UI", "start")
-    .WithHttpEndpoint(env: "PORT")  // No port specified - Angular will use its default or find available
-    .WithExternalHttpEndpoints()
-    .WaitFor(bffService);  // Wait for BFF to be ready before starting UI
+// Add custom URLs for easy navigation in Aspire dashboard
+bffService
+    .WithUrlForEndpoint("http", url => {
+      url.DisplayText = "📖 Swagger UI";
+      url.Url = "/swagger";
+    })
+     .WithUrlForEndpoint("http", url => {
+       url.DisplayText = "🚀 GraphQL";
+       url.Url = "/graphql";
+     });
 
 builder.Build().Run();

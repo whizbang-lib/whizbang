@@ -163,7 +163,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Generates the EFCoreRegistrationMetadata class with discovered model types.
+  /// Generates extension methods that register discovered models directly.
+  /// This is generated in the consumer project and calls library methods with the discovered models.
   /// </summary>
   private static void GenerateRegistrationMetadata(
       SourceProductionContext context,
@@ -179,8 +180,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     if (allModels.Count == 0) {
-      // No models found - generate empty metadata
-      GenerateEmptyMetadata(context);
+      // No models found - don't generate anything
       return;
     }
 
@@ -193,27 +193,45 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("#nullable enable");
     sb.AppendLine();
 
-    sb.AppendLine("using System;");
+    sb.AppendLine("using System.Runtime.CompilerServices;");
+    sb.AppendLine("using Microsoft.Extensions.DependencyInjection;");
+    sb.AppendLine("using Whizbang.Data.EFCore.Postgres;");
     sb.AppendLine();
 
-    sb.AppendLine("namespace Whizbang.Data.EFCore.Postgres;");
+    sb.AppendLine("namespace Whizbang.Data.EFCore.Postgres.Generated;");
     sb.AppendLine();
 
     sb.AppendLine("/// <summary>");
-    sb.AppendLine($"/// Metadata for {allModels.Count} discovered perspective model type(s).");
-    sb.AppendLine("/// Used by PostgresDriverExtensions for automatic service registration.");
+    sb.AppendLine($"/// Auto-generated module initializer for registering {allModels.Count} discovered perspective model(s).");
+    sb.AppendLine("/// Runs at module load time and registers models with ModelRegistrationRegistry (AOT-compatible).");
     sb.AppendLine("/// </summary>");
-    sb.AppendLine("internal static class EFCoreRegistrationMetadata {");
-    sb.AppendLine("  internal static readonly ModelTypeInfo[] Models = [");
+    sb.AppendLine("internal static class GeneratedModelRegistration {");
+    sb.AppendLine("  /// <summary>");
+    sb.AppendLine("  /// Module initializer that registers the model registration callback.");
+    sb.AppendLine("  /// This runs automatically when the assembly is loaded (no reflection required).");
+    sb.AppendLine("  /// </summary>");
+    sb.AppendLine("  [ModuleInitializer]");
+    sb.AppendLine("  internal static void Initialize() {");
+    sb.AppendLine("    // Register callback with the library's registry");
+    sb.AppendLine("    ModelRegistrationRegistry.RegisterModels((services, dbContextType, upsertStrategy) => {");
+    sb.AppendLine();
 
     foreach (var model in allModels) {
-      sb.AppendLine($"    new(typeof({model.TypeName}), \"{model.TableName}\"),");
+      sb.AppendLine($"      // Register {model.TypeName}");
+      sb.AppendLine($"      EFCoreInfrastructureRegistration.RegisterPerspectiveModel(");
+      sb.AppendLine($"          services,");
+      sb.AppendLine($"          dbContextType,");
+      sb.AppendLine($"          typeof({model.TypeName}),");
+      sb.AppendLine($"          \"{model.TableName}\",");
+      sb.AppendLine($"          upsertStrategy);");
+      sb.AppendLine();
     }
 
-    sb.AppendLine("  ];");
+    sb.AppendLine("    });");
+    sb.AppendLine("  }");
     sb.AppendLine("}");
 
-    context.AddSource("EFCoreRegistrationMetadata.g.cs", sb.ToString());
+    context.AddSource("EFCoreModelRegistration.g.cs", sb.ToString());
 
     // Report diagnostic
     var descriptor = new DiagnosticDescriptor(
@@ -245,8 +263,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("/// <summary>");
     sb.AppendLine("/// Empty metadata - no perspective model types discovered.");
     sb.AppendLine("/// </summary>");
-    sb.AppendLine("internal static class EFCoreRegistrationMetadata {");
-    sb.AppendLine("  internal static readonly ModelTypeInfo[] Models = [];");
+    sb.AppendLine("public static class EFCoreRegistrationMetadata {");
+    sb.AppendLine("  public static readonly ModelTypeInfo[] Models = [];");
     sb.AppendLine("}");
 
     context.AddSource("EFCoreRegistrationMetadata.g.cs", sb.ToString());

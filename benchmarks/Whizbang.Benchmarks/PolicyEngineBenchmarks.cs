@@ -59,11 +59,11 @@ public class PolicyEngineBenchmarks {
     _engine20Policies.AddPolicy("OrderPolicy", ctx => ctx.Message is OrderCommand, cfg => cfg.UseTopic("orders"));
   }
 
-  private IMessageEnvelope CreateEnvelope<T>(T message) {
+  private static IMessageEnvelope CreateEnvelope<T>(T message) {
     var envelope = new MessageEnvelope<T> {
       MessageId = MessageId.New(),
       Payload = message,
-      Hops = new List<MessageHop>()
+      Hops = []
     };
     envelope.AddHop(new MessageHop {
       Type = HopType.Current,

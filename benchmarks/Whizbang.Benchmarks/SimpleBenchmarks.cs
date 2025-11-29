@@ -25,12 +25,12 @@ public class SimpleBenchmarks {
 
   // ID Generation Benchmarks
   [Benchmark]
-  public MessageId CreateMessageId() {
+  public static MessageId CreateMessageId() {
     return MessageId.New();
   }
 
   [Benchmark]
-  public CorrelationId CreateCorrelationId() {
+  public static CorrelationId CreateCorrelationId() {
     return CorrelationId.New();
   }
 
@@ -49,7 +49,7 @@ public class SimpleBenchmarks {
 
   // Message Hop Benchmarks
   [Benchmark]
-  public MessageHop CreateSimpleHop() {
+  public static MessageHop CreateSimpleHop() {
     return new MessageHop {
       Type = HopType.Current,
       ServiceName = "TestService",
@@ -58,7 +58,7 @@ public class SimpleBenchmarks {
   }
 
   [Benchmark]
-  public MessageHop CreateComplexHop() {
+  public static MessageHop CreateComplexHop() {
     return new MessageHop {
       Type = HopType.Current,
       ServiceName = "TestService",
@@ -72,12 +72,12 @@ public class SimpleBenchmarks {
 
   // Message Envelope Benchmarks
   [Benchmark]
-  public IMessageEnvelope CreateEnvelope() {
+  public static IMessageEnvelope CreateEnvelope() {
     var message = new TestCommand("test-123", 42);
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
       Payload = message,
-      Hops = new List<MessageHop>()
+      Hops = []
     };
     envelope.AddHop(new MessageHop {
       Type = HopType.Current,

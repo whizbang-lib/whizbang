@@ -9,14 +9,9 @@ namespace ECommerce.ShippingWorker.Receptors;
 /// Handles PaymentProcessedEvent DIRECTLY and dispatches CreateShipmentCommand
 /// This demonstrates that EVENTS can have RECEPTORS (not just perspectives!)
 /// </summary>
-public class PaymentShippingReceptor : IReceptor<PaymentProcessedEvent, CreateShipmentCommand> {
-  private readonly IDispatcher _dispatcher;
-  private readonly ILogger<PaymentShippingReceptor> _logger;
-
-  public PaymentShippingReceptor(IDispatcher dispatcher, ILogger<PaymentShippingReceptor> logger) {
-    _dispatcher = dispatcher;
-    _logger = logger;
-  }
+public class PaymentShippingReceptor(IDispatcher dispatcher, ILogger<PaymentShippingReceptor> logger) : IReceptor<PaymentProcessedEvent, CreateShipmentCommand> {
+  private readonly IDispatcher _dispatcher = dispatcher;
+  private readonly ILogger<PaymentShippingReceptor> _logger = logger;
 
   public async ValueTask<CreateShipmentCommand> HandleAsync(
     PaymentProcessedEvent message,

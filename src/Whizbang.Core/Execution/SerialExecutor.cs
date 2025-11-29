@@ -17,7 +17,7 @@ public class SerialExecutor : IExecutionStrategy {
   private State _state = State.NotStarted;
   private Task? _workerTask;
   private CancellationTokenSource? _workerCts;
-  private readonly object _stateLock = new();
+  private readonly Lock _stateLock = new();
   private bool _channelCompleted = false;
 
   /// <summary>
@@ -216,25 +216,17 @@ public class SerialExecutor : IExecutionStrategy {
     }
   }
 
-  private readonly struct WorkItem {
-    public readonly IMessageEnvelope Envelope;
-    public readonly PolicyContext Context;
-    public readonly Func<object?, ValueTask> ExecuteAsync;
-    public readonly object? State;
-    public readonly CancellationToken CancellationToken;
-
-    public WorkItem(
-      IMessageEnvelope envelope,
-      PolicyContext context,
-      Func<object?, ValueTask> executeAsync,
-      object? state,
-      CancellationToken cancellationToken
+  private readonly struct WorkItem(
+    IMessageEnvelope envelope,
+    PolicyContext context,
+    Func<object?, ValueTask> executeAsync,
+    object? state,
+    CancellationToken cancellationToken
     ) {
-      Envelope = envelope;
-      Context = context;
-      ExecuteAsync = executeAsync;
-      State = state;
-      CancellationToken = cancellationToken;
-    }
+    public readonly IMessageEnvelope Envelope = envelope;
+    public readonly PolicyContext Context = context;
+    public readonly Func<object?, ValueTask> ExecuteAsync = executeAsync;
+    public readonly object? State = state;
+    public readonly CancellationToken CancellationToken = cancellationToken;
   }
 }

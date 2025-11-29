@@ -19,9 +19,9 @@ public class InProcessTransportTests {
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = message,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop { ServiceName = "Test", Timestamp = DateTimeOffset.UtcNow }
-      }
+      ]
     };
   }
 

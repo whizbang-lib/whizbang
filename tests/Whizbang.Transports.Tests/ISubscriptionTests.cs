@@ -88,7 +88,7 @@ public class ISubscriptionTests {
   }
 
   // Helper methods
-  private ISubscription CreateTestSubscription() {
+  private static ISubscription CreateTestSubscription() {
     // This will use a test implementation once ISubscription is defined
     // For now, this will fail compilation - that's expected in RED phase
     return new TestSubscription();

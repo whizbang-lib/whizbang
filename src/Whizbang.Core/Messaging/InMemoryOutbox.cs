@@ -17,13 +17,9 @@ namespace Whizbang.Core.Messaging;
 /// NOT suitable for production use across multiple processes.
 /// Uses JSONB adapter for envelope serialization (matching PostgreSQL implementation).
 /// </summary>
-public class InMemoryOutbox : IOutbox {
+public class InMemoryOutbox(IJsonbPersistenceAdapter<IMessageEnvelope> envelopeAdapter) : IOutbox {
   private readonly ConcurrentDictionary<MessageId, OutboxRecord> _messages = new();
-  private readonly IJsonbPersistenceAdapter<IMessageEnvelope> _envelopeAdapter;
-
-  public InMemoryOutbox(IJsonbPersistenceAdapter<IMessageEnvelope> envelopeAdapter) {
-    _envelopeAdapter = envelopeAdapter ?? throw new ArgumentNullException(nameof(envelopeAdapter));
-  }
+  private readonly IJsonbPersistenceAdapter<IMessageEnvelope> _envelopeAdapter = envelopeAdapter ?? throw new ArgumentNullException(nameof(envelopeAdapter));
 
   /// <inheritdoc />
   public Task StoreAsync(IMessageEnvelope envelope, string destination, CancellationToken cancellationToken = default) {

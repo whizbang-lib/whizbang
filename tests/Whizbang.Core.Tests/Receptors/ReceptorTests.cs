@@ -33,7 +33,7 @@ public class ReceptorTests : DiagnosticTestBase {
       }
 
       // Introduce async delay to ensure task is not immediately completed
-      await Task.Delay(1);
+      await Task.Delay(1, cancellationToken);
 
       // Calculate total
       var total = message.Items.Sum(item => item.Quantity * item.Price);
@@ -203,7 +203,7 @@ public class ReceptorTests : DiagnosticTestBase {
 
   public class OrderBusinessReceptor : IReceptor<CreateOrder, OrderCreated> {
     public async ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken cancellationToken = default) {
-      await Task.Delay(1);
+      await Task.Delay(1, cancellationToken);
 
       var total = message.Items.Sum(item => item.Quantity * item.Price);
 
@@ -218,7 +218,7 @@ public class ReceptorTests : DiagnosticTestBase {
 
   public class OrderAuditReceptor : IReceptor<CreateOrder, AuditEvent> {
     public async ValueTask<AuditEvent> HandleAsync(CreateOrder message, CancellationToken cancellationToken = default) {
-      await Task.Delay(1);
+      await Task.Delay(1, cancellationToken);
 
       return new AuditEvent(
           Action: "OrderCreated",
@@ -233,7 +233,7 @@ public class ReceptorTests : DiagnosticTestBase {
 
   public class PaymentReceptor : IReceptor<ProcessPayment, (PaymentProcessed, AuditEvent)> {
     public async ValueTask<(PaymentProcessed, AuditEvent)> HandleAsync(ProcessPayment message, CancellationToken cancellationToken = default) {
-      await Task.Delay(1);
+      await Task.Delay(1, cancellationToken);
 
       var payment = new PaymentProcessed(
           PaymentId: message.PaymentId,
@@ -256,19 +256,19 @@ public class ReceptorTests : DiagnosticTestBase {
 
   public class NotificationReceptor : IReceptor<OrderCreated, INotificationEvent[]> {
     public async ValueTask<INotificationEvent[]> HandleAsync(OrderCreated message, CancellationToken cancellationToken = default) {
-      await Task.Delay(1);
+      await Task.Delay(1, cancellationToken);
 
-      var notifications = new List<INotificationEvent>();
-
-      // Always send email
-      notifications.Add(new EmailSent(message.CustomerId));
+      var notifications = new List<INotificationEvent> {
+        // Always send email
+        new EmailSent(message.CustomerId)
+      };
 
       // High value alert for orders >= $1000
       if (message.Total >= 1000m) {
         notifications.Add(new HighValueAlert(message.OrderId));
       }
 
-      return notifications.ToArray();
+      return [.. notifications];
     }
   }
 }

@@ -152,12 +152,12 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   private static string GetSimpleName(string fullyQualifiedName) {
     // Handle arrays: Type[]
     if (fullyQualifiedName.EndsWith("[]")) {
-      var baseType = fullyQualifiedName.Substring(0, fullyQualifiedName.Length - 2);
+      var baseType = fullyQualifiedName[..^2];
       return GetSimpleName(baseType) + "[]";
     }
 
     // Handle simple types
     var lastDot = fullyQualifiedName.LastIndexOf('.');
-    return lastDot >= 0 ? fullyQualifiedName.Substring(lastDot + 1) : fullyQualifiedName;
+    return lastDot >= 0 ? fullyQualifiedName[(lastDot + 1)..] : fullyQualifiedName;
   }
 }

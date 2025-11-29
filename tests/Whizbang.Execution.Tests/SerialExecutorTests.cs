@@ -364,18 +364,15 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
   public async Task DrainAsync_WithWorkerCancellation_HandlesOperationCanceledExceptionAsync(CancellationToken cancellationToken) {
     // Arrange
     var executor = new SerialExecutor();
-    await executor.StartAsync();
+    await executor.StartAsync(cancellationToken);
     var envelope = CreateTestEnvelope("test");
     var context = CreateTestContext();
 
     var tcs = new TaskCompletionSource<int>();
 
     // Act - Queue long-running work
-    var task = executor.ExecuteAsync<int>(
-      envelope,
-      async (env, ctx) => await tcs.Task,
-      context
-    ).AsTask();
+    var task = executor.ExecuteAsync<int>(envelope, async (env, ctx) => await tcs.Task, context
+, cancellationToken).AsTask();
 
     // Complete the work BEFORE stopping to avoid deadlock
     tcs.SetResult(42);
@@ -387,10 +384,10 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     }
 
     // Stop executor (triggers cancellation of worker)
-    await executor.StopAsync();
+    await executor.StopAsync(cancellationToken);
 
     // Drain should handle OperationCanceledException from worker (line 158)
-    await executor.DrainAsync();
+    await executor.DrainAsync(cancellationToken);
 
     // Assert - No exception should be thrown
   }

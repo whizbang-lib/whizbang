@@ -8,14 +8,9 @@ namespace ECommerce.OrderService.API.Services;
 /// Background service that makes EXPLICIT dispatcher calls
 /// Demonstrates dispatchers outside of receptors/perspectives
 /// </summary>
-public class OrderRetryService {
-  private readonly IDispatcher _dispatcher;
-  private readonly ILogger<OrderRetryService> _logger;
-
-  public OrderRetryService(IDispatcher dispatcher, ILogger<OrderRetryService> _logger) {
-    _dispatcher = dispatcher;
-    this._logger = _logger;
-  }
+public class OrderRetryService(IDispatcher dispatcher, ILogger<OrderRetryService> _logger) {
+  private readonly IDispatcher _dispatcher = dispatcher;
+  private readonly ILogger<OrderRetryService> _logger = _logger;
 
   /// <summary>
   /// Retries a failed order by explicitly dispatching CreateOrderCommand
@@ -30,14 +25,14 @@ public class OrderRetryService {
     var command = new CreateOrderCommand {
       OrderId = OrderId.From(Guid.Parse(orderId)),
       CustomerId = CustomerId.From(Guid.Parse(customerId)),
-      LineItems = new List<OrderLineItem> {
+      LineItems = [
         new() {
           ProductId = ProductId.From(Guid.Parse("PROD-001")),
           ProductName = "Test Product",
           Quantity = 2,
           UnitPrice = 29.99m
         }
-      },
+      ],
       TotalAmount = 59.98m
     };
 
@@ -84,14 +79,14 @@ public class OrderRetryService {
       OrderId = OrderId.From(Guid.Parse(orderId)),
       CustomerId = CustomerId.From(Guid.Parse("CUST-TEST")),
       CreatedAt = DateTime.UtcNow,
-      LineItems = new List<OrderLineItem> {
+      LineItems = [
         new() {
           ProductId = ProductId.From(Guid.Parse("PROD-TEST")),
           ProductName = "Test Product",
           Quantity = 1,
           UnitPrice = 9.99m
         }
-      },
+      ],
       TotalAmount = 9.99m
     };
 

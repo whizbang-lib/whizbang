@@ -21,7 +21,7 @@ public class MessageContext : IMessageContext {
   /// <inheritdoc />
   public string? UserId { get; init; }
 
-  private Dictionary<string, object> _metadata = new();
+  private readonly Dictionary<string, object> _metadata = [];
 
   /// <inheritdoc />
   public IReadOnlyDictionary<string, object> Metadata => _metadata;

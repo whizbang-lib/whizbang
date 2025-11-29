@@ -54,7 +54,7 @@ public class DispatcherBenchmarks {
     _lightCommand = new LightweightCommand(42);
     _heavyCommand = new HeavyweightCommand(
       Data: new string('x', 1000),
-      Ids: Enumerable.Range(0, 10).Select(_ => Guid.NewGuid()).ToArray(),
+      Ids: [.. Enumerable.Range(0, 10).Select(_ => Guid.NewGuid())],
       Metadata: new Dictionary<string, object> {
                 { "key1", "value1" },
                 { "key2", 123 },
@@ -170,7 +170,7 @@ public class DispatcherBenchmarks {
   // ========================================
 
   [Benchmark]
-  public async Task ColdStart_FirstLocalInvoke() {
+  public static async Task ColdStart_FirstLocalInvoke() {
     // Simulate cold start by creating fresh dispatcher
     var services = new ServiceCollection();
     services.AddReceptors();
@@ -198,7 +198,7 @@ public class DispatcherBenchmarks {
     var orderCommand = new ProcessOrderCommand(
       OrderId: Guid.NewGuid(),
       CustomerId: Guid.NewGuid(),
-      Items: new[] { "Item1", "Item2", "Item3" },
+      Items: ["Item1", "Item2", "Item3"],
       TotalAmount: 99.99m
     );
 
@@ -210,7 +210,7 @@ public class DispatcherBenchmarks {
     var orderCommand = new ProcessOrderCommand(
       OrderId: Guid.NewGuid(),
       CustomerId: Guid.NewGuid(),
-      Items: new[] { "Item1", "Item2", "Item3" },
+      Items: ["Item1", "Item2", "Item3"],
       TotalAmount: 99.99m
     );
 

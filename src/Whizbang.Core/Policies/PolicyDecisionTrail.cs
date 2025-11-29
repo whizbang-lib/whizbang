@@ -9,7 +9,7 @@ public class PolicyDecisionTrail {
   /// List of all policy decisions made during processing.
   /// Init setter required for JSON deserialization.
   /// </summary>
-  public List<PolicyDecision> Decisions { get; init; } = new();
+  public List<PolicyDecision> Decisions { get; init; } = [];
 
   /// <summary>
   /// Records a policy decision with full context for debugging.

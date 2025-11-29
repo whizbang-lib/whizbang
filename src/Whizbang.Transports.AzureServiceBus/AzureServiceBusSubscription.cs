@@ -8,15 +8,10 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// Azure Service Bus subscription implementation.
 /// Controls a ServiceBusProcessor lifecycle and supports pause/resume operations.
 /// </summary>
-public class AzureServiceBusSubscription : ISubscription {
-  private readonly ServiceBusProcessor _processor;
-  private readonly ILogger _logger;
+public class AzureServiceBusSubscription(ServiceBusProcessor processor, ILogger logger) : ISubscription {
+  private readonly ServiceBusProcessor _processor = processor ?? throw new ArgumentNullException(nameof(processor));
+  private readonly ILogger _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private bool _isDisposed;
-
-  public AzureServiceBusSubscription(ServiceBusProcessor processor, ILogger logger) {
-    _processor = processor ?? throw new ArgumentNullException(nameof(processor));
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-  }
 
   /// <inheritdoc />
   public bool IsActive { get; private set; } = true;

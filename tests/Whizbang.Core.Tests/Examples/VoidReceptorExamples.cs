@@ -27,12 +27,8 @@ public static class VoidReceptorExamples {
   /// ZERO ALLOCATION PATTERN: Synchronous void receptor.
   /// Returns ValueTask.CompletedTask for immediate completion.
   /// </summary>
-  public class LogUserActionReceptor : IReceptor<LogUserActionCommand> {
-    private readonly ILogger _logger;
-
-    public LogUserActionReceptor(ILogger logger) {
-      _logger = logger;
-    }
+  public class LogUserActionReceptor(VoidReceptorExamples.ILogger logger) : IReceptor<LogUserActionCommand> {
+    private readonly ILogger _logger = logger;
 
     public ValueTask HandleAsync(
         LogUserActionCommand message,
@@ -69,12 +65,8 @@ public static class VoidReceptorExamples {
   /// ASYNC PATTERN: Void receptor with asynchronous I/O.
   /// Use async when performing database writes, API calls, etc.
   /// </summary>
-  public class SendNotificationReceptor : IReceptor<SendNotificationEvent> {
-    private readonly INotificationService _notificationService;
-
-    public SendNotificationReceptor(INotificationService notificationService) {
-      _notificationService = notificationService;
-    }
+  public class SendNotificationReceptor(VoidReceptorExamples.INotificationService notificationService) : IReceptor<SendNotificationEvent> {
+    private readonly INotificationService _notificationService = notificationService;
 
     public async ValueTask HandleAsync(
         SendNotificationEvent message,
@@ -109,14 +101,9 @@ public static class VoidReceptorExamples {
   /// STATE UPDATE PATTERN: Synchronous state changes with zero allocation.
   /// Perfect for caching, in-memory updates, metrics, etc.
   /// </summary>
-  public class UpdateCacheReceptor : IReceptor<UpdateCacheCommand> {
-    private readonly ICache _cache;
-    private readonly IMetrics _metrics;
-
-    public UpdateCacheReceptor(ICache cache, IMetrics metrics) {
-      _cache = cache;
-      _metrics = metrics;
-    }
+  public class UpdateCacheReceptor(VoidReceptorExamples.ICache cache, VoidReceptorExamples.IMetrics metrics) : IReceptor<UpdateCacheCommand> {
+    private readonly ICache _cache = cache;
+    private readonly IMetrics _metrics = metrics;
 
     public ValueTask HandleAsync(
         UpdateCacheCommand message,
@@ -154,12 +141,8 @@ public static class VoidReceptorExamples {
   /// VALIDATION PATTERN: Throw exceptions for validation errors.
   /// Void receptors can throw exceptions - dispatcher will propagate them.
   /// </summary>
-  public class ProcessPaymentReceptor : IReceptor<ProcessPaymentCommand> {
-    private readonly IPaymentGateway _gateway;
-
-    public ProcessPaymentReceptor(IPaymentGateway gateway) {
-      _gateway = gateway;
-    }
+  public class ProcessPaymentReceptor(VoidReceptorExamples.IPaymentGateway gateway) : IReceptor<ProcessPaymentCommand> {
+    private readonly IPaymentGateway _gateway = gateway;
 
     public async ValueTask HandleAsync(
         ProcessPaymentCommand message,
@@ -203,12 +186,8 @@ public static class VoidReceptorExamples {
   /// <summary>
   /// AUDIT RECEPTOR: Logs all order events for audit trail.
   /// </summary>
-  public class AuditOrderReceptor : IReceptor<OrderPlacedEvent> {
-    private readonly IAuditLog _auditLog;
-
-    public AuditOrderReceptor(IAuditLog auditLog) {
-      _auditLog = auditLog;
-    }
+  public class AuditOrderReceptor(VoidReceptorExamples.IAuditLog auditLog) : IReceptor<OrderPlacedEvent> {
+    private readonly IAuditLog _auditLog = auditLog;
 
     public ValueTask HandleAsync(
         OrderPlacedEvent message,
@@ -221,12 +200,8 @@ public static class VoidReceptorExamples {
   /// <summary>
   /// ANALYTICS RECEPTOR: Tracks order metrics.
   /// </summary>
-  public class AnalyticsOrderReceptor : IReceptor<OrderPlacedEvent> {
-    private readonly IAnalytics _analytics;
-
-    public AnalyticsOrderReceptor(IAnalytics analytics) {
-      _analytics = analytics;
-    }
+  public class AnalyticsOrderReceptor(VoidReceptorExamples.IAnalytics analytics) : IReceptor<OrderPlacedEvent> {
+    private readonly IAnalytics _analytics = analytics;
 
     public ValueTask HandleAsync(
         OrderPlacedEvent message,
@@ -244,12 +219,8 @@ public static class VoidReceptorExamples {
   /// <summary>
   /// EMAIL RECEPTOR: Sends confirmation email.
   /// </summary>
-  public class EmailOrderReceptor : IReceptor<OrderPlacedEvent> {
-    private readonly IEmailService _emailService;
-
-    public EmailOrderReceptor(IEmailService emailService) {
-      _emailService = emailService;
-    }
+  public class EmailOrderReceptor(VoidReceptorExamples.IEmailService emailService) : IReceptor<OrderPlacedEvent> {
+    private readonly IEmailService _emailService = emailService;
 
     public async ValueTask HandleAsync(
         OrderPlacedEvent message,
@@ -269,12 +240,8 @@ public static class VoidReceptorExamples {
   /// <summary>
   /// Example showing how to use void receptors with the dispatcher.
   /// </summary>
-  public class VoidReceptorUsageExample {
-    private readonly IDispatcher _dispatcher;
-
-    public VoidReceptorUsageExample(IDispatcher dispatcher) {
-      _dispatcher = dispatcher;
-    }
+  public class VoidReceptorUsageExample(IDispatcher dispatcher) {
+    private readonly IDispatcher _dispatcher = dispatcher;
 
     /// <summary>
     /// Example 1: Send command (void) - for commands that don't return results.

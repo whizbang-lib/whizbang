@@ -351,6 +351,14 @@ trim_trailing_whitespace = false
 # Test Files                  #
 ###############################
 # Disable "make member static" for test files (TUnit requires instance methods)
-[**/*Tests.cs,**/*Tests/*.cs]
+[*Tests/**/*.cs]
 dotnet_diagnostic.CA1822.severity = none
 dotnet_diagnostic.IDE0062.severity = none
+csharp_prefer_static_local_function = false:none
+csharp_prefer_static_anonymous_function = false:none
+
+[**/*Tests.cs]
+dotnet_diagnostic.CA1822.severity = none
+dotnet_diagnostic.IDE0062.severity = none
+csharp_prefer_static_local_function = false:none
+csharp_prefer_static_anonymous_function = false:none

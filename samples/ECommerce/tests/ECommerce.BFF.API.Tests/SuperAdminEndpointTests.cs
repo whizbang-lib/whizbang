@@ -10,7 +10,7 @@ public class SuperAdminEndpointTests {
   [Test]
   public async Task GetRecentOrdersEndpoint_CanBeConstructedAsync() {
     // Arrange & Act
-    var mockLens = new MockOrderLens(new List<OrderReadModel>());
+    var mockLens = new MockOrderLens([]);
     var endpoint = new GetRecentOrdersEndpoint(mockLens);
 
     // Assert
@@ -20,7 +20,7 @@ public class SuperAdminEndpointTests {
   [Test]
   public async Task GetOrdersByTenantEndpoint_CanBeConstructedAsync() {
     // Arrange & Act
-    var mockLens = new MockOrderLens(new List<OrderReadModel>());
+    var mockLens = new MockOrderLens([]);
     var endpoint = new GetOrdersByTenantEndpoint(mockLens);
 
     // Assert
@@ -30,7 +30,7 @@ public class SuperAdminEndpointTests {
   [Test]
   public async Task SuperAdmin_GetOrderByIdEndpoint_CanBeConstructedAsync() {
     // Arrange & Act
-    var mockLens = new MockOrderLens(new List<OrderReadModel>());
+    var mockLens = new MockOrderLens([]);
     var endpoint = new GetOrderByIdEndpoint(mockLens);
 
     // Assert
@@ -40,12 +40,8 @@ public class SuperAdminEndpointTests {
   /// <summary>
   /// Mock implementation of IOrderLens for testing
   /// </summary>
-  private class MockOrderLens : IOrderLens {
-    private readonly List<OrderReadModel> _orders;
-
-    public MockOrderLens(List<OrderReadModel> orders) {
-      _orders = orders;
-    }
+  private class MockOrderLens(List<OrderReadModel> orders) : IOrderLens {
+    private readonly List<OrderReadModel> _orders = orders;
 
     public Task<IEnumerable<OrderReadModel>> GetByCustomerIdAsync(string customerId, CancellationToken cancellationToken = default) {
       var result = _orders.Where(o => o.CustomerId == customerId);

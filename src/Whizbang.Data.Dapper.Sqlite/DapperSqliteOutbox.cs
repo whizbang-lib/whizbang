@@ -8,14 +8,10 @@ namespace Whizbang.Data.Dapper.Sqlite;
 /// SQLite-specific implementation of IOutbox using Dapper.
 /// Uses JSONB columns (stored as TEXT in SQLite) for envelope persistence.
 /// </summary>
-public class DapperSqliteOutbox : DapperOutboxBase {
-  public DapperSqliteOutbox(
-    IDbConnectionFactory connectionFactory,
-    IDbExecutor executor,
-    IJsonbPersistenceAdapter<IMessageEnvelope> envelopeAdapter)
-    : base(connectionFactory, executor, envelopeAdapter) {
-  }
-
+public class DapperSqliteOutbox(
+  IDbConnectionFactory connectionFactory,
+  IDbExecutor executor,
+  IJsonbPersistenceAdapter<IMessageEnvelope> envelopeAdapter) : DapperOutboxBase(connectionFactory, executor, envelopeAdapter) {
   protected override string GetStoreSql() => @"
     INSERT INTO whizbang_outbox (message_id, destination, event_type, event_data, metadata, scope, created_at, published_at)
     VALUES (@MessageId, @Destination, @EventType, @EventData, @Metadata, @Scope, @CreatedAt, NULL)";

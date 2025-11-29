@@ -12,9 +12,7 @@ public class InMemoryTraceStore : ITraceStore {
   private readonly ConcurrentDictionary<MessageId, IMessageEnvelope> _traces = new();
 
   public Task StoreAsync(IMessageEnvelope envelope, CancellationToken ct = default) {
-    if (envelope == null) {
-      throw new ArgumentNullException(nameof(envelope));
-    }
+    ArgumentNullException.ThrowIfNull(envelope);
 
     _traces.TryAdd(envelope.MessageId, envelope);
     return Task.CompletedTask;

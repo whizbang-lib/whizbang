@@ -46,7 +46,7 @@ public class ZeroAllocationBenchmarks {
     _lightweightEnvelope = new MessageEnvelope<LightweightCommand> {
       MessageId = MessageId.New(),
       Payload = lightMessage,
-      Hops = new List<MessageHop>()
+      Hops = []
     };
     _lightweightEnvelope.AddHop(new MessageHop {
       Type = HopType.Current,
@@ -65,13 +65,13 @@ public class ZeroAllocationBenchmarks {
         ["tenantId"] = "tenant-456",
         ["source"] = "api"
       },
-      Tags: new List<string> { "priority", "urgent", "customer-facing" },
+      Tags: ["priority", "urgent", "customer-facing"],
       Timestamp: DateTimeOffset.UtcNow
     );
     _heavyweightEnvelope = new MessageEnvelope<HeavyweightCommand> {
       MessageId = MessageId.New(),
       Payload = heavyMessage,
-      Hops = new List<MessageHop>()
+      Hops = []
     };
     _heavyweightEnvelope.AddHop(new MessageHop {
       Type = HopType.Current,

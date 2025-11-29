@@ -12,16 +12,10 @@ namespace Whizbang.Core.Messaging;
 /// Polls the outbox, publishes messages, and marks them as published on success.
 /// Handles errors gracefully without losing messages.
 /// </summary>
-public class OutboxPublisher {
-  private readonly IOutbox _outbox;
-  private readonly ITransport _transport;
-  private readonly System.Text.Json.JsonSerializerOptions _jsonOptions;
-
-  public OutboxPublisher(IOutbox outbox, ITransport transport, System.Text.Json.JsonSerializerOptions jsonOptions) {
-    _outbox = outbox ?? throw new ArgumentNullException(nameof(outbox));
-    _transport = transport ?? throw new ArgumentNullException(nameof(transport));
-    _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
-  }
+public class OutboxPublisher(IOutbox outbox, ITransport transport, System.Text.Json.JsonSerializerOptions jsonOptions) {
+  private readonly IOutbox _outbox = outbox ?? throw new ArgumentNullException(nameof(outbox));
+  private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+  private readonly System.Text.Json.JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
 
   /// <summary>
   /// Publishes a batch of pending messages from the outbox.
@@ -57,7 +51,7 @@ public class OutboxPublisher {
           // Use AOT-compatible deserialization with WhizbangJsonContext
           var hopsTypeInfo = _jsonOptions.GetTypeInfo(typeof(List<MessageHop>));
           if (hopsTypeInfo != null) {
-            hops = System.Text.Json.JsonSerializer.Deserialize(hopsJson, hopsTypeInfo) as List<MessageHop> ?? new List<MessageHop>();
+            hops = System.Text.Json.JsonSerializer.Deserialize(hopsJson, hopsTypeInfo) as List<MessageHop> ?? [];
           }
         }
 

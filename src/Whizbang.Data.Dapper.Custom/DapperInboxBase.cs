@@ -114,7 +114,7 @@ public abstract class DapperInboxBase : IInbox {
       new { BatchSize = batchSize },
       cancellationToken: cancellationToken);
 
-    return rows.Select(r => new InboxMessage(
+    return [.. rows.Select(r => new InboxMessage(
       MessageId.From(r.MessageId),
       r.HandlerName,
       r.EventType,
@@ -122,7 +122,7 @@ public abstract class DapperInboxBase : IInbox {
       r.Metadata,
       r.Scope,
       r.ReceivedAt
-    )).ToList();
+    ))];
   }
 
   public async Task MarkProcessedAsync(MessageId messageId, CancellationToken cancellationToken = default) {

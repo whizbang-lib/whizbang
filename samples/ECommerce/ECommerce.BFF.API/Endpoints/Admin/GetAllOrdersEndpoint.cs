@@ -6,12 +6,8 @@ namespace ECommerce.BFF.API.Endpoints.Admin;
 /// <summary>
 /// Get all orders for the current tenant (admin view)
 /// </summary>
-public class GetAllOrdersEndpoint : EndpointWithoutRequest<IEnumerable<OrderReadModel>> {
-  private readonly IOrderLens _orderLens;
-
-  public GetAllOrdersEndpoint(IOrderLens orderLens) {
-    _orderLens = orderLens;
-  }
+public class GetAllOrdersEndpoint(IOrderLens orderLens) : EndpointWithoutRequest<IEnumerable<OrderReadModel>> {
+  private readonly IOrderLens _orderLens = orderLens;
 
   public override void Configure() {
     Get("/admin/orders");
@@ -27,7 +23,7 @@ public class GetAllOrdersEndpoint : EndpointWithoutRequest<IEnumerable<OrderRead
       ThrowError("TenantId is required");
     }
 
-    var orders = await _orderLens.GetByTenantIdAsync(tenantId!);
+    var orders = await _orderLens.GetByTenantIdAsync(tenantId!, cancellationToken: ct);
     Response = orders;
   }
 }

@@ -51,7 +51,7 @@ public class PipelineBehaviorTests {
     // Arrange
     var behavior = new PostProcessingBehavior();
 
-    Task<string> next() {
+    static Task<string> next() {
       return Task.FromResult("original");
     }
 
@@ -95,7 +95,7 @@ public class PipelineBehaviorTests {
   }
 
   private class PreProcessingBehavior : PipelineBehavior<string, string> {
-    private readonly List<string> _log = new();
+    private readonly List<string> _log = [];
 
     public List<string> Log => _log;
 

@@ -50,7 +50,7 @@ public class WhizbangActivitySourceTests {
     // Arrange
     using var listener = new ActivityListener {
       ShouldListenTo = s => s.Name == "Whizbang.Execution",
-      Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData
+      Sample = (ref _) => ActivitySamplingResult.AllData
     };
     ActivitySource.AddActivityListener(listener);
 
@@ -87,7 +87,7 @@ public class WhizbangActivitySourceTests {
     // Arrange
     using var listener = new ActivityListener {
       ShouldListenTo = s => s.Name == "Whizbang.Execution",
-      Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData
+      Sample = (ref _) => ActivitySamplingResult.AllData
     };
     ActivitySource.AddActivityListener(listener);
 
@@ -111,7 +111,7 @@ public class WhizbangActivitySourceTests {
     // Arrange
     using var listener = new ActivityListener {
       ShouldListenTo = s => s.Name == "Whizbang.Execution",
-      Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData
+      Sample = (ref _) => ActivitySamplingResult.AllData
     };
     ActivitySource.AddActivityListener(listener);
 
@@ -128,7 +128,7 @@ public class WhizbangActivitySourceTests {
     // Arrange
     using var listener = new ActivityListener {
       ShouldListenTo = s => s.Name == "Whizbang.Transport",
-      Sample = (ref ActivityCreationOptions<ActivityContext> _) => ActivitySamplingResult.AllData
+      Sample = (ref _) => ActivitySamplingResult.AllData
     };
     ActivitySource.AddActivityListener(listener);
 

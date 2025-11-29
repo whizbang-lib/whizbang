@@ -8,14 +8,9 @@ namespace ECommerce.InventoryWorker.Receptors;
 /// <summary>
 /// Handles AdjustInventoryCommand and publishes InventoryAdjustedEvent
 /// </summary>
-public class AdjustInventoryReceptor : IReceptor<AdjustInventoryCommand, InventoryAdjustedEvent> {
-  private readonly IDispatcher _dispatcher;
-  private readonly ILogger<AdjustInventoryReceptor> _logger;
-
-  public AdjustInventoryReceptor(IDispatcher dispatcher, ILogger<AdjustInventoryReceptor> logger) {
-    _dispatcher = dispatcher;
-    _logger = logger;
-  }
+public class AdjustInventoryReceptor(IDispatcher dispatcher, ILogger<AdjustInventoryReceptor> logger) : IReceptor<AdjustInventoryCommand, InventoryAdjustedEvent> {
+  private readonly IDispatcher _dispatcher = dispatcher;
+  private readonly ILogger<AdjustInventoryReceptor> _logger = logger;
 
   public async ValueTask<InventoryAdjustedEvent> HandleAsync(
     AdjustInventoryCommand message,

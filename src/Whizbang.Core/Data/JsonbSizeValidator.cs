@@ -11,7 +11,7 @@ namespace Whizbang.Core.Data;
 /// Calculates byte sizes, logs warnings, and adds size metadata when thresholds crossed.
 /// Size is NOT stored in metadata unless threshold is violated (for troubleshooting).
 /// </summary>
-public class JsonbSizeValidator {
+public class JsonbSizeValidator(ILogger<JsonbSizeValidator> logger, JsonSerializerOptions jsonOptions) {
   /// <summary>
   /// TOAST compression threshold: PostgreSQL begins compressing columns > 2KB.
   /// Performance impact: ~2× slower than uncompressed.
@@ -25,13 +25,8 @@ public class JsonbSizeValidator {
   /// </summary>
   private const int TOAST_EXTERNALIZATION_THRESHOLD = 7_000;
 
-  private readonly ILogger<JsonbSizeValidator> _logger;
-  private readonly JsonSerializerOptions _jsonOptions;
-
-  public JsonbSizeValidator(ILogger<JsonbSizeValidator> logger, JsonSerializerOptions jsonOptions) {
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-    _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
-  }
+  private readonly ILogger<JsonbSizeValidator> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
 
   /// <summary>
   /// Validates JSONB size and adds warning to metadata if threshold crossed.

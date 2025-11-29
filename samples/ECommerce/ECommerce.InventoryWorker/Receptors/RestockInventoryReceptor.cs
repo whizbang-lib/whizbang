@@ -8,14 +8,9 @@ namespace ECommerce.InventoryWorker.Receptors;
 /// <summary>
 /// Handles RestockInventoryCommand and publishes InventoryRestockedEvent
 /// </summary>
-public class RestockInventoryReceptor : IReceptor<RestockInventoryCommand, InventoryRestockedEvent> {
-  private readonly IDispatcher _dispatcher;
-  private readonly ILogger<RestockInventoryReceptor> _logger;
-
-  public RestockInventoryReceptor(IDispatcher dispatcher, ILogger<RestockInventoryReceptor> logger) {
-    _dispatcher = dispatcher;
-    _logger = logger;
-  }
+public class RestockInventoryReceptor(IDispatcher dispatcher, ILogger<RestockInventoryReceptor> logger) : IReceptor<RestockInventoryCommand, InventoryRestockedEvent> {
+  private readonly IDispatcher _dispatcher = dispatcher;
+  private readonly ILogger<RestockInventoryReceptor> _logger = logger;
 
   public async ValueTask<InventoryRestockedEvent> HandleAsync(
     RestockInventoryCommand message,

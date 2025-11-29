@@ -7,14 +7,9 @@ namespace ECommerce.InventoryWorker.Perspectives;
 /// <summary>
 /// Listens to OrderCreatedEvent and dispatches ReserveInventoryCommand for each line item
 /// </summary>
-public class OrderInventoryPerspective : IPerspectiveOf<OrderCreatedEvent> {
-  private readonly IDispatcher _dispatcher;
-  private readonly ILogger<OrderInventoryPerspective> _logger;
-
-  public OrderInventoryPerspective(IDispatcher dispatcher, ILogger<OrderInventoryPerspective> logger) {
-    _dispatcher = dispatcher;
-    _logger = logger;
-  }
+public class OrderInventoryPerspective(IDispatcher dispatcher, ILogger<OrderInventoryPerspective> logger) : IPerspectiveOf<OrderCreatedEvent> {
+  private readonly IDispatcher _dispatcher = dispatcher;
+  private readonly ILogger<OrderInventoryPerspective> _logger = logger;
 
   public async Task Update(OrderCreatedEvent @event, CancellationToken cancellationToken = default) {
     _logger.LogInformation(

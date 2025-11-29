@@ -31,7 +31,7 @@ public class OrderQueries {
     // For now, return sample orders
     await Task.Delay(10); // Simulate async operation
 
-    return new List<Order> {
+    return [
       new Order {
         OrderId = "order-1",
         CustomerId = "customer-123",
@@ -44,7 +44,7 @@ public class OrderQueries {
         TotalAmount = 149.99m,
         Status = "Shipped"
       }
-    };
+    ];
   }
 }
 

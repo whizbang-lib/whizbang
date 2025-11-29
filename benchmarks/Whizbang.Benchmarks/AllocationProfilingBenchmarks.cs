@@ -26,8 +26,8 @@ public class AllocationProfilingBenchmarks {
   private Func<IMessageEnvelope, PolicyContext, ValueTask<int>> _handler = null!;
 
   // For testing
-  private SemaphoreSlim _testSemaphore = null!;
-  private object _testLock = null!;
+  private readonly SemaphoreSlim _testSemaphore = null!;
+  private readonly object _testLock = null!;
 
   [GlobalSetup]
   public async Task Setup() {
@@ -41,7 +41,7 @@ public class AllocationProfilingBenchmarks {
     _envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
       Payload = message,
-      Hops = new List<MessageHop>()
+      Hops = []
     };
     _envelope.AddHop(new MessageHop {
       Type = HopType.Current,
@@ -147,7 +147,7 @@ public class AllocationProfilingBenchmarks {
   /// Test: Semaphore acquire + release only
   /// </summary>
   [Benchmark]
-  public int SemaphoreAcquireRelease() {
+  public static int SemaphoreAcquireRelease() {
     var sem = new SemaphoreSlim(10, 10);
     sem.Wait(0);
     sem.Release();

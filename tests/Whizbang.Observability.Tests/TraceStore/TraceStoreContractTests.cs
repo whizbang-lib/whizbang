@@ -24,7 +24,7 @@ public abstract class TraceStoreContractTests {
   /// <summary>
   /// Helper to create a test envelope with specified IDs and timing.
   /// </summary>
-  private IMessageEnvelope CreateTestEnvelope<TMessage>(
+  private static IMessageEnvelope CreateTestEnvelope<TMessage>(
     TMessage payload,
     MessageId? messageId = null,
     CorrelationId? correlationId = null,
@@ -34,7 +34,7 @@ public abstract class TraceStoreContractTests {
     var envelope = new Whizbang.Core.Observability.MessageEnvelope<TMessage> {
       MessageId = messageId ?? MessageId.New(),
       Payload = payload,
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     envelope.AddHop(new MessageHop {

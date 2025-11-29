@@ -9,12 +9,8 @@ namespace ECommerce.OrderService.API.Endpoints.Orders;
 /// <summary>
 /// FastEndpoints endpoint for creating orders
 /// </summary>
-public class CreateOrderEndpoint : Endpoint<CreateOrderRequest, CreateOrderResponse> {
-  private readonly IDispatcher _dispatcher;
-
-  public CreateOrderEndpoint(IDispatcher dispatcher) {
-    _dispatcher = dispatcher;
-  }
+public class CreateOrderEndpoint(IDispatcher dispatcher) : Endpoint<CreateOrderRequest, CreateOrderResponse> {
+  private readonly IDispatcher _dispatcher = dispatcher;
 
   public override void Configure() {
     Post("/orders");
@@ -24,14 +20,14 @@ public class CreateOrderEndpoint : Endpoint<CreateOrderRequest, CreateOrderRespo
       s.Description = "Creates a new order and dispatches it via Whizbang";
       s.ExampleRequest = new CreateOrderRequest {
         CustomerId = "customer-123",
-        LineItems = new List<OrderLineItemDto> {
+        LineItems = [
           new OrderLineItemDto {
             ProductId = "product-1",
             ProductName = "Sample Product",
             Quantity = 2,
             UnitPrice = 49.99m
           }
-        }
+        ]
       };
     });
   }

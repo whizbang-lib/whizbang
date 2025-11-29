@@ -19,26 +19,20 @@ namespace Whizbang.Core.Transports;
 /// - Creates message envelopes with hops for observability
 /// - Supports request/response pattern across transports
 /// </summary>
-public class DispatcherTransportBridge {
-  private readonly IDispatcher _dispatcher;
-  private readonly ITransport _transport;
-  private readonly IMessageSerializer _serializer;
-
-  /// <summary>
-  /// Creates a new bridge connecting a dispatcher with a transport.
-  /// </summary>
-  /// <param name="dispatcher">The local dispatcher for message handling</param>
-  /// <param name="transport">The transport for remote messaging</param>
-  /// <param name="serializer">The serializer for message envelopes</param>
-  public DispatcherTransportBridge(
-    IDispatcher dispatcher,
-    ITransport transport,
-    IMessageSerializer serializer
+/// <remarks>
+/// Creates a new bridge connecting a dispatcher with a transport.
+/// </remarks>
+/// <param name="dispatcher">The local dispatcher for message handling</param>
+/// <param name="transport">The transport for remote messaging</param>
+/// <param name="serializer">The serializer for message envelopes</param>
+public class DispatcherTransportBridge(
+  IDispatcher dispatcher,
+  ITransport transport,
+  IMessageSerializer serializer
   ) {
-    _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
-    _transport = transport ?? throw new ArgumentNullException(nameof(transport));
-    _serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
-  }
+  private readonly IDispatcher _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
+  private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+  private readonly IMessageSerializer _serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
 
   /// <summary>
   /// Publishes a message to a remote transport destination.
@@ -133,14 +127,14 @@ public class DispatcherTransportBridge {
   /// <summary>
   /// Creates a MessageEnvelope with initial hop containing context information.
   /// </summary>
-  private MessageEnvelope<TMessage> CreateEnvelope<TMessage>(
+  private static MessageEnvelope<TMessage> CreateEnvelope<TMessage>(
     TMessage message,
     IMessageContext context
   ) {
     var envelope = new MessageEnvelope<TMessage> {
       MessageId = MessageId.New(),
       Payload = message!,
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     var hop = new MessageHop {

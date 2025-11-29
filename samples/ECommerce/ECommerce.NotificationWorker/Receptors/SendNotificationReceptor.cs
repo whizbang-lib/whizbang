@@ -7,14 +7,9 @@ namespace ECommerce.NotificationWorker.Receptors;
 /// <summary>
 /// Handles SendNotificationCommand and publishes NotificationSentEvent
 /// </summary>
-public class SendNotificationReceptor : IReceptor<SendNotificationCommand, NotificationSentEvent> {
-  private readonly IDispatcher _dispatcher;
-  private readonly ILogger<SendNotificationReceptor> _logger;
-
-  public SendNotificationReceptor(IDispatcher dispatcher, ILogger<SendNotificationReceptor> logger) {
-    _dispatcher = dispatcher;
-    _logger = logger;
-  }
+public class SendNotificationReceptor(IDispatcher dispatcher, ILogger<SendNotificationReceptor> logger) : IReceptor<SendNotificationCommand, NotificationSentEvent> {
+  private readonly IDispatcher _dispatcher = dispatcher;
+  private readonly ILogger<SendNotificationReceptor> _logger = logger;
 
   public async ValueTask<NotificationSentEvent> HandleAsync(
     SendNotificationCommand message,

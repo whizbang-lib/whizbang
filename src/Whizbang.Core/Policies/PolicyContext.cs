@@ -121,13 +121,9 @@ public class PolicyContext {
       );
     }
 
-    var service = Services.GetService(typeof(T)) as T;
-    if (service is null) {
-      throw new InvalidOperationException(
+    var service = Services.GetService(typeof(T)) as T ?? throw new InvalidOperationException(
           $"Service of type {typeof(T).Name} is not registered in the ServiceProvider."
       );
-    }
-
     return service;
   }
 
@@ -210,13 +206,10 @@ public class PolicyContext {
       );
     }
 
-    var extractor = Services.GetService(typeof(IAggregateIdExtractor)) as IAggregateIdExtractor;
-    if (extractor is null) {
-      throw new InvalidOperationException(
+    var extractor = Services.GetService(typeof(IAggregateIdExtractor)) as IAggregateIdExtractor ?? throw new InvalidOperationException(
           "IAggregateIdExtractor is not registered in the ServiceProvider. " +
           "Call services.AddWhizbangAggregateIdExtractor() during startup to register the source-generated extractor."
       );
-    }
 
     // Use the source-generated extractor (zero reflection)
     var aggregateId = extractor.ExtractAggregateId(Message, MessageType);

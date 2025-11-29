@@ -6,12 +6,8 @@ namespace ECommerce.BFF.API.Endpoints;
 /// <summary>
 /// Get a specific product by ID
 /// </summary>
-public class GetProductByIdEndpoint : EndpointWithoutRequest<ProductDto> {
-  private readonly IProductCatalogLens _lens;
-
-  public GetProductByIdEndpoint(IProductCatalogLens lens) {
-    _lens = lens;
-  }
+public class GetProductByIdEndpoint(IProductCatalogLens lens) : EndpointWithoutRequest<ProductDto> {
+  private readonly IProductCatalogLens _lens = lens;
 
   public override void Configure() {
     Get("/products/{productId}");

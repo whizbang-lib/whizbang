@@ -242,7 +242,7 @@ public class CreateProductReceptorTests {
 /// Test implementation of IDispatcher for testing
 /// </summary>
 internal class TestDispatcher : IDispatcher {
-  public List<object> PublishedEvents { get; } = new();
+  public List<object> PublishedEvents { get; } = [];
 
   public Task PublishAsync<TEvent>(TEvent @event) {
     PublishedEvents.Add(@event!);
@@ -319,7 +319,7 @@ internal class TestDispatcher : IDispatcher {
 /// Test implementation of ILogger for testing
 /// </summary>
 internal class TestLogger<T> : ILogger<T> {
-  public List<string> LoggedMessages { get; } = new();
+  public List<string> LoggedMessages { get; } = [];
 
   public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 

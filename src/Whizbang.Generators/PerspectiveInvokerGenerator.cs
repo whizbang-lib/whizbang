@@ -98,7 +98,7 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
 
     // Flatten perspectives: one entry per (ClassName, EventType) pair
     var flatPerspectives = perspectives
-        .SelectMany(p => p.EventTypes.Select(et => (ClassName: p.ClassName, EventType: et)))
+        .SelectMany(p => p.EventTypes.Select(et => (p.ClassName, EventType: et)))
         .ToList();
 
     // Group by event type for routing generation
@@ -162,6 +162,6 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
   /// </summary>
   private static string GetSimpleName(string fullyQualifiedName) {
     var lastDot = fullyQualifiedName.LastIndexOf('.');
-    return lastDot >= 0 ? fullyQualifiedName.Substring(lastDot + 1) : fullyQualifiedName;
+    return lastDot >= 0 ? fullyQualifiedName[(lastDot + 1)..] : fullyQualifiedName;
   }
 }

@@ -78,12 +78,7 @@ public class JsonMessageSerializer : IMessageSerializer {
   public Task<byte[]> SerializeAsync(IMessageEnvelope envelope) {
     // Get JsonTypeInfo from options or context - fully AOT-compatible
     var envelopeType = envelope.GetType();
-    var typeInfo = _options?.GetTypeInfo(envelopeType) ?? _context?.GetTypeInfo(envelopeType);
-
-    if (typeInfo is null) {
-      throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
-    }
-
+    var typeInfo = (_options?.GetTypeInfo(envelopeType) ?? _context?.GetTypeInfo(envelopeType)) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
     var json = JsonSerializer.Serialize(envelope, typeInfo);
     return Task.FromResult(System.Text.Encoding.UTF8.GetBytes(json));
   }
@@ -94,18 +89,8 @@ public class JsonMessageSerializer : IMessageSerializer {
     var envelopeType = typeof(MessageEnvelope<TMessage>);
 
     // Get JsonTypeInfo from options or context - fully AOT-compatible
-    var typeInfo = _options?.GetTypeInfo(envelopeType) ?? _context?.GetTypeInfo(envelopeType);
-
-    if (typeInfo is null) {
-      throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
-    }
-
-    var envelope = JsonSerializer.Deserialize(json, typeInfo) as IMessageEnvelope;
-
-    if (envelope is null) {
-      throw new InvalidOperationException($"Failed to deserialize envelope for message type {typeof(TMessage).Name}");
-    }
-
+    var typeInfo = (_options?.GetTypeInfo(envelopeType) ?? _context?.GetTypeInfo(envelopeType)) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
+    var envelope = JsonSerializer.Deserialize(json, typeInfo) as IMessageEnvelope ?? throw new InvalidOperationException($"Failed to deserialize envelope for message type {typeof(TMessage).Name}");
     return Task.FromResult(envelope);
   }
 }
@@ -169,11 +154,7 @@ internal class MetadataConverter : JsonConverter<IReadOnlyDictionary<string, obj
         throw new JsonException($"Expected PropertyName token, got {reader.TokenType}");
       }
 
-      var key = reader.GetString();
-      if (key is null) {
-        throw new JsonException("Property name cannot be null");
-      }
-
+      var key = reader.GetString() ?? throw new JsonException("Property name cannot be null");
       reader.Read();
       var value = ReadValue(ref reader);
       dictionary[key] = value;

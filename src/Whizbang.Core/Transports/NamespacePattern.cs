@@ -12,18 +12,13 @@ namespace Whizbang.Core.Transports;
 /// - "*.Events" matches MyApp.Orders.Events, MyApp.Payments.Events
 /// - "MyApp.*.*" matches MyApp.Orders.OrderCreated, MyApp.Payments.PaymentProcessed
 /// </summary>
-public class NamespacePattern {
-  private readonly string _pattern;
-  private readonly Regex _regex;
-
-  /// <summary>
-  /// Creates a new namespace pattern.
-  /// </summary>
-  /// <param name="pattern">Pattern with wildcards (e.g., "MyApp.Orders.*")</param>
-  public NamespacePattern(string pattern) {
-    _pattern = pattern ?? throw new ArgumentNullException(nameof(pattern));
-    _regex = PatternToRegex(pattern);
-  }
+/// <remarks>
+/// Creates a new namespace pattern.
+/// </remarks>
+/// <param name="pattern">Pattern with wildcards (e.g., "MyApp.Orders.*")</param>
+public class NamespacePattern(string pattern) {
+  private readonly string _pattern = pattern ?? throw new ArgumentNullException(nameof(pattern));
+  private readonly Regex _regex = PatternToRegex(pattern);
 
   /// <summary>
   /// Checks if a message type matches this pattern.

@@ -9,7 +9,7 @@ namespace Whizbang.Generators.Tests;
 /// <summary>
 /// Tests for the MessageRegistryGenerator source generator.
 /// </summary>
-public class MessageRegistryGeneratorTests {
+public partial class MessageRegistryGeneratorTests {
 
   [Test]
   [RequiresAssemblyFiles()]
@@ -405,9 +405,7 @@ namespace TestNamespace {
     await Assert.That(generatedSource!).Contains("LogReceptor");
 
     // Both should be in receptors array
-    var receptorOccurrences = System.Text.RegularExpressions.Regex.Matches(
-        generatedSource!,
-        "\"\"receptors\"\":");
+    var receptorOccurrences = MyRegex().Matches(generatedSource);
     await Assert.That(receptorOccurrences.Count).IsGreaterThanOrEqualTo(2);
   }
 
@@ -1556,4 +1554,7 @@ public class DualReceptor : IReceptor<DualCommand, string>, IReceptor<DualComman
     await Assert.That(generatedJson!).Contains("ServiceWithFieldDispatch");
     await Assert.That(generatedJson).Contains("TestCommand");
   }
+
+  [System.Text.RegularExpressions.GeneratedRegex("\"\"receptors\"\":")]
+  private static partial System.Text.RegularExpressions.Regex MyRegex();
 }

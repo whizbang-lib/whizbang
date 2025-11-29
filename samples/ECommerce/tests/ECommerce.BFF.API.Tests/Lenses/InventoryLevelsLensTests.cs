@@ -1,29 +1,28 @@
-using Dapper;
 using ECommerce.BFF.API.Lenses;
 using ECommerce.BFF.API.Perspectives;
 using ECommerce.BFF.API.Tests.TestHelpers;
 using ECommerce.Contracts.Events;
-using Microsoft.Extensions.Logging.Abstractions;
-using Npgsql;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
 
 namespace ECommerce.BFF.API.Tests.Lenses;
 
 /// <summary>
-/// Integration tests for InventoryLevelsLens (BFF)
+/// Integration tests for InventoryLevelsLens (BFF) using unified Whizbang API
 /// </summary>
 public class InventoryLevelsLensTests : IAsyncDisposable {
-  private readonly DatabaseTestHelper _dbHelper = new();
+  private readonly EFCoreTestHelper _helper = new();
 
   [Test]
   public async Task GetByProductIdAsync_WithExistingInventory_ReturnsInventoryDtoAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new InventoryLevelsLens(connectionFactory);
+    // Arrange with EF Core
+    var lens = new InventoryLevelsLens(_helper.GetLensQuery<InventoryLevelDto>());
 
     // Create inventory via perspective
-    var perspective = new InventoryLevelsPerspective(connectionFactory, NullLogger<InventoryLevelsPerspective>.Instance, null!);
+    var perspective = new InventoryLevelsPerspective(_helper.GetPerspectiveStore<InventoryLevelDto>(), _helper.GetLensQuery<InventoryLevelDto>(), _helper.GetLogger<InventoryLevelsPerspective>(), _helper.GetHubContext());
     var productId = Guid.CreateVersion7();
     var restockEvent = new InventoryRestockedEvent {
 
@@ -47,8 +46,8 @@ public class InventoryLevelsLensTests : IAsyncDisposable {
   [Test]
   public async Task GetByProductIdAsync_WithNonExistent_ReturnsNullAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new InventoryLevelsLens(connectionFactory);
+    // Arrange with EF Core
+    var lens = new InventoryLevelsLens(_helper.GetLensQuery<InventoryLevelDto>());
 
     // Act
     var result = await lens.GetByProductIdAsync(Guid.CreateVersion7());
@@ -60,8 +59,8 @@ public class InventoryLevelsLensTests : IAsyncDisposable {
   [Test]
   public async Task GetAllAsync_WithNoInventory_ReturnsEmptyListAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new InventoryLevelsLens(connectionFactory);
+    // Arrange with EF Core
+    var lens = new InventoryLevelsLens(_helper.GetLensQuery<InventoryLevelDto>());
 
     // Act
     var result = await lens.GetAllAsync();
@@ -74,9 +73,9 @@ public class InventoryLevelsLensTests : IAsyncDisposable {
   [Test]
   public async Task GetAllAsync_WithMultipleEntries_ReturnsAllAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new InventoryLevelsLens(connectionFactory);
-    var perspective = new InventoryLevelsPerspective(connectionFactory, NullLogger<InventoryLevelsPerspective>.Instance, null!);
+    // Arrange with EF Core
+    var lens = new InventoryLevelsLens(_helper.GetLensQuery<InventoryLevelDto>());
+    var perspective = new InventoryLevelsPerspective(_helper.GetPerspectiveStore<InventoryLevelDto>(), _helper.GetLensQuery<InventoryLevelDto>(), _helper.GetLogger<InventoryLevelsPerspective>(), _helper.GetHubContext());
 
     // Create 3 inventory entries
     var prod1 = Guid.CreateVersion7();
@@ -116,9 +115,9 @@ public class InventoryLevelsLensTests : IAsyncDisposable {
   [Test]
   public async Task GetAllAsync_CalculatesAvailableCorrectlyAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new InventoryLevelsLens(connectionFactory);
-    var perspective = new InventoryLevelsPerspective(connectionFactory, NullLogger<InventoryLevelsPerspective>.Instance, null!);
+    // Arrange with EF Core
+    var lens = new InventoryLevelsLens(_helper.GetLensQuery<InventoryLevelDto>());
+    var perspective = new InventoryLevelsPerspective(_helper.GetPerspectiveStore<InventoryLevelDto>(), _helper.GetLensQuery<InventoryLevelDto>(), _helper.GetLogger<InventoryLevelsPerspective>(), _helper.GetHubContext());
 
     // Create inventory and reserve some
     var productId = Guid.CreateVersion7();
@@ -142,7 +141,7 @@ public class InventoryLevelsLensTests : IAsyncDisposable {
 
     // Assert
     await Assert.That(result).HasCount().EqualTo(1);
-    var inventory = result.First();
+    var inventory = result[0];
     await Assert.That(inventory.Quantity).IsEqualTo(100);
     await Assert.That(inventory.Reserved).IsEqualTo(30);
     await Assert.That(inventory.Available).IsEqualTo(70); // 100 - 30
@@ -151,9 +150,9 @@ public class InventoryLevelsLensTests : IAsyncDisposable {
   [Test]
   public async Task GetLowStockAsync_WithDefaultThreshold_ReturnsLowStockAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new InventoryLevelsLens(connectionFactory);
-    var perspective = new InventoryLevelsPerspective(connectionFactory, NullLogger<InventoryLevelsPerspective>.Instance, null!);
+    // Arrange with EF Core
+    var lens = new InventoryLevelsLens(_helper.GetLensQuery<InventoryLevelDto>());
+    var perspective = new InventoryLevelsPerspective(_helper.GetPerspectiveStore<InventoryLevelDto>(), _helper.GetLensQuery<InventoryLevelDto>(), _helper.GetLogger<InventoryLevelsPerspective>(), _helper.GetHubContext());
 
     // Create products with varying stock levels
     var prodLow = Guid.CreateVersion7();
@@ -183,15 +182,15 @@ public class InventoryLevelsLensTests : IAsyncDisposable {
 
     // Assert
     await Assert.That(result).HasCount().EqualTo(1);
-    await Assert.That(result.First().ProductId).IsEqualTo(prodLow);
+    await Assert.That(result[0].ProductId).IsEqualTo(prodLow);
   }
 
   [Test]
   public async Task GetLowStockAsync_WithCustomThreshold_UsesThresholdAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new InventoryLevelsLens(connectionFactory);
-    var perspective = new InventoryLevelsPerspective(connectionFactory, NullLogger<InventoryLevelsPerspective>.Instance, null!);
+    // Arrange with EF Core
+    var lens = new InventoryLevelsLens(_helper.GetLensQuery<InventoryLevelDto>());
+    var perspective = new InventoryLevelsPerspective(_helper.GetPerspectiveStore<InventoryLevelDto>(), _helper.GetLensQuery<InventoryLevelDto>(), _helper.GetLogger<InventoryLevelsPerspective>(), _helper.GetHubContext());
 
     // Create products with varying stock levels
     var prodLow = Guid.CreateVersion7();
@@ -229,9 +228,9 @@ public class InventoryLevelsLensTests : IAsyncDisposable {
   [Test]
   public async Task GetLowStockAsync_WithNoLowStock_ReturnsEmptyListAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new InventoryLevelsLens(connectionFactory);
-    var perspective = new InventoryLevelsPerspective(connectionFactory, NullLogger<InventoryLevelsPerspective>.Instance, null!);
+    // Arrange with EF Core
+    var lens = new InventoryLevelsLens(_helper.GetLensQuery<InventoryLevelDto>());
+    var perspective = new InventoryLevelsPerspective(_helper.GetPerspectiveStore<InventoryLevelDto>(), _helper.GetLensQuery<InventoryLevelDto>(), _helper.GetLogger<InventoryLevelsPerspective>(), _helper.GetHubContext());
 
     // Create only high-stock products
     await perspective.Update(new InventoryRestockedEvent {
@@ -258,10 +257,10 @@ public class InventoryLevelsLensTests : IAsyncDisposable {
 
   [After(Test)]
   public async Task CleanupAsync() {
-    await _dbHelper.CleanupDatabaseAsync();
+    await _helper.CleanupDatabaseAsync();
   }
 
   public async ValueTask DisposeAsync() {
-    await _dbHelper.DisposeAsync();
+    await _helper.DisposeAsync();
   }
 }

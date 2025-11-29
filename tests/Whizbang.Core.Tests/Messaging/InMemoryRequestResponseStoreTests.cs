@@ -85,7 +85,7 @@ public class InMemoryRequestResponseStoreTests : RequestResponseStoreContractTes
     var response = new MessageEnvelope<string> {
       MessageId = MessageId.New(),
       Payload = "response",
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     // Start waiting and saving response in parallel
@@ -109,7 +109,7 @@ public class InMemoryRequestResponseStoreTests : RequestResponseStoreContractTes
     var response = new MessageEnvelope<string> {
       MessageId = MessageId.New(),
       Payload = "early response",
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     // Act - save response BEFORE saving request (race condition scenario)

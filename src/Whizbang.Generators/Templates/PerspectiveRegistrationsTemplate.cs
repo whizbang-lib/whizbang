@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Core.Generated;
 
@@ -16,14 +17,15 @@ public static class PerspectiveRegistrationExtensions {
   /// <summary>
   /// Registers all discovered IPerspectiveOf implementations with the service collection.
   /// Each perspective is registered as Scoped to match the typical database context lifetime.
+  /// Returns a WhizbangPerspectiveBuilder for fluent configuration of storage providers.
   /// </summary>
   /// <param name="services">The service collection to add registrations to</param>
-  /// <returns>The service collection for method chaining</returns>
-  public static IServiceCollection AddWhizbangPerspectives(this IServiceCollection services) {
+  /// <returns>A WhizbangPerspectiveBuilder for configuring storage providers</returns>
+  public static WhizbangPerspectiveBuilder AddWhizbangPerspectives(this IServiceCollection services) {
     #region PERSPECTIVE_REGISTRATIONS
     // This region gets replaced with generated registration code
     #endregion
 
-    return services;
+    return new WhizbangPerspectiveBuilder(services);
   }
 }

@@ -7,11 +7,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// PostgreSQL-specific implementation of ISequenceProvider using Dapper.
 /// Uses PostgreSQL's RETURNING clause for atomic operations.
 /// </summary>
-public class DapperPostgresSequenceProvider : DapperSequenceProviderBase {
-  public DapperPostgresSequenceProvider(IDbConnectionFactory connectionFactory, IDbExecutor executor)
-    : base(connectionFactory, executor) {
-  }
-
+public class DapperPostgresSequenceProvider(IDbConnectionFactory connectionFactory, IDbExecutor executor) : DapperSequenceProviderBase(connectionFactory, executor) {
   protected override string GetUpdateSequenceSql() => @"
     UPDATE whizbang_sequences
     SET current_value = current_value + 1, last_updated_at = @Now

@@ -65,7 +65,7 @@ public static class TemplateUtilities {
       return code;
     }
 
-    var lines = code.Split(new[] { "\r\n", "\r", "\n" }, System.StringSplitOptions.None);
+    var lines = code.Split(["\r\n", "\r", "\n"], System.StringSplitOptions.None);
     var indentedLines = lines.Select(line =>
         string.IsNullOrWhiteSpace(line) ? line : indentation + line
     );
@@ -128,14 +128,14 @@ public static class TemplateUtilities {
       return code;
     }
 
-    var lines = code.Split(new[] { "\r\n", "\r", "\n" }, System.StringSplitOptions.None);
+    var lines = code.Split(["\r\n", "\r", "\n"], System.StringSplitOptions.None);
     var result = lines.Select(line => {
       if (string.IsNullOrWhiteSpace(line)) {
         return line;
       }
 
       if (line.StartsWith(indentationToRemove)) {
-        return line.Substring(indentationToRemove.Length);
+        return line[indentationToRemove.Length..];
       }
       return line;
     });

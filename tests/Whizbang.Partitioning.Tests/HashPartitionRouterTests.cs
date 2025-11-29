@@ -96,12 +96,13 @@ public class HashPartitionRouterTests : PartitionRouterContractTests {
     var partitionCount = 100;
 
     // Act - Test keys that differ by one character
-    var partitions = new HashSet<int>();
-    partitions.Add(router.SelectPartition("user-1000", partitionCount, context));
-    partitions.Add(router.SelectPartition("user-1001", partitionCount, context));
-    partitions.Add(router.SelectPartition("user-1002", partitionCount, context));
-    partitions.Add(router.SelectPartition("user-1003", partitionCount, context));
-    partitions.Add(router.SelectPartition("user-1004", partitionCount, context));
+    var partitions = new HashSet<int> {
+      router.SelectPartition("user-1000", partitionCount, context),
+      router.SelectPartition("user-1001", partitionCount, context),
+      router.SelectPartition("user-1002", partitionCount, context),
+      router.SelectPartition("user-1003", partitionCount, context),
+      router.SelectPartition("user-1004", partitionCount, context)
+    };
 
     // Assert - Even similar keys should distribute across partitions
     // (Not guaranteed to be all unique, but should be > 1)

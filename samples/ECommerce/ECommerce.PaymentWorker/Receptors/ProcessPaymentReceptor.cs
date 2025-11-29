@@ -8,14 +8,9 @@ namespace ECommerce.PaymentWorker.Receptors;
 /// <summary>
 /// Handles ProcessPaymentCommand and publishes PaymentProcessedEvent or PaymentFailedEvent
 /// </summary>
-public class ProcessPaymentReceptor : IReceptor<ProcessPaymentCommand, PaymentProcessedEvent> {
-  private readonly IDispatcher _dispatcher;
-  private readonly ILogger<ProcessPaymentReceptor> _logger;
-
-  public ProcessPaymentReceptor(IDispatcher dispatcher, ILogger<ProcessPaymentReceptor> logger) {
-    _dispatcher = dispatcher;
-    _logger = logger;
-  }
+public class ProcessPaymentReceptor(IDispatcher dispatcher, ILogger<ProcessPaymentReceptor> logger) : IReceptor<ProcessPaymentCommand, PaymentProcessedEvent> {
+  private readonly IDispatcher _dispatcher = dispatcher;
+  private readonly ILogger<ProcessPaymentReceptor> _logger = logger;
 
   public async ValueTask<PaymentProcessedEvent> HandleAsync(
     ProcessPaymentCommand message,

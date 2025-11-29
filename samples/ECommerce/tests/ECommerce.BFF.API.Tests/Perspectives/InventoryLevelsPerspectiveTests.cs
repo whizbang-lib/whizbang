@@ -1,26 +1,30 @@
-using Dapper;
+using ECommerce.BFF.API.Lenses;
 using ECommerce.BFF.API.Perspectives;
 using ECommerce.BFF.API.Tests.TestHelpers;
 using ECommerce.Contracts.Events;
-using Microsoft.Extensions.Logging;
-using Npgsql;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
 
 namespace ECommerce.BFF.API.Tests.Perspectives;
 
 /// <summary>
-/// Integration tests for InventoryLevelsPerspective (BFF)
+/// Integration tests for InventoryLevelsPerspective (BFF) using unified Whizbang API
 /// </summary>
 public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
-  private readonly DatabaseTestHelper _dbHelper = new();
+  private readonly EFCoreTestHelper _helper = new();
 
   [Test]
   public async Task Update_WithInventoryRestockedEvent_UpdatesQuantityAndAvailableAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var logger = new TestLogger<InventoryLevelsPerspective>();
-    var perspective = new InventoryLevelsPerspective(connectionFactory, logger, null!);
+    var perspective = new InventoryLevelsPerspective(
+      _helper.GetPerspectiveStore<InventoryLevelDto>(),
+      _helper.GetLensQuery<InventoryLevelDto>(),
+      _helper.GetLogger<InventoryLevelsPerspective>(),
+      _helper.GetHubContext());
+
+    var lens = _helper.GetLensQuery<InventoryLevelDto>();
 
     var productId = Guid.CreateVersion7();
     var @event = new InventoryRestockedEvent {
@@ -34,28 +38,26 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     // Act
     await perspective.Update(@event, CancellationToken.None);
 
-    // Assert - Verify inventory was created/updated in bff.inventory_levels
-    var connectionString = await _dbHelper.GetConnectionStringAsync();
-    await using var connection = new NpgsqlConnection(connectionString);
-    await connection.OpenAsync();
-
-    var inventory = await connection.QuerySingleOrDefaultAsync<InventoryRow>(
-      "SELECT product_id, quantity, reserved, available, last_updated FROM bff.inventory_levels WHERE product_id = @ProductId",
-      new { ProductId = productId });
+    // Assert - Verify inventory was created/updated using lens query
+    var inventory = await lens.GetByIdAsync(productId.ToString(), CancellationToken.None);
 
     await Assert.That(inventory).IsNotNull();
-    await Assert.That(inventory!.product_id).IsEqualTo(productId);
-    await Assert.That(inventory.quantity).IsEqualTo(100);
-    await Assert.That(inventory.reserved).IsEqualTo(0);
-    await Assert.That(inventory.available).IsEqualTo(100);
+    await Assert.That(inventory!.ProductId).IsEqualTo(productId);
+    await Assert.That(inventory.Quantity).IsEqualTo(100);
+    await Assert.That(inventory.Reserved).IsEqualTo(0);
+    await Assert.That(inventory.Available).IsEqualTo(100);
   }
 
   [Test]
   public async Task Update_WithInventoryReservedEvent_UpdatesReservedAndAvailableAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var logger = new TestLogger<InventoryLevelsPerspective>();
-    var perspective = new InventoryLevelsPerspective(connectionFactory, logger, null!);
+    var perspective = new InventoryLevelsPerspective(
+      _helper.GetPerspectiveStore<InventoryLevelDto>(),
+      _helper.GetLensQuery<InventoryLevelDto>(),
+      _helper.GetLogger<InventoryLevelsPerspective>(),
+      _helper.GetHubContext());
+
+    var lens = _helper.GetLensQuery<InventoryLevelDto>();
 
     // Create initial inventory
     var productId = Guid.CreateVersion7();
@@ -78,27 +80,25 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     };
     await perspective.Update(reservedEvent, CancellationToken.None);
 
-    // Assert - Verify reserved and available were updated in bff.inventory_levels
-    var connectionString = await _dbHelper.GetConnectionStringAsync();
-    await using var connection = new NpgsqlConnection(connectionString);
-    await connection.OpenAsync();
-
-    var inventory = await connection.QuerySingleOrDefaultAsync<InventoryRow>(
-      "SELECT quantity, reserved, available FROM bff.inventory_levels WHERE product_id = @ProductId",
-      new { ProductId = productId });
+    // Assert - Verify reserved and available were updated using lens query
+    var inventory = await lens.GetByIdAsync(productId.ToString(), CancellationToken.None);
 
     await Assert.That(inventory).IsNotNull();
-    await Assert.That(inventory!.quantity).IsEqualTo(100);
-    await Assert.That(inventory.reserved).IsEqualTo(25);
-    await Assert.That(inventory.available).IsEqualTo(75); // 100 - 25
+    await Assert.That(inventory!.Quantity).IsEqualTo(100);
+    await Assert.That(inventory.Reserved).IsEqualTo(25);
+    await Assert.That(inventory.Available).IsEqualTo(75); // 100 - 25
   }
 
   [Test]
   public async Task Update_WithInventoryReleasedEvent_UpdatesReservedAndAvailableAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var logger = new TestLogger<InventoryLevelsPerspective>();
-    var perspective = new InventoryLevelsPerspective(connectionFactory, logger, null!);
+    var perspective = new InventoryLevelsPerspective(
+      _helper.GetPerspectiveStore<InventoryLevelDto>(),
+      _helper.GetLensQuery<InventoryLevelDto>(),
+      _helper.GetLogger<InventoryLevelsPerspective>(),
+      _helper.GetHubContext());
+
+    var lens = _helper.GetLensQuery<InventoryLevelDto>();
 
     // Create initial inventory and reserve some
     var productId = Guid.CreateVersion7();
@@ -130,27 +130,25 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     };
     await perspective.Update(releasedEvent, CancellationToken.None);
 
-    // Assert - Verify reserved and available were updated in bff.inventory_levels
-    var connectionString = await _dbHelper.GetConnectionStringAsync();
-    await using var connection = new NpgsqlConnection(connectionString);
-    await connection.OpenAsync();
-
-    var inventory = await connection.QuerySingleOrDefaultAsync<InventoryRow>(
-      "SELECT quantity, reserved, available FROM bff.inventory_levels WHERE product_id = @ProductId",
-      new { ProductId = productId });
+    // Assert - Verify reserved and available were updated using lens query
+    var inventory = await lens.GetByIdAsync(productId.ToString(), CancellationToken.None);
 
     await Assert.That(inventory).IsNotNull();
-    await Assert.That(inventory!.quantity).IsEqualTo(100);
-    await Assert.That(inventory.reserved).IsEqualTo(0); // 30 - 30
-    await Assert.That(inventory.available).IsEqualTo(100); // Back to full availability
+    await Assert.That(inventory!.Quantity).IsEqualTo(100);
+    await Assert.That(inventory.Reserved).IsEqualTo(0); // 30 - 30
+    await Assert.That(inventory.Available).IsEqualTo(100); // Back to full availability
   }
 
   [Test]
   public async Task Update_WithInventoryAdjustedEvent_UpdatesQuantityAndAvailableAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var logger = new TestLogger<InventoryLevelsPerspective>();
-    var perspective = new InventoryLevelsPerspective(connectionFactory, logger, null!);
+    var perspective = new InventoryLevelsPerspective(
+      _helper.GetPerspectiveStore<InventoryLevelDto>(),
+      _helper.GetLensQuery<InventoryLevelDto>(),
+      _helper.GetLogger<InventoryLevelsPerspective>(),
+      _helper.GetHubContext());
+
+    var lens = _helper.GetLensQuery<InventoryLevelDto>();
 
     // Create initial inventory
     var productId = Guid.CreateVersion7();
@@ -174,38 +172,21 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     };
     await perspective.Update(adjustedEvent, CancellationToken.None);
 
-    // Assert - Verify quantity and available were updated in bff.inventory_levels
-    var connectionString = await _dbHelper.GetConnectionStringAsync();
-    await using var connection = new NpgsqlConnection(connectionString);
-    await connection.OpenAsync();
-
-    var inventory = await connection.QuerySingleOrDefaultAsync<InventoryRow>(
-      "SELECT quantity, reserved, available FROM bff.inventory_levels WHERE product_id = @ProductId",
-      new { ProductId = productId });
+    // Assert - Verify quantity and available were updated using lens query
+    var inventory = await lens.GetByIdAsync(productId.ToString(), CancellationToken.None);
 
     await Assert.That(inventory).IsNotNull();
-    await Assert.That(inventory!.quantity).IsEqualTo(90);
-    await Assert.That(inventory.reserved).IsEqualTo(0);
-    await Assert.That(inventory.available).IsEqualTo(90);
+    await Assert.That(inventory!.Quantity).IsEqualTo(90);
+    await Assert.That(inventory.Reserved).IsEqualTo(0);
+    await Assert.That(inventory.Available).IsEqualTo(90);
   }
 
   [After(Test)]
   public async Task CleanupAsync() {
-    await _dbHelper.CleanupDatabaseAsync();
+    await _helper.CleanupDatabaseAsync();
   }
 
   public async ValueTask DisposeAsync() {
-    await _dbHelper.DisposeAsync();
+    await _helper.DisposeAsync();
   }
-}
-
-/// <summary>
-/// DTO for reading inventory_levels rows from database
-/// </summary>
-internal record InventoryRow {
-  public Guid product_id { get; init; }
-  public int quantity { get; init; }
-  public int reserved { get; init; }
-  public int available { get; init; }
-  public DateTime last_updated { get; init; }
 }

@@ -8,11 +8,11 @@ namespace ECommerce.BFF.API.Tests.TestHelpers;
 /// Factory methods for creating test events with realistic data.
 /// </summary>
 public static class EventBuilder {
-  private static readonly Faker _faker = new Faker();
+  private static readonly Faker _faker = new();
 
   public static OrderCreatedEvent CreateOrderCreatedEvent(
-    string? orderId = null,
-    string? customerId = null,
+    Guid? orderId = null,
+    Guid? customerId = null,
     decimal? totalAmount = null,
     List<OrderLineItem>? lineItems = null,
     DateTime? createdAt = null) {
@@ -26,8 +26,8 @@ public static class EventBuilder {
     ];
 
     return new OrderCreatedEvent {
-      OrderId = OrderId.From(_faker.Random.Guid()),
-      CustomerId = CustomerId.From(_faker.Random.Guid()),
+      OrderId = orderId.HasValue ? OrderId.From(orderId.Value) : OrderId.New(),
+      CustomerId = customerId.HasValue ? CustomerId.From(customerId.Value) : CustomerId.New(),
       TotalAmount = totalAmount ?? items.Sum(i => i.Quantity * i.UnitPrice),
       LineItems = items,
       CreatedAt = createdAt ?? DateTime.UtcNow

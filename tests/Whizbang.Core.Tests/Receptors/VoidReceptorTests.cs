@@ -52,7 +52,7 @@ public class VoidReceptorTests : DiagnosticTestBase {
   }
 
   public class LogEventReceptor : IReceptor<LogEventCommand> {
-    public List<string> LoggedEvents { get; } = new();
+    public List<string> LoggedEvents { get; } = [];
 
     public ValueTask HandleAsync(LogEventCommand message, CancellationToken cancellationToken = default) {
       LoggedEvents.Add($"{message.EventType}: {message.Message}");

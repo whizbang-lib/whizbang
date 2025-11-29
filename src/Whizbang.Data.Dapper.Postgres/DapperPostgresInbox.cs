@@ -8,14 +8,10 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// PostgreSQL-specific implementation of IInbox using Dapper.
 /// Uses JSONB storage pattern for envelope serialization - mirrors DapperPostgresOutbox.
 /// </summary>
-public class DapperPostgresInbox : DapperInboxBase {
-  public DapperPostgresInbox(
-    IDbConnectionFactory connectionFactory,
-    IDbExecutor executor,
-    IJsonbPersistenceAdapter<IMessageEnvelope> envelopeAdapter)
-    : base(connectionFactory, executor, envelopeAdapter) {
-  }
-
+public class DapperPostgresInbox(
+  IDbConnectionFactory connectionFactory,
+  IDbExecutor executor,
+  IJsonbPersistenceAdapter<IMessageEnvelope> envelopeAdapter) : DapperInboxBase(connectionFactory, executor, envelopeAdapter) {
   protected override string GetStoreSql() => @"
     INSERT INTO whizbang_inbox (message_id, handler_name, event_type, event_data, metadata, scope, received_at, processed_at)
     VALUES (@MessageId, @HandlerName, @EventType, @EventData::jsonb, @Metadata::jsonb, @Scope::jsonb, @ReceivedAt, NULL)

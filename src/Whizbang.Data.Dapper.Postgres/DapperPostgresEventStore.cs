@@ -19,29 +19,21 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// Stream ID is inferred from event's [AggregateId] property.
 /// Uses JsonbSizeValidator for C#-based size validation.
 /// </summary>
-public class DapperPostgresEventStore : DapperEventStoreBase {
-  private readonly IJsonbPersistenceAdapter<IMessageEnvelope> _adapter;
-  private readonly JsonbSizeValidator _sizeValidator;
-  private readonly IPolicyEngine _policyEngine;
-  private readonly IPerspectiveInvoker? _perspectiveInvoker;
-  private readonly ILogger<DapperPostgresEventStore> _logger;
-
-  public DapperPostgresEventStore(
-    IDbConnectionFactory connectionFactory,
-    IDbExecutor executor,
-    JsonSerializerOptions jsonOptions,
-    IJsonbPersistenceAdapter<IMessageEnvelope> adapter,
-    JsonbSizeValidator sizeValidator,
-    IPolicyEngine policyEngine,
-    IPerspectiveInvoker? perspectiveInvoker,
-    ILogger<DapperPostgresEventStore> logger
-  ) : base(connectionFactory, executor, jsonOptions) {
-    _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
-    _sizeValidator = sizeValidator ?? throw new ArgumentNullException(nameof(sizeValidator));
-    _policyEngine = policyEngine ?? throw new ArgumentNullException(nameof(policyEngine));
-    _perspectiveInvoker = perspectiveInvoker;
-    _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-  }
+public class DapperPostgresEventStore(
+  IDbConnectionFactory connectionFactory,
+  IDbExecutor executor,
+  JsonSerializerOptions jsonOptions,
+  IJsonbPersistenceAdapter<IMessageEnvelope> adapter,
+  JsonbSizeValidator sizeValidator,
+  IPolicyEngine policyEngine,
+  IPerspectiveInvoker? perspectiveInvoker,
+  ILogger<DapperPostgresEventStore> logger
+  ) : DapperEventStoreBase(connectionFactory, executor, jsonOptions) {
+  private readonly IJsonbPersistenceAdapter<IMessageEnvelope> _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
+  private readonly JsonbSizeValidator _sizeValidator = sizeValidator ?? throw new ArgumentNullException(nameof(sizeValidator));
+  private readonly IPolicyEngine _policyEngine = policyEngine ?? throw new ArgumentNullException(nameof(policyEngine));
+  private readonly IPerspectiveInvoker? _perspectiveInvoker = perspectiveInvoker;
+  private readonly ILogger<DapperPostgresEventStore> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
   /// <summary>
   /// Appends an event to the specified stream (AOT-compatible).

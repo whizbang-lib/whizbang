@@ -9,7 +9,8 @@
 
   <!-- AOT Compatibility Settings (Production Code Only) -->
   <!-- TEMP: Excluding Whizbang.Core while completing Phases 4-5 (JSON + Dispatcher) -->
-  <PropertyGroup Condition="'$(IsTestProject)' != 'true' and '$(MSBuildProjectName)' != 'Whizbang.Generators' and '$(MSBuildProjectName)' != 'Whizbang.Core'">
+  <!-- Exclude all source generator projects (netstandard2.0) - they run at compile-time, not runtime -->
+  <PropertyGroup Condition="'$(IsTestProject)' != 'true' and !$(MSBuildProjectName.Contains('Generators')) and '$(MSBuildProjectName)' != 'Whizbang.Core'">
     <!-- Enable AOT analyzers to detect reflection and trim incompatibilities -->
     <IsAotCompatible>true</IsAotCompatible>
     <EnableAotAnalyzer>true</EnableAotAnalyzer>

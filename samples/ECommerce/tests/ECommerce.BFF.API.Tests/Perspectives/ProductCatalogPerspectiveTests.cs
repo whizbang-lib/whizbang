@@ -1,26 +1,30 @@
-using Dapper;
+using ECommerce.BFF.API.Lenses;
 using ECommerce.BFF.API.Perspectives;
 using ECommerce.BFF.API.Tests.TestHelpers;
 using ECommerce.Contracts.Events;
-using Microsoft.Extensions.Logging;
-using Npgsql;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
 
 namespace ECommerce.BFF.API.Tests.Perspectives;
 
 /// <summary>
-/// Integration tests for ProductCatalogPerspective (BFF)
+/// Integration tests for ProductCatalogPerspective (BFF) using unified Whizbang API
 /// </summary>
 public class ProductCatalogPerspectiveTests : IAsyncDisposable {
-  private readonly DatabaseTestHelper _dbHelper = new();
+  private readonly EFCoreTestHelper _helper = new();
 
   [Test]
   public async Task Update_WithProductCreatedEvent_InsertsProductAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var logger = new TestLogger<ProductCatalogPerspective>();
-    var perspective = new ProductCatalogPerspective(connectionFactory, logger, null!);
+    var perspective = new ProductCatalogPerspective(
+      _helper.GetPerspectiveStore<ProductDto>(),
+      _helper.GetLensQuery<ProductDto>(),
+      _helper.GetLogger<ProductCatalogPerspective>(),
+      _helper.GetHubContext());
+
+    var lens = _helper.GetLensQuery<ProductDto>();
 
     var productId = Guid.CreateVersion7();
     var @event = new ProductCreatedEvent {
@@ -36,31 +40,29 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
     // Act
     await perspective.Update(@event, CancellationToken.None);
 
-    // Assert - Verify product was inserted into bff.product_catalog
-    var connectionString = await _dbHelper.GetConnectionStringAsync();
-    await using var connection = new NpgsqlConnection(connectionString);
-    await connection.OpenAsync();
-
-    var product = await connection.QuerySingleOrDefaultAsync<ProductRow>(
-      "SELECT product_id, name, description, price, image_url, created_at, updated_at, deleted_at FROM bff.product_catalog WHERE product_id = @ProductId",
-      new { ProductId = productId });
+    // Assert - Verify product was inserted using lens query
+    var product = await lens.GetByIdAsync(productId.ToString(), CancellationToken.None);
 
     await Assert.That(product).IsNotNull();
-    await Assert.That(product!.product_id).IsEqualTo(productId);
-    await Assert.That(product.name).IsEqualTo("Test Widget");
-    await Assert.That(product.description).IsEqualTo("A test widget");
-    await Assert.That(product.price).IsEqualTo(29.99m);
-    await Assert.That(product.image_url).IsEqualTo("https://example.com/widget.jpg");
-    await Assert.That(product.updated_at).IsNull();
-    await Assert.That(product.deleted_at).IsNull();
+    await Assert.That(product!.ProductId).IsEqualTo(productId);
+    await Assert.That(product.Name).IsEqualTo("Test Widget");
+    await Assert.That(product.Description).IsEqualTo("A test widget");
+    await Assert.That(product.Price).IsEqualTo(29.99m);
+    await Assert.That(product.ImageUrl).IsEqualTo("https://example.com/widget.jpg");
+    await Assert.That(product.UpdatedAt).IsNull();
+    await Assert.That(product.DeletedAt).IsNull();
   }
 
   [Test]
   public async Task Update_WithProductUpdatedEvent_UpdatesProductAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var logger = new TestLogger<ProductCatalogPerspective>();
-    var perspective = new ProductCatalogPerspective(connectionFactory, logger, null!);
+    var perspective = new ProductCatalogPerspective(
+      _helper.GetPerspectiveStore<ProductDto>(),
+      _helper.GetLensQuery<ProductDto>(),
+      _helper.GetLogger<ProductCatalogPerspective>(),
+      _helper.GetHubContext());
+
+    var lens = _helper.GetLensQuery<ProductDto>();
 
     // Create initial product
     var productId = Guid.CreateVersion7();
@@ -87,29 +89,27 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
     };
     await perspective.Update(updatedEvent, CancellationToken.None);
 
-    // Assert - Verify product was updated in bff.product_catalog
-    var connectionString = await _dbHelper.GetConnectionStringAsync();
-    await using var connection = new NpgsqlConnection(connectionString);
-    await connection.OpenAsync();
-
-    var product = await connection.QuerySingleOrDefaultAsync<ProductRow>(
-      "SELECT product_id, name, description, price, image_url, updated_at FROM bff.product_catalog WHERE product_id = @ProductId",
-      new { ProductId = productId });
+    // Assert - Verify product was updated using lens query
+    var product = await lens.GetByIdAsync(productId.ToString(), CancellationToken.None);
 
     await Assert.That(product).IsNotNull();
-    await Assert.That(product!.name).IsEqualTo("Updated Name");
-    await Assert.That(product.description).IsEqualTo("Original Description"); // Unchanged
-    await Assert.That(product.price).IsEqualTo(19.99m);
-    await Assert.That(product.image_url).IsEqualTo("https://example.com/new.jpg");
-    await Assert.That(product.updated_at).IsNotNull();
+    await Assert.That(product!.Name).IsEqualTo("Updated Name");
+    await Assert.That(product.Description).IsEqualTo("Original Description"); // Unchanged
+    await Assert.That(product.Price).IsEqualTo(19.99m);
+    await Assert.That(product.ImageUrl).IsEqualTo("https://example.com/new.jpg");
+    await Assert.That(product.UpdatedAt).IsNotNull();
   }
 
   [Test]
   public async Task Update_WithProductDeletedEvent_SoftDeletesProductAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var logger = new TestLogger<ProductCatalogPerspective>();
-    var perspective = new ProductCatalogPerspective(connectionFactory, logger, null!);
+    var perspective = new ProductCatalogPerspective(
+      _helper.GetPerspectiveStore<ProductDto>(),
+      _helper.GetLensQuery<ProductDto>(),
+      _helper.GetLogger<ProductCatalogPerspective>(),
+      _helper.GetHubContext());
+
+    var lens = _helper.GetLensQuery<ProductDto>();
 
     // Create initial product
     var productId = Guid.CreateVersion7();
@@ -132,27 +132,23 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
     };
     await perspective.Update(deletedEvent, CancellationToken.None);
 
-    // Assert - Verify product was soft deleted in bff.product_catalog
-    var connectionString = await _dbHelper.GetConnectionStringAsync();
-    await using var connection = new NpgsqlConnection(connectionString);
-    await connection.OpenAsync();
-
-    var product = await connection.QuerySingleOrDefaultAsync<ProductRow>(
-      "SELECT product_id, name, deleted_at FROM bff.product_catalog WHERE product_id = @ProductId",
-      new { ProductId = productId });
+    // Assert - Verify product was soft deleted using lens query
+    var product = await lens.GetByIdAsync(productId.ToString(), CancellationToken.None);
 
     await Assert.That(product).IsNotNull(); // Should still exist
-    await Assert.That(product!.product_id).IsEqualTo(productId);
-    await Assert.That(product.name).IsEqualTo("To Be Deleted"); // Data intact
-    await Assert.That(product.deleted_at).IsNotNull(); // Soft deleted
+    await Assert.That(product!.ProductId).IsEqualTo(productId);
+    await Assert.That(product.Name).IsEqualTo("To Be Deleted"); // Data intact
+    await Assert.That(product.DeletedAt).IsNotNull(); // Soft deleted
   }
 
   [Test]
   public async Task Update_WithDuplicateProductCreatedEvent_HandlesGracefullyAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var logger = new TestLogger<ProductCatalogPerspective>();
-    var perspective = new ProductCatalogPerspective(connectionFactory, logger, null!);
+    var perspective = new ProductCatalogPerspective(
+      _helper.GetPerspectiveStore<ProductDto>(),
+      _helper.GetLensQuery<ProductDto>(),
+      _helper.GetLogger<ProductCatalogPerspective>(),
+      _helper.GetHubContext());
 
     var productId = Guid.CreateVersion7();
     var @event = new ProductCreatedEvent {
@@ -165,39 +161,23 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
       CreatedAt = DateTime.UtcNow
     };
 
-    // Act - Create same product twice
+    // Act - Create same product twice (upsert should handle gracefully)
+    await perspective.Update(@event, CancellationToken.None);
     await perspective.Update(@event, CancellationToken.None);
 
-    // This should either succeed (upsert) or fail gracefully
-    // depending on implementation choice
-    var exception = await Assert.ThrowsAsync<Exception>(async () => {
-      await perspective.Update(@event, CancellationToken.None);
-    });
-
-    // Assert - Should either succeed or throw specific exception
-    // Implementation will determine exact behavior
+    // Assert - Should succeed (upsert behavior)
+    var lens = _helper.GetLensQuery<ProductDto>();
+    var product = await lens.GetByIdAsync(productId.ToString(), CancellationToken.None);
+    await Assert.That(product).IsNotNull();
+    await Assert.That(product!.ProductId).IsEqualTo(productId);
   }
 
   [After(Test)]
   public async Task CleanupAsync() {
-    await _dbHelper.CleanupDatabaseAsync();
+    await _helper.CleanupDatabaseAsync();
   }
 
   public async ValueTask DisposeAsync() {
-    await _dbHelper.DisposeAsync();
+    await _helper.DisposeAsync();
   }
-}
-
-/// <summary>
-/// DTO for reading product_catalog rows from database
-/// </summary>
-internal record ProductRow {
-  public Guid product_id { get; init; }
-  public string name { get; init; } = string.Empty;
-  public string? description { get; init; }
-  public decimal price { get; init; }
-  public string? image_url { get; init; }
-  public DateTime created_at { get; init; }
-  public DateTime? updated_at { get; init; }
-  public DateTime? deleted_at { get; init; }
 }

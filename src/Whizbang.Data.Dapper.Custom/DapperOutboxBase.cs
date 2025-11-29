@@ -101,7 +101,7 @@ public abstract class DapperOutboxBase : IOutbox {
       new { BatchSize = batchSize },
       cancellationToken: cancellationToken);
 
-    return rows.Select(r => new OutboxMessage(
+    return [.. rows.Select(r => new OutboxMessage(
       MessageId.From(r.MessageId),
       r.Destination,
       r.EventType,
@@ -109,7 +109,7 @@ public abstract class DapperOutboxBase : IOutbox {
       r.Metadata,
       r.Scope,
       r.CreatedAt
-    )).ToList();
+    ))];
   }
 
   public async Task MarkPublishedAsync(MessageId messageId, CancellationToken cancellationToken = default) {

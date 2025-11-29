@@ -10,7 +10,7 @@ namespace Whizbang.Core.Pooling;
 /// Thread-safe and lock-free using ConcurrentBag.
 /// </summary>
 public static class PolicyContextPool {
-  private static readonly ConcurrentBag<PolicyContext> _pool = new();
+  private static readonly ConcurrentBag<PolicyContext> _pool = [];
   private static int _poolSize = 0;
   private const int MaxPoolSize = 1024;
 
@@ -24,9 +24,7 @@ public static class PolicyContextPool {
       IServiceProvider? services,
       string environment
   ) {
-    PolicyContext? context = null;
-
-    if (_pool.TryTake(out context)) {
+    if (_pool.TryTake(out var context)) {
       Interlocked.Decrement(ref _poolSize);
     } else {
       context = new PolicyContext();

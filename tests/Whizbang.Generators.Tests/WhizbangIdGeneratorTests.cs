@@ -8,7 +8,7 @@ namespace Whizbang.Generators.Tests;
 /// Following TDD: These tests are written BEFORE the generator implementation.
 /// All tests should FAIL initially (RED phase), then pass after implementation (GREEN phase).
 /// </summary>
-public class WhizbangIdGeneratorTests {
+public partial class WhizbangIdGeneratorTests {
   /// <summary>
   /// Test that type-based discovery generates a complete value object.
   /// Usage: [WhizbangId] public readonly partial struct ProductId;
@@ -367,10 +367,7 @@ public class WhizbangIdGeneratorTests {
     await Assert.That(generatedSource).IsNotNull();
 
     // Count occurrences of struct declaration (should be exactly 1)
-    var structDeclarationCount = System.Text.RegularExpressions.Regex.Matches(
-        generatedSource!,
-        @"public readonly partial struct ProductId"
-    ).Count;
+    var structDeclarationCount = MyRegex().Count(generatedSource);
     await Assert.That(structDeclarationCount).IsEqualTo(1);
   }
 
@@ -444,4 +441,8 @@ public class WhizbangIdGeneratorTests {
     var warning = diagnostics.FirstOrDefault(d => d.Id == "WHIZ024");
     await Assert.That(warning).IsNull();
   }
+
+  [System.Text.RegularExpressions.GeneratedRegex(@"public readonly partial struct ProductId"
+  )]
+  private static partial System.Text.RegularExpressions.Regex MyRegex();
 }

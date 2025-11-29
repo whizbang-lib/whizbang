@@ -2,8 +2,6 @@ using ECommerce.Contracts.Generated;
 using Whizbang.Core;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Observability;
-using Whizbang.Core.Workers;
-using Whizbang.Data.Dapper.Postgres;
 using Whizbang.Transports.AzureServiceBus;
 
 var builder = Host.CreateApplicationBuilder(args);
@@ -12,15 +10,14 @@ var builder = Host.CreateApplicationBuilder(args);
 builder.AddServiceDefaults();
 
 // Get connection strings from Aspire configuration
-var postgresConnection = builder.Configuration.GetConnectionString("shippingdb")
-    ?? throw new InvalidOperationException("PostgreSQL connection string 'shippingdb' not found");
 var serviceBusConnection = builder.Configuration.GetConnectionString("servicebus")
     ?? throw new InvalidOperationException("Azure Service Bus connection string 'servicebus' not found");
 
-// Register Whizbang Postgres stores (with automatic schema initialization)
-var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
-builder.Services.AddWhizbangPostgres(postgresConnection, jsonOptions, initializeSchema: true);
-builder.Services.AddWhizbangPostgresHealthChecks();
+// TODO: Migrate to EF Core implementations
+// The ShippingWorker needs EF Core implementations of:
+// - Inbox (for reliable event consumption)
+// - Outbox (for reliable shipping event publishing)
+// Migration plan: builder.Services.AddWhizbang().WithEFCore<ShippingDbContext>().WithDriver.Postgres
 
 // Register Azure Service Bus transport
 builder.Services.AddAzureServiceBusTransport(serviceBusConnection, ECommerce.Contracts.Generated.WhizbangJsonContext.Default);
@@ -29,18 +26,16 @@ builder.Services.AddAzureServiceBusHealthChecks();
 // Add trace store for observability
 builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
 
-// Register Whizbang dispatcher with source-generated receptors
-builder.Services.AddReceptors();
-builder.Services.AddWhizbangDispatcher();
+// TODO: Re-enable after EF Core implementations
+// builder.Services.AddReceptors();
+// builder.Services.AddWhizbangDispatcher();
+// builder.Services.AddHostedService<OutboxPublisherWorker>();
 
-// Register outbox publisher worker for reliable event publishing
-builder.Services.AddHostedService<OutboxPublisherWorker>();
-
-// Configure Service Bus consumer to receive events from other services
-var consumerOptions = new ServiceBusConsumerOptions();
-consumerOptions.Subscriptions.Add(new TopicSubscription("orders", "shipping-service"));
-builder.Services.AddSingleton(consumerOptions);
-builder.Services.AddHostedService<ServiceBusConsumerWorker>();
+// TODO: Re-enable after EF Core inbox
+// var consumerOptions = new ServiceBusConsumerOptions();
+// consumerOptions.Subscriptions.Add(new TopicSubscription("orders", "shipping-service"));
+// builder.Services.AddSingleton(consumerOptions);
+// builder.Services.AddHostedService<ServiceBusConsumerWorker>();
 
 var host = builder.Build();
 host.Run();

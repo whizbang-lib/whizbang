@@ -48,7 +48,7 @@ public class InMemorySerializerTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = message,
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           ServiceName = "Test",
@@ -58,7 +58,7 @@ public class InMemorySerializerTests {
             ["key2"] = 123
           }
         }
-      }
+      ]
     };
 
     // Act - Round trip
@@ -93,13 +93,13 @@ public class InMemorySerializerTests {
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "test", Value = 1 },
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           ServiceName = "Test",
           Timestamp = DateTimeOffset.UtcNow
         }
-      }
+      ]
     };
   }
 }

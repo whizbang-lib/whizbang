@@ -12,26 +12,18 @@ namespace Whizbang.Core.Workers;
 /// Background worker that polls the outbox and publishes pending messages to the transport.
 /// Implements the transactional outbox pattern for reliable message delivery.
 /// </summary>
-public class OutboxPublisherWorker : BackgroundService {
-  private readonly IOutbox _outbox;
-  private readonly ITransport _transport;
-  private readonly ILogger<OutboxPublisherWorker> _logger;
-  private readonly OutboxPublisherOptions _options;
-  private readonly JsonSerializerOptions _jsonOptions;
-
-  public OutboxPublisherWorker(
-    IOutbox outbox,
-    ITransport transport,
-    JsonSerializerOptions jsonOptions,
-    OutboxPublisherOptions? options = null,
-    ILogger<OutboxPublisherWorker>? logger = null
-  ) {
-    _outbox = outbox ?? throw new ArgumentNullException(nameof(outbox));
-    _transport = transport ?? throw new ArgumentNullException(nameof(transport));
-    _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
-    _options = options ?? new OutboxPublisherOptions();
-    _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<OutboxPublisherWorker>.Instance;
-  }
+public class OutboxPublisherWorker(
+  IOutbox outbox,
+  ITransport transport,
+  JsonSerializerOptions jsonOptions,
+  OutboxPublisherOptions? options = null,
+  ILogger<OutboxPublisherWorker>? logger = null
+  ) : BackgroundService {
+  private readonly IOutbox _outbox = outbox ?? throw new ArgumentNullException(nameof(outbox));
+  private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
+  private readonly ILogger<OutboxPublisherWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<OutboxPublisherWorker>.Instance;
+  private readonly OutboxPublisherOptions _options = options ?? new OutboxPublisherOptions();
+  private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
 
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     _logger.LogInformation(
@@ -124,7 +116,7 @@ public class OutboxPublisherWorker : BackgroundService {
       var hopsJson = hopsElem.GetRawText();
       var hopsTypeInfo = _jsonOptions.GetTypeInfo(typeof(List<MessageHop>));
       if (hopsTypeInfo != null) {
-        hops = JsonSerializer.Deserialize(hopsJson, hopsTypeInfo) as List<MessageHop> ?? new List<MessageHop>();
+        hops = JsonSerializer.Deserialize(hopsJson, hopsTypeInfo) as List<MessageHop> ?? [];
       }
     }
 

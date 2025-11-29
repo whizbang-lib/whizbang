@@ -5,15 +5,8 @@ namespace ECommerce.BFF.API.Endpoints;
 /// <summary>
 /// Create a new order (fire-and-forget)
 /// </summary>
-public class CreateOrderEndpoint : Endpoint<CreateOrderRequest, CreateOrderResponse> {
-  private readonly ILogger<CreateOrderEndpoint> _logger;
-  // TODO: Uncomment after implementing dispatcher
-  // private readonly IDispatcher _dispatcher;
-
-  public CreateOrderEndpoint(ILogger<CreateOrderEndpoint> logger) {
-    _logger = logger;
-    // _dispatcher = dispatcher;
-  }
+public class CreateOrderEndpoint(ILogger<CreateOrderEndpoint> logger) : Endpoint<CreateOrderRequest, CreateOrderResponse> {
+  private readonly ILogger<CreateOrderEndpoint> _logger = logger;
 
   public override void Configure() {
     Post("/orders");

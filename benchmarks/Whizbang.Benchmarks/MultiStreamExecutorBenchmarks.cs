@@ -41,7 +41,7 @@ public class MultiStreamExecutorBenchmarks {
       var envelope = new MessageEnvelope<TestCommand> {
         MessageId = MessageId.New(),
         Payload = message,
-        Hops = new List<MessageHop>()
+        Hops = []
       };
       envelope.AddHop(new MessageHop {
         Type = HopType.Current,

@@ -709,7 +709,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         var startIndex = genericPrefix.Length;
         var endIndex = fullyQualifiedTypeName.LastIndexOf('>');
         if (endIndex > startIndex) {
-          return fullyQualifiedTypeName.Substring(startIndex, endIndex - startIndex);
+          return fullyQualifiedTypeName[startIndex..endIndex];
         }
       }
     }
@@ -767,7 +767,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
         // Extract simple name from fully qualified element type
         var parts = elementTypeName.Split('.');
-        var elementSimpleName = parts[parts.Length - 1].Replace("global::", "");
+        var elementSimpleName = parts[^1].Replace("global::", "");
 
         listTypes[listTypeName] = new ListTypeInfo(
             ListTypeName: listTypeName,

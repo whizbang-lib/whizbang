@@ -14,8 +14,8 @@ public class ParallelExecutor : IExecutionStrategy {
   private readonly SemaphoreSlim _semaphore;
   private readonly int _maxConcurrency;
   private State _state = State.NotStarted;
-  private readonly object _stateLock = new();
-  private readonly ConcurrentBag<Task> _runningTasks = new();
+  private readonly Lock _stateLock = new();
+  private readonly ConcurrentBag<Task> _runningTasks = [];
 
   public ParallelExecutor(int maxConcurrency = 10) {
     if (maxConcurrency <= 0) {

@@ -7,11 +7,7 @@ namespace Whizbang.Data.Dapper.Sqlite;
 /// SQLite-specific implementation of ISequenceProvider using Dapper.
 /// SQLite doesn't support RETURNING clause, so we use a different approach.
 /// </summary>
-public class DapperSqliteSequenceProvider : DapperSequenceProviderBase {
-  public DapperSqliteSequenceProvider(IDbConnectionFactory connectionFactory, IDbExecutor executor)
-    : base(connectionFactory, executor) {
-  }
-
+public class DapperSqliteSequenceProvider(IDbConnectionFactory connectionFactory, IDbExecutor executor) : DapperSequenceProviderBase(connectionFactory, executor) {
   protected override string GetUpdateSequenceSql() => @"
     UPDATE whizbang_sequences
     SET current_value = current_value + 1, last_updated_at = @Now

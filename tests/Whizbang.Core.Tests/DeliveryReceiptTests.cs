@@ -27,7 +27,7 @@ public class DeliveryReceiptTests {
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Accepted);
     await Assert.That(receipt.CorrelationId).IsEqualTo(correlationId);
     await Assert.That(receipt.CausationId).IsEqualTo(causationId);
-    await Assert.That(receipt.Timestamp).IsNotEqualTo(default(DateTimeOffset));
+    await Assert.That(receipt.Timestamp).IsNotEqualTo(default);
   }
 
   [Test]
@@ -47,7 +47,7 @@ public class DeliveryReceiptTests {
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Queued);
     await Assert.That(receipt.CorrelationId).IsEqualTo(correlationId);
     await Assert.That(receipt.CausationId).IsEqualTo(causationId);
-    await Assert.That(receipt.Timestamp).IsNotEqualTo(default(DateTimeOffset));
+    await Assert.That(receipt.Timestamp).IsNotEqualTo(default);
   }
 
   [Test]
@@ -170,7 +170,7 @@ public class DeliveryReceiptTests {
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Accepted);
     await Assert.That(receipt.CorrelationId).IsEqualTo(correlationId);
     await Assert.That(receipt.CausationId).IsEqualTo(causationId);
-    await Assert.That(receipt.Timestamp).IsNotEqualTo(default(DateTimeOffset));
+    await Assert.That(receipt.Timestamp).IsNotEqualTo(default);
     await Assert.That(receipt.Metadata).IsNotNull();
   }
 }

@@ -19,14 +19,14 @@ public class OrderServiceIntegrationTests {
     var command = new CreateOrderCommand {
       OrderId = orderId,
       CustomerId = customerId,
-      LineItems = new List<OrderLineItem> {
+      LineItems = [
         new OrderLineItem {
           ProductId = productId,
           ProductName = "Widget",
           Quantity = 2,
           UnitPrice = 19.99m
         }
-      },
+      ],
       TotalAmount = 39.98m
     };
 

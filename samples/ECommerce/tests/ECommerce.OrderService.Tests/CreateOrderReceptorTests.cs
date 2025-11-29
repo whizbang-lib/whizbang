@@ -17,7 +17,7 @@ public class CreateOrderReceptorTests {
   /// Helper class to track dispatcher calls
   /// </summary>
   private class TestDispatcher : IDispatcher {
-    public List<object> PublishedMessages { get; } = new();
+    public List<object> PublishedMessages { get; } = [];
     public int PublishCount => PublishedMessages.Count;
 
     public Task PublishAsync<TEvent>(TEvent @event) {
@@ -66,14 +66,14 @@ public class CreateOrderReceptorTests {
     var command = new CreateOrderCommand {
       OrderId = orderId,
       CustomerId = customerId,
-      LineItems = new List<OrderLineItem> {
+      LineItems = [
         new OrderLineItem {
           ProductId = productId,
           ProductName = "Widget",
           Quantity = 2,
           UnitPrice = 19.99m
         }
-      },
+      ],
       TotalAmount = 39.98m
     };
 
@@ -102,14 +102,14 @@ public class CreateOrderReceptorTests {
     var command = new CreateOrderCommand {
       OrderId = OrderId.New(),
       CustomerId = CustomerId.New(),
-      LineItems = new List<OrderLineItem> {
+      LineItems = [
         new OrderLineItem {
           ProductId = ProductId.New(),
           ProductName = "Widget",
           Quantity = 2,
           UnitPrice = 19.99m
         }
-      },
+      ],
       TotalAmount = -10.00m  // Invalid negative amount
     };
 
@@ -129,14 +129,14 @@ public class CreateOrderReceptorTests {
     var command = new CreateOrderCommand {
       OrderId = OrderId.New(),
       CustomerId = CustomerId.New(),
-      LineItems = new List<OrderLineItem> {
+      LineItems = [
         new OrderLineItem {
           ProductId = ProductId.New(),
           ProductName = "Widget",
           Quantity = 2,
           UnitPrice = 19.99m
         }
-      },
+      ],
       TotalAmount = 0.00m  // Invalid zero amount
     };
 
@@ -156,7 +156,7 @@ public class CreateOrderReceptorTests {
     var command = new CreateOrderCommand {
       OrderId = OrderId.New(),
       CustomerId = CustomerId.New(),
-      LineItems = new List<OrderLineItem>(),  // Empty list
+      LineItems = [],  // Empty list
       TotalAmount = 39.98m
     };
 
@@ -180,7 +180,7 @@ public class CreateOrderReceptorTests {
     var command = new CreateOrderCommand {
       OrderId = orderId,
       CustomerId = customerId,
-      LineItems = new List<OrderLineItem> {
+      LineItems = [
         new OrderLineItem {
           ProductId = productId1,
           ProductName = "Widget",
@@ -193,7 +193,7 @@ public class CreateOrderReceptorTests {
           Quantity = 1,
           UnitPrice = 29.99m
         }
-      },
+      ],
       TotalAmount = 69.97m
     };
 

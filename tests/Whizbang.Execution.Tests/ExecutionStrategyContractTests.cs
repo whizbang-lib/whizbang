@@ -29,18 +29,18 @@ public abstract class ExecutionStrategyContractTests {
   /// <summary>
   /// Helper to create a minimal PolicyContext for testing.
   /// </summary>
-  protected PolicyContext CreateTestContext() {
+  protected static PolicyContext CreateTestContext() {
     return null!; // Execution strategies don't currently use PolicyContext
   }
 
   /// <summary>
   /// Helper to create a test envelope
   /// </summary>
-  protected IMessageEnvelope CreateTestEnvelope(string payload) {
+  protected static IMessageEnvelope CreateTestEnvelope(string payload) {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage(payload),
-      Hops = new List<MessageHop>()
+      Hops = []
     };
     envelope.AddHop(new MessageHop {
       Type = HopType.Current,
