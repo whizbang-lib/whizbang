@@ -22,6 +22,15 @@
     <PackageReference Include="PolySharp" PrivateAssets="all" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Reference the shared library and ensure it's packaged with the generator -->
+    <ProjectReference Include="../Whizbang.Generators.Shared/Whizbang.Generators.Shared.csproj">
+      <PrivateAssets>all</PrivateAssets>
+      <ReferenceOutputAssembly>true</ReferenceOutputAssembly>
+      <OutputItemType>Analyzer</OutputItemType>
+      <SetTargetFramework>TargetFramework=netstandard2.0</SetTargetFramework>
+    </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
     <!-- Template files - these are real C# code that gets full analyzer support -->
     <!-- BUT they must be excluded from compilation since they reference types not in this project -->
     <Compile Remove="Templates\**\*.cs" />

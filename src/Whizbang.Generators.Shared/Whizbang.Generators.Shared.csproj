@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+
+    <!-- This is NOT a generator itself - just shared helper library -->
+    <IsRoslynComponent>false</IsRoslynComponent>
+
+    <!-- Standard library properties -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Roslyn APIs for syntax/semantic analysis -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+
+    <!-- C# 12 features for netstandard2.0 -->
+    <PackageReference Include="PolySharp" />
+
+    <!-- Code analysis -->
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

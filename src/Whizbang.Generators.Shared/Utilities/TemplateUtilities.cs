@@ -1,11 +1,15 @@
+using System;
+using System.IO;
 using System.Linq;
+using System.Reflection;
 using System.Text.RegularExpressions;
 
-namespace Whizbang.Generators;
+namespace Whizbang.Generators.Shared.Utilities;
 
 /// <summary>
 /// Shared utilities for working with source generator templates.
 /// Provides robust template marker replacement with indentation preservation.
+/// Used by all Whizbang generators to ensure consistent template handling.
 /// </summary>
 public static class TemplateUtilities {
   /// <summary>
@@ -65,7 +69,7 @@ public static class TemplateUtilities {
       return code;
     }
 
-    var lines = code.Split(["\r\n", "\r", "\n"], System.StringSplitOptions.None);
+    var lines = code.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
     var indentedLines = lines.Select(line =>
         string.IsNullOrWhiteSpace(line) ? line : indentation + line
     );
@@ -83,7 +87,7 @@ public static class TemplateUtilities {
   /// <param name="resourceNamespace">Namespace prefix for resources (default: "Whizbang.Generators.Templates.Snippets")</param>
   /// <returns>The code inside the #region block, without region tags or indentation</returns>
   public static string ExtractSnippet(
-      System.Reflection.Assembly assembly,
+      Assembly assembly,
       string templateName,
       string regionName,
       string resourceNamespace = "Whizbang.Generators.Templates.Snippets") {
@@ -91,14 +95,6 @@ public static class TemplateUtilities {
     var template = GetEmbeddedTemplate(assembly, templateName, resourceNamespace);
 
     // Pattern to extract content between #region and #endregion
-    // (\s*)           - Capture leading whitespace before #region
-    // #region\s+      - Match '#region' followed by whitespace
-    // {regionName}    - Match the specific region name
-    // [^\r\n]*        - Rest of #region line (non-capturing)
-    // [\r\n]+         - Match line ending(s) after #region
-    // (.*?)           - Capture content between region tags (non-greedy)
-    // [\r\n]+\s*      - Match final newline and indentation before #endregion
-    // #endregion      - Match endregion tag
     var pattern = $@"(\s*)#region\s+{Regex.Escape(regionName)}[^\r\n]*[\r\n]+(.*?)[\r\n]+\s*#endregion";
 
     var match = Regex.Match(template, pattern, RegexOptions.Singleline);
@@ -106,13 +102,10 @@ public static class TemplateUtilities {
       return $"// ERROR: Snippet region '{regionName}' not found in {templateName}";
     }
 
-    // Group 1 captures whitespace before #region, which may include trailing newline from previous line
-    // Group 2 captures the content between region tags
     var rawIndentation = match.Groups[1].Value;
     var content = match.Groups[2].Value;
 
-    // Remove any newline characters from the captured indentation
-    // (they're not part of the actual line indentation)
+    // Remove newline characters from captured indentation
     var indentation = rawIndentation.Replace("\r", "").Replace("\n", "");
 
     // Remove the base indentation from all lines
@@ -128,14 +121,14 @@ public static class TemplateUtilities {
       return code;
     }
 
-    var lines = code.Split(["\r\n", "\r", "\n"], System.StringSplitOptions.None);
+    var lines = code.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
     var result = lines.Select(line => {
       if (string.IsNullOrWhiteSpace(line)) {
         return line;
       }
 
       if (line.StartsWith(indentationToRemove)) {
-        return line[indentationToRemove.Length..];
+        return line.Substring(indentationToRemove.Length);
       }
       return line;
     });
@@ -148,10 +141,10 @@ public static class TemplateUtilities {
   /// </summary>
   /// <param name="assembly">The assembly containing the embedded resource</param>
   /// <param name="templateName">Template filename (e.g., "DispatcherTemplate.cs")</param>
-  /// <param name="resourceNamespace">Namespace prefix for resources (e.g., "Whizbang.Generators.Templates")</param>
+  /// <param name="resourceNamespace">Namespace prefix for resources (default: "Whizbang.Generators.Templates")</param>
   /// <returns>Template file contents, or error message if not found</returns>
   public static string GetEmbeddedTemplate(
-      System.Reflection.Assembly assembly,
+      Assembly assembly,
       string templateName,
       string resourceNamespace = "Whizbang.Generators.Templates") {
 
@@ -160,11 +153,10 @@ public static class TemplateUtilities {
     using var stream = assembly.GetManifestResourceStream(resourceName);
     if (stream == null) {
       // Fallback: if embedded resource not found, return empty template
-      // This shouldn't happen in production but helps during development
       return "// ERROR: Template not found: " + templateName;
     }
 
-    using var reader = new System.IO.StreamReader(stream);
+    using var reader = new StreamReader(stream);
     return reader.ReadToEnd();
   }
 
@@ -175,8 +167,8 @@ public static class TemplateUtilities {
   /// <param name="assembly">The assembly containing the embedded resources</param>
   /// <param name="template">The template content with a HEADER region</param>
   /// <returns>Template with HEADER region replaced with timestamped header</returns>
-  public static string ReplaceHeaderRegion(System.Reflection.Assembly assembly, string template) {
-    var timestamp = System.DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss UTC");
+  public static string ReplaceHeaderRegion(Assembly assembly, string template) {
+    var timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss UTC");
 
     // Load header snippet
     var headerSnippet = ExtractSnippet(
