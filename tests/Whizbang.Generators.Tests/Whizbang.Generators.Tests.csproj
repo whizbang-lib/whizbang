@@ -16,6 +16,8 @@
   <ItemGroup>
     <!-- Reference to the generator project we're testing -->
     <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj" />
+    <!-- Shared utilities used by generators -->
+    <ProjectReference Include="../../src/Whizbang.Generators.Shared/Whizbang.Generators.Shared.csproj" />
     <!-- Core for interfaces like ICommand, IEvent, etc. -->
     <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
   </ItemGroup>

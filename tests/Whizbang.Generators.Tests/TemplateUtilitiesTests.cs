@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators.Tests;
 
