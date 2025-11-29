@@ -1,8 +1,11 @@
+using ECommerce.BFF.API.Lenses;
+using ECommerce.Contracts.Generated;
+using ECommerce.InventoryWorker.Lenses;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Npgsql;
-using Testcontainers.ServiceBus;
 using Testcontainers.PostgreSql;
+using Testcontainers.ServiceBus;
 using Whizbang.Core;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Messaging;
@@ -11,9 +14,6 @@ using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Dapper.Postgres;
 using Whizbang.Transports.AzureServiceBus;
-using ECommerce.Contracts.Generated;
-using ECommerce.InventoryWorker.Lenses;
-using ECommerce.BFF.API.Lenses;
 
 namespace ECommerce.Integration.Tests.Fixtures;
 
@@ -153,9 +153,8 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton<IProductLens, ProductLens>();
     builder.Services.AddSingleton<IInventoryLens, InventoryLens>();
 
-    // Register perspectives for event processing
-    builder.Services.AddSingleton<ECommerce.InventoryWorker.Perspectives.ProductCatalogPerspective>();
-    builder.Services.AddSingleton<ECommerce.InventoryWorker.Perspectives.InventoryLevelsPerspective>();
+    // Register perspectives for event processing (using generated extension method)
+    builder.Services.AddWhizbangPerspectives();
 
     // Register Service Bus consumer subscriptions for InventoryWorker's own perspectives
     var consumerOptions = new ServiceBusConsumerOptions();
@@ -193,9 +192,8 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     // Note: BFF doesn't send commands in production, but needs dispatcher for event consumption
     builder.Services.AddWhizbangDispatcher();
 
-    // Register perspectives for event processing
-    builder.Services.AddScoped<ECommerce.BFF.API.Perspectives.ProductCatalogPerspective>();
-    builder.Services.AddScoped<ECommerce.BFF.API.Perspectives.InventoryLevelsPerspective>();
+    // Register perspectives for event processing (using generated extension method)
+    builder.Services.AddWhizbangPerspectives();
 
     // Register lenses (readonly repositories)
     builder.Services.AddScoped<IProductCatalogLens, ProductCatalogLens>();

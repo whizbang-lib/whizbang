@@ -1,17 +1,17 @@
+using ECommerce.BFF.API.Lenses;
+using ECommerce.Contracts.Generated;
+using ECommerce.InventoryWorker.Lenses;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Npgsql;
-using Testcontainers.ServiceBus;
 using Testcontainers.PostgreSql;
+using Testcontainers.ServiceBus;
 using Whizbang.Core;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Dapper.Postgres;
 using Whizbang.Transports.AzureServiceBus;
-using ECommerce.Contracts.Generated;
-using ECommerce.InventoryWorker.Lenses;
-using ECommerce.BFF.API.Lenses;
 
 namespace ECommerce.Integration.Tests.Fixtures;
 

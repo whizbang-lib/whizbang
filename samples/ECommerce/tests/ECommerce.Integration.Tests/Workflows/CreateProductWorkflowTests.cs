@@ -84,7 +84,7 @@ public class CreateProductWorkflowTests {
   public async Task CreateProduct_MultipleProducts_AllMaterializeCorrectlyAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-    
+
 
     var commands = new[] {
       new CreateProductCommand {
@@ -152,7 +152,7 @@ public class CreateProductWorkflowTests {
   public async Task CreateProduct_ZeroInitialStock_MaterializesWithZeroQuantityAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-    
+
 
     var command = new CreateProductCommand {
       ProductId = "test-prod-zero-stock",
@@ -185,7 +185,7 @@ public class CreateProductWorkflowTests {
   public async Task CreateProduct_NoImageUrl_MaterializesWithNullImageAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-    
+
 
     var command = new CreateProductCommand {
       ProductId = "test-prod-no-image",

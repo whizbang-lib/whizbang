@@ -33,7 +33,7 @@ public class UpdateProductWorkflowTests {
   public async Task UpdateProduct_Name_UpdatesPerspectivesAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-    
+
 
     // Create initial product
     var createCommand = new CreateProductCommand {
@@ -79,7 +79,7 @@ public class UpdateProductWorkflowTests {
   public async Task UpdateProduct_AllFields_UpdatesPerspectivesAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-    
+
 
     // Create initial product
     var createCommand = new CreateProductCommand {
@@ -128,7 +128,7 @@ public class UpdateProductWorkflowTests {
   public async Task UpdateProduct_PriceOnly_UpdatesOnlyPriceAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-    
+
 
     // Create initial product
     var createCommand = new CreateProductCommand {
@@ -173,7 +173,7 @@ public class UpdateProductWorkflowTests {
   public async Task UpdateProduct_DescriptionAndImage_UpdatesBothFieldsAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-    
+
 
     // Create initial product
     var createCommand = new CreateProductCommand {
@@ -219,7 +219,7 @@ public class UpdateProductWorkflowTests {
   public async Task UpdateProduct_MultipleSequentialUpdates_AccumulatesChangesAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-    
+
 
     // Create initial product
     var createCommand = new CreateProductCommand {
@@ -289,7 +289,7 @@ public class UpdateProductWorkflowTests {
   public async Task UpdateProduct_DoesNotAffectInventoryAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-    
+
 
     // Create product with initial stock
     var createCommand = new CreateProductCommand {
