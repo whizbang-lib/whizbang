@@ -21,6 +21,15 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 public class InMemoryInbox : IInbox {
   private readonly ConcurrentDictionary<MessageId, InboxRecord> _messages = new();
+  private readonly JsonSerializerOptions _jsonOptions;
+
+  /// <summary>
+  /// Initializes a new instance of InMemoryInbox with optional custom JSON options.
+  /// </summary>
+  /// <param name="jsonOptions">JSON serialization options. If null, uses WhizbangJsonContext.Default.</param>
+  public InMemoryInbox(JsonSerializerOptions? jsonOptions = null) {
+    _jsonOptions = jsonOptions ?? new JsonSerializerOptions { TypeInfoResolver = WhizbangJsonContext.Default };
+  }
 
   /// <inheritdoc />
   public Task StoreAsync<TMessage>(MessageEnvelope<TMessage> envelope, string handlerName, CancellationToken cancellationToken = default) {
@@ -31,8 +40,7 @@ public class InMemoryInbox : IInbox {
     var eventType = typeof(TMessage).FullName ?? throw new InvalidOperationException("Event type has no FullName");
 
     // Serialize using AOT-compatible JsonTypeInfo
-    var jsonOptions = new JsonSerializerOptions { TypeInfoResolver = WhizbangJsonContext.Default };
-    var typeInfo = (JsonTypeInfo<TMessage>)jsonOptions.GetTypeInfo(typeof(TMessage));
+    var typeInfo = (JsonTypeInfo<TMessage>)_jsonOptions.GetTypeInfo(typeof(TMessage));
     var eventDataJson = JsonSerializer.Serialize(envelope.Payload, typeInfo);
 
     // For in-memory, we'll store as strings (simulating JSONB)

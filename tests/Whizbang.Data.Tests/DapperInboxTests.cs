@@ -27,7 +27,8 @@ public class DapperInboxTests : InboxContractTests {
   }
 
   protected override Task<IInbox> CreateInboxAsync() {
-    var jsonOptions = WhizbangJsonContext.CreateOptions();
+    // Use Core.Tests JSON context which includes TestMessage
+    var jsonOptions = global::Whizbang.Core.Tests.Generated.WhizbangJsonContext.CreateOptions();
     var adapter = new EventEnvelopeJsonbAdapter(jsonOptions);
     var inbox = new DapperSqliteInbox(_testBase.ConnectionFactory, _testBase.Executor, adapter);
     return Task.FromResult<IInbox>(inbox);

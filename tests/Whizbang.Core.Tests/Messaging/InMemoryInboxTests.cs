@@ -2,6 +2,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Messaging;
@@ -13,13 +14,16 @@ namespace Whizbang.Core.Tests.Messaging;
 [InheritsTests]
 public class InMemoryInboxTests : InboxContractTests {
   protected override Task<IInbox> CreateInboxAsync() {
-    return Task.FromResult<IInbox>(new InMemoryInbox());
+    // Use Core.Tests JSON context which includes TestMessage
+    var jsonOptions = WhizbangJsonContext.CreateOptions();
+    return Task.FromResult<IInbox>(new InMemoryInbox(jsonOptions));
   }
 
   [Test]
   public async Task CleanupExpiredAsync_WithExpiredRecords_ShouldRemoveThemAsync() {
     // Arrange
-    var inbox = new InMemoryInbox();
+    var jsonOptions = WhizbangJsonContext.CreateOptions();
+    var inbox = new InMemoryInbox(jsonOptions);
     var envelope1 = CreateTestEnvelope();
     var envelope2 = CreateTestEnvelope();
 
@@ -46,7 +50,8 @@ public class InMemoryInboxTests : InboxContractTests {
   [Test]
   public async Task CleanupExpiredAsync_WithMixedRecords_ShouldOnlyRemoveExpiredAsync() {
     // Arrange
-    var inbox = new InMemoryInbox();
+    var jsonOptions = WhizbangJsonContext.CreateOptions();
+    var inbox = new InMemoryInbox(jsonOptions);
     var expiredEnvelope = CreateTestEnvelope();
     var recentEnvelope = CreateTestEnvelope();
 
@@ -75,7 +80,8 @@ public class InMemoryInboxTests : InboxContractTests {
   [Test]
   public async Task CleanupExpiredAsync_WithNoExpiredRecords_ShouldNotRemoveAnythingAsync() {
     // Arrange
-    var inbox = new InMemoryInbox();
+    var jsonOptions = WhizbangJsonContext.CreateOptions();
+    var inbox = new InMemoryInbox(jsonOptions);
     var envelope = CreateTestEnvelope();
 
     // Store and mark message as processed
@@ -103,10 +109,5 @@ public class InMemoryInboxTests : InboxContractTests {
         }
       ]
     };
-  }
-
-  // Test message type
-  private record TestMessage : IEvent {
-    public int Value { get; init; }
   }
 }

@@ -8,6 +8,13 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.Tests.Messaging;
 
 /// <summary>
+/// Test message type for inbox contract tests.
+/// </summary>
+public record TestMessage : IEvent {
+  public int Value { get; init; }
+}
+
+/// <summary>
 /// Contract tests for IInbox interface.
 /// All implementations of IInbox must pass these tests.
 /// Tests the new inbox pattern that mirrors IOutbox (staging + processing).
@@ -278,10 +285,5 @@ public abstract class InboxContractTests {
         }
       ]
     };
-  }
-
-  // Test message type - must be public for MessageJsonContextGenerator to discover it
-  public record TestMessage : IEvent {
-    public int Value { get; init; }
   }
 }
