@@ -71,7 +71,7 @@ public abstract class DapperInboxBase : IInbox {
   /// </summary>
   protected abstract string GetCleanupExpiredSql();
 
-  public async Task StoreAsync(IMessageEnvelope envelope, string handlerName, CancellationToken cancellationToken = default) {
+  public async Task StoreAsync<TMessage>(MessageEnvelope<TMessage> envelope, string handlerName, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
     ArgumentNullException.ThrowIfNull(handlerName);
 
@@ -82,8 +82,7 @@ public abstract class DapperInboxBase : IInbox {
     var jsonbModel = _envelopeAdapter.ToJsonb(envelope);
 
     // Get event type from payload
-    var payload = envelope.GetPayload();
-    var eventType = payload.GetType().FullName ?? throw new InvalidOperationException("Event type has no FullName");
+    var eventType = typeof(TMessage).FullName ?? throw new InvalidOperationException("Event type has no FullName");
 
     var sql = GetStoreSql();
 

@@ -28,7 +28,7 @@ public class DapperSqliteEventStore(
   /// Stream ID is provided explicitly, avoiding reflection.
   /// Uses retry logic with the UNIQUE constraint to handle concurrent writes.
   /// </summary>
-  public override async Task AppendAsync(Guid streamId, IMessageEnvelope envelope, CancellationToken cancellationToken = default) {
+  public override async Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
 
     const int maxRetries = 10;
@@ -44,7 +44,7 @@ public class DapperSqliteEventStore(
         var nextSequence = lastSequence + 1;
 
         // Serialize envelope (AOT-compatible via WhizbangJsonContext in resolver chain)
-        var envelopeType = envelope.GetType();
+        var envelopeType = typeof(MessageEnvelope<TMessage>);
         var typeInfo = _jsonOptions.GetTypeInfo(envelopeType) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
         var json = JsonSerializer.Serialize(envelope, typeInfo);
 

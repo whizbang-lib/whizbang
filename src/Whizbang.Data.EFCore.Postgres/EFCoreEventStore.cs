@@ -1,126 +1,230 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Core;
+using Whizbang.Core.Generated;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Data.EFCore.Postgres.Entities;
+using Whizbang.Data.EFCore.Postgres.Serialization;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
 /// <summary>
 /// EF Core implementation of IEventStore using PostgreSQL with JSONB columns.
-/// Provides append-only event storage with optimistic concurrency control.
+/// Provides append-only event storage for event sourcing and streaming scenarios.
+/// Stores events with stream-based organization using sequence numbers.
 /// </summary>
 public sealed class EFCoreEventStore<TDbContext> : IEventStore
   where TDbContext : DbContext {
 
   private readonly TDbContext _context;
-  private readonly string _tableName;
+  private static readonly JsonSerializerOptions _jsonOptions = EFCoreJsonContext.CreateCombinedOptions();
 
   public EFCoreEventStore(TDbContext context) {
     _context = context ?? throw new ArgumentNullException(nameof(context));
-    _tableName = "event_store"; // Default table name, can be configured
   }
 
-  public async Task AppendAsync(
-      string streamId,
-      long expectedVersion,
-      IEnumerable<object> events,
+  /// <summary>
+  /// Appends an event to the specified stream.
+  /// Assigns the next sequence number automatically.
+  /// Ensures optimistic concurrency through unique constraint on (StreamId, Sequence).
+  /// </summary>
+  public async Task AppendAsync<TMessage>(
+      Guid streamId,
+      MessageEnvelope<TMessage> envelope,
       CancellationToken cancellationToken = default) {
 
-    if (string.IsNullOrWhiteSpace(streamId)) {
-      throw new ArgumentException("Stream ID cannot be null or whitespace.", nameof(streamId));
-    }
+    ArgumentNullException.ThrowIfNull(envelope);
 
-    if (expectedVersion < 0) {
-      throw new ArgumentException("Expected version must be non-negative.", nameof(expectedVersion));
-    }
+    // Get the next sequence number for this stream
+    var lastSequence = await GetLastSequenceAsync(streamId, cancellationToken);
+    var nextSequence = lastSequence + 1;
 
-    var eventList = events?.ToList() ?? throw new ArgumentNullException(nameof(events));
-    if (eventList.Count == 0) {
-      return; // Nothing to append
-    }
+    // Serialize envelope data to JSON using JsonTypeInfo for AOT compatibility
+    var typeInfo = (JsonTypeInfo<TMessage>)_jsonOptions.GetTypeInfo(typeof(TMessage));
+    var eventDataJson = JsonSerializer.Serialize(envelope.Payload, typeInfo);
+    var eventData = JsonDocument.Parse(eventDataJson);
+    var metadata = SerializeMetadata(envelope);
+    var scope = SerializeScope(envelope);
 
-    // Check current stream version for optimistic concurrency
-    var currentVersion = await GetStreamVersionAsync(streamId, cancellationToken);
-    if (currentVersion != expectedVersion) {
+    var record = new EventStoreRecord {
+      StreamId = streamId,
+      Sequence = nextSequence,
+      EventType = typeof(TMessage).FullName ?? "Unknown",
+      EventData = eventData,
+      Metadata = metadata,
+      Scope = scope,
+      CreatedAt = DateTime.UtcNow
+    };
+
+    await _context.Set<EventStoreRecord>().AddAsync(record, cancellationToken);
+
+    try {
+      await _context.SaveChangesAsync(cancellationToken);
+    } catch (DbUpdateException ex) when (IsDuplicateKeyException(ex)) {
+      // Concurrent append detected - optimistic concurrency failure
       throw new InvalidOperationException(
-        $"Concurrency conflict: Expected version {expectedVersion} but stream is at version {currentVersion}");
+        $"Concurrent modification detected for stream {streamId} at sequence {nextSequence}. " +
+        "Another process has already appended to this stream.",
+        ex);
     }
-
-    // Append events with sequential versions
-    var nextVersion = expectedVersion + 1;
-    var records = new List<EventStoreRecord>();
-
-    foreach (var @event in eventList) {
-      var eventType = @event.GetType().FullName
-        ?? throw new InvalidOperationException($"Event type has no FullName: {@event.GetType()}");
-
-      // Serialize event to JSON
-      var eventDataJson = JsonSerializer.Serialize(@event);
-      var eventData = JsonDocument.Parse(eventDataJson);
-
-      // Create metadata (placeholder - should come from MessageEnvelope)
-      var metadataJson = JsonSerializer.Serialize(new {
-        Timestamp = DateTime.UtcNow,
-        CorrelationId = Guid.NewGuid().ToString(),
-        CausationId = Guid.NewGuid().ToString()
-      });
-      var metadata = JsonDocument.Parse(metadataJson);
-
-      var record = new EventStoreRecord {
-        StreamId = streamId,
-        Version = nextVersion++,
-        EventType = eventType,
-        EventData = eventData,
-        Metadata = metadata,
-        Scope = null,
-        CreatedAt = DateTime.UtcNow
-      };
-
-      records.Add(record);
-    }
-
-    // Add all records in batch
-    await _context.Set<EventStoreRecord>().AddRangeAsync(records, cancellationToken);
-    await _context.SaveChangesAsync(cancellationToken);
   }
 
-  public async Task<IEnumerable<object>> ReadStreamAsync(
-      string streamId,
-      long fromVersion = 1,
-      CancellationToken cancellationToken = default) {
+  /// <summary>
+  /// Reads events from a stream with strong typing.
+  /// Returns events in sequence order starting from the specified sequence number.
+  /// Uses IAsyncEnumerable for efficient streaming of large event sequences.
+  /// </summary>
+  public async IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
+      Guid streamId,
+      long fromSequence,
+      [EnumeratorCancellation] CancellationToken cancellationToken = default) {
 
-    if (string.IsNullOrWhiteSpace(streamId)) {
-      throw new ArgumentException("Stream ID cannot be null or whitespace.", nameof(streamId));
-    }
+    // Query events from the specified sequence onwards
+    var query = _context.Set<EventStoreRecord>()
+      .Where(e => e.StreamId == streamId && e.Sequence >= fromSequence)
+      .OrderBy(e => e.Sequence)
+      .AsAsyncEnumerable();
 
-    var records = await _context.Set<EventStoreRecord>()
-      .Where(e => e.StreamId == streamId && e.Version >= fromVersion)
-      .OrderBy(e => e.Version)
-      .ToListAsync(cancellationToken);
-
-    var events = new List<object>();
-    foreach (var record in records) {
-      // Deserialize event (requires type resolution - simplified for now)
-      var eventType = Type.GetType(record.EventType);
-      if (eventType == null) {
-        throw new InvalidOperationException($"Cannot resolve event type: {record.EventType}");
+    await foreach (var record in query.WithCancellation(cancellationToken)) {
+      // Deserialize the event data using JsonTypeInfo for AOT compatibility
+      var eventDataJson = record.EventData.RootElement.GetRawText();
+      var typeInfo = (JsonTypeInfo<TMessage>)_jsonOptions.GetTypeInfo(typeof(TMessage));
+      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo);
+      if (eventData == null) {
+        throw new InvalidOperationException($"Failed to deserialize event at sequence {record.Sequence}");
       }
 
-      var @event = JsonSerializer.Deserialize(record.EventData.RootElement.GetRawText(), eventType)
-        ?? throw new InvalidOperationException($"Failed to deserialize event: {record.EventType}");
+      // Deserialize metadata to reconstruct envelope
+      var metadataJson = record.Metadata.RootElement.GetRawText();
+      var metadata = JsonSerializer.Deserialize(metadataJson, EFCoreJsonContext.Default.EnvelopeMetadataDto);
+      if (metadata == null) {
+        throw new InvalidOperationException($"Failed to deserialize metadata at sequence {record.Sequence}");
+      }
 
-      events.Add(@event);
+      // Reconstruct message hops from metadata
+      var hops = new List<MessageHop>();
+      foreach (var hop in metadata.Hops) {
+        // Parse HopType enum
+        var hopType = Enum.TryParse<HopType>(hop.Type, out var parsedType) ? parsedType : HopType.Current;
+
+        // Reconstruct security context if present
+        SecurityContext? securityContext = null;
+        if (hop.SecurityContext != null) {
+          securityContext = new SecurityContext {
+            UserId = hop.SecurityContext.UserId,
+            TenantId = hop.SecurityContext.TenantId
+          };
+        }
+
+        var messageHop = new MessageHop {
+          Type = hopType,
+          Topic = hop.Topic,
+          StreamKey = hop.StreamKey,
+          PartitionIndex = hop.PartitionIndex,
+          SequenceNumber = hop.SequenceNumber,
+          SecurityContext = securityContext,
+          Metadata = hop.Metadata,
+          CallerMemberName = hop.CallerMemberName,
+          CallerFilePath = hop.CallerFilePath,
+          CallerLineNumber = hop.CallerLineNumber,
+          Timestamp = hop.Timestamp,
+          Duration = hop.Duration ?? TimeSpan.Zero,
+          ServiceName = "Unknown", // Not serialized, default value
+          CorrelationId = metadata.CorrelationId != null ? CorrelationId.Parse(metadata.CorrelationId) : null,
+          CausationId = metadata.CausationId != null ? MessageId.Parse(metadata.CausationId) : null
+        };
+        hops.Add(messageHop);
+      }
+
+      // Reconstruct the message envelope using the constructor
+      var envelope = new MessageEnvelope<TMessage>(
+        MessageId.Parse(record.StreamId.ToString()), // Use StreamId as message context
+        eventData!,
+        hops
+      );
+
+      yield return envelope;
     }
-
-    return events;
   }
 
-  private async Task<long> GetStreamVersionAsync(string streamId, CancellationToken cancellationToken) {
-    var maxVersion = await _context.Set<EventStoreRecord>()
-      .Where(e => e.StreamId == streamId)
-      .MaxAsync(e => (long?)e.Version, cancellationToken);
+  /// <summary>
+  /// Gets the last (highest) sequence number for a stream.
+  /// Returns -1 if the stream doesn't exist or is empty.
+  /// </summary>
+  public async Task<long> GetLastSequenceAsync(
+      Guid streamId,
+      CancellationToken cancellationToken = default) {
 
-    return maxVersion ?? 0; // Stream doesn't exist yet, version is 0
+    var lastSequence = await _context.Set<EventStoreRecord>()
+      .Where(e => e.StreamId == streamId)
+      .MaxAsync(e => (long?)e.Sequence, cancellationToken);
+
+    return lastSequence ?? -1;
+  }
+
+  /// <summary>
+  /// Serializes envelope metadata (correlation, causation, hops) to JSON.
+  /// </summary>
+  private static JsonDocument SerializeMetadata(IMessageEnvelope envelope) {
+    var metadata = new EnvelopeMetadataDto {
+      CorrelationId = envelope.GetCorrelationId()?.ToString(),
+      CausationId = envelope.GetCausationId()?.ToString(),
+      Timestamp = envelope.GetMessageTimestamp(),
+      Hops = envelope.Hops.Select(h => new HopMetadataDto {
+        Type = h.Type.ToString(),
+        Topic = h.Topic,
+        StreamKey = h.StreamKey,
+        PartitionIndex = h.PartitionIndex,
+        SequenceNumber = h.SequenceNumber,
+        SecurityContext = h.SecurityContext != null ? new SecurityContextDto {
+          UserId = h.SecurityContext.UserId?.ToString(),
+          TenantId = h.SecurityContext.TenantId?.ToString()
+        } : null,
+        Metadata = h.Metadata,
+        CallerMemberName = h.CallerMemberName,
+        CallerFilePath = h.CallerFilePath,
+        CallerLineNumber = h.CallerLineNumber,
+        Timestamp = h.Timestamp,
+        Duration = h.Duration
+      }).ToList()
+    };
+
+    var json = JsonSerializer.Serialize(metadata, EFCoreJsonContext.Default.EnvelopeMetadataDto);
+    return JsonDocument.Parse(json);
+  }
+
+  /// <summary>
+  /// Serializes security scope (tenant, user) to JSON if present.
+  /// </summary>
+  private static JsonDocument? SerializeScope(IMessageEnvelope envelope) {
+    // Extract security context from first hop if available
+    var firstHop = envelope.Hops.FirstOrDefault();
+    if (firstHop?.SecurityContext == null) {
+      return null;
+    }
+
+    var scope = new ScopeDto {
+      UserId = firstHop.SecurityContext.UserId?.ToString(),
+      TenantId = firstHop.SecurityContext.TenantId?.ToString()
+    };
+
+    var json = JsonSerializer.Serialize(scope, EFCoreJsonContext.Default.ScopeDto);
+    return JsonDocument.Parse(json);
+  }
+
+  /// <summary>
+  /// Checks if the exception is due to a duplicate key constraint violation.
+  /// PostgreSQL uses error code 23505 for unique constraint violations.
+  /// </summary>
+  private static bool IsDuplicateKeyException(DbUpdateException ex) {
+    // Check for PostgreSQL unique constraint violation
+    // The error message typically contains "23505" or "duplicate key"
+    return ex.InnerException?.Message.Contains("23505") == true ||
+           ex.InnerException?.Message.Contains("duplicate key", StringComparison.OrdinalIgnoreCase) == true;
   }
 }

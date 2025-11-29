@@ -42,7 +42,7 @@ public abstract class InboxContractTests {
     var inbox = await CreateInboxAsync();
 
     // Act & Assert
-    await Assert.That(() => inbox.StoreAsync(null!, "TestHandler"))
+    await Assert.That(() => inbox.StoreAsync<TestMessage>(null!, "TestHandler"))
       .ThrowsExactly<ArgumentNullException>();
   }
 
@@ -266,7 +266,7 @@ public abstract class InboxContractTests {
   }
 
   // Helper method to create test envelope
-  private static IMessageEnvelope CreateTestEnvelope() {
+  private static MessageEnvelope<TestMessage> CreateTestEnvelope() {
     var message = new TestMessage { Value = 42 };
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),

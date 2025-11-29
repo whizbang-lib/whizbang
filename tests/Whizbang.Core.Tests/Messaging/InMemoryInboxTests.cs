@@ -91,7 +91,7 @@ public class InMemoryInboxTests : InboxContractTests {
   }
 
   // Helper method to create test envelope
-  private static IMessageEnvelope CreateTestEnvelope() {
+  private static MessageEnvelope<TestMessage> CreateTestEnvelope() {
     var message = new TestMessage { Value = 42 };
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),

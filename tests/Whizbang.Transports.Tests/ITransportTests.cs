@@ -132,7 +132,7 @@ public class ITransportTests {
     return new InProcessTransport();
   }
 
-  private static IMessageEnvelope CreateTestEnvelope() {
+  private static MessageEnvelope<TestMessage> CreateTestEnvelope() {
     var message = new TestMessage { Content = "Test" };
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),

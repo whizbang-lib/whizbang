@@ -26,14 +26,14 @@ public class InMemoryEventStore(
   private readonly IPerspectiveInvoker? _perspectiveInvoker = perspectiveInvoker;
 
   /// <inheritdoc />
-  public Task AppendAsync(Guid streamId, IMessageEnvelope envelope, CancellationToken cancellationToken = default) {
+  public Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
 
     var stream = _streams.GetOrAdd(streamId, _ => new StreamData());
     stream.Append(envelope);
 
     // Queue event for perspective invocation at scope disposal
-    if (_perspectiveInvoker != null && envelope.GetPayload() is IEvent @event) {
+    if (_perspectiveInvoker != null && envelope.Payload is IEvent @event) {
       _perspectiveInvoker.QueueEvent(@event);
     }
 

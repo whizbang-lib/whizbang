@@ -40,11 +40,11 @@ public class DapperPostgresEventStore(
   /// Stream ID is provided explicitly, avoiding reflection.
   /// Splits envelope into 3 JSONB columns, validates size, handles concurrent writes with retry.
   /// </summary>
-  public override async Task AppendAsync(Guid streamId, IMessageEnvelope envelope, CancellationToken cancellationToken = default) {
+  public override async Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
 
     // Get policy configuration
-    var payload = envelope.GetPayload();
+    var payload = envelope.Payload;
     var policyCtx = new PolicyContext(payload, envelope);
     var policy = await _policyEngine.MatchAsync(policyCtx);
 
@@ -52,7 +52,7 @@ public class DapperPostgresEventStore(
     var jsonb = _adapter.ToJsonb(envelope, policy);
 
     // Validate size (calculates in C#, logs warnings, adds to metadata if threshold crossed)
-    jsonb = _sizeValidator.Validate(jsonb, payload.GetType().Name, policy);
+    jsonb = _sizeValidator.Validate(jsonb, typeof(TMessage).Name, policy);
 
     const int maxRetries = 10;
     var lastException = default(Exception);
@@ -74,7 +74,7 @@ public class DapperPostgresEventStore(
             EventId = envelope.MessageId.Value,
             StreamId = streamId,
             SequenceNumber = nextSequence,
-            EventType = payload.GetType().FullName,
+            EventType = typeof(TMessage).FullName,
             EventData = jsonb.DataJson,
             Metadata = jsonb.MetadataJson,
             Scope = jsonb.ScopeJson,

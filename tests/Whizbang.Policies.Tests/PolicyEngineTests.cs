@@ -25,7 +25,7 @@ public class PolicyEngineTests {
   /// <summary>
   /// Helper to create a test envelope
   /// </summary>
-  private static IMessageEnvelope CreateTestEnvelope<TMessage>(TMessage payload) {
+  private static Whizbang.Core.Observability.MessageEnvelope<TMessage> CreateTestEnvelope<TMessage>(TMessage payload) {
     var envelope = new Whizbang.Core.Observability.MessageEnvelope<TMessage> {
       MessageId = MessageId.New(),
       Payload = payload,

@@ -16,12 +16,14 @@ public interface IOutbox {
   /// <summary>
   /// Stores a message envelope in the outbox for later publication.
   /// Uses the same 3-column JSONB pattern as the event store (event_data, metadata, scope).
+  /// Generic for AOT compatibility - allows compile-time type information for JSON serialization.
   /// </summary>
+  /// <typeparam name="TMessage">The message payload type (must be registered in JsonSerializerContext)</typeparam>
   /// <param name="envelope">The message envelope to store</param>
   /// <param name="destination">The destination to publish to (topic, queue, etc.)</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Task that completes when the message is stored</returns>
-  Task StoreAsync(IMessageEnvelope envelope, string destination, CancellationToken cancellationToken = default);
+  Task StoreAsync<TMessage>(MessageEnvelope<TMessage> envelope, string destination, CancellationToken cancellationToken = default);
 
   /// <summary>
   /// Gets pending messages that have not yet been published.

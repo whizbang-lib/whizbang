@@ -63,7 +63,7 @@ public abstract class OutboxContractTests {
     var outbox = await CreateOutboxAsync();
 
     // Act & Assert
-    await Assert.That(() => outbox.StoreAsync(null!, "test-topic"))
+    await Assert.That(() => outbox.StoreAsync<OutboxTestEvent>(null!, "test-topic"))
       .ThrowsExactly<ArgumentNullException>();
   }
 

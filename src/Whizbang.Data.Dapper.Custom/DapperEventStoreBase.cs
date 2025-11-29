@@ -69,7 +69,7 @@ public abstract class DapperEventStoreBase : IEventStore {
   /// <summary>
   /// AOT-compatible append with explicit stream ID.
   /// </summary>
-  public abstract Task AppendAsync(Guid streamId, IMessageEnvelope envelope, CancellationToken cancellationToken = default);
+  public abstract Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default);
 
   public abstract IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
     Guid streamId,

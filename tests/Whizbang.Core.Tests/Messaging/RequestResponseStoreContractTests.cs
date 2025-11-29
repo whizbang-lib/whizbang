@@ -137,7 +137,7 @@ public abstract class RequestResponseStoreContractTests {
   /// <summary>
   /// Helper method to create a test message envelope.
   /// </summary>
-  private static IMessageEnvelope CreateTestEnvelope() {
+  private static MessageEnvelope<TestResponse> CreateTestEnvelope() {
     return new MessageEnvelope<TestResponse> {
       MessageId = MessageId.New(),
       Payload = new TestResponse("test response"),

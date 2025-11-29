@@ -17,12 +17,14 @@ public interface IInbox {
   /// <summary>
   /// Stores an incoming message envelope in the inbox for later processing.
   /// Uses the same 3-column JSONB pattern as outbox and event store (event_data, metadata, scope).
+  /// Generic for AOT compatibility - allows compile-time type information for JSON serialization.
   /// </summary>
+  /// <typeparam name="TMessage">The message payload type (must be registered in JsonSerializerContext)</typeparam>
   /// <param name="envelope">The message envelope to store</param>
   /// <param name="handlerName">The name of the handler that will process this message</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Task that completes when the message is stored</returns>
-  Task StoreAsync(IMessageEnvelope envelope, string handlerName, CancellationToken cancellationToken = default);
+  Task StoreAsync<TMessage>(MessageEnvelope<TMessage> envelope, string handlerName, CancellationToken cancellationToken = default);
 
   /// <summary>
   /// Gets pending messages that have not yet been processed.

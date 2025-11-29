@@ -22,14 +22,13 @@ public class InMemoryOutbox(IJsonbPersistenceAdapter<IMessageEnvelope> envelopeA
   private readonly IJsonbPersistenceAdapter<IMessageEnvelope> _envelopeAdapter = envelopeAdapter ?? throw new ArgumentNullException(nameof(envelopeAdapter));
 
   /// <inheritdoc />
-  public Task StoreAsync(IMessageEnvelope envelope, string destination, CancellationToken cancellationToken = default) {
+  public Task StoreAsync<TMessage>(MessageEnvelope<TMessage> envelope, string destination, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
     ArgumentNullException.ThrowIfNull(destination);
 
     // Convert envelope to JSONB format
     var jsonbModel = _envelopeAdapter.ToJsonb(envelope);
-    var payload = envelope.GetPayload();
-    var eventType = payload.GetType().FullName ?? throw new InvalidOperationException("Event type has no FullName");
+    var eventType = typeof(TMessage).FullName ?? throw new InvalidOperationException("Event type has no FullName");
 
     var record = new OutboxRecord(
       MessageId: envelope.MessageId,

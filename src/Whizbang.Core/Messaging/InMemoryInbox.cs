@@ -1,9 +1,13 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
+using Whizbang.Core.Generated;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 
@@ -19,20 +23,24 @@ public class InMemoryInbox : IInbox {
   private readonly ConcurrentDictionary<MessageId, InboxRecord> _messages = new();
 
   /// <inheritdoc />
-  public Task StoreAsync(IMessageEnvelope envelope, string handlerName, CancellationToken cancellationToken = default) {
+  public Task StoreAsync<TMessage>(MessageEnvelope<TMessage> envelope, string handlerName, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
     ArgumentNullException.ThrowIfNull(handlerName);
 
     // Get event type from payload
-    var payload = envelope.GetPayload();
-    var eventType = payload.GetType().FullName ?? throw new InvalidOperationException("Event type has no FullName");
+    var eventType = typeof(TMessage).FullName ?? throw new InvalidOperationException("Event type has no FullName");
+
+    // Serialize using AOT-compatible JsonTypeInfo
+    var jsonOptions = new JsonSerializerOptions { TypeInfoResolver = WhizbangJsonContext.Default };
+    var typeInfo = (JsonTypeInfo<TMessage>)jsonOptions.GetTypeInfo(typeof(TMessage));
+    var eventDataJson = JsonSerializer.Serialize(envelope.Payload, typeInfo);
 
     // For in-memory, we'll store as strings (simulating JSONB)
     var record = new InboxRecord(
       MessageId: envelope.MessageId,
       HandlerName: handlerName,
       EventType: eventType,
-      EventData: System.Text.Json.JsonSerializer.Serialize(payload),
+      EventData: eventDataJson,
       Metadata: "{}",  // Simplified for in-memory
       Scope: null,
       ReceivedAt: DateTimeOffset.UtcNow,

@@ -24,7 +24,7 @@ public abstract class TraceStoreContractTests {
   /// <summary>
   /// Helper to create a test envelope with specified IDs and timing.
   /// </summary>
-  private static IMessageEnvelope CreateTestEnvelope<TMessage>(
+  private static MessageEnvelope<TMessage> CreateTestEnvelope<TMessage>(
     TMessage payload,
     MessageId? messageId = null,
     CorrelationId? correlationId = null,

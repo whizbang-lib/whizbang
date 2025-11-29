@@ -19,12 +19,14 @@ public interface IEventStore {
   /// Appends an event to the specified stream (AOT-compatible).
   /// Stream ID is provided explicitly, avoiding reflection.
   /// Events are ordered by sequence number within each stream.
+  /// Generic for AOT compatibility - allows compile-time type information for JSON serialization.
   /// </summary>
+  /// <typeparam name="TMessage">The message payload type (must be registered in JsonSerializerContext)</typeparam>
   /// <param name="streamId">The stream identifier (aggregate ID)</param>
   /// <param name="envelope">The message envelope to append</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Task that completes when the event is appended</returns>
-  Task AppendAsync(Guid streamId, IMessageEnvelope envelope, CancellationToken cancellationToken = default);
+  Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default);
 
   /// <summary>
   /// Reads events from a stream by stream ID (UUID) with strong typing.

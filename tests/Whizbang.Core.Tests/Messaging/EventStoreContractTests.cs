@@ -57,7 +57,7 @@ public abstract class EventStoreContractTests {
     var streamId = Guid.NewGuid();
 
     // Act & Assert
-    await Assert.That(() => eventStore.AppendAsync(streamId, null!))
+    await Assert.That(() => eventStore.AppendAsync<TestEvent>(streamId, null!))
       .ThrowsExactly<ArgumentNullException>();
   }
 
@@ -206,7 +206,7 @@ public abstract class EventStoreContractTests {
   /// <summary>
   /// Helper method to create a test message envelope with TestEvent payload.
   /// </summary>
-  private static IMessageEnvelope CreateTestEnvelope(Guid aggregateId, string payload) {
+  private static MessageEnvelope<TestEvent> CreateTestEnvelope(Guid aggregateId, string payload) {
     var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.New(),
       Payload = new TestEvent {

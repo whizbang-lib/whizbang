@@ -14,7 +14,7 @@ namespace Whizbang.Transports.Tests;
 /// </summary>
 [Category("Transport")]
 public class InProcessTransportTests {
-  private static IMessageEnvelope CreateTestEnvelope(string content) {
+  private static MessageEnvelope<TestMessage> CreateTestEnvelope(string content) {
     var message = new TestMessage { Content = content };
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),

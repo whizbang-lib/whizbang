@@ -330,7 +330,7 @@ public class IMessageSerializerTests {
     return new JsonMessageSerializer(options);
   }
 
-  private static IMessageEnvelope CreateTestEnvelope(TestMessage? message = null) {
+  private static MessageEnvelope<TestMessage> CreateTestEnvelope(TestMessage? message = null) {
     var msg = message ?? new TestMessage { Content = "Test", Value = 1 };
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
