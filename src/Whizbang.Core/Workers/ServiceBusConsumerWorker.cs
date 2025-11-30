@@ -82,8 +82,80 @@ public class ServiceBusConsumerWorker(
         envelope.MessageId
       );
 
+      // Deserialize the JsonElement payload to the actual event type
+      // The PayloadType is stored in the last hop's metadata by OutboxPublisherWorker
+      // IMPORTANT: Do this BEFORE adding receivedHop so lastHop refers to OutboxPublisherWorker's hop
+      var payload = envelope.GetPayload();
+      object? deserializedEvent = null;
+
+      // DEBUG: Log hop information
+      _logger.LogInformation("DEBUG: Envelope has {HopCount} hops", envelope.Hops.Count);
+
+      // Try to find PayloadType in the most recent hop metadata
+      var lastHop = envelope.Hops.LastOrDefault();
+      _logger.LogInformation("DEBUG: Last hop exists: {Exists}, Has metadata: {HasMetadata}",
+        lastHop != null,
+        lastHop?.Metadata != null);
+
+      if (lastHop?.Metadata != null && lastHop.Metadata.TryGetValue("PayloadType", out var payloadTypeObj)) {
+        _logger.LogInformation("DEBUG: PayloadType found in metadata");
+
+        var payloadTypeElem = (System.Text.Json.JsonElement)payloadTypeObj;
+        var payloadTypeName = payloadTypeElem.GetString();
+        _logger.LogInformation("DEBUG: PayloadType name: '{PayloadTypeName}'", payloadTypeName);
+
+        if (!string.IsNullOrEmpty(payloadTypeName)) {
+          // Get the Type from the fully-qualified name
+          var payloadType = Type.GetType(payloadTypeName);
+          _logger.LogInformation("DEBUG: Type.GetType() returned: {TypeFound} (Type: {TypeName})",
+            payloadType != null,
+            payloadType?.FullName ?? "null");
+
+          if (payloadType != null) {
+            // Get the JsonTypeInfo for this type from the JSON context
+            var typeInfo = _jsonOptions.GetTypeInfo(payloadType);
+            _logger.LogInformation("DEBUG: GetTypeInfo() returned: {TypeInfoFound}", typeInfo != null);
+
+            if (typeInfo != null && payload is System.Text.Json.JsonElement jsonElem) {
+              _logger.LogInformation("DEBUG: Payload is JsonElement, attempting deserialization...");
+              // Re-serialize the JsonElement and deserialize to the correct type
+              var json = jsonElem.GetRawText();
+              deserializedEvent = JsonSerializer.Deserialize(json, typeInfo);
+              _logger.LogInformation("DEBUG: Deserialization result: {Success} (Type: {TypeName})",
+                deserializedEvent != null,
+                deserializedEvent?.GetType().Name ?? "null");
+              _logger.LogInformation("DEBUG: AFTER DESERIALIZATION - Event is IEvent: {IsIEvent}",
+                deserializedEvent is IEvent);
+            } else {
+              _logger.LogWarning("DEBUG: Deserialization skipped - TypeInfo: {HasTypeInfo}, IsJsonElement: {IsJsonElement}",
+                typeInfo != null,
+                payload is System.Text.Json.JsonElement);
+            }
+          }
+        }
+      } else {
+        _logger.LogWarning("DEBUG: PayloadType NOT found in last hop metadata");
+        if (lastHop?.Metadata != null) {
+          _logger.LogWarning("DEBUG: Last hop metadata keys: {Keys}",
+            string.Join(", ", lastHop.Metadata.Keys));
+        }
+      }
+
+      // Fallback: If deserialization didn't produce an event, use payload if it's already an IEvent
+      // This happens in test scenarios or when the envelope already contains a typed event
+      if (deserializedEvent == null && payload is IEvent typedPayload) {
+        deserializedEvent = typedPayload;
+        _logger.LogInformation(
+          "DEBUG: Using typed payload directly as event: {EventType}",
+          typedPayload.GetType().Name
+        );
+      }
+
+      _logger.LogInformation("DEBUG: BEFORE ADDING HOP");
+
       // Add hop indicating message was received from Service Bus
       // This preserves the distributed trace from the sending service
+      // IMPORTANT: Add AFTER deserialization so PayloadType lookup works correctly
       var receivedHop = new MessageHop {
         Type = HopType.Current,
         ServiceName = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name ?? "Unknown",
@@ -92,35 +164,27 @@ public class ServiceBusConsumerWorker(
       };
       envelope.AddHop(receivedHop);
 
-      // Deserialize the JsonElement payload to the actual event type
-      // The PayloadType is stored in the last hop's metadata by OutboxPublisherWorker
-      var payload = envelope.GetPayload();
-      object? deserializedEvent = null;
-
-      // Try to find PayloadType in the most recent hop metadata
-      var lastHop = envelope.Hops.LastOrDefault();
-      if (lastHop?.Metadata != null && lastHop.Metadata.TryGetValue("PayloadType", out var payloadTypeObj)) {
-        var payloadTypeElem = (System.Text.Json.JsonElement)payloadTypeObj;
-        var payloadTypeName = payloadTypeElem.GetString();
-        if (!string.IsNullOrEmpty(payloadTypeName)) {
-          // Get the Type from the fully-qualified name
-          var payloadType = Type.GetType(payloadTypeName);
-          if (payloadType != null) {
-            // Get the JsonTypeInfo for this type from the JSON context
-            var typeInfo = _jsonOptions.GetTypeInfo(payloadType);
-            if (typeInfo != null && payload is System.Text.Json.JsonElement jsonElem) {
-              // Re-serialize the JsonElement and deserialize to the correct type
-              var json = jsonElem.GetRawText();
-              deserializedEvent = JsonSerializer.Deserialize(json, typeInfo);
-            }
-          }
-        }
-      }
+      _logger.LogInformation("DEBUG: BEFORE CREATING SCOPE");
 
       // Invoke perspectives in a scope (mimics Event Store behavior)
       // Create scope to resolve scoped services (IEventStore, IPerspectiveInvoker)
       await using var scope = _scopeFactory.CreateAsyncScope();
+
+      _logger.LogInformation("DEBUG: SCOPE CREATED, RESOLVING INVOKER");
+
       var perspectiveInvoker = scope.ServiceProvider.GetService<Perspectives.IPerspectiveInvoker>();
+
+      _logger.LogInformation("DEBUG: INVOKER RESOLVED: {InvokerType}",
+        perspectiveInvoker?.GetType().FullName ?? "NULL");
+
+      _logger.LogInformation("DEBUG: ABOUT TO LOG INVOKER TYPE");
+
+      // DEBUG: Log which invoker type is being resolved
+      _logger.LogInformation(
+        "DEBUG: PerspectiveInvoker type: {InvokerType}, Assembly: {Assembly}",
+        perspectiveInvoker?.GetType().FullName ?? "null",
+        perspectiveInvoker?.GetType().Assembly.GetName().Name ?? "null"
+      );
 
       // Log deserialization result
       _logger.LogInformation(
@@ -136,6 +200,15 @@ public class ServiceBusConsumerWorker(
           "Queued event {EventType} to perspective invoker",
           @event.GetType().Name
         );
+
+        // IMPORTANT: Invoke perspectives BEFORE disposing scope
+        // If we wait for scope disposal, the service provider will already be disposed
+        // when the invoker tries to resolve perspectives via GetServices()
+        await perspectiveInvoker.InvokePerspectivesAsync(ct);
+        _logger.LogInformation(
+          "Invoked perspectives for {EventType}",
+          @event.GetType().Name
+        );
       } else {
         _logger.LogWarning(
           "Failed to queue event - Deserialized: {Deserialized}, IsIEvent: {IsIEvent}, HasInvoker: {HasInvoker}",
@@ -145,8 +218,7 @@ public class ServiceBusConsumerWorker(
         );
       }
 
-      // Dispose scope to trigger perspective invocation
-      // (IPerspectiveInvoker.DisposeAsync invokes all queued perspectives)
+      // Dispose scope (invoker won't re-invoke perspectives since queue is already cleared)
       await scope.DisposeAsync();
 
       // Mark as processed in inbox (for deduplication)
