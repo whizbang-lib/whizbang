@@ -2,12 +2,12 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Whizbang.Core\Whizbang.Core.csproj" />
+    <ProjectReference Include="..\Whizbang.Data.EFCore.Custom\Whizbang.Data.EFCore.Custom.csproj" />
     <!-- Reference the generator project -->
     <ProjectReference Include="..\Whizbang.Data.EFCore.Postgres.Generators\Whizbang.Data.EFCore.Postgres.Generators.csproj"
                       OutputItemType="Analyzer"
                       ReferenceOutputAssembly="false" />
   </ItemGroup>
-
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />

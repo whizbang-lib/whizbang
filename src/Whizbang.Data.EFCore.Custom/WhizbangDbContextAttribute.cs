@@ -1,6 +1,6 @@
 using System;
 
-namespace Whizbang.Data.EFCore.Postgres;
+namespace Whizbang.Data.EFCore.Custom;
 
 /// <summary>
 /// Marks a DbContext class for Whizbang source generator discovery.

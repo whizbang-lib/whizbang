@@ -2,7 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using ECommerce.BFF.API.Lenses;
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Core.Lenses;
-using Whizbang.Data.EFCore.Postgres;
+using Whizbang.Data.EFCore.Custom;
 using Whizbang.Data.EFCore.Postgres.Generated;
 
 namespace ECommerce.BFF.API;

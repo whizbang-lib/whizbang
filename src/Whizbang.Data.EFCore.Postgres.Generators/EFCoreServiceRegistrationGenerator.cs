@@ -170,7 +170,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Check for [WhizbangDbContext] attribute (explicit opt-in required)
     var attribute = symbol.GetAttributes()
-        .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Data.EFCore.Postgres.WhizbangDbContextAttribute");
+        .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Data.EFCore.Custom.WhizbangDbContextAttribute");
 
     if (attribute is null) {
       return null;  // No attribute = not discovered (opt-in required)
