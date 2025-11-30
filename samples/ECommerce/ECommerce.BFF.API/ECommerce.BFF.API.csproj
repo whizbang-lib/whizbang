@@ -6,6 +6,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
     <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
+
+    <!-- Native AOT Configuration (DISABLED - EF Core 10 AOT is experimental, not production-ready) -->
+    <!-- See docs/EFCORE-AOT-STATUS.md for details. Re-enable when EF Core 12+ matures AOT support. -->
+    <!-- <PublishAot>true</PublishAot> -->
+    <!-- <IsAotCompatible>true</IsAotCompatible> -->
+    <!-- <InterceptorsNamespaces>$(InterceptorsNamespaces);Microsoft.EntityFrameworkCore.GeneratedInterceptors</InterceptorsNamespaces> -->
   </PropertyGroup>
 
   <ItemGroup>
@@ -30,6 +36,7 @@
     <PackageReference Include="HotChocolate.AspNetCore" />
     <PackageReference Include="HotChocolate.Data" />
     <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Tasks" />
   </ItemGroup>
 
 </Project>
