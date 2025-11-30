@@ -1,6 +1,10 @@
+extern alias InventoryWorker;
+extern alias BffApi;
+
 using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Generated;
 using ECommerce.InventoryWorker.Lenses;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
@@ -11,9 +15,11 @@ using Whizbang.Core;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.Dapper.Postgres;
+using Whizbang.Data.EFCore.Postgres;
 using Whizbang.Transports.AzureServiceBus;
 
 namespace ECommerce.Integration.Tests.Fixtures;
@@ -29,6 +35,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   private bool _isInitialized;
   private IHost? _inventoryHost;
   private IHost? _bffHost;
+  private static readonly Microsoft.EntityFrameworkCore.Storage.InMemoryDatabaseRoot _inMemoryDatabaseRoot = new();
 
   public SharedIntegrationFixture() {
     _postgresContainer = new PostgreSqlBuilder()
@@ -147,8 +154,8 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     // Register Whizbang dispatcher with source-generated receptors
     builder.Services.AddReceptors();
 
-    // Register perspective invoker for scoped event processing
-    builder.Services.AddWhizbangPerspectiveInvoker();
+    // Register perspective invoker for scoped event processing (use InventoryWorker's generated invoker)
+    InventoryWorker::Whizbang.Core.Generated.DispatcherRegistrations.AddWhizbangPerspectiveInvoker(builder.Services);
 
     // Register Whizbang dispatcher with outbox and transport support
     builder.Services.AddWhizbangDispatcher();
@@ -194,9 +201,24 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   private IHost CreateBffHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
 
-    // Register Whizbang Postgres stores
+    // Register Whizbang Postgres stores (Dapper-based for Inbox/Outbox/EventStore)
     var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
     builder.Services.AddWhizbangPostgres(postgresConnection, jsonOptions, initializeSchema: false);
+
+    // Register EF Core DbContext for perspectives with InMemory database using shared root
+    // The shared InMemoryDatabaseRoot ensures all scopes see the same data
+    builder.Services.AddDbContext<BffApi::ECommerce.BFF.API.BffDbContext>(options =>
+      options.UseInMemoryDatabase("BffIntegrationTestDb", _inMemoryDatabaseRoot));
+
+    // Register EF Core perspective stores using fluent API with InMemory driver
+    // This properly registers IPerspectiveStore<T> and ILensQuery<T> for all perspective DTOs
+    _ = BffApi::Whizbang.Core.Generated.PerspectiveRegistrationExtensions
+      .AddWhizbangPerspectives(builder.Services)
+      .WithEFCore<BffApi::ECommerce.BFF.API.BffDbContext>()
+      .WithDriver.InMemory;
+
+    // Register SignalR (required by BFF perspectives for real-time notifications)
+    builder.Services.AddSignalR();
 
     // Register Azure Service Bus transport
     builder.Services.AddAzureServiceBusTransport(serviceBusConnection, ECommerce.Contracts.Generated.WhizbangJsonContext.Default);
@@ -204,8 +226,10 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     // Add trace store for observability
     builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
 
-    // Register perspective invoker for scoped event processing
-    builder.Services.AddWhizbangPerspectiveInvoker();
+    // Register perspective invoker for scoped event processing (manually register BFF.API's generated invoker)
+    // BFF.API doesn't have DispatcherRegistrations because it has no Receptors, so manually register
+    builder.Services.AddScoped<IPerspectiveInvoker>(sp =>
+      new BffApi::Whizbang.Core.Generated.GeneratedPerspectiveInvoker(sp));
 
     // Register Whizbang dispatcher (needed by ServiceBusConsumerWorker)
     // Note: BFF doesn't send commands in production, but needs dispatcher for event consumption
@@ -291,33 +315,7 @@ CREATE TABLE IF NOT EXISTS inventoryworker.inventory_levels (
 CREATE INDEX IF NOT EXISTS idx_product_catalog_deleted_at ON inventoryworker.product_catalog(deleted_at);
 CREATE INDEX IF NOT EXISTS idx_inventory_levels_available ON inventoryworker.inventory_levels(available);
 
--- Create BFF schema
-CREATE SCHEMA IF NOT EXISTS bff;
-
--- BFF ProductCatalog perspective
-CREATE TABLE IF NOT EXISTS bff.product_catalog (
-  product_id UUID PRIMARY KEY,
-  name VARCHAR(200) NOT NULL,
-  description TEXT,
-  price DECIMAL(18, 2) NOT NULL,
-  image_url VARCHAR(500),
-  created_at TIMESTAMPTZ NOT NULL,
-  updated_at TIMESTAMPTZ,
-  deleted_at TIMESTAMPTZ
-);
-
--- BFF InventoryLevels perspective
-CREATE TABLE IF NOT EXISTS bff.inventory_levels (
-  product_id UUID PRIMARY KEY,
-  quantity INTEGER NOT NULL DEFAULT 0,
-  reserved INTEGER NOT NULL DEFAULT 0,
-  available INTEGER GENERATED ALWAYS AS (quantity - reserved) STORED,
-  last_updated TIMESTAMPTZ NOT NULL
-);
-
--- Create indices for BFF
-CREATE INDEX IF NOT EXISTS idx_bff_product_catalog_deleted_at ON bff.product_catalog(deleted_at);
-CREATE INDEX IF NOT EXISTS idx_bff_inventory_levels_available ON bff.inventory_levels(available);
+-- BFF perspectives use EF Core InMemory database (not Postgres), so no schema needed here
 ";
 
     await using var command = connection.CreateCommand();
@@ -329,7 +327,7 @@ CREATE INDEX IF NOT EXISTS idx_bff_inventory_levels_available ON bff.inventory_l
   /// Waits for asynchronous event processing to complete.
   /// Gives the Service Bus consumer and perspectives time to process published events.
   /// </summary>
-  public async Task WaitForEventProcessingAsync(int millisecondsDelay = 3000) {
+  public async Task WaitForEventProcessingAsync(int millisecondsDelay = 5000) {
     await Task.Delay(millisecondsDelay);
   }
 
@@ -349,16 +347,23 @@ CREATE INDEX IF NOT EXISTS idx_bff_inventory_levels_available ON bff.inventory_l
     var cleanupSql = @"
 TRUNCATE TABLE inventoryworker.product_catalog CASCADE;
 TRUNCATE TABLE inventoryworker.inventory_levels CASCADE;
-TRUNCATE TABLE bff.product_catalog CASCADE;
-TRUNCATE TABLE bff.inventory_levels CASCADE;
 TRUNCATE TABLE whizbang_outbox CASCADE;
 TRUNCATE TABLE whizbang_inbox CASCADE;
 TRUNCATE TABLE whizbang_event_store CASCADE;
+
+-- BFF perspectives use EF Core InMemory database, cleaned up separately below
 ";
 
     await using var command = connection.CreateCommand();
     command.CommandText = cleanupSql;
     await command.ExecuteNonQueryAsync(cancellationToken);
+
+    // Clear BFF EF Core InMemory database
+    using (var scope = _bffHost!.Services.CreateScope()) {
+      var dbContext = scope.ServiceProvider.GetRequiredService<BffApi::ECommerce.BFF.API.BffDbContext>();
+      dbContext.Database.EnsureDeleted();
+      dbContext.Database.EnsureCreated();
+    }
   }
 
   public async ValueTask DisposeAsync() {

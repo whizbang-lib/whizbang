@@ -7,6 +7,7 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// End-to-end integration tests for the UpdateProduct workflow.
 /// Tests the complete flow: Command → Receptor → Event Store → Perspectives.
 /// </summary>
+[NotInParallel]
 public class UpdateProductWorkflowTests {
   private static SharedIntegrationFixture? _fixture;
 

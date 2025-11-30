@@ -6,8 +6,8 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// <summary>
 /// End-to-end integration tests for the CreateProduct workflow.
 /// Tests the complete flow: Command → Receptor → Event Store → Perspectives.
-/// Uses unique product IDs per test to avoid collisions when running in parallel.
 /// </summary>
+[NotInParallel]
 public class CreateProductWorkflowTests {
   private static SharedIntegrationFixture? _fixture;
 
