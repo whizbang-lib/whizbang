@@ -3,35 +3,55 @@ using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Data.EFCore.Postgres.Generators;
 
 /// <summary>
-/// Source generator that discovers perspectives and generates EF Core ModelBuilder configuration.
-/// Generates a ConfigureWhizbangPerspectives() extension method for ModelBuilder.
-/// DISABLED: Replaced by EFCoreServiceRegistrationGenerator with fluent API.
+/// Source generator that discovers Perspective implementations and generates EF Core ModelBuilder setup.
+/// Generates a ConfigureWhizbang() extension method that configures:
+/// - PerspectiveRow&lt;TModel&gt; entities (discovered from IPerspectiveOf implementations with IPerspectiveStore&lt;TModel&gt; dependencies)
+/// - InboxRecord, OutboxRecord, EventStoreRecord (fixed Whizbang entities)
+/// Uses EF Core 10 ComplexProperty().ToJson() for JSONB columns (Postgres).
 /// </summary>
-// [Generator] // Disabled - using fluent API with EFCoreServiceRegistrationGenerator instead
+[Generator]
 public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
-  private const string PERSPECTIVE_INTERFACE = "Whizbang.Core.IPerspectiveOf<TEvent>";
+  private const string IPERSPECTIVE_OF_TYPE = "Whizbang.Core.IPerspectiveOf<TEvent>";
+  private const string IPERSPECTIVE_STORE_TYPE = "Whizbang.Core.Lenses.IPerspectiveStore<TModel>";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
-    // Discover all classes that implement IPerspectiveOf<TEvent>
-    var perspectives = context.SyntaxProvider.CreateSyntaxProvider(
+    // Discover classes implementing IPerspectiveOf<TEvent> that use IPerspectiveStore<TModel>
+    var perspectiveClasses = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
         transform: static (ctx, ct) => ExtractPerspectiveInfo(ctx, ct)
     ).Where(static info => info is not null);
 
-    // Generate ModelBuilder extension method
+    //  Combine with compilation to check assembly name
+    var perspectivesWithCompilation = perspectiveClasses.Collect()
+        .Combine(context.CompilationProvider);
+
+    // Generate ModelBuilder extension method with all Whizbang entities
     context.RegisterSourceOutput(
-        perspectives.Collect(),
-        static (ctx, perspectives) => GenerateModelBuilderExtension(ctx, perspectives!)
+        perspectivesWithCompilation,
+        static (ctx, data) => {
+          var perspectives = data.Left;
+          var compilation = data.Right;
+
+          // Skip generation if this IS the library project itself
+          // The library should not have this class baked in - only consuming projects should
+          if (compilation.AssemblyName == "Whizbang.Data.EFCore.Postgres") {
+            return;
+          }
+
+          GenerateModelBuilderExtension(ctx, perspectives!);
+        }
     );
   }
 
   /// <summary>
-  /// Extracts perspective information from a class declaration.
-  /// Returns null if the class doesn't implement IPerspectiveOf.
+  /// Extracts perspective information from a class implementing IPerspectiveOf.
+  /// Discovers TModel type from IPerspectiveStore&lt;TModel&gt; constructor parameter.
+  /// Returns null if the class doesn't implement IPerspectiveOf or doesn't have IPerspectiveStore dependency.
   /// </summary>
   private static PerspectiveInfo? ExtractPerspectiveInfo(
       GeneratorSyntaxContext context,
@@ -44,68 +64,49 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Find IPerspectiveOf<TEvent> interface
-    var perspectiveInterface = symbol.AllInterfaces.FirstOrDefault(i =>
-        i.OriginalDefinition.ToDisplayString() == PERSPECTIVE_INTERFACE);
+    // DEBUG: Check all interfaces the class implements
+    var allInterfaceNames = string.Join(", ",
+        symbol.AllInterfaces.Select(i => i.OriginalDefinition.ToDisplayString()));
 
-    if (perspectiveInterface is null) {
+    // Check if class implements IPerspectiveOf<TEvent>
+    // Note: IPerspectiveOf is generic with ONE type parameter (TEvent)
+    bool implementsIPerspectiveOf = symbol.AllInterfaces.Any(i => {
+      var originalDef = i.OriginalDefinition.ToDisplayString();
+      // IPerspectiveOf<TEvent> has full name "Whizbang.Core.IPerspectiveOf<TEvent>"
+      return originalDef.StartsWith("Whizbang.Core.IPerspectiveOf<");
+    });
+
+    if (!implementsIPerspectiveOf) {
       return null;
     }
 
-    // Get the event type (TEvent from IPerspectiveOf<TEvent>)
-    var eventType = perspectiveInterface.TypeArguments[0];
-
-    // Get the model type from the perspective's Model property
-    // Assumption: Perspectives have a property that returns the model type
-    // For now, we'll infer from the class name by convention
-    // E.g., "OrderPerspective" -> "OrderSummary" (remove "Perspective" suffix)
-    var className = symbol.Name;
-    var modelTypeName = InferModelTypeName(symbol);
-
-    if (modelTypeName is null) {
+    // Find IPerspectiveStore<TModel> in constructor parameters
+    var constructor = symbol.Constructors.FirstOrDefault();
+    if (constructor is null) {
       return null;
     }
 
-    // Generate table name from simple model type name (e.g., "OrderSummary" -> "order_summary")
-    // Extract just the class name without namespace
-    var simpleTypeName = modelTypeName.Contains('.')
-        ? modelTypeName.Substring(modelTypeName.LastIndexOf('.') + 1)
-        : modelTypeName;
-    var tableName = ToSnakeCase(simpleTypeName);
+    foreach (var parameter in constructor.Parameters) {
+      if (parameter.Type is INamedTypeSymbol parameterType) {
+        var originalDef = parameterType.OriginalDefinition.ToDisplayString();
 
-    return new PerspectiveInfo(
-        ModelTypeName: $"global::{modelTypeName}",
-        TableName: tableName
-    );
-  }
+        // IPerspectiveStore<TModel> has full name "Whizbang.Core.Perspectives.IPerspectiveStore<TModel>"
+        if (originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveStore<")) {
+          // Get TModel from IPerspectiveStore<TModel>
+          var modelType = parameterType.TypeArguments[0];
+          var tableName = ToSnakeCase(modelType.Name);
 
-  /// <summary>
-  /// Infers the model type name from the perspective class.
-  /// Looks for properties or methods that return the model type.
-  /// </summary>
-  private static string? InferModelTypeName(INamedTypeSymbol perspectiveSymbol) {
-    // Look for a property or method that returns a type (the model)
-    // Common patterns:
-    // 1. A property with a specific type
-    // 2. UpdateAsync method parameter type
-    // 3. Convention: Remove "Perspective" suffix from class name
-
-    // For now, use convention: Remove "Perspective" suffix
-    var className = perspectiveSymbol.Name;
-    if (className.EndsWith("Perspective")) {
-      var modelName = className.Substring(0, className.Length - "Perspective".Length);
-
-      // Get the containing namespace
-      var ns = perspectiveSymbol.ContainingNamespace;
-      if (ns is not null && !ns.IsGlobalNamespace) {
-        return $"{ns.ToDisplayString()}.{modelName}";
+          return new PerspectiveInfo(
+              ModelTypeName: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+              TableName: tableName
+          );
+        }
       }
-
-      return modelName;
     }
 
-    return null;
+    return null; // No IPerspectiveStore<TModel> found in constructor
   }
+
 
   /// <summary>
   /// Converts PascalCase to snake_case.
@@ -132,93 +133,139 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Generates the ModelBuilder extension method with EF Core configuration.
+  /// Generates the ModelBuilder extension method with EF Core configuration for all Whizbang entities.
+  /// Includes: discovered PerspectiveRow&lt;TModel&gt; entities + fixed entities (Inbox, Outbox, EventStore).
+  /// Uses template system for code generation.
   /// </summary>
   private static void GenerateModelBuilderExtension(
       SourceProductionContext context,
       ImmutableArray<PerspectiveInfo> perspectives) {
 
-    // ALWAYS report diagnostic to confirm generator is running (even if no perspectives found)
+    // DEBUG: Report that this method is running
+    var debugDescriptor = new DiagnosticDescriptor(
+        id: "EFCORE001",
+        title: "DEBUG: GenerateModelBuilderExtension Running",
+        messageFormat: "DEBUG: GenerateModelBuilderExtension called with {0} raw perspective(s)",
+        category: "Whizbang.Generator",
+        defaultSeverity: DiagnosticSeverity.Warning,
+        isEnabledByDefault: true);
+    context.ReportDiagnostic(Diagnostic.Create(debugDescriptor, Location.None, perspectives.Length));
+
+    // Deduplicate perspectives by ModelTypeName (multiple perspectives might use same model type)
+    var uniquePerspectives = perspectives
+        .GroupBy(p => p.ModelTypeName)
+        .Select(g => g.First())
+        .ToImmutableArray();
+
+    // Report diagnostic about discovery
     var runningDescriptor = new DiagnosticDescriptor(
         id: "EFCORE000",
-        title: "EF Core Generator Executed",
-        messageFormat: "EF Core perspective generator executed and discovered {0} perspective(s). Looking for interface: '{1}'",
+        title: "EF Core Configuration Generator Executed",
+        messageFormat: "Whizbang EF Core generator discovered {0} unique model type(s) from {1} perspective(s) + 3 fixed entities (Inbox, Outbox, EventStore)",
         category: "Whizbang.Generator",
         defaultSeverity: DiagnosticSeverity.Info,
         isEnabledByDefault: true);
 
-    context.ReportDiagnostic(Diagnostic.Create(runningDescriptor, Location.None, perspectives.Length, PERSPECTIVE_INTERFACE));
+    context.ReportDiagnostic(Diagnostic.Create(runningDescriptor, Location.None, uniquePerspectives.Length, perspectives.Length));
 
-    if (perspectives.IsEmpty) {
-      // Report warning if no perspectives found
-      var warningDescriptor = new DiagnosticDescriptor(
-          id: "EFCORE001",
-          title: "No Perspectives Found",
-          messageFormat: "EF Core perspective generator did not find any IPerspectiveOf implementations (searched for: '{0}')",
-          category: "Whizbang.Generator",
-          defaultSeverity: DiagnosticSeverity.Warning,
-          isEnabledByDefault: true);
+    // Load main template
+    var assembly = typeof(EFCorePerspectiveConfigurationGenerator).Assembly;
+    var template = TemplateUtilities.GetEmbeddedTemplate(
+        assembly,
+        "EFCoreConfigurationTemplate.cs",
+        "Whizbang.Data.EFCore.Postgres.Generators.Templates"
+    );
 
-      context.ReportDiagnostic(Diagnostic.Create(warningDescriptor, Location.None, PERSPECTIVE_INTERFACE));
-      return; // No perspectives found, nothing to generate
+    // Replace header with timestamp
+    template = TemplateUtilities.ReplaceRegion(
+        template,
+        "HEADER",
+        $"// <auto-generated/>\n// Generated by Whizbang.Data.EFCore.Postgres.Generators.EFCorePerspectiveConfigurationGenerator at {System.DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC\n// DO NOT EDIT - Changes will be overwritten\n#nullable enable"
+    );
+
+    // Replace __PERSPECTIVE_COUNT__ placeholder
+    template = template.Replace("__PERSPECTIVE_COUNT__", uniquePerspectives.Length.ToString());
+
+    // Generate perspective configurations
+    var perspectiveConfigs = new StringBuilder();
+    if (uniquePerspectives.Length > 0) {
+      perspectiveConfigs.AppendLine("  // ===== Discovered Perspective Entities =====");
+      perspectiveConfigs.AppendLine();
+
+      foreach (var perspective in uniquePerspectives) {
+        // Extract perspective entity config snippet
+        var snippet = TemplateUtilities.ExtractSnippet(
+            assembly,
+            "EFCoreSnippets.cs",
+            "PERSPECTIVE_ENTITY_CONFIG_SNIPPET",
+            "Whizbang.Data.EFCore.Postgres.Generators.Templates.Snippets"
+        );
+
+        // Replace placeholders
+        var config = snippet
+            .Replace("__MODEL_TYPE__", perspective.ModelTypeName)
+            .Replace("__TABLE_NAME__", perspective.TableName);
+
+        perspectiveConfigs.AppendLine(TemplateUtilities.IndentCode(config, "  "));
+        perspectiveConfigs.AppendLine();
+      }
     }
 
-    var sb = new StringBuilder();
+    template = TemplateUtilities.ReplaceRegion(template, "PERSPECTIVE_CONFIGURATIONS", perspectiveConfigs.ToString());
 
-    // File header
-    sb.AppendLine("// <auto-generated/>");
-    sb.AppendLine($"// Generated by Whizbang.Data.EFCore.Postgres.Generators at {System.DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
-    sb.AppendLine("// DO NOT EDIT - Changes will be overwritten");
-    sb.AppendLine("#nullable enable");
-    sb.AppendLine();
+    // Generate inbox configuration
+    var inboxSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        "EFCoreSnippets.cs",
+        "INBOX_ENTITY_CONFIG_SNIPPET",
+        "Whizbang.Data.EFCore.Postgres.Generators.Templates.Snippets"
+    );
+    template = TemplateUtilities.ReplaceRegion(template, "INBOX_CONFIGURATION", inboxSnippet);
 
-    sb.AppendLine("using Microsoft.EntityFrameworkCore;");
-    sb.AppendLine("using Whizbang.Core.Lenses;");
-    sb.AppendLine();
+    // Generate outbox configuration
+    var outboxSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        "EFCoreSnippets.cs",
+        "OUTBOX_ENTITY_CONFIG_SNIPPET",
+        "Whizbang.Data.EFCore.Postgres.Generators.Templates.Snippets"
+    );
+    template = TemplateUtilities.ReplaceRegion(template, "OUTBOX_CONFIGURATION", outboxSnippet);
 
-    sb.AppendLine("namespace Whizbang.Data.EFCore.Postgres;");
-    sb.AppendLine();
+    // Generate event store configuration
+    var eventStoreSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        "EFCoreSnippets.cs",
+        "EVENTSTORE_ENTITY_CONFIG_SNIPPET",
+        "Whizbang.Data.EFCore.Postgres.Generators.Templates.Snippets"
+    );
+    template = TemplateUtilities.ReplaceRegion(template, "EVENTSTORE_CONFIGURATION", eventStoreSnippet);
 
-    // Extension class
-    sb.AppendLine("/// <summary>");
-    sb.AppendLine("/// Extension methods for configuring Whizbang perspectives in EF Core ModelBuilder.");
-    sb.AppendLine("/// </summary>");
-    sb.AppendLine("public static class WhizbangModelBuilderExtensions {");
-    sb.AppendLine();
+    // Generate diagnostic perspective list
+    var diagnosticList = new StringBuilder();
+    if (uniquePerspectives.Length > 0) {
+      if (uniquePerspectives.Length == perspectives.Length) {
+        diagnosticList.AppendLine($"    logger.LogInformation(\"Discovered Perspectives: {uniquePerspectives.Length} perspective(s)\");");
+      } else {
+        diagnosticList.AppendLine($"    logger.LogInformation(\"Discovered Perspectives: {uniquePerspectives.Length} unique model type(s) from {perspectives.Length} perspective(s)\");");
+      }
+      diagnosticList.AppendLine("    logger.LogInformation(\"\");");
 
-    // Extension method
-    sb.AppendLine("  /// <summary>");
-    sb.AppendLine("  /// Configures all Whizbang perspectives for PostgreSQL with JSONB columns.");
-    sb.AppendLine("  /// </summary>");
-    sb.AppendLine("  /// <param name=\"modelBuilder\">The ModelBuilder instance</param>");
-    sb.AppendLine("  /// <returns>The ModelBuilder instance for chaining</returns>");
-    sb.AppendLine("  public static ModelBuilder ConfigureWhizbangPerspectives(this ModelBuilder modelBuilder) {");
-    sb.AppendLine();
-
-    // Configure each perspective
-    foreach (var perspective in perspectives) {
-      sb.AppendLine($"    // Configure {perspective.ModelTypeName}");
-      sb.AppendLine($"    modelBuilder.Entity<PerspectiveRow<{perspective.ModelTypeName}>>(entity => {{");
-      sb.AppendLine($"      entity.ToTable(\"{perspective.TableName}\");");
-      sb.AppendLine("      entity.HasKey(e => e.Id);");
-      sb.AppendLine();
-      sb.AppendLine("      // Configure JSONB columns using EF Core 10 complex types");
-      sb.AppendLine("      entity.ComplexProperty(e => e.Data).ToJson(\"model_data\");");
-      sb.AppendLine("      entity.ComplexProperty(e => e.Metadata).ToJson(\"metadata\");");
-      sb.AppendLine("      entity.ComplexProperty(e => e.Scope).ToJson(\"scope\");");
-      sb.AppendLine();
-      sb.AppendLine("      // Configure system fields");
-      sb.AppendLine("      entity.Property(e => e.CreatedAt).IsRequired();");
-      sb.AppendLine("      entity.Property(e => e.UpdatedAt).IsRequired();");
-      sb.AppendLine("      entity.Property(e => e.Version).IsRequired();");
-      sb.AppendLine("    });");
-      sb.AppendLine();
+      foreach (var perspective in uniquePerspectives) {
+        diagnosticList.AppendLine($"    logger.LogInformation(\"  - {perspective.ModelTypeName} (table: {perspective.TableName})\");");
+      }
+    } else {
+      diagnosticList.AppendLine("    logger.LogInformation(\"Discovered Perspectives: 0 perspective(s)\");");
     }
 
-    sb.AppendLine("    return modelBuilder;");
-    sb.AppendLine("  }");
-    sb.AppendLine("}");
+    template = TemplateUtilities.ReplaceRegion(template, "DIAGNOSTIC_PERSPECTIVE_LIST", diagnosticList.ToString());
 
-    context.AddSource("WhizbangModelBuilderExtensions.g.cs", sb.ToString());
+    // Replace diagnostic placeholders
+    var timestamp = System.DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+    template = template.Replace("__TIMESTAMP__", timestamp);
+
+    var totalEntityCount = uniquePerspectives.Length + 3; // perspectives + inbox + outbox + eventstore
+    template = template.Replace("__TOTAL_ENTITY_COUNT__", totalEntityCount.ToString());
+
+    context.AddSource("WhizbangModelBuilderExtensions.g.cs", template);
   }
 }
