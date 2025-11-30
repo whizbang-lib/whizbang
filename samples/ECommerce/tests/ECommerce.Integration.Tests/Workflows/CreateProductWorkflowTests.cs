@@ -11,13 +11,21 @@ namespace ECommerce.Integration.Tests.Workflows;
 public class CreateProductWorkflowTests {
   private static SharedIntegrationFixture? _fixture;
 
+  // Test product IDs (deterministic GUIDs for reproducibility)
+  private static readonly ProductId TestProd1 = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000001"));
+  private static readonly ProductId TestProdMulti1 = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000011"));
+  private static readonly ProductId TestProdMulti2 = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000012"));
+  private static readonly ProductId TestProdMulti3 = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000013"));
+  private static readonly ProductId TestProdZeroStock = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000020"));
+  private static readonly ProductId TestProdNoImage = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000030"));
+
   [Before(Test)]
   public async Task SetupAsync() {
     _fixture = await SharedFixtureSource.GetFixtureAsync();
   }
 
   [After(Class)]
-  public async Task CleanupAsync() {
+  public static async Task CleanupAsync() {
     if (_fixture != null) {
       await _fixture.CleanupDatabaseAsync();
     }
@@ -36,7 +44,7 @@ public class CreateProductWorkflowTests {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
     var command = new CreateProductCommand {
-      ProductId = "test-prod-create-1",
+      ProductId = TestProd1,
       Name = "Integration Test Product",
       Description = "A test product for integration testing",
       Price = 99.99m,
@@ -88,7 +96,7 @@ public class CreateProductWorkflowTests {
 
     var commands = new[] {
       new CreateProductCommand {
-        ProductId = "test-prod-multi-1",
+        ProductId = TestProdMulti1,
         Name = "Product 1",
         Description = "First test product",
         Price = 10.00m,
@@ -96,7 +104,7 @@ public class CreateProductWorkflowTests {
         InitialStock = 100
       },
       new CreateProductCommand {
-        ProductId = "test-prod-multi-2",
+        ProductId = TestProdMulti2,
         Name = "Product 2",
         Description = "Second test product",
         Price = 20.00m,
@@ -104,7 +112,7 @@ public class CreateProductWorkflowTests {
         InitialStock = 200
       },
       new CreateProductCommand {
-        ProductId = "test-prod-multi-3",
+        ProductId = TestProdMulti3,
         Name = "Product 3",
         Description = "Third test product",
         Price = 30.00m,
@@ -155,7 +163,7 @@ public class CreateProductWorkflowTests {
 
 
     var command = new CreateProductCommand {
-      ProductId = "test-prod-zero-stock",
+      ProductId = TestProdZeroStock,
       Name = "Zero Stock Product",
       Description = "Product with no initial inventory",
       Price = 49.99m,
@@ -188,7 +196,7 @@ public class CreateProductWorkflowTests {
 
 
     var command = new CreateProductCommand {
-      ProductId = "test-prod-no-image",
+      ProductId = TestProdNoImage,
       Name = "No Image Product",
       Description = "Product without an image",
       Price = 19.99m,

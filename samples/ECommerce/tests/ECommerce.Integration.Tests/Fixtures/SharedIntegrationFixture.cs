@@ -153,8 +153,14 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton<IProductLens, ProductLens>();
     builder.Services.AddSingleton<IInventoryLens, InventoryLens>();
 
-    // Register perspectives for event processing (using generated extension method)
-    builder.Services.AddWhizbangPerspectives();
+    // Register InventoryWorker perspectives manually (avoid ambiguity with BFF perspectives)
+    builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.InventoryRestockedEvent>, ECommerce.InventoryWorker.Perspectives.InventoryLevelsPerspective>();
+    builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.InventoryReservedEvent>, ECommerce.InventoryWorker.Perspectives.InventoryLevelsPerspective>();
+    builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.InventoryAdjustedEvent>, ECommerce.InventoryWorker.Perspectives.InventoryLevelsPerspective>();
+    builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.OrderCreatedEvent>, ECommerce.InventoryWorker.Perspectives.OrderInventoryPerspective>();
+    builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.ProductCreatedEvent>, ECommerce.InventoryWorker.Perspectives.ProductCatalogPerspective>();
+    builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.ProductUpdatedEvent>, ECommerce.InventoryWorker.Perspectives.ProductCatalogPerspective>();
+    builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.ProductDeletedEvent>, ECommerce.InventoryWorker.Perspectives.ProductCatalogPerspective>();
 
     // Register Service Bus consumer subscriptions for InventoryWorker's own perspectives
     var consumerOptions = new ServiceBusConsumerOptions();
@@ -192,8 +198,19 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     // Note: BFF doesn't send commands in production, but needs dispatcher for event consumption
     builder.Services.AddWhizbangDispatcher();
 
-    // Register perspectives for event processing (using generated extension method)
-    builder.Services.AddWhizbangPerspectives();
+    // Register BFF perspectives manually (avoid ambiguity with InventoryWorker perspectives)
+    builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.InventoryRestockedEvent>, ECommerce.BFF.API.Perspectives.InventoryLevelsPerspective>();
+    builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.InventoryReservedEvent>, ECommerce.BFF.API.Perspectives.InventoryLevelsPerspective>();
+    builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.InventoryReleasedEvent>, ECommerce.BFF.API.Perspectives.InventoryLevelsPerspective>();
+    builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.InventoryAdjustedEvent>, ECommerce.BFF.API.Perspectives.InventoryLevelsPerspective>();
+    builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.InventoryReservedEvent>, ECommerce.BFF.API.Perspectives.InventoryPerspective>();
+    builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.OrderCreatedEvent>, ECommerce.BFF.API.Perspectives.OrderPerspective>();
+    builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.PaymentFailedEvent>, ECommerce.BFF.API.Perspectives.PaymentFailedPerspective>();
+    builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.PaymentProcessedEvent>, ECommerce.BFF.API.Perspectives.PaymentPerspective>();
+    builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.ProductCreatedEvent>, ECommerce.BFF.API.Perspectives.ProductCatalogPerspective>();
+    builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.ProductUpdatedEvent>, ECommerce.BFF.API.Perspectives.ProductCatalogPerspective>();
+    builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.ProductDeletedEvent>, ECommerce.BFF.API.Perspectives.ProductCatalogPerspective>();
+    builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.ShipmentCreatedEvent>, ECommerce.BFF.API.Perspectives.ShippingPerspective>();
 
     // Register lenses (readonly repositories)
     builder.Services.AddScoped<IProductCatalogLens, ProductCatalogLens>();

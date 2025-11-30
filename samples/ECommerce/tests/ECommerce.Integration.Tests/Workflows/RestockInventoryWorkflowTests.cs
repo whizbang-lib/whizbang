@@ -10,13 +10,20 @@ namespace ECommerce.Integration.Tests.Workflows;
 public class RestockInventoryWorkflowTests {
   private static SharedIntegrationFixture? _fixture;
 
+  // Test product IDs (deterministic GUIDs for reproducibility)
+  private static readonly ProductId TestProdRestock1 = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000101"));
+  private static readonly ProductId TestProdMultiRestock = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000102"));
+  private static readonly ProductId TestProdRestockZero = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000103"));
+  private static readonly ProductId TestProdRestockZeroQty = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000104"));
+  private static readonly ProductId TestProdLargeRestock = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000105"));
+
   [Before(Test)]
   public async Task SetupAsync() {
     _fixture = await SharedFixtureSource.GetFixtureAsync();
   }
 
   [After(Class)]
-  public async Task CleanupAsync() {
+  public static async Task CleanupAsync() {
     if (_fixture != null) {
       await _fixture.CleanupDatabaseAsync();
     }
@@ -37,7 +44,7 @@ public class RestockInventoryWorkflowTests {
 
     // First, create a product with initial stock
     var createCommand = new CreateProductCommand {
-      ProductId = "test-prod-restock-1",
+      ProductId = TestProdRestock1,
       Name = "Restockable Product",
       Description = "Product that will be restocked",
       Price = 50.00m,
@@ -49,7 +56,7 @@ public class RestockInventoryWorkflowTests {
 
     // Act - Restock inventory
     var restockCommand = new RestockInventoryCommand {
-      ProductId = "test-prod-restock-1",
+      ProductId = TestProdRestock1,
       QuantityToAdd = 50
     };
     await fixture.Dispatcher.SendAsync(restockCommand);
@@ -78,7 +85,7 @@ public class RestockInventoryWorkflowTests {
 
     // Create product with initial stock of 5
     var createCommand = new CreateProductCommand {
-      ProductId = "test-prod-multi-restock",
+      ProductId = TestProdMultiRestock,
       Name = "Multi-Restock Product",
       Description = "Product restocked multiple times",
       Price = 25.00m,
@@ -90,9 +97,9 @@ public class RestockInventoryWorkflowTests {
 
     // Act - Perform multiple restock operations
     var restockCommands = new[] {
-      new RestockInventoryCommand { ProductId = "test-prod-multi-restock", QuantityToAdd = 10 },
-      new RestockInventoryCommand { ProductId = "test-prod-multi-restock", QuantityToAdd = 20 },
-      new RestockInventoryCommand { ProductId = "test-prod-multi-restock", QuantityToAdd = 15 }
+      new RestockInventoryCommand { ProductId = TestProdMultiRestock, QuantityToAdd = 10 },
+      new RestockInventoryCommand { ProductId = TestProdMultiRestock, QuantityToAdd = 20 },
+      new RestockInventoryCommand { ProductId = TestProdMultiRestock, QuantityToAdd = 15 }
     };
 
     foreach (var restockCommand in restockCommands) {
@@ -122,7 +129,7 @@ public class RestockInventoryWorkflowTests {
 
     // Create product with zero initial stock
     var createCommand = new CreateProductCommand {
-      ProductId = "test-prod-restock-zero",
+      ProductId = TestProdRestockZero,
       Name = "Restock from Zero",
       Description = "Product starting with no inventory",
       Price = 75.00m,
@@ -134,7 +141,7 @@ public class RestockInventoryWorkflowTests {
 
     // Act - Restock from zero
     var restockCommand = new RestockInventoryCommand {
-      ProductId = "test-prod-restock-zero",
+      ProductId = TestProdRestockZero,
       QuantityToAdd = 100
     };
     await fixture.Dispatcher.SendAsync(restockCommand);
@@ -161,7 +168,7 @@ public class RestockInventoryWorkflowTests {
 
     // Create product with initial stock
     var createCommand = new CreateProductCommand {
-      ProductId = "test-prod-restock-zero-qty",
+      ProductId = TestProdRestockZeroQty,
       Name = "Zero Quantity Restock",
       Description = "Testing zero quantity restock",
       Price = 30.00m,
@@ -173,7 +180,7 @@ public class RestockInventoryWorkflowTests {
 
     // Act - Restock with zero quantity
     var restockCommand = new RestockInventoryCommand {
-      ProductId = "test-prod-restock-zero-qty",
+      ProductId = TestProdRestockZeroQty,
       QuantityToAdd = 0
     };
     await fixture.Dispatcher.SendAsync(restockCommand);
@@ -200,7 +207,7 @@ public class RestockInventoryWorkflowTests {
 
     // Create product with small initial stock
     var createCommand = new CreateProductCommand {
-      ProductId = "test-prod-large-restock",
+      ProductId = TestProdLargeRestock,
       Name = "Large Restock Product",
       Description = "Product with large inventory increase",
       Price = 100.00m,
@@ -212,7 +219,7 @@ public class RestockInventoryWorkflowTests {
 
     // Act - Restock with large quantity
     var restockCommand = new RestockInventoryCommand {
-      ProductId = "test-prod-large-restock",
+      ProductId = TestProdLargeRestock,
       QuantityToAdd = 10000
     };
     await fixture.Dispatcher.SendAsync(restockCommand);
