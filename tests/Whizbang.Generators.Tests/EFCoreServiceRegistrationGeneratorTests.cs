@@ -9,6 +9,34 @@ namespace Whizbang.Generators.Tests;
 /// </summary>
 public class EFCoreServiceRegistrationGeneratorTests {
 
+  // Perspective boilerplate required for generator to produce output
+  private const string PerspectiveBoilerplate = """
+    using Whizbang.Core;
+    using Whizbang.Core.Perspectives;
+
+    // Test event
+    public record TestEvent : IEvent;
+
+    // Test model
+    public record TestModel {
+      public string Id { get; init; } = "";
+    }
+
+    // Test perspective (requires IPerspectiveStore<TModel> in constructor)
+    public class TestPerspective : IPerspectiveOf<TestEvent> {
+      private readonly IPerspectiveStore<TestModel> _store;
+
+      public TestPerspective(IPerspectiveStore<TestModel> store) {
+        _store = store;
+      }
+
+      public Task Update(TestEvent @event, CancellationToken cancellationToken = default) {
+        return Task.CompletedTask;
+      }
+    }
+
+    """;
+
   #region Attribute Discovery Tests
 
   /// <summary>
@@ -18,34 +46,13 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithWhizbangDbContextAttribute_DiscoversDbContextAsync() {
     // Arrange
-    var source = """
+    var source = $$"""
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
-      using Whizbang.Core;
-      using Whizbang.Core.Perspectives;
 
       namespace TestApp;
 
-      // Test event
-      public record TestEvent : IEvent;
-
-      // Test model
-      public record TestModel {
-        public string Id { get; init; } = "";
-      }
-
-      // Test perspective (requires IPerspectiveStore<TModel> in constructor)
-      public class TestPerspective : IPerspectiveOf<TestEvent> {
-        private readonly IPerspectiveStore<TestModel> _store;
-
-        public TestPerspective(IPerspectiveStore<TestModel> store) {
-          _store = store;
-        }
-
-        public Task Update(TestEvent @event, CancellationToken cancellationToken = default) {
-          return Task.CompletedTask;
-        }
-      }
+      {{PerspectiveBoilerplate}}
 
       [WhizbangDbContext]
       public class TestDbContext : DbContext {
@@ -97,11 +104,13 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithDefaultKey_UsesEmptyStringKeyAsync() {
     // Arrange
-    var source = """
+    var source = $$"""
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
 
       namespace TestApp;
+
+      {{PerspectiveBoilerplate}}
 
       [WhizbangDbContext]  // No args = default key ""
       public class TestDbContext : DbContext {
@@ -130,8 +139,21 @@ public class EFCoreServiceRegistrationGeneratorTests {
     var source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
 
       namespace TestApp;
+
+      public record TestEvent : IEvent;
+      public record TestModel { public string Id { get; init; } = ""; }
+
+      // Perspective with matching key
+      [WhizbangPerspective("catalog")]
+      public class TestPerspective : IPerspectiveOf<TestEvent> {
+        private readonly IPerspectiveStore<TestModel> _store;
+        public TestPerspective(IPerspectiveStore<TestModel> store) => _store = store;
+        public Task Update(TestEvent @event, CancellationToken ct = default) => Task.CompletedTask;
+      }
 
       [WhizbangDbContext("catalog")]
       public class CatalogDbContext : DbContext {
@@ -160,8 +182,21 @@ public class EFCoreServiceRegistrationGeneratorTests {
     var source = """
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
 
       namespace TestApp;
+
+      public record TestEvent : IEvent;
+      public record TestModel { public string Id { get; init; } = ""; }
+
+      // Perspective with matching key (matches "catalog" key)
+      [WhizbangPerspective("catalog")]
+      public class TestPerspective : IPerspectiveOf<TestEvent> {
+        private readonly IPerspectiveStore<TestModel> _store;
+        public TestPerspective(IPerspectiveStore<TestModel> store) => _store = store;
+        public Task Update(TestEvent @event, CancellationToken ct = default) => Task.CompletedTask;
+      }
 
       [WhizbangDbContext("catalog", "products")]
       public class CatalogDbContext : DbContext {
@@ -191,11 +226,13 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithDiscoveredDbContext_GeneratesPartialClassAsync() {
     // Arrange
-    var source = """
+    var source = $$"""
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
 
       namespace TestApp;
+
+      {{PerspectiveBoilerplate}}
 
       [WhizbangDbContext]
       public partial class TestDbContext : DbContext {
@@ -229,11 +266,13 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithDiscoveredDbContext_GeneratesRegistrationMetadataAsync() {
     // Arrange
-    var source = """
+    var source = $$"""
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
 
       namespace TestApp;
+
+      {{PerspectiveBoilerplate}}
 
       [WhizbangDbContext]
       public class TestDbContext : DbContext {
@@ -267,11 +306,13 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithDiscoveredDbContext_GeneratesSchemaExtensionsAsync() {
     // Arrange
-    var source = """
+    var source = $$"""
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
 
       namespace TestApp;
+
+      {{PerspectiveBoilerplate}}
 
       [WhizbangDbContext]
       public class TestDbContext : DbContext {
@@ -307,11 +348,13 @@ public class EFCoreServiceRegistrationGeneratorTests {
   [Test]
   public async Task Generator_WithValidDbContext_ProducesNoDiagnosticsAsync() {
     // Arrange
-    var source = """
+    var source = $$"""
       using Microsoft.EntityFrameworkCore;
       using Whizbang.Data.EFCore.Custom;
 
       namespace TestApp;
+
+      {{PerspectiveBoilerplate}}
 
       [WhizbangDbContext]
       public class TestDbContext : DbContext {
