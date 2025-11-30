@@ -7,6 +7,7 @@ namespace ECommerce.Contracts.Events;
 /// Event published when a notification is successfully sent
 /// </summary>
 public record NotificationSentEvent : IEvent {
+  [StreamKey]
   public required string CustomerId { get; init; }
   public required string Subject { get; init; }
   public NotificationType Type { get; init; }

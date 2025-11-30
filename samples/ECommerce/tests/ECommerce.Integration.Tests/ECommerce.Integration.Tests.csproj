@@ -13,6 +13,7 @@
     <PackageReference Include="TUnit.Assertions" />
     <PackageReference Include="Testcontainers.PostgreSql" />
     <PackageReference Include="Testcontainers.ServiceBus" />
+    <PackageReference Include="Azure.Messaging.ServiceBus" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
     <PackageReference Include="Microsoft.Extensions.Hosting" />
   </ItemGroup>
@@ -23,6 +24,10 @@
     <ProjectReference Include="..\..\ECommerce.Contracts\ECommerce.Contracts.csproj" />
     <ProjectReference Include="..\..\..\..\src\Whizbang.Core\Whizbang.Core.csproj" />
     <ProjectReference Include="..\..\..\..\src\Whizbang.Data.Dapper.Postgres\Whizbang.Data.Dapper.Postgres.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="servicebus-config.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

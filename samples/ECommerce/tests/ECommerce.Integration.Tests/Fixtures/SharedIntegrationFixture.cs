@@ -3,6 +3,7 @@ using ECommerce.Contracts.Generated;
 using ECommerce.InventoryWorker.Lenses;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Microsoft.Extensions.Logging;
 using Npgsql;
 using Testcontainers.PostgreSql;
 using Testcontainers.ServiceBus;
@@ -37,9 +38,12 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       .WithPassword("whizbang_pass")
       .Build();
 
+    // Mount config file to pre-create topics and subscriptions
+    var configPath = Path.Combine(AppContext.BaseDirectory, "servicebus-config.json");
     _serviceBusContainer = new ServiceBusBuilder()
       .WithImage("mcr.microsoft.com/azure-messaging/servicebus-emulator:latest")
       .WithAcceptLicenseAgreement(true)
+      .WithBindMount(configPath, "/ServiceBus_Emulator/ConfigFiles/Config.json")
       .Build();
   }
 
@@ -170,7 +174,16 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
 
     // Register background workers
     builder.Services.AddHostedService<OutboxPublisherWorker>();
-    builder.Services.AddHostedService<ServiceBusConsumerWorker>();
+    builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
+      new ServiceBusConsumerWorker(
+        sp.GetRequiredService<ITransport>(),
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<IInbox>(),
+        jsonOptions,  // Pass JSON options for event deserialization
+        sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
+        sp.GetRequiredService<ServiceBusConsumerOptions>()
+      )
+    );
 
     return builder.Build();
   }
@@ -221,7 +234,16 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     consumerOptions.Subscriptions.Add(new TopicSubscription("products", "bff-service"));
     consumerOptions.Subscriptions.Add(new TopicSubscription("inventory", "bff-service"));
     builder.Services.AddSingleton(consumerOptions);
-    builder.Services.AddHostedService<ServiceBusConsumerWorker>();
+    builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
+      new ServiceBusConsumerWorker(
+        sp.GetRequiredService<ITransport>(),
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        sp.GetRequiredService<IInbox>(),
+        jsonOptions,  // Pass JSON options for event deserialization
+        sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
+        sp.GetRequiredService<ServiceBusConsumerOptions>()
+      )
+    );
 
     return builder.Build();
   }

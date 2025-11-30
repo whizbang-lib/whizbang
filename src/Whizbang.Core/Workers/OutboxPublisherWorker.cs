@@ -132,16 +132,24 @@ public class OutboxPublisherWorker(
     };
 
     // Add hop indicating message is being published from outbox
+    // Include PayloadType in metadata so consumer can deserialize correctly
     var publishHop = new MessageHop {
       Type = HopType.Current,
       ServiceName = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name ?? "OutboxPublisher",
       Topic = outboxMessage.Destination,
-      Timestamp = DateTimeOffset.UtcNow
+      Timestamp = DateTimeOffset.UtcNow,
+      Metadata = new Dictionary<string, object> {
+        ["PayloadType"] = outboxMessage.EventType  // Store string directly - will be serialized as JSON string
+      }
     };
     envelope.AddHop(publishHop);
 
     // Parse destination (format: "topic" or "topic/subscription")
-    var destination = new TransportDestination(outboxMessage.Destination);
+    var destination = new TransportDestination(
+      outboxMessage.Destination,
+      null,  // No routing key
+      null   // No metadata needed for destination
+    );
 
     // Publish to transport
     await _transport.PublishAsync(envelope, destination, cancellationToken);

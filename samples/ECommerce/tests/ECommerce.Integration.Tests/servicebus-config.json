@@ -1,0 +1,36 @@
+{
+  "UserConfig": {
+    "Logging": {
+      "Type": "Console"
+    },
+    "Namespaces": [
+      {
+        "Name": "sbemulatorns",
+        "Topics": [
+          {
+            "Name": "products",
+            "Subscriptions": [
+              {
+                "Name": "inventory-worker"
+              },
+              {
+                "Name": "bff-service"
+              }
+            ]
+          },
+          {
+            "Name": "inventory",
+            "Subscriptions": [
+              {
+                "Name": "inventory-worker"
+              },
+              {
+                "Name": "bff-service"
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

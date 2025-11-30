@@ -484,7 +484,7 @@ public abstract class Dispatcher(
     envelope.AddHop(hop);
 
     // Store complete envelope in outbox (will be serialized to JSONB)
-    await _outbox!.StoreAsync(envelope, destination);
+    await _outbox!.StoreAsync<TEvent>(envelope, destination);
   }
 
   /// <summary>

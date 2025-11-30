@@ -6,6 +6,7 @@ namespace ECommerce.Contracts.Events;
 /// Event published when payment is successfully processed
 /// </summary>
 public record PaymentProcessedEvent : IEvent {
+  [StreamKey]
   public required string OrderId { get; init; }
   public required string CustomerId { get; init; }
   public decimal Amount { get; init; }

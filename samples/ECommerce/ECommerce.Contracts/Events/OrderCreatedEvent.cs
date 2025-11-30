@@ -7,6 +7,7 @@ namespace ECommerce.Contracts.Events;
 /// Event published when an order is successfully created
 /// </summary>
 public record OrderCreatedEvent : IEvent {
+  [StreamKey]
   public required OrderId OrderId { get; init; }
   public required CustomerId CustomerId { get; init; }
   public required List<OrderLineItem> LineItems { get; init; }

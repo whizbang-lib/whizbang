@@ -43,4 +43,12 @@
     <None Include="Templates\**\*.sql" />
     <EmbeddedResource Include="Templates\**\*.sql" />
   </ItemGroup>
+
+  <!-- Ensure Shared DLL is copied for Roslyn generator host -->
+  <Target Name="CopySharedDLL" AfterTargets="Build">
+    <Copy
+      SourceFiles="../Whizbang.Generators.Shared/bin/$(Configuration)/netstandard2.0/Whizbang.Generators.Shared.dll"
+      DestinationFolder="$(OutputPath)"
+      SkipUnchangedFiles="true" />
+  </Target>
 </Project>

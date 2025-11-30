@@ -111,6 +111,7 @@ private JsonTypeInfo<T> GetOrCreateTypeInfo<T>(JsonSerializerOptions options) {
   }
 
   // Handle common primitive types using JsonMetadataServices (AOT-compatible)
+  // Note: Nullable primitives (decimal?, int?, etc.) are handled by the resolver chain below
   if (type == typeof(string)) {
     return (JsonTypeInfo<T>)(object)JsonMetadataServices.CreateValueInfo<string>(options, JsonMetadataServices.StringConverter);
   }

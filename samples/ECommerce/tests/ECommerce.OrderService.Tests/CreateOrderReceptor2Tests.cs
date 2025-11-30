@@ -20,7 +20,7 @@ public class CreateOrderReceptor2Tests {
     public List<(IMessageEnvelope envelope, string destination)> StoredMessages { get; } = [];
     public int StoreCount => StoredMessages.Count;
 
-    public Task StoreAsync(IMessageEnvelope envelope, string destination, CancellationToken cancellationToken = default) {
+    public Task StoreAsync<TMessage>(MessageEnvelope<TMessage> envelope, string destination, CancellationToken cancellationToken = default) {
       StoredMessages.Add((envelope, destination));
       return Task.CompletedTask;
     }

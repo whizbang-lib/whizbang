@@ -7,6 +7,7 @@ namespace ECommerce.Contracts.Events;
 /// </summary>
 public record ProductUpdatedEvent : IEvent {
   [AggregateId]
+  [StreamKey]
   public required Guid ProductId { get; init; }
   public string? Name { get; init; }
   public string? Description { get; init; }

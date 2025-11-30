@@ -8,6 +8,7 @@ namespace ECommerce.Contracts.Events;
 public record InventoryReservedEvent : IEvent {
   public required string OrderId { get; init; }
   [AggregateId]
+  [StreamKey]
   public required Guid ProductId { get; init; }
   public int Quantity { get; init; }
   public DateTime ReservedAt { get; init; }

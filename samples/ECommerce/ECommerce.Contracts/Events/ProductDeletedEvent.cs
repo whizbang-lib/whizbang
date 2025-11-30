@@ -7,6 +7,7 @@ namespace ECommerce.Contracts.Events;
 /// </summary>
 public record ProductDeletedEvent : IEvent {
   [AggregateId]
+  [StreamKey]
   public required Guid ProductId { get; init; }
   public DateTime DeletedAt { get; init; }
 }

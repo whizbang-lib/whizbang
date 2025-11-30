@@ -69,7 +69,7 @@ public abstract class DapperOutboxBase : IOutbox {
     var jsonbModel = _envelopeAdapter.ToJsonb(envelope);
 
     // Get event type from payload
-    var eventType = typeof(TMessage).FullName ?? throw new InvalidOperationException("Event type has no FullName");
+    var eventType = typeof(TMessage).AssemblyQualifiedName ?? throw new InvalidOperationException("Event type has no AssemblyQualifiedName");
 
     var sql = GetStoreSql();
 
