@@ -98,9 +98,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         allData,
         static (ctx, data) => {
           var perspectives = data.Left.Left;
+          var dbContexts = data.Left.Right;
 
           try {
-            GenerateRegistrationMetadata(ctx, perspectives!);
+            GenerateRegistrationMetadata(ctx, perspectives!, dbContexts!);
           } catch (Exception ex) {
             var descriptor = new DiagnosticDescriptor(
                 id: "EFCORE996",
@@ -139,7 +140,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// Extracts DbContext information from a class inheriting from DbContext.
-  /// Returns null if the class doesn't inherit from DbContext.
+  /// Returns null if the class doesn't inherit from DbContext OR doesn't have [WhizbangDbContext] attribute (opt-in required).
   /// </summary>
   private static DbContextInfo? ExtractDbContextInfo(
       GeneratorSyntaxContext context,
@@ -154,18 +155,39 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Check if class inherits from DbContext
     var baseType = symbol.BaseType;
+    bool inheritsDbContext = false;
     while (baseType != null) {
       if (baseType.ToDisplayString() == "Microsoft.EntityFrameworkCore.DbContext") {
-        return new DbContextInfo(
-            ClassName: symbol.Name,
-            FullyQualifiedName: symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-            Namespace: symbol.ContainingNamespace.ToDisplayString()
-        );
+        inheritsDbContext = true;
+        break;
       }
       baseType = baseType.BaseType;
     }
 
-    return null; // Doesn't inherit from DbContext
+    if (!inheritsDbContext) {
+      return null;
+    }
+
+    // Check for [WhizbangDbContext] attribute (explicit opt-in required)
+    var attribute = symbol.GetAttributes()
+        .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Data.EFCore.Postgres.WhizbangDbContextAttribute");
+
+    if (attribute is null) {
+      return null;  // No attribute = not discovered (opt-in required)
+    }
+
+    // Extract keys from attribute
+    var keys = ExtractKeysFromAttribute(attribute);
+    if (keys.Length == 0) {
+      keys = new[] { "" };  // Default to unnamed key
+    }
+
+    return new DbContextInfo(
+        ClassName: symbol.Name,
+        FullyQualifiedName: symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        Namespace: symbol.ContainingNamespace.ToDisplayString(),
+        Keys: keys
+    );
   }
 
   /// <summary>
@@ -213,11 +235,25 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           var modelType = parameterType.TypeArguments[0];
           var tableName = ToSnakeCase(modelType.Name);
 
+          // Check for [WhizbangPerspective] attribute (optional)
+          var perspectiveAttribute = symbol.GetAttributes()
+              .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.Perspectives.WhizbangPerspectiveAttribute");
+
+          string[] keys;
+          if (perspectiveAttribute is not null) {
+            // Attribute present - extract keys
+            keys = ExtractKeysFromAttribute(perspectiveAttribute);
+          } else {
+            // No attribute - matches default DbContext only
+            keys = Array.Empty<string>();
+          }
+
           return new PerspectiveModelInfo(
               PerspectiveClassName: symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
               ModelTypeName: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
               TableName: tableName,
-              NamespaceHint: symbol.ContainingNamespace.ToDisplayString()
+              NamespaceHint: symbol.ContainingNamespace.ToDisplayString(),
+              Keys: keys
           );
         }
       }
@@ -251,7 +287,53 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Extracts string array keys from attribute constructor arguments.
+  /// Supports params string[] parameter pattern used by WhizbangDbContext and WhizbangPerspective attributes.
+  /// </summary>
+  /// <param name="attribute">The attribute data to extract keys from</param>
+  /// <returns>Array of keys, or empty array if no keys found</returns>
+  private static string[] ExtractKeysFromAttribute(AttributeData attribute) {
+    if (attribute.ConstructorArguments.Length == 0) {
+      return Array.Empty<string>();
+    }
+
+    var arg = attribute.ConstructorArguments[0];
+
+    // Handle params array argument
+    if (arg.Kind == TypedConstantKind.Array) {
+      return arg.Values
+          .Where(v => v.Value is string)
+          .Select(v => (string)v.Value!)
+          .ToArray();
+    }
+
+    return Array.Empty<string>();
+  }
+
+  /// <summary>
+  /// Determines if a perspective should be included in a DbContext based on key matching.
+  /// </summary>
+  /// <param name="perspective">The perspective to check</param>
+  /// <param name="dbContext">The DbContext to check against</param>
+  /// <returns>True if the perspective matches this DbContext's keys</returns>
+  /// <remarks>
+  /// Matching rules:
+  /// - Perspective with no keys (empty array) matches default DbContext only (Key = "")
+  /// - Otherwise, any perspective key must match any DbContext key
+  /// </remarks>
+  private static bool MatchesDbContext(PerspectiveModelInfo perspective, DbContextInfo dbContext) {
+    // Perspective with no keys = matches default DbContext only
+    if (perspective.Keys.Length == 0) {
+      return dbContext.Keys.Contains("");
+    }
+
+    // Check if any perspective key matches any DbContext key
+    return perspective.Keys.Any(pk => dbContext.Keys.Contains(pk));
+  }
+
+  /// <summary>
   /// Generates DbContext partial class with DbSet&lt;PerspectiveRow&lt;TModel&gt;&gt; properties.
+  /// Loops through each DbContext and generates a separate partial class with matching perspectives.
   /// </summary>
   private static void GenerateDbContextPartial(
       SourceProductionContext context,
@@ -267,7 +349,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       var noDbContextDescriptor = new DiagnosticDescriptor(
           id: "EFCORE998",
           title: "No DbContext Found",
-          messageFormat: "Could not find any DbContext classes in the compilation. Partial class generation requires a DbContext.",
+          messageFormat: "Could not find any DbContext classes with [WhizbangDbContext] attribute. Partial class generation requires explicit opt-in.",
           category: "Whizbang.Generator",
           defaultSeverity: DiagnosticSeverity.Warning,
           isEnabledByDefault: true);
@@ -275,82 +357,120 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       return;
     }
 
-    // Use the first DbContext found (there should typically only be one per project)
-    var dbContext = dbContexts[0];
-    var dbContextNamespace = dbContext.Namespace;
-    var dbContextClassName = dbContext.ClassName;
+    // Loop through each DbContext and generate partial class
+    foreach (var dbContext in dbContexts) {
+      // Filter perspectives that match this DbContext's keys
+      var matchingPerspectives = perspectives
+          .Where(p => MatchesDbContext(p, dbContext))
+          .ToList();
 
-    // Collect unique models
-    var uniqueModels = perspectives
-        .GroupBy(p => p.ModelTypeName)
-        .Select(g => g.First())
-        .ToList();
+      if (matchingPerspectives.Count == 0) {
+        // Report info - DbContext has no matching perspectives
+        var noPerspectivesDescriptor = new DiagnosticDescriptor(
+            id: "EFCORE109",
+            title: "DbContext Has No Matching Perspectives",
+            messageFormat: "DbContext '{0}' with keys [{1}] matched zero perspectives",
+            category: "Whizbang.Generator",
+            defaultSeverity: DiagnosticSeverity.Info,
+            isEnabledByDefault: true);
+        var keysDisplay = string.Join(", ", dbContext.Keys.Select(k => $"\"{k}\""));
+        context.ReportDiagnostic(Diagnostic.Create(noPerspectivesDescriptor, Location.None, dbContext.ClassName, keysDisplay));
+        continue;
+      }
 
-    var sb = new StringBuilder();
+      // Collect unique models for this DbContext
+      var uniqueModels = matchingPerspectives
+          .GroupBy(p => p.ModelTypeName)
+          .Select(g => g.First())
+          .ToList();
 
-    // File header
-    sb.AppendLine("// <auto-generated/>");
-    sb.AppendLine($"// Generated by Whizbang.Data.EFCore.Postgres.Generators.EFCoreServiceRegistrationGenerator at {System.DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
-    sb.AppendLine("// DO NOT EDIT - Changes will be overwritten");
-    sb.AppendLine("#nullable enable");
-    sb.AppendLine();
+      var sb = new StringBuilder();
 
-    sb.AppendLine("using Microsoft.EntityFrameworkCore;");
-    sb.AppendLine("using Whizbang.Core.Lenses;");
-    sb.AppendLine();
-
-    sb.AppendLine($"namespace {dbContextNamespace};");
-    sb.AppendLine();
-
-    sb.AppendLine("/// <summary>");
-    sb.AppendLine($"/// Auto-generated partial class with DbSet properties for {uniqueModels.Count} perspective model(s).");
-    sb.AppendLine("/// </summary>");
-    sb.AppendLine($"public partial class {dbContextClassName} {{");
-
-    foreach (var model in uniqueModels) {
-      var modelName = ExtractSimpleName(model.ModelTypeName);
-      var propertyName = $"{modelName}s";  // Pluralize
-
-      sb.AppendLine($"  /// <summary>");
-      sb.AppendLine($"  /// DbSet for {modelName} perspective (table: {model.TableName})");
-      sb.AppendLine($"  /// </summary>");
-      sb.AppendLine($"  public DbSet<PerspectiveRow<{model.ModelTypeName}>> {propertyName} => Set<PerspectiveRow<{model.ModelTypeName}>>();");
+      // File header
+      sb.AppendLine("// <auto-generated/>");
+      sb.AppendLine($"// Generated by Whizbang.Data.EFCore.Postgres.Generators.EFCoreServiceRegistrationGenerator at {System.DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+      sb.AppendLine("// DO NOT EDIT - Changes will be overwritten");
+      sb.AppendLine("#nullable enable");
       sb.AppendLine();
+
+      sb.AppendLine("using Microsoft.EntityFrameworkCore;");
+      sb.AppendLine("using Whizbang.Core.Lenses;");
+      sb.AppendLine();
+
+      sb.AppendLine($"namespace {dbContext.Namespace};");
+      sb.AppendLine();
+
+      sb.AppendLine("/// <summary>");
+      sb.AppendLine($"/// Auto-generated partial class with DbSet properties for {uniqueModels.Count} perspective model(s).");
+      var keysComment = string.Join(", ", dbContext.Keys.Select(k => $"\"{k}\""));
+      sb.AppendLine($"/// DbContext keys: [{keysComment}]");
+      sb.AppendLine("/// </summary>");
+      sb.AppendLine($"public partial class {dbContext.ClassName} {{");
+
+      foreach (var model in uniqueModels) {
+        var modelName = ExtractSimpleName(model.ModelTypeName);
+        var propertyName = $"{modelName}s";  // Pluralize
+
+        sb.AppendLine($"  /// <summary>");
+        sb.AppendLine($"  /// DbSet for {modelName} perspective (table: {model.TableName})");
+        sb.AppendLine($"  /// </summary>");
+        sb.AppendLine($"  public DbSet<PerspectiveRow<{model.ModelTypeName}>> {propertyName} => Set<PerspectiveRow<{model.ModelTypeName}>>();");
+        sb.AppendLine();
+      }
+
+      sb.AppendLine("}");
+
+      context.AddSource($"{dbContext.ClassName}.Generated.g.cs", sb.ToString());
+
+      // Report diagnostic
+      var descriptor = new DiagnosticDescriptor(
+          id: "EFCORE103",
+          title: "DbContext Partial Class Generated",
+          messageFormat: "Generated DbContext partial class '{0}' with {1} DbSet properties (keys: [{2}])",
+          category: "Whizbang.Generator",
+          defaultSeverity: DiagnosticSeverity.Info,
+          isEnabledByDefault: true);
+
+      context.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, dbContext.ClassName, uniqueModels.Count, keysComment));
     }
-
-    sb.AppendLine("}");
-
-    context.AddSource($"{dbContextClassName}.Generated.g.cs", sb.ToString());
-
-    // Report diagnostic
-    var descriptor = new DiagnosticDescriptor(
-        id: "EFCORE103",
-        title: "DbContext Partial Class Generated",
-        messageFormat: "Generated DbContext partial class with {0} DbSet properties",
-        category: "Whizbang.Generator",
-        defaultSeverity: DiagnosticSeverity.Info,
-        isEnabledByDefault: true);
-
-    context.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, uniqueModels.Count));
   }
 
   /// <summary>
   /// Generates extension methods that register discovered models directly.
+  /// Groups perspectives by DbContext and generates conditional registration per DbContext type.
   /// This is generated in the consumer project and calls library methods with the discovered models.
   /// </summary>
   private static void GenerateRegistrationMetadata(
       SourceProductionContext context,
-      ImmutableArray<PerspectiveModelInfo> perspectives) {
+      ImmutableArray<PerspectiveModelInfo> perspectives,
+      ImmutableArray<DbContextInfo> dbContexts) {
 
     if (perspectives.IsEmpty) {
       return;  // No perspectives found
     }
 
-    // Collect unique models
-    var uniqueModels = perspectives
+    if (dbContexts.IsEmpty) {
+      return;  // No DbContext found
+    }
+
+    // Group perspectives by DbContext
+    var dbContextGroups = dbContexts.Select(dbContext => {
+      var matchingPerspectives = perspectives
+          .Where(p => MatchesDbContext(p, dbContext))
+          .GroupBy(p => p.ModelTypeName)
+          .Select(g => g.First())
+          .ToList();
+      return (DbContext: dbContext, Models: matchingPerspectives);
+    }).Where(g => g.Models.Count > 0).ToList();
+
+    if (dbContextGroups.Count == 0) {
+      return;  // No DbContexts with matching perspectives
+    }
+
+    // Count total unique models across all DbContexts
+    var totalUniqueModels = perspectives
         .GroupBy(p => p.ModelTypeName)
-        .Select(g => g.First())
-        .ToList();
+        .Count();
 
     var sb = new StringBuilder();
 
@@ -370,7 +490,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine();
 
     sb.AppendLine("/// <summary>");
-    sb.AppendLine($"/// Auto-generated module initializer for registering {uniqueModels.Count} discovered perspective model(s).");
+    sb.AppendLine($"/// Auto-generated module initializer for registering {totalUniqueModels} perspective model(s) across {dbContextGroups.Count} DbContext(s).");
     sb.AppendLine("/// Runs at module load time and registers models with ModelRegistrationRegistry (AOT-compatible).");
     sb.AppendLine("/// For test assemblies where ModuleInitializers may not run reliably, call Initialize() explicitly.");
     sb.AppendLine("/// </summary>");
@@ -386,14 +506,22 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("    ModelRegistrationRegistry.RegisterModels((services, dbContextType, upsertStrategy) => {");
     sb.AppendLine();
 
-    foreach (var model in uniqueModels) {
-      sb.AppendLine($"      // Register {model.ModelTypeName}");
-      sb.AppendLine($"      EFCoreInfrastructureRegistration.RegisterPerspectiveModel(");
-      sb.AppendLine($"          services,");
-      sb.AppendLine($"          dbContextType,");
-      sb.AppendLine($"          typeof({model.ModelTypeName}),");
-      sb.AppendLine($"          \"{model.TableName}\",");
-      sb.AppendLine($"          upsertStrategy);");
+    // Generate conditional registration per DbContext
+    foreach (var group in dbContextGroups) {
+      var keysDisplay = string.Join(", ", group.DbContext.Keys.Select(k => $"\"{k}\""));
+      sb.AppendLine($"      // {group.DbContext.ClassName} (keys: [{keysDisplay}])");
+      sb.AppendLine($"      if (dbContextType == typeof({group.DbContext.FullyQualifiedName})) {{");
+
+      foreach (var model in group.Models) {
+        sb.AppendLine($"        EFCoreInfrastructureRegistration.RegisterPerspectiveModel(");
+        sb.AppendLine($"            services,");
+        sb.AppendLine($"            dbContextType,");
+        sb.AppendLine($"            typeof({model.ModelTypeName}),");
+        sb.AppendLine($"            \"{model.TableName}\",");
+        sb.AppendLine($"            upsertStrategy);");
+      }
+
+      sb.AppendLine($"      }}");
       sb.AppendLine();
     }
 
@@ -407,17 +535,17 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     var descriptor = new DiagnosticDescriptor(
         id: "EFCORE100",
         title: "EF Core Registration Metadata Generated",
-        messageFormat: "Generated EF Core registration metadata for {0} model type(s)",
+        messageFormat: "Generated EF Core registration metadata for {0} model type(s) across {1} DbContext(s)",
         category: "Whizbang.Generator",
         defaultSeverity: DiagnosticSeverity.Info,
         isEnabledByDefault: true);
 
-    context.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, uniqueModels.Count));
+    context.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, totalUniqueModels, dbContextGroups.Count));
   }
 
   /// <summary>
   /// Generates DbContext schema initialization extensions.
-  /// Creates EnsureWhizbangTablesCreatedAsync() method for the discovered DbContext.
+  /// Creates EnsureWhizbangTablesCreatedAsync() method for each discovered DbContext.
   /// Uses template system for code generation.
   /// </summary>
   private static void GenerateSchemaExtensions(
@@ -433,13 +561,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       return; // No DbContext found
     }
 
-    // Use the first DbContext found
-    var dbContext = dbContexts[0];
-    var dbContextNamespace = dbContext.Namespace;
-    var dbContextClassName = dbContext.ClassName;
-    var dbContextFQN = dbContext.FullyQualifiedName;
-
-    // Load template
+    // Load template once (same template for all DbContexts)
     var assembly = typeof(EFCoreServiceRegistrationGenerator).Assembly;
     var templateBase = TemplateUtilities.GetEmbeddedTemplate(
         assembly,
@@ -447,32 +569,45 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         "Whizbang.Data.EFCore.Postgres.Generators.Templates"
     );
 
-    var template = templateBase;
+    // Loop through each DbContext and generate extension method
+    foreach (var dbContext in dbContexts) {
+      // Filter perspectives that match this DbContext's keys
+      var matchingPerspectives = perspectives
+          .Where(p => MatchesDbContext(p, dbContext))
+          .ToList();
 
-    // Replace header with timestamp
-    template = TemplateUtilities.ReplaceRegion(
-        template,
-        "HEADER",
-        $"// <auto-generated/>\n// Generated by Whizbang.Data.EFCore.Postgres.Generators.EFCoreServiceRegistrationGenerator at {System.DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC\n// DO NOT EDIT - Changes will be overwritten\n#nullable enable"
-    );
+      if (matchingPerspectives.Count == 0) {
+        // Skip - already reported in GenerateDbContextPartial
+        continue;
+      }
 
-    // Replace placeholders
-    template = template.Replace("__DBCONTEXT_NAMESPACE__", dbContextNamespace);
-    template = template.Replace("__DBCONTEXT_CLASS__", dbContextClassName);
-    template = template.Replace("__DBCONTEXT_FQN__", dbContextFQN);
+      var template = templateBase;
 
-    context.AddSource($"{dbContextClassName}_SchemaExtensions.g.cs", template);
+      // Replace header with timestamp
+      template = TemplateUtilities.ReplaceRegion(
+          template,
+          "HEADER",
+          $"// <auto-generated/>\n// Generated by Whizbang.Data.EFCore.Postgres.Generators.EFCoreServiceRegistrationGenerator at {System.DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC\n// DO NOT EDIT - Changes will be overwritten\n#nullable enable"
+      );
 
-    // Report diagnostic
-    var descriptor = new DiagnosticDescriptor(
-        id: "EFCORE102",
-        title: "DbContext Schema Extension Generated",
-        messageFormat: "Generated EnsureWhizbangTablesCreatedAsync() extension for {0}",
-        category: "Whizbang.Generator",
-        defaultSeverity: DiagnosticSeverity.Info,
-        isEnabledByDefault: true);
+      // Replace placeholders
+      template = template.Replace("__DBCONTEXT_NAMESPACE__", dbContext.Namespace);
+      template = template.Replace("__DBCONTEXT_CLASS__", dbContext.ClassName);
+      template = template.Replace("__DBCONTEXT_FQN__", dbContext.FullyQualifiedName);
 
-    context.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, dbContextClassName));
+      context.AddSource($"{dbContext.ClassName}_SchemaExtensions.g.cs", template);
+
+      // Report diagnostic
+      var descriptor = new DiagnosticDescriptor(
+          id: "EFCORE102",
+          title: "DbContext Schema Extension Generated",
+          messageFormat: "Generated EnsureWhizbangTablesCreatedAsync() extension for '{0}' with {1} matching perspective(s)",
+          category: "Whizbang.Generator",
+          defaultSeverity: DiagnosticSeverity.Info,
+          isEnabledByDefault: true);
+
+      context.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, dbContext.ClassName, matchingPerspectives.Count));
+    }
   }
 
   /// <summary>
@@ -491,10 +626,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 /// <param name="ClassName">Simple class name (e.g., "BffDbContext")</param>
 /// <param name="FullyQualifiedName">Fully qualified class name with global:: prefix</param>
 /// <param name="Namespace">Containing namespace</param>
+/// <param name="Keys">Array of keys that identify which perspectives should be included. Default: [""]</param>
 internal sealed record DbContextInfo(
     string ClassName,
     string FullyQualifiedName,
-    string Namespace);
+    string Namespace,
+    string[] Keys);
 
 /// <summary>
 /// Information about a discovered perspective and its TModel type.
@@ -503,8 +640,10 @@ internal sealed record DbContextInfo(
 /// <param name="ModelTypeName">Fully qualified model type name (TModel)</param>
 /// <param name="TableName">Snake_case table name</param>
 /// <param name="NamespaceHint">Namespace hint for DbContext generation</param>
+/// <param name="Keys">Array of keys that identify which DbContexts should include this perspective. Empty = default context only</param>
 internal sealed record PerspectiveModelInfo(
     string PerspectiveClassName,
     string ModelTypeName,
     string TableName,
-    string NamespaceHint);
+    string NamespaceHint,
+    string[] Keys);
