@@ -395,6 +395,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
       sb.AppendLine("using Microsoft.EntityFrameworkCore;");
       sb.AppendLine("using Whizbang.Core.Lenses;");
+      sb.AppendLine("using Whizbang.Data.EFCore.Postgres.Generated;");
       sb.AppendLine();
 
       sb.AppendLine($"namespace {dbContext.Namespace};");
@@ -417,6 +418,27 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         sb.AppendLine($"  public DbSet<PerspectiveRow<{model.ModelTypeName}>> {propertyName} => Set<PerspectiveRow<{model.ModelTypeName}>>();");
         sb.AppendLine();
       }
+
+      // Generate OnModelCreating override with OnModelCreatingExtended hook
+      sb.AppendLine($"  /// <summary>");
+      sb.AppendLine($"  /// Configures the EF Core model for this DbContext.");
+      sb.AppendLine($"  /// Calls modelBuilder.ConfigureWhizbang() for auto-generated configurations,");
+      sb.AppendLine($"  /// then calls OnModelCreatingExtended() for custom user configurations.");
+      sb.AppendLine($"  /// </summary>");
+      sb.AppendLine($"  protected override void OnModelCreating(ModelBuilder modelBuilder) {{");
+      sb.AppendLine($"    // Apply Whizbang-generated configurations");
+      sb.AppendLine($"    modelBuilder.ConfigureWhizbang();");
+      sb.AppendLine();
+      sb.AppendLine($"    // Call user's extended configuration");
+      sb.AppendLine($"    OnModelCreatingExtended(modelBuilder);");
+      sb.AppendLine($"  }}");
+      sb.AppendLine();
+      sb.AppendLine($"  /// <summary>");
+      sb.AppendLine($"  /// Override this method to extend the model configuration beyond Whizbang's auto-generated setup.");
+      sb.AppendLine($"  /// Use this for custom entity configurations, indexes, constraints, etc.");
+      sb.AppendLine($"  /// </summary>");
+      sb.AppendLine($"  /// <param name=\"modelBuilder\">The builder being used to construct the model for this context.</param>");
+      sb.AppendLine($"  partial void OnModelCreatingExtended(ModelBuilder modelBuilder);");
 
       sb.AppendLine("}");
 
