@@ -97,6 +97,7 @@ public class RestockInventoryWorkflowTests {
     await fixture.WaitForEventProcessingAsync();
 
     // Act - Perform multiple restock operations
+    // Wait between each restock to ensure events are processed and perspectives are updated
     var restockCommands = new[] {
       new RestockInventoryCommand { ProductId = TestProdMultiRestock, QuantityToAdd = 10 },
       new RestockInventoryCommand { ProductId = TestProdMultiRestock, QuantityToAdd = 20 },
@@ -105,8 +106,8 @@ public class RestockInventoryWorkflowTests {
 
     foreach (var restockCommand in restockCommands) {
       await fixture.Dispatcher.SendAsync(restockCommand);
+      await fixture.WaitForEventProcessingAsync();
     }
-    await fixture.WaitForEventProcessingAsync();
 
     // Assert - Verify total quantity = 5 + 10 + 20 + 15 = 50
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);

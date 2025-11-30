@@ -121,13 +121,12 @@ public class CreateProductWorkflowTests {
       }
     };
 
-    // Act
+    // Act - Create each product and wait for event processing
+    // This ensures events are processed in order and perspectives are updated before the next product
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
+      await fixture.WaitForEventProcessingAsync();
     }
-
-    // Wait for async event processing
-    await fixture.WaitForEventProcessingAsync();
 
     // Assert - Verify all products materialized in InventoryWorker perspective
     foreach (var command in commands) {

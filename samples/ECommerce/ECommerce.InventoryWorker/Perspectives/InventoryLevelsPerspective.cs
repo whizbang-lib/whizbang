@@ -9,17 +9,50 @@ namespace ECommerce.InventoryWorker.Perspectives;
 
 /// <summary>
 /// Materializes inventory events into inventory_levels table.
-/// Handles InventoryRestockedEvent, InventoryReservedEvent, and InventoryAdjustedEvent.
+/// Handles ProductCreatedEvent (initializes at 0), InventoryRestockedEvent, InventoryReservedEvent, and InventoryAdjustedEvent.
 /// </summary>
 public class InventoryLevelsPerspective(
   IDbConnectionFactory connectionFactory,
   ILogger<InventoryLevelsPerspective> logger) :
+  IPerspectiveOf<ProductCreatedEvent>,
   IPerspectiveOf<InventoryRestockedEvent>,
   IPerspectiveOf<InventoryReservedEvent>,
   IPerspectiveOf<InventoryAdjustedEvent> {
 
   private readonly IDbConnectionFactory _connectionFactory = connectionFactory;
   private readonly ILogger<InventoryLevelsPerspective> _logger = logger;
+
+  /// <summary>
+  /// Handles ProductCreatedEvent by initializing inventory at 0 quantity.
+  /// Creates initial inventory record for new products.
+  /// </summary>
+  public async Task Update(ProductCreatedEvent @event, CancellationToken cancellationToken = default) {
+    try {
+      using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
+      EnsureConnectionOpen(connection);
+
+      await connection.ExecuteAsync(@"
+        INSERT INTO inventoryworker.inventory_levels (
+          product_id, quantity, reserved, last_updated
+        ) VALUES (
+          @ProductId, 0, 0, @CreatedAt
+        )
+        ON CONFLICT (product_id) DO NOTHING",
+        new {
+          @event.ProductId,
+          @event.CreatedAt
+        });
+
+      _logger.LogInformation(
+        "Inventory levels initialized: Product {ProductId} created with 0 quantity",
+        @event.ProductId);
+    } catch (Exception ex) {
+      _logger.LogError(ex,
+        "Failed to initialize inventory levels for ProductCreatedEvent: {ProductId}",
+        @event.ProductId);
+      throw;
+    }
+  }
 
   /// <summary>
   /// Handles InventoryRestockedEvent by upserting inventory levels.

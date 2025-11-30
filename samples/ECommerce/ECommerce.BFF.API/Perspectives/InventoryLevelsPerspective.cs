@@ -10,7 +10,7 @@ namespace ECommerce.BFF.API.Perspectives;
 
 /// <summary>
 /// Materializes inventory events into BFF read model.
-/// Handles InventoryRestockedEvent, InventoryReservedEvent, InventoryReleasedEvent, and InventoryAdjustedEvent.
+/// Handles ProductCreatedEvent (initializes at 0), InventoryRestockedEvent, InventoryReservedEvent, InventoryReleasedEvent, and InventoryAdjustedEvent.
 /// Sends real-time SignalR notifications after successful database updates.
 /// Uses EF Core with 3-column JSONB pattern - zero reflection, AOT compatible.
 /// </summary>
@@ -19,6 +19,7 @@ public class InventoryLevelsPerspective(
   ILensQuery<InventoryLevelDto> query,
   ILogger<InventoryLevelsPerspective> logger,
   IHubContext<ProductInventoryHub> hubContext) :
+  IPerspectiveOf<ProductCreatedEvent>,
   IPerspectiveOf<InventoryRestockedEvent>,
   IPerspectiveOf<InventoryReservedEvent>,
   IPerspectiveOf<InventoryReleasedEvent>,
@@ -28,6 +29,43 @@ public class InventoryLevelsPerspective(
   private readonly ILensQuery<InventoryLevelDto> _query = query;
   private readonly ILogger<InventoryLevelsPerspective> _logger = logger;
   private readonly IHubContext<ProductInventoryHub> _hubContext = hubContext;
+
+  /// <summary>
+  /// Handles ProductCreatedEvent by initializing inventory at 0 quantity.
+  /// Creates initial inventory record for new products.
+  /// Sends real-time SignalR notification after successful database insert.
+  /// </summary>
+  public async Task Update(ProductCreatedEvent @event, CancellationToken cancellationToken = default) {
+    try {
+      var model = new InventoryLevelDto {
+        ProductId = @event.ProductId,
+        Quantity = 0,
+        Reserved = 0,
+        Available = 0,
+        LastUpdated = @event.CreatedAt
+      };
+
+      // Store handles JSON serialization, metadata, scope, timestamps
+      await _store.UpsertAsync(@event.ProductId.ToString(), model, cancellationToken);
+
+      _logger.LogInformation(
+        "BFF inventory levels initialized: Product {ProductId} created with 0 quantity",
+        @event.ProductId);
+
+      // Send real-time notification
+      await SendInventoryNotificationAsync(
+        @event.ProductId.ToString(),
+        "Created",
+        model,
+        null,
+        cancellationToken);
+    } catch (Exception ex) {
+      _logger.LogError(ex,
+        "Failed to initialize BFF inventory levels for ProductCreatedEvent: {ProductId}",
+        @event.ProductId);
+      throw;
+    }
+  }
 
   /// <summary>
   /// Handles InventoryRestockedEvent by upserting inventory levels.

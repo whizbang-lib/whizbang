@@ -1,8 +1,11 @@
 using ECommerce.Contracts.Commands;
 using ECommerce.Contracts.Events;
+using ECommerce.InventoryWorker.Lenses;
 using ECommerce.InventoryWorker.Receptors;
+using Microsoft.Extensions.Logging;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 
 namespace ECommerce.InventoryWorker.Tests.Receptors;
 
@@ -14,8 +17,9 @@ public class RestockInventoryReceptorTests {
   public async Task HandleAsync_WithValidCommand_ReturnsInventoryRestockedEventAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
+    var inventoryLens = new TestInventoryLens();
     var logger = new TestLogger<RestockInventoryReceptor>();
-    var receptor = new RestockInventoryReceptor(dispatcher, logger);
+    var receptor = new RestockInventoryReceptor(dispatcher, inventoryLens, logger);
 
     var productId = Guid.CreateVersion7();
     var command = new RestockInventoryCommand {
@@ -37,8 +41,9 @@ public class RestockInventoryReceptorTests {
   public async Task HandleAsync_PublishesInventoryRestockedEventAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
+    var inventoryLens = new TestInventoryLens();
     var logger = new TestLogger<RestockInventoryReceptor>();
-    var receptor = new RestockInventoryReceptor(dispatcher, logger);
+    var receptor = new RestockInventoryReceptor(dispatcher, inventoryLens, logger);
 
     var productId = Guid.CreateVersion7();
     var command = new RestockInventoryCommand {
@@ -63,8 +68,9 @@ public class RestockInventoryReceptorTests {
   public async Task HandleAsync_SetsRestockedAtTimestampAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
+    var inventoryLens = new TestInventoryLens();
     var logger = new TestLogger<RestockInventoryReceptor>();
-    var receptor = new RestockInventoryReceptor(dispatcher, logger);
+    var receptor = new RestockInventoryReceptor(dispatcher, inventoryLens, logger);
 
     var beforeCall = DateTime.UtcNow;
 
@@ -89,8 +95,9 @@ public class RestockInventoryReceptorTests {
   public async Task HandleAsync_LogsInformation_AboutRestockingAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
+    var inventoryLens = new TestInventoryLens();
     var logger = new TestLogger<RestockInventoryReceptor>();
-    var receptor = new RestockInventoryReceptor(dispatcher, logger);
+    var receptor = new RestockInventoryReceptor(dispatcher, inventoryLens, logger);
 
     var productId = Guid.CreateVersion7();
     var command = new RestockInventoryCommand {
@@ -110,8 +117,9 @@ public class RestockInventoryReceptorTests {
   public async Task HandleAsync_WithCancellationToken_CompletesSuccessfullyAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
+    var inventoryLens = new TestInventoryLens();
     var logger = new TestLogger<RestockInventoryReceptor>();
-    var receptor = new RestockInventoryReceptor(dispatcher, logger);
+    var receptor = new RestockInventoryReceptor(dispatcher, inventoryLens, logger);
 
     var productId = Guid.CreateVersion7();
     var command = new RestockInventoryCommand {
@@ -133,8 +141,9 @@ public class RestockInventoryReceptorTests {
   public async Task HandleAsync_WithLargeQuantity_MapsCorrectlyAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
+    var inventoryLens = new TestInventoryLens();
     var logger = new TestLogger<RestockInventoryReceptor>();
-    var receptor = new RestockInventoryReceptor(dispatcher, logger);
+    var receptor = new RestockInventoryReceptor(dispatcher, inventoryLens, logger);
 
     var productId = Guid.CreateVersion7();
     var command = new RestockInventoryCommand {
@@ -154,8 +163,9 @@ public class RestockInventoryReceptorTests {
   public async Task HandleAsync_WithZeroQuantity_MapsCorrectlyAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
+    var inventoryLens = new TestInventoryLens();
     var logger = new TestLogger<RestockInventoryReceptor>();
-    var receptor = new RestockInventoryReceptor(dispatcher, logger);
+    var receptor = new RestockInventoryReceptor(dispatcher, inventoryLens, logger);
 
     var productId = Guid.CreateVersion7();
     var command = new RestockInventoryCommand {
@@ -175,8 +185,9 @@ public class RestockInventoryReceptorTests {
   public async Task HandleAsync_MapsNewTotalQuantityCorrectlyAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
+    var inventoryLens = new TestInventoryLens();
     var logger = new TestLogger<RestockInventoryReceptor>();
-    var receptor = new RestockInventoryReceptor(dispatcher, logger);
+    var receptor = new RestockInventoryReceptor(dispatcher, inventoryLens, logger);
 
     var productId = Guid.CreateVersion7();
     var command = new RestockInventoryCommand {
@@ -190,5 +201,37 @@ public class RestockInventoryReceptorTests {
 
     // Assert - For now, NewTotalQuantity should equal QuantityAdded (no existing inventory)
     await Assert.That(result.NewTotalQuantity).IsEqualTo(50);
+  }
+}
+
+/// <summary>
+/// Test double for IInventoryLens that returns configurable inventory levels
+/// </summary>
+internal class TestInventoryLens : IInventoryLens {
+  private readonly Dictionary<Guid, InventoryLevelDto> _inventory = [];
+
+  public void SetInventory(Guid productId, int quantity, int reserved = 0) {
+    _inventory[productId] = new InventoryLevelDto {
+      ProductId = productId,
+      Quantity = quantity,
+      Reserved = reserved,
+      Available = quantity - reserved,
+      LastUpdated = DateTime.UtcNow
+    };
+  }
+
+  public Task<InventoryLevelDto?> GetByProductIdAsync(Guid productId, CancellationToken cancellationToken = default) {
+    _inventory.TryGetValue(productId, out var inventory);
+    return Task.FromResult(inventory);
+  }
+
+  public Task<IReadOnlyList<InventoryLevelDto>> GetAllAsync(CancellationToken cancellationToken = default) {
+    IReadOnlyList<InventoryLevelDto> result = [.. _inventory.Values];
+    return Task.FromResult(result);
+  }
+
+  public Task<IReadOnlyList<InventoryLevelDto>> GetLowStockAsync(int threshold = 10, CancellationToken cancellationToken = default) {
+    IReadOnlyList<InventoryLevelDto> result = [.. _inventory.Values.Where(i => i.Available <= threshold)];
+    return Task.FromResult(result);
   }
 }

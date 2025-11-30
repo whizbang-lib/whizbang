@@ -165,6 +165,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton<IInventoryLens, InventoryLens>();
 
     // Register InventoryWorker perspectives manually (avoid ambiguity with BFF perspectives)
+    builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.ProductCreatedEvent>, ECommerce.InventoryWorker.Perspectives.InventoryLevelsPerspective>();
     builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.InventoryRestockedEvent>, ECommerce.InventoryWorker.Perspectives.InventoryLevelsPerspective>();
     builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.InventoryReservedEvent>, ECommerce.InventoryWorker.Perspectives.InventoryLevelsPerspective>();
     builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.InventoryAdjustedEvent>, ECommerce.InventoryWorker.Perspectives.InventoryLevelsPerspective>();
@@ -236,6 +237,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     builder.Services.AddWhizbangDispatcher();
 
     // Register BFF perspectives manually (avoid ambiguity with InventoryWorker perspectives)
+    builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.ProductCreatedEvent>, ECommerce.BFF.API.Perspectives.InventoryLevelsPerspective>();
     builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.InventoryRestockedEvent>, ECommerce.BFF.API.Perspectives.InventoryLevelsPerspective>();
     builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.InventoryReservedEvent>, ECommerce.BFF.API.Perspectives.InventoryLevelsPerspective>();
     builder.Services.AddScoped<IPerspectiveOf<ECommerce.Contracts.Events.InventoryReleasedEvent>, ECommerce.BFF.API.Perspectives.InventoryLevelsPerspective>();
