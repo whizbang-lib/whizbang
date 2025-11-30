@@ -15,6 +15,9 @@
 
     <!-- Enable performance reporting -->
     <ReportAnalyzer>true</ReportAnalyzer>
+
+    <!-- Enable ILRepack to merge Shared DLL into generator DLL -->
+    <ILRepackEnabled>true</ILRepackEnabled>
   </PropertyGroup>
 
   <ItemGroup>
@@ -22,6 +25,28 @@
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
     <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" PrivateAssets="all" />
     <PackageReference Include="PolySharp" PrivateAssets="all" />
+    <!-- ILRepack to merge Shared DLL into generator DLL -->
+    <PackageReference Include="ILRepack.Lib.MSBuild.Task" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Reference the shared library for TemplateUtilities -->
+    <ProjectReference Include="../Whizbang.Generators.Shared/Whizbang.Generators.Shared.csproj">
+      <PrivateAssets>all</PrivateAssets>
+      <ReferenceOutputAssembly>true</ReferenceOutputAssembly>
+      <!-- Don't use OutputItemType=Analyzer for Shared - it needs to be copied as a regular dependency -->
+      <SetTargetFramework>TargetFramework=netstandard2.0</SetTargetFramework>
+    </ProjectReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Template files - these are real C# code that gets full analyzer support -->
+    <!-- BUT they must be excluded from compilation since they reference types not in this project -->
+    <Compile Remove="Templates\**\*.cs" />
+    <!-- Include as content so IDE can analyze them -->
+    <None Include="Templates\**\*.cs" />
+    <!-- Embed as resources so generator can read them at runtime -->
+    <EmbeddedResource Include="Templates\**\*.cs" />
   </ItemGroup>
 
   <!-- Note: Cannot reference Whizbang.Core directly due to TFM incompatibility -->

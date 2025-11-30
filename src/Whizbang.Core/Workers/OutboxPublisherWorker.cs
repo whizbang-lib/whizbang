@@ -53,7 +53,10 @@ public class OutboxPublisherWorker(
 
   private async Task ProcessPendingMessagesAsync(CancellationToken cancellationToken) {
     // Get batch of pending messages
+    _logger.LogInformation("OutboxPublisherWorker: Checking for pending messages...");
     var pendingMessages = await _outbox.GetPendingAsync(_options.BatchSize, cancellationToken);
+
+    _logger.LogInformation("OutboxPublisherWorker: Found {Count} pending messages", pendingMessages.Count);
 
     if (pendingMessages.Count == 0) {
       _logger.LogTrace("No pending outbox messages");

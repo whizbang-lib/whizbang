@@ -484,7 +484,9 @@ public abstract class Dispatcher(
     envelope.AddHop(hop);
 
     // Store complete envelope in outbox (will be serialized to JSONB)
+    System.Diagnostics.Debug.WriteLine($"[Dispatcher] Storing event {eventType.Name} to outbox with destination '{destination}'");
     await _outbox!.StoreAsync<TEvent>(envelope, destination);
+    System.Diagnostics.Debug.WriteLine($"[Dispatcher] Successfully stored event {eventType.Name} to outbox");
   }
 
   /// <summary>

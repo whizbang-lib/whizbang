@@ -1,4 +1,5 @@
 using ECommerce.BFF.API;
+using ECommerce.BFF.API.Generated;
 using ECommerce.BFF.API.GraphQL;
 using ECommerce.BFF.API.Hubs;
 using ECommerce.BFF.API.Lenses;
@@ -14,6 +15,7 @@ using Whizbang.Core.Lenses;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.EFCore.Postgres;
+using Whizbang.Data.EFCore.Postgres.Generated;
 using Whizbang.Transports.AzureServiceBus;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -99,9 +101,11 @@ var app = builder.Build();
 app.Logger.LogInformation("CORS configured for Angular UI at: {AngularUrl}", angularUrl);
 
 // Initialize database schema on startup
+// Uses generated EnsureWhizbangTablesCreatedAsync() extension method
+// Creates all PerspectiveRow<T> entities + Inbox/Outbox/EventStore tables
 using (var scope = app.Services.CreateScope()) {
   var dbContext = scope.ServiceProvider.GetRequiredService<BffDbContext>();
-  dbContext.Database.EnsureCreated();
+  await dbContext.EnsureWhizbangTablesCreatedAsync();
 }
 
 // Configure the HTTP request pipeline

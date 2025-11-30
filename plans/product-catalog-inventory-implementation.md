@@ -218,7 +218,7 @@ services.AddWhizbangPostgres(
 
 #### 1.1: Run Baseline Tests [✅]
 
-- [x] Navigate to: `/Users/philcarbone/src/whizbang`
+- [x] Navigate to: `~/src/whizbang`
 - [x] Run: `dotnet test --solution Whizbang.All.sln`
 - [x] Record: **1550 tests passing, 2 skipped, 0 failures**
 - [x] Verify all green before proceeding
@@ -272,7 +272,7 @@ services.AddWhizbangPostgres(
 **Run Command**:
 
 ```bash
-cd /Users/philcarbone/src/whizbang/tests/Whizbang.Data.Postgres.Tests
+cd ~/src/whizbang/tests/Whizbang.Data.Postgres.Tests
 dotnet run
 ```
 
@@ -281,7 +281,7 @@ dotnet run
 #### 1.4: Measure Baseline Coverage [ ]
 
 ```bash
-cd /Users/philcarbone/src/whizbang/tests/Whizbang.Data.Postgres.Tests
+cd ~/src/whizbang/tests/Whizbang.Data.Postgres.Tests
 dotnet run -- --coverage --coverage-output-format cobertura --coverage-output coverage-baseline.xml
 ```
 
@@ -314,7 +314,7 @@ Changes:
 **Run Tests**:
 
 ```bash
-cd /Users/philcarbone/src/whizbang/tests/Whizbang.Data.Postgres.Tests
+cd ~/src/whizbang/tests/Whizbang.Data.Postgres.Tests
 dotnet run
 ```
 
@@ -323,7 +323,7 @@ dotnet run
 #### 1.6: Measure Post-Implementation Coverage [ ]
 
 ```bash
-cd /Users/philcarbone/src/whizbang/tests/Whizbang.Data.Postgres.Tests
+cd ~/src/whizbang/tests/Whizbang.Data.Postgres.Tests
 dotnet run -- --coverage --coverage-output-format cobertura --coverage-output coverage-after.xml
 ```
 
@@ -340,7 +340,7 @@ dotnet run -- --coverage --coverage-output-format cobertura --coverage-output co
 #### 1.7: Verify No Regressions [ ]
 
 ```bash
-cd /Users/philcarbone/src/whizbang
+cd ~/src/whizbang
 dotnet test
 ```
 
@@ -363,7 +363,7 @@ Code review checklist:
 Search for forbidden patterns:
 
 ```bash
-cd /Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Postgres
+cd ~/src/whizbang/src/Whizbang.Data.Dapper.Postgres
 grep -r "Type\.GetType" .
 grep -r "Assembly\." .
 grep -r "Activator\." .
@@ -376,7 +376,7 @@ grep -r "Activator\." .
 - [ ] Run `dotnet format` on modified files:
 
   ```bash
-  cd /Users/philcarbone/src/whizbang
+  cd ~/src/whizbang
   dotnet format src/Whizbang.Data.Dapper.Postgres/Whizbang.Data.Dapper.Postgres.csproj
   ```
 

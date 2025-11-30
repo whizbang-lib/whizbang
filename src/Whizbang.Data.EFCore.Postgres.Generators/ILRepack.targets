@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Project>
+  <!--
+    Custom ILRepack configuration for Whizbang.Data.EFCore.Postgres.Generators
+    Merges Whizbang.Generators.Shared.dll into Whizbang.Data.EFCore.Postgres.Generators.dll
+    Runs in ALL configurations (Debug and Release) since generators need this during development
+  -->
+  <Target Name="MergeSharedAssembly" AfterTargets="Build">
+    <ItemGroup>
+      <!-- Main assembly (must be first) -->
+      <InputAssemblies Include="$(OutputPath)$(TargetName)$(TargetExt)" />
+      <!-- Shared library to merge -->
+      <InputAssemblies Include="$(OutputPath)Whizbang.Generators.Shared.dll" />
+
+      <!-- Build list of search directories from reference paths -->
+      <_ILRepackSearchDir Include="@(ReferencePath->'%(RootDir)%(Directory)')" />
+    </ItemGroup>
+
+    <PropertyGroup>
+      <_ILRepackSearchDirs>@(_ILRepackSearchDir->Distinct(), ';')</_ILRepackSearchDirs>
+    </PropertyGroup>
+
+    <Message Text="ILRepack: Merging Whizbang.Generators.Shared.dll into $(TargetName)$(TargetExt)" Importance="High" />
+    <Message Text="ILRepack: Search directories = $(_ILRepackSearchDirs)" Importance="High" />
+
+    <ILRepack
+      Parallel="true"
+      DebugInfo="true"
+      Internalize="true"
+      InputAssemblies="@(InputAssemblies)"
+      TargetKind="SameAsPrimaryAssembly"
+      OutputFile="$(OutputPath)$(TargetName)$(TargetExt)"
+      LibraryPath="$(OutputPath);$(_ILRepackSearchDirs)"
+    />
+  </Target>
+
+  <!-- Clean up the Shared DLL after merging -->
+  <Target Name="CleanupMergedAssemblies" AfterTargets="MergeSharedAssembly">
+    <Delete Files="$(OutputPath)Whizbang.Generators.Shared.dll;$(OutputPath)Whizbang.Generators.Shared.pdb;$(OutputPath)Whizbang.Generators.Shared.xml" />
+    <Message Text="ILRepack: Cleaned up merged Shared DLL files" Importance="High" />
+  </Target>
+</Project>

@@ -51,7 +51,7 @@ public sealed class EFCoreOutbox<TDbContext> : IOutbox
     var record = new OutboxRecord {
       MessageId = envelope.MessageId.ToString(),
       Destination = destination,
-      EventType = typeof(TMessage).AssemblyQualifiedName ?? throw new InvalidOperationException("Event type has no AssemblyQualifiedName"),
+      EventType = typeof(TMessage).FullName ?? throw new InvalidOperationException("Event type has no FullName"),
       EventData = eventData,
       Metadata = metadata,
       Scope = scope,

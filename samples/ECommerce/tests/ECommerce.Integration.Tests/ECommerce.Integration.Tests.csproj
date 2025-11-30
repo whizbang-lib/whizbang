@@ -19,11 +19,16 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\ECommerce.InventoryWorker\ECommerce.InventoryWorker.csproj" />
-    <ProjectReference Include="..\..\ECommerce.BFF.API\ECommerce.BFF.API.csproj" />
+    <ProjectReference Include="..\..\ECommerce.InventoryWorker\ECommerce.InventoryWorker.csproj">
+      <Aliases>global,InventoryWorker</Aliases>
+    </ProjectReference>
+    <ProjectReference Include="..\..\ECommerce.BFF.API\ECommerce.BFF.API.csproj">
+      <Aliases>global,BffApi</Aliases>
+    </ProjectReference>
     <ProjectReference Include="..\..\ECommerce.Contracts\ECommerce.Contracts.csproj" />
     <ProjectReference Include="..\..\..\..\src\Whizbang.Core\Whizbang.Core.csproj" />
     <ProjectReference Include="..\..\..\..\src\Whizbang.Data.Dapper.Postgres\Whizbang.Data.Dapper.Postgres.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Whizbang.Data.EFCore.Postgres\Whizbang.Data.EFCore.Postgres.csproj" />
   </ItemGroup>
 
   <ItemGroup>

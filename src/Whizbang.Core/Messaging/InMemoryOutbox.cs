@@ -28,7 +28,7 @@ public class InMemoryOutbox(IJsonbPersistenceAdapter<IMessageEnvelope> envelopeA
 
     // Convert envelope to JSONB format
     var jsonbModel = _envelopeAdapter.ToJsonb(envelope);
-    var eventType = typeof(TMessage).AssemblyQualifiedName ?? throw new InvalidOperationException("Event type has no AssemblyQualifiedName");
+    var eventType = typeof(TMessage).FullName ?? throw new InvalidOperationException("Event type has no FullName");
 
     var record = new OutboxRecord(
       MessageId: envelope.MessageId,

@@ -9,6 +9,10 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <InternalsVisibleTo Include="ECommerce.Integration.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\..\..\src\Whizbang.Core\Whizbang.Core.csproj" />
     <ProjectReference Include="..\..\..\src\Whizbang.Generators\Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     <ProjectReference Include="..\..\..\src\Whizbang.Data.Dapper.Postgres\Whizbang.Data.Dapper.Postgres.csproj" />

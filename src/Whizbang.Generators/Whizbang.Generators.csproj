@@ -12,6 +12,8 @@
     <ReportAnalyzer>true</ReportAnalyzer>
     <!-- Suppress release tracking warnings for early development -->
     <NoWarn>$(NoWarn);RS2008</NoWarn>
+    <!-- Enable ILRepack to merge Shared DLL into generator DLL -->
+    <ILRepackEnabled>true</ILRepackEnabled>
   </PropertyGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
@@ -20,13 +22,15 @@
       <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
     </PackageReference>
     <PackageReference Include="PolySharp" PrivateAssets="all" />
+    <!-- ILRepack to merge Shared DLL into generator DLL -->
+    <PackageReference Include="ILRepack.Lib.MSBuild.Task" PrivateAssets="all" />
   </ItemGroup>
   <ItemGroup>
     <!-- Reference the shared library and ensure it's packaged with the generator -->
     <ProjectReference Include="../Whizbang.Generators.Shared/Whizbang.Generators.Shared.csproj">
       <PrivateAssets>all</PrivateAssets>
       <ReferenceOutputAssembly>true</ReferenceOutputAssembly>
-      <OutputItemType>Analyzer</OutputItemType>
+      <!-- Don't use OutputItemType=Analyzer for Shared - it needs to be copied as a regular dependency -->
       <SetTargetFramework>TargetFramework=netstandard2.0</SetTargetFramework>
     </ProjectReference>
   </ItemGroup>
@@ -44,11 +48,4 @@
     <EmbeddedResource Include="Templates\**\*.sql" />
   </ItemGroup>
 
-  <!-- Ensure Shared DLL is copied for Roslyn generator host -->
-  <Target Name="CopySharedDLL" AfterTargets="Build">
-    <Copy
-      SourceFiles="../Whizbang.Generators.Shared/bin/$(Configuration)/netstandard2.0/Whizbang.Generators.Shared.dll"
-      DestinationFolder="$(OutputPath)"
-      SkipUnchangedFiles="true" />
-  </Target>
 </Project>
