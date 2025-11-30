@@ -14,12 +14,15 @@
     <Compile Remove=".whizbang-generated/**/*.cs" />
   </ItemGroup>
   <ItemGroup>
-    <!-- Reference to the generator project we're testing -->
+    <!-- Reference to the generator projects we're testing -->
     <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Data.EFCore.Postgres.Generators/Whizbang.Data.EFCore.Postgres.Generators.csproj" />
     <!-- Shared utilities used by generators -->
     <ProjectReference Include="../../src/Whizbang.Generators.Shared/Whizbang.Generators.Shared.csproj" />
     <!-- Core for interfaces like ICommand, IEvent, etc. -->
     <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
+    <!-- EFCore.Custom for WhizbangDbContextAttribute -->
+    <ProjectReference Include="../../src/Whizbang.Data.EFCore.Custom/Whizbang.Data.EFCore.Custom.csproj" />
   </ItemGroup>
   <ItemGroup>
     <!-- Testing framework -->
@@ -28,5 +31,7 @@
     <!-- Roslyn for source generator testing -->
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" />
+    <!-- EF Core for DbContext testing -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
   </ItemGroup>
 </Project>
