@@ -9,11 +9,9 @@ namespace Whizbang.Core.Tests.Transports.AzureServiceBus;
 /// Tests for ServiceBusInfrastructureOptions configuration class.
 /// Ensures default values and property setters work correctly.
 /// </summary>
-public class ServiceBusInfrastructureOptionsTests
-{
+public class ServiceBusInfrastructureOptionsTests {
   [Test]
-  public async Task ServiceBusInfrastructureOptions_DefaultValues_AreSetAsync()
-  {
+  public async Task ServiceBusInfrastructureOptions_DefaultValues_AreSetAsync() {
     // Arrange & Act
     var options = new ServiceBusInfrastructureOptions();
 
@@ -26,8 +24,7 @@ public class ServiceBusInfrastructureOptionsTests
   }
 
   [Test]
-  public async Task ServiceBusInfrastructureOptions_ServiceName_CanBeSetAsync()
-  {
+  public async Task ServiceBusInfrastructureOptions_ServiceName_CanBeSetAsync() {
     // Arrange
     var options = new ServiceBusInfrastructureOptions();
 
@@ -39,8 +36,7 @@ public class ServiceBusInfrastructureOptionsTests
   }
 
   [Test]
-  public async Task ServiceBusInfrastructureOptions_RequiredTopics_CanBeModifiedAsync()
-  {
+  public async Task ServiceBusInfrastructureOptions_RequiredTopics_CanBeModifiedAsync() {
     // Arrange
     var options = new ServiceBusInfrastructureOptions();
     var requirement = new TopicRequirement("orders", "bff-orders");
@@ -54,8 +50,7 @@ public class ServiceBusInfrastructureOptionsTests
   }
 
   [Test]
-  public async Task ServiceBusInfrastructureOptions_AutoCreateInProduction_CanBeDisabledAsync()
-  {
+  public async Task ServiceBusInfrastructureOptions_AutoCreateInProduction_CanBeDisabledAsync() {
     // Arrange
     var options = new ServiceBusInfrastructureOptions();
 
@@ -67,8 +62,7 @@ public class ServiceBusInfrastructureOptionsTests
   }
 
   [Test]
-  public async Task ServiceBusInfrastructureOptions_GenerateAspireConfigInDev_CanBeDisabledAsync()
-  {
+  public async Task ServiceBusInfrastructureOptions_GenerateAspireConfigInDev_CanBeDisabledAsync() {
     // Arrange
     var options = new ServiceBusInfrastructureOptions();
 
@@ -80,8 +74,7 @@ public class ServiceBusInfrastructureOptionsTests
   }
 
   [Test]
-  public async Task ServiceBusInfrastructureOptions_FailOnProvisioningError_CanBeEnabledAsync()
-  {
+  public async Task ServiceBusInfrastructureOptions_FailOnProvisioningError_CanBeEnabledAsync() {
     // Arrange
     var options = new ServiceBusInfrastructureOptions();
 
@@ -93,8 +86,7 @@ public class ServiceBusInfrastructureOptionsTests
   }
 
   [Test]
-  public async Task ServiceBusInfrastructureOptions_RequiredTopics_InitializedAsEmptyListAsync()
-  {
+  public async Task ServiceBusInfrastructureOptions_RequiredTopics_InitializedAsEmptyListAsync() {
     // Arrange & Act
     var options = new ServiceBusInfrastructureOptions();
 
@@ -104,8 +96,7 @@ public class ServiceBusInfrastructureOptionsTests
   }
 
   [Test]
-  public async Task ServiceBusInfrastructureOptions_MultipleRequiredTopics_CanBeAddedAsync()
-  {
+  public async Task ServiceBusInfrastructureOptions_MultipleRequiredTopics_CanBeAddedAsync() {
     // Arrange
     var options = new ServiceBusInfrastructureOptions();
     var req1 = new TopicRequirement("orders", "bff-orders");

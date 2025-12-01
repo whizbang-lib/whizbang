@@ -60,6 +60,7 @@ public static class InMemoryDriverExtensions {
   /// - IPerspectiveStore and ILensQuery (for all discovered models via source-generated module initializer)
   /// AOT-compatible, no reflection.
   /// </summary>
+  [RequiresDynamicCode("Calls System.Type.MakeGenericType(params Type[])")]
   private static void RegisterEFCoreInfrastructure(
       IServiceCollection services,
       Type dbContextType,

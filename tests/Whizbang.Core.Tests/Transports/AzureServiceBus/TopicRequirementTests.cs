@@ -9,11 +9,9 @@ namespace Whizbang.Core.Tests.Transports.AzureServiceBus;
 /// Tests for TopicRequirement value object.
 /// Ensures value equality semantics and immutability.
 /// </summary>
-public class TopicRequirementTests
-{
+public class TopicRequirementTests {
   [Test]
-  public async Task TopicRequirement_Constructor_SetsPropertiesAsync()
-  {
+  public async Task TopicRequirement_Constructor_SetsPropertiesAsync() {
     // Arrange & Act
     var requirement = new TopicRequirement("orders", "bff-orders");
 
@@ -23,8 +21,7 @@ public class TopicRequirementTests
   }
 
   [Test]
-  public async Task TopicRequirement_WithSameValues_AreEqualAsync()
-  {
+  public async Task TopicRequirement_WithSameValues_AreEqualAsync() {
     // Arrange
     var req1 = new TopicRequirement("orders", "bff-orders");
     var req2 = new TopicRequirement("orders", "bff-orders");
@@ -35,8 +32,7 @@ public class TopicRequirementTests
   }
 
   [Test]
-  public async Task TopicRequirement_WithDifferentTopicNames_AreNotEqualAsync()
-  {
+  public async Task TopicRequirement_WithDifferentTopicNames_AreNotEqualAsync() {
     // Arrange
     var req1 = new TopicRequirement("orders", "bff-orders");
     var req2 = new TopicRequirement("products", "bff-orders");
@@ -46,8 +42,7 @@ public class TopicRequirementTests
   }
 
   [Test]
-  public async Task TopicRequirement_WithDifferentSubscriptionNames_AreNotEqualAsync()
-  {
+  public async Task TopicRequirement_WithDifferentSubscriptionNames_AreNotEqualAsync() {
     // Arrange
     var req1 = new TopicRequirement("orders", "bff-orders");
     var req2 = new TopicRequirement("orders", "payment-orders");
@@ -57,8 +52,7 @@ public class TopicRequirementTests
   }
 
   [Test]
-  public async Task TopicRequirement_ToString_ReturnsFormattedStringAsync()
-  {
+  public async Task TopicRequirement_ToString_ReturnsFormattedStringAsync() {
     // Arrange
     var requirement = new TopicRequirement("orders", "bff-orders");
 
@@ -71,8 +65,7 @@ public class TopicRequirementTests
   }
 
   [Test]
-  public async Task TopicRequirement_WithEmptyTopicName_AllowedAsync()
-  {
+  public async Task TopicRequirement_WithEmptyTopicName_AllowedAsync() {
     // Arrange & Act - Records allow any string values
     var requirement = new TopicRequirement("", "bff-orders");
 
@@ -81,8 +74,7 @@ public class TopicRequirementTests
   }
 
   [Test]
-  public async Task TopicRequirement_WithEmptySubscriptionName_AllowedAsync()
-  {
+  public async Task TopicRequirement_WithEmptySubscriptionName_AllowedAsync() {
     // Arrange & Act
     var requirement = new TopicRequirement("orders", "");
 
@@ -91,8 +83,7 @@ public class TopicRequirementTests
   }
 
   [Test]
-  public async Task TopicRequirement_Deconstruct_ExtractsValuesAsync()
-  {
+  public async Task TopicRequirement_Deconstruct_ExtractsValuesAsync() {
     // Arrange
     var requirement = new TopicRequirement("orders", "bff-orders");
 

@@ -3,8 +3,7 @@ namespace Whizbang.Core.Transports.AzureServiceBus;
 /// <summary>
 /// Configuration options for Service Bus infrastructure auto-discovery and provisioning.
 /// </summary>
-public class ServiceBusInfrastructureOptions
-{
+public class ServiceBusInfrastructureOptions {
   /// <summary>
   /// Name of this service (used for generating unique subscription names).
   /// </summary>

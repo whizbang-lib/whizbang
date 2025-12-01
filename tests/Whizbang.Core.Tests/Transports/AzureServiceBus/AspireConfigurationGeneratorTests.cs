@@ -9,11 +9,9 @@ namespace Whizbang.Core.Tests.Transports.AzureServiceBus;
 /// Tests for AspireConfigurationGenerator static class.
 /// Ensures correct C# code generation for Aspire AppHost configuration.
 /// </summary>
-public class AspireConfigurationGeneratorTests
-{
+public class AspireConfigurationGeneratorTests {
   [Test]
-  public async Task GenerateAppHostCode_WithNoRequirements_ReturnsEmptyMessageAsync()
-  {
+  public async Task GenerateAppHostCode_WithNoRequirements_ReturnsEmptyMessageAsync() {
     // Arrange
     var requirements = Array.Empty<TopicRequirement>();
 
@@ -26,8 +24,7 @@ public class AspireConfigurationGeneratorTests
   }
 
   [Test]
-  public async Task GenerateAppHostCode_WithSingleRequirement_GeneratesCorrectCodeAsync()
-  {
+  public async Task GenerateAppHostCode_WithSingleRequirement_GeneratesCorrectCodeAsync() {
     // Arrange
     var requirements = new[]
     {
@@ -43,8 +40,7 @@ public class AspireConfigurationGeneratorTests
   }
 
   [Test]
-  public async Task GenerateAppHostCode_WithMultipleRequirements_GeneratesCorrectCodeAsync()
-  {
+  public async Task GenerateAppHostCode_WithMultipleRequirements_GeneratesCorrectCodeAsync() {
     // Arrange
     var requirements = new[]
     {
@@ -63,8 +59,7 @@ public class AspireConfigurationGeneratorTests
   }
 
   [Test]
-  public async Task GenerateAppHostCode_GroupsByTopic_WhenMultipleSubscriptionsAsync()
-  {
+  public async Task GenerateAppHostCode_GroupsByTopic_WhenMultipleSubscriptionsAsync() {
     // Arrange - Multiple subscriptions for the same topic
     var requirements = new[]
     {
@@ -87,8 +82,7 @@ public class AspireConfigurationGeneratorTests
   }
 
   [Test]
-  public async Task GenerateAppHostCode_WithServiceName_IncludesServiceNameInCommentsAsync()
-  {
+  public async Task GenerateAppHostCode_WithServiceName_IncludesServiceNameInCommentsAsync() {
     // Arrange
     var requirements = new[]
     {
@@ -103,8 +97,7 @@ public class AspireConfigurationGeneratorTests
   }
 
   [Test]
-  public async Task GenerateAppHostCode_IncludesHeaderAndFooterAsync()
-  {
+  public async Task GenerateAppHostCode_IncludesHeaderAndFooterAsync() {
     // Arrange
     var requirements = new[]
     {
@@ -120,8 +113,7 @@ public class AspireConfigurationGeneratorTests
   }
 
   [Test]
-  public async Task GenerateAppHostCode_GeneratesValidCSharpSyntaxAsync()
-  {
+  public async Task GenerateAppHostCode_GeneratesValidCSharpSyntaxAsync() {
     // Arrange
     var requirements = new[]
     {
@@ -140,8 +132,7 @@ public class AspireConfigurationGeneratorTests
   }
 
   [Test]
-  public async Task GenerateAppHostCode_SortsTopicsAlphabeticallyAsync()
-  {
+  public async Task GenerateAppHostCode_SortsTopicsAlphabeticallyAsync() {
     // Arrange - Topics in non-alphabetical order
     var requirements = new[]
     {
@@ -163,8 +154,7 @@ public class AspireConfigurationGeneratorTests
   }
 
   [Test]
-  public async Task GenerateAppHostCode_WithSpecialCharacters_EscapesCorrectlyAsync()
-  {
+  public async Task GenerateAppHostCode_WithSpecialCharacters_EscapesCorrectlyAsync() {
     // Arrange - Topic names with hyphens and underscores
     var requirements = new[]
     {

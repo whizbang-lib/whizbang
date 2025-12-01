@@ -5,8 +5,7 @@ namespace Whizbang.Core.Transports.AzureServiceBus;
 /// <summary>
 /// Generates Aspire AppHost configuration code for Service Bus topics and subscriptions.
 /// </summary>
-public static class AspireConfigurationGenerator
-{
+public static class AspireConfigurationGenerator {
   /// <summary>
   /// Generates C# code for configuring Service Bus topics in Aspire AppHost.
   /// </summary>
@@ -15,13 +14,11 @@ public static class AspireConfigurationGenerator
   /// <returns>Generated C# code as a string</returns>
   public static string GenerateAppHostCode(
     IEnumerable<TopicRequirement> requirements,
-    string? serviceName = null)
-  {
+    string? serviceName = null) {
     var requirementsList = requirements.ToList();
 
     // Handle empty case
-    if (!requirementsList.Any())
-    {
+    if (!requirementsList.Any()) {
       return "// === Whizbang Service Bus Configuration ===\n" +
              "// No Service Bus topics required\n" +
              "// ==========================================";
@@ -31,12 +28,9 @@ public static class AspireConfigurationGenerator
 
     // Header
     sb.AppendLine("// === Whizbang Service Bus Configuration ===");
-    if (!string.IsNullOrWhiteSpace(serviceName))
-    {
+    if (!string.IsNullOrWhiteSpace(serviceName)) {
       sb.AppendLine($"// Service Bus topics for {serviceName} service");
-    }
-    else
-    {
+    } else {
       sb.AppendLine("// Add this to your AppHost Program.cs:");
     }
     sb.AppendLine();
@@ -48,15 +42,13 @@ public static class AspireConfigurationGenerator
       .ToList();
 
     // Generate code for each topic
-    foreach (var topicGroup in topicGroups)
-    {
+    foreach (var topicGroup in topicGroups) {
       var topicName = topicGroup.Key;
       var variableName = ToCamelCase(topicName) + "Topic";
 
       sb.AppendLine($"var {variableName} = serviceBus.AddServiceBusTopic(\"{topicName}\");");
 
-      foreach (var requirement in topicGroup.OrderBy(r => r.SubscriptionName))
-      {
+      foreach (var requirement in topicGroup.OrderBy(r => r.SubscriptionName)) {
         sb.AppendLine($"{variableName}.AddServiceBusSubscription(\"{requirement.SubscriptionName}\");");
       }
 
@@ -72,18 +64,15 @@ public static class AspireConfigurationGenerator
   /// <summary>
   /// Converts a string to camelCase for variable naming.
   /// </summary>
-  private static string ToCamelCase(string input)
-  {
-    if (string.IsNullOrWhiteSpace(input))
-    {
+  private static string ToCamelCase(string input) {
+    if (string.IsNullOrWhiteSpace(input)) {
       return input;
     }
 
     // Remove hyphens and underscores, capitalize after them
     var parts = input.Split(new[] { '-', '_' }, StringSplitOptions.RemoveEmptyEntries);
 
-    if (parts.Length == 0)
-    {
+    if (parts.Length == 0) {
       return input;
     }
 
@@ -91,19 +80,15 @@ public static class AspireConfigurationGenerator
 
     // First part is lowercase
     sb.Append(char.ToLowerInvariant(parts[0][0]));
-    if (parts[0].Length > 1)
-    {
+    if (parts[0].Length > 1) {
       sb.Append(parts[0].Substring(1));
     }
 
     // Remaining parts are capitalized
-    for (int i = 1; i < parts.Length; i++)
-    {
-      if (parts[i].Length > 0)
-      {
+    for (int i = 1; i < parts.Length; i++) {
+      if (parts[i].Length > 0) {
         sb.Append(char.ToUpperInvariant(parts[i][0]));
-        if (parts[i].Length > 1)
-        {
+        if (parts[i].Length > 1) {
           sb.Append(parts[i].Substring(1));
         }
       }
