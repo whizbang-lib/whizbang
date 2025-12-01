@@ -1,0 +1,119 @@
+using System.Text;
+using Whizbang.Data.Schema.Schemas;
+
+namespace Whizbang.Data.Schema.Postgres;
+
+/// <summary>
+/// Builds Postgres DDL (Data Definition Language) from database-agnostic schema definitions.
+/// Generates CREATE TABLE and CREATE INDEX statements with proper Postgres syntax.
+/// </summary>
+public static class PostgresSchemaBuilder {
+  /// <summary>
+  /// Builds a CREATE TABLE statement for a single table definition.
+  /// </summary>
+  /// <param name="table">Table definition to convert to SQL</param>
+  /// <param name="prefix">Table name prefix (e.g., "wb_" or "wb_per_")</param>
+  /// <returns>Complete CREATE TABLE statement with all columns and constraints</returns>
+  public static string BuildCreateTable(TableDefinition table, string prefix) {
+    var sb = new StringBuilder();
+    var tableName = $"{prefix}{table.Name}";
+
+    sb.AppendLine($"CREATE TABLE IF NOT EXISTS {tableName} (");
+
+    var columnDefinitions = new List<string>();
+    foreach (var column in table.Columns) {
+      columnDefinitions.Add(BuildColumnDefinition(column));
+    }
+
+    sb.AppendLine(string.Join(",\n", columnDefinitions.Select(c => $"  {c}")));
+    sb.AppendLine(");");
+
+    return sb.ToString();
+  }
+
+  /// <summary>
+  /// Builds a single column definition line.
+  /// </summary>
+  private static string BuildColumnDefinition(ColumnDefinition column) {
+    var parts = new List<string>();
+
+    // Column name and type
+    var sqlType = PostgresTypeMapper.MapDataType(column.DataType, column.MaxLength);
+    parts.Add($"{column.Name} {sqlType}");
+
+    // Nullability
+    parts.Add(column.Nullable ? "NULL" : "NOT NULL");
+
+    // Default value
+    if (column.DefaultValue is not null) {
+      var defaultValue = PostgresTypeMapper.MapDefaultValue(column.DefaultValue);
+      parts.Add($"DEFAULT {defaultValue}");
+    }
+
+    // Unique constraint
+    if (column.Unique) {
+      parts.Add("UNIQUE");
+    }
+
+    // Primary key
+    if (column.PrimaryKey) {
+      parts.Add("PRIMARY KEY");
+    }
+
+    return string.Join(" ", parts);
+  }
+
+  /// <summary>
+  /// Builds a CREATE INDEX statement for a single index definition.
+  /// </summary>
+  /// <param name="index">Index definition to convert to SQL</param>
+  /// <param name="tableName">Table name (without prefix)</param>
+  /// <param name="prefix">Table name prefix (e.g., "wb_")</param>
+  /// <returns>Complete CREATE INDEX statement</returns>
+  public static string BuildCreateIndex(IndexDefinition index, string tableName, string prefix) {
+    var fullTableName = $"{prefix}{tableName}";
+    var unique = index.Unique ? "UNIQUE " : "";
+    var columns = string.Join(", ", index.Columns);
+
+    return $"CREATE {unique}INDEX IF NOT EXISTS {index.Name} ON {fullTableName} ({columns});";
+  }
+
+  /// <summary>
+  /// Builds complete Postgres schema with all infrastructure tables and indexes.
+  /// Generates SQL for inbox, outbox, event_store, request_response, and sequences tables.
+  /// </summary>
+  /// <param name="config">Schema configuration with prefix settings</param>
+  /// <returns>Complete DDL script for all infrastructure tables</returns>
+  public static string BuildInfrastructureSchema(SchemaConfiguration config) {
+    var sb = new StringBuilder();
+
+    sb.AppendLine("-- Whizbang Infrastructure Schema for Postgres");
+    sb.AppendLine($"-- Generated: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+    sb.AppendLine($"-- Infrastructure Prefix: {config.InfrastructurePrefix}");
+    sb.AppendLine($"-- Perspective Prefix: {config.PerspectivePrefix}");
+    sb.AppendLine();
+
+    // Build all infrastructure tables
+    var tables = new[] {
+      (InboxSchema.Table, "Inbox - Message deduplication and idempotency"),
+      (OutboxSchema.Table, "Outbox - Transactional messaging pattern"),
+      (EventStoreSchema.Table, "Event Store - Event sourcing and audit trail"),
+      (RequestResponseSchema.Table, "Request/Response - Async request/response tracking"),
+      (SequencesSchema.Table, "Sequences - Distributed sequence generation")
+    };
+
+    foreach (var (table, description) in tables) {
+      sb.AppendLine($"-- {description}");
+      sb.AppendLine(BuildCreateTable(table, config.InfrastructurePrefix));
+
+      // Build indexes for this table
+      foreach (var index in table.Indexes) {
+        sb.AppendLine(BuildCreateIndex(index, table.Name, config.InfrastructurePrefix));
+      }
+
+      sb.AppendLine();
+    }
+
+    return sb.ToString();
+  }
+}
