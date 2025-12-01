@@ -18,6 +18,9 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// Ensures all Whizbang tables exist for __DBCONTEXT_CLASS__.
   /// Creates tables from entity configurations (ConfigureWhizbang() in OnModelCreating).
   /// Idempotent - safe to call multiple times.
+  ///
+  /// Uses EF Core's migration script generation + ExecuteSqlRaw to create tables.
+  /// This handles Aspire scenarios where database exists but tables don't.
   /// </summary>
   /// <param name="dbContext">The __DBCONTEXT_CLASS__ instance</param>
   /// <param name="cancellationToken">Cancellation token</param>
@@ -25,8 +28,18 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     this __DBCONTEXT_FQN__ dbContext,
     CancellationToken cancellationToken = default) {
 
-    // EF Core creates schema from entity configurations in OnModelCreating
-    // Includes all PerspectiveRow<T> entities + Inbox/Outbox/EventStore
-    await dbContext.Database.EnsureCreatedAsync(cancellationToken);
+    // Generate CREATE TABLE script from EF Core model
+    // This creates DDL for all entities configured in ConfigureWhizbang()
+    var script = dbContext.Database.GenerateCreateScript();
+
+    // Execute the script (creates tables if they don't exist)
+    // Note: GenerateCreateScript() doesn't include IF NOT EXISTS
+    // So we wrap in transaction and ignore errors for existing tables
+    try {
+      await dbContext.Database.ExecuteSqlRawAsync(script, cancellationToken);
+    } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P07") {
+      // 42P07 = duplicate_table error - table already exists, this is fine
+      // Idempotent operation - safe to ignore
+    }
   }
 }

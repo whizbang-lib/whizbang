@@ -17,14 +17,12 @@ namespace Whizbang.Core.Workers;
 public class ServiceBusConsumerWorker(
   ITransport transport,
   IServiceScopeFactory scopeFactory,
-  IInbox inbox,
   JsonSerializerOptions jsonOptions,
   ILogger<ServiceBusConsumerWorker> logger,
   ServiceBusConsumerOptions? options = null
   ) : BackgroundService {
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
-  private readonly IInbox _inbox = inbox ?? throw new ArgumentNullException(nameof(inbox));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<ServiceBusConsumerWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly List<ISubscription> _subscriptions = [];
@@ -68,8 +66,12 @@ public class ServiceBusConsumerWorker(
 
   private async Task HandleMessageAsync(IMessageEnvelope envelope, CancellationToken ct) {
     try {
+      // Create scope early to resolve scoped services (IInbox, IPerspectiveInvoker)
+      await using var scope = _scopeFactory.CreateAsyncScope();
+      var inbox = scope.ServiceProvider.GetRequiredService<IInbox>();
+
       // Check inbox for deduplication
-      if (await _inbox.HasProcessedAsync(envelope.MessageId, ct)) {
+      if (await inbox.HasProcessedAsync(envelope.MessageId, ct)) {
         _logger.LogInformation(
           "Message {MessageId} already processed, skipping",
           envelope.MessageId
@@ -164,14 +166,9 @@ public class ServiceBusConsumerWorker(
       };
       envelope.AddHop(receivedHop);
 
-      _logger.LogInformation("DEBUG: BEFORE CREATING SCOPE");
+      _logger.LogInformation("DEBUG: BEFORE RESOLVING INVOKER");
 
-      // Invoke perspectives in a scope (mimics Event Store behavior)
-      // Create scope to resolve scoped services (IEventStore, IPerspectiveInvoker)
-      await using var scope = _scopeFactory.CreateAsyncScope();
-
-      _logger.LogInformation("DEBUG: SCOPE CREATED, RESOLVING INVOKER");
-
+      // Resolve perspective invoker from the scope (already created at method start)
       var perspectiveInvoker = scope.ServiceProvider.GetService<Perspectives.IPerspectiveInvoker>();
 
       _logger.LogInformation("DEBUG: INVOKER RESOLVED: {InvokerType}",
@@ -218,16 +215,15 @@ public class ServiceBusConsumerWorker(
         );
       }
 
-      // Dispose scope (invoker won't re-invoke perspectives since queue is already cleared)
-      await scope.DisposeAsync();
-
       // Mark as processed in inbox (for deduplication)
-      await _inbox.MarkProcessedAsync(envelope.MessageId, ct);
+      await inbox.MarkProcessedAsync(envelope.MessageId, ct);
 
       _logger.LogInformation(
         "Successfully processed message {MessageId}",
         envelope.MessageId
       );
+
+      // Scope will be disposed automatically by 'await using' at end of method
     } catch (Exception ex) {
       _logger.LogError(
         ex,
