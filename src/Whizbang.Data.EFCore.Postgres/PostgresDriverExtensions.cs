@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Data.EFCore.Postgres;
@@ -39,6 +40,7 @@ public static class PostgresDriverExtensions {
               "Call .WithEFCore<TDbContext>() before .WithDriver.Postgres");
         }
 
+        // Register all EF Core infrastructure (Inbox, Outbox, EventStore, Perspectives)
         RegisterEFCoreInfrastructure(
             selector.Services,
             selector.DbContextType,
@@ -51,16 +53,30 @@ public static class PostgresDriverExtensions {
   }
 
   /// <summary>
-  /// Registers EF Core infrastructure (IPerspectiveStore and ILensQuery) for all discovered models.
-  /// Invokes the callback registered by source-generated module initializer (AOT-compatible, no reflection).
+  /// Registers all EF Core infrastructure services.
+  /// Registers:
+  /// - IInbox, IOutbox, IEventStore (core messaging infrastructure)
+  /// - IPerspectiveStore and ILensQuery (for all discovered models via source-generated module initializer)
+  /// AOT-compatible, no reflection.
   /// </summary>
   private static void RegisterEFCoreInfrastructure(
       IServiceCollection services,
       Type dbContextType,
       IDbUpsertStrategy upsertStrategy) {
 
+    // Register core messaging infrastructure (IInbox, IOutbox, IEventStore)
+    // These use the generic EFCore implementations parameterized by TDbContext
+    var inboxType = typeof(EFCoreInbox<>).MakeGenericType(dbContextType);
+    var outboxType = typeof(EFCoreOutbox<>).MakeGenericType(dbContextType);
+    var eventStoreType = typeof(EFCoreEventStore<>).MakeGenericType(dbContextType);
+
+    services.AddScoped(typeof(IInbox), inboxType);
+    services.AddScoped(typeof(IOutbox), outboxType);
+    services.AddScoped(typeof(IEventStore), eventStoreType);
+
     // Invoke the registration callback that was registered by the
     // source-generated module initializer in the consumer assembly
+    // This registers IPerspectiveStore<T> and ILensQuery<T> for all discovered perspective models
     ModelRegistrationRegistry.InvokeRegistration(services, dbContextType, upsertStrategy);
   }
 }
