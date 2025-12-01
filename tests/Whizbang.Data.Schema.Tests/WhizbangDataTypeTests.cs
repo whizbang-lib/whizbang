@@ -1,0 +1,112 @@
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Data.Schema;
+
+namespace Whizbang.Data.Schema.Tests;
+
+/// <summary>
+/// Tests for WhizbangDataType enum - database-agnostic type system.
+/// Tests verify all expected types are defined for cross-database compatibility.
+/// </summary>
+public class WhizbangDataTypeTests {
+  [Test]
+  public async Task WhizbangDataType_HasUuidTypeAsync() {
+    // Arrange & Act
+    var hasUuid = Enum.IsDefined(typeof(WhizbangDataType), "Uuid");
+
+    // Assert
+    await Assert.That(hasUuid).IsTrue();
+  }
+
+  [Test]
+  public async Task WhizbangDataType_HasStringTypeAsync() {
+    // Arrange & Act
+    var hasString = Enum.IsDefined(typeof(WhizbangDataType), "String");
+
+    // Assert
+    await Assert.That(hasString).IsTrue();
+  }
+
+  [Test]
+  public async Task WhizbangDataType_HasTimestampTzTypeAsync() {
+    // Arrange & Act
+    var hasTimestampTz = Enum.IsDefined(typeof(WhizbangDataType), "TimestampTz");
+
+    // Assert
+    await Assert.That(hasTimestampTz).IsTrue();
+  }
+
+  [Test]
+  public async Task WhizbangDataType_HasJsonTypeAsync() {
+    // Arrange & Act
+    var hasJson = Enum.IsDefined(typeof(WhizbangDataType), "Json");
+
+    // Assert
+    await Assert.That(hasJson).IsTrue();
+  }
+
+  [Test]
+  public async Task WhizbangDataType_HasBigIntTypeAsync() {
+    // Arrange & Act
+    var hasBigInt = Enum.IsDefined(typeof(WhizbangDataType), "BigInt");
+
+    // Assert
+    await Assert.That(hasBigInt).IsTrue();
+  }
+
+  [Test]
+  public async Task WhizbangDataType_HasIntegerTypeAsync() {
+    // Arrange & Act
+    var hasInteger = Enum.IsDefined(typeof(WhizbangDataType), "Integer");
+
+    // Assert
+    await Assert.That(hasInteger).IsTrue();
+  }
+
+  [Test]
+  public async Task WhizbangDataType_HasBooleanTypeAsync() {
+    // Arrange & Act
+    var hasBoolean = Enum.IsDefined(typeof(WhizbangDataType), "Boolean");
+
+    // Assert
+    await Assert.That(hasBoolean).IsTrue();
+  }
+
+  [Test]
+  public async Task WhizbangDataType_HasExactlySevenTypesAsync() {
+    // Arrange & Act - Use generic GetValues for AOT compatibility
+    var typeCount = Enum.GetValues<WhizbangDataType>().Length;
+
+    // Assert
+    await Assert.That(typeCount).IsEqualTo(7);
+  }
+
+  [Test]
+  public async Task WhizbangDataType_AllValuesAreUniqueAsync() {
+    // Arrange - Use generic GetValues for AOT compatibility
+    var values = Enum.GetValues<WhizbangDataType>().Cast<int>();
+
+    // Act
+    var distinctCount = values.Distinct().Count();
+    var totalCount = values.Count();
+
+    // Assert
+    await Assert.That(distinctCount).IsEqualTo(totalCount);
+  }
+
+  [Test]
+  public async Task WhizbangDataType_ToStringReturnsCorrectNamesAsync() {
+    // Arrange
+    var expectedNames = new[] { "Uuid", "String", "TimestampTz", "Json", "BigInt", "Integer", "Boolean" };
+
+    // Act - Use generic GetNames for AOT compatibility
+    var actualNames = Enum.GetNames<WhizbangDataType>();
+
+    // Assert - Check each name individually for AOT compatibility
+    await Assert.That(actualNames.Length).IsEqualTo(expectedNames.Length);
+    foreach (var expectedName in expectedNames) {
+      await Assert.That(actualNames).Contains(expectedName);
+    }
+  }
+}
