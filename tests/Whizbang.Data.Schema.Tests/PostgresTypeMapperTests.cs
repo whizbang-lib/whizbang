@@ -1,4 +1,4 @@
-using Whizbang.Data.Schema.Postgres;
+using Whizbang.Data.Dapper.Postgres.Schema;
 
 namespace Whizbang.Data.Schema.Tests;
 

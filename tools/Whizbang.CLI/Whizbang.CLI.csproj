@@ -2,6 +2,8 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\Whizbang.Data.Schema\Whizbang.Data.Schema.csproj" />
+    <ProjectReference Include="..\..\src\Whizbang.Data.Dapper.Postgres\Whizbang.Data.Dapper.Postgres.csproj" />
+    <ProjectReference Include="..\..\src\Whizbang.Data.Dapper.Sqlite\Whizbang.Data.Dapper.Sqlite.csproj" />
   </ItemGroup>
 
   <PropertyGroup>

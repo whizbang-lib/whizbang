@@ -1,5 +1,5 @@
 using System.Collections.Immutable;
-using Whizbang.Data.Schema.Postgres;
+using Whizbang.Data.Dapper.Postgres.Schema;
 using Whizbang.Data.Schema.Schemas;
 
 namespace Whizbang.Data.Schema.Tests;

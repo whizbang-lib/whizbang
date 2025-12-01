@@ -1,4 +1,4 @@
-using Whizbang.Data.Schema.Sqlite;
+using Whizbang.Data.Dapper.Sqlite.Schema;
 
 namespace Whizbang.Data.Schema.Tests;
 

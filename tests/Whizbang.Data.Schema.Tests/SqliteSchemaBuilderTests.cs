@@ -1,6 +1,6 @@
 using System.Collections.Immutable;
+using Whizbang.Data.Dapper.Sqlite.Schema;
 using Whizbang.Data.Schema.Schemas;
-using Whizbang.Data.Schema.Sqlite;
 
 namespace Whizbang.Data.Schema.Tests;
 

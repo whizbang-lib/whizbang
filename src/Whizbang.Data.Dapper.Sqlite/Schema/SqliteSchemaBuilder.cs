@@ -1,7 +1,8 @@
 using System.Text;
+using Whizbang.Data.Schema;
 using Whizbang.Data.Schema.Schemas;
 
-namespace Whizbang.Data.Schema.Sqlite;
+namespace Whizbang.Data.Dapper.Sqlite.Schema;
 
 /// <summary>
 /// Builds SQLite DDL (Data Definition Language) from database-agnostic schema definitions.

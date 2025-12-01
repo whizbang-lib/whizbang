@@ -1,7 +1,8 @@
 using System.Text;
+using Whizbang.Data.Schema;
 using Whizbang.Data.Schema.Schemas;
 
-namespace Whizbang.Data.Schema.Postgres;
+namespace Whizbang.Data.Dapper.Postgres.Schema;
 
 /// <summary>
 /// Builds Postgres DDL (Data Definition Language) from database-agnostic schema definitions.
