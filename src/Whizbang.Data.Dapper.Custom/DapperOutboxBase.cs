@@ -88,6 +88,37 @@ public abstract class DapperOutboxBase : IOutbox {
       cancellationToken: cancellationToken);
   }
 
+  public async Task StoreAsync(IMessageEnvelope envelope, string destination, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(envelope);
+    ArgumentNullException.ThrowIfNull(destination);
+
+    using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+
+    // Convert envelope to JSONB format using adapter (works with IMessageEnvelope)
+    var jsonbModel = _envelopeAdapter.ToJsonb(envelope);
+
+    // Get event type from envelope runtime type
+    var eventType = envelope.GetType().GenericTypeArguments[0].FullName
+      ?? throw new InvalidOperationException("Event type has no FullName");
+
+    var sql = GetStoreSql();
+
+    await _executor.ExecuteAsync(
+      connection,
+      sql,
+      new {
+        MessageId = envelope.MessageId.Value,
+        Destination = destination,
+        EventType = eventType,
+        EventData = jsonbModel.DataJson,
+        Metadata = jsonbModel.MetadataJson,
+        Scope = jsonbModel.ScopeJson,
+        CreatedAt = DateTimeOffset.UtcNow
+      },
+      cancellationToken: cancellationToken);
+  }
+
   public async Task<IReadOnlyList<OutboxMessage>> GetPendingAsync(int batchSize, CancellationToken cancellationToken = default) {
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);

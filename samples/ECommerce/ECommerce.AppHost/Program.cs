@@ -29,6 +29,19 @@ ordersTopic.AddServiceBusSubscription("payment-service");
 ordersTopic.AddServiceBusSubscription("shipping-service");
 ordersTopic.AddServiceBusSubscription("inventory-service");
 ordersTopic.AddServiceBusSubscription("notification-service");
+ordersTopic.AddServiceBusSubscription("bff-orders");  // BFF listens to order events
+
+// Configure the "products" topic with BFF subscription
+var productsTopic = serviceBus.AddServiceBusTopic("products");
+productsTopic.AddServiceBusSubscription("bff-products");  // BFF listens to product events
+
+// Configure the "payments" topic with BFF subscription
+var paymentsTopic = serviceBus.AddServiceBusTopic("payments");
+paymentsTopic.AddServiceBusSubscription("bff-payments");  // BFF listens to payment events
+
+// Configure the "shipping" topic with BFF subscription
+var shippingTopic = serviceBus.AddServiceBusTopic("shipping");
+shippingTopic.AddServiceBusSubscription("bff-shipping");  // BFF listens to shipping events
 
 // Add all ECommerce services with infrastructure dependencies
 // IMPORTANT: Using --no-build to prevent concurrent rebuild conflicts on shared libraries (Whizbang.Core)

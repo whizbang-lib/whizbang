@@ -26,6 +26,18 @@ public interface IOutbox {
   Task StoreAsync<TMessage>(MessageEnvelope<TMessage> envelope, string destination, CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Stores a message envelope in the outbox for later publication (non-generic overload).
+  /// Uses the same 3-column JSONB pattern as the event store (event_data, metadata, scope).
+  /// This overload supports dynamic routing scenarios (e.g., BFF.API with 0 local receptors)
+  /// where the message type is not known at compile time. AOT-compatible - no reflection.
+  /// </summary>
+  /// <param name="envelope">The message envelope to store (runtime type information available)</param>
+  /// <param name="destination">The destination to publish to (topic, queue, etc.)</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>Task that completes when the message is stored</returns>
+  Task StoreAsync(IMessageEnvelope envelope, string destination, CancellationToken cancellationToken = default);
+
+  /// <summary>
   /// Gets pending messages that have not yet been published.
   /// </summary>
   /// <param name="batchSize">Maximum number of messages to retrieve</param>

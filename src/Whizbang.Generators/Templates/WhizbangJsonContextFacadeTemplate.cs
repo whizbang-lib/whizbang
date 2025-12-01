@@ -48,10 +48,12 @@ public class WhizbangJsonContext : JsonSerializerContext, IJsonTypeInfoResolver 
       (IJsonTypeInfoResolver)global::Whizbang.Core.Generated.InfrastructureJsonContext.Default
     };
 
-    return new JsonSerializerOptions {
+    var options = new JsonSerializerOptions {
       TypeInfoResolver = System.Text.Json.Serialization.Metadata.JsonTypeInfoResolver.Combine(resolvers),
       DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
+__CONVERTER_REGISTRATIONS__
+    return options;
   }
 
   /// <summary>

@@ -119,20 +119,19 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       ImmutableArray<ReceptorInfo> receptors,
       ImmutableArray<bool> hasPerspectives) {
 
-    // Only warn if BOTH IReceptor and IPerspectiveOf implementations are missing
+    // Only warn and skip generation if BOTH IReceptor and IPerspectiveOf implementations are missing
     // Example: BFF with 5 IPerspectiveOf but no IReceptor should NOT warn
+    // Example: Whizbang.Core with 0 receptors and 0 perspectives should skip generation
     if (receptors.IsEmpty && hasPerspectives.IsEmpty) {
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.NoReceptorsFound,
           Location.None
       ));
-      return;
+      return;  // Skip generation - no receptors AND no perspectives
     }
 
-    // If we have perspectives but no receptors, skip code generation but don't warn
-    if (receptors.IsEmpty) {
-      return;
-    }
+    // If we have perspectives but no receptors, generate empty dispatcher for outbox fallback routing
+    // This enables BFF.API services to dispatch commands to remote services via outbox
 
     // Report each discovered receptor
     foreach (var receptor in receptors) {

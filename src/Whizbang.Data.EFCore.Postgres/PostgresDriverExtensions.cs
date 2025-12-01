@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Lenses;
@@ -66,13 +67,28 @@ public static class PostgresDriverExtensions {
 
     // Register core messaging infrastructure (IInbox, IOutbox, IEventStore)
     // These use the generic EFCore implementations parameterized by TDbContext
+    // JsonSerializerOptions is resolved from DI (if registered) for application message types
     var inboxType = typeof(EFCoreInbox<>).MakeGenericType(dbContextType);
     var outboxType = typeof(EFCoreOutbox<>).MakeGenericType(dbContextType);
     var eventStoreType = typeof(EFCoreEventStore<>).MakeGenericType(dbContextType);
 
-    services.AddScoped(typeof(IInbox), inboxType);
-    services.AddScoped(typeof(IOutbox), outboxType);
-    services.AddScoped(typeof(IEventStore), eventStoreType);
+    services.AddScoped(typeof(IInbox), sp => {
+      var context = sp.GetRequiredService(dbContextType);
+      var jsonOptions = sp.GetService<System.Text.Json.JsonSerializerOptions>();
+      return Activator.CreateInstance(inboxType, context, jsonOptions)!;
+    });
+
+    services.AddScoped(typeof(IOutbox), sp => {
+      var context = sp.GetRequiredService(dbContextType);
+      var jsonOptions = sp.GetService<System.Text.Json.JsonSerializerOptions>();
+      return Activator.CreateInstance(outboxType, context, jsonOptions)!;
+    });
+
+    services.AddScoped(typeof(IEventStore), sp => {
+      var context = sp.GetRequiredService(dbContextType);
+      var jsonOptions = sp.GetService<System.Text.Json.JsonSerializerOptions>();
+      return Activator.CreateInstance(eventStoreType, context, jsonOptions)!;
+    });
 
     // Invoke the registration callback that was registered by the
     // source-generated module initializer in the consumer assembly

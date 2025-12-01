@@ -1,6 +1,7 @@
 using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Commands;
 using Whizbang.Core;
+using Whizbang.Core.ValueObjects;
 
 namespace ECommerce.BFF.API.GraphQL;
 

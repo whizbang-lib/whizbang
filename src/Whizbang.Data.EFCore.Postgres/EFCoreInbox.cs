@@ -21,10 +21,11 @@ public sealed class EFCoreInbox<TDbContext> : IInbox
   where TDbContext : DbContext {
 
   private readonly TDbContext _context;
-  private static readonly JsonSerializerOptions _jsonOptions = EFCoreJsonContext.CreateCombinedOptions();
+  private readonly JsonSerializerOptions _jsonOptions;
 
-  public EFCoreInbox(TDbContext context) {
+  public EFCoreInbox(TDbContext context, JsonSerializerOptions? jsonOptions = null) {
     _context = context ?? throw new ArgumentNullException(nameof(context));
+    _jsonOptions = jsonOptions ?? EFCoreJsonContext.CreateCombinedOptions();
   }
 
   /// <summary>

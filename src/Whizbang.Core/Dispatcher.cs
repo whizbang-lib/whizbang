@@ -114,8 +114,30 @@ public abstract class Dispatcher(
     var messageType = message.GetType();
 
     // Get strongly-typed delegate from generated code
-    // We need to use object as TResult since we don't know the actual result type
-    var invoker = _getReceptorInvoker<object>(message, messageType) ?? throw new HandlerNotFoundException(messageType);
+    var invoker = _getReceptorInvoker<object>(message, messageType);
+
+    // If no local receptor exists, check for outbox fallback
+    if (invoker == null) {
+      // Try to resolve IOutbox from a scope (it may be Scoped, e.g., EF Core implementation)
+      var scope = _scopeFactory.CreateScope();
+      try {
+        var outbox = scope.ServiceProvider.GetService<IOutbox>();
+        if (outbox != null && _jsonOptions != null) {
+          // Route to outbox for remote delivery (AOT-compatible, no reflection)
+          return await SendToOutboxViaScopeAsync(message, messageType, context, outbox, callerMemberName, callerFilePath, callerLineNumber);
+        }
+      } finally {
+        // Dispose scope asynchronously to properly handle services that only implement IAsyncDisposable
+        if (scope is IAsyncDisposable asyncDisposable) {
+          await asyncDisposable.DisposeAsync();
+        } else {
+          scope.Dispose();
+        }
+      }
+
+      // No receptor and no outbox - throw
+      throw new HandlerNotFoundException(messageType);
+    }
 
     // Create envelope with hop for observability
     var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
@@ -451,17 +473,29 @@ public abstract class Dispatcher(
     await publisher(@event);
 
     // If outbox is configured, publish event for cross-service delivery
-    if (_outbox != null && _jsonOptions != null) {
-      await PublishToOutboxAsync(@event, eventType);
+    // Resolve IOutbox from a scope (it may be Scoped, e.g., EF Core implementation)
+    var publishScope = _scopeFactory.CreateScope();
+    try {
+      var publishOutbox = publishScope.ServiceProvider.GetService<IOutbox>();
+      if (publishOutbox != null && _jsonOptions != null) {
+        await PublishToOutboxViaScopeAsync(@event, eventType, publishOutbox);
+      }
+    } finally {
+      // Dispose scope asynchronously to properly handle services that only implement IAsyncDisposable
+      if (publishScope is IAsyncDisposable asyncDisposable) {
+        await asyncDisposable.DisposeAsync();
+      } else {
+        publishScope.Dispose();
+      }
     }
   }
 
   /// <summary>
-  /// Publishes an event to the outbox for cross-service delivery.
+  /// Publishes an event to the outbox for cross-service delivery using a scoped outbox instance.
   /// The OutboxPublisherWorker will poll the outbox and publish to the transport.
   /// Creates a complete MessageEnvelope with a hop indicating "stored to outbox".
   /// </summary>
-  private async Task PublishToOutboxAsync<TEvent>(TEvent @event, Type eventType) {
+  private async Task PublishToOutboxViaScopeAsync<TEvent>(TEvent @event, Type eventType, IOutbox outbox) {
     // Determine destination topic from event type name
     // TODO: Make this configurable via IEventRoutingConfiguration
     var destination = DetermineEventTopic(eventType);
@@ -485,7 +519,7 @@ public abstract class Dispatcher(
 
     // Store complete envelope in outbox (will be serialized to JSONB)
     System.Diagnostics.Debug.WriteLine($"[Dispatcher] Storing event {eventType.Name} to outbox with destination '{destination}'");
-    await _outbox!.StoreAsync<TEvent>(envelope, destination);
+    await outbox.StoreAsync<TEvent>(envelope, destination);
     System.Diagnostics.Debug.WriteLine($"[Dispatcher] Successfully stored event {eventType.Name} to outbox");
   }
 
@@ -511,6 +545,63 @@ public abstract class Dispatcher(
 
     // Default: use lowercase type name without "Event" suffix
     return typeName.Replace("Event", "").ToLowerInvariant();
+  }
+
+  /// <summary>
+  /// Determines the Service Bus topic for a command type.
+  /// Convention: CreateProductCommand → "products", UpdateInventoryCommand → "inventory"
+  /// </summary>
+  private static string DetermineCommandDestination(Type messageType) {
+    var typeName = messageType.Name;
+
+    // Convention-based routing: ProductXxxCommand → "products", InventoryXxxCommand → "inventory"
+    if (typeName.StartsWith("Product") || typeName.StartsWith("CreateProduct")) {
+      return "products";
+    }
+
+    if (typeName.StartsWith("Inventory")) {
+      return "inventory";
+    }
+
+    if (typeName.StartsWith("Order")) {
+      return "orders";
+    }
+
+    // Default: use lowercase type name without "Command" suffix
+    return typeName.Replace("Command", "").ToLowerInvariant();
+  }
+
+  /// <summary>
+  /// Sends a message to the outbox for remote delivery using a scoped outbox instance.
+  /// Creates a MessageEnvelope with proper type information and stores it in the outbox.
+  /// The OutboxPublisherWorker will poll the outbox and publish to the transport.
+  /// AOT-compatible - uses non-generic IOutbox.StoreAsync overload, no reflection.
+  /// </summary>
+  private async Task<IDeliveryReceipt> SendToOutboxViaScopeAsync(
+    object message,
+    Type messageType,
+    IMessageContext context,
+    IOutbox outbox,
+    string callerMemberName,
+    string callerFilePath,
+    int callerLineNumber
+  ) {
+    // Determine destination topic from message type name
+    var destination = DetermineCommandDestination(messageType);
+
+    // Create envelope with hop for observability (returns IMessageEnvelope)
+    var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
+
+    // Store in outbox using non-generic overload (AOT-compatible, no reflection)
+    await outbox.StoreAsync(envelope, destination);
+
+    // Return delivery receipt with Accepted status (message queued, not yet delivered)
+    return DeliveryReceipt.Accepted(
+      envelope.MessageId,
+      destination,
+      context.CorrelationId,
+      context.CausationId
+    );
   }
 
   // ========================================

@@ -578,16 +578,17 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine("#nullable enable");
     sb.AppendLine();
 
+    sb.AppendLine("using System;");
+    sb.AppendLine("using System.Text.Json;");
     sb.AppendLine("using System.Text.Json.Serialization;");
+    sb.AppendLine("using System.Text.Json.Serialization.Metadata;");
     sb.AppendLine();
 
     sb.AppendLine("namespace Whizbang.Core.Generated;");
     sb.AppendLine();
 
     // Generate class that implements IJsonTypeInfoResolver
-    // Note: We implement IJsonTypeInfoResolver directly instead of using JsonSerializerContext
-    // because [JsonSerializable] attributes only work on source files, not generated files.
-    sb.AppendLine("public class WhizbangIdJsonContext : System.Text.Json.Serialization.Metadata.IJsonTypeInfoResolver {");
+    sb.AppendLine("public class WhizbangIdJsonContext : IJsonTypeInfoResolver {");
     sb.AppendLine("  /// <summary>");
     sb.AppendLine("  /// Default singleton instance of WhizbangIdJsonContext.");
     sb.AppendLine("  /// </summary>");
@@ -596,7 +597,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine("  /// <summary>");
     sb.AppendLine("  /// Resolves JsonTypeInfo for discovered WhizbangId types in this assembly.");
     sb.AppendLine("  /// </summary>");
-    sb.AppendLine("  public System.Text.Json.Serialization.Metadata.JsonTypeInfo? GetTypeInfo(System.Type type, System.Text.Json.JsonSerializerOptions options) {");
+    sb.AppendLine("  public JsonTypeInfo? GetTypeInfo(Type type, JsonSerializerOptions options) {");
 
     if (deduplicated.Count == 0) {
       // No WhizbangId types discovered - return null for all types
@@ -608,9 +609,10 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
       sb.AppendLine("    // Check for discovered WhizbangId types");
       foreach (var id in deduplicated) {
         sb.AppendLine($"    if (type == typeof({id.FullyQualifiedName})) {{");
-        sb.AppendLine($"      // WhizbangId types use custom JSON converters, return null");
-        sb.AppendLine($"      // The converter will be registered separately");
-        sb.AppendLine("      return null;");
+        sb.AppendLine($"      // Create JsonTypeInfo for {id.TypeName} using the generated converter");
+        sb.AppendLine($"      var converter = new {id.FullyQualifiedName}JsonConverter();");
+        sb.AppendLine($"      var jsonTypeInfo = JsonMetadataServices.CreateValueInfo<{id.FullyQualifiedName}>(options, converter);");
+        sb.AppendLine("      return jsonTypeInfo;");
         sb.AppendLine("    }");
         sb.AppendLine();
       }

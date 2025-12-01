@@ -4,9 +4,11 @@
 #endregion
 #nullable enable
 
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Logging;
 
 namespace __DBCONTEXT_NAMESPACE__.Generated;
 
@@ -19,27 +21,62 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// Creates tables from entity configurations (ConfigureWhizbang() in OnModelCreating).
   /// Idempotent - safe to call multiple times.
   ///
-  /// Uses EF Core's migration script generation + ExecuteSqlRaw to create tables.
-  /// This handles Aspire scenarios where database exists but tables don't.
+  /// Post-processes EF Core's generated script to add IF NOT EXISTS clauses.
+  /// Exception handler serves as defense-in-depth fallback.
   /// </summary>
   /// <param name="dbContext">The __DBCONTEXT_CLASS__ instance</param>
+  /// <param name="logger">Optional logger for diagnostic messages</param>
   /// <param name="cancellationToken">Cancellation token</param>
   public static async Task EnsureWhizbangTablesCreatedAsync(
     this __DBCONTEXT_FQN__ dbContext,
+    ILogger? logger = null,
     CancellationToken cancellationToken = default) {
 
     // Generate CREATE TABLE script from EF Core model
-    // This creates DDL for all entities configured in ConfigureWhizbang()
     var script = dbContext.Database.GenerateCreateScript();
 
-    // Execute the script (creates tables if they don't exist)
-    // Note: GenerateCreateScript() doesn't include IF NOT EXISTS
-    // So we wrap in transaction and ignore errors for existing tables
+    // Post-process to add IF NOT EXISTS clauses
+    script = MakeScriptIdempotent(script);
+
+    // Execute the idempotent script
     try {
       await dbContext.Database.ExecuteSqlRawAsync(script, cancellationToken);
     } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P07") {
-      // 42P07 = duplicate_table error - table already exists, this is fine
-      // Idempotent operation - safe to ignore
+      // 42P07 = duplicate_table - Unexpected! Script should be idempotent.
+      // This catch serves as defense-in-depth if SQL post-processing has a bug.
+      logger?.LogWarning(
+        "Caught duplicate_table exception despite IF NOT EXISTS in SQL. " +
+        "This suggests the SQL post-processing may have a bug. " +
+        "Table: {Table}, SqlState: {SqlState}",
+        ex.TableName ?? "unknown",
+        ex.SqlState);
     }
+  }
+
+  /// <summary>
+  /// Post-processes EF Core's generated SQL to add IF NOT EXISTS clauses.
+  /// Makes CREATE TABLE and CREATE INDEX statements idempotent.
+  /// </summary>
+  private static string MakeScriptIdempotent(string script) {
+    // Add IF NOT EXISTS to CREATE TABLE statements
+    // Pattern: CREATE TABLE table_name (
+    // Replace: CREATE TABLE IF NOT EXISTS table_name (
+    script = Regex.Replace(
+      script,
+      @"CREATE TABLE (\w+) \(",
+      "CREATE TABLE IF NOT EXISTS $1 (",
+      RegexOptions.Multiline);
+
+    // Add IF NOT EXISTS to CREATE INDEX statements
+    // Pattern: CREATE INDEX index_name ON
+    // Replace: CREATE INDEX IF NOT EXISTS index_name ON
+    // Also handles: CREATE UNIQUE INDEX
+    script = Regex.Replace(
+      script,
+      @"CREATE (UNIQUE )?INDEX ([""'\w]+) ON",
+      "CREATE $1INDEX IF NOT EXISTS $2 ON",
+      RegexOptions.Multiline);
+
+    return script;
   }
 }

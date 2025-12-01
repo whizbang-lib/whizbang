@@ -28,13 +28,17 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         transform: static (ctx, ct) => ExtractMessageTypeInfo(ctx, ct)
     ).Where(static info => info is not null);
 
-    // Combine compilation with messages to get assembly name
+    // Combine messages with compilation
     var messagesWithCompilation = messageTypes.Collect().Combine(context.CompilationProvider);
 
     // Generate WhizbangJsonContext from collected message types
     context.RegisterSourceOutput(
         messagesWithCompilation,
-        static (ctx, data) => GenerateWhizbangJsonContext(ctx, data.Left!, data.Right)
+        static (ctx, data) => GenerateWhizbangJsonContext(
+            ctx,
+            data.Left!,    // messages
+            data.Right     // compilation
+        )
     );
   }
 
@@ -206,6 +210,20 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       facadeTemplate = TemplateUtilities.ReplaceHeaderRegion(assembly, facadeTemplate);
       facadeTemplate = facadeTemplate.Replace("__ASSEMBLY_NAME__", assemblyName);
       facadeTemplate = facadeTemplate.Replace("__NAMESPACE__", namespaceName);
+
+      // Discover WhizbangId converters by examining message property types
+      var converters = DiscoverWhizbangIdConverters(allTypes, compilation);
+
+      // Generate converter registration code
+      var converterRegistrations = new System.Text.StringBuilder();
+      if (!converters.IsEmpty) {
+        converterRegistrations.AppendLine();
+        converterRegistrations.AppendLine("    // Register WhizbangId converters");
+        foreach (var converter in converters) {
+          converterRegistrations.AppendLine($"    options.Converters.Add(new global::{converter.FullyQualifiedTypeName}());");
+        }
+      }
+      facadeTemplate = facadeTemplate.Replace("__CONVERTER_REGISTRATIONS__", converterRegistrations.ToString());
 
       context.AddSource("WhizbangJsonContext.g.cs", facadeTemplate);
     }
@@ -744,6 +762,64 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     };
 
     return frameworkTypes.Contains(fullyQualifiedTypeName);
+  }
+
+  /// <summary>
+  /// Discovers WhizbangId JSON converters by examining property types in messages.
+  /// Infers converter names for types that look like ID types (e.g., ProductId -> ProductIdJsonConverter).
+  /// Uses naming conventions since source generators run in parallel and generated types may not be visible.
+  /// Returns info about converters that need to be registered in JsonSerializerOptions.
+  /// </summary>
+  private static ImmutableArray<WhizbangIdTypeInfo> DiscoverWhizbangIdConverters(
+      ImmutableArray<JsonMessageTypeInfo> allTypes,
+      Compilation compilation) {
+
+    var converters = new Dictionary<string, WhizbangIdTypeInfo>();
+
+    foreach (var type in allTypes) {
+      foreach (var property in type.Properties) {
+        // Skip primitive and framework types
+        if (IsPrimitiveOrFrameworkType(property.Type)) {
+          continue;
+        }
+
+        // Skip collection types
+        if (ExtractElementType(property.Type) != null) {
+          continue;
+        }
+
+        // Extract simple type name from fully qualified name
+        // e.g., "global::ECommerce.Contracts.Commands.ProductId" -> "ProductId"
+        var parts = property.Type.Replace("global::", "").Split('.');
+        var typeName = parts[^1];
+
+        // Heuristic: If type name ends with "Id", it's likely a WhizbangId type with a generated converter
+        // This includes types like ProductId, OrderId, CustomerId, MessageId, CorrelationId, etc.
+        if (!typeName.EndsWith("Id")) {
+          continue;
+        }
+
+        // Infer converter name: {TypeName}JsonConverter
+        var converterTypeName = $"{typeName}JsonConverter";
+
+        // Check if converter already discovered
+        if (converters.ContainsKey(converterTypeName)) {
+          continue;
+        }
+
+        // Infer converter namespace (same as the property type)
+        var propertyTypeNamespace = string.Join(".", parts.Take(parts.Length - 1));
+        var converterFullName = $"{propertyTypeNamespace}.{converterTypeName}";
+
+        // Add the converter (optimistic registration - if it doesn't exist, compilation will fail with clear error)
+        converters[converterTypeName] = new WhizbangIdTypeInfo(
+            TypeName: converterTypeName,
+            FullyQualifiedTypeName: converterFullName
+        );
+      }
+    }
+
+    return converters.Values.ToImmutableArray();
   }
 
   /// <summary>

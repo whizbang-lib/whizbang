@@ -21,10 +21,11 @@ public sealed class EFCoreOutbox<TDbContext> : IOutbox
   where TDbContext : DbContext {
 
   private readonly TDbContext _context;
-  private static readonly JsonSerializerOptions _jsonOptions = EFCoreJsonContext.CreateCombinedOptions();
+  private readonly JsonSerializerOptions _jsonOptions;
 
-  public EFCoreOutbox(TDbContext context) {
+  public EFCoreOutbox(TDbContext context, JsonSerializerOptions? jsonOptions = null) {
     _context = context ?? throw new ArgumentNullException(nameof(context));
+    _jsonOptions = jsonOptions ?? EFCoreJsonContext.CreateCombinedOptions();
   }
 
   /// <summary>
@@ -52,6 +53,52 @@ public sealed class EFCoreOutbox<TDbContext> : IOutbox
       MessageId = envelope.MessageId.ToString(),
       Destination = destination,
       EventType = typeof(TMessage).FullName ?? throw new InvalidOperationException("Event type has no FullName"),
+      EventData = eventData,
+      Metadata = metadata,
+      Scope = scope,
+      Status = "Pending",
+      Attempts = 0,
+      Error = null,
+      CreatedAt = DateTimeOffset.UtcNow,
+      PublishedAt = null,
+      Topic = destination,  // Legacy field, same as Destination
+      PartitionKey = null   // Can be extracted from envelope if needed
+    };
+
+    await _context.Set<OutboxRecord>().AddAsync(record, cancellationToken);
+    await _context.SaveChangesAsync(cancellationToken);
+  }
+
+  /// <summary>
+  /// Stores a message envelope in the outbox for later publication (non-generic overload).
+  /// Extracts envelope data into JSONB columns for efficient querying.
+  /// Uses runtime type information from the envelope. AOT-compatible - no reflection.
+  /// </summary>
+  public async Task StoreAsync(
+      IMessageEnvelope envelope,
+      string destination,
+      CancellationToken cancellationToken = default) {
+
+    ArgumentNullException.ThrowIfNull(envelope);
+    if (string.IsNullOrWhiteSpace(destination)) {
+      throw new ArgumentException("Destination cannot be null or whitespace.", nameof(destination));
+    }
+
+    // Get payload type from envelope runtime type
+    var payloadType = envelope.GetType().GenericTypeArguments[0];
+
+    // Serialize envelope data to JSON using runtime type info
+    var typeInfo = _jsonOptions.GetTypeInfo(payloadType);
+    var payload = envelope.GetPayload();
+    var eventDataJson = JsonSerializer.Serialize(payload, typeInfo);
+    var eventData = JsonDocument.Parse(eventDataJson);
+    var metadata = SerializeMetadata(envelope);
+    var scope = SerializeScope(envelope);
+
+    var record = new OutboxRecord {
+      MessageId = envelope.MessageId.ToString(),
+      Destination = destination,
+      EventType = payloadType.FullName ?? throw new InvalidOperationException("Event type has no FullName"),
       EventData = eventData,
       Metadata = metadata,
       Scope = scope,

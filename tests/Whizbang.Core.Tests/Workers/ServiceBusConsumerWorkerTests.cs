@@ -48,6 +48,9 @@ public class ServiceBusConsumerWorkerTests {
     // Register scoped marker service to verify scope is active
     services.AddScoped<ScopeMarker>();
 
+    // Register test inbox (resolved from scope in HandleMessageAsync)
+    services.AddScoped<IInbox, TestInbox>();
+
     // Register test perspective invoker that verifies scope is active
     services.AddScoped<IPerspectiveInvoker>(sp => {
       var scopeMarker = sp.GetService<ScopeMarker>();
@@ -65,7 +68,6 @@ public class ServiceBusConsumerWorkerTests {
 
     // Create test dependencies
     var transport = new TestTransport();
-    var inbox = new TestInbox();
     var jsonOptions = new JsonSerializerOptions();
     var logger = new TestLogger<ServiceBusConsumerWorker>();
 
@@ -75,9 +77,9 @@ public class ServiceBusConsumerWorkerTests {
     var worker = new ServiceBusConsumerWorker(
       transport,
       scopeFactory,
-      inbox,
       jsonOptions,
-      logger
+      logger,
+      options: null
     );
 
     // Use reflection to access private HandleMessageAsync method
@@ -107,7 +109,12 @@ public class ServiceBusConsumerWorkerTests {
     var testEvent = new ServiceBusWorkerTestEvent { Data = "test data" };
     var envelope = CreateTestEnvelope(testEvent);
 
+    // Create test inbox that's already processed the message
+    var testInbox = new TestInbox();
+    await testInbox.MarkProcessedAsync(envelope.MessageId, CancellationToken.None);
+
     var services = new ServiceCollection();
+    services.AddScoped<IInbox>(sp => testInbox);
     services.AddScoped<IPerspectiveInvoker>(sp => new TestPerspectiveInvoker(() => {
       perspectiveInvokerCalled = true;
     }));
@@ -116,19 +123,15 @@ public class ServiceBusConsumerWorkerTests {
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
     var transport = new TestTransport();
-    var inbox = new TestInbox();
     var jsonOptions = new JsonSerializerOptions();
     var logger = new TestLogger<ServiceBusConsumerWorker>();
-
-    // Mark message as already processed
-    await inbox.MarkProcessedAsync(envelope.MessageId, CancellationToken.None);
 
     var worker = new ServiceBusConsumerWorker(
       transport,
       scopeFactory,
-      inbox,
       jsonOptions,
-      logger
+      logger,
+      options: null
     );
 
     var handleMessageMethod = typeof(ServiceBusConsumerWorker)

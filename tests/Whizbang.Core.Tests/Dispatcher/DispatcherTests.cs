@@ -463,4 +463,146 @@ public class DispatcherTests {
     );
     await Assert.That(traces).HasCount().GreaterThanOrEqualTo(1);
   }
+
+  // ========================================
+  // OUTBOX FALLBACK TESTS (0-Receptor Scenario)
+  // ========================================
+
+  /// <summary>
+  /// Test message for outbox fallback tests.
+  /// </summary>
+  public record CreateProductCommand(string Name, decimal Price);
+
+  /// <summary>
+  /// Test outbox that tracks stored messages.
+  /// </summary>
+  private class TestOutbox : Whizbang.Core.Messaging.IOutbox {
+    public List<(Whizbang.Core.Observability.IMessageEnvelope Envelope, string Destination)> StoredMessages { get; } = [];
+
+    public Task StoreAsync<TMessage>(Whizbang.Core.Observability.MessageEnvelope<TMessage> envelope, string destination, CancellationToken cancellationToken = default) {
+      StoredMessages.Add((envelope, destination));
+      return Task.CompletedTask;
+    }
+
+    public Task StoreAsync(Whizbang.Core.Observability.IMessageEnvelope envelope, string destination, CancellationToken cancellationToken = default) {
+      StoredMessages.Add((envelope, destination));
+      return Task.CompletedTask;
+    }
+
+    public Task<IReadOnlyList<Whizbang.Core.Messaging.OutboxMessage>> GetPendingAsync(int batchSize, CancellationToken cancellationToken = default) {
+      // Not needed for outbox fallback tests - return empty list
+      return Task.FromResult<IReadOnlyList<Whizbang.Core.Messaging.OutboxMessage>>(Array.Empty<Whizbang.Core.Messaging.OutboxMessage>());
+    }
+
+    public Task MarkPublishedAsync(Whizbang.Core.ValueObjects.MessageId messageId, CancellationToken cancellationToken = default) {
+      // Not needed for outbox fallback tests - no-op
+      return Task.CompletedTask;
+    }
+  }
+
+  /// <summary>
+  /// Empty dispatcher implementation with no receptors (all lookups return null).
+  /// Simulates BFF.API scenario with 0 local receptors.
+  /// </summary>
+  private class EmptyDispatcher : Whizbang.Core.Dispatcher {
+    public EmptyDispatcher(
+      IServiceProvider services,
+      Whizbang.Core.Observability.ITraceStore? traceStore = null,
+      Whizbang.Core.Messaging.IOutbox? outbox = null,
+      System.Text.Json.JsonSerializerOptions? jsonOptions = null
+    ) : base(services, traceStore, outbox, transport: null, jsonOptions) { }
+
+    // All receptor lookups return null (0 receptors)
+    protected override ReceptorInvoker<TResult>? _getReceptorInvoker<TResult>(object message, Type messageType) => null;
+    protected override VoidReceptorInvoker? _getVoidReceptorInvoker(object message, Type messageType) => null;
+    protected override ReceptorPublisher<TEvent> _getReceptorPublisher<TEvent>(TEvent @event, Type eventType) =>
+      _ => Task.CompletedTask; // No receptors to publish to
+  }
+
+  /// <summary>
+  /// Test: SendAsync with no local receptor should route to outbox when outbox is configured.
+  /// This is the core BFF.API scenario - send commands remotely via outbox.
+  /// </summary>
+  [Test]
+  public async Task SendAsync_NoLocalReceptor_WithOutbox_RoutesToOutboxAsync() {
+    // Arrange
+    var services = new ServiceCollection()
+      .AddSingleton<IServiceScopeFactory>(sp => new TestServiceScopeFactory(sp))
+      .BuildServiceProvider();
+
+    var outbox = new TestOutbox();
+    var jsonOptions = new System.Text.Json.JsonSerializerOptions();
+    var dispatcher = new EmptyDispatcher(services, traceStore: null, outbox, jsonOptions);
+
+    var command = new CreateProductCommand("Test Product", 42.99m);
+
+    // Act
+    var receipt = await dispatcher.SendAsync(command);
+
+    // Assert - Command should be written to outbox
+    await Assert.That(outbox.StoredMessages).HasCount().EqualTo(1);
+
+    var (envelope, destination) = outbox.StoredMessages[0];
+    await Assert.That(envelope).IsNotNull();
+    await Assert.That(destination).IsNotNull();
+
+    // Verify envelope contains the command (use GetPayload() instead of casting)
+    var payload = envelope.GetPayload();
+    await Assert.That(payload).IsEqualTo(command);
+
+    // Verify delivery receipt
+    await Assert.That(receipt).IsNotNull();
+    await Assert.That(receipt.MessageId).IsEqualTo(envelope.MessageId);
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Accepted); // Outbox = Accepted, not Delivered
+  }
+
+  /// <summary>
+  /// Test: SendAsync with no local receptor AND no outbox should throw HandlerNotFoundException.
+  /// This preserves existing behavior when outbox is not configured.
+  /// </summary>
+  [Test]
+  public async Task SendAsync_NoLocalReceptor_NoOutbox_ThrowsHandlerNotFoundAsync() {
+    // Arrange
+    var services = new ServiceCollection()
+      .AddSingleton<IServiceScopeFactory>(sp => new TestServiceScopeFactory(sp))
+      .BuildServiceProvider();
+
+    var dispatcher = new EmptyDispatcher(services, traceStore: null, outbox: null, jsonOptions: null);
+
+    var command = new CreateProductCommand("Test", 1.00m);
+
+    // Act & Assert - Should throw when no receptor AND no outbox
+    var exception = await Assert.That(async () => await dispatcher.SendAsync(command))
+      .ThrowsExactly<HandlerNotFoundException>();
+
+    await Assert.That(exception?.Message).Contains("CreateProductCommand");
+  }
+
+  /// <summary>
+  /// Test service scope factory for outbox fallback testing.
+  /// </summary>
+  private class TestServiceScopeFactory : IServiceScopeFactory {
+    private readonly IServiceProvider _services;
+
+    public TestServiceScopeFactory(IServiceProvider services) {
+      _services = services;
+    }
+
+    public IServiceScope CreateScope() {
+      return new TestServiceScope(_services);
+    }
+  }
+
+  /// <summary>
+  /// Test service scope for outbox fallback testing.
+  /// </summary>
+  private class TestServiceScope : IServiceScope {
+    public TestServiceScope(IServiceProvider serviceProvider) {
+      ServiceProvider = serviceProvider;
+    }
+
+    public IServiceProvider ServiceProvider { get; }
+
+    public void Dispose() { }
+  }
 }

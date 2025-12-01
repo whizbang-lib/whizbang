@@ -566,4 +566,109 @@ public class OrderReceptor : IReceptor<GetComplexOrder, (OrderSummary, (Customer
     // GetSimpleName should simplify nested tuple
     await Assert.That(whiz001!.GetMessage()).Contains("(OrderSummary, (CustomerInfo, ShippingInfo))");
   }
+
+  // ========================================
+  // ZERO-RECEPTOR GENERATION TESTS (Outbox Fallback)
+  // ========================================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ZeroReceptors_WithPerspective_GeneratesEmptyDispatcherAsync() {
+    // Arrange - BFF.API scenario: 0 receptors, but has perspectives
+    // Should generate empty dispatcher for outbox fallback support
+    var source = @"
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Perspectives;
+
+public record ProductCreatedEvent : IEvent;
+
+public class ProductCatalogPerspective : IPerspectiveOf<ProductCreatedEvent> {
+  public Guid Id { get; set; }
+  public Task Update(ProductCreatedEvent @event, CancellationToken ct = default) => Task.CompletedTask;
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate empty Dispatcher.g.cs
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+    await Assert.That(dispatcher!).Contains("class GeneratedDispatcher");
+    await Assert.That(dispatcher).Contains("return null"); // All lookups return null
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ZeroReceptors_WithPerspective_GeneratesAddReceptorsAsync() {
+    // Arrange - Should generate AddReceptors() extension even with 0 receptors
+    var source = @"
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Perspectives;
+
+public record ProductCreatedEvent : IEvent;
+
+public class ProductCatalogPerspective : IPerspectiveOf<ProductCreatedEvent> {
+  public Guid Id { get; set; }
+  public Task Update(ProductCreatedEvent @event, CancellationToken ct = default) => Task.CompletedTask;
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate DispatcherRegistrations.g.cs
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var registrations = GeneratorTestHelper.GetGeneratedSource(result, "DispatcherRegistrations.g.cs");
+    await Assert.That(registrations).IsNotNull();
+    await Assert.That(registrations!).Contains("AddReceptors");
+    await Assert.That(registrations).Contains("AddWhizbangDispatcher");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_ZeroReceptors_WithPerspective_GeneratedCodeCompilesAsync() {
+    // Arrange - Verify generated code compiles successfully
+    var source = @"
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Perspectives;
+
+public record ProductCreatedEvent : IEvent;
+
+public class ProductCatalogPerspective : IPerspectiveOf<ProductCreatedEvent> {
+  public Guid Id { get; set; }
+  public Task Update(ProductCreatedEvent @event, CancellationToken ct = default) => Task.CompletedTask;
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - No compilation errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    // Verify all expected files are generated
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    var registrations = GeneratorTestHelper.GetGeneratedSource(result, "DispatcherRegistrations.g.cs");
+    var diagnostics = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorDiscoveryDiagnostics.g.cs");
+
+    await Assert.That(dispatcher).IsNotNull();
+    await Assert.That(registrations).IsNotNull();
+    await Assert.That(diagnostics).IsNotNull();
+  }
 }
