@@ -18,12 +18,12 @@
       }
     },
     {
-      "label": "build AppHost",
+      "label": "build all services",
       "command": "dotnet",
       "type": "process",
       "args": [
         "build",
-        "${workspaceFolder}/ECommerce.AppHost/ECommerce.AppHost.csproj",
+        "${workspaceFolder}/ECommerce.sln",
         "/property:GenerateFullPaths=true",
         "/consoleloggerparameters:NoSummary;ForceNoAlign"
       ],
@@ -93,7 +93,7 @@
       "dependsOrder": "sequence",
       "dependsOn": [
         "setup dev certs",
-        "build AppHost"
+        "build all services"
       ],
       "problemMatcher": []
     }

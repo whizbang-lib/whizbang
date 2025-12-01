@@ -5,6 +5,45 @@
     Merges Whizbang.Generators.Shared.dll into Whizbang.Generators.dll
     Runs in ALL configurations (Debug and Release) since generators need this during development
   -->
+
+  <!--
+    ILRepack File Lock Issue (RESOLVED):
+
+    ACTUAL ROOT CAUSE: Aspire's AddProject() runs 'dotnet run' for each service, which rebuilds
+    the project by default. When multiple services start concurrently, they all try to rebuild
+    shared libraries (Whizbang.Core) simultaneously, causing file lock conflicts.
+
+    WORKFLOW THAT CAUSED THE ISSUE:
+      1. Launch Aspire from VSCode
+      2. Aspire starts multiple services concurrently (BFF, InventoryWorker, PaymentWorker, etc.)
+      3. Each service runs: dotnet run (with project path)
+      4. dotnet run rebuilds the project, including shared library Whizbang.Core.dll
+      5. CONFLICT: Multiple concurrent builds try to write to Whizbang.Core.dll
+      6. Build fails: "Cannot open Whizbang.Core.dll for writing"
+
+    PERMANENT FIX (IMPLEMENTED):
+      1. VSCode preLaunchTask builds entire solution ONCE: dotnet build ECommerce.sln
+      2. Each service in AppHost configured with .WithArgs() using the no-build flag
+      3. Aspire runs services without rebuilding using the no-build argument
+      4. No concurrent rebuild conflicts!
+
+    MANUAL WORKAROUND (if error still occurs):
+      Run the helper script from repository root:
+        pwsh ./clean-generator-locks.ps1
+
+      The script will:
+        1. Kill any lingering ECommerce/AppHost processes
+        2. Shut down dotnet build server
+        3. Clean build artifacts
+        4. Remove locked files
+
+      Then rebuild: dotnet build
+
+    WHY ILREPACK?
+      Source generators must be packaged with all dependencies merged into a single assembly.
+      ILRepack merges Whizbang.Generators.Shared.dll (common helper code) into each generator
+      to create self-contained assemblies. This is standard practice for generator packaging.
+  -->
   <Target Name="MergeSharedAssembly" AfterTargets="Build">
     <ItemGroup>
       <!-- Main assembly (must be first) -->

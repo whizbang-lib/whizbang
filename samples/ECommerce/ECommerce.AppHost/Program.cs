@@ -31,7 +31,10 @@ ordersTopic.AddServiceBusSubscription("inventory-service");
 ordersTopic.AddServiceBusSubscription("notification-service");
 
 // Add all ECommerce services with infrastructure dependencies
+// IMPORTANT: Using --no-build to prevent concurrent rebuild conflicts on shared libraries (Whizbang.Core)
+// The preLaunchTask in VSCode builds all services once before launching Aspire
 var orderService = builder.AddProject("orderservice", "../ECommerce.OrderService.API/ECommerce.OrderService.API.csproj")
+    .WithArgs("--no-build")
     .WithReference(ordersDb)
     .WithReference(serviceBus)
     .WaitFor(ordersDb)
@@ -39,24 +42,28 @@ var orderService = builder.AddProject("orderservice", "../ECommerce.OrderService
     .WithExternalHttpEndpoints();
 
 var inventoryWorker = builder.AddProject("inventoryworker", "../ECommerce.InventoryWorker/ECommerce.InventoryWorker.csproj")
+    .WithArgs("--no-build")
     .WithReference(inventoryDb)
     .WithReference(serviceBus)
     .WaitFor(inventoryDb)
     .WaitFor(serviceBus);
 
 var paymentWorker = builder.AddProject("paymentworker", "../ECommerce.PaymentWorker/ECommerce.PaymentWorker.csproj")
+    .WithArgs("--no-build")
     .WithReference(paymentDb)
     .WithReference(serviceBus)
     .WaitFor(paymentDb)
     .WaitFor(serviceBus);
 
 var shippingWorker = builder.AddProject("shippingworker", "../ECommerce.ShippingWorker/ECommerce.ShippingWorker.csproj")
+    .WithArgs("--no-build")
     .WithReference(shippingDb)
     .WithReference(serviceBus)
     .WaitFor(shippingDb)
     .WaitFor(serviceBus);
 
 var notificationWorker = builder.AddProject("notificationworker", "../ECommerce.NotificationWorker/ECommerce.NotificationWorker.csproj")
+    .WithArgs("--no-build")
     .WithReference(notificationDb)
     .WithReference(serviceBus)
     .WaitFor(notificationDb)
@@ -69,6 +76,7 @@ var angularApp = builder.AddNpmApp("ui", "../ECommerce.UI", "start")
     .WithExternalHttpEndpoints();
 
 var bffService = builder.AddProject("bff", "../ECommerce.BFF.API/ECommerce.BFF.API.csproj")
+    .WithArgs("--no-build")
     .WithReference(bffDb)
     .WithReference(serviceBus)
     .WithReference(angularApp)  // BFF can discover Angular URL for CORS
