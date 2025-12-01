@@ -26,10 +26,10 @@ public class EFCoreSnippets {
       entity.HasKey(e => e.Id);
 
       // JSONB columns (EF Core 10 OwnsOne + ToJson for Npgsql JSONB mapping)
-      // OwnsOne().ToJson() supports complex types with nested collections
-      entity.OwnsOne(e => e.Data).ToJson();
-      entity.OwnsOne(e => e.Metadata).ToJson();
-      entity.OwnsOne(e => e.Scope).ToJson();
+      // Using lambda syntax to properly handle complex types with nested collections
+      entity.OwnsOne(e => e.Data, data => data.ToJson());
+      entity.OwnsOne(e => e.Metadata, metadata => metadata.ToJson());
+      entity.OwnsOne(e => e.Scope, scope => scope.ToJson());
 
       // System fields
       entity.Property(e => e.CreatedAt).IsRequired();
