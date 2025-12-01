@@ -34,6 +34,7 @@ public static class InMemoryDriverExtensions {
     /// </code>
     /// </example>
     public WhizbangPerspectiveBuilder InMemory {
+      [RequiresDynamicCode()]
       get {
         if (options is not EFCoreDriverSelector selector) {
           throw new InvalidOperationException(

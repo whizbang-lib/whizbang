@@ -34,6 +34,7 @@ public static class PostgresDriverExtensions {
     /// </code>
     /// </example>
     public WhizbangPerspectiveBuilder Postgres {
+      [RequiresDynamicCode()]
       get {
         if (options is not EFCoreDriverSelector selector) {
           throw new InvalidOperationException(
