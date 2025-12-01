@@ -30,6 +30,10 @@ public static class ServiceCollectionExtensions {
     var options = new AzureServiceBusOptions();
     configureOptions?.Invoke(options);
 
+    // Register JsonSerializerOptions for ServiceBusConsumerWorker and other components
+    // This allows workers to deserialize messages using the same JSON context
+    services.AddSingleton(jsonContext.Options);
+
     // Register transport as singleton
     services.AddSingleton<ITransport>(sp => {
       var logger = sp.GetService<ILogger<AzureServiceBusTransport>>();
