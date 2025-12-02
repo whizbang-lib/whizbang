@@ -52,8 +52,8 @@ public sealed class EFCoreInbox<TDbContext> : IInbox
     var record = new InboxRecord {
       MessageId = envelope.MessageId.ToString(),
       HandlerName = handlerName,
-      EventType = typeof(TMessage).FullName ?? "Unknown",
-      EventData = eventData,
+      MessageType = typeof(TMessage).FullName ?? "Unknown",
+      MessageData = eventData,
       Metadata = metadata,
       Scope = scope,
       Status = "Pending",
@@ -88,8 +88,8 @@ public sealed class EFCoreInbox<TDbContext> : IInbox
     return records.Select(r => new InboxMessage(
       MessageId.Parse(r.MessageId),
       r.HandlerName,
-      r.EventType,
-      r.EventData.RootElement.GetRawText(),
+      r.MessageType,
+      r.MessageData.RootElement.GetRawText(),
       r.Metadata.RootElement.GetRawText(),
       r.Scope?.RootElement.GetRawText(),
       r.ReceivedAt

@@ -61,20 +61,20 @@ public interface IInbox {
 
 /// <summary>
 /// Represents a message envelope stored in the inbox waiting to be processed.
-/// Mirrors OutboxMessage - uses 3-column JSONB storage pattern (event_data, metadata, scope).
+/// Mirrors OutboxMessage - uses 3-column JSONB storage pattern (message_data, metadata, scope).
 /// </summary>
 /// <param name="MessageId">The unique message identifier</param>
 /// <param name="HandlerName">The name of the handler that will process this message</param>
-/// <param name="EventType">The fully-qualified type name of the event payload</param>
-/// <param name="EventData">The event payload as JSON string</param>
+/// <param name="MessageType">The fully-qualified type name of the message payload</param>
+/// <param name="MessageData">The message payload as JSON string</param>
 /// <param name="Metadata">The envelope metadata (correlation, causation, hops) as JSON string</param>
 /// <param name="Scope">The security scope (tenant, user) as JSON string (nullable)</param>
 /// <param name="ReceivedAt">When the message was received into the inbox</param>
 public record InboxMessage(
   MessageId MessageId,
   string HandlerName,
-  string EventType,
-  string EventData,
+  string MessageType,
+  string MessageData,
   string Metadata,
   string? Scope,
   DateTimeOffset ReceivedAt

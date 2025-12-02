@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Azure.Messaging.ServiceBus;
+using Azure.Messaging.ServiceBus.Administration;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
@@ -13,6 +14,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// </summary>
 public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
   private readonly ServiceBusClient _client;
+  private readonly ServiceBusAdministrationClient? _adminClient;
   private readonly ILogger<AzureServiceBusTransport> _logger;
   private readonly Dictionary<string, ServiceBusSender> _senders = [];
   private readonly SemaphoreSlim _senderLock = new(1, 1);
@@ -30,6 +32,16 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
     ArgumentNullException.ThrowIfNull(jsonContext);
 
     _client = new ServiceBusClient(connectionString);
+
+    // Create administration client for managing subscription rules (SQL filters)
+    // This may fail with emulator or certain connection string formats
+    try {
+      _adminClient = new ServiceBusAdministrationClient(connectionString);
+    } catch (Exception ex) {
+      _logger?.LogWarning(ex, "Failed to create ServiceBusAdministrationClient. SQL filters will not be available.");
+      _adminClient = null;
+    }
+
     _jsonContext = jsonContext;
     _options = options ?? new AzureServiceBusOptions();
     _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<AzureServiceBusTransport>.Instance;
@@ -121,6 +133,36 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
     ArgumentNullException.ThrowIfNull(destination);
 
     try {
+      var topicName = destination.Address;
+      var subscriptionName = destination.RoutingKey ?? _options.DefaultSubscriptionName;
+
+      // Apply SQL filter if specified in metadata
+      if (destination.Metadata?.TryGetValue("SqlFilter", out var sqlFilterObj) == true &&
+          sqlFilterObj is string sqlFilter &&
+          !string.IsNullOrWhiteSpace(sqlFilter)) {
+
+        if (_adminClient != null) {
+          try {
+            await ApplySqlFilterAsync(topicName, subscriptionName, sqlFilter, cancellationToken);
+          } catch (Exception ex) {
+            _logger.LogWarning(
+              ex,
+              "Failed to apply SQL filter '{SqlFilter}' to {TopicName}/{SubscriptionName}. Proceeding without filter.",
+              sqlFilter,
+              topicName,
+              subscriptionName
+            );
+          }
+        } else {
+          _logger.LogWarning(
+            "SQL filter '{SqlFilter}' specified for {TopicName}/{SubscriptionName} but administration client is not available",
+            sqlFilter,
+            topicName,
+            subscriptionName
+          );
+        }
+      }
+
       // Create processor for the topic/subscription
       var processorOptions = new ServiceBusProcessorOptions {
         MaxConcurrentCalls = _options.MaxConcurrentCalls,
@@ -129,8 +171,8 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
       };
 
       var processor = _client.CreateProcessor(
-        destination.Address,
-        destination.RoutingKey ?? _options.DefaultSubscriptionName,
+        topicName,
+        subscriptionName,
         processorOptions
       );
 
@@ -287,6 +329,74 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
       "Request/response pattern is not supported by Azure Service Bus transport. " +
       "Use IRequestResponseStore with publish/subscribe instead."
     );
+  }
+
+  /// <summary>
+  /// Applies a SQL filter to a subscription by replacing the default rule.
+  /// </summary>
+  private async Task ApplySqlFilterAsync(
+    string topicName,
+    string subscriptionName,
+    string sqlFilter,
+    CancellationToken cancellationToken
+  ) {
+    if (_adminClient == null) {
+      throw new InvalidOperationException("Administration client is not available");
+    }
+
+    const string defaultRuleName = "$Default";
+    const string customRuleName = "CustomSqlFilter";
+
+    try {
+      // Check if subscription exists
+      var subscriptionExists = await _adminClient.SubscriptionExistsAsync(topicName, subscriptionName, cancellationToken);
+      if (!subscriptionExists) {
+        _logger.LogWarning(
+          "Subscription {TopicName}/{SubscriptionName} does not exist. Cannot apply SQL filter.",
+          topicName,
+          subscriptionName
+        );
+        return;
+      }
+
+      // Remove default rule if it exists
+      var rules = _adminClient.GetRulesAsync(topicName, subscriptionName, cancellationToken);
+      await foreach (var rule in rules) {
+        if (rule.Name == defaultRuleName || rule.Name == customRuleName) {
+          await _adminClient.DeleteRuleAsync(topicName, subscriptionName, rule.Name, cancellationToken);
+          _logger.LogDebug(
+            "Deleted rule '{RuleName}' from {TopicName}/{SubscriptionName}",
+            rule.Name,
+            topicName,
+            subscriptionName
+          );
+        }
+      }
+
+      // Create new rule with SQL filter
+      var ruleOptions = new CreateRuleOptions {
+        Name = customRuleName,
+        Filter = new SqlRuleFilter(sqlFilter)
+      };
+
+      await _adminClient.CreateRuleAsync(topicName, subscriptionName, ruleOptions, cancellationToken);
+
+      _logger.LogInformation(
+        "Applied SQL filter '{SqlFilter}' to {TopicName}/{SubscriptionName}",
+        sqlFilter,
+        topicName,
+        subscriptionName
+      );
+    } catch (Exception ex) {
+      _logger.LogError(
+        ex,
+        "Error applying SQL filter '{SqlFilter}' to {TopicName}/{SubscriptionName}",
+        sqlFilter,
+        topicName,
+        subscriptionName
+      );
+      throw;
+    }
   }
 
   private async Task<ServiceBusSender> GetOrCreateSenderAsync(string topicName, CancellationToken cancellationToken) {

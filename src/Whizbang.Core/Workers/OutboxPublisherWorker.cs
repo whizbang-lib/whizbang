@@ -123,8 +123,8 @@ public class OutboxPublisherWorker(
       }
     }
 
-    // Deserialize event payload as JsonElement (type-agnostic)
-    using var eventDataDoc = JsonDocument.Parse(outboxMessage.EventData);
+    // Deserialize message payload as JsonElement (type-agnostic)
+    using var eventDataDoc = JsonDocument.Parse(outboxMessage.MessageData);
     var eventPayload = eventDataDoc.RootElement.Clone();
 
     // Reconstruct envelope with original message ID and hops
@@ -142,16 +142,19 @@ public class OutboxPublisherWorker(
       Topic = outboxMessage.Destination,
       Timestamp = DateTimeOffset.UtcNow,
       Metadata = new Dictionary<string, object> {
-        ["PayloadType"] = outboxMessage.EventType  // Store string directly - will be serialized as JSON string
+        ["PayloadType"] = outboxMessage.MessageType  // Store string directly - will be serialized as JSON string
       }
     };
     envelope.AddHop(publishHop);
 
     // Parse destination (format: "topic" or "topic/subscription")
+    // Include Destination in metadata for SQL filter support
     var destination = new TransportDestination(
       outboxMessage.Destination,
       null,  // No routing key
-      null   // No metadata needed for destination
+      new Dictionary<string, object> {
+        ["Destination"] = outboxMessage.Destination  // Used by SQL filters in inbox pattern
+      }
     );
 
     // Publish to transport

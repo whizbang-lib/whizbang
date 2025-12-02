@@ -94,7 +94,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         if (originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveStore<")) {
           // Get TModel from IPerspectiveStore<TModel>
           var modelType = parameterType.TypeArguments[0];
-          var tableName = ToSnakeCase(modelType.Name);
+          var tableName = "wh_per_" + ToSnakeCase(modelType.Name);
 
           return new PerspectiveInfo(
               ModelTypeName: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),

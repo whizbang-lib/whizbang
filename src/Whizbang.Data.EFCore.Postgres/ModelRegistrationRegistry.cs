@@ -21,21 +21,24 @@ public static class ModelRegistrationRegistry {
 
   /// <summary>
   /// Invokes the registered model registration callback.
-  /// Called by driver extensions (InMemory, Postgres) to register discovered models.
+  /// Called by driver extensions (InMemory, Postgres) to register discovered models and infrastructure.
+  /// If no registrar has been set (module initializer hasn't run or no DbContext found), does nothing gracefully.
   /// </summary>
   /// <param name="services">The service collection to register services in.</param>
   /// <param name="dbContextType">The DbContext type.</param>
   /// <param name="upsertStrategy">The database-specific upsert strategy.</param>
-  /// <exception cref="InvalidOperationException">Thrown if no models were discovered.</exception>
   internal static void InvokeRegistration(
       IServiceCollection services,
       Type dbContextType,
       IDbUpsertStrategy upsertStrategy) {
 
+    // If no registrar was set, the module initializer hasn't run or no DbContext was discovered.
+    // This can happen when:
+    // 1. There are no perspectives in the consumer assembly (only infrastructure)
+    // 2. The module initializer hasn't been triggered yet
+    // Either way, gracefully skip registration rather than throwing an error.
     if (_registrar == null) {
-      throw new InvalidOperationException(
-          "No perspective models were discovered in the DbContext. " +
-          "Ensure you have Entity<PerspectiveRow<TModel>> calls in OnModelCreating.");
+      return;
     }
 
     _registrar(services, dbContextType, upsertStrategy);

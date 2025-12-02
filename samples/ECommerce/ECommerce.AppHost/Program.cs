@@ -43,6 +43,18 @@ paymentsTopic.AddServiceBusSubscription("bff-payments");  // BFF listens to paym
 var shippingTopic = serviceBus.AddServiceBusTopic("shipping");
 shippingTopic.AddServiceBusSubscription("bff-shipping");  // BFF listens to shipping events
 
+// Configure the "inbox" topic for point-to-point messaging (commands/queries)
+// Each service has its own subscription with SQL filter: Destination = 'service-name'
+// Filters are applied at runtime by AzureServiceBusTransport when subscribing
+// Note: Subscription names must be globally unique across ALL topics in Aspire
+var inboxTopic = serviceBus.AddServiceBusTopic("inbox");
+inboxTopic.AddServiceBusSubscription("inbox-inventory");
+inboxTopic.AddServiceBusSubscription("inbox-payment");
+inboxTopic.AddServiceBusSubscription("inbox-shipping");
+inboxTopic.AddServiceBusSubscription("inbox-notification");
+inboxTopic.AddServiceBusSubscription("inbox-order");
+inboxTopic.AddServiceBusSubscription("inbox-bff");
+
 // Add all ECommerce services with infrastructure dependencies
 // IMPORTANT: Using --no-build to prevent concurrent rebuild conflicts on shared libraries (Whizbang.Core)
 // The preLaunchTask in VSCode builds all services once before launching Aspire

@@ -1,8 +1,4 @@
-using System.Diagnostics.CodeAnalysis;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Whizbang.Core.Lenses;
-using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Data.EFCore.Postgres;
@@ -20,7 +16,8 @@ public static class InMemoryDriverExtensions {
   extension(IDriverOptions options) {
     /// <summary>
     /// Configures EF Core InMemory provider as the database driver for perspectives.
-    /// Registers IPerspectiveStore&lt;T&gt; and ILensQuery&lt;T&gt; for all discovered perspective models.
+    /// Registers IPerspectiveStore&lt;T&gt;, ILensQuery&lt;T&gt;, IInbox, IOutbox, and IEventStore
+    /// for all discovered perspective models via source-generated AOT-compatible code.
     /// Uses InMemoryUpsertStrategy for fast, isolated testing.
     /// </summary>
     /// <returns>A WhizbangPerspectiveBuilder for further configuration.</returns>
@@ -34,7 +31,6 @@ public static class InMemoryDriverExtensions {
     /// </code>
     /// </example>
     public WhizbangPerspectiveBuilder InMemory {
-      [RequiresDynamicCode()]
       get {
         if (options is not EFCoreDriverSelector selector) {
           throw new InvalidOperationException(
@@ -42,8 +38,10 @@ public static class InMemoryDriverExtensions {
               "Call .WithEFCore<TDbContext>() before .WithDriver.InMemory");
         }
 
-        // Register all EF Core infrastructure (Inbox, Outbox, EventStore, Perspectives)
-        RegisterEFCoreInfrastructure(
+        // Invoke model registration callback (infrastructure + perspectives)
+        // This is registered by source-generated module initializer in consumer assembly
+        // The generated code contains AOT-safe registration using concrete types
+        ModelRegistrationRegistry.InvokeRegistration(
             selector.Services,
             selector.DbContextType,
             new InMemoryUpsertStrategy()
@@ -52,49 +50,5 @@ public static class InMemoryDriverExtensions {
         return new WhizbangPerspectiveBuilder(selector.Services);
       }
     }
-  }
-
-  /// <summary>
-  /// Registers all EF Core infrastructure services.
-  /// Registers:
-  /// - IInbox, IOutbox, IEventStore (core messaging infrastructure)
-  /// - IPerspectiveStore and ILensQuery (for all discovered models via source-generated module initializer)
-  /// AOT-compatible, no reflection.
-  /// </summary>
-  [RequiresDynamicCode("Calls System.Type.MakeGenericType(params Type[])")]
-  private static void RegisterEFCoreInfrastructure(
-      IServiceCollection services,
-      Type dbContextType,
-      IDbUpsertStrategy upsertStrategy) {
-
-    // Register core messaging infrastructure (IInbox, IOutbox, IEventStore)
-    // These use the generic EFCore implementations parameterized by TDbContext
-    // JsonSerializerOptions is resolved from DI (if registered) for application message types
-    var inboxType = typeof(EFCoreInbox<>).MakeGenericType(dbContextType);
-    var outboxType = typeof(EFCoreOutbox<>).MakeGenericType(dbContextType);
-    var eventStoreType = typeof(EFCoreEventStore<>).MakeGenericType(dbContextType);
-
-    services.AddScoped(typeof(IInbox), sp => {
-      var context = sp.GetRequiredService(dbContextType);
-      var jsonOptions = sp.GetService<System.Text.Json.JsonSerializerOptions>();
-      return Activator.CreateInstance(inboxType, context, jsonOptions)!;
-    });
-
-    services.AddScoped(typeof(IOutbox), sp => {
-      var context = sp.GetRequiredService(dbContextType);
-      var jsonOptions = sp.GetService<System.Text.Json.JsonSerializerOptions>();
-      return Activator.CreateInstance(outboxType, context, jsonOptions)!;
-    });
-
-    services.AddScoped(typeof(IEventStore), sp => {
-      var context = sp.GetRequiredService(dbContextType);
-      var jsonOptions = sp.GetService<System.Text.Json.JsonSerializerOptions>();
-      return Activator.CreateInstance(eventStoreType, context, jsonOptions)!;
-    });
-
-    // Invoke the registration callback that was registered by the
-    // source-generated module initializer in the consumer assembly
-    // This registers IPerspectiveStore<T> and ILensQuery<T> for all discovered perspective models
-    ModelRegistrationRegistry.InvokeRegistration(services, dbContextType, upsertStrategy);
   }
 }

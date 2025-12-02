@@ -10,16 +10,29 @@ namespace Whizbang.Data.Dapper.Custom;
 /// Base class for Dapper-based IOutbox implementations.
 /// Provides common implementation logic while allowing derived classes to provide database-specific SQL.
 /// Uses JSONB adapter for envelope serialization.
+/// Supports both immediate processing (with instanceId) and polling-based (without instanceId).
 /// </summary>
 public abstract class DapperOutboxBase : IOutbox {
   protected readonly IDbConnectionFactory _connectionFactory;
   protected readonly IDbExecutor _executor;
   protected readonly IJsonbPersistenceAdapter<IMessageEnvelope> _envelopeAdapter;
+  protected readonly Guid? _instanceId;
+  protected readonly int _leaseSeconds;
 
+  /// <summary>
+  /// Creates a new DapperOutboxBase instance.
+  /// </summary>
+  /// <param name="connectionFactory">Database connection factory</param>
+  /// <param name="executor">Database command executor</param>
+  /// <param name="envelopeAdapter">JSONB persistence adapter for envelopes</param>
+  /// <param name="instanceId">Service instance ID for lease-based coordination (optional, enables immediate processing)</param>
+  /// <param name="leaseSeconds">Lease duration in seconds (default 300 = 5 minutes)</param>
   protected DapperOutboxBase(
     IDbConnectionFactory connectionFactory,
     IDbExecutor executor,
-    IJsonbPersistenceAdapter<IMessageEnvelope> envelopeAdapter) {
+    IJsonbPersistenceAdapter<IMessageEnvelope> envelopeAdapter,
+    Guid? instanceId = null,
+    int leaseSeconds = 300) {
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentNullException.ThrowIfNull(executor);
     ArgumentNullException.ThrowIfNull(envelopeAdapter);
@@ -27,6 +40,8 @@ public abstract class DapperOutboxBase : IOutbox {
     _connectionFactory = connectionFactory;
     _executor = executor;
     _envelopeAdapter = envelopeAdapter;
+    _instanceId = instanceId;
+    _leaseSeconds = leaseSeconds;
   }
 
   /// <summary>
@@ -41,7 +56,9 @@ public abstract class DapperOutboxBase : IOutbox {
   /// <summary>
   /// Gets the SQL command to store a new outbox message using JSONB pattern.
   /// Parameters: @MessageId (Guid), @Destination (string), @EventType (string),
-  ///             @EventData (string), @Metadata (string), @Scope (string, nullable), @CreatedAt (DateTimeOffset)
+  ///             @EventData (string), @Metadata (string), @Scope (string, nullable),
+  ///             @Status (string), @Attempts (int), @CreatedAt (DateTimeOffset),
+  ///             @InstanceId (Guid, nullable), @LeaseExpiry (DateTimeOffset, nullable)
   /// </summary>
   protected abstract string GetStoreSql();
 
@@ -58,7 +75,7 @@ public abstract class DapperOutboxBase : IOutbox {
   /// </summary>
   protected abstract string GetMarkPublishedSql();
 
-  public async Task StoreAsync<TMessage>(MessageEnvelope<TMessage> envelope, string destination, CancellationToken cancellationToken = default) {
+  public async Task<OutboxMessage> StoreAsync<TMessage>(MessageEnvelope<TMessage> envelope, string destination, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
     ArgumentNullException.ThrowIfNull(destination);
 
@@ -71,6 +88,7 @@ public abstract class DapperOutboxBase : IOutbox {
     // Get event type from payload
     var eventType = typeof(TMessage).FullName ?? throw new InvalidOperationException("Event type has no FullName");
 
+    var now = DateTimeOffset.UtcNow;
     var sql = GetStoreSql();
 
     await _executor.ExecuteAsync(
@@ -83,12 +101,26 @@ public abstract class DapperOutboxBase : IOutbox {
         EventData = jsonbModel.DataJson,
         Metadata = jsonbModel.MetadataJson,
         Scope = jsonbModel.ScopeJson,
-        CreatedAt = DateTimeOffset.UtcNow
+        Status = _instanceId.HasValue ? "Publishing" : "Pending",
+        Attempts = 0,
+        CreatedAt = now,
+        InstanceId = _instanceId,
+        LeaseExpiry = _instanceId.HasValue ? now.AddSeconds(_leaseSeconds) : (DateTimeOffset?)null
       },
       cancellationToken: cancellationToken);
+
+    return new OutboxMessage(
+      envelope.MessageId,
+      destination,
+      eventType,
+      jsonbModel.DataJson,
+      jsonbModel.MetadataJson,
+      jsonbModel.ScopeJson,
+      now
+    );
   }
 
-  public async Task StoreAsync(IMessageEnvelope envelope, string destination, CancellationToken cancellationToken = default) {
+  public async Task<OutboxMessage> StoreAsync(IMessageEnvelope envelope, string destination, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
     ArgumentNullException.ThrowIfNull(destination);
 
@@ -102,6 +134,7 @@ public abstract class DapperOutboxBase : IOutbox {
     var eventType = envelope.GetType().GenericTypeArguments[0].FullName
       ?? throw new InvalidOperationException("Event type has no FullName");
 
+    var now = DateTimeOffset.UtcNow;
     var sql = GetStoreSql();
 
     await _executor.ExecuteAsync(
@@ -114,9 +147,23 @@ public abstract class DapperOutboxBase : IOutbox {
         EventData = jsonbModel.DataJson,
         Metadata = jsonbModel.MetadataJson,
         Scope = jsonbModel.ScopeJson,
-        CreatedAt = DateTimeOffset.UtcNow
+        Status = _instanceId.HasValue ? "Publishing" : "Pending",
+        Attempts = 0,
+        CreatedAt = now,
+        InstanceId = _instanceId,
+        LeaseExpiry = _instanceId.HasValue ? now.AddSeconds(_leaseSeconds) : (DateTimeOffset?)null
       },
       cancellationToken: cancellationToken);
+
+    return new OutboxMessage(
+      envelope.MessageId,
+      destination,
+      eventType,
+      jsonbModel.DataJson,
+      jsonbModel.MetadataJson,
+      jsonbModel.ScopeJson,
+      now
+    );
   }
 
   public async Task<IReadOnlyList<OutboxMessage>> GetPendingAsync(int batchSize, CancellationToken cancellationToken = default) {

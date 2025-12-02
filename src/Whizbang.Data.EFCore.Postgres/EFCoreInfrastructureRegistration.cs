@@ -1,13 +1,16 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Data.EFCore.Postgres;
 
 /// <summary>
-/// Public helper class for registering EF Core infrastructure (IPerspectiveStore and ILensQuery).
+/// Public helper class for registering EF Core infrastructure (IPerspectiveStore, ILensQuery).
 /// Called by source-generated registration code in consumer assemblies.
+/// Note: Infrastructure (Inbox, Outbox, EventStore) registration happens via source-generated code with concrete types.
 /// </summary>
 public static class EFCoreInfrastructureRegistration {
   /// <summary>

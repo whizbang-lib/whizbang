@@ -55,8 +55,8 @@ public class OutboxPublisher(IOutbox outbox, ITransport transport, System.Text.J
           }
         }
 
-        // Deserialize event payload as JsonElement (type-agnostic)
-        using var eventDataDoc = System.Text.Json.JsonDocument.Parse(message.EventData);
+        // Deserialize message payload as JsonElement (type-agnostic)
+        using var eventDataDoc = System.Text.Json.JsonDocument.Parse(message.MessageData);
         var eventPayload = eventDataDoc.RootElement.Clone();
 
         // Create envelope with original hops
@@ -74,7 +74,14 @@ public class OutboxPublisher(IOutbox outbox, ITransport transport, System.Text.J
           Timestamp = DateTimeOffset.UtcNow
         });
 
-        var destination = new TransportDestination(message.Destination);
+        // Include Destination in metadata for SQL filter support
+        var destination = new TransportDestination(
+          message.Destination,
+          null,  // No routing key
+          new Dictionary<string, object> {
+            ["Destination"] = message.Destination  // Used by SQL filters in inbox pattern
+          }
+        );
 
         // Publish via transport
         await _transport.PublishAsync(envelope, destination, cancellationToken);

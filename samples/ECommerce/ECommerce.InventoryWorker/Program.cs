@@ -50,14 +50,18 @@ builder.Services.AddWhizbangAggregateIdExtractor();
 builder.Services.AddSingleton<IProductLens, ProductLens>();
 builder.Services.AddSingleton<IInventoryLens, InventoryLens>();
 
-// Service Bus consumer - receives CreateProductCommand and other commands
+// Service Bus consumer - receives events and commands
 var consumerOptions = new ServiceBusConsumerOptions();
+// Event subscription - receives all events published to "products" topic
 consumerOptions.Subscriptions.Add(new TopicSubscription("products", "inventory-service"));
+// Inbox subscription - receives point-to-point messages with SQL filter
+// Note: Subscription name must match the one registered in AppHost
+consumerOptions.Subscriptions.Add(new TopicSubscription("inbox", "inbox-inventory", "Destination = 'inventory-service'"));
 builder.Services.AddSingleton(consumerOptions);
 builder.Services.AddHostedService<ServiceBusConsumerWorker>();
 
-// TODO: Re-enable after testing
-// builder.Services.AddHostedService<OutboxPublisherWorker>();
+// Outbox publisher - publishes pending outbox messages to Service Bus
+builder.Services.AddHostedService<OutboxPublisherWorker>();
 
 builder.Services.AddHostedService<Worker>();
 

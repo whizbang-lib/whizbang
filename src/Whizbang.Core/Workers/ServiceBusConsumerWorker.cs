@@ -34,9 +34,15 @@ public class ServiceBusConsumerWorker(
     try {
       // Subscribe to configured topics
       foreach (var topicConfig in _options.Subscriptions) {
+        // Create destination with SQL filter metadata if specified
+        var metadata = !string.IsNullOrWhiteSpace(topicConfig.SqlFilter)
+          ? new Dictionary<string, object> { ["SqlFilter"] = topicConfig.SqlFilter }
+          : null;
+
         var destination = new TransportDestination(
           topicConfig.TopicName,
-          topicConfig.SubscriptionName
+          topicConfig.SubscriptionName,
+          metadata
         );
 
         var subscription = await _transport.SubscribeAsync(
@@ -261,4 +267,5 @@ public class ServiceBusConsumerOptions {
 /// </summary>
 /// <param name="TopicName">The Service Bus topic name</param>
 /// <param name="SubscriptionName">The subscription name for this consumer</param>
-public record TopicSubscription(string TopicName, string SubscriptionName);
+/// <param name="SqlFilter">Optional SQL filter expression (e.g., "Destination = 'service-name'")</param>
+public record TopicSubscription(string TopicName, string SubscriptionName, string? SqlFilter = null);

@@ -436,20 +436,27 @@ public abstract class Dispatcher(
       var aggregateIdExtractor = scope.ServiceProvider.GetService<IAggregateIdExtractor>();
       var perspectiveInvoker = scope.ServiceProvider.GetService<IPerspectiveInvoker>();
 
-      if (@event is IEvent && eventStore != null && aggregateIdExtractor != null) {
-        var aggregateId = aggregateIdExtractor.ExtractAggregateId(@event, eventType);
-        if (aggregateId.HasValue) {
-          // Create envelope with event
-          var messageId = MessageId.New();
-          var envelope = new MessageEnvelope<TEvent> {
-            MessageId = messageId,
-            Payload = @event,
-            Hops = []
-          };
+      if (@event is IEvent && eventStore != null) {
+        // Create envelope with event
+        var messageId = MessageId.New();
+        var envelope = new MessageEnvelope<TEvent> {
+          MessageId = messageId,
+          Payload = @event,
+          Hops = []
+        };
 
-          // Write to Event Store (this queues event to IPerspectiveInvoker)
-          await eventStore.AppendAsync(aggregateId.Value, envelope);
+        // Determine stream ID: use aggregate ID if available, otherwise use message ID
+        // This ensures ALL events are persisted while maintaining proper streams for aggregates
+        Guid streamId;
+        if (aggregateIdExtractor != null) {
+          var aggregateId = aggregateIdExtractor.ExtractAggregateId(@event, eventType);
+          streamId = aggregateId ?? messageId.Value;
+        } else {
+          streamId = messageId.Value;
         }
+
+        // Write to Event Store (this queues event to IPerspectiveInvoker)
+        await eventStore.AppendAsync(streamId, envelope);
       }
 
       // Manually dispose the perspective invoker to invoke perspectives

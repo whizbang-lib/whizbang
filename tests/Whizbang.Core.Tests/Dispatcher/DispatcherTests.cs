@@ -479,14 +479,30 @@ public class DispatcherTests {
   private class TestOutbox : Whizbang.Core.Messaging.IOutbox {
     public List<(Whizbang.Core.Observability.IMessageEnvelope Envelope, string Destination)> StoredMessages { get; } = [];
 
-    public Task StoreAsync<TMessage>(Whizbang.Core.Observability.MessageEnvelope<TMessage> envelope, string destination, CancellationToken cancellationToken = default) {
+    public Task<Whizbang.Core.Messaging.OutboxMessage> StoreAsync<TMessage>(Whizbang.Core.Observability.MessageEnvelope<TMessage> envelope, string destination, CancellationToken cancellationToken = default) {
       StoredMessages.Add((envelope, destination));
-      return Task.CompletedTask;
+      return Task.FromResult(new Whizbang.Core.Messaging.OutboxMessage(
+        envelope.MessageId,
+        destination,
+        typeof(TMessage).FullName ?? "Unknown",
+        "{}",
+        "{}",
+        null,
+        DateTimeOffset.UtcNow
+      ));
     }
 
-    public Task StoreAsync(Whizbang.Core.Observability.IMessageEnvelope envelope, string destination, CancellationToken cancellationToken = default) {
+    public Task<Whizbang.Core.Messaging.OutboxMessage> StoreAsync(Whizbang.Core.Observability.IMessageEnvelope envelope, string destination, CancellationToken cancellationToken = default) {
       StoredMessages.Add((envelope, destination));
-      return Task.CompletedTask;
+      return Task.FromResult(new Whizbang.Core.Messaging.OutboxMessage(
+        envelope.MessageId,
+        destination,
+        envelope.GetType().GenericTypeArguments[0].FullName ?? "Unknown",
+        "{}",
+        "{}",
+        null,
+        DateTimeOffset.UtcNow
+      ));
     }
 
     public Task<IReadOnlyList<Whizbang.Core.Messaging.OutboxMessage>> GetPendingAsync(int batchSize, CancellationToken cancellationToken = default) {

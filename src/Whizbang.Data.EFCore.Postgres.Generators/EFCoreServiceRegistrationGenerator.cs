@@ -233,7 +233,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         if (originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveStore<")) {
           // Get TModel from IPerspectiveStore<TModel>
           var modelType = parameterType.TypeArguments[0];
-          var tableName = ToSnakeCase(modelType.Name);
+          var tableName = "wh_per_" + ToSnakeCase(modelType.Name);
 
           // Check for [WhizbangPerspective] attribute (optional)
           var perspectiveAttribute = symbol.GetAttributes()
@@ -460,39 +460,74 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates extension methods that register discovered models directly.
   /// Groups perspectives by DbContext and generates conditional registration per DbContext type.
-  /// This is generated in the consumer project and calls library methods with the discovered models.
+  /// Uses template snippets for AOT-compatible registration (no reflection).
+  /// Always generates infrastructure registration (Inbox/Outbox/EventStore) even when there are no perspectives.
   /// </summary>
   private static void GenerateRegistrationMetadata(
       SourceProductionContext context,
       ImmutableArray<PerspectiveModelInfo> perspectives,
       ImmutableArray<DbContextInfo> dbContexts) {
 
-    if (perspectives.IsEmpty) {
-      return;  // No perspectives found
-    }
+    // DEBUG: Always report that we're running
+    var debugDescriptor = new DiagnosticDescriptor(
+        id: "EFCORE106",
+        title: "GenerateRegistrationMetadata Running",
+        messageFormat: "GenerateRegistrationMetadata: Found {0} perspectives, {1} DbContexts",
+        category: "Whizbang.Generator",
+        defaultSeverity: DiagnosticSeverity.Info,
+        isEnabledByDefault: true);
+    context.ReportDiagnostic(Diagnostic.Create(debugDescriptor, Location.None, perspectives.Length, dbContexts.Length));
 
     if (dbContexts.IsEmpty) {
-      return;  // No DbContext found
+      return;  // No DbContext found - nothing to register
     }
 
-    // Group perspectives by DbContext
+    // Group perspectives by DbContext (may be empty if no perspectives)
     var dbContextGroups = dbContexts.Select(dbContext => {
-      var matchingPerspectives = perspectives
-          .Where(p => MatchesDbContext(p, dbContext))
-          .GroupBy(p => p.ModelTypeName)
-          .Select(g => g.First())
-          .ToList();
+      var matchingPerspectives = perspectives.IsEmpty
+          ? new List<PerspectiveModelInfo>()
+          : perspectives
+              .Where(p => MatchesDbContext(p, dbContext))
+              .GroupBy(p => p.ModelTypeName)
+              .Select(g => g.First())
+              .ToList();
       return (DbContext: dbContext, Models: matchingPerspectives);
-    }).Where(g => g.Models.Count > 0).ToList();
-
-    if (dbContextGroups.Count == 0) {
-      return;  // No DbContexts with matching perspectives
-    }
+    }).ToList();
 
     // Count total unique models across all DbContexts
-    var totalUniqueModels = perspectives
+    var totalUniqueModels = perspectives.IsEmpty ? 0 : perspectives
         .GroupBy(p => p.ModelTypeName)
         .Count();
+
+    // Load snippets from EFCoreSnippets.cs
+    var assembly = typeof(EFCoreServiceRegistrationGenerator).Assembly;
+    string infrastructureSnippet;
+    string perspectiveSnippet;
+
+    try {
+      infrastructureSnippet = TemplateUtilities.ExtractSnippet(
+          assembly,
+          "EFCoreSnippets.cs",
+          "REGISTER_INFRASTRUCTURE_SNIPPET",
+          "Whizbang.Data.EFCore.Postgres.Generators.Templates.Snippets"
+      );
+      perspectiveSnippet = TemplateUtilities.ExtractSnippet(
+          assembly,
+          "EFCoreSnippets.cs",
+          "REGISTER_PERSPECTIVE_MODEL_SNIPPET",
+          "Whizbang.Data.EFCore.Postgres.Generators.Templates.Snippets"
+      );
+    } catch (Exception ex) {
+      var errorDescriptor = new DiagnosticDescriptor(
+          id: "EFCORE999",
+          title: "Failed to Load Snippets",
+          messageFormat: "Failed to load snippets from EFCoreSnippets.cs: {0}",
+          category: "Whizbang.Generator",
+          defaultSeverity: DiagnosticSeverity.Error,
+          isEnabledByDefault: true);
+      context.ReportDiagnostic(Diagnostic.Create(errorDescriptor, Location.None, ex.Message));
+      return;
+    }
 
     var sb = new StringBuilder();
 
@@ -505,6 +540,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     sb.AppendLine("using System.Runtime.CompilerServices;");
     sb.AppendLine("using Microsoft.Extensions.DependencyInjection;");
+    sb.AppendLine("using Whizbang.Core.Lenses;");
     sb.AppendLine("using Whizbang.Data.EFCore.Postgres;");
     sb.AppendLine();
 
@@ -534,13 +570,20 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine($"      // {group.DbContext.ClassName} (keys: [{keysDisplay}])");
       sb.AppendLine($"      if (dbContextType == typeof({group.DbContext.FullyQualifiedName})) {{");
 
+      // Generate infrastructure registration (Inbox, Outbox, EventStore) - once per DbContext
+      var infraCode = infrastructureSnippet
+          .Replace("__DBCONTEXT_FQN__", group.DbContext.FullyQualifiedName);
+      sb.AppendLine(TemplateUtilities.IndentCode(infraCode, "        "));
+      sb.AppendLine();
+
+      // Generate perspective model registrations - one per model
       foreach (var model in group.Models) {
-        sb.AppendLine($"        EFCoreInfrastructureRegistration.RegisterPerspectiveModel(");
-        sb.AppendLine($"            services,");
-        sb.AppendLine($"            dbContextType,");
-        sb.AppendLine($"            typeof({model.ModelTypeName}),");
-        sb.AppendLine($"            \"{model.TableName}\",");
-        sb.AppendLine($"            upsertStrategy);");
+        var perspectiveCode = perspectiveSnippet
+            .Replace("__MODEL_TYPE__", model.ModelTypeName)
+            .Replace("__DBCONTEXT_FQN__", group.DbContext.FullyQualifiedName)
+            .Replace("__TABLE_NAME__", model.TableName);
+        sb.AppendLine(TemplateUtilities.IndentCode(perspectiveCode, "        "));
+        sb.AppendLine();
       }
 
       sb.AppendLine($"      }}");

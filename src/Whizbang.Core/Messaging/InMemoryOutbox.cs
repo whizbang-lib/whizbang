@@ -22,13 +22,14 @@ public class InMemoryOutbox(IJsonbPersistenceAdapter<IMessageEnvelope> envelopeA
   private readonly IJsonbPersistenceAdapter<IMessageEnvelope> _envelopeAdapter = envelopeAdapter ?? throw new ArgumentNullException(nameof(envelopeAdapter));
 
   /// <inheritdoc />
-  public Task StoreAsync<TMessage>(MessageEnvelope<TMessage> envelope, string destination, CancellationToken cancellationToken = default) {
+  public Task<OutboxMessage> StoreAsync<TMessage>(MessageEnvelope<TMessage> envelope, string destination, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
     ArgumentNullException.ThrowIfNull(destination);
 
     // Convert envelope to JSONB format
     var jsonbModel = _envelopeAdapter.ToJsonb(envelope);
     var eventType = typeof(TMessage).FullName ?? throw new InvalidOperationException("Event type has no FullName");
+    var now = DateTimeOffset.UtcNow;
 
     var record = new OutboxRecord(
       MessageId: envelope.MessageId,
@@ -37,16 +38,25 @@ public class InMemoryOutbox(IJsonbPersistenceAdapter<IMessageEnvelope> envelopeA
       EventData: jsonbModel.DataJson,
       Metadata: jsonbModel.MetadataJson,
       Scope: jsonbModel.ScopeJson,
-      CreatedAt: DateTimeOffset.UtcNow,
+      CreatedAt: now,
       PublishedAt: null
     );
 
     _messages.TryAdd(envelope.MessageId, record);
-    return Task.CompletedTask;
+
+    return Task.FromResult(new OutboxMessage(
+      envelope.MessageId,
+      destination,
+      eventType,
+      jsonbModel.DataJson,
+      jsonbModel.MetadataJson,
+      jsonbModel.ScopeJson,
+      now
+    ));
   }
 
   /// <inheritdoc />
-  public Task StoreAsync(IMessageEnvelope envelope, string destination, CancellationToken cancellationToken = default) {
+  public Task<OutboxMessage> StoreAsync(IMessageEnvelope envelope, string destination, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
     ArgumentNullException.ThrowIfNull(destination);
 
@@ -54,6 +64,7 @@ public class InMemoryOutbox(IJsonbPersistenceAdapter<IMessageEnvelope> envelopeA
     var jsonbModel = _envelopeAdapter.ToJsonb(envelope);
     var eventType = envelope.GetType().GenericTypeArguments[0].FullName
       ?? throw new InvalidOperationException("Event type has no FullName");
+    var now = DateTimeOffset.UtcNow;
 
     var record = new OutboxRecord(
       MessageId: envelope.MessageId,
@@ -62,12 +73,21 @@ public class InMemoryOutbox(IJsonbPersistenceAdapter<IMessageEnvelope> envelopeA
       EventData: jsonbModel.DataJson,
       Metadata: jsonbModel.MetadataJson,
       Scope: jsonbModel.ScopeJson,
-      CreatedAt: DateTimeOffset.UtcNow,
+      CreatedAt: now,
       PublishedAt: null
     );
 
     _messages.TryAdd(envelope.MessageId, record);
-    return Task.CompletedTask;
+
+    return Task.FromResult(new OutboxMessage(
+      envelope.MessageId,
+      destination,
+      eventType,
+      jsonbModel.DataJson,
+      jsonbModel.MetadataJson,
+      jsonbModel.ScopeJson,
+      now
+    ));
   }
 
   /// <inheritdoc />
