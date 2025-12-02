@@ -91,7 +91,7 @@ CREATE TABLE IF NOT EXISTS wb_request_response (
   expires_at TIMESTAMPTZ NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_request_response_correlation ON wb_request_response (correlation_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_request_response_correlation ON wb_request_response (correlation_id);
 CREATE INDEX IF NOT EXISTS idx_request_response_status_created ON wb_request_response (status, created_at);
 CREATE INDEX IF NOT EXISTS idx_request_response_expires ON wb_request_response (expires_at);
 

@@ -11,13 +11,13 @@ public class DapperPostgresSequenceProvider(IDbConnectionFactory connectionFacto
   protected override string GetUpdateSequenceSql() => @"
     UPDATE whizbang_sequences
     SET current_value = current_value + 1, last_updated_at = @Now
-    WHERE sequence_key = @SequenceKey
+    WHERE sequence_name = @SequenceKey
     RETURNING current_value";
 
   protected override string GetInsertOrUpdateSequenceSql() => @"
-    INSERT INTO whizbang_sequences (sequence_key, current_value, last_updated_at)
+    INSERT INTO whizbang_sequences (sequence_name, current_value, last_updated_at)
     VALUES (@SequenceKey, 0, @Now)
-    ON CONFLICT (sequence_key) DO UPDATE
+    ON CONFLICT (sequence_name) DO UPDATE
     SET current_value = whizbang_sequences.current_value + 1,
         last_updated_at = @Now
     RETURNING current_value";
@@ -25,12 +25,12 @@ public class DapperPostgresSequenceProvider(IDbConnectionFactory connectionFacto
   protected override string GetCurrentSequenceSql() => @"
     SELECT current_value
     FROM whizbang_sequences
-    WHERE sequence_key = @SequenceKey";
+    WHERE sequence_name = @SequenceKey";
 
   protected override string GetResetSequenceSql() => @"
-    INSERT INTO whizbang_sequences (sequence_key, current_value, last_updated_at)
+    INSERT INTO whizbang_sequences (sequence_name, current_value, last_updated_at)
     VALUES (@SequenceKey, @NewValue - 1, @Now)
-    ON CONFLICT (sequence_key) DO UPDATE
+    ON CONFLICT (sequence_name) DO UPDATE
     SET current_value = @NewValue - 1,
         last_updated_at = @Now";
 }
