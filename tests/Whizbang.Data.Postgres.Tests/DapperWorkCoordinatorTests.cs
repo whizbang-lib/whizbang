@@ -367,12 +367,12 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     await connection.ExecuteAsync(@"
       INSERT INTO wb_outbox (
-        message_id, destination, message_type, message_data, metadata, scope,
-        status, attempts, error, created_at, published_at, topic, partition_key,
+        message_id, destination, event_type, event_data, metadata, scope,
+        status, attempts, error, created_at, published_at,
         instance_id, lease_expiry
       ) VALUES (
         @messageId, @destination, @messageType, @messageData::jsonb, '{}'::jsonb, NULL,
-        @status, 0, NULL, @now, NULL, @destination, NULL,
+        @status, 0, NULL, @now, NULL,
         @instanceId, @leaseExpiry
       )",
       new {

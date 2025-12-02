@@ -73,7 +73,10 @@ public class DapperPostgresEventStore(
           new {
             EventId = envelope.MessageId.Value,
             StreamId = streamId,
+            AggregateId = streamId, // For backwards compatibility, stream_id = aggregate_id
+            AggregateType = typeof(TMessage).Name,
             SequenceNumber = nextSequence,
+            Version = (int)nextSequence, // version tracks stream-specific sequence
             EventType = typeof(TMessage).FullName,
             EventData = jsonb.DataJson,
             Metadata = jsonb.MetadataJson,
@@ -145,9 +148,9 @@ public class DapperPostgresEventStore(
 
   protected override string GetAppendSql() => @"
     INSERT INTO whizbang_event_store
-      (event_id, stream_id, sequence_number, event_type, event_data, metadata, scope, created_at)
+      (event_id, stream_id, aggregate_id, aggregate_type, sequence_number, version, event_type, event_data, metadata, scope, created_at)
     VALUES
-      (@EventId, @StreamId, @SequenceNumber, @EventType,
+      (@EventId, @StreamId, @AggregateId, @AggregateType, @SequenceNumber, @Version, @EventType,
        @EventData::jsonb, @Metadata::jsonb, @Scope::jsonb, @CreatedAt)";
 
   protected override string GetReadSql() => @"
