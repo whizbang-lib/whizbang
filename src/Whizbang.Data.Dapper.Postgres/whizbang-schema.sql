@@ -55,8 +55,11 @@ CREATE INDEX IF NOT EXISTS idx_outbox_published_at ON wb_outbox (published_at);
 CREATE INDEX IF NOT EXISTS idx_outbox_lease_expiry ON wb_outbox (lease_expiry) WHERE status = 'Publishing';
 
 -- Event Store - Event sourcing and audit trail
+-- Uses stream_id as the primary event stream identifier (preferred)
+-- aggregate_id maintained for backwards compatibility
 CREATE TABLE IF NOT EXISTS wb_event_store (
   event_id UUID NOT NULL PRIMARY KEY,
+  stream_id UUID NOT NULL,
   aggregate_id UUID NOT NULL,
   aggregate_type VARCHAR(500) NOT NULL,
   event_type VARCHAR(500) NOT NULL,
@@ -67,6 +70,7 @@ CREATE TABLE IF NOT EXISTS wb_event_store (
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_event_store_stream ON wb_event_store (stream_id, version);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_event_store_aggregate ON wb_event_store (aggregate_id, version);
 CREATE INDEX IF NOT EXISTS idx_event_store_aggregate_type ON wb_event_store (aggregate_type, created_at);
 CREATE INDEX IF NOT EXISTS idx_event_store_sequence ON wb_event_store (sequence_number);
