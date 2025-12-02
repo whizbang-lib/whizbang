@@ -57,6 +57,7 @@ CREATE INDEX IF NOT EXISTS idx_outbox_lease_expiry ON wb_outbox (lease_expiry) W
 -- Event Store - Event sourcing and audit trail
 -- Uses stream_id as the primary event stream identifier (preferred)
 -- aggregate_id maintained for backwards compatibility
+-- Uses 3-column JSONB pattern: event_data, metadata, scope
 CREATE TABLE IF NOT EXISTS wb_event_store (
   event_id UUID NOT NULL PRIMARY KEY,
   stream_id UUID NOT NULL,
@@ -65,6 +66,7 @@ CREATE TABLE IF NOT EXISTS wb_event_store (
   event_type VARCHAR(500) NOT NULL,
   event_data JSONB NOT NULL,
   metadata JSONB NOT NULL,
+  scope JSONB NULL,
   sequence_number BIGINT NOT NULL,
   version INTEGER NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -111,59 +113,63 @@ CREATE OR REPLACE VIEW whizbang_sequences AS SELECT * FROM wb_sequences;
 -- Coordinated Work Processing Function
 -- Atomically processes work batches with heartbeat updates, orphaned message recovery,
 -- message completion, and failure tracking in a single transaction.
+-- Phase 6 design: Accepts JSONB arrays for failed messages with error text.
 CREATE OR REPLACE FUNCTION process_work_batch(
   p_instance_id UUID,
-  p_heartbeat TIMESTAMPTZ,
-  p_lease_seconds INTEGER,
-  p_outbox_batch_size INTEGER,
-  p_inbox_batch_size INTEGER,
-  p_completed_outbox_ids UUID[],
-  p_failed_outbox_ids UUID[],
-  p_completed_inbox_ids UUID[],
-  p_failed_inbox_ids UUID[]
+  p_outbox_completed_ids UUID[],
+  p_outbox_failed_messages JSONB,
+  p_inbox_completed_ids UUID[],
+  p_inbox_failed_messages JSONB,
+  p_lease_seconds INTEGER
 )
 RETURNS TABLE(
-  outbox_message_id UUID,
-  outbox_destination VARCHAR,
-  outbox_event_type VARCHAR,
-  outbox_event_data TEXT,
-  outbox_metadata TEXT,
-  outbox_scope TEXT,
-  inbox_message_id UUID,
-  inbox_handler_name VARCHAR,
-  inbox_event_type VARCHAR,
-  inbox_event_data TEXT,
-  inbox_metadata TEXT,
-  inbox_scope TEXT
+  source VARCHAR,
+  message_id UUID,
+  destination VARCHAR,
+  event_type VARCHAR,
+  event_data TEXT,
+  metadata TEXT,
+  scope TEXT,
+  attempts INTEGER
 ) AS $$
 DECLARE
   v_now TIMESTAMPTZ := CURRENT_TIMESTAMP;
   v_lease_expiry TIMESTAMPTZ := v_now + (p_lease_seconds || ' seconds')::INTERVAL;
+  v_failed_msg JSONB;
+  v_msg_id UUID;
+  v_error TEXT;
 BEGIN
-  -- 1. Upsert service instance heartbeat
+  -- 1. Upsert service instance heartbeat (generate timestamp here)
   INSERT INTO wb_service_instances (instance_id, heartbeat, active)
-  VALUES (p_instance_id, p_heartbeat, true)
+  VALUES (p_instance_id, v_now, true)
   ON CONFLICT (instance_id)
-  DO UPDATE SET heartbeat = EXCLUDED.heartbeat, active = true;
+  DO UPDATE SET heartbeat = v_now, active = true;
 
   -- 2. Mark completed outbox messages as Published
-  IF array_length(p_completed_outbox_ids, 1) > 0 THEN
+  IF array_length(p_outbox_completed_ids, 1) > 0 THEN
     UPDATE wb_outbox
     SET status = 'Published',
         published_at = v_now,
         instance_id = NULL,
         lease_expiry = NULL
-    WHERE message_id = ANY(p_completed_outbox_ids);
+    WHERE message_id = ANY(p_outbox_completed_ids);
   END IF;
 
-  -- 3. Mark failed outbox messages as Failed
-  IF array_length(p_failed_outbox_ids, 1) > 0 THEN
-    UPDATE wb_outbox
-    SET status = 'Failed',
-        attempts = attempts + 1,
-        instance_id = NULL,
-        lease_expiry = NULL
-    WHERE message_id = ANY(p_failed_outbox_ids);
+  -- 3. Mark failed outbox messages as Failed (with error text)
+  IF jsonb_array_length(p_outbox_failed_messages) > 0 THEN
+    FOR v_failed_msg IN SELECT * FROM jsonb_array_elements(p_outbox_failed_messages)
+    LOOP
+      v_msg_id := (v_failed_msg->>'MessageId')::UUID;
+      v_error := v_failed_msg->>'Error';
+
+      UPDATE wb_outbox
+      SET status = 'Failed',
+          attempts = attempts + 1,
+          error = v_error,
+          instance_id = NULL,
+          lease_expiry = NULL
+      WHERE message_id = v_msg_id;
+    END LOOP;
   END IF;
 
   -- 4. Mark completed inbox messages as Completed
@@ -176,76 +182,82 @@ BEGIN
     WHERE message_id = ANY(p_completed_inbox_ids);
   END IF;
 
-  -- 5. Mark failed inbox messages as Failed
-  IF array_length(p_failed_inbox_ids, 1) > 0 THEN
-    UPDATE wb_inbox
-    SET status = 'Failed',
-        attempts = attempts + 1,
-        instance_id = NULL,
-        lease_expiry = NULL
-    WHERE message_id = ANY(p_failed_inbox_ids);
+  -- 5. Mark failed inbox messages as Failed (with error text)
+  IF jsonb_array_length(p_inbox_failed_messages) > 0 THEN
+    FOR v_failed_msg IN SELECT * FROM jsonb_array_elements(p_inbox_failed_messages)
+    LOOP
+      v_msg_id := (v_failed_msg->>'MessageId')::UUID;
+      v_error := v_failed_msg->>'Error';
+
+      UPDATE wb_inbox
+      SET status = 'Failed',
+          attempts = attempts + 1,
+          error = v_error,
+          instance_id = NULL,
+          lease_expiry = NULL
+      WHERE message_id = v_msg_id;
+    END LOOP;
   END IF;
 
-  -- 6. Claim orphaned outbox messages (expired leases)
+  -- 6. Claim and return orphaned outbox messages
   RETURN QUERY
-  WITH claimed_outbox AS (
-    UPDATE wb_outbox
-    SET instance_id = p_instance_id,
-        lease_expiry = v_lease_expiry,
-        attempts = attempts + 1
-    WHERE message_id IN (
-      SELECT message_id
-      FROM wb_outbox
-      WHERE status = 'Publishing'
-        AND (lease_expiry IS NULL OR lease_expiry < v_now)
-      ORDER BY created_at
-      LIMIT p_outbox_batch_size
-    )
-    RETURNING
-      message_id,
-      destination,
-      event_type,
-      event_data::TEXT,
-      metadata::TEXT,
-      scope::TEXT
+  WITH orphaned_ids AS (
+    SELECT o.message_id
+    FROM wb_outbox o
+    WHERE o.status = 'Publishing'
+      AND (o.lease_expiry IS NULL OR o.lease_expiry < v_now)
+    ORDER BY o.created_at
+    LIMIT 100
   ),
-  -- 7. Claim orphaned inbox messages (expired leases)
-  claimed_inbox AS (
-    UPDATE wb_inbox
+  claimed_outbox AS (
+    UPDATE wb_outbox o
     SET instance_id = p_instance_id,
         lease_expiry = v_lease_expiry,
-        attempts = attempts + 1
-    WHERE message_id IN (
-      SELECT message_id
-      FROM wb_inbox
-      WHERE status = 'Processing'
-        AND (lease_expiry IS NULL OR lease_expiry < v_now)
-      ORDER BY received_at
-      LIMIT p_inbox_batch_size
-    )
-    RETURNING
-      message_id,
-      handler_name,
-      event_type,
-      event_data::TEXT,
-      metadata::TEXT,
-      scope::TEXT
+        attempts = o.attempts + 1
+    FROM orphaned_ids oi
+    WHERE o.message_id = oi.message_id
+    RETURNING o.message_id, o.destination, o.event_type, o.event_data::TEXT, o.metadata::TEXT, o.scope::TEXT, o.attempts
   )
   SELECT
+    'outbox'::VARCHAR as source,
     co.message_id,
     co.destination,
     co.event_type,
     co.event_data,
     co.metadata,
     co.scope,
+    co.attempts
+  FROM claimed_outbox co;
+
+  -- 7. Claim and return orphaned inbox messages
+  RETURN QUERY
+  WITH orphaned_ids AS (
+    SELECT i.message_id
+    FROM wb_inbox i
+    WHERE i.status = 'Processing'
+      AND (i.lease_expiry IS NULL OR i.lease_expiry < v_now)
+    ORDER BY i.received_at
+    LIMIT 100
+  ),
+  claimed_inbox AS (
+    UPDATE wb_inbox i
+    SET instance_id = p_instance_id,
+        lease_expiry = v_lease_expiry,
+        attempts = i.attempts + 1
+    FROM orphaned_ids oi
+    WHERE i.message_id = oi.message_id
+    RETURNING i.message_id, i.event_type, i.event_data::TEXT, i.metadata::TEXT, i.scope::TEXT, i.attempts
+  )
+  SELECT
+    'inbox'::VARCHAR as source,
     ci.message_id,
-    ci.handler_name,
+    NULL::VARCHAR as destination,
     ci.event_type,
     ci.event_data,
     ci.metadata,
-    ci.scope
-  FROM claimed_outbox co
-  FULL OUTER JOIN claimed_inbox ci ON false; -- Cartesian product for separate result sets
+    ci.scope,
+    ci.attempts
+  FROM claimed_inbox ci;
 
 END;
 $$ LANGUAGE plpgsql;

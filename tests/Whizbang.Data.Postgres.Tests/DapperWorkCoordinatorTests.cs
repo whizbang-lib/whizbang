@@ -17,16 +17,14 @@ namespace Whizbang.Data.Postgres.Tests;
 public class DapperWorkCoordinatorTests : PostgresTestBase {
   private DapperWorkCoordinator _sut = null!;
   private Guid _instanceId;
-  private string _connectionString = null!;
   private readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
 
   [Before(Test)]
   public async Task TestSetupAsync() {
     _instanceId = _idProvider.NewGuid();
-    // Get connection string by creating and examining a connection
-    using var connection = await ConnectionFactory.CreateConnectionAsync();
-    _connectionString = connection.ConnectionString;
-    _sut = new DapperWorkCoordinator(_connectionString);
+    // Get connection string from base class (before any connections are opened)
+    _sut = new DapperWorkCoordinator(ConnectionString);
+    await Task.CompletedTask;  // Keep async signature for consistency
   }
 
   [Test]

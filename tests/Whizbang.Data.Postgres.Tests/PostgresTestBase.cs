@@ -17,6 +17,7 @@ public abstract class PostgresTestBase : IAsyncDisposable {
 
   public DapperDbExecutor Executor { get; private set; } = null!;
   public PostgresConnectionFactory ConnectionFactory { get; private set; } = null!;
+  protected string ConnectionString { get; private set; } = null!;
 
   [Before(Test)]
   public async Task SetupAsync() {
@@ -31,11 +32,13 @@ public abstract class PostgresTestBase : IAsyncDisposable {
     await _postgresContainer.StartAsync();
 
     // Create connection factory
-    _connectionFactory = new PostgresConnectionFactory(_postgresContainer.GetConnectionString());
+    var connectionString = _postgresContainer.GetConnectionString();
+    _connectionFactory = new PostgresConnectionFactory(connectionString);
 
     // Setup per-test instances
     Executor = new DapperDbExecutor();
     ConnectionFactory = _connectionFactory;
+    ConnectionString = connectionString;
 
     // Initialize database schema
     await InitializeDatabaseAsync();
