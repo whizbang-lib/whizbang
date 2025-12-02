@@ -18,6 +18,7 @@
   <ItemGroup>
     <ProjectReference Include="../Whizbang.Data.Dapper.Custom/Whizbang.Data.Dapper.Custom.csproj" />
     <ProjectReference Include="../Whizbang.Data.Schema/Whizbang.Data.Schema.csproj" />
+    <ProjectReference Include="../Whizbang.Data.Postgres/Whizbang.Data.Postgres.csproj" />
   </ItemGroup>
 
   <ItemGroup>
