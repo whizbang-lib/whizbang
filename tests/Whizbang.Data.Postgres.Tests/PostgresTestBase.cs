@@ -1,4 +1,5 @@
 using System.Data;
+using Dapper;
 using Npgsql;
 using Testcontainers.PostgreSql;
 using TUnit.Core;
@@ -12,6 +13,26 @@ namespace Whizbang.Data.Postgres.Tests;
 /// Each test gets its own isolated PostgreSQL container for maximum isolation and parallel execution.
 /// </summary>
 public abstract class PostgresTestBase : IAsyncDisposable {
+  static PostgresTestBase() {
+    // Configure Npgsql to use DateTimeOffset for TIMESTAMPTZ columns globally
+    AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", false);
+
+    // Register Dapper type handler to convert DateTime to DateTimeOffset
+    SqlMapper.AddTypeHandler(new DateTimeOffsetHandler());
+  }
+
+  private class DateTimeOffsetHandler : SqlMapper.TypeHandler<DateTimeOffset> {
+    public override DateTimeOffset Parse(object value) {
+      if (value is DateTime dt) {
+        return new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Utc));
+      }
+      return (DateTimeOffset)value;
+    }
+
+    public override void SetValue(IDbDataParameter parameter, DateTimeOffset value) {
+      parameter.Value = value;
+    }
+  }
   private PostgreSqlContainer? _postgresContainer;
   private PostgresConnectionFactory? _connectionFactory;
 
@@ -31,8 +52,10 @@ public abstract class PostgresTestBase : IAsyncDisposable {
 
     await _postgresContainer.StartAsync();
 
-    // Create connection factory
-    var connectionString = _postgresContainer.GetConnectionString();
+    // Create connection factory with DateTimeOffset support
+    var baseConnectionString = _postgresContainer.GetConnectionString();
+    // Add Timezone=UTC to ensure TIMESTAMPTZ columns map to DateTimeOffset
+    var connectionString = $"{baseConnectionString};Timezone=UTC";
     _connectionFactory = new PostgresConnectionFactory(connectionString);
 
     // Setup per-test instances
