@@ -18,13 +18,13 @@ public class DapperPostgresOutbox(
 ) : DapperOutboxBase(connectionFactory, executor, envelopeAdapter, instanceId, leaseSeconds) {
   protected override string GetStoreSql() => @"
     INSERT INTO wb_outbox (
-      message_id, destination, message_type, message_data, metadata, scope,
-      status, attempts, error, created_at, published_at, topic, partition_key,
+      message_id, destination, event_type, event_data, metadata, scope,
+      status, attempts, error, created_at, published_at,
       instance_id, lease_expiry
     )
     VALUES (
       @MessageId, @Destination, @EventType, @EventData::jsonb, @Metadata::jsonb, @Scope::jsonb,
-      @Status, @Attempts, NULL, @CreatedAt, NULL, @Destination, NULL,
+      @Status, @Attempts, NULL, @CreatedAt, NULL,
       @InstanceId, @LeaseExpiry
     )";
 
@@ -32,8 +32,8 @@ public class DapperPostgresOutbox(
     SELECT
       message_id AS MessageId,
       destination AS Destination,
-      message_type AS EventType,
-      message_data::text AS EventData,
+      event_type AS EventType,
+      event_data::text AS EventData,
       metadata::text AS Metadata,
       scope::text AS Scope,
       created_at AS CreatedAt

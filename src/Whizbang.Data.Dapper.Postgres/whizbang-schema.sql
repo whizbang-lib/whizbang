@@ -124,7 +124,7 @@ CREATE OR REPLACE FUNCTION process_work_batch(
 )
 RETURNS TABLE(
   source VARCHAR,
-  message_id UUID,
+  msg_id UUID,
   destination VARCHAR,
   event_type VARCHAR,
   event_data TEXT,
@@ -147,12 +147,12 @@ BEGIN
 
   -- 2. Mark completed outbox messages as Published
   IF array_length(p_outbox_completed_ids, 1) > 0 THEN
-    UPDATE wb_outbox
+    UPDATE wb_outbox o
     SET status = 'Published',
         published_at = v_now,
         instance_id = NULL,
         lease_expiry = NULL
-    WHERE message_id = ANY(p_outbox_completed_ids);
+    WHERE o.message_id = ANY(p_outbox_completed_ids);
   END IF;
 
   -- 3. Mark failed outbox messages as Failed (with error text)
@@ -162,24 +162,24 @@ BEGIN
       v_msg_id := (v_failed_msg->>'MessageId')::UUID;
       v_error := v_failed_msg->>'Error';
 
-      UPDATE wb_outbox
+      UPDATE wb_outbox o
       SET status = 'Failed',
-          attempts = attempts + 1,
+          attempts = o.attempts + 1,
           error = v_error,
           instance_id = NULL,
           lease_expiry = NULL
-      WHERE message_id = v_msg_id;
+      WHERE o.message_id = v_msg_id;
     END LOOP;
   END IF;
 
   -- 4. Mark completed inbox messages as Completed
-  IF array_length(p_completed_inbox_ids, 1) > 0 THEN
-    UPDATE wb_inbox
+  IF array_length(p_inbox_completed_ids, 1) > 0 THEN
+    UPDATE wb_inbox i
     SET status = 'Completed',
         processed_at = v_now,
         instance_id = NULL,
         lease_expiry = NULL
-    WHERE message_id = ANY(p_completed_inbox_ids);
+    WHERE i.message_id = ANY(p_inbox_completed_ids);
   END IF;
 
   -- 5. Mark failed inbox messages as Failed (with error text)
@@ -189,38 +189,39 @@ BEGIN
       v_msg_id := (v_failed_msg->>'MessageId')::UUID;
       v_error := v_failed_msg->>'Error';
 
-      UPDATE wb_inbox
+      UPDATE wb_inbox i
       SET status = 'Failed',
-          attempts = attempts + 1,
+          attempts = i.attempts + 1,
           error = v_error,
           instance_id = NULL,
           lease_expiry = NULL
-      WHERE message_id = v_msg_id;
+      WHERE i.message_id = v_msg_id;
     END LOOP;
   END IF;
 
   -- 6. Claim and return orphaned outbox messages
   RETURN QUERY
-  WITH orphaned_ids AS (
-    SELECT o.message_id
-    FROM wb_outbox o
-    WHERE o.status = 'Publishing'
-      AND (o.lease_expiry IS NULL OR o.lease_expiry < v_now)
-    ORDER BY o.created_at
+  WITH to_claim AS (
+    SELECT message_id AS claim_id
+    FROM wb_outbox
+    WHERE status = 'Publishing'
+      AND (lease_expiry IS NULL OR lease_expiry < v_now)
+    ORDER BY created_at
     LIMIT 100
+    FOR UPDATE SKIP LOCKED
   ),
   claimed_outbox AS (
     UPDATE wb_outbox o
     SET instance_id = p_instance_id,
         lease_expiry = v_lease_expiry,
         attempts = o.attempts + 1
-    FROM orphaned_ids oi
-    WHERE o.message_id = oi.message_id
+    FROM to_claim tc
+    WHERE o.message_id = tc.claim_id
     RETURNING o.message_id, o.destination, o.event_type, o.event_data::TEXT, o.metadata::TEXT, o.scope::TEXT, o.attempts
   )
   SELECT
     'outbox'::VARCHAR as source,
-    co.message_id,
+    co.message_id as msg_id,
     co.destination,
     co.event_type,
     co.event_data,
@@ -231,26 +232,27 @@ BEGIN
 
   -- 7. Claim and return orphaned inbox messages
   RETURN QUERY
-  WITH orphaned_ids AS (
-    SELECT i.message_id
-    FROM wb_inbox i
-    WHERE i.status = 'Processing'
-      AND (i.lease_expiry IS NULL OR i.lease_expiry < v_now)
-    ORDER BY i.received_at
+  WITH to_claim AS (
+    SELECT message_id AS claim_id
+    FROM wb_inbox
+    WHERE status = 'Processing'
+      AND (lease_expiry IS NULL OR lease_expiry < v_now)
+    ORDER BY received_at
     LIMIT 100
+    FOR UPDATE SKIP LOCKED
   ),
   claimed_inbox AS (
     UPDATE wb_inbox i
     SET instance_id = p_instance_id,
         lease_expiry = v_lease_expiry,
         attempts = i.attempts + 1
-    FROM orphaned_ids oi
-    WHERE i.message_id = oi.message_id
+    FROM to_claim tc
+    WHERE i.message_id = tc.claim_id
     RETURNING i.message_id, i.event_type, i.event_data::TEXT, i.metadata::TEXT, i.scope::TEXT, i.attempts
   )
   SELECT
     'inbox'::VARCHAR as source,
-    ci.message_id,
+    ci.message_id as msg_id,
     NULL::VARCHAR as destination,
     ci.event_type,
     ci.event_data,

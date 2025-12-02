@@ -76,7 +76,7 @@ public class DapperWorkCoordinator(
     var orphanedOutbox = resultList
       .Where(r => r.source == "outbox")
       .Select(r => new OrphanedOutboxMessage {
-        MessageId = r.message_id,
+        MessageId = r.msg_id,
         Destination = r.destination!,
         MessageType = r.event_type,
         MessageData = r.event_data,
@@ -89,7 +89,7 @@ public class DapperWorkCoordinator(
     var orphanedInbox = resultList
       .Where(r => r.source == "inbox")
       .Select(r => new OrphanedInboxMessage {
-        MessageId = r.message_id,
+        MessageId = r.msg_id,
         MessageType = r.event_type,
         MessageData = r.event_data,
         Metadata = r.metadata,
@@ -137,7 +137,7 @@ public class DapperWorkCoordinator(
 /// </summary>
 internal class WorkBatchRow {
   public required string source { get; set; }  // 'outbox' or 'inbox'
-  public required Guid message_id { get; set; }
+  public required Guid msg_id { get; set; }
   public string? destination { get; set; }  // null for inbox
   public required string event_type { get; set; }
   public required string event_data { get; set; }  // JSON string
