@@ -344,7 +344,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   private async Task InsertServiceInstanceAsync(Guid instanceId, bool active) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     await connection.ExecuteAsync(@"
-      INSERT INTO wb_service_instances (instance_id, is_active, last_heartbeat)
+      INSERT INTO wb_service_instances (instance_id, active, heartbeat)
       VALUES (@instanceId, @active, @heartbeat)",
       new { instanceId, active, heartbeat = DateTimeOffset.UtcNow });
   }
@@ -352,7 +352,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   private async Task<DateTimeOffset?> GetInstanceHeartbeatAsync(Guid instanceId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     return await connection.QueryFirstOrDefaultAsync<DateTimeOffset?>(@"
-      SELECT last_heartbeat FROM wb_service_instances WHERE instance_id = @instanceId",
+      SELECT heartbeat FROM wb_service_instances WHERE instance_id = @instanceId",
       new { instanceId });
   }
 
