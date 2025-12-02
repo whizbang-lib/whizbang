@@ -16,21 +16,39 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// EF Core implementation of IInbox using PostgreSQL with JSONB columns.
 /// Provides exactly-once message processing through deduplication.
 /// Stores incoming messages with their full envelope metadata for processing.
+/// Supports both immediate processing (with instanceId) and polling-based (without instanceId).
 /// </summary>
 public sealed class EFCoreInbox<TDbContext> : IInbox
   where TDbContext : DbContext {
 
   private readonly TDbContext _context;
   private readonly JsonSerializerOptions _jsonOptions;
+  private readonly Guid? _instanceId;
+  private readonly int _leaseSeconds;
 
-  public EFCoreInbox(TDbContext context, JsonSerializerOptions? jsonOptions = null) {
+  /// <summary>
+  /// Creates a new EFCoreInbox instance.
+  /// </summary>
+  /// <param name="context">The database context</param>
+  /// <param name="jsonOptions">JSON serialization options (optional, uses default if null)</param>
+  /// <param name="instanceId">Service instance ID for lease-based coordination (optional, enables immediate processing)</param>
+  /// <param name="leaseSeconds">Lease duration in seconds (default 300 = 5 minutes)</param>
+  public EFCoreInbox(
+    TDbContext context,
+    JsonSerializerOptions? jsonOptions = null,
+    Guid? instanceId = null,
+    int leaseSeconds = 300
+  ) {
     _context = context ?? throw new ArgumentNullException(nameof(context));
     _jsonOptions = jsonOptions ?? EFCoreJsonContext.CreateCombinedOptions();
+    _instanceId = instanceId;
+    _leaseSeconds = leaseSeconds;
   }
 
   /// <summary>
-  /// Stores an incoming message envelope in the inbox for later processing.
+  /// Stores an incoming message envelope in the inbox for processing.
   /// Extracts envelope data into JSONB columns for efficient querying.
+  /// When instanceId is configured, sets status to "Processing" with lease for immediate processing.
   /// </summary>
   public async Task StoreAsync<TMessage>(
       MessageEnvelope<TMessage> envelope,
@@ -49,6 +67,8 @@ public sealed class EFCoreInbox<TDbContext> : IInbox
     var metadata = SerializeMetadata(envelope);
     var scope = SerializeScope(envelope);
 
+    var now = DateTimeOffset.UtcNow;
+
     var record = new InboxRecord {
       MessageId = envelope.MessageId.ToString(),
       HandlerName = handlerName,
@@ -56,11 +76,13 @@ public sealed class EFCoreInbox<TDbContext> : IInbox
       MessageData = eventData,
       Metadata = metadata,
       Scope = scope,
-      Status = "Pending",
+      Status = _instanceId.HasValue ? "Processing" : "Pending",
       Attempts = 0,
       Error = null,
-      ReceivedAt = DateTimeOffset.UtcNow,
-      ProcessedAt = null
+      ReceivedAt = now,
+      ProcessedAt = null,
+      InstanceId = _instanceId,
+      LeaseExpiry = _instanceId.HasValue ? now.AddSeconds(_leaseSeconds) : null
     };
 
     await _context.Set<InboxRecord>().AddAsync(record, cancellationToken);

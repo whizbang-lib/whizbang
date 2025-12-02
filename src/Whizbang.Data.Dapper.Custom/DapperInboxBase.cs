@@ -10,16 +10,29 @@ namespace Whizbang.Data.Dapper.Custom;
 /// Base class for Dapper-based IInbox implementations.
 /// Provides common implementation logic while allowing derived classes to provide database-specific SQL.
 /// Uses JSONB adapter for envelope serialization - mirrors DapperOutboxBase.
+/// Supports both immediate processing (with instanceId) and polling-based (without instanceId).
 /// </summary>
 public abstract class DapperInboxBase : IInbox {
   protected readonly IDbConnectionFactory _connectionFactory;
   protected readonly IDbExecutor _executor;
   protected readonly IJsonbPersistenceAdapter<IMessageEnvelope> _envelopeAdapter;
+  protected readonly Guid? _instanceId;
+  protected readonly int _leaseSeconds;
 
+  /// <summary>
+  /// Creates a new DapperInboxBase instance.
+  /// </summary>
+  /// <param name="connectionFactory">Database connection factory</param>
+  /// <param name="executor">Database command executor</param>
+  /// <param name="envelopeAdapter">JSONB persistence adapter for envelopes</param>
+  /// <param name="instanceId">Service instance ID for lease-based coordination (optional, enables immediate processing)</param>
+  /// <param name="leaseSeconds">Lease duration in seconds (default 300 = 5 minutes)</param>
   protected DapperInboxBase(
     IDbConnectionFactory connectionFactory,
     IDbExecutor executor,
-    IJsonbPersistenceAdapter<IMessageEnvelope> envelopeAdapter) {
+    IJsonbPersistenceAdapter<IMessageEnvelope> envelopeAdapter,
+    Guid? instanceId = null,
+    int leaseSeconds = 300) {
     ArgumentNullException.ThrowIfNull(connectionFactory);
     ArgumentNullException.ThrowIfNull(executor);
     ArgumentNullException.ThrowIfNull(envelopeAdapter);
@@ -27,6 +40,8 @@ public abstract class DapperInboxBase : IInbox {
     _connectionFactory = connectionFactory;
     _executor = executor;
     _envelopeAdapter = envelopeAdapter;
+    _instanceId = instanceId;
+    _leaseSeconds = leaseSeconds;
   }
 
   /// <summary>
@@ -41,7 +56,9 @@ public abstract class DapperInboxBase : IInbox {
   /// <summary>
   /// Gets the SQL command to store a new inbox message using JSONB pattern.
   /// Parameters: @MessageId (Guid), @HandlerName (string), @EventType (string),
-  ///             @EventData (string), @Metadata (string), @Scope (string, nullable), @ReceivedAt (DateTimeOffset)
+  ///             @EventData (string), @Metadata (string), @Scope (string, nullable),
+  ///             @Status (string), @Attempts (int), @ReceivedAt (DateTimeOffset),
+  ///             @InstanceId (Guid, nullable), @LeaseExpiry (DateTimeOffset, nullable)
   /// </summary>
   protected abstract string GetStoreSql();
 
@@ -84,6 +101,7 @@ public abstract class DapperInboxBase : IInbox {
     // Get event type from payload
     var eventType = typeof(TMessage).FullName ?? throw new InvalidOperationException("Event type has no FullName");
 
+    var now = DateTimeOffset.UtcNow;
     var sql = GetStoreSql();
 
     await _executor.ExecuteAsync(
@@ -96,7 +114,11 @@ public abstract class DapperInboxBase : IInbox {
         EventData = jsonbModel.DataJson,
         Metadata = jsonbModel.MetadataJson,
         Scope = jsonbModel.ScopeJson,
-        ReceivedAt = DateTimeOffset.UtcNow
+        Status = _instanceId.HasValue ? "Processing" : "Pending",
+        Attempts = 0,
+        ReceivedAt = now,
+        InstanceId = _instanceId,
+        LeaseExpiry = _instanceId.HasValue ? now.AddSeconds(_leaseSeconds) : (DateTimeOffset?)null
       },
       cancellationToken: cancellationToken);
   }
