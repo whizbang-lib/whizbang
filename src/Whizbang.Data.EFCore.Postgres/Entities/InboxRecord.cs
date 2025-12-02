@@ -21,17 +21,17 @@ public sealed class InboxRecord {
   public required string HandlerName { get; set; }
 
   /// <summary>
-  /// Fully-qualified event type name (e.g., "MyApp.Events.OrderCreated").
+  /// Fully-qualified message type name (e.g., "MyApp.Events.OrderCreated", "MyApp.Commands.CreateOrder").
   /// Used for debugging and monitoring.
   /// </summary>
-  public required string EventType { get; set; }
+  public required string MessageType { get; set; }
 
   /// <summary>
-  /// Event payload stored as JSONB.
-  /// Contains the actual event data for debugging/replay.
-  /// Schema matches the event type.
+  /// Message payload stored as JSONB.
+  /// Contains the actual message data for debugging/replay.
+  /// Schema matches the message type.
   /// </summary>
-  public required JsonDocument EventData { get; set; }
+  public required JsonDocument MessageData { get; set; }
 
   /// <summary>
   /// Message metadata stored as JSONB.
@@ -76,4 +76,18 @@ public sealed class InboxRecord {
   /// Null if not yet processed.
   /// </summary>
   public DateTime? ProcessedAt { get; set; }
+
+  /// <summary>
+  /// Service instance ID currently processing this message.
+  /// Used for multi-instance coordination and tracking which instance owns the lease.
+  /// Null if message is not currently being processed.
+  /// </summary>
+  public Guid? InstanceId { get; set; }
+
+  /// <summary>
+  /// UTC timestamp when the processing lease expires.
+  /// Used for orphaned work recovery - messages with expired leases can be claimed by other instances.
+  /// Null if message is not currently being processed or has been completed/failed.
+  /// </summary>
+  public DateTimeOffset? LeaseExpiry { get; set; }
 }
