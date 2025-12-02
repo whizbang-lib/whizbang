@@ -3,6 +3,7 @@ using Dapper;
 using Npgsql;
 using TUnit.Assertions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Data.Dapper.Postgres;
 
@@ -11,15 +12,17 @@ namespace Whizbang.Data.Postgres.Tests;
 /// <summary>
 /// Integration tests for DapperWorkCoordinator.
 /// Tests the process_work_batch PostgreSQL function and lease-based work coordination.
+/// Uses UUIDv7 for all message IDs to ensure proper time-ordered database indexing.
 /// </summary>
 public class DapperWorkCoordinatorTests : PostgresTestBase {
   private DapperWorkCoordinator _sut = null!;
   private Guid _instanceId;
   private string _connectionString = null!;
+  private readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
 
   [Before(Test)]
   public async Task TestSetupAsync() {
-    _instanceId = Guid.NewGuid();
+    _instanceId = _idProvider.NewGuid();
     // Get connection string by creating and examining a connection
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     _connectionString = connection.ConnectionString;
@@ -54,8 +57,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   public async Task ProcessWorkBatchAsync_CompletesOutboxMessages_MarksAsPublishedAsync() {
     // Arrange
     await InsertServiceInstanceAsync(_instanceId, active: true);
-    var messageId1 = Guid.NewGuid();
-    var messageId2 = Guid.NewGuid();
+    var messageId1 = _idProvider.NewGuid();
+    var messageId2 = _idProvider.NewGuid();
 
     await InsertOutboxMessageAsync(messageId1, "topic1", "TestEvent", "{}", status: "Publishing", instanceId: _instanceId);
     await InsertOutboxMessageAsync(messageId2, "topic2", "TestEvent", "{}", status: "Publishing", instanceId: _instanceId);
@@ -82,7 +85,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   public async Task ProcessWorkBatchAsync_FailsOutboxMessages_MarksAsFailedWithErrorAsync() {
     // Arrange
     await InsertServiceInstanceAsync(_instanceId, active: true);
-    var messageId = Guid.NewGuid();
+    var messageId = _idProvider.NewGuid();
 
     await InsertOutboxMessageAsync(messageId, "topic1", "TestEvent", "{}", status: "Publishing", instanceId: _instanceId);
 
@@ -108,8 +111,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   public async Task ProcessWorkBatchAsync_CompletesInboxMessages_MarksAsCompletedAsync() {
     // Arrange
     await InsertServiceInstanceAsync(_instanceId, active: true);
-    var messageId1 = Guid.NewGuid();
-    var messageId2 = Guid.NewGuid();
+    var messageId1 = _idProvider.NewGuid();
+    var messageId2 = _idProvider.NewGuid();
 
     await InsertInboxMessageAsync(messageId1, "Handler1", "TestEvent", "{}", status: "Processing", instanceId: _instanceId);
     await InsertInboxMessageAsync(messageId2, "Handler2", "TestEvent", "{}", status: "Processing", instanceId: _instanceId);
@@ -136,7 +139,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   public async Task ProcessWorkBatchAsync_FailsInboxMessages_MarksAsFailedWithErrorAsync() {
     // Arrange
     await InsertServiceInstanceAsync(_instanceId, active: true);
-    var messageId = Guid.NewGuid();
+    var messageId = _idProvider.NewGuid();
 
     await InsertInboxMessageAsync(messageId, "Handler1", "TestEvent", "{}", status: "Processing", instanceId: _instanceId);
 
@@ -162,9 +165,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   public async Task ProcessWorkBatchAsync_RecoversOrphanedOutboxMessages_ReturnsExpiredLeasesAsync() {
     // Arrange
     await InsertServiceInstanceAsync(_instanceId, active: true);
-    var orphanedId1 = Guid.NewGuid();
-    var orphanedId2 = Guid.NewGuid();
-    var activeId = Guid.NewGuid();
+    var orphanedId1 = _idProvider.NewGuid();
+    var orphanedId2 = _idProvider.NewGuid();
+    var activeId = _idProvider.NewGuid();
 
     // Orphaned messages (expired leases)
     await InsertOutboxMessageAsync(
@@ -173,7 +176,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       "OrphanedEvent1",
       "{\"data\":1}",
       status: "Publishing",
-      instanceId: Guid.NewGuid(),
+      instanceId: _idProvider.NewGuid(),
       leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-10));
 
     await InsertOutboxMessageAsync(
@@ -182,7 +185,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       "OrphanedEvent2",
       "{\"data\":2}",
       status: "Publishing",
-      instanceId: Guid.NewGuid(),
+      instanceId: _idProvider.NewGuid(),
       leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-5));
 
     // Active message (not expired)
@@ -192,7 +195,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       "ActiveEvent",
       "{\"data\":3}",
       status: "Publishing",
-      instanceId: Guid.NewGuid(),
+      instanceId: _idProvider.NewGuid(),
       leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(5));
 
     // Act
@@ -227,8 +230,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   public async Task ProcessWorkBatchAsync_RecoversOrphanedInboxMessages_ReturnsExpiredLeasesAsync() {
     // Arrange
     await InsertServiceInstanceAsync(_instanceId, active: true);
-    var orphanedId1 = Guid.NewGuid();
-    var orphanedId2 = Guid.NewGuid();
+    var orphanedId1 = _idProvider.NewGuid();
+    var orphanedId2 = _idProvider.NewGuid();
 
     // Orphaned messages (expired leases)
     await InsertInboxMessageAsync(
@@ -237,7 +240,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       "OrphanedEvent1",
       "{\"data\":1}",
       status: "Processing",
-      instanceId: Guid.NewGuid(),
+      instanceId: _idProvider.NewGuid(),
       leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-10));
 
     await InsertInboxMessageAsync(
@@ -246,7 +249,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       "OrphanedEvent2",
       "{\"data\":2}",
       status: "Processing",
-      instanceId: Guid.NewGuid(),
+      instanceId: _idProvider.NewGuid(),
       leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-5));
 
     // Act
@@ -278,27 +281,27 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await InsertServiceInstanceAsync(_instanceId, active: true);
 
     // Completed messages
-    var completedOutboxId = Guid.NewGuid();
-    var completedInboxId = Guid.NewGuid();
+    var completedOutboxId = _idProvider.NewGuid();
+    var completedInboxId = _idProvider.NewGuid();
     await InsertOutboxMessageAsync(completedOutboxId, "topic1", "Event1", "{}", status: "Publishing", instanceId: _instanceId);
     await InsertInboxMessageAsync(completedInboxId, "Handler1", "Event2", "{}", status: "Processing", instanceId: _instanceId);
 
     // Failed messages
-    var failedOutboxId = Guid.NewGuid();
-    var failedInboxId = Guid.NewGuid();
+    var failedOutboxId = _idProvider.NewGuid();
+    var failedInboxId = _idProvider.NewGuid();
     await InsertOutboxMessageAsync(failedOutboxId, "topic2", "Event3", "{}", status: "Publishing", instanceId: _instanceId);
     await InsertInboxMessageAsync(failedInboxId, "Handler2", "Event4", "{}", status: "Processing", instanceId: _instanceId);
 
     // Orphaned messages
-    var orphanedOutboxId = Guid.NewGuid();
-    var orphanedInboxId = Guid.NewGuid();
+    var orphanedOutboxId = _idProvider.NewGuid();
+    var orphanedInboxId = _idProvider.NewGuid();
     await InsertOutboxMessageAsync(
       orphanedOutboxId,
       "topic3",
       "OrphanedEvent1",
       "{}",
       status: "Publishing",
-      instanceId: Guid.NewGuid(),
+      instanceId: _idProvider.NewGuid(),
       leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-10));
     await InsertInboxMessageAsync(
       orphanedInboxId,
@@ -306,7 +309,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       "OrphanedEvent2",
       "{}",
       status: "Processing",
-      instanceId: Guid.NewGuid(),
+      instanceId: _idProvider.NewGuid(),
       leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-10));
 
     // Act

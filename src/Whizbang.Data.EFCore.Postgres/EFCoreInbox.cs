@@ -85,8 +85,22 @@ public sealed class EFCoreInbox<TDbContext> : IInbox
       LeaseExpiry = _instanceId.HasValue ? now.AddSeconds(_leaseSeconds) : null
     };
 
-    await _context.Set<InboxRecord>().AddAsync(record, cancellationToken);
-    await _context.SaveChangesAsync(cancellationToken);
+    try {
+      await _context.Set<InboxRecord>().AddAsync(record, cancellationToken);
+      await _context.SaveChangesAsync(cancellationToken);
+    } catch (DbUpdateException ex) when (IsDuplicateKeyViolation(ex)) {
+      // Message already exists in inbox - this is expected for idempotency
+      // Silently ignore duplicate messages (similar to Dapper's ON CONFLICT DO NOTHING)
+    }
+  }
+
+  /// <summary>
+  /// Checks if a DbUpdateException is caused by a duplicate key violation (PostgreSQL error code 23505).
+  /// </summary>
+  private static bool IsDuplicateKeyViolation(DbUpdateException ex) {
+    // PostgreSQL duplicate key violation: error code 23505
+    return ex.InnerException?.Message.Contains("23505") == true ||
+           ex.InnerException?.Message.Contains("duplicate key") == true;
   }
 
   /// <summary>
