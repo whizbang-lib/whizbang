@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
@@ -11,15 +12,16 @@ namespace Whizbang.Core.Workers;
 /// <summary>
 /// Background worker that polls the outbox and publishes pending messages to the transport.
 /// Implements the transactional outbox pattern for reliable message delivery.
+/// Uses IServiceScopeFactory to resolve scoped IOutbox within each work cycle.
 /// </summary>
 public class OutboxPublisherWorker(
-  IOutbox outbox,
+  IServiceScopeFactory scopeFactory,
   ITransport transport,
   JsonSerializerOptions jsonOptions,
   OutboxPublisherOptions? options = null,
   ILogger<OutboxPublisherWorker>? logger = null
   ) : BackgroundService {
-  private readonly IOutbox _outbox = outbox ?? throw new ArgumentNullException(nameof(outbox));
+  private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
   private readonly ILogger<OutboxPublisherWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<OutboxPublisherWorker>.Instance;
   private readonly OutboxPublisherOptions _options = options ?? new OutboxPublisherOptions();
@@ -52,9 +54,13 @@ public class OutboxPublisherWorker(
   }
 
   private async Task ProcessPendingMessagesAsync(CancellationToken cancellationToken) {
+    // Create a scope to resolve scoped IOutbox
+    using var scope = _scopeFactory.CreateScope();
+    var outbox = scope.ServiceProvider.GetRequiredService<IOutbox>();
+
     // Get batch of pending messages
     _logger.LogInformation("OutboxPublisherWorker: Checking for pending messages...");
-    var pendingMessages = await _outbox.GetPendingAsync(_options.BatchSize, cancellationToken);
+    var pendingMessages = await outbox.GetPendingAsync(_options.BatchSize, cancellationToken);
 
     _logger.LogInformation("OutboxPublisherWorker: Found {Count} pending messages", pendingMessages.Count);
 
@@ -75,7 +81,7 @@ public class OutboxPublisherWorker(
 
       try {
         await PublishMessageAsync(outboxMessage, cancellationToken);
-        await _outbox.MarkPublishedAsync(outboxMessage.MessageId, cancellationToken);
+        await outbox.MarkPublishedAsync(outboxMessage.MessageId, cancellationToken);
         successCount++;
 
         _logger.LogDebug(

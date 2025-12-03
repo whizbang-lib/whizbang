@@ -1,100 +1,56 @@
-using System.Data;
-using Dapper;
-using Whizbang.Core.Data;
+using ECommerce.InventoryWorker.Lenses;
+using Microsoft.EntityFrameworkCore;
+using Whizbang.Core.Lenses;
 
 namespace ECommerce.InventoryWorker.Lenses;
 
 /// <summary>
-/// Read-only query implementation for product catalog data.
-/// Queries the product_catalog table materialized by ProductCatalogPerspective.
+/// EF Core implementation of IProductLens for fast readonly queries.
+/// Uses ILensQuery abstraction with LINQ for type-safe queries - zero reflection, AOT compatible.
 /// </summary>
-public class ProductLens(IDbConnectionFactory connectionFactory) : IProductLens {
-  private readonly IDbConnectionFactory _connectionFactory = connectionFactory;
+public class ProductLens(ILensQuery<ProductDto> query) : IProductLens {
+  private readonly ILensQuery<ProductDto> _query = query;
 
   /// <inheritdoc />
   public async Task<ProductDto?> GetByIdAsync(Guid productId, CancellationToken cancellationToken = default) {
-    using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-    EnsureConnectionOpen(connection);
+    var product = await _query.GetByIdAsync(productId.ToString(), cancellationToken);
 
-    return await connection.QuerySingleOrDefaultAsync<ProductDto>(@"
-      SELECT
-        product_id AS ProductId,
-        name AS Name,
-        description AS Description,
-        price AS Price,
-        image_url AS ImageUrl,
-        created_at AS CreatedAt,
-        updated_at AS UpdatedAt,
-        deleted_at AS DeletedAt
-      FROM inventoryworker.product_catalog
-      WHERE product_id = @ProductId AND deleted_at IS NULL",
-      new { ProductId = productId });
+    // Filter out deleted products
+    if (product?.DeletedAt != null) {
+      return null;
+    }
+
+    return product;
   }
 
   /// <inheritdoc />
   public async Task<IReadOnlyList<ProductDto>> GetAllAsync(bool includeDeleted = false, CancellationToken cancellationToken = default) {
-    using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-    EnsureConnectionOpen(connection);
+    var query = _query.Query.AsNoTracking();
 
-    var sql = includeDeleted
-      ? @"
-        SELECT
-          product_id AS ProductId,
-          name AS Name,
-          description AS Description,
-          price AS Price,
-          image_url AS ImageUrl,
-          created_at AS CreatedAt,
-          updated_at AS UpdatedAt,
-          deleted_at AS DeletedAt
-        FROM inventoryworker.product_catalog"
-      : @"
-        SELECT
-          product_id AS ProductId,
-          name AS Name,
-          description AS Description,
-          price AS Price,
-          image_url AS ImageUrl,
-          created_at AS CreatedAt,
-          updated_at AS UpdatedAt,
-          deleted_at AS DeletedAt
-        FROM inventoryworker.product_catalog
-        WHERE deleted_at IS NULL";
+    if (!includeDeleted) {
+      query = query.Where(row => row.Data.DeletedAt == null);
+    }
 
-    var results = await connection.QueryAsync<ProductDto>(sql);
-    return [.. results];
+    var results = await query
+      .Select(row => row.Data)
+      .ToListAsync(cancellationToken);
+
+    return results.AsReadOnly();
   }
 
   /// <inheritdoc />
   public async Task<IReadOnlyList<ProductDto>> GetByIdsAsync(IEnumerable<Guid> productIds, CancellationToken cancellationToken = default) {
-    var idList = productIds.ToList();
-    if (idList.Count == 0) {
+    var ids = productIds.Select(id => id.ToString()).ToList();
+    if (ids.Count == 0) {
       return Array.Empty<ProductDto>();
     }
 
-    using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-    EnsureConnectionOpen(connection);
+    var results = await _query.Query
+      .AsNoTracking()
+      .Where(row => ids.Contains(row.Id) && row.Data.DeletedAt == null)
+      .Select(row => row.Data)
+      .ToListAsync(cancellationToken);
 
-    var results = await connection.QueryAsync<ProductDto>(@"
-      SELECT
-        product_id AS ProductId,
-        name AS Name,
-        description AS Description,
-        price AS Price,
-        image_url AS ImageUrl,
-        created_at AS CreatedAt,
-        updated_at AS UpdatedAt,
-        deleted_at AS DeletedAt
-      FROM inventoryworker.product_catalog
-      WHERE product_id = ANY(@ProductIds) AND deleted_at IS NULL",
-      new { ProductIds = idList.ToArray() });
-
-    return [.. results];
-  }
-
-  private static void EnsureConnectionOpen(IDbConnection connection) {
-    if (connection.State != ConnectionState.Open) {
-      connection.Open();
-    }
+    return results.AsReadOnly();
   }
 }

@@ -36,7 +36,8 @@ builder.Services.AddDbContext<InventoryDbContext>(options =>
 // Register unified Whizbang API with EF Core Postgres driver
 // This automatically registers ALL infrastructure:
 // - IInbox, IOutbox, IEventStore (using EF Core implementations)
-// Source generator discovers models from InventoryDbContext (none in this service)
+// - IPerspectiveStore<T> and ILensQuery<T> for all discovered perspective models
+// Source generator discovers ProductDto, InventoryLevelDto from perspective implementations
 _ = builder.Services
   .AddWhizbang()
   .WithEFCore<InventoryDbContext>()
@@ -46,9 +47,16 @@ _ = builder.Services
 builder.Services.AddReceptors();
 builder.Services.AddWhizbangAggregateIdExtractor();
 
-// Register lenses (readonly repositories)
-builder.Services.AddSingleton<IProductLens, ProductLens>();
-builder.Services.AddSingleton<IInventoryLens, InventoryLens>();
+// Register perspectives (ProductCatalogPerspective, InventoryLevelsPerspective, OrderInventoryPerspective)
+// These materialize events into read models using EF Core
+_ = builder.Services.AddWhizbangPerspectives();
+
+// Register dispatcher for sending commands from OrderInventoryPerspective
+builder.Services.AddWhizbangDispatcher();
+
+// Register lenses (readonly repositories using EF Core ILensQuery)
+builder.Services.AddScoped<IProductLens, ProductLens>();
+builder.Services.AddScoped<IInventoryLens, InventoryLens>();
 
 // Service Bus consumer - receives events and commands
 var consumerOptions = new ServiceBusConsumerOptions();

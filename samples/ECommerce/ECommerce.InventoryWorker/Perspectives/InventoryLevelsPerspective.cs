@@ -1,25 +1,27 @@
-using System.Data;
-using Dapper;
 using ECommerce.Contracts.Events;
+using ECommerce.InventoryWorker.Lenses;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core;
-using Whizbang.Core.Data;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
 
 namespace ECommerce.InventoryWorker.Perspectives;
 
 /// <summary>
-/// Materializes inventory events into inventory_levels table.
+/// Materializes inventory events into InventoryLevelDto perspective using EF Core.
 /// Handles ProductCreatedEvent (initializes at 0), InventoryRestockedEvent, InventoryReservedEvent, and InventoryAdjustedEvent.
 /// </summary>
 public class InventoryLevelsPerspective(
-  IDbConnectionFactory connectionFactory,
+  IPerspectiveStore<InventoryLevelDto> store,
+  ILensQuery<InventoryLevelDto> query,
   ILogger<InventoryLevelsPerspective> logger) :
   IPerspectiveOf<ProductCreatedEvent>,
   IPerspectiveOf<InventoryRestockedEvent>,
   IPerspectiveOf<InventoryReservedEvent>,
   IPerspectiveOf<InventoryAdjustedEvent> {
 
-  private readonly IDbConnectionFactory _connectionFactory = connectionFactory;
+  private readonly IPerspectiveStore<InventoryLevelDto> _store = store;
+  private readonly ILensQuery<InventoryLevelDto> _query = query;
   private readonly ILogger<InventoryLevelsPerspective> _logger = logger;
 
   /// <summary>
@@ -28,20 +30,14 @@ public class InventoryLevelsPerspective(
   /// </summary>
   public async Task Update(ProductCreatedEvent @event, CancellationToken cancellationToken = default) {
     try {
-      using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-      EnsureConnectionOpen(connection);
+      var inventory = new InventoryLevelDto {
+        ProductId = @event.ProductId,
+        Quantity = 0,
+        Reserved = 0,
+        LastUpdated = @event.CreatedAt
+      };
 
-      await connection.ExecuteAsync(@"
-        INSERT INTO inventoryworker.inventory_levels (
-          product_id, quantity, reserved, last_updated
-        ) VALUES (
-          @ProductId, 0, 0, @CreatedAt
-        )
-        ON CONFLICT (product_id) DO NOTHING",
-        new {
-          @event.ProductId,
-          @event.CreatedAt
-        });
+      await _store.UpsertAsync(@event.ProductId.ToString(), inventory, cancellationToken);
 
       _logger.LogInformation(
         "Inventory levels initialized: Product {ProductId} created with 0 quantity",
@@ -60,24 +56,17 @@ public class InventoryLevelsPerspective(
   /// </summary>
   public async Task Update(InventoryRestockedEvent @event, CancellationToken cancellationToken = default) {
     try {
-      using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-      EnsureConnectionOpen(connection);
+      // Get existing inventory or create new with defaults
+      var existing = await _query.GetByIdAsync(@event.ProductId.ToString(), cancellationToken);
 
-      await connection.ExecuteAsync(@"
-        INSERT INTO inventoryworker.inventory_levels (
-          product_id, quantity, reserved, last_updated
-        ) VALUES (
-          @ProductId, @NewTotalQuantity, 0, @RestockedAt
-        )
-        ON CONFLICT (product_id) DO UPDATE
-        SET
-          quantity = @NewTotalQuantity,
-          last_updated = @RestockedAt",
-        new {
-          @event.ProductId,
-          @event.NewTotalQuantity,
-          @event.RestockedAt
-        });
+      var inventory = new InventoryLevelDto {
+        ProductId = @event.ProductId,
+        Quantity = @event.NewTotalQuantity,
+        Reserved = existing?.Reserved ?? 0,
+        LastUpdated = @event.RestockedAt
+      };
+
+      await _store.UpsertAsync(@event.ProductId.ToString(), inventory, cancellationToken);
 
       _logger.LogInformation(
         "Inventory levels updated: Product {ProductId} restocked to {Quantity}",
@@ -96,20 +85,23 @@ public class InventoryLevelsPerspective(
   /// </summary>
   public async Task Update(InventoryReservedEvent @event, CancellationToken cancellationToken = default) {
     try {
-      using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-      EnsureConnectionOpen(connection);
+      // Get existing inventory to increment reserved
+      var existing = await _query.GetByIdAsync(@event.ProductId.ToString(), cancellationToken);
+      if (existing == null) {
+        _logger.LogWarning(
+          "Inventory {ProductId} not found for reservation, skipping",
+          @event.ProductId);
+        return;
+      }
 
-      await connection.ExecuteAsync(@"
-        UPDATE inventoryworker.inventory_levels
-        SET
-          reserved = reserved + @Quantity,
-          last_updated = @ReservedAt
-        WHERE product_id = @ProductId",
-        new {
-          @event.ProductId,
-          @event.Quantity,
-          @event.ReservedAt
-        });
+      var updated = new InventoryLevelDto {
+        ProductId = existing.ProductId,
+        Quantity = existing.Quantity,
+        Reserved = existing.Reserved + @event.Quantity,
+        LastUpdated = @event.ReservedAt
+      };
+
+      await _store.UpsertAsync(@event.ProductId.ToString(), updated, cancellationToken);
 
       _logger.LogInformation(
         "Inventory levels updated: Product {ProductId} reserved {Quantity} units",
@@ -129,20 +121,23 @@ public class InventoryLevelsPerspective(
   /// </summary>
   public async Task Update(InventoryAdjustedEvent @event, CancellationToken cancellationToken = default) {
     try {
-      using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
-      EnsureConnectionOpen(connection);
+      // Get existing inventory to preserve reserved count
+      var existing = await _query.GetByIdAsync(@event.ProductId.ToString(), cancellationToken);
+      if (existing == null) {
+        _logger.LogWarning(
+          "Inventory {ProductId} not found for adjustment, skipping",
+          @event.ProductId);
+        return;
+      }
 
-      await connection.ExecuteAsync(@"
-        UPDATE inventoryworker.inventory_levels
-        SET
-          quantity = @NewTotalQuantity,
-          last_updated = @AdjustedAt
-        WHERE product_id = @ProductId",
-        new {
-          @event.ProductId,
-          @event.NewTotalQuantity,
-          @event.AdjustedAt
-        });
+      var updated = new InventoryLevelDto {
+        ProductId = existing.ProductId,
+        Quantity = @event.NewTotalQuantity,
+        Reserved = existing.Reserved,
+        LastUpdated = @event.AdjustedAt
+      };
+
+      await _store.UpsertAsync(@event.ProductId.ToString(), updated, cancellationToken);
 
       _logger.LogInformation(
         "Inventory levels updated: Product {ProductId} adjusted to {Quantity} (Reason: {Reason})",
@@ -154,12 +149,6 @@ public class InventoryLevelsPerspective(
         "Failed to update inventory levels for InventoryAdjustedEvent: {ProductId}",
         @event.ProductId);
       throw;
-    }
-  }
-
-  private static void EnsureConnectionOpen(IDbConnection connection) {
-    if (connection.State != ConnectionState.Open) {
-      connection.Open();
     }
   }
 }
