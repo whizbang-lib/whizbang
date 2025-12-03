@@ -9,11 +9,10 @@ namespace ECommerce.InventoryWorker;
 /// This service doesn't have perspectives, so we use the [WhizbangDbContext] attribute
 /// without any perspective models. The source generator will still configure the
 /// core Inbox/Outbox/EventStore entities.
+/// AOT-compatible: All configuration is done via source generators, no reflection needed.
 /// </summary>
 [WhizbangDbContext]
 public partial class InventoryDbContext : DbContext {
-  [RequiresDynamicCode()]
-  [RequiresUnreferencedCode()]
   public InventoryDbContext(DbContextOptions<InventoryDbContext> options) : base(options) { }
 
   // DbSet properties and OnModelCreating are auto-generated in partial class

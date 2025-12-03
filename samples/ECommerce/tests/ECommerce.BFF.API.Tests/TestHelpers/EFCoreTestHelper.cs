@@ -23,7 +23,8 @@ public sealed class EFCoreTestHelper : IAsyncDisposable {
   private readonly BffDbContext _dbContext;
   private readonly PostgreSqlContainer _postgresContainer;
 
-  [RequiresDynamicCode()]
+  // NOTE: CleanupDatabaseAsync uses reflection and is NOT AOT-compatible
+  // TODO: Refactor to use generated code or remove reflection
   public EFCoreTestHelper() {
     // Create and start PostgreSQL container
     _postgresContainer = new PostgreSqlBuilder()

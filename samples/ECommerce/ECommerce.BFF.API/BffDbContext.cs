@@ -12,11 +12,10 @@ namespace ECommerce.BFF.API;
 /// OnModelCreating is auto-generated in partial class with ConfigureWhizbang() call.
 /// Implement OnModelCreatingExtended() to add custom model configurations.
 /// DbSet properties are auto-generated from discovered IPerspectiveOf implementations.
+/// AOT-compatible: All configuration is done via source generators, no reflection needed.
 /// </summary>
 [WhizbangDbContext]
 public partial class BffDbContext : DbContext {
-  [RequiresDynamicCode()]
-  [RequiresUnreferencedCode()]
   public BffDbContext(DbContextOptions<BffDbContext> options) : base(options) { }
 
   // DbSet properties auto-generated in BffDbContext.Generated.g.cs
