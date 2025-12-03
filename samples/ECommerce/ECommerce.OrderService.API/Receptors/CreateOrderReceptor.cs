@@ -97,9 +97,12 @@ public class CreateOrderReceptor2(IOutbox outbox, ILogger<CreateOrderReceptor2> 
       Payload = orderCreated,
       Hops = []
     };
-    await _outbox.StoreAsync(envelope, "orders/created", cancellationToken);
+    var outboxMessage = await _outbox.StoreAsync(envelope, "orders/created", cancellationToken);
 
-    _logger.LogInformation("Order {OrderId} created and event stored in outbox (Receptor2)", message.OrderId);
+    _logger.LogInformation(
+      "Order {OrderId} created and event stored in outbox (Receptor2) with message ID {MessageId}",
+      message.OrderId,
+      outboxMessage.MessageId);
 
     return orderCreated;
   }

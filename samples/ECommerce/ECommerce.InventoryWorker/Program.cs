@@ -2,12 +2,12 @@ using ECommerce.Contracts.Generated;
 using ECommerce.InventoryWorker;
 using ECommerce.InventoryWorker.Lenses;
 using ECommerce.InventoryWorker.Services;
+using Microsoft.EntityFrameworkCore;
 using Whizbang.Core;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Workers;
-using Microsoft.EntityFrameworkCore;
 using Whizbang.Data.EFCore.Postgres;
 using Whizbang.Transports.AzureServiceBus;
 

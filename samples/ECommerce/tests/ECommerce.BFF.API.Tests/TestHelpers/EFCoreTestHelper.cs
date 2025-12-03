@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using ECommerce.BFF.API.Hubs;
 using ECommerce.BFF.API.Lenses;
 using Microsoft.AspNetCore.SignalR;
@@ -22,6 +23,7 @@ public sealed class EFCoreTestHelper : IAsyncDisposable {
   private readonly BffDbContext _dbContext;
   private readonly PostgreSqlContainer _postgresContainer;
 
+  [RequiresDynamicCode()]
   public EFCoreTestHelper() {
     // Create and start PostgreSQL container
     _postgresContainer = new PostgreSqlBuilder()

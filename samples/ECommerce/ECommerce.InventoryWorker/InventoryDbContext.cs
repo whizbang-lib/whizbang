@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Data.EFCore.Custom;
 
@@ -11,6 +12,8 @@ namespace ECommerce.InventoryWorker;
 /// </summary>
 [WhizbangDbContext]
 public partial class InventoryDbContext : DbContext {
+  [RequiresDynamicCode()]
+  [RequiresUnreferencedCode()]
   public InventoryDbContext(DbContextOptions<InventoryDbContext> options) : base(options) { }
 
   // DbSet properties and OnModelCreating are auto-generated in partial class

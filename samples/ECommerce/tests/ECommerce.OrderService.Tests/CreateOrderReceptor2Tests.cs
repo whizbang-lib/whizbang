@@ -20,9 +20,32 @@ public class CreateOrderReceptor2Tests {
     public List<(IMessageEnvelope envelope, string destination)> StoredMessages { get; } = [];
     public int StoreCount => StoredMessages.Count;
 
-    public Task StoreAsync<TMessage>(MessageEnvelope<TMessage> envelope, string destination, CancellationToken cancellationToken = default) {
+    public Task<OutboxMessage> StoreAsync<TMessage>(MessageEnvelope<TMessage> envelope, string destination, CancellationToken cancellationToken = default) {
       StoredMessages.Add((envelope, destination));
-      return Task.CompletedTask;
+      var outboxMessage = new OutboxMessage(
+        envelope.MessageId,
+        destination,
+        typeof(TMessage).FullName ?? typeof(TMessage).Name,
+        "{}",  // Dummy JSON
+        "{}",  // Dummy metadata
+        null,  // No scope
+        DateTimeOffset.UtcNow
+      );
+      return Task.FromResult(outboxMessage);
+    }
+
+    public Task<OutboxMessage> StoreAsync(IMessageEnvelope envelope, string destination, CancellationToken cancellationToken = default) {
+      StoredMessages.Add((envelope, destination));
+      var outboxMessage = new OutboxMessage(
+        envelope.MessageId,
+        destination,
+        envelope.GetType().FullName ?? envelope.GetType().Name,
+        "{}",  // Dummy JSON
+        "{}",  // Dummy metadata
+        null,  // No scope
+        DateTimeOffset.UtcNow
+      );
+      return Task.FromResult(outboxMessage);
     }
 
     public Task<IReadOnlyList<OutboxMessage>> GetPendingAsync(int batchSize, CancellationToken cancellationToken = default) {
