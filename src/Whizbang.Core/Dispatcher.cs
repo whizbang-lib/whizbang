@@ -41,6 +41,7 @@ public delegate Task ReceptorPublisher<in TEvent>(TEvent @event);
 /// </summary>
 public abstract class Dispatcher(
   IServiceProvider serviceProvider,
+  IServiceInstanceProvider? instanceProvider = null,
   ITraceStore? traceStore = null,
   IOutbox? outbox = null,
   ITransport? transport = null,
@@ -48,6 +49,7 @@ public abstract class Dispatcher(
   ) : IDispatcher {
   private readonly IServiceProvider _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
+  private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
   private readonly ITraceStore? _traceStore = traceStore;
   private readonly IOutbox? _outbox = outbox;
   private readonly ITransport? _transport = transport;
@@ -384,7 +386,7 @@ public abstract class Dispatcher(
   /// <summary>
   /// Creates a MessageEnvelope with initial hop containing caller information and context.
   /// </summary>
-  private static IMessageEnvelope _createEnvelope<TMessage>(
+  private IMessageEnvelope _createEnvelope<TMessage>(
     TMessage message,
     IMessageContext context,
     string callerMemberName,
@@ -399,7 +401,8 @@ public abstract class Dispatcher(
 
     var hop = new MessageHop {
       Type = HopType.Current,
-      ServiceName = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name ?? "Unknown",
+      ServiceName = _instanceProvider?.ServiceName ?? System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name ?? "Unknown",
+      ServiceInstanceId = _instanceProvider?.InstanceId ?? Guid.Empty,
       Timestamp = DateTimeOffset.UtcNow,
       CorrelationId = context.CorrelationId,
       CausationId = context.CausationId,
@@ -448,7 +451,8 @@ public abstract class Dispatcher(
         // Add hop indicating message is being stored to event store
         var hop = new MessageHop {
           Type = HopType.Current,
-          ServiceName = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name ?? "Unknown",
+          ServiceName = _instanceProvider?.ServiceName ?? System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name ?? "Unknown",
+          ServiceInstanceId = _instanceProvider?.InstanceId ?? Guid.Empty,
           Timestamp = DateTimeOffset.UtcNow
         };
         envelope.AddHop(hop);
@@ -526,7 +530,8 @@ public abstract class Dispatcher(
     // Add hop indicating message is being stored to outbox
     var hop = new MessageHop {
       Type = HopType.Current,
-      ServiceName = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name ?? "Unknown",
+      ServiceName = _instanceProvider?.ServiceName ?? System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name ?? "Unknown",
+      ServiceInstanceId = _instanceProvider?.InstanceId ?? Guid.Empty,
       Topic = destination,
       Timestamp = DateTimeOffset.UtcNow
     };
