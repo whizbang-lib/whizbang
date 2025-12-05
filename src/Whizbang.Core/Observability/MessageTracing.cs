@@ -12,7 +12,7 @@ public static class MessageTracing {
   /// Records a message hop with automatic caller information capture.
   /// The caller information is captured at compile time via attributes.
   /// </summary>
-  /// <param name="serviceInstanceId">The unique instance ID of the service processing this message</param>
+  /// <param name="serviceInstance">The service instance information for the service processing this message</param>
   /// <param name="topic">The topic being processed</param>
   /// <param name="streamKey">The stream key being processed</param>
   /// <param name="executionStrategy">The execution strategy being used</param>
@@ -24,7 +24,7 @@ public static class MessageTracing {
   /// <param name="callerLineNumber">Automatically captured calling line number</param>
   /// <returns>A MessageHop with all information including caller details</returns>
   public static MessageHop RecordHop(
-      Guid serviceInstanceId,
+      ServiceInstanceInfo serviceInstance,
       string topic,
       string streamKey,
       string executionStrategy,
@@ -36,9 +36,7 @@ public static class MessageTracing {
       [CallerLineNumber] int? callerLineNumber = null
   ) {
     return new MessageHop {
-      ServiceName = Assembly.GetEntryAssembly()?.GetName().Name ?? "Unknown",
-      ServiceInstanceId = serviceInstanceId,
-      MachineName = Environment.MachineName,
+      ServiceInstance = serviceInstance,
       Timestamp = DateTimeOffset.UtcNow,
       Topic = topic,
       StreamKey = streamKey,

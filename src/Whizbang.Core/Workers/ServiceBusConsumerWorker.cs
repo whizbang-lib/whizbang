@@ -172,8 +172,7 @@ public class ServiceBusConsumerWorker(
       // IMPORTANT: Add AFTER deserialization so PayloadType lookup works correctly
       var receivedHop = new MessageHop {
         Type = HopType.Current,
-        ServiceName = _instanceProvider.ServiceName,
-        ServiceInstanceId = _instanceProvider.InstanceId,
+        ServiceInstance = _instanceProvider.ToInfo(),
         Topic = _options.Subscriptions.FirstOrDefault()?.TopicName ?? "unknown-topic",
         Timestamp = DateTimeOffset.UtcNow
       };

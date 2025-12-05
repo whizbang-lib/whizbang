@@ -194,8 +194,7 @@ public class WorkCoordinatorPublisherWorker(
     // Include PayloadType in metadata so consumer can deserialize correctly
     var publishHop = new MessageHop {
       Type = HopType.Current,
-      ServiceName = _instanceProvider.ServiceName,
-      ServiceInstanceId = _instanceProvider.InstanceId,
+      ServiceInstance = _instanceProvider.ToInfo(),
       Topic = outboxMessage.Destination,
       Timestamp = DateTimeOffset.UtcNow,
       Metadata = new Dictionary<string, object> {

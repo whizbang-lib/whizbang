@@ -142,8 +142,12 @@ public class DispatcherTransportBridge(
 
     var hop = new MessageHop {
       Type = HopType.Current,
-      ServiceName = _instanceProvider?.ServiceName ?? System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name ?? "Unknown",
-      ServiceInstanceId = _instanceProvider?.InstanceId ?? Guid.Empty,
+      ServiceInstance = _instanceProvider?.ToInfo() ?? new ServiceInstanceInfo(
+        System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name ?? "Unknown",
+        Guid.Empty,
+        Environment.MachineName,
+        Environment.ProcessId
+      ),
       Timestamp = DateTimeOffset.UtcNow,
       CorrelationId = context.CorrelationId,
       CausationId = context.CausationId
