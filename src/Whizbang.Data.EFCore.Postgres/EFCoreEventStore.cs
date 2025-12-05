@@ -145,7 +145,8 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
           CallerLineNumber = hop.CallerLineNumber,
           Timestamp = hop.Timestamp,
           Duration = hop.Duration ?? TimeSpan.Zero,
-          ServiceName = "Unknown", // Not serialized, default value
+          ServiceName = "Unknown", // Not serialized in old data, default value
+          ServiceInstanceId = Guid.Empty, // Not serialized in old data, use empty guid
           CorrelationId = metadata.CorrelationId != null ? CorrelationId.Parse(metadata.CorrelationId) : null,
           CausationId = metadata.CausationId != null ? MessageId.Parse(metadata.CausationId) : null
         };
