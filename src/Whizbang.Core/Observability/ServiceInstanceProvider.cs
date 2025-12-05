@@ -1,4 +1,5 @@
 using System.Reflection;
+using Microsoft.Extensions.Configuration;
 
 namespace Whizbang.Core.Observability;
 
@@ -6,6 +7,8 @@ namespace Whizbang.Core.Observability;
 /// Default implementation of IServiceInstanceProvider.
 /// Generates a unique UUIDv7 instance ID at construction time and captures
 /// service name, host name, and process ID from the environment.
+/// Service name can be configured via "Whizbang:ServiceName" or "ServiceName" configuration keys,
+/// falling back to the entry assembly name.
 /// Register as a singleton to ensure consistent instance identity throughout the application lifetime.
 /// </summary>
 public sealed class ServiceInstanceProvider : IServiceInstanceProvider {
@@ -24,10 +27,22 @@ public sealed class ServiceInstanceProvider : IServiceInstanceProvider {
   /// <summary>
   /// Initializes a new instance with generated UUIDv7 instance ID and
   /// automatically captured service information from the environment.
+  /// Service name is resolved in this order:
+  /// 1. Configuration key "Whizbang:ServiceName"
+  /// 2. Configuration key "ServiceName"
+  /// 3. Entry assembly name (without file extension)
+  /// 4. "Unknown" (fallback)
   /// </summary>
-  public ServiceInstanceProvider() {
+  /// <param name="configuration">Optional configuration for resolving service name</param>
+  public ServiceInstanceProvider(IConfiguration? configuration = null) {
     InstanceId = WhizbangIdProvider.NewGuid();
-    ServiceName = Assembly.GetEntryAssembly()?.GetName().Name ?? "Unknown";
+
+    // Resolve ServiceName from configuration or assembly
+    ServiceName = configuration?["Whizbang:ServiceName"]
+                  ?? configuration?["ServiceName"]
+                  ?? Assembly.GetEntryAssembly()?.GetName().Name
+                  ?? "Unknown";
+
     HostName = Environment.MachineName;
     ProcessId = Environment.ProcessId;
   }
@@ -45,5 +60,15 @@ public sealed class ServiceInstanceProvider : IServiceInstanceProvider {
     ServiceName = serviceName;
     HostName = hostName;
     ProcessId = processId;
+  }
+
+  /// <inheritdoc />
+  public ServiceInstanceInfo ToInfo() {
+    return new ServiceInstanceInfo(
+      ServiceName,
+      InstanceId,
+      HostName,
+      ProcessId
+    );
   }
 }

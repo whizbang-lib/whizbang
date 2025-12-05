@@ -52,22 +52,10 @@ public record MessageHop {
   public string? CausationType { get; init; }
 
   /// <summary>
-  /// The service that processed this message.
-  /// Typically the entry assembly name.
+  /// Information about the service instance that processed this message.
+  /// Includes service name, instance ID, host name, and process ID for complete traceability.
   /// </summary>
-  public required string ServiceName { get; init; }
-
-  /// <summary>
-  /// The unique instance ID of the service that processed this message.
-  /// Used for tracking which specific instance handled the message in distributed scenarios.
-  /// </summary>
-  public required Guid ServiceInstanceId { get; init; }
-
-  /// <summary>
-  /// The machine that processed this message.
-  /// Useful for distributed tracing across nodes.
-  /// </summary>
-  public string MachineName { get; init; } = Environment.MachineName;
+  public required ServiceInstanceInfo ServiceInstance { get; init; }
 
   /// <summary>
   /// When this hop occurred.

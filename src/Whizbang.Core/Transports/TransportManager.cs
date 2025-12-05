@@ -16,9 +16,11 @@ namespace Whizbang.Core.Transports;
 /// Creates a new TransportManager with a custom serializer.
 /// </remarks>
 /// <param name="serializer">The message serializer to use</param>
-public class TransportManager(IMessageSerializer serializer) : ITransportManager {
+/// <param name="instanceProvider">Optional service instance provider for message tracing</param>
+public class TransportManager(IMessageSerializer serializer, IServiceInstanceProvider? instanceProvider = null) : ITransportManager {
   private readonly Dictionary<TransportType, ITransport> _transports = [];
   private readonly IMessageSerializer _serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
+  private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
 
   /// <inheritdoc />
   public void AddTransport(TransportType type, ITransport transport) {
@@ -161,7 +163,7 @@ public class TransportManager(IMessageSerializer serializer) : ITransportManager
   /// <summary>
   /// Creates a message envelope with hop for observability.
   /// </summary>
-  private static MessageEnvelope<TMessage> CreateEnvelope<TMessage>(
+  private MessageEnvelope<TMessage> CreateEnvelope<TMessage>(
     TMessage message,
     IMessageContext context
   ) {
@@ -171,7 +173,8 @@ public class TransportManager(IMessageSerializer serializer) : ITransportManager
       Hops = [
         new MessageHop {
           Type = HopType.Current,
-          ServiceName = "TransportManager", // TODO: Get from configuration
+          ServiceName = _instanceProvider?.ServiceName ?? "TransportManager",
+          ServiceInstanceId = _instanceProvider?.InstanceId ?? Guid.Empty,
           Timestamp = DateTimeOffset.UtcNow,
           Metadata = new Dictionary<string, object> {
             ["CorrelationId"] = context.CorrelationId.ToString(),

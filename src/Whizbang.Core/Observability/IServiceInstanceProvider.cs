@@ -33,4 +33,11 @@ public interface IServiceInstanceProvider {
   /// Used for identifying the specific OS process.
   /// </summary>
   int ProcessId { get; }
+
+  /// <summary>
+  /// Creates a ServiceInstanceInfo record from this provider's properties.
+  /// Useful for capturing service instance information in observability hops.
+  /// </summary>
+  /// <returns>A ServiceInstanceInfo record containing all instance metadata</returns>
+  ServiceInstanceInfo ToInfo();
 }

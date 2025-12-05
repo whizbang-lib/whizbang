@@ -12,10 +12,15 @@ namespace Whizbang.Core.Messaging;
 /// Polls the outbox, publishes messages, and marks them as published on success.
 /// Handles errors gracefully without losing messages.
 /// </summary>
-public class OutboxPublisher(IOutbox outbox, ITransport transport, System.Text.Json.JsonSerializerOptions jsonOptions) {
+public class OutboxPublisher(
+  IOutbox outbox,
+  ITransport transport,
+  System.Text.Json.JsonSerializerOptions jsonOptions,
+  IServiceInstanceProvider? instanceProvider = null) {
   private readonly IOutbox _outbox = outbox ?? throw new ArgumentNullException(nameof(outbox));
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
   private readonly System.Text.Json.JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
+  private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
 
   /// <summary>
   /// Publishes a batch of pending messages from the outbox.
@@ -69,7 +74,8 @@ public class OutboxPublisher(IOutbox outbox, ITransport transport, System.Text.J
         // Add hop for this publishing action
         envelope.AddHop(new MessageHop {
           Type = HopType.Current,
-          ServiceName = "OutboxPublisher",
+          ServiceName = _instanceProvider?.ServiceName ?? "OutboxPublisher",
+          ServiceInstanceId = _instanceProvider?.InstanceId ?? Guid.Empty,
           Topic = message.Destination,
           Timestamp = DateTimeOffset.UtcNow
         });
