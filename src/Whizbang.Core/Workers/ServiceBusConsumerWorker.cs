@@ -15,12 +15,14 @@ namespace Whizbang.Core.Workers;
 /// Events from remote services are stored in inbox for deduplication and perspectives are invoked directly.
 /// </summary>
 public class ServiceBusConsumerWorker(
+  IServiceInstanceProvider instanceProvider,
   ITransport transport,
   IServiceScopeFactory scopeFactory,
   JsonSerializerOptions jsonOptions,
   ILogger<ServiceBusConsumerWorker> logger,
   ServiceBusConsumerOptions? options = null
   ) : BackgroundService {
+  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
@@ -170,7 +172,8 @@ public class ServiceBusConsumerWorker(
       // IMPORTANT: Add AFTER deserialization so PayloadType lookup works correctly
       var receivedHop = new MessageHop {
         Type = HopType.Current,
-        ServiceName = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name ?? "Unknown",
+        ServiceName = _instanceProvider.ServiceName,
+        ServiceInstanceId = _instanceProvider.InstanceId,
         Topic = _options.Subscriptions.FirstOrDefault()?.TopicName ?? "unknown-topic",
         Timestamp = DateTimeOffset.UtcNow
       };
