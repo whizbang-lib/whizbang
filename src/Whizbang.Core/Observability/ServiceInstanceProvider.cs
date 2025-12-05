@@ -64,11 +64,11 @@ public sealed class ServiceInstanceProvider : IServiceInstanceProvider {
 
   /// <inheritdoc />
   public ServiceInstanceInfo ToInfo() {
-    return new ServiceInstanceInfo(
-      ServiceName,
-      InstanceId,
-      HostName,
-      ProcessId
-    );
+    return new ServiceInstanceInfo {
+      ServiceName = ServiceName,
+      InstanceId = InstanceId,
+      HostName = HostName,
+      ProcessId = ProcessId
+    };
   }
 }
