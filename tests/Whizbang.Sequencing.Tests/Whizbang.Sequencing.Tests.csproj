@@ -23,7 +23,6 @@
     <PackageReference Include="TUnit" />
     <PackageReference Include="Rocks" />
     <PackageReference Include="Bogus" />
-    <PackageReference Include="Vogen" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
   </ItemGroup>
 </Project>

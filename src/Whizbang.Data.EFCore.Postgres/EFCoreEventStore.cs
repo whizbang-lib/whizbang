@@ -23,10 +23,15 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
 
   private readonly TDbContext _context;
   private readonly JsonSerializerOptions _jsonOptions;
+  private readonly Whizbang.Core.Perspectives.IPerspectiveInvoker? _perspectiveInvoker;
 
-  public EFCoreEventStore(TDbContext context, JsonSerializerOptions? jsonOptions = null) {
+  public EFCoreEventStore(
+    TDbContext context,
+    JsonSerializerOptions? jsonOptions = null,
+    Whizbang.Core.Perspectives.IPerspectiveInvoker? perspectiveInvoker = null) {
     _context = context ?? throw new ArgumentNullException(nameof(context));
     _jsonOptions = jsonOptions ?? EFCoreJsonContext.CreateCombinedOptions();
+    _perspectiveInvoker = perspectiveInvoker;
   }
 
   /// <summary>
@@ -72,6 +77,11 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
         $"Concurrent modification detected for stream {streamId} at sequence {nextSequence}. " +
         "Another process has already appended to this stream.",
         ex);
+    }
+
+    // Queue event for perspective invocation at scope disposal
+    if (_perspectiveInvoker != null && envelope.Payload is IEvent @event) {
+      _perspectiveInvoker.QueueEvent(@event);
     }
   }
 

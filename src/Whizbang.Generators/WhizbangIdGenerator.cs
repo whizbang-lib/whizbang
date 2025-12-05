@@ -58,12 +58,18 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     );
 
     // Generate WhizbangIdJsonContext for JSON serialization
+    // Combine compilation with discovered IDs to get assembly name for namespace
+    var compilationAndIds = context.CompilationProvider.Combine(allIds);
+
     context.RegisterSourceOutput(
-        allIds,
+        compilationAndIds,
         static (ctx, data) => {
-          var typeIds = data.Left.Left;
-          var propertyIds = data.Left.Right;
-          var parameterIds = data.Right;
+          var compilation = data.Left;
+          var idsData = data.Right;
+
+          var typeIds = idsData.Left.Left;
+          var propertyIds = idsData.Left.Right;
+          var parameterIds = idsData.Right;
 
           // Flatten all IDs into single array
           var builder = ImmutableArray.CreateBuilder<(WhizbangIdInfo?, Location?, string?)?>();
@@ -71,7 +77,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
           builder.AddRange(propertyIds);
           builder.AddRange(parameterIds);
 
-          GenerateWhizbangIdJsonContext(ctx, builder.ToImmutable());
+          GenerateWhizbangIdJsonContext(ctx, compilation, builder.ToImmutable());
         }
     );
   }
@@ -458,6 +464,11 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     // Explicit conversion from Guid
     sb.AppendLine("  /// <summary>Explicitly converts from Guid.</summary>");
     sb.AppendLine($"  public static explicit operator {id.TypeName}(Guid value) => new(value);");
+    sb.AppendLine();
+
+    // Parse method for string deserialization
+    sb.AppendLine("  /// <summary>Parses a string representation of a Guid into this ID type.</summary>");
+    sb.AppendLine($"  public static {id.TypeName} Parse(string value) => From(Guid.Parse(value));");
 
     sb.AppendLine("}");
 
@@ -550,9 +561,11 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates WhizbangIdJsonContext with [JsonSerializable] attributes for all discovered WhizbangId types.
   /// Always generates the context (even if empty) to ensure consistent availability across all projects.
+  /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
   private static void GenerateWhizbangIdJsonContext(
       SourceProductionContext context,
+      Compilation compilation,
       ImmutableArray<(WhizbangIdInfo?, Location?, string?)?> results) {
 
     // Extract only valid IDs (filter out errors and nulls)
@@ -569,6 +582,10 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
             .GroupBy(id => id.FullyQualifiedName)
             .Select(group => group.First())];
 
+    // Determine namespace from assembly name
+    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var namespaceName = $"{assemblyName}.Generated";
+
     var sb = new StringBuilder();
 
     // Header
@@ -584,7 +601,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine("using System.Text.Json.Serialization.Metadata;");
     sb.AppendLine();
 
-    sb.AppendLine("namespace Whizbang.Core.Generated;");
+    sb.AppendLine($"namespace {namespaceName};");
     sb.AppendLine();
 
     // Generate class that implements IJsonTypeInfoResolver

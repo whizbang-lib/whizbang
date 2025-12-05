@@ -132,15 +132,46 @@ public class EFCoreSnippets {
   }
 
   /// <summary>
-  /// AOT-compatible registration for core infrastructure (Inbox, Outbox, EventStore).
+  /// Configuration for ServiceInstanceRecord entity.
+  /// No placeholders.
+  /// </summary>
+  public void ServiceInstanceEntityConfiguration(ModelBuilder modelBuilder) {
+    #region SERVICE_INSTANCE_ENTITY_CONFIG_SNIPPET
+    // ServiceInstanceRecord - Service instance tracking
+    modelBuilder.Entity<ServiceInstanceRecord>(entity => {
+      entity.ToTable("wh_service_instances");
+      entity.HasKey(e => e.InstanceId);
+
+      entity.Property(e => e.InstanceId).IsRequired();
+      entity.Property(e => e.ServiceName).IsRequired().HasMaxLength(200);
+      entity.Property(e => e.HostName).IsRequired().HasMaxLength(200);
+      entity.Property(e => e.ProcessId).IsRequired();
+      entity.Property(e => e.StartedAt).IsRequired();
+      entity.Property(e => e.LastHeartbeatAt).IsRequired();
+      entity.Property(e => e.Metadata).HasColumnType("jsonb");
+
+      entity.HasIndex(e => new { e.ServiceName, e.LastHeartbeatAt });
+      entity.HasIndex(e => e.LastHeartbeatAt);
+    });
+    #endregion
+  }
+
+  /// <summary>
+  /// AOT-compatible registration for core infrastructure (Inbox, Outbox, EventStore, WorkCoordinator).
   /// Placeholders: __DBCONTEXT_FQN__
   /// </summary>
   public void RegisterInfrastructure(IServiceCollection services) {
     #region REGISTER_INFRASTRUCTURE_SNIPPET
-    // Register core infrastructure (Inbox, Outbox, EventStore) - AOT compatible
+    // Register core infrastructure (Inbox, Outbox, EventStore, WorkCoordinator) - AOT compatible
     services.AddScoped<Whizbang.Core.Messaging.IInbox, Whizbang.Data.EFCore.Postgres.EFCoreInbox<__DBCONTEXT_FQN__>>();
     services.AddScoped<Whizbang.Core.Messaging.IOutbox, Whizbang.Data.EFCore.Postgres.EFCoreOutbox<__DBCONTEXT_FQN__>>();
-    services.AddScoped<Whizbang.Core.Messaging.IEventStore, Whizbang.Data.EFCore.Postgres.EFCoreEventStore<__DBCONTEXT_FQN__>>();
+    services.AddScoped<Whizbang.Core.Messaging.IEventStore>(sp => {
+      var context = sp.GetRequiredService<__DBCONTEXT_FQN__>();
+      var jsonOptions = sp.GetService<System.Text.Json.JsonSerializerOptions>();
+      var perspectiveInvoker = sp.GetService<Whizbang.Core.Perspectives.IPerspectiveInvoker>();
+      return new Whizbang.Data.EFCore.Postgres.EFCoreEventStore<__DBCONTEXT_FQN__>(context, jsonOptions, perspectiveInvoker);
+    });
+    services.AddScoped<Whizbang.Core.Messaging.IWorkCoordinator, Whizbang.Data.EFCore.Postgres.EFCoreWorkCoordinator<__DBCONTEXT_FQN__>>();
     #endregion
   }
 

@@ -1,7 +1,7 @@
 using Whizbang.Core.Generated;
 
-// Force registration of all diagnostics
-ReceptorDiscoveryDiagnostics.Register();
-
-// Print all collected diagnostics
-WhizbangDiagnostics.PrintDiagnostics();
+// Print all collected diagnostics from all generators
+var diagnostics = WhizbangDiagnostics.Diagnostics(
+  categories: DiagnosticCategory.All,
+  printToConsole: true
+);

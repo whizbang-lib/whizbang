@@ -313,7 +313,7 @@ public class AggregateIdGeneratorTests {
     // Assert - Generated code should be in Whizbang.Core.Generated namespace
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "AggregateIdExtractors.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("namespace Whizbang.Core.Generated");
+    await Assert.That(generatedSource!).Contains("namespace TestAssembly.Generated");
   }
 
   [Test]

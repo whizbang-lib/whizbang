@@ -58,6 +58,12 @@ public record MessageHop {
   public required string ServiceName { get; init; }
 
   /// <summary>
+  /// The unique instance ID of the service that processed this message.
+  /// Used for tracking which specific instance handled the message in distributed scenarios.
+  /// </summary>
+  public required Guid ServiceInstanceId { get; init; }
+
+  /// <summary>
   /// The machine that processed this message.
   /// Useful for distributed tracing across nodes.
   /// </summary>

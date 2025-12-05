@@ -1,4 +1,4 @@
-<Project>
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <!-- This is a container project for the Angular UI - no compilation -->

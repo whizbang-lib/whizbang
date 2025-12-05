@@ -1,7 +1,9 @@
 -- Migration: Create process_work_batch function for lease-based coordination
 -- Date: 2025-12-02
+-- Updated: 2025-12-04 - Added instance management and stale cleanup
 -- Description: Single SQL function that handles all work coordination operations:
---              - Update instance heartbeat
+--              - Register/update instance with real metadata
+--              - Clean up stale instances (expired heartbeats)
 --              - Mark completed/failed messages (outbox and inbox separately)
 --              - Claim orphaned work (expired leases)
 --              - Return orphaned work to process
@@ -9,11 +11,16 @@
 
 CREATE OR REPLACE FUNCTION process_work_batch(
   p_instance_id UUID,
+  p_service_name VARCHAR(200),
+  p_host_name VARCHAR(200),
+  p_process_id INTEGER,
+  p_metadata JSONB DEFAULT NULL,
   p_outbox_completed_ids UUID[] DEFAULT ARRAY[]::UUID[],
   p_outbox_failed_messages JSONB DEFAULT '[]'::JSONB,
   p_inbox_completed_ids UUID[] DEFAULT ARRAY[]::UUID[],
   p_inbox_failed_messages JSONB DEFAULT '[]'::JSONB,
-  p_lease_seconds INT DEFAULT 300
+  p_lease_seconds INT DEFAULT 300,
+  p_stale_threshold_seconds INT DEFAULT 600
 )
 RETURNS TABLE (
   source VARCHAR(10),  -- 'outbox' or 'inbox'
@@ -28,24 +35,55 @@ RETURNS TABLE (
 DECLARE
   v_lease_expiry TIMESTAMPTZ;
   v_now TIMESTAMPTZ;
+  v_stale_cutoff TIMESTAMPTZ;
+  v_active_instance_count INT;
+  v_inbox_batch_size INT;
+  v_max_batch_size INT := 100;  -- Base batch size
 BEGIN
-  -- Calculate lease expiry timestamp
+  -- Calculate timestamps
   v_now := NOW();
   v_lease_expiry := v_now + (p_lease_seconds || ' seconds')::INTERVAL;
+  v_stale_cutoff := v_now - (p_stale_threshold_seconds || ' seconds')::INTERVAL;
 
-  -- 1. Update instance heartbeat (upsert)
-  INSERT INTO wb_service_instances (instance_id, service_name, host_name, process_id, last_heartbeat_at)
+  -- 1. Register/update this instance with real metadata (upsert)
+  INSERT INTO wb_service_instances (
+    instance_id,
+    service_name,
+    host_name,
+    process_id,
+    started_at,
+    last_heartbeat_at,
+    metadata
+  )
   VALUES (
     p_instance_id,
-    'WorkCoordinator',  -- Will be updated by caller with actual service name
-    'localhost',        -- Will be updated by caller with actual hostname
-    0,                  -- Will be updated by caller with actual PID
-    v_now
+    p_service_name,
+    p_host_name,
+    p_process_id,
+    v_now,
+    v_now,
+    p_metadata
   )
   ON CONFLICT (instance_id)
-  DO UPDATE SET last_heartbeat_at = v_now;
+  DO UPDATE SET
+    last_heartbeat_at = v_now,
+    metadata = COALESCE(EXCLUDED.metadata, wb_service_instances.metadata);
 
-  -- 2. Mark completed outbox messages
+  -- 2. Clean up stale instances (haven't heartbeat in stale_threshold_seconds)
+  DELETE FROM wb_service_instances
+  WHERE last_heartbeat_at < v_stale_cutoff
+    AND instance_id != p_instance_id;
+
+  -- 2a. Calculate dynamic batch size for inbox based on active instance count
+  -- This ensures fair work distribution: with 1 instance = 100%, 3 instances = 34% each (rounding up)
+  SELECT COUNT(*) INTO v_active_instance_count
+  FROM wb_service_instances
+  WHERE last_heartbeat_at >= v_stale_cutoff;
+
+  -- Divide batch size by instance count, rounding up (CEILING ensures at least 1 per instance)
+  v_inbox_batch_size := CEILING(v_max_batch_size::NUMERIC / GREATEST(v_active_instance_count, 1));
+
+  -- 3. Mark completed outbox messages
   IF array_length(p_outbox_completed_ids, 1) > 0 THEN
     UPDATE wb_outbox
     SET status = 'Published',
@@ -56,7 +94,7 @@ BEGIN
       AND instance_id = p_instance_id;
   END IF;
 
-  -- 3. Mark failed outbox messages
+  -- 4. Mark failed outbox messages
   IF jsonb_array_length(p_outbox_failed_messages) > 0 THEN
     UPDATE wb_outbox
     SET status = 'Failed',
@@ -68,7 +106,7 @@ BEGIN
       AND wb_outbox.instance_id = p_instance_id;
   END IF;
 
-  -- 4. Mark completed inbox messages
+  -- 5. Mark completed inbox messages
   IF array_length(p_inbox_completed_ids, 1) > 0 THEN
     UPDATE wb_inbox
     SET status = 'Completed',
@@ -79,7 +117,7 @@ BEGIN
       AND instance_id = p_instance_id;
   END IF;
 
-  -- 5. Mark failed inbox messages
+  -- 6. Mark failed inbox messages
   IF jsonb_array_length(p_inbox_failed_messages) > 0 THEN
     UPDATE wb_inbox
     SET status = 'Failed',
@@ -90,7 +128,7 @@ BEGIN
       AND wb_inbox.instance_id = p_instance_id;
   END IF;
 
-  -- 6. Claim and return orphaned outbox work
+  -- 7. Claim and return orphaned outbox work
   RETURN QUERY
   WITH claimed_outbox AS (
     UPDATE wb_outbox
@@ -124,7 +162,8 @@ BEGIN
   )
   SELECT * FROM claimed_outbox;
 
-  -- 7. Claim and return orphaned inbox work
+  -- 8. Claim and return next inbox work (with dynamic batch sizing)
+  -- Batch size is distributed fairly across active instances
   RETURN QUERY
   WITH claimed_inbox AS (
     UPDATE wb_inbox
@@ -143,7 +182,7 @@ BEGIN
       )
       AND processed_at IS NULL  -- Not already completed
       ORDER BY received_at ASC
-      LIMIT 100  -- Configurable batch size
+      LIMIT v_inbox_batch_size  -- Dynamic batch size based on instance count
       FOR UPDATE SKIP LOCKED  -- Skip rows locked by other instances
     )
     RETURNING
@@ -162,4 +201,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Add comment for documentation
-COMMENT ON FUNCTION process_work_batch IS 'Atomic work coordination: heartbeat, mark completed/failed, claim orphaned work';
+COMMENT ON FUNCTION process_work_batch IS 'Atomic work coordination: register/heartbeat instance, cleanup stale instances, mark completed/failed, claim orphaned work';

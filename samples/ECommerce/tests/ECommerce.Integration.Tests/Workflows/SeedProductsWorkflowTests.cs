@@ -1,4 +1,4 @@
-using BffApi::ECommerce.BFF.API.GraphQL;
+using ECommerce.BFF.API.GraphQL;
 using ECommerce.Integration.Tests.Fixtures;
 
 namespace ECommerce.Integration.Tests.Workflows;

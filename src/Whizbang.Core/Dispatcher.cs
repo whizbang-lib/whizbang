@@ -118,10 +118,10 @@ public abstract class Dispatcher(
 
     // If no local receptor exists, check for outbox fallback
     if (invoker == null) {
-      // Try to resolve IOutbox from a scope (it may be Scoped, e.g., EF Core implementation)
+      // Try to resolve IOutbox from constructor parameter first, then from a scope (it may be Scoped, e.g., EF Core implementation)
       var scope = _scopeFactory.CreateScope();
       try {
-        var outbox = scope.ServiceProvider.GetService<IOutbox>();
+        var outbox = _outbox ?? scope.ServiceProvider.GetService<IOutbox>();
         if (outbox != null && _jsonOptions != null) {
           // Route to outbox for remote delivery (AOT-compatible, no reflection)
           return await SendToOutboxViaScopeAsync(message, messageType, context, outbox, callerMemberName, callerFilePath, callerLineNumber);
@@ -444,6 +444,14 @@ public abstract class Dispatcher(
           Payload = @event,
           Hops = []
         };
+
+        // Add hop indicating message is being stored to event store
+        var hop = new MessageHop {
+          Type = HopType.Current,
+          ServiceName = System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name ?? "Unknown",
+          Timestamp = DateTimeOffset.UtcNow
+        };
+        envelope.AddHop(hop);
 
         // Determine stream ID: use aggregate ID if available, otherwise use message ID
         // This ensures ALL events are persisted while maintaining proper streams for aggregates

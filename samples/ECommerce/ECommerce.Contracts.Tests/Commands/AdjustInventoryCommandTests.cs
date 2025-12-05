@@ -9,17 +9,19 @@ namespace ECommerce.Contracts.Tests.Commands;
 /// Tests for AdjustInventoryCommand
 /// </summary>
 public class AdjustInventoryCommandTests {
+  private static readonly IWhizbangIdProvider IdProvider = new Uuid7IdProvider();
   [Test]
   public async Task AdjustInventoryCommand_WithPositiveChange_InitializesSuccessfullyAsync() {
     // Arrange & Act
+    var productId = IdProvider.NewGuid();
     var cmd = new AdjustInventoryCommand {
-      ProductId = "prod-123",
+      ProductId = productId,
       QuantityChange = 10,
       Reason = "Inventory correction - found extra units"
     };
 
     // Assert
-    await Assert.That(cmd.ProductId).IsEqualTo("prod-123");
+    await Assert.That(cmd.ProductId).IsEqualTo(productId);
     await Assert.That(cmd.QuantityChange).IsEqualTo(10);
     await Assert.That(cmd.Reason).IsEqualTo("Inventory correction - found extra units");
   }
@@ -28,7 +30,7 @@ public class AdjustInventoryCommandTests {
   public async Task AdjustInventoryCommand_WithNegativeChange_InitializesSuccessfullyAsync() {
     // Arrange & Act
     var cmd = new AdjustInventoryCommand {
-      ProductId = "prod-456",
+      ProductId = IdProvider.NewGuid(),
       QuantityChange = -5,
       Reason = "Damaged goods"
     };
@@ -42,7 +44,7 @@ public class AdjustInventoryCommandTests {
   public async Task AdjustInventoryCommand_WithZeroChange_InitializesSuccessfullyAsync() {
     // Arrange & Act
     var cmd = new AdjustInventoryCommand {
-      ProductId = "prod-789",
+      ProductId = IdProvider.NewGuid(),
       QuantityChange = 0,
       Reason = "Audit - no discrepancies found"
     };
@@ -55,14 +57,15 @@ public class AdjustInventoryCommandTests {
   [Test]
   public async Task AdjustInventoryCommand_RecordEquality_WorksCorrectlyAsync() {
     // Arrange
+    var productId = IdProvider.NewGuid();
     var cmd1 = new AdjustInventoryCommand {
-      ProductId = "prod-123",
+      ProductId = productId,
       QuantityChange = -10,
       Reason = "Shrinkage"
     };
 
     var cmd2 = new AdjustInventoryCommand {
-      ProductId = "prod-123",
+      ProductId = productId,
       QuantityChange = -10,
       Reason = "Shrinkage"
     };
@@ -74,8 +77,9 @@ public class AdjustInventoryCommandTests {
   [Test]
   public async Task AdjustInventoryCommand_ToString_ReturnsReadableRepresentationAsync() {
     // Arrange & Act
+    var productId = IdProvider.NewGuid();
     var cmd = new AdjustInventoryCommand {
-      ProductId = "prod-999",
+      ProductId = productId,
       QuantityChange = -15,
       Reason = "Damaged during shipping"
     };
@@ -83,7 +87,7 @@ public class AdjustInventoryCommandTests {
     var stringRep = cmd.ToString();
 
     // Assert
-    await Assert.That(stringRep).Contains("prod-999");
+    await Assert.That(stringRep).Contains(productId.ToString());
     await Assert.That(stringRep).IsNotNull();
   }
 }

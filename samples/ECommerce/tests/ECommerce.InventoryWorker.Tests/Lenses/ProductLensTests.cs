@@ -1,10 +1,8 @@
-using Dapper;
 using ECommerce.Contracts.Events;
 using ECommerce.InventoryWorker.Lenses;
 using ECommerce.InventoryWorker.Perspectives;
 using ECommerce.InventoryWorker.Tests.TestHelpers;
-using Microsoft.Extensions.Logging.Abstractions;
-using Npgsql;
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 
@@ -19,11 +17,10 @@ public class ProductLensTests : IAsyncDisposable {
   [Test]
   public async Task GetByIdAsync_WithExistingProduct_ReturnsProductDtoAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new ProductLens(connectionFactory);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var lens = sp.GetRequiredService<IProductLens>();
+    var perspective = sp.GetRequiredService<ProductCatalogPerspective>();
 
-    // Create a product via perspective
-    var perspective = new ProductCatalogPerspective(connectionFactory, NullLogger<ProductCatalogPerspective>.Instance);
     var productId = Guid.CreateVersion7();
     var productEvent = new ProductCreatedEvent {
       ProductId = productId,
@@ -51,8 +48,8 @@ public class ProductLensTests : IAsyncDisposable {
   [Test]
   public async Task GetByIdAsync_WithNonExistentProduct_ReturnsNullAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new ProductLens(connectionFactory);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var lens = sp.GetRequiredService<IProductLens>();
 
     // Act
     var result = await lens.GetByIdAsync(Guid.CreateVersion7());
@@ -64,11 +61,10 @@ public class ProductLensTests : IAsyncDisposable {
   [Test]
   public async Task GetByIdAsync_WithDeletedProduct_ReturnsNullAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new ProductLens(connectionFactory);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var lens = sp.GetRequiredService<IProductLens>();
+    var perspective = sp.GetRequiredService<ProductCatalogPerspective>();
 
-    // Create and delete a product
-    var perspective = new ProductCatalogPerspective(connectionFactory, NullLogger<ProductCatalogPerspective>.Instance);
     var productId = Guid.CreateVersion7();
     var createdEvent = new ProductCreatedEvent {
       ProductId = productId,
@@ -96,8 +92,8 @@ public class ProductLensTests : IAsyncDisposable {
   [Test]
   public async Task GetAllAsync_WithNoProducts_ReturnsEmptyListAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new ProductLens(connectionFactory);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var lens = sp.GetRequiredService<IProductLens>();
 
     // Act
     var result = await lens.GetAllAsync();
@@ -110,9 +106,9 @@ public class ProductLensTests : IAsyncDisposable {
   [Test]
   public async Task GetAllAsync_WithMultipleProducts_ReturnsAllNonDeletedAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new ProductLens(connectionFactory);
-    var perspective = new ProductCatalogPerspective(connectionFactory, NullLogger<ProductCatalogPerspective>.Instance);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var lens = sp.GetRequiredService<IProductLens>();
+    var perspective = sp.GetRequiredService<ProductCatalogPerspective>();
 
     // Create 3 products
     var prod1 = Guid.CreateVersion7();
@@ -164,9 +160,9 @@ public class ProductLensTests : IAsyncDisposable {
   [Test]
   public async Task GetAllAsync_WithIncludeDeleted_ReturnsAllProductsAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new ProductLens(connectionFactory);
-    var perspective = new ProductCatalogPerspective(connectionFactory, NullLogger<ProductCatalogPerspective>.Instance);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var lens = sp.GetRequiredService<IProductLens>();
+    var perspective = sp.GetRequiredService<ProductCatalogPerspective>();
 
     // Create 2 products
     var prod1 = Guid.CreateVersion7();
@@ -207,9 +203,9 @@ public class ProductLensTests : IAsyncDisposable {
   [Test]
   public async Task GetByIdsAsync_WithExistingIds_ReturnsMatchingProductsAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new ProductLens(connectionFactory);
-    var perspective = new ProductCatalogPerspective(connectionFactory, NullLogger<ProductCatalogPerspective>.Instance);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var lens = sp.GetRequiredService<IProductLens>();
+    var perspective = sp.GetRequiredService<ProductCatalogPerspective>();
 
     // Create 3 products
     var prod1 = Guid.CreateVersion7();
@@ -254,8 +250,8 @@ public class ProductLensTests : IAsyncDisposable {
   [Test]
   public async Task GetByIdsAsync_WithEmptyList_ReturnsEmptyListAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new ProductLens(connectionFactory);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var lens = sp.GetRequiredService<IProductLens>();
 
     // Act
     var result = await lens.GetByIdsAsync(Array.Empty<Guid>());
@@ -268,9 +264,9 @@ public class ProductLensTests : IAsyncDisposable {
   [Test]
   public async Task GetByIdsAsync_WithMixedIds_ReturnsOnlyExistingAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new ProductLens(connectionFactory);
-    var perspective = new ProductCatalogPerspective(connectionFactory, NullLogger<ProductCatalogPerspective>.Instance);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var lens = sp.GetRequiredService<IProductLens>();
+    var perspective = sp.GetRequiredService<ProductCatalogPerspective>();
 
     // Create 2 products
     var prod1 = Guid.CreateVersion7();

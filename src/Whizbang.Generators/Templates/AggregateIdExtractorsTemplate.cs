@@ -8,7 +8,9 @@ using System;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
 
+#region NAMESPACE
 namespace Whizbang.Core.Generated;
+#endregion
 
 /// <summary>
 /// Internal static extractor for compile-time aggregate ID extraction.

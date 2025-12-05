@@ -15,10 +15,11 @@ namespace __NAMESPACE__;
 
 /// <summary>
 /// Generated JSON type resolver for __ASSEMBLY_NAME__.
-/// Chains three contexts:
-/// 1. WhizbangIdJsonContext (MessageId, CorrelationId from Whizbang.Core)
-/// 2. MessageJsonContext (discovered messages in this assembly)
-/// 3. InfrastructureJsonContext (MessageHop, SecurityContext, etc. from Whizbang.Core)
+/// Chains four contexts:
+/// 1. WhizbangIdJsonContext from Whizbang.Core (MessageId, CorrelationId)
+/// 2. WhizbangIdJsonContext from this assembly (local WhizbangId types like ProductId, OrderId)
+/// 3. MessageJsonContext (discovered messages in this assembly)
+/// 4. InfrastructureJsonContext (MessageHop, SecurityContext, etc. from Whizbang.Core)
 /// </summary>
 public class WhizbangJsonContext : JsonSerializerContext, IJsonTypeInfoResolver {
   /// <summary>
@@ -39,11 +40,12 @@ public class WhizbangJsonContext : JsonSerializerContext, IJsonTypeInfoResolver 
   public static JsonSerializerOptions CreateOptions() {
     // Combine local contexts (WhizbangIdJsonContext, MessageJsonContext)
     // with Core's InfrastructureJsonContext.
-    // Note: WhizbangIdJsonContext and MessageJsonContext are generated PER ASSEMBLY.
-    // WhizbangIdJsonContext is always in Whizbang.Core.Generated namespace.
-    // MessageJsonContext is in the local {AssemblyName}.Generated namespace.
+    // Note: Both WhizbangIdJsonContext and MessageJsonContext are generated PER ASSEMBLY.
+    // Whizbang.Core.Generated contains Core's WhizbangId types (MessageId, CorrelationId).
+    // This assembly's Generated namespace contains local WhizbangId types and messages.
     var resolvers = new[] {
       (IJsonTypeInfoResolver)global::Whizbang.Core.Generated.WhizbangIdJsonContext.Default,
+      (IJsonTypeInfoResolver)WhizbangIdJsonContext.Default,  // Local WhizbangId types
       (IJsonTypeInfoResolver)MessageJsonContext.Default,
       (IJsonTypeInfoResolver)global::Whizbang.Core.Generated.InfrastructureJsonContext.Default
     };
@@ -63,6 +65,7 @@ __CONVERTER_REGISTRATIONS__
   private static readonly IJsonTypeInfoResolver _combinedResolver =
     System.Text.Json.Serialization.Metadata.JsonTypeInfoResolver.Combine(
       global::Whizbang.Core.Generated.WhizbangIdJsonContext.Default,
+      WhizbangIdJsonContext.Default,  // Local WhizbangId types
       MessageJsonContext.Default,
       global::Whizbang.Core.Generated.InfrastructureJsonContext.Default
     );

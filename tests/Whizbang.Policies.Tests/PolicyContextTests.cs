@@ -1,9 +1,9 @@
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
-using Whizbang.Core.Generated;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Policies.Tests.Generated;
 
 namespace Whizbang.Policies.Tests;
 

@@ -1,3 +1,5 @@
+using Whizbang.Hosting.Azure.ServiceBus;
+
 var builder = DistributedApplication.CreateBuilder(args);
 
 // Add PostgreSQL database with pgAdmin (persistent across restarts)
@@ -25,35 +27,36 @@ var serviceBus = builder.AddAzureServiceBus("servicebus")
 
 // Configure the "orders" topic with subscriptions for each worker service
 var ordersTopic = serviceBus.AddServiceBusTopic("orders");
-ordersTopic.AddServiceBusSubscription("payment-service");
-ordersTopic.AddServiceBusSubscription("shipping-service");
-ordersTopic.AddServiceBusSubscription("inventory-service");
-ordersTopic.AddServiceBusSubscription("notification-service");
-ordersTopic.AddServiceBusSubscription("bff-orders");  // BFF listens to order events
+ordersTopic.AddServiceBusSubscription("sub-payment-orders");
+ordersTopic.AddServiceBusSubscription("sub-shipping-orders");
+ordersTopic.AddServiceBusSubscription("sub-inventory-orders");
+ordersTopic.AddServiceBusSubscription("sub-notification-orders");
+ordersTopic.AddServiceBusSubscription("sub-bff-orders");
 
-// Configure the "products" topic with BFF subscription
+// Configure the "products" topic with subscriptions
 var productsTopic = serviceBus.AddServiceBusTopic("products");
-productsTopic.AddServiceBusSubscription("bff-products");  // BFF listens to product events
+productsTopic.AddServiceBusSubscription("sub-bff-products");
+productsTopic.AddServiceBusSubscription("sub-inventory-products");
 
 // Configure the "payments" topic with BFF subscription
 var paymentsTopic = serviceBus.AddServiceBusTopic("payments");
-paymentsTopic.AddServiceBusSubscription("bff-payments");  // BFF listens to payment events
+paymentsTopic.AddServiceBusSubscription("sub-bff-payments");
 
 // Configure the "shipping" topic with BFF subscription
 var shippingTopic = serviceBus.AddServiceBusTopic("shipping");
-shippingTopic.AddServiceBusSubscription("bff-shipping");  // BFF listens to shipping events
+shippingTopic.AddServiceBusSubscription("sub-bff-shipping");
 
 // Configure the "inbox" topic for point-to-point messaging (commands/queries)
-// Each service has its own subscription with SQL filter: Destination = 'service-name'
-// Filters are applied at runtime by AzureServiceBusTransport when subscribing
+// Each service has its own subscription with CorrelationFilter: Destination = 'service-name'
+// Filters are provisioned by Aspire (emulator/Bicep) via WithDestinationFilter extension
 // Note: Subscription names must be globally unique across ALL topics in Aspire
 var inboxTopic = serviceBus.AddServiceBusTopic("inbox");
-inboxTopic.AddServiceBusSubscription("inbox-inventory");
-inboxTopic.AddServiceBusSubscription("inbox-payment");
-inboxTopic.AddServiceBusSubscription("inbox-shipping");
-inboxTopic.AddServiceBusSubscription("inbox-notification");
-inboxTopic.AddServiceBusSubscription("inbox-order");
-inboxTopic.AddServiceBusSubscription("inbox-bff");
+inboxTopic.AddServiceBusSubscription("sub-inbox-inventory").WithDestinationFilter("inventory-service");
+inboxTopic.AddServiceBusSubscription("sub-inbox-payment").WithDestinationFilter("payment-service");
+inboxTopic.AddServiceBusSubscription("sub-inbox-shipping").WithDestinationFilter("shipping-service");
+inboxTopic.AddServiceBusSubscription("sub-inbox-notification").WithDestinationFilter("notification-service");
+inboxTopic.AddServiceBusSubscription("sub-inbox-order").WithDestinationFilter("order-service");
+inboxTopic.AddServiceBusSubscription("sub-inbox-bff").WithDestinationFilter("bff-service");
 
 // Add all ECommerce services with infrastructure dependencies
 // IMPORTANT: Using --no-build to prevent concurrent rebuild conflicts on shared libraries (Whizbang.Core)

@@ -24,9 +24,16 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
     ).Where(static info => info is not null);
 
     // Generate perspective invoker with routing logic
+    // Combine compilation with discovered perspectives to get assembly name for namespace
+    var compilationAndPerspectives = context.CompilationProvider.Combine(perspectiveCandidates.Collect());
+
     context.RegisterSourceOutput(
-        perspectiveCandidates.Collect(),
-        static (ctx, perspectives) => GeneratePerspectiveInvoker(ctx, perspectives!)
+        compilationAndPerspectives,
+        static (ctx, data) => {
+          var compilation = data.Left;
+          var perspectives = data.Right;
+          GeneratePerspectiveInvoker(ctx, compilation, perspectives!);
+        }
     );
   }
 
@@ -75,16 +82,22 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates the GeneratedPerspectiveInvoker class with runtime routing logic.
   /// Groups perspectives by event type for efficient lookup.
+  /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
   private static void GeneratePerspectiveInvoker(
       SourceProductionContext context,
+      Compilation compilation,
       ImmutableArray<PerspectiveInfo> perspectives) {
 
     if (perspectives.IsEmpty) {
       // No perspectives found - generate empty invoker
-      GenerateEmptyInvoker(context);
+      GenerateEmptyInvoker(context, compilation);
       return;
     }
+
+    // Determine namespace from assembly name
+    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var namespaceName = $"{assemblyName}.Generated";
 
     // Report each discovered perspective for routing
     foreach (var perspective in perspectives) {
@@ -135,6 +148,7 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
     // Replace template regions
     var result = template;
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(PerspectiveInvokerGenerator).Assembly, result);
+    result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName};");
     result = TemplateUtilities.ReplaceRegion(result, "PERSPECTIVE_ROUTING", routingCode.ToString());
 
     context.AddSource("PerspectiveInvoker.g.cs", result);
@@ -143,8 +157,13 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates an empty invoker when no perspectives are discovered.
   /// This ensures the build doesn't fail when IPerspectiveInvoker is injected but no perspectives exist.
+  /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
-  private static void GenerateEmptyInvoker(SourceProductionContext context) {
+  private static void GenerateEmptyInvoker(SourceProductionContext context, Compilation compilation) {
+    // Determine namespace from assembly name
+    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var namespaceName = $"{assemblyName}.Generated";
+
     var template = TemplateUtilities.GetEmbeddedTemplate(
         typeof(PerspectiveInvokerGenerator).Assembly,
         "PerspectiveInvokerTemplate.cs"
@@ -152,6 +171,7 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
 
     var result = template;
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(PerspectiveInvokerGenerator).Assembly, result);
+    result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName};");
     result = TemplateUtilities.ReplaceRegion(result, "PERSPECTIVE_ROUTING", "// No perspectives discovered");
 
     context.AddSource("PerspectiveInvoker.g.cs", result);

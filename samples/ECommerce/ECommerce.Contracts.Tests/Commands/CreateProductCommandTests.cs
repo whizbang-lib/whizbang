@@ -9,11 +9,13 @@ namespace ECommerce.Contracts.Tests.Commands;
 /// Tests for CreateProductCommand
 /// </summary>
 public class CreateProductCommandTests {
+  private static readonly IWhizbangIdProvider IdProvider = new Uuid7IdProvider();
   [Test]
   public async Task CreateProductCommand_WithAllProperties_InitializesSuccessfullyAsync() {
     // Arrange & Act
+    var productId = ProductId.New();
     var cmd = new CreateProductCommand {
-      ProductId = "prod-123",
+      ProductId = productId,
       Name = "Quality Widget",
       Description = "A high-quality widget for all your needs",
       Price = 29.99m,
@@ -22,7 +24,7 @@ public class CreateProductCommandTests {
     };
 
     // Assert
-    await Assert.That(cmd.ProductId).IsEqualTo("prod-123");
+    await Assert.That(cmd.ProductId.Value).IsEqualTo(productId.Value);
     await Assert.That(cmd.Name).IsEqualTo("Quality Widget");
     await Assert.That(cmd.Description).IsEqualTo("A high-quality widget for all your needs");
     await Assert.That(cmd.Price).IsEqualTo(29.99m);
@@ -34,7 +36,7 @@ public class CreateProductCommandTests {
   public async Task CreateProductCommand_WithNullImageUrl_InitializesSuccessfullyAsync() {
     // Arrange & Act
     var cmd = new CreateProductCommand {
-      ProductId = "prod-456",
+      ProductId = ProductId.New(),
       Name = "Basic Widget",
       Description = "No image widget",
       Price = 19.99m,
@@ -51,7 +53,7 @@ public class CreateProductCommandTests {
   public async Task CreateProductCommand_WithZeroInitialStock_InitializesSuccessfullyAsync() {
     // Arrange & Act
     var cmd = new CreateProductCommand {
-      ProductId = "prod-789",
+      ProductId = ProductId.New(),
       Name = "Pre-order Product",
       Description = "Coming soon",
       Price = 49.99m,
@@ -66,8 +68,9 @@ public class CreateProductCommandTests {
   [Test]
   public async Task CreateProductCommand_RecordEquality_WorksCorrectlyAsync() {
     // Arrange
+    var productId = ProductId.New();
     var cmd1 = new CreateProductCommand {
-      ProductId = "prod-123",
+      ProductId = productId,
       Name = "Widget",
       Description = "Description",
       Price = 29.99m,
@@ -76,7 +79,7 @@ public class CreateProductCommandTests {
     };
 
     var cmd2 = new CreateProductCommand {
-      ProductId = "prod-123",
+      ProductId = productId,
       Name = "Widget",
       Description = "Description",
       Price = 29.99m,
@@ -91,8 +94,9 @@ public class CreateProductCommandTests {
   [Test]
   public async Task CreateProductCommand_ToString_ReturnsReadableRepresentationAsync() {
     // Arrange & Act
+    var productId = ProductId.New();
     var cmd = new CreateProductCommand {
-      ProductId = "prod-999",
+      ProductId = productId,
       Name = "ToString Test",
       Description = "Test",
       Price = 99.99m,
@@ -103,7 +107,7 @@ public class CreateProductCommandTests {
     var stringRep = cmd.ToString();
 
     // Assert
-    await Assert.That(stringRep).Contains("prod-999");
+    await Assert.That(stringRep).Contains(productId.Value.ToString());
     await Assert.That(stringRep).IsNotNull();
   }
 }

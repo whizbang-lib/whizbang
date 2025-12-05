@@ -9,11 +9,13 @@ namespace ECommerce.Contracts.Tests.Commands;
 /// Tests for UpdateProductCommand
 /// </summary>
 public class UpdateProductCommandTests {
+  private static readonly IWhizbangIdProvider IdProvider = new Uuid7IdProvider();
   [Test]
   public async Task UpdateProductCommand_WithAllPropertiesUpdated_InitializesSuccessfullyAsync() {
     // Arrange & Act
+    var productId = IdProvider.NewGuid();
     var cmd = new UpdateProductCommand {
-      ProductId = "prod-123",
+      ProductId = productId,
       Name = "Updated Widget",
       Description = "Updated description",
       Price = 39.99m,
@@ -21,7 +23,7 @@ public class UpdateProductCommandTests {
     };
 
     // Assert
-    await Assert.That(cmd.ProductId).IsEqualTo("prod-123");
+    await Assert.That(cmd.ProductId).IsEqualTo(productId);
     await Assert.That(cmd.Name).IsEqualTo("Updated Widget");
     await Assert.That(cmd.Description).IsEqualTo("Updated description");
     await Assert.That(cmd.Price).IsEqualTo(39.99m);
@@ -31,8 +33,9 @@ public class UpdateProductCommandTests {
   [Test]
   public async Task UpdateProductCommand_WithOnlyNameUpdated_InitializesSuccessfullyAsync() {
     // Arrange & Act
+    var productId = IdProvider.NewGuid();
     var cmd = new UpdateProductCommand {
-      ProductId = "prod-456",
+      ProductId = productId,
       Name = "New Name",
       Description = null,
       Price = null,
@@ -40,7 +43,7 @@ public class UpdateProductCommandTests {
     };
 
     // Assert
-    await Assert.That(cmd.ProductId).IsEqualTo("prod-456");
+    await Assert.That(cmd.ProductId).IsEqualTo(productId);
     await Assert.That(cmd.Name).IsEqualTo("New Name");
     await Assert.That(cmd.Description).IsNull();
     await Assert.That(cmd.Price).IsNull();
@@ -51,7 +54,7 @@ public class UpdateProductCommandTests {
   public async Task UpdateProductCommand_WithAllPropertiesNull_InitializesSuccessfullyAsync() {
     // Arrange & Act
     var cmd = new UpdateProductCommand {
-      ProductId = "prod-789",
+      ProductId = IdProvider.NewGuid(),
       Name = null,
       Description = null,
       Price = null,
@@ -68,8 +71,9 @@ public class UpdateProductCommandTests {
   [Test]
   public async Task UpdateProductCommand_RecordEquality_WorksCorrectlyAsync() {
     // Arrange
+    var productId = IdProvider.NewGuid();
     var cmd1 = new UpdateProductCommand {
-      ProductId = "prod-123",
+      ProductId = productId,
       Name = "Name",
       Description = null,
       Price = 29.99m,
@@ -77,7 +81,7 @@ public class UpdateProductCommandTests {
     };
 
     var cmd2 = new UpdateProductCommand {
-      ProductId = "prod-123",
+      ProductId = productId,
       Name = "Name",
       Description = null,
       Price = 29.99m,
@@ -91,8 +95,9 @@ public class UpdateProductCommandTests {
   [Test]
   public async Task UpdateProductCommand_ToString_ReturnsReadableRepresentationAsync() {
     // Arrange & Act
+    var productId = IdProvider.NewGuid();
     var cmd = new UpdateProductCommand {
-      ProductId = "prod-999",
+      ProductId = productId,
       Name = "ToString Test",
       Description = null,
       Price = null,
@@ -102,7 +107,7 @@ public class UpdateProductCommandTests {
     var stringRep = cmd.ToString();
 
     // Assert
-    await Assert.That(stringRep).Contains("prod-999");
+    await Assert.That(stringRep).Contains(productId.ToString());
     await Assert.That(stringRep).IsNotNull();
   }
 }

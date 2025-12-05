@@ -17,7 +17,7 @@ namespace Whizbang.Data.EFCore.Postgres.Generated;
 /// </summary>
 public static class WhizbangModelBuilderExtensions {
   /// <summary>
-  /// Configures all Whizbang entities (__PERSPECTIVE_COUNT__ perspective(s) + inbox/outbox/eventstore).
+  /// Configures all Whizbang entities (__PERSPECTIVE_COUNT__ perspective(s) + inbox/outbox/eventstore/serviceinstance).
   /// Auto-generated - call from DbContext.OnModelCreating().
   /// Uses EF Core 10 ComplexProperty().ToJson() for JSONB columns (Postgres).
   /// </summary>
@@ -41,6 +41,10 @@ public static class WhizbangModelBuilderExtensions {
 
     #region EVENTSTORE_CONFIGURATION
     // EventStoreRecord configuration - this region will be replaced
+    #endregion
+
+    #region SERVICE_INSTANCE_CONFIGURATION
+    // ServiceInstanceRecord configuration - this region will be replaced
     #endregion
 
     return modelBuilder;
@@ -101,9 +105,10 @@ public static class WhizbangModelBuilderExtensions {
 
         logger.LogInformation("");
         logger.LogInformation("Fixed Whizbang Entities:");
-        logger.LogInformation("  - InboxRecord (table: inbox)");
-        logger.LogInformation("  - OutboxRecord (table: outbox)");
-        logger.LogInformation("  - EventStoreRecord (table: event_store)");
+        logger.LogInformation("  - InboxRecord (table: wh_inbox)");
+        logger.LogInformation("  - OutboxRecord (table: wh_outbox)");
+        logger.LogInformation("  - EventStoreRecord (table: wh_events)");
+        logger.LogInformation("  - ServiceInstanceRecord (table: wh_service_instances)");
         logger.LogInformation("");
         logger.LogInformation("Total Entities Configured: {TotalCount}", TotalDiscoveredCount);
         logger.LogInformation("============================================================");

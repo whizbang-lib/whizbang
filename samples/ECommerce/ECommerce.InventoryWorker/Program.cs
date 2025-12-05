@@ -1,5 +1,6 @@
 using ECommerce.Contracts.Generated;
 using ECommerce.InventoryWorker;
+using ECommerce.InventoryWorker.Generated;
 using ECommerce.InventoryWorker.Lenses;
 using ECommerce.InventoryWorker.Services;
 using Microsoft.EntityFrameworkCore;
@@ -61,17 +62,27 @@ builder.Services.AddScoped<IInventoryLens, InventoryLens>();
 // Service Bus consumer - receives events and commands
 var consumerOptions = new ServiceBusConsumerOptions();
 // Event subscription - receives all events published to "products" topic
-consumerOptions.Subscriptions.Add(new TopicSubscription("products", "inventory-service"));
-// Inbox subscription - receives point-to-point messages with SQL filter
-// Note: Subscription name must match the one registered in AppHost
-consumerOptions.Subscriptions.Add(new TopicSubscription("inbox", "inbox-inventory", "Destination = 'inventory-service'"));
+consumerOptions.Subscriptions.Add(new TopicSubscription("products", "sub-inventory-products"));
+// Inbox subscription - receives point-to-point messages with CorrelationFilter
+// Note: Subscription name and destination filter must match those registered in AppHost
+consumerOptions.Subscriptions.Add(new TopicSubscription("inbox", "sub-inbox-inventory", "inventory-service"));
 builder.Services.AddSingleton(consumerOptions);
 builder.Services.AddHostedService<ServiceBusConsumerWorker>();
 
-// Outbox publisher - publishes pending outbox messages to Service Bus
-builder.Services.AddHostedService<OutboxPublisherWorker>();
+// WorkCoordinator publisher - atomic coordination with lease-based work claiming
+builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
 
 builder.Services.AddHostedService<Worker>();
 
 var host = builder.Build();
+
+// Initialize database schema on startup
+// Uses generated EnsureWhizbangDatabaseInitializedAsync() extension method
+// Creates Inbox/Outbox/EventStore tables + PostgreSQL functions + PerspectiveRow<T> tables
+using (var scope = host.Services.CreateScope()) {
+  var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+  var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+  await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger);
+}
+
 host.Run();

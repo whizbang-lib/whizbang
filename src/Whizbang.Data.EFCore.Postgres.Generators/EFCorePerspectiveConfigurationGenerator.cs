@@ -11,7 +11,7 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// Source generator that discovers Perspective implementations and generates EF Core ModelBuilder setup.
 /// Generates a ConfigureWhizbang() extension method that configures:
 /// - PerspectiveRow&lt;TModel&gt; entities (discovered from IPerspectiveOf implementations with IPerspectiveStore&lt;TModel&gt; dependencies)
-/// - InboxRecord, OutboxRecord, EventStoreRecord (fixed Whizbang entities)
+/// - InboxRecord, OutboxRecord, EventStoreRecord, ServiceInstanceRecord (fixed Whizbang entities)
 /// Uses EF Core 10 ComplexProperty().ToJson() for JSONB columns (Postgres).
 /// </summary>
 [Generator]
@@ -161,7 +161,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     var runningDescriptor = new DiagnosticDescriptor(
         id: "EFCORE000",
         title: "EF Core Configuration Generator Executed",
-        messageFormat: "Whizbang EF Core generator discovered {0} unique model type(s) from {1} perspective(s) + 3 fixed entities (Inbox, Outbox, EventStore)",
+        messageFormat: "Whizbang EF Core generator discovered {0} unique model type(s) from {1} perspective(s) + 4 fixed entities (Inbox, Outbox, EventStore, ServiceInstance)",
         category: "Whizbang.Generator",
         defaultSeverity: DiagnosticSeverity.Info,
         isEnabledByDefault: true);
@@ -240,6 +240,15 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     );
     template = TemplateUtilities.ReplaceRegion(template, "EVENTSTORE_CONFIGURATION", eventStoreSnippet);
 
+    // Generate service instance configuration
+    var serviceInstanceSnippet = TemplateUtilities.ExtractSnippet(
+        assembly,
+        "EFCoreSnippets.cs",
+        "SERVICE_INSTANCE_ENTITY_CONFIG_SNIPPET",
+        "Whizbang.Data.EFCore.Postgres.Generators.Templates.Snippets"
+    );
+    template = TemplateUtilities.ReplaceRegion(template, "SERVICE_INSTANCE_CONFIGURATION", serviceInstanceSnippet);
+
     // Generate diagnostic perspective list
     var diagnosticList = new StringBuilder();
     if (uniquePerspectives.Length > 0) {
@@ -263,7 +272,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     var timestamp = System.DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
     template = template.Replace("__TIMESTAMP__", timestamp);
 
-    var totalEntityCount = uniquePerspectives.Length + 3; // perspectives + inbox + outbox + eventstore
+    var totalEntityCount = uniquePerspectives.Length + 4; // perspectives + inbox + outbox + eventstore + serviceinstance
     template = template.Replace("__TOTAL_ENTITY_COUNT__", totalEntityCount.ToString());
 
     context.AddSource("WhizbangModelBuilderExtensions.g.cs", template);

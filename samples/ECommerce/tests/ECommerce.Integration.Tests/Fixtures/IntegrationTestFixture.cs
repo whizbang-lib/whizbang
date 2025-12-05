@@ -1,16 +1,20 @@
+using System.Diagnostics.CodeAnalysis;
 using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Generated;
 using ECommerce.InventoryWorker.Lenses;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Npgsql;
 using Testcontainers.PostgreSql;
 using Testcontainers.ServiceBus;
 using Whizbang.Core;
-using Whizbang.Core.Generated;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
+using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
-using Whizbang.Data.Dapper.Postgres;
+using Whizbang.Data.EFCore.Postgres;
 using Whizbang.Transports.AzureServiceBus;
 
 namespace ECommerce.Integration.Tests.Fixtures;
@@ -84,17 +88,18 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
       _serviceBusContainer.StartAsync(cancellationToken)
     );
 
-    // Initialize PostgreSQL schema
-    await InitializeSchemaAsync(cancellationToken);
-
     // Get connection strings
     var postgresConnection = _postgresContainer.GetConnectionString();
     var serviceBusConnection = _serviceBusContainer.GetConnectionString();
 
-    // Create and start service hosts
+    // Create service hosts (but don't start them yet)
     _inventoryHost = CreateInventoryHost(postgresConnection, serviceBusConnection);
     _bffHost = CreateBffHost(postgresConnection, serviceBusConnection);
 
+    // Initialize PostgreSQL schema using EFCore DbContexts
+    await InitializeSchemaAsync(cancellationToken);
+
+    // Start service hosts
     await Task.WhenAll(
       _inventoryHost.StartAsync(cancellationToken),
       _bffHost.StartAsync(cancellationToken)
@@ -112,34 +117,53 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
   private IHost CreateInventoryHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
 
-    // Register Whizbang Postgres stores
-    var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
-    builder.Services.AddWhizbangPostgres(postgresConnection, jsonOptions, initializeSchema: false);
-
     // Register Azure Service Bus transport
     builder.Services.AddAzureServiceBusTransport(serviceBusConnection, ECommerce.Contracts.Generated.WhizbangJsonContext.Default);
 
     // Add trace store for observability
     builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
 
-    // Register Whizbang dispatcher with source-generated receptors
-    builder.Services.AddReceptors();
+    // Register JsonSerializerOptions for Npgsql JSONB serialization
+    builder.Services.AddSingleton(ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions());
 
-    // Register perspective invoker for scoped event processing
-    builder.Services.AddWhizbangPerspectiveInvoker();
+    // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
+    // IMPORTANT: Npgsql 9.0+ requires EnableDynamicJson() for JSONB serialization of complex types
+    var inventoryDataSourceBuilder = new NpgsqlDataSourceBuilder(postgresConnection);
+    inventoryDataSourceBuilder.EnableDynamicJson();
+    var inventoryDataSource = inventoryDataSourceBuilder.Build();
+    builder.Services.AddSingleton(inventoryDataSource);
 
-    builder.Services.AddWhizbangDispatcher();
+    builder.Services.AddDbContext<ECommerce.InventoryWorker.InventoryDbContext>(options =>
+      options.UseNpgsql(inventoryDataSource));
 
-    // Register lenses for querying materialized views
-    builder.Services.AddSingleton<IProductLens, ProductLens>();
-    builder.Services.AddSingleton<IInventoryLens, InventoryLens>();
+    // Register Whizbang with EFCore infrastructure
+    _ = builder.Services
+      .AddWhizbang()
+      .WithEFCore<ECommerce.InventoryWorker.InventoryDbContext>()
+      .WithDriver.Postgres;
 
-    // Register perspectives for event processing
-    builder.Services.AddSingleton<ECommerce.InventoryWorker.Perspectives.ProductCatalogPerspective>();
-    builder.Services.AddSingleton<ECommerce.InventoryWorker.Perspectives.InventoryLevelsPerspective>();
+    // Register Whizbang generated services
+    ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddReceptors(builder.Services);
+    builder.Services.AddWhizbangAggregateIdExtractor();
+
+    // Register perspectives
+    _ = ECommerce.InventoryWorker.Generated.PerspectiveRegistrationExtensions.AddWhizbangPerspectives(builder.Services);
+
+    // Register dispatcher
+    ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangDispatcher(builder.Services);
+
+    // Register lenses
+    builder.Services.AddScoped<IProductLens, ProductLens>();
+    builder.Services.AddScoped<IInventoryLens, InventoryLens>();
+
+    // Service Bus consumer
+    var consumerOptions = new ServiceBusConsumerOptions();
+    consumerOptions.Subscriptions.Add(new TopicSubscription("products", "inventory-worker"));
+    consumerOptions.Subscriptions.Add(new TopicSubscription("inventory", "inventory-worker"));
+    builder.Services.AddSingleton(consumerOptions);
 
     // Register background workers
-    builder.Services.AddHostedService<OutboxPublisherWorker>();
+    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
     builder.Services.AddHostedService<ServiceBusConsumerWorker>();
 
     return builder.Build();
@@ -151,32 +175,45 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
   private IHost CreateBffHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
 
-    // Register Whizbang Postgres stores
-    var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
-    builder.Services.AddWhizbangPostgres(postgresConnection, jsonOptions, initializeSchema: false);
-
     // Register Azure Service Bus transport
     builder.Services.AddAzureServiceBusTransport(serviceBusConnection, ECommerce.Contracts.Generated.WhizbangJsonContext.Default);
 
     // Add trace store for observability
     builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
 
-    // Register perspective invoker for scoped event processing
-    builder.Services.AddWhizbangPerspectiveInvoker();
+    // Register JsonSerializerOptions for Npgsql JSONB serialization
+    builder.Services.AddSingleton(ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions());
 
-    // Register Whizbang dispatcher (needed by ServiceBusConsumerWorker)
-    // Note: BFF doesn't send commands in production, but needs dispatcher for event consumption
-    builder.Services.AddWhizbangDispatcher();
+    // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
+    // IMPORTANT: Npgsql 9.0+ requires EnableDynamicJson() for JSONB serialization of complex types
+    var bffDataSourceBuilder = new NpgsqlDataSourceBuilder(postgresConnection);
+    bffDataSourceBuilder.EnableDynamicJson();
+    var bffDataSource = bffDataSourceBuilder.Build();
+    builder.Services.AddSingleton(bffDataSource);
 
-    // Register perspectives for event processing
-    builder.Services.AddScoped<ECommerce.BFF.API.Perspectives.ProductCatalogPerspective>();
-    builder.Services.AddScoped<ECommerce.BFF.API.Perspectives.InventoryLevelsPerspective>();
+    builder.Services.AddDbContext<ECommerce.BFF.API.BffDbContext>(options =>
+      options.UseNpgsql(bffDataSource));
 
-    // Register lenses (readonly repositories)
+    // Register Whizbang with EFCore infrastructure
+    _ = builder.Services
+      .AddWhizbang()
+      .WithEFCore<ECommerce.BFF.API.BffDbContext>()
+      .WithDriver.Postgres;
+
+    // Register SignalR (required by BFF perspectives)
+    builder.Services.AddSignalR();
+
+    // Register perspectives
+    _ = ECommerce.BFF.API.Generated.PerspectiveRegistrationExtensions.AddWhizbangPerspectives(builder.Services);
+
+    // Register dispatcher (needed for event consumption)
+    ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangDispatcher(builder.Services);
+
+    // Register lenses
     builder.Services.AddScoped<IProductCatalogLens, ProductCatalogLens>();
     builder.Services.AddScoped<IInventoryLevelsLens, InventoryLevelsLens>();
 
-    // Register Service Bus consumer to receive events
+    // Service Bus consumer
     var consumerOptions = new ServiceBusConsumerOptions();
     consumerOptions.Subscriptions.Add(new TopicSubscription("products", "bff-service"));
     consumerOptions.Subscriptions.Add(new TopicSubscription("inventory", "bff-service"));
@@ -190,77 +227,20 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
   /// Initializes the PostgreSQL schema: Whizbang core tables + InventoryWorker schema + BFF schema.
   /// </summary>
   private async Task InitializeSchemaAsync(CancellationToken cancellationToken = default) {
-    var connectionString = _postgresContainer.GetConnectionString();
+    // Initialize Whizbang core schema using EFCore
+    // Creates Inbox/Outbox/EventStore + PostgreSQL functions + perspective tables for both InventoryWorker and BFF
+    using (var scope = _inventoryHost!.Services.CreateScope()) {
+      var inventoryDbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+      await ECommerce.InventoryWorker.Generated.InventoryDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(inventoryDbContext, logger: null, cancellationToken);
+    }
 
-    // Initialize Whizbang core schema (event_store, inbox, outbox)
-    var initializer = new PostgresSchemaInitializer(connectionString);
-    await initializer.InitializeSchemaAsync(cancellationToken);
+    using (var scope = _bffHost!.Services.CreateScope()) {
+      var bffDbContext = scope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
+      await ECommerce.BFF.API.Generated.BffDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(bffDbContext, logger: null, cancellationToken);
+    }
 
-    // Create service-specific schemas and tables
-    await using var connection = new NpgsqlConnection(connectionString);
-    await connection.OpenAsync(cancellationToken);
-
-    var schemaSql = @"
--- Create InventoryWorker schema
-CREATE SCHEMA IF NOT EXISTS inventoryworker;
-
--- ProductCatalog table - stores product information
-CREATE TABLE IF NOT EXISTS inventoryworker.product_catalog (
-  product_id UUID PRIMARY KEY,
-  name VARCHAR(200) NOT NULL,
-  description TEXT,
-  price DECIMAL(18, 2) NOT NULL,
-  image_url VARCHAR(500),
-  created_at TIMESTAMPTZ NOT NULL,
-  updated_at TIMESTAMPTZ,
-  deleted_at TIMESTAMPTZ
-);
-
--- InventoryLevels table - tracks inventory quantities
-CREATE TABLE IF NOT EXISTS inventoryworker.inventory_levels (
-  product_id UUID PRIMARY KEY,
-  quantity INTEGER NOT NULL DEFAULT 0,
-  reserved INTEGER NOT NULL DEFAULT 0,
-  available INTEGER GENERATED ALWAYS AS (quantity - reserved) STORED,
-  last_updated TIMESTAMPTZ NOT NULL
-);
-
--- Create indices for InventoryWorker
-CREATE INDEX IF NOT EXISTS idx_product_catalog_deleted_at ON inventoryworker.product_catalog(deleted_at);
-CREATE INDEX IF NOT EXISTS idx_inventory_levels_available ON inventoryworker.inventory_levels(available);
-
--- Create BFF schema
-CREATE SCHEMA IF NOT EXISTS bff;
-
--- BFF ProductCatalog perspective
-CREATE TABLE IF NOT EXISTS bff.product_catalog (
-  product_id UUID PRIMARY KEY,
-  name VARCHAR(200) NOT NULL,
-  description TEXT,
-  price DECIMAL(18, 2) NOT NULL,
-  image_url VARCHAR(500),
-  created_at TIMESTAMPTZ NOT NULL,
-  updated_at TIMESTAMPTZ,
-  deleted_at TIMESTAMPTZ
-);
-
--- BFF InventoryLevels perspective
-CREATE TABLE IF NOT EXISTS bff.inventory_levels (
-  product_id UUID PRIMARY KEY,
-  quantity INTEGER NOT NULL DEFAULT 0,
-  reserved INTEGER NOT NULL DEFAULT 0,
-  available INTEGER GENERATED ALWAYS AS (quantity - reserved) STORED,
-  last_updated TIMESTAMPTZ NOT NULL
-);
-
--- Create indices for BFF
-CREATE INDEX IF NOT EXISTS idx_bff_product_catalog_deleted_at ON bff.product_catalog(deleted_at);
-CREATE INDEX IF NOT EXISTS idx_bff_inventory_levels_available ON bff.inventory_levels(available);
-";
-
-    await using var command = connection.CreateCommand();
-    command.CommandText = schemaSql;
-    await command.ExecuteNonQueryAsync(cancellationToken);
+    // Note: Service-specific schemas for perspectives are created by EnsureWhizbangDatabaseInitializedAsync()
+    // No need for manual SQL schema creation
   }
 
   /// <summary>
@@ -279,23 +259,25 @@ CREATE INDEX IF NOT EXISTS idx_bff_inventory_levels_available ON bff.inventory_l
       return;
     }
 
-    var connectionString = _postgresContainer.GetConnectionString();
-    await using var connection = new NpgsqlConnection(connectionString);
-    await connection.OpenAsync(cancellationToken);
+    // Truncate all Whizbang tables in the shared database
+    // Both InventoryWorker and BFF share the same database, so we only need to truncate once
+    using (var scope = _inventoryHost!.Services.CreateScope()) {
+      var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
-    var cleanupSql = @"
-TRUNCATE TABLE inventoryworker.product_catalog CASCADE;
-TRUNCATE TABLE inventoryworker.inventory_levels CASCADE;
-TRUNCATE TABLE bff.product_catalog CASCADE;
-TRUNCATE TABLE bff.inventory_levels CASCADE;
-TRUNCATE TABLE whizbang_outbox CASCADE;
-TRUNCATE TABLE whizbang_inbox CASCADE;
-TRUNCATE TABLE whizbang_event_store CASCADE;
-";
-
-    await using var command = connection.CreateCommand();
-    command.CommandText = cleanupSql;
-    await command.ExecuteNonQueryAsync(cancellationToken);
+      // Truncate Whizbang core tables and all perspective tables
+      // CASCADE ensures all dependent data is cleared
+      // Use DO block to gracefully handle case where tables don't exist
+      await dbContext.Database.ExecuteSqlRawAsync(@"
+        DO $$
+        BEGIN
+          TRUNCATE TABLE wh_event_store, wh_outbox, wh_inbox CASCADE;
+        EXCEPTION
+          WHEN undefined_table THEN
+            -- Tables don't exist, nothing to clean up
+            NULL;
+        END $$;
+      ", cancellationToken);
+    }
   }
 
   public async ValueTask DisposeAsync() {

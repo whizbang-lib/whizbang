@@ -33,9 +33,19 @@ public class StreamKeyGenerator : IIncrementalGenerator {
     ).Where(static info => info is not null);
 
     // Generate extractor methods from collected events
+    // Combine compilation with discovered events to get assembly name for namespace
+    var compilationAndEvents = context.CompilationProvider
+        .Combine(eventsWithStreamKey.Collect())
+        .Combine(eventsWithoutStreamKey.Collect());
+
     context.RegisterSourceOutput(
-        eventsWithStreamKey.Collect().Combine(eventsWithoutStreamKey.Collect()),
-        static (ctx, data) => GenerateStreamKeyExtractors(ctx, data.Left!, data.Right!)
+        compilationAndEvents,
+        static (ctx, data) => {
+          var compilation = data.Left.Left;
+          var withStreamKey = data.Left.Right;
+          var withoutStreamKey = data.Right;
+          GenerateStreamKeyExtractors(ctx, compilation, withStreamKey!, withoutStreamKey!);
+        }
     );
   }
 
@@ -161,10 +171,18 @@ public class StreamKeyGenerator : IIncrementalGenerator {
     return typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
   }
 
+  /// <summary>
+  /// Generates stream key extractors with assembly-specific namespace to avoid conflicts.
+  /// </summary>
   private static void GenerateStreamKeyExtractors(
       SourceProductionContext context,
+      Compilation compilation,
       ImmutableArray<StreamKeyInfo> eventsWithStreamKey,
       ImmutableArray<string> eventsWithoutStreamKey) {
+
+    // Determine namespace from assembly name
+    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var namespaceName = $"{assemblyName}.Generated";
 
     // Report diagnostics for events with stream keys
     foreach (var info in eventsWithStreamKey) {
@@ -195,6 +213,9 @@ public class StreamKeyGenerator : IIncrementalGenerator {
 
     // Replace header with timestamp
     template = TemplateUtilities.ReplaceHeaderRegion(typeof(StreamKeyGenerator).Assembly, template);
+
+    // Replace namespace region with assembly-specific namespace
+    template = TemplateUtilities.ReplaceRegion(template, "NAMESPACE", $"namespace {namespaceName};");
 
     // Generate dispatch cases
     if (!eventsWithStreamKey.IsEmpty) {

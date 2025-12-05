@@ -24,9 +24,16 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     ).Where(static info => info is not null);
 
     // Collect all perspectives and generate registration code
+    // Combine compilation with discovered perspectives to get assembly name for namespace
+    var compilationAndPerspectives = context.CompilationProvider.Combine(perspectiveCandidates.Collect());
+
     context.RegisterSourceOutput(
-        perspectiveCandidates.Collect(),
-        static (ctx, perspectives) => GeneratePerspectiveRegistrations(ctx, perspectives!)
+        compilationAndPerspectives,
+        static (ctx, data) => {
+          var compilation = data.Left;
+          var perspectives = data.Right;
+          GeneratePerspectiveRegistrations(ctx, compilation, perspectives!);
+        }
     );
   }
 
@@ -75,9 +82,11 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates the perspective registration code for all discovered perspectives.
   /// Creates an AddWhizbangPerspectives extension method that registers all perspectives as Scoped services.
+  /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
   private static void GeneratePerspectiveRegistrations(
       SourceProductionContext context,
+      Compilation compilation,
       ImmutableArray<PerspectiveInfo> perspectives) {
 
     if (perspectives.IsEmpty) {
@@ -96,7 +105,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       ));
     }
 
-    var registrationSource = GenerateRegistrationSource(perspectives);
+    var registrationSource = GenerateRegistrationSource(compilation, perspectives);
     context.AddSource("PerspectiveRegistrations.g.cs", registrationSource);
   }
 
@@ -104,8 +113,13 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   /// Generates the C# source code for the registration extension method.
   /// Uses template-based generation for IDE support.
   /// Handles perspectives that implement multiple IPerspectiveOf&lt;TEvent&gt; interfaces.
+  /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
-  private static string GenerateRegistrationSource(ImmutableArray<PerspectiveInfo> perspectives) {
+  private static string GenerateRegistrationSource(Compilation compilation, ImmutableArray<PerspectiveInfo> perspectives) {
+    // Determine namespace from assembly name
+    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var namespaceName = $"{assemblyName}.Generated";
+
     // Load template from embedded resource
     var template = TemplateUtilities.GetEmbeddedTemplate(
         typeof(PerspectiveDiscoveryGenerator).Assembly,
@@ -137,6 +151,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
 
     // Replace template markers
     var result = template;
+    result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName};");
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(PerspectiveDiscoveryGenerator).Assembly, result);
     result = result.Replace("{{PERSPECTIVE_CLASS_COUNT}}", perspectives.Length.ToString());
     result = result.Replace("{{REGISTRATION_COUNT}}", totalRegistrations.ToString());

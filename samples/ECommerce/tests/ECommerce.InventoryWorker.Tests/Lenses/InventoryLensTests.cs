@@ -1,10 +1,8 @@
-using Dapper;
 using ECommerce.Contracts.Events;
 using ECommerce.InventoryWorker.Lenses;
 using ECommerce.InventoryWorker.Perspectives;
 using ECommerce.InventoryWorker.Tests.TestHelpers;
-using Microsoft.Extensions.Logging.Abstractions;
-using Npgsql;
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 
@@ -19,11 +17,10 @@ public class InventoryLensTests : IAsyncDisposable {
   [Test]
   public async Task GetByProductIdAsync_WithExistingInventory_ReturnsInventoryDtoAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new InventoryLens(connectionFactory);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var lens = sp.GetRequiredService<IInventoryLens>();
+    var perspective = sp.GetRequiredService<InventoryLevelsPerspective>();
 
-    // Create inventory via perspective
-    var perspective = new InventoryLevelsPerspective(connectionFactory, NullLogger<InventoryLevelsPerspective>.Instance);
     var productId = Guid.CreateVersion7();
     var restockEvent = new InventoryRestockedEvent {
       ProductId = productId,
@@ -46,8 +43,8 @@ public class InventoryLensTests : IAsyncDisposable {
   [Test]
   public async Task GetByProductIdAsync_WithNonExistent_ReturnsNullAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new InventoryLens(connectionFactory);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var lens = sp.GetRequiredService<IInventoryLens>();
 
     // Act
     var result = await lens.GetByProductIdAsync(Guid.CreateVersion7());
@@ -59,8 +56,8 @@ public class InventoryLensTests : IAsyncDisposable {
   [Test]
   public async Task GetAllAsync_WithNoInventory_ReturnsEmptyListAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new InventoryLens(connectionFactory);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var lens = sp.GetRequiredService<IInventoryLens>();
 
     // Act
     var result = await lens.GetAllAsync();
@@ -73,9 +70,9 @@ public class InventoryLensTests : IAsyncDisposable {
   [Test]
   public async Task GetAllAsync_WithMultipleEntries_ReturnsAllAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new InventoryLens(connectionFactory);
-    var perspective = new InventoryLevelsPerspective(connectionFactory, NullLogger<InventoryLevelsPerspective>.Instance);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var lens = sp.GetRequiredService<IInventoryLens>();
+    var perspective = sp.GetRequiredService<InventoryLevelsPerspective>();
 
     // Create 3 inventory entries
     var productId1 = Guid.CreateVersion7();
@@ -112,9 +109,9 @@ public class InventoryLensTests : IAsyncDisposable {
   [Test]
   public async Task GetAllAsync_CalculatesAvailableCorrectlyAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new InventoryLens(connectionFactory);
-    var perspective = new InventoryLevelsPerspective(connectionFactory, NullLogger<InventoryLevelsPerspective>.Instance);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var lens = sp.GetRequiredService<IInventoryLens>();
+    var perspective = sp.GetRequiredService<InventoryLevelsPerspective>();
 
     // Create inventory and reserve some
     var productId = Guid.CreateVersion7();
@@ -145,9 +142,9 @@ public class InventoryLensTests : IAsyncDisposable {
   [Test]
   public async Task GetLowStockAsync_WithDefaultThreshold_ReturnsLowStockAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new InventoryLens(connectionFactory);
-    var perspective = new InventoryLevelsPerspective(connectionFactory, NullLogger<InventoryLevelsPerspective>.Instance);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var lens = sp.GetRequiredService<IInventoryLens>();
+    var perspective = sp.GetRequiredService<InventoryLevelsPerspective>();
 
     // Create products with varying stock levels
     var lowStockProductId = Guid.CreateVersion7();
@@ -180,9 +177,9 @@ public class InventoryLensTests : IAsyncDisposable {
   [Test]
   public async Task GetLowStockAsync_WithCustomThreshold_UsesThresholdAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new InventoryLens(connectionFactory);
-    var perspective = new InventoryLevelsPerspective(connectionFactory, NullLogger<InventoryLevelsPerspective>.Instance);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var lens = sp.GetRequiredService<IInventoryLens>();
+    var perspective = sp.GetRequiredService<InventoryLevelsPerspective>();
 
     // Create products with varying stock levels
     var lowStockProductId = Guid.CreateVersion7();
@@ -217,9 +214,9 @@ public class InventoryLensTests : IAsyncDisposable {
   [Test]
   public async Task GetLowStockAsync_WithNoLowStock_ReturnsEmptyListAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var lens = new InventoryLens(connectionFactory);
-    var perspective = new InventoryLevelsPerspective(connectionFactory, NullLogger<InventoryLevelsPerspective>.Instance);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var lens = sp.GetRequiredService<IInventoryLens>();
+    var perspective = sp.GetRequiredService<InventoryLevelsPerspective>();
 
     // Create only high-stock products
     await perspective.Update(new InventoryRestockedEvent {

@@ -2,7 +2,9 @@ using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 
+#region NAMESPACE
 namespace Whizbang.Core.Generated;
+#endregion
 
 #region HEADER
 // This region gets replaced with generated header + timestamp

@@ -33,6 +33,12 @@ public static class WhizbangActivitySource {
   public static readonly ActivitySource Transport = new("Whizbang.Transport", "1.0.0");
 
   /// <summary>
+  /// ActivitySource for hosting and initialization operations (Aspire AppHost, startup provisioning).
+  /// Tracks infrastructure setup like topic/subscription creation, filter provisioning, and worker initialization.
+  /// </summary>
+  public static readonly ActivitySource Hosting = new("Whizbang.Hosting", "1.0.0");
+
+  /// <summary>
   /// Records a defensive exception that should never occur in normal operation.
   /// Sets activity status to Error and adds exception details.
   /// </summary>

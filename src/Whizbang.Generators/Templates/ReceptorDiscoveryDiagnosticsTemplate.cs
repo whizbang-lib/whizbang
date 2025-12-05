@@ -6,8 +6,11 @@
 
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using Whizbang.Core.Generated;
 
+#region NAMESPACE
 namespace Whizbang.Core.Generated {
+#endregion
   /// <summary>
   /// Registers receptor discovery diagnostics with the central diagnostics collector.
   /// This class is auto-generated and registers its information during static initialization.

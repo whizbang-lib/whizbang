@@ -1,12 +1,18 @@
 using ECommerce.Contracts.Generated;
-// using ECommerce.OrderService.API.GraphQL.Mutations; // TODO: Re-enable after EF Core dispatcher
+using ECommerce.OrderService.API;
+using ECommerce.OrderService.API.Generated;
+using ECommerce.OrderService.API.GraphQL.Mutations;
 using ECommerce.OrderService.API.GraphQL.Queries;
-// using FastEndpoints; // TODO: Re-enable after EF Core dispatcher
-// using FastEndpoints.Swagger; // TODO: Re-enable after EF Core dispatcher
+using FastEndpoints;
+using FastEndpoints.Swagger;
+using Microsoft.EntityFrameworkCore;
 using Whizbang.Core;
 using Whizbang.Core.Generated;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Core.Workers;
+using Whizbang.Data.EFCore.Postgres;
 using Whizbang.Transports.AzureServiceBus;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -17,36 +23,21 @@ builder.AddServiceDefaults();
 // Add HotChocolate GraphQL
 builder.Services
   .AddGraphQLServer()
-  // TODO: Re-enable after EF Core dispatcher is implemented
-  // OrderMutations.CreateOrderAsync depends on IDispatcher
-  // .AddMutationType<OrderMutations>()
-  .AddQueryType<OrderQueries>(); // OrderQueries is fine (no IDispatcher dependency)
+  .AddMutationType<OrderMutations>()
+  .AddQueryType<OrderQueries>();
 
-// TODO: Re-enable after EF Core dispatcher is implemented
-// FastEndpoints - CreateOrderEndpoint depends on IDispatcher
-// builder.Services.AddFastEndpoints();
-// builder.Services.SwaggerDocument();
+// Add FastEndpoints for REST API
+builder.Services.AddFastEndpoints();
+builder.Services.SwaggerDocument();
 
 // Add OpenAPI for traditional endpoints
 builder.Services.AddOpenApi();
 
 // Get connection strings from Aspire configuration
+var postgresConnection = builder.Configuration.GetConnectionString("ordersdb")
+    ?? throw new InvalidOperationException("PostgreSQL connection string 'ordersdb' not found");
 var serviceBusConnection = builder.Configuration.GetConnectionString("servicebus")
     ?? throw new InvalidOperationException("Azure Service Bus connection string 'servicebus' not found");
-
-// TODO: Migrate to EF Core implementations
-// The following Whizbang infrastructure needs EF Core implementations:
-// - Event Store (for event sourcing)
-// - Inbox (for reliable command/event consumption)
-// - Outbox (for reliable event publishing)
-// - Outbox Publisher Worker
-//
-// Currently using Dapper implementations (Whizbang.Data.Dapper.Postgres).
-// Migration plan:
-// 1. Implement IEventStore<T> using EF Core with PerspectiveRow-like pattern
-// 2. Implement IInbox/IOutbox using EF Core
-// 3. Create OutboxPublisherWorker that works with EF Core
-// 4. Update this service to use: builder.Services.AddWhizbang().WithEFCore<OrderDbContext>()
 
 // Register Azure Service Bus transport
 builder.Services.AddAzureServiceBusTransport(serviceBusConnection, ECommerce.Contracts.Generated.WhizbangJsonContext.Default);
@@ -55,31 +46,50 @@ builder.Services.AddAzureServiceBusHealthChecks();
 // Add trace store for observability
 builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
 
-// TODO: Re-enable after EF Core event store is implemented
-// Register Whizbang dispatcher with source-generated receptors
-// builder.Services.AddReceptors();
-// builder.Services.AddWhizbangDispatcher();
+// Register EF Core DbContext for Inbox/Outbox/EventStore
+builder.Services.AddDbContext<OrderDbContext>(options =>
+  options.UseNpgsql(postgresConnection));
 
-// TODO: Re-enable after EF Core outbox is implemented
-// Register outbox publisher worker for reliable event publishing
-// builder.Services.AddHostedService<OutboxPublisherWorker>();
+// Register unified Whizbang API with EF Core Postgres driver
+// This automatically registers ALL infrastructure:
+// - IInbox, IOutbox, IEventStore (using EF Core implementations)
+// Source generator discovers infrastructure from [WhizbangDbContext] attribute
+_ = builder.Services
+  .AddWhizbang()
+  .WithEFCore<OrderDbContext>()
+  .WithDriver.Postgres;
+
+// Register Whizbang generated services (from ECommerce.Contracts)
+builder.Services.AddReceptors();
+builder.Services.AddWhizbangDispatcher();
+builder.Services.AddWhizbangAggregateIdExtractor();
+
+// WorkCoordinator publisher - atomic coordination with lease-based work claiming
+builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
 
 var app = builder.Build();
+
+// Initialize database schema on startup
+// Uses generated EnsureWhizbangDatabaseInitializedAsync() extension method
+// Creates Inbox/Outbox/EventStore tables + PostgreSQL functions
+using (var scope = app.Services.CreateScope()) {
+  var dbContext = scope.ServiceProvider.GetRequiredService<OrderDbContext>();
+  var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+  await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger);
+}
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment()) {
   app.MapOpenApi();
-  // TODO: Re-enable after EF Core dispatcher is implemented
-  // app.UseSwaggerGen(); // FastEndpoints Swagger UI
+  app.UseSwaggerGen(); // FastEndpoints Swagger UI
 }
 
 app.UseHttpsRedirection();
 
-// TODO: Re-enable after EF Core dispatcher is implemented
 // FastEndpoints (REST API at /api/*)
-// app.UseFastEndpoints(config => {
-//   config.Endpoints.RoutePrefix = "api";
-// });
+app.UseFastEndpoints(config => {
+  config.Endpoints.RoutePrefix = "api";
+});
 
 // HotChocolate GraphQL (at /graphql)
 app.MapGraphQL("/graphql");

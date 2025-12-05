@@ -87,14 +87,15 @@ builder.Services
 // Perspectives are invoked automatically via PerspectiveInvoker
 // NOTE: Subscription names must be unique across all topics in Aspire AppHost model
 var consumerOptions = new ServiceBusConsumerOptions();
-consumerOptions.Subscriptions.Add(new TopicSubscription("products", "bff-products"));
-consumerOptions.Subscriptions.Add(new TopicSubscription("orders", "bff-orders"));
-consumerOptions.Subscriptions.Add(new TopicSubscription("payments", "bff-payments"));
-consumerOptions.Subscriptions.Add(new TopicSubscription("shipping", "bff-shipping"));
+consumerOptions.Subscriptions.Add(new TopicSubscription("products", "sub-bff-products"));
+consumerOptions.Subscriptions.Add(new TopicSubscription("orders", "sub-bff-orders"));
+consumerOptions.Subscriptions.Add(new TopicSubscription("payments", "sub-bff-payments"));
+consumerOptions.Subscriptions.Add(new TopicSubscription("shipping", "sub-bff-shipping"));
 builder.Services.AddSingleton(consumerOptions);
 builder.Services.AddHostedService<ServiceBusConsumerWorker>();
 
-// TODO: Add outbox publisher worker when needed for publishing from BFF
+// Outbox publisher worker - publishes pending messages from outbox to Service Bus
+builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
 
 // Add FastEndpoints for REST API (AOT-compatible)
 builder.Services.AddFastEndpoints();
@@ -123,11 +124,12 @@ var app = builder.Build();
 app.Logger.LogInformation("CORS configured for Angular UI at: {AngularUrl}", angularUrl);
 
 // Initialize database schema on startup
-// Uses generated EnsureWhizbangTablesCreatedAsync() extension method
-// Creates all PerspectiveRow<T> entities + Inbox/Outbox/EventStore tables
+// Uses generated EnsureWhizbangDatabaseInitializedAsync() extension method
+// Creates all PerspectiveRow<T> entities + Inbox/Outbox/EventStore tables + PostgreSQL functions
 using (var scope = app.Services.CreateScope()) {
   var dbContext = scope.ServiceProvider.GetRequiredService<BffDbContext>();
-  await dbContext.EnsureWhizbangTablesCreatedAsync();
+  var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+  await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger);
 }
 
 // Development-only: Auto-seed products on startup

@@ -34,6 +34,7 @@ public class InventoryLevelsPerspective(
         ProductId = @event.ProductId,
         Quantity = 0,
         Reserved = 0,
+        Available = 0,
         LastUpdated = @event.CreatedAt
       };
 
@@ -59,10 +60,12 @@ public class InventoryLevelsPerspective(
       // Get existing inventory or create new with defaults
       var existing = await _query.GetByIdAsync(@event.ProductId.ToString(), cancellationToken);
 
+      var reserved = existing?.Reserved ?? 0;
       var inventory = new InventoryLevelDto {
         ProductId = @event.ProductId,
         Quantity = @event.NewTotalQuantity,
-        Reserved = existing?.Reserved ?? 0,
+        Reserved = reserved,
+        Available = @event.NewTotalQuantity - reserved,
         LastUpdated = @event.RestockedAt
       };
 
@@ -94,10 +97,12 @@ public class InventoryLevelsPerspective(
         return;
       }
 
+      var newReserved = existing.Reserved + @event.Quantity;
       var updated = new InventoryLevelDto {
         ProductId = existing.ProductId,
         Quantity = existing.Quantity,
-        Reserved = existing.Reserved + @event.Quantity,
+        Reserved = newReserved,
+        Available = existing.Quantity - newReserved,
         LastUpdated = @event.ReservedAt
       };
 
@@ -134,6 +139,7 @@ public class InventoryLevelsPerspective(
         ProductId = existing.ProductId,
         Quantity = @event.NewTotalQuantity,
         Reserved = existing.Reserved,
+        Available = @event.NewTotalQuantity - existing.Reserved,
         LastUpdated = @event.AdjustedAt
       };
 

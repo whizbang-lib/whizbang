@@ -17,40 +17,88 @@ namespace __DBCONTEXT_NAMESPACE__.Generated;
 /// </summary>
 public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// <summary>
-  /// Ensures all Whizbang tables exist for __DBCONTEXT_CLASS__.
-  /// Creates tables from entity configurations (ConfigureWhizbang() in OnModelCreating).
+  /// Ensures Whizbang database schema is fully initialized for __DBCONTEXT_CLASS__.
+  /// Creates tables from entity configurations (ConfigureWhizbang() in OnModelCreating)
+  /// and executes PostgreSQL functions/migrations.
   /// Idempotent - safe to call multiple times.
   ///
-  /// Post-processes EF Core's generated script to add IF NOT EXISTS clauses.
-  /// Exception handler serves as defense-in-depth fallback.
+  /// Steps:
+  /// 1. Creates tables with IF NOT EXISTS (post-processed EF Core script)
+  /// 2. Executes PostgreSQL functions (process_work_batch, etc.)
   /// </summary>
   /// <param name="dbContext">The __DBCONTEXT_CLASS__ instance</param>
   /// <param name="logger">Optional logger for diagnostic messages</param>
   /// <param name="cancellationToken">Cancellation token</param>
-  public static async Task EnsureWhizbangTablesCreatedAsync(
+  public static async Task EnsureWhizbangDatabaseInitializedAsync(
     this __DBCONTEXT_FQN__ dbContext,
     ILogger? logger = null,
     CancellationToken cancellationToken = default) {
 
-    // Generate CREATE TABLE script from EF Core model
+    // Step 1: Create tables
+    logger?.LogInformation("Creating Whizbang tables for {DbContext}...", "__DBCONTEXT_CLASS__");
     var script = dbContext.Database.GenerateCreateScript();
-
-    // Post-process to add IF NOT EXISTS clauses
     script = MakeScriptIdempotent(script);
 
-    // Execute the idempotent script
-    try {
-      await dbContext.Database.ExecuteSqlRawAsync(script, cancellationToken);
-    } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P07") {
-      // 42P07 = duplicate_table - Unexpected! Script should be idempotent.
-      // This catch serves as defense-in-depth if SQL post-processing has a bug.
-      logger?.LogWarning(
-        "Caught duplicate_table exception despite IF NOT EXISTS in SQL. " +
-        "This suggests the SQL post-processing may have a bug. " +
-        "Table: {Table}, SqlState: {SqlState}",
-        ex.TableName ?? "unknown",
-        ex.SqlState);
+    // Only execute if script is not empty (DbContext may have no user-defined entities)
+    if (!string.IsNullOrWhiteSpace(script)) {
+      try {
+        await dbContext.Database.ExecuteSqlRawAsync(script, cancellationToken);
+        logger?.LogInformation("Whizbang tables created successfully");
+      } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P07") {
+        // 42P07 = duplicate_table - Unexpected! Script should be idempotent.
+        logger?.LogWarning(
+          "Caught duplicate_table exception despite IF NOT EXISTS. " +
+          "Table: {Table}, SqlState: {SqlState}",
+          ex.TableName ?? "unknown",
+          ex.SqlState);
+      }
+    } else {
+      logger?.LogInformation("No user-defined tables to create (DbContext has no perspectives)");
     }
+
+    // Step 2: Create PostgreSQL functions
+    logger?.LogInformation("Creating Whizbang PostgreSQL functions...");
+    await ExecuteMigrationsAsync(dbContext, logger, cancellationToken);
+    logger?.LogInformation("Whizbang database initialization complete");
+  }
+
+  /// <summary>
+  /// Executes PostgreSQL migration scripts to create functions.
+  /// Migrations are embedded as string constants for AOT compatibility.
+  /// </summary>
+  private static async Task ExecuteMigrationsAsync(
+    __DBCONTEXT_FQN__ dbContext,
+    ILogger? logger,
+    CancellationToken cancellationToken) {
+
+    // Migration scripts are embedded below by the source generator
+    var migrations = GetMigrationScripts();
+
+    foreach (var (name, sql) in migrations) {
+      try {
+        logger?.LogInformation("Executing migration: {Migration}", name);
+        await dbContext.Database.ExecuteSqlRawAsync(sql, cancellationToken);
+        logger?.LogInformation("Migration {Migration} completed successfully", name);
+      } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42723") {
+        // 42723 = duplicate_function - function already exists, safe to ignore
+        logger?.LogInformation("Function already exists (expected): {Message}", ex.MessageText);
+      } catch (Exception ex) {
+        logger?.LogError(ex, "Failed to execute migration {Migration}", name);
+        throw;
+      }
+    }
+  }
+
+  /// <summary>
+  /// Returns migration scripts as (name, sql) tuples.
+  /// Scripts are embedded by the source generator.
+  /// </summary>
+  private static (string Name, string Sql)[] GetMigrationScripts() {
+    return new[] {
+      #region MIGRATIONS
+      // Migration scripts will be embedded here by the source generator
+      #endregion
+    };
   }
 
   /// <summary>

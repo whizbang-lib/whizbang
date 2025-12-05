@@ -35,7 +35,7 @@ public record OrderCreated([StreamKey] string OrderId, string CustomerName) : IE
 
     var code = GeneratorTestHelper.GetGeneratedSource(result, "StreamKeyExtractors.g.cs");
     await Assert.That(code).IsNotNull();
-    await Assert.That(code!).Contains("namespace Whizbang.Core.Generated");
+    await Assert.That(code!).Contains("namespace TestAssembly.Generated");
     await Assert.That(code).Contains("public static partial class StreamKeyExtractors");
     await Assert.That(code).Contains("MyApp.Events.OrderCreated");
     await Assert.That(code).Contains("Extract stream key from OrderCreated");

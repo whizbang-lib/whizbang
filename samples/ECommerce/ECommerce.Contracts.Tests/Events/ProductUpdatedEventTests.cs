@@ -9,12 +9,14 @@ namespace ECommerce.Contracts.Tests.Events;
 /// Tests for ProductUpdatedEvent
 /// </summary>
 public class ProductUpdatedEventTests {
+  private static readonly IWhizbangIdProvider IdProvider = new Uuid7IdProvider();
   [Test]
   public async Task ProductUpdatedEvent_WithAllPropertiesUpdated_InitializesSuccessfullyAsync() {
     // Arrange & Act
+    var productId = IdProvider.NewGuid();
     var updatedAt = DateTime.UtcNow;
     var evt = new ProductUpdatedEvent {
-      ProductId = "prod-123",
+      ProductId = productId,
       Name = "Updated Widget",
       Description = "Updated description",
       Price = 39.99m,
@@ -23,7 +25,7 @@ public class ProductUpdatedEventTests {
     };
 
     // Assert
-    await Assert.That(evt.ProductId).IsEqualTo("prod-123");
+    await Assert.That(evt.ProductId).IsEqualTo(productId);
     await Assert.That(evt.Name).IsEqualTo("Updated Widget");
     await Assert.That(evt.Description).IsEqualTo("Updated description");
     await Assert.That(evt.Price).IsEqualTo(39.99m);
@@ -34,8 +36,9 @@ public class ProductUpdatedEventTests {
   [Test]
   public async Task ProductUpdatedEvent_WithOnlyNameUpdated_InitializesSuccessfullyAsync() {
     // Arrange & Act
+    var productId = IdProvider.NewGuid();
     var evt = new ProductUpdatedEvent {
-      ProductId = "prod-456",
+      ProductId = productId,
       Name = "New Name",
       Description = null,
       Price = null,
@@ -44,7 +47,7 @@ public class ProductUpdatedEventTests {
     };
 
     // Assert
-    await Assert.That(evt.ProductId).IsEqualTo("prod-456");
+    await Assert.That(evt.ProductId).IsEqualTo(productId);
     await Assert.That(evt.Name).IsEqualTo("New Name");
     await Assert.That(evt.Description).IsNull();
     await Assert.That(evt.Price).IsNull();
@@ -55,7 +58,7 @@ public class ProductUpdatedEventTests {
   public async Task ProductUpdatedEvent_WithAllPropertiesNull_InitializesSuccessfullyAsync() {
     // Arrange & Act
     var evt = new ProductUpdatedEvent {
-      ProductId = "prod-789",
+      ProductId = IdProvider.NewGuid(),
       Name = null,
       Description = null,
       Price = null,
@@ -73,9 +76,10 @@ public class ProductUpdatedEventTests {
   [Test]
   public async Task ProductUpdatedEvent_RecordEquality_WorksCorrectlyAsync() {
     // Arrange
+    var productId = IdProvider.NewGuid();
     var updatedAt = DateTime.UtcNow;
     var evt1 = new ProductUpdatedEvent {
-      ProductId = "prod-123",
+      ProductId = productId,
       Name = "Name",
       Description = null,
       Price = 29.99m,
@@ -84,7 +88,7 @@ public class ProductUpdatedEventTests {
     };
 
     var evt2 = new ProductUpdatedEvent {
-      ProductId = "prod-123",
+      ProductId = productId,
       Name = "Name",
       Description = null,
       Price = 29.99m,
@@ -99,8 +103,9 @@ public class ProductUpdatedEventTests {
   [Test]
   public async Task ProductUpdatedEvent_ToString_ReturnsReadableRepresentationAsync() {
     // Arrange & Act
+    var productId = IdProvider.NewGuid();
     var evt = new ProductUpdatedEvent {
-      ProductId = "prod-999",
+      ProductId = productId,
       Name = "ToString Test",
       Description = null,
       Price = null,
@@ -111,7 +116,7 @@ public class ProductUpdatedEventTests {
     var stringRep = evt.ToString();
 
     // Assert
-    await Assert.That(stringRep).Contains("prod-999");
+    await Assert.That(stringRep).Contains(productId.ToString());
     await Assert.That(stringRep).IsNotNull();
   }
 }

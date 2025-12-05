@@ -9,26 +9,29 @@ namespace ECommerce.Contracts.Tests.Commands;
 /// Tests for DeleteProductCommand
 /// </summary>
 public class DeleteProductCommandTests {
+  private static readonly IWhizbangIdProvider IdProvider = new Uuid7IdProvider();
   [Test]
   public async Task DeleteProductCommand_WithValidProductId_InitializesSuccessfullyAsync() {
     // Arrange & Act
+    var productId = IdProvider.NewGuid();
     var cmd = new DeleteProductCommand {
-      ProductId = "prod-123"
+      ProductId = productId
     };
 
     // Assert
-    await Assert.That(cmd.ProductId).IsEqualTo("prod-123");
+    await Assert.That(cmd.ProductId).IsEqualTo(productId);
   }
 
   [Test]
   public async Task DeleteProductCommand_RecordEquality_WorksCorrectlyAsync() {
     // Arrange
+    var productId = IdProvider.NewGuid();
     var cmd1 = new DeleteProductCommand {
-      ProductId = "prod-123"
+      ProductId = productId
     };
 
     var cmd2 = new DeleteProductCommand {
-      ProductId = "prod-123"
+      ProductId = productId
     };
 
     // Act & Assert
@@ -38,14 +41,15 @@ public class DeleteProductCommandTests {
   [Test]
   public async Task DeleteProductCommand_ToString_ReturnsReadableRepresentationAsync() {
     // Arrange & Act
+    var productId = IdProvider.NewGuid();
     var cmd = new DeleteProductCommand {
-      ProductId = "prod-999"
+      ProductId = productId
     };
 
     var stringRep = cmd.ToString();
 
     // Assert
-    await Assert.That(stringRep).Contains("prod-999");
+    await Assert.That(stringRep).Contains(productId.ToString());
     await Assert.That(stringRep).IsNotNull();
   }
 
@@ -53,11 +57,11 @@ public class DeleteProductCommandTests {
   public async Task DeleteProductCommand_WithDifferentProductIds_AreNotEqualAsync() {
     // Arrange
     var cmd1 = new DeleteProductCommand {
-      ProductId = "prod-123"
+      ProductId = IdProvider.NewGuid()
     };
 
     var cmd2 = new DeleteProductCommand {
-      ProductId = "prod-456"
+      ProductId = IdProvider.NewGuid()
     };
 
     // Act & Assert

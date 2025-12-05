@@ -4,7 +4,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
-using Whizbang.Core.Generated;
+using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Dispatcher;

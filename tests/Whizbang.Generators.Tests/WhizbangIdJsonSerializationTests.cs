@@ -203,7 +203,7 @@ public class WhizbangIdJsonSerializationTests {
     // Assert - Should be in Whizbang.Core.Generated namespace
     var contextSource = GeneratorTestHelper.GetGeneratedSource(result, "WhizbangIdJsonContext.g.cs");
     await Assert.That(contextSource).IsNotNull();
-    await Assert.That(contextSource!).Contains("namespace Whizbang.Core.Generated");
+    await Assert.That(contextSource!).Contains("namespace TestAssembly.Generated");
   }
 
   /// <summary>

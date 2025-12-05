@@ -48,7 +48,7 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
 
     var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
     await Assert.That(dispatcher).IsNotNull();
-    await Assert.That(dispatcher!).Contains("namespace Whizbang.Core.Generated");
+    await Assert.That(dispatcher!).Contains("namespace TestAssembly.Generated");
     await Assert.That(dispatcher).Contains("class GeneratedDispatcher");
     await Assert.That(dispatcher).Contains("CreateOrder");
     await Assert.That(dispatcher).Contains("OrderCreated");
@@ -384,7 +384,7 @@ public class TestReceptor : IReceptor<TestCommand, TestResponse> {
 
     var diagnostics = GeneratorTestHelper.GetGeneratedSource(result, "ReceptorDiscoveryDiagnostics.g.cs");
     await Assert.That(diagnostics).IsNotNull();
-    await Assert.That(diagnostics!).Contains("namespace Whizbang.Core.Generated");
+    await Assert.That(diagnostics!).Contains("namespace TestAssembly.Generated");
   }
 
   [Test]

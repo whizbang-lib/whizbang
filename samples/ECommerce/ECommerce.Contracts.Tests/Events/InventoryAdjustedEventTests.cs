@@ -9,12 +9,14 @@ namespace ECommerce.Contracts.Tests.Events;
 /// Tests for InventoryAdjustedEvent
 /// </summary>
 public class InventoryAdjustedEventTests {
+  private static readonly IWhizbangIdProvider IdProvider = new Uuid7IdProvider();
   [Test]
   public async Task InventoryAdjustedEvent_WithPositiveChange_InitializesSuccessfullyAsync() {
     // Arrange & Act
+    var productId = IdProvider.NewGuid();
     var adjustedAt = DateTime.UtcNow;
     var evt = new InventoryAdjustedEvent {
-      ProductId = "prod-123",
+      ProductId = productId,
       QuantityChange = 10,
       NewTotalQuantity = 110,
       Reason = "Inventory correction - found extra units",
@@ -22,7 +24,7 @@ public class InventoryAdjustedEventTests {
     };
 
     // Assert
-    await Assert.That(evt.ProductId).IsEqualTo("prod-123");
+    await Assert.That(evt.ProductId).IsEqualTo(productId);
     await Assert.That(evt.QuantityChange).IsEqualTo(10);
     await Assert.That(evt.NewTotalQuantity).IsEqualTo(110);
     await Assert.That(evt.Reason).IsEqualTo("Inventory correction - found extra units");
@@ -33,7 +35,7 @@ public class InventoryAdjustedEventTests {
   public async Task InventoryAdjustedEvent_WithNegativeChange_InitializesSuccessfullyAsync() {
     // Arrange & Act
     var evt = new InventoryAdjustedEvent {
-      ProductId = "prod-456",
+      ProductId = IdProvider.NewGuid(),
       QuantityChange = -5,
       NewTotalQuantity = 95,
       Reason = "Damaged goods",
@@ -50,7 +52,7 @@ public class InventoryAdjustedEventTests {
   public async Task InventoryAdjustedEvent_WithZeroChange_InitializesSuccessfullyAsync() {
     // Arrange & Act
     var evt = new InventoryAdjustedEvent {
-      ProductId = "prod-789",
+      ProductId = IdProvider.NewGuid(),
       QuantityChange = 0,
       NewTotalQuantity = 100,
       Reason = "Audit - no discrepancies found",
@@ -65,9 +67,10 @@ public class InventoryAdjustedEventTests {
   [Test]
   public async Task InventoryAdjustedEvent_RecordEquality_WorksCorrectlyAsync() {
     // Arrange
+    var productId = IdProvider.NewGuid();
     var adjustedAt = DateTime.UtcNow;
     var evt1 = new InventoryAdjustedEvent {
-      ProductId = "prod-123",
+      ProductId = productId,
       QuantityChange = -10,
       NewTotalQuantity = 90,
       Reason = "Shrinkage",
@@ -75,7 +78,7 @@ public class InventoryAdjustedEventTests {
     };
 
     var evt2 = new InventoryAdjustedEvent {
-      ProductId = "prod-123",
+      ProductId = productId,
       QuantityChange = -10,
       NewTotalQuantity = 90,
       Reason = "Shrinkage",
@@ -89,8 +92,9 @@ public class InventoryAdjustedEventTests {
   [Test]
   public async Task InventoryAdjustedEvent_ToString_ReturnsReadableRepresentationAsync() {
     // Arrange & Act
+    var productId = IdProvider.NewGuid();
     var evt = new InventoryAdjustedEvent {
-      ProductId = "prod-999",
+      ProductId = productId,
       QuantityChange = -15,
       NewTotalQuantity = 85,
       Reason = "Damaged during shipping",
@@ -100,7 +104,7 @@ public class InventoryAdjustedEventTests {
     var stringRep = evt.ToString();
 
     // Assert
-    await Assert.That(stringRep).Contains("prod-999");
+    await Assert.That(stringRep).Contains(productId.ToString());
     await Assert.That(stringRep).IsNotNull();
   }
 }

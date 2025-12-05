@@ -2,7 +2,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
-using Whizbang.Core.Generated;
+using Whizbang.Core.Tests.Generated;
 
 namespace Whizbang.Core.Tests;
 

@@ -30,11 +30,15 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   [Test]
   public async Task ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync() {
     // Arrange
-    await InsertServiceInstanceAsync(_instanceId, active: true);
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
 
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
       _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
       [],
       [],
       [],
@@ -42,8 +46,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       leaseSeconds: 300);
 
     // Assert
-    await Assert.That(result.OrphanedOutbox).HasCount().EqualTo(0);
-    await Assert.That(result.OrphanedInbox).HasCount().EqualTo(0);
+    await Assert.That(result.OutboxWork).HasCount().EqualTo(0);
+    await Assert.That(result.InboxWork).HasCount().EqualTo(0);
 
     // Verify heartbeat was updated
     var heartbeat = await GetInstanceHeartbeatAsync(_instanceId);
@@ -54,7 +58,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   [Test]
   public async Task ProcessWorkBatchAsync_CompletesOutboxMessages_MarksAsPublishedAsync() {
     // Arrange
-    await InsertServiceInstanceAsync(_instanceId, active: true);
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
     var messageId1 = _idProvider.NewGuid();
     var messageId2 = _idProvider.NewGuid();
 
@@ -64,13 +68,17 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
       _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
       [messageId1, messageId2],
       [],
       [],
       []);
 
     // Assert
-    await Assert.That(result.OrphanedOutbox).HasCount().EqualTo(0);
+    await Assert.That(result.OutboxWork).HasCount().EqualTo(0);
 
     // Verify messages marked as Published
     var status1 = await GetOutboxStatusAsync(messageId1);
@@ -82,7 +90,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   [Test]
   public async Task ProcessWorkBatchAsync_FailsOutboxMessages_MarksAsFailedWithErrorAsync() {
     // Arrange
-    await InsertServiceInstanceAsync(_instanceId, active: true);
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
     var messageId = _idProvider.NewGuid();
 
     await InsertOutboxMessageAsync(messageId, "topic1", "TestEvent", "{}", status: "Publishing", instanceId: _instanceId);
@@ -90,13 +98,17 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
       _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
       [],
       [new FailedMessage { MessageId = messageId, Error = "Network timeout" }],
       [],
       []);
 
     // Assert
-    await Assert.That(result.OrphanedOutbox).HasCount().EqualTo(0);
+    await Assert.That(result.OutboxWork).HasCount().EqualTo(0);
 
     // Verify message marked as Failed with error
     var status = await GetOutboxStatusAsync(messageId);
@@ -108,7 +120,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   [Test]
   public async Task ProcessWorkBatchAsync_CompletesInboxMessages_MarksAsCompletedAsync() {
     // Arrange
-    await InsertServiceInstanceAsync(_instanceId, active: true);
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
     var messageId1 = _idProvider.NewGuid();
     var messageId2 = _idProvider.NewGuid();
 
@@ -118,13 +130,17 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
       _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
       [],
       [],
       [messageId1, messageId2],
       []);
 
     // Assert
-    await Assert.That(result.OrphanedInbox).HasCount().EqualTo(0);
+    await Assert.That(result.InboxWork).HasCount().EqualTo(0);
 
     // Verify messages marked as Completed
     var status1 = await GetInboxStatusAsync(messageId1);
@@ -136,7 +152,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   [Test]
   public async Task ProcessWorkBatchAsync_FailsInboxMessages_MarksAsFailedWithErrorAsync() {
     // Arrange
-    await InsertServiceInstanceAsync(_instanceId, active: true);
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
     var messageId = _idProvider.NewGuid();
 
     await InsertInboxMessageAsync(messageId, "Handler1", "TestEvent", "{}", status: "Processing", instanceId: _instanceId);
@@ -144,13 +160,17 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
       _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
       [],
       [],
       [],
       [new FailedMessage { MessageId = messageId, Error = "Handler exception" }]);
 
     // Assert
-    await Assert.That(result.OrphanedInbox).HasCount().EqualTo(0);
+    await Assert.That(result.InboxWork).HasCount().EqualTo(0);
 
     // Verify message marked as Failed with error
     var status = await GetInboxStatusAsync(messageId);
@@ -162,7 +182,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   [Test]
   public async Task ProcessWorkBatchAsync_RecoversOrphanedOutboxMessages_ReturnsExpiredLeasesAsync() {
     // Arrange
-    await InsertServiceInstanceAsync(_instanceId, active: true);
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
     var orphanedId1 = _idProvider.NewGuid();
     var orphanedId2 = _idProvider.NewGuid();
     var activeId = _idProvider.NewGuid();
@@ -199,22 +219,26 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
       _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
       [],
       [],
       [],
       []);
 
-    // Assert - Should return 2 orphaned messages, not the active one
-    await Assert.That(result.OrphanedOutbox).HasCount().EqualTo(2);
-    await Assert.That(result.OrphanedInbox).HasCount().EqualTo(0);
+    // Assert - Should return 2 work items, not the active one
+    await Assert.That(result.OutboxWork).HasCount().EqualTo(2);
+    await Assert.That(result.InboxWork).HasCount().EqualTo(0);
 
-    var orphaned1 = result.OrphanedOutbox.First(m => m.MessageId == orphanedId1);
-    var orphaned2 = result.OrphanedOutbox.First(m => m.MessageId == orphanedId2);
+    var work1 = result.OutboxWork.First(m => m.MessageId == orphanedId1);
+    var work2 = result.OutboxWork.First(m => m.MessageId == orphanedId2);
 
-    await Assert.That(orphaned1.Destination).IsEqualTo("topic1");
-    await Assert.That(orphaned1.MessageType).IsEqualTo("OrphanedEvent1");
-    await Assert.That(orphaned2.Destination).IsEqualTo("topic2");
-    await Assert.That(orphaned2.MessageType).IsEqualTo("OrphanedEvent2");
+    await Assert.That(work1.Destination).IsEqualTo("topic1");
+    await Assert.That(work1.MessageType).IsEqualTo("OrphanedEvent1");
+    await Assert.That(work2.Destination).IsEqualTo("topic2");
+    await Assert.That(work2.MessageType).IsEqualTo("OrphanedEvent2");
 
     // Verify orphaned messages now have new lease
     var newInstanceId = await GetOutboxInstanceIdAsync(orphanedId1);
@@ -227,7 +251,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   [Test]
   public async Task ProcessWorkBatchAsync_RecoversOrphanedInboxMessages_ReturnsExpiredLeasesAsync() {
     // Arrange
-    await InsertServiceInstanceAsync(_instanceId, active: true);
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
     var orphanedId1 = _idProvider.NewGuid();
     var orphanedId2 = _idProvider.NewGuid();
 
@@ -253,20 +277,24 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
       _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
       [],
       [],
       [],
       []);
 
     // Assert
-    await Assert.That(result.OrphanedOutbox).HasCount().EqualTo(0);
-    await Assert.That(result.OrphanedInbox).HasCount().EqualTo(2);
+    await Assert.That(result.OutboxWork).HasCount().EqualTo(0);
+    await Assert.That(result.InboxWork).HasCount().EqualTo(2);
 
-    var orphaned1 = result.OrphanedInbox.First(m => m.MessageId == orphanedId1);
-    var orphaned2 = result.OrphanedInbox.First(m => m.MessageId == orphanedId2);
+    var work1 = result.InboxWork.First(m => m.MessageId == orphanedId1);
+    var work2 = result.InboxWork.First(m => m.MessageId == orphanedId2);
 
-    await Assert.That(orphaned1.MessageType).IsEqualTo("OrphanedEvent1");
-    await Assert.That(orphaned2.MessageType).IsEqualTo("OrphanedEvent2");
+    await Assert.That(work1.MessageType).IsEqualTo("OrphanedEvent1");
+    await Assert.That(work2.MessageType).IsEqualTo("OrphanedEvent2");
 
     // Verify orphaned messages now have new lease
     var newInstanceId = await GetInboxInstanceIdAsync(orphanedId1);
@@ -276,7 +304,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   [Test]
   public async Task ProcessWorkBatchAsync_MixedOperations_HandlesAllCorrectlyAsync() {
     // Arrange
-    await InsertServiceInstanceAsync(_instanceId, active: true);
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
 
     // Completed messages
     var completedOutboxId = _idProvider.NewGuid();
@@ -313,14 +341,18 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
       _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
       [completedOutboxId],
       [new FailedMessage { MessageId = failedOutboxId, Error = "Outbox error" }],
       [completedInboxId],
       [new FailedMessage { MessageId = failedInboxId, Error = "Inbox error" }]);
 
     // Assert
-    await Assert.That(result.OrphanedOutbox).HasCount().EqualTo(1);
-    await Assert.That(result.OrphanedInbox).HasCount().EqualTo(1);
+    await Assert.That(result.OutboxWork).HasCount().EqualTo(1);
+    await Assert.That(result.InboxWork).HasCount().EqualTo(1);
 
     // Verify completed
     await Assert.That(await GetOutboxStatusAsync(completedOutboxId)).IsEqualTo("Published");
@@ -330,27 +362,28 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await Assert.That(await GetOutboxStatusAsync(failedOutboxId)).IsEqualTo("Failed");
     await Assert.That(await GetInboxStatusAsync(failedInboxId)).IsEqualTo("Failed");
 
-    // Verify orphaned returned and claimed
-    await Assert.That(result.OrphanedOutbox[0].MessageId).IsEqualTo(orphanedOutboxId);
-    await Assert.That(result.OrphanedInbox[0].MessageId).IsEqualTo(orphanedInboxId);
+    // Verify work returned and claimed
+    await Assert.That(result.OutboxWork[0].MessageId).IsEqualTo(orphanedOutboxId);
+    await Assert.That(result.InboxWork[0].MessageId).IsEqualTo(orphanedInboxId);
     await Assert.That(await GetOutboxInstanceIdAsync(orphanedOutboxId)).IsEqualTo(_instanceId);
     await Assert.That(await GetInboxInstanceIdAsync(orphanedInboxId)).IsEqualTo(_instanceId);
   }
 
   // Helper methods for test data setup and verification
 
-  private async Task InsertServiceInstanceAsync(Guid instanceId, bool active) {
+  private async Task InsertServiceInstanceAsync(Guid instanceId, string serviceName, string hostName, int processId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
+    var now = DateTimeOffset.UtcNow;
     await connection.ExecuteAsync(@"
-      INSERT INTO wb_service_instances (instance_id, active, heartbeat)
-      VALUES (@instanceId, @active, @heartbeat)",
-      new { instanceId, active, heartbeat = DateTimeOffset.UtcNow });
+      INSERT INTO wb_service_instances (instance_id, service_name, host_name, process_id, started_at, last_heartbeat_at, metadata)
+      VALUES (@instanceId, @serviceName, @hostName, @processId, @now, @now, NULL)",
+      new { instanceId, serviceName, hostName, processId, now });
   }
 
   private async Task<DateTimeOffset?> GetInstanceHeartbeatAsync(Guid instanceId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     return await connection.QueryFirstOrDefaultAsync<DateTimeOffset?>(@"
-      SELECT heartbeat FROM wb_service_instances WHERE instance_id = @instanceId",
+      SELECT last_heartbeat_at FROM wb_service_instances WHERE instance_id = @instanceId",
       new { instanceId });
   }
 

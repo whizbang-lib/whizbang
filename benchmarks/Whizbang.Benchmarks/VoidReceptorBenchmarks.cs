@@ -84,7 +84,7 @@ public class VoidReceptorBenchmarks {
     servicesWithTracing.AddTransient<IReceptor<CreateOrderCommand, OrderCreatedEvent>, CreateOrderReceptor>();
     servicesWithTracing.AddTransient<IReceptor<CreateOrderCommand, OrderCreatedEvent>, AsyncCreateOrderReceptor>();
     var providerWithTracing = servicesWithTracing.BuildServiceProvider();
-    _dispatcherWithTracing = new Core.Generated.GeneratedDispatcher(
+    _dispatcherWithTracing = new Benchmarks.Generated.GeneratedDispatcher(
       providerWithTracing,
       new InMemoryTraceStore()
     );
@@ -96,7 +96,7 @@ public class VoidReceptorBenchmarks {
     servicesNoTracing.AddTransient<IReceptor<CreateOrderCommand, OrderCreatedEvent>, CreateOrderReceptor>();
     servicesNoTracing.AddTransient<IReceptor<CreateOrderCommand, OrderCreatedEvent>, AsyncCreateOrderReceptor>();
     var providerNoTracing = servicesNoTracing.BuildServiceProvider();
-    _dispatcherNoTracing = new Core.Generated.GeneratedDispatcher(
+    _dispatcherNoTracing = new Benchmarks.Generated.GeneratedDispatcher(
       providerNoTracing,
       traceStore: null  // No tracing = fast path
     );

@@ -9,16 +9,18 @@ namespace ECommerce.Contracts.Tests.Commands;
 /// Tests for RestockInventoryCommand
 /// </summary>
 public class RestockInventoryCommandTests {
+  private static readonly IWhizbangIdProvider IdProvider = new Uuid7IdProvider();
   [Test]
   public async Task RestockInventoryCommand_WithValidProperties_InitializesSuccessfullyAsync() {
     // Arrange & Act
+    var productId = IdProvider.NewGuid();
     var cmd = new RestockInventoryCommand {
-      ProductId = "prod-123",
+      ProductId = productId,
       QuantityToAdd = 100
     };
 
     // Assert
-    await Assert.That(cmd.ProductId).IsEqualTo("prod-123");
+    await Assert.That(cmd.ProductId).IsEqualTo(productId);
     await Assert.That(cmd.QuantityToAdd).IsEqualTo(100);
   }
 
@@ -26,7 +28,7 @@ public class RestockInventoryCommandTests {
   public async Task RestockInventoryCommand_WithSmallQuantity_InitializesSuccessfullyAsync() {
     // Arrange & Act
     var cmd = new RestockInventoryCommand {
-      ProductId = "prod-456",
+      ProductId = IdProvider.NewGuid(),
       QuantityToAdd = 1
     };
 
@@ -38,7 +40,7 @@ public class RestockInventoryCommandTests {
   public async Task RestockInventoryCommand_WithLargeQuantity_InitializesSuccessfullyAsync() {
     // Arrange & Act
     var cmd = new RestockInventoryCommand {
-      ProductId = "prod-bulk",
+      ProductId = IdProvider.NewGuid(),
       QuantityToAdd = 10000
     };
 
@@ -49,13 +51,14 @@ public class RestockInventoryCommandTests {
   [Test]
   public async Task RestockInventoryCommand_RecordEquality_WorksCorrectlyAsync() {
     // Arrange
+    var productId = IdProvider.NewGuid();
     var cmd1 = new RestockInventoryCommand {
-      ProductId = "prod-123",
+      ProductId = productId,
       QuantityToAdd = 100
     };
 
     var cmd2 = new RestockInventoryCommand {
-      ProductId = "prod-123",
+      ProductId = productId,
       QuantityToAdd = 100
     };
 
@@ -66,15 +69,16 @@ public class RestockInventoryCommandTests {
   [Test]
   public async Task RestockInventoryCommand_ToString_ReturnsReadableRepresentationAsync() {
     // Arrange & Act
+    var productId = IdProvider.NewGuid();
     var cmd = new RestockInventoryCommand {
-      ProductId = "prod-999",
+      ProductId = productId,
       QuantityToAdd = 500
     };
 
     var stringRep = cmd.ToString();
 
     // Assert
-    await Assert.That(stringRep).Contains("prod-999");
+    await Assert.That(stringRep).Contains(productId.ToString());
     await Assert.That(stringRep).IsNotNull();
   }
 }

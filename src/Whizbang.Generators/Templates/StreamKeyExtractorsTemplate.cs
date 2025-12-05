@@ -6,7 +6,9 @@
 
 using System;
 
+#region NAMESPACE
 namespace Whizbang.Core.Generated;
+#endregion
 
 /// <summary>
 /// Generated stream key extractors for zero-reflection AOT compatibility.

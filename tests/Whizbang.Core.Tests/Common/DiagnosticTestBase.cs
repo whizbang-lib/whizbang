@@ -5,6 +5,7 @@ using Microsoft.Testing.Platform.OutputDevice;
 using Microsoft.Testing.Platform.Services;
 using TUnit.Core;
 using Whizbang.Core.Generated;
+using Whizbang.Core.Tests.Generated;
 
 namespace Whizbang.Core.Tests.Common;
 

@@ -1,8 +1,8 @@
 using System.Diagnostics.CodeAnalysis;
 using BenchmarkDotNet.Attributes;
 using Microsoft.Extensions.DependencyInjection;
+using Whizbang.Benchmarks.Generated;
 using Whizbang.Core;
-using Whizbang.Core.Generated;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
 

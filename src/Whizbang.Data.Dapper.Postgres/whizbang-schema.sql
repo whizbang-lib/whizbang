@@ -6,11 +6,15 @@
 -- Service Instances - Track active service instances for distributed coordination
 CREATE TABLE IF NOT EXISTS wb_service_instances (
   instance_id UUID NOT NULL PRIMARY KEY,
-  heartbeat TIMESTAMPTZ NOT NULL,
-  active BOOLEAN NOT NULL DEFAULT true
+  service_name VARCHAR(200) NOT NULL,
+  host_name VARCHAR(200) NOT NULL,
+  process_id INTEGER NOT NULL,
+  started_at TIMESTAMPTZ NOT NULL,
+  last_heartbeat_at TIMESTAMPTZ NOT NULL,
+  metadata JSONB NULL
 );
 
-CREATE INDEX IF NOT EXISTS idx_service_instances_active_heartbeat ON wb_service_instances (active, heartbeat);
+CREATE INDEX IF NOT EXISTS idx_service_instances_last_heartbeat ON wb_service_instances (last_heartbeat_at);
 
 -- Inbox - Message deduplication and idempotency
 CREATE TABLE IF NOT EXISTS wb_inbox (
@@ -113,14 +117,19 @@ CREATE OR REPLACE VIEW whizbang_sequences AS SELECT * FROM wb_sequences;
 -- Coordinated Work Processing Function
 -- Atomically processes work batches with heartbeat updates, orphaned message recovery,
 -- message completion, and failure tracking in a single transaction.
--- Phase 6 design: Accepts JSONB arrays for failed messages with error text.
+-- Updated: 2025-12-04 - Added instance management and stale cleanup
 CREATE OR REPLACE FUNCTION process_work_batch(
   p_instance_id UUID,
-  p_outbox_completed_ids UUID[],
-  p_outbox_failed_messages JSONB,
-  p_inbox_completed_ids UUID[],
-  p_inbox_failed_messages JSONB,
-  p_lease_seconds INTEGER
+  p_service_name VARCHAR(200),
+  p_host_name VARCHAR(200),
+  p_process_id INTEGER,
+  p_metadata JSONB DEFAULT NULL,
+  p_outbox_completed_ids UUID[] DEFAULT ARRAY[]::UUID[],
+  p_outbox_failed_messages JSONB DEFAULT '[]'::JSONB,
+  p_inbox_completed_ids UUID[] DEFAULT ARRAY[]::UUID[],
+  p_inbox_failed_messages JSONB DEFAULT '[]'::JSONB,
+  p_lease_seconds INTEGER DEFAULT 300,
+  p_stale_threshold_seconds INTEGER DEFAULT 600
 )
 RETURNS TABLE(
   source VARCHAR,
@@ -135,17 +144,53 @@ RETURNS TABLE(
 DECLARE
   v_now TIMESTAMPTZ := CURRENT_TIMESTAMP;
   v_lease_expiry TIMESTAMPTZ := v_now + (p_lease_seconds || ' seconds')::INTERVAL;
+  v_stale_cutoff TIMESTAMPTZ := v_now - (p_stale_threshold_seconds || ' seconds')::INTERVAL;
+  v_active_instance_count INT;
+  v_inbox_batch_size INT;
+  v_max_batch_size INT := 100;  -- Base batch size
   v_failed_msg JSONB;
   v_msg_id UUID;
   v_error TEXT;
 BEGIN
-  -- 1. Upsert service instance heartbeat (generate timestamp here)
-  INSERT INTO wb_service_instances (instance_id, heartbeat, active)
-  VALUES (p_instance_id, v_now, true)
+  -- 1. Register/update this instance with real metadata (upsert)
+  INSERT INTO wb_service_instances (
+    instance_id,
+    service_name,
+    host_name,
+    process_id,
+    started_at,
+    last_heartbeat_at,
+    metadata
+  )
+  VALUES (
+    p_instance_id,
+    p_service_name,
+    p_host_name,
+    p_process_id,
+    v_now,
+    v_now,
+    p_metadata
+  )
   ON CONFLICT (instance_id)
-  DO UPDATE SET heartbeat = v_now, active = true;
+  DO UPDATE SET
+    last_heartbeat_at = v_now,
+    metadata = COALESCE(EXCLUDED.metadata, wb_service_instances.metadata);
 
-  -- 2. Mark completed outbox messages as Published
+  -- 2. Clean up stale instances (haven't heartbeat in stale_threshold_seconds)
+  DELETE FROM wb_service_instances
+  WHERE last_heartbeat_at < v_stale_cutoff
+    AND instance_id != p_instance_id;
+
+  -- 2a. Calculate dynamic batch size for inbox based on active instance count
+  -- This ensures fair work distribution: with 1 instance = 100%, 3 instances = 34% each (rounding up)
+  SELECT COUNT(*) INTO v_active_instance_count
+  FROM wb_service_instances
+  WHERE last_heartbeat_at >= v_stale_cutoff;
+
+  -- Divide batch size by instance count, rounding up (CEILING ensures at least 1 per instance)
+  v_inbox_batch_size := CEILING(v_max_batch_size::NUMERIC / GREATEST(v_active_instance_count, 1));
+
+  -- 3. Mark completed outbox messages as Published
   IF array_length(p_outbox_completed_ids, 1) > 0 THEN
     UPDATE wb_outbox o
     SET status = 'Published',
@@ -155,7 +200,7 @@ BEGIN
     WHERE o.message_id = ANY(p_outbox_completed_ids);
   END IF;
 
-  -- 3. Mark failed outbox messages as Failed (with error text)
+  -- 4. Mark failed outbox messages as Failed (with error text)
   IF jsonb_array_length(p_outbox_failed_messages) > 0 THEN
     FOR v_failed_msg IN SELECT * FROM jsonb_array_elements(p_outbox_failed_messages)
     LOOP
@@ -172,7 +217,7 @@ BEGIN
     END LOOP;
   END IF;
 
-  -- 4. Mark completed inbox messages as Completed
+  -- 5. Mark completed inbox messages as Completed
   IF array_length(p_inbox_completed_ids, 1) > 0 THEN
     UPDATE wb_inbox i
     SET status = 'Completed',
@@ -182,7 +227,7 @@ BEGIN
     WHERE i.message_id = ANY(p_inbox_completed_ids);
   END IF;
 
-  -- 5. Mark failed inbox messages as Failed (with error text)
+  -- 6. Mark failed inbox messages as Failed (with error text)
   IF jsonb_array_length(p_inbox_failed_messages) > 0 THEN
     FOR v_failed_msg IN SELECT * FROM jsonb_array_elements(p_inbox_failed_messages)
     LOOP
@@ -199,7 +244,7 @@ BEGIN
     END LOOP;
   END IF;
 
-  -- 6. Claim and return orphaned outbox messages
+  -- 7. Claim and return orphaned outbox messages
   RETURN QUERY
   WITH to_claim AS (
     SELECT message_id AS claim_id
@@ -230,7 +275,8 @@ BEGIN
     co.attempts
   FROM claimed_outbox co;
 
-  -- 7. Claim and return orphaned inbox messages
+  -- 8. Claim and return next inbox work (with dynamic batch sizing)
+  -- Batch size is distributed fairly across active instances
   RETURN QUERY
   WITH to_claim AS (
     SELECT message_id AS claim_id
@@ -238,7 +284,7 @@ BEGIN
     WHERE status = 'Processing'
       AND (lease_expiry IS NULL OR lease_expiry < v_now)
     ORDER BY received_at
-    LIMIT 100
+    LIMIT v_inbox_batch_size  -- Dynamic batch size based on instance count
     FOR UPDATE SKIP LOCKED
   ),
   claimed_inbox AS (

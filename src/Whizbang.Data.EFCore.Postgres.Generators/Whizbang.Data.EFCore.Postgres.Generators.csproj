@@ -47,6 +47,8 @@
     <None Include="Templates\**\*.cs" />
     <!-- Embed as resources so generator can read them at runtime -->
     <EmbeddedResource Include="Templates\**\*.cs" />
+    <!-- Embed SQL migration files as resources -->
+    <EmbeddedResource Include="Templates\Migrations\*.sql" />
   </ItemGroup>
 
   <!-- Note: Cannot reference Whizbang.Core directly due to TFM incompatibility -->

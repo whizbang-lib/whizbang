@@ -9,31 +9,34 @@ namespace ECommerce.Contracts.Tests.Events;
 /// Tests for ProductDeletedEvent
 /// </summary>
 public class ProductDeletedEventTests {
+  private static readonly IWhizbangIdProvider IdProvider = new Uuid7IdProvider();
   [Test]
   public async Task ProductDeletedEvent_WithValidProperties_InitializesSuccessfullyAsync() {
     // Arrange & Act
+    var productId = IdProvider.NewGuid();
     var deletedAt = DateTime.UtcNow;
     var evt = new ProductDeletedEvent {
-      ProductId = "prod-123",
+      ProductId = productId,
       DeletedAt = deletedAt
     };
 
     // Assert
-    await Assert.That(evt.ProductId).IsEqualTo("prod-123");
+    await Assert.That(evt.ProductId).IsEqualTo(productId);
     await Assert.That(evt.DeletedAt).IsEqualTo(deletedAt);
   }
 
   [Test]
   public async Task ProductDeletedEvent_RecordEquality_WorksCorrectlyAsync() {
     // Arrange
+    var productId = IdProvider.NewGuid();
     var deletedAt = DateTime.UtcNow;
     var evt1 = new ProductDeletedEvent {
-      ProductId = "prod-123",
+      ProductId = productId,
       DeletedAt = deletedAt
     };
 
     var evt2 = new ProductDeletedEvent {
-      ProductId = "prod-123",
+      ProductId = productId,
       DeletedAt = deletedAt
     };
 
@@ -44,15 +47,16 @@ public class ProductDeletedEventTests {
   [Test]
   public async Task ProductDeletedEvent_ToString_ReturnsReadableRepresentationAsync() {
     // Arrange & Act
+    var productId = IdProvider.NewGuid();
     var evt = new ProductDeletedEvent {
-      ProductId = "prod-999",
+      ProductId = productId,
       DeletedAt = DateTime.UtcNow
     };
 
     var stringRep = evt.ToString();
 
     // Assert
-    await Assert.That(stringRep).Contains("prod-999");
+    await Assert.That(stringRep).Contains(productId.ToString());
     await Assert.That(stringRep).IsNotNull();
   }
 
@@ -61,12 +65,12 @@ public class ProductDeletedEventTests {
     // Arrange
     var deletedAt = DateTime.UtcNow;
     var evt1 = new ProductDeletedEvent {
-      ProductId = "prod-123",
+      ProductId = IdProvider.NewGuid(),
       DeletedAt = deletedAt
     };
 
     var evt2 = new ProductDeletedEvent {
-      ProductId = "prod-456",
+      ProductId = IdProvider.NewGuid(),
       DeletedAt = deletedAt
     };
 

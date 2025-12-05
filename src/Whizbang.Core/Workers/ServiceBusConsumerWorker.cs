@@ -29,14 +29,18 @@ public class ServiceBusConsumerWorker(
   private readonly ServiceBusConsumerOptions _options = options ?? new ServiceBusConsumerOptions();
 
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
+    using var activity = WhizbangActivitySource.Hosting.StartActivity("ServiceBusConsumerWorker.Start");
+    activity?.SetTag("worker.subscriptions_count", _options.Subscriptions.Count);
+    activity?.SetTag("servicebus.has_filter", _options.Subscriptions.Any(s => !string.IsNullOrWhiteSpace(s.DestinationFilter)));
+
     _logger.LogInformation("ServiceBusConsumerWorker starting...");
 
     try {
       // Subscribe to configured topics
       foreach (var topicConfig in _options.Subscriptions) {
-        // Create destination with SQL filter metadata if specified
-        var metadata = !string.IsNullOrWhiteSpace(topicConfig.SqlFilter)
-          ? new Dictionary<string, object> { ["SqlFilter"] = topicConfig.SqlFilter }
+        // Create destination with DestinationFilter metadata if specified
+        var metadata = !string.IsNullOrWhiteSpace(topicConfig.DestinationFilter)
+          ? new Dictionary<string, object> { ["DestinationFilter"] = topicConfig.DestinationFilter }
           : null;
 
         var destination = new TransportDestination(
@@ -267,5 +271,5 @@ public class ServiceBusConsumerOptions {
 /// </summary>
 /// <param name="TopicName">The Service Bus topic name</param>
 /// <param name="SubscriptionName">The subscription name for this consumer</param>
-/// <param name="SqlFilter">Optional SQL filter expression (e.g., "Destination = 'service-name'")</param>
-public record TopicSubscription(string TopicName, string SubscriptionName, string? SqlFilter = null);
+/// <param name="DestinationFilter">Optional destination filter value (e.g., "inventory-service")</param>
+public record TopicSubscription(string TopicName, string SubscriptionName, string? DestinationFilter = null);

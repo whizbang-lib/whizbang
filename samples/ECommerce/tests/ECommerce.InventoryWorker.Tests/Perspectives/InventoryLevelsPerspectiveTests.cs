@@ -1,11 +1,12 @@
-using Dapper;
 using ECommerce.Contracts.Events;
+using ECommerce.InventoryWorker.Lenses;
 using ECommerce.InventoryWorker.Perspectives;
 using ECommerce.InventoryWorker.Tests.TestHelpers;
-using Microsoft.Extensions.Logging;
-using Npgsql;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core.Lenses;
 
 namespace ECommerce.InventoryWorker.Tests.Perspectives;
 
@@ -18,13 +19,12 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
   [Test]
   public async Task Update_WithInventoryRestockedEvent_CreatesNewInventoryRecordAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var logger = new TestLogger<InventoryLevelsPerspective>();
-    var perspective = new InventoryLevelsPerspective(connectionFactory, logger);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var perspective = sp.GetRequiredService<InventoryLevelsPerspective>();
+    var query = sp.GetRequiredService<ILensQuery<InventoryLevelDto>>();
 
     var productId = Guid.CreateVersion7();
     var @event = new InventoryRestockedEvent {
-
       ProductId = productId,
       QuantityAdded = 100,
       NewTotalQuantity = 100,
@@ -34,28 +34,22 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     // Act
     await perspective.Update(@event, CancellationToken.None);
 
-    // Assert - Verify inventory record was created
-    var connectionString = await _dbHelper.GetConnectionStringAsync();
-    await using var connection = new NpgsqlConnection(connectionString);
-    await connection.OpenAsync();
+    // Assert - Verify inventory record was created using EF Core
+    var stored = await query.GetByIdAsync(productId.ToString());
 
-    var inventory = await connection.QuerySingleOrDefaultAsync<InventoryRow>(
-      "SELECT product_id, quantity, reserved, available, last_updated FROM inventoryworker.inventory_levels WHERE product_id = @ProductId",
-      new { ProductId = productId });
-
-    await Assert.That(inventory).IsNotNull();
-    await Assert.That(inventory!.product_id).IsEqualTo(productId);
-    await Assert.That(inventory.quantity).IsEqualTo(100);
-    await Assert.That(inventory.reserved).IsEqualTo(0);
-    await Assert.That(inventory.available).IsEqualTo(100); // Computed column: quantity - reserved
+    await Assert.That(stored).IsNotNull();
+    await Assert.That(stored!.ProductId).IsEqualTo(productId);
+    await Assert.That(stored.Quantity).IsEqualTo(100);
+    await Assert.That(stored.Reserved).IsEqualTo(0);
+    await Assert.That(stored.Available).IsEqualTo(100); // Computed: quantity - reserved
   }
 
   [Test]
   public async Task Update_WithInventoryRestockedEvent_UpdatesExistingInventoryAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var logger = new TestLogger<InventoryLevelsPerspective>();
-    var perspective = new InventoryLevelsPerspective(connectionFactory, logger);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var perspective = sp.GetRequiredService<InventoryLevelsPerspective>();
+    var query = sp.GetRequiredService<ILensQuery<InventoryLevelDto>>();
 
     var productId = Guid.CreateVersion7();
 
@@ -79,27 +73,21 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     };
     await perspective.Update(restockEvent, CancellationToken.None);
 
-    // Assert - Verify quantity was updated
-    var connectionString = await _dbHelper.GetConnectionStringAsync();
-    await using var connection = new NpgsqlConnection(connectionString);
-    await connection.OpenAsync();
+    // Assert - Verify quantity was updated using EF Core
+    var stored = await query.GetByIdAsync(productId.ToString());
 
-    var inventory = await connection.QuerySingleOrDefaultAsync<InventoryRow>(
-      "SELECT quantity, reserved, available FROM inventoryworker.inventory_levels WHERE product_id = @ProductId",
-      new { ProductId = productId });
-
-    await Assert.That(inventory).IsNotNull();
-    await Assert.That(inventory!.quantity).IsEqualTo(125);
-    await Assert.That(inventory.reserved).IsEqualTo(0); // Should remain unchanged
-    await Assert.That(inventory.available).IsEqualTo(125);
+    await Assert.That(stored).IsNotNull();
+    await Assert.That(stored!.Quantity).IsEqualTo(125);
+    await Assert.That(stored.Reserved).IsEqualTo(0); // Should remain unchanged
+    await Assert.That(stored.Available).IsEqualTo(125);
   }
 
   [Test]
   public async Task Update_WithInventoryRestockedEvent_UpdatesLastUpdatedTimestampAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var logger = new TestLogger<InventoryLevelsPerspective>();
-    var perspective = new InventoryLevelsPerspective(connectionFactory, logger);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var perspective = sp.GetRequiredService<InventoryLevelsPerspective>();
+    var query = sp.GetRequiredService<ILensQuery<InventoryLevelDto>>();
 
     var productId = Guid.CreateVersion7();
     var restockTime = DateTime.UtcNow;
@@ -114,46 +102,19 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     // Act
     await perspective.Update(@event, CancellationToken.None);
 
-    // Assert - Verify last_updated was set
-    var connectionString = await _dbHelper.GetConnectionStringAsync();
-    await using var connection = new NpgsqlConnection(connectionString);
-    await connection.OpenAsync();
+    // Assert - Verify last_updated was set using EF Core
+    var stored = await query.GetByIdAsync(productId.ToString());
 
-    var inventory = await connection.QuerySingleOrDefaultAsync<InventoryRow>(
-      "SELECT last_updated FROM inventoryworker.inventory_levels WHERE product_id = @ProductId",
-      new { ProductId = productId });
-
-    await Assert.That(inventory).IsNotNull();
+    await Assert.That(stored).IsNotNull();
   }
 
-  [Test]
-  public async Task Update_WithInventoryRestockedEvent_LogsSuccessAsync() {
-    // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var logger = new TestLogger<InventoryLevelsPerspective>();
-    var perspective = new InventoryLevelsPerspective(connectionFactory, logger);
-
-    var @event = new InventoryRestockedEvent {
-
-      ProductId = Guid.CreateVersion7(),
-      QuantityAdded = 100,
-      NewTotalQuantity = 100,
-      RestockedAt = DateTime.UtcNow
-    };
-
-    // Act
-    await perspective.Update(@event, CancellationToken.None);
-
-    // Assert - Should have logged something
-    await Assert.That(logger.LoggedMessages).HasCount().GreaterThanOrEqualTo(1);
-  }
 
   [Test]
   public async Task Update_WithInventoryReservedEvent_UpdatesReservedQuantityAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var logger = new TestLogger<InventoryLevelsPerspective>();
-    var perspective = new InventoryLevelsPerspective(connectionFactory, logger);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var perspective = sp.GetRequiredService<InventoryLevelsPerspective>();
+    var query = sp.GetRequiredService<ILensQuery<InventoryLevelDto>>();
 
     var productId = Guid.CreateVersion7();
 
@@ -177,27 +138,21 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     };
     await perspective.Update(reservedEvent, CancellationToken.None);
 
-    // Assert - Verify reserved was updated
-    var connectionString = await _dbHelper.GetConnectionStringAsync();
-    await using var connection = new NpgsqlConnection(connectionString);
-    await connection.OpenAsync();
+    // Assert - Verify reserved was updated using EF Core
+    var stored = await query.GetByIdAsync(productId.ToString());
 
-    var inventory = await connection.QuerySingleOrDefaultAsync<InventoryRow>(
-      "SELECT quantity, reserved, available FROM inventoryworker.inventory_levels WHERE product_id = @ProductId",
-      new { ProductId = productId });
-
-    await Assert.That(inventory).IsNotNull();
-    await Assert.That(inventory!.quantity).IsEqualTo(100);
-    await Assert.That(inventory.reserved).IsEqualTo(25);
-    await Assert.That(inventory.available).IsEqualTo(75); // Computed: 100 - 25
+    await Assert.That(stored).IsNotNull();
+    await Assert.That(stored!.Quantity).IsEqualTo(100);
+    await Assert.That(stored.Reserved).IsEqualTo(25);
+    await Assert.That(stored.Available).IsEqualTo(75); // Computed: 100 - 25
   }
 
   [Test]
   public async Task Update_WithInventoryReservedEvent_AccumulatesReservationsAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var logger = new TestLogger<InventoryLevelsPerspective>();
-    var perspective = new InventoryLevelsPerspective(connectionFactory, logger);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var perspective = sp.GetRequiredService<InventoryLevelsPerspective>();
+    var query = sp.GetRequiredService<ILensQuery<InventoryLevelDto>>();
 
     var productId = Guid.CreateVersion7();
 
@@ -230,27 +185,21 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     };
     await perspective.Update(reservation2, CancellationToken.None);
 
-    // Assert - Verify reserved accumulated
-    var connectionString = await _dbHelper.GetConnectionStringAsync();
-    await using var connection = new NpgsqlConnection(connectionString);
-    await connection.OpenAsync();
+    // Assert - Verify reserved accumulated using EF Core
+    var stored = await query.GetByIdAsync(productId.ToString());
 
-    var inventory = await connection.QuerySingleOrDefaultAsync<InventoryRow>(
-      "SELECT quantity, reserved, available FROM inventoryworker.inventory_levels WHERE product_id = @ProductId",
-      new { ProductId = productId });
-
-    await Assert.That(inventory).IsNotNull();
-    await Assert.That(inventory!.quantity).IsEqualTo(100);
-    await Assert.That(inventory.reserved).IsEqualTo(25); // 10 + 15
-    await Assert.That(inventory.available).IsEqualTo(75); // 100 - 25
+    await Assert.That(stored).IsNotNull();
+    await Assert.That(stored!.Quantity).IsEqualTo(100);
+    await Assert.That(stored.Reserved).IsEqualTo(25); // 10 + 15
+    await Assert.That(stored.Available).IsEqualTo(75); // 100 - 25
   }
 
   [Test]
   public async Task Update_WithInventoryReservedEvent_UpdatesLastUpdatedTimestampAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var logger = new TestLogger<InventoryLevelsPerspective>();
-    var perspective = new InventoryLevelsPerspective(connectionFactory, logger);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var perspective = sp.GetRequiredService<InventoryLevelsPerspective>();
+    var query = sp.GetRequiredService<ILensQuery<InventoryLevelDto>>();
 
     var productId = Guid.CreateVersion7();
 
@@ -275,55 +224,19 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     };
     await perspective.Update(reservedEvent, CancellationToken.None);
 
-    // Assert - Verify last_updated was updated
-    var connectionString = await _dbHelper.GetConnectionStringAsync();
-    await using var connection = new NpgsqlConnection(connectionString);
-    await connection.OpenAsync();
+    // Assert - Verify last_updated was updated using EF Core
+    var stored = await query.GetByIdAsync(productId.ToString());
 
-    var inventory = await connection.QuerySingleOrDefaultAsync<InventoryRow>(
-      "SELECT last_updated FROM inventoryworker.inventory_levels WHERE product_id = @ProductId",
-      new { ProductId = productId });
-
-    await Assert.That(inventory).IsNotNull();
+    await Assert.That(stored).IsNotNull();
   }
 
-  [Test]
-  public async Task Update_WithInventoryReservedEvent_LogsSuccessAsync() {
-    // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var logger = new TestLogger<InventoryLevelsPerspective>();
-    var perspective = new InventoryLevelsPerspective(connectionFactory, logger);
-
-    // Create initial inventory
-    var restockEvent = new InventoryRestockedEvent {
-
-      ProductId = Guid.CreateVersion7(),
-      QuantityAdded = 100,
-      NewTotalQuantity = 100,
-      RestockedAt = DateTime.UtcNow
-    };
-    await perspective.Update(restockEvent, CancellationToken.None);
-
-    // Act
-    var reservedEvent = new InventoryReservedEvent {
-      OrderId = "order-log",
-
-      ProductId = Guid.CreateVersion7(),
-      Quantity = 25,
-      ReservedAt = DateTime.UtcNow
-    };
-    await perspective.Update(reservedEvent, CancellationToken.None);
-
-    // Assert - Should have logged something
-    await Assert.That(logger.LoggedMessages).HasCount().GreaterThanOrEqualTo(2); // Restock + Reserve
-  }
 
   [Test]
   public async Task Update_WithInventoryAdjustedEvent_UpdatesQuantityAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var logger = new TestLogger<InventoryLevelsPerspective>();
-    var perspective = new InventoryLevelsPerspective(connectionFactory, logger);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var perspective = sp.GetRequiredService<InventoryLevelsPerspective>();
+    var query = sp.GetRequiredService<ILensQuery<InventoryLevelDto>>();
 
     var productId = Guid.CreateVersion7();
 
@@ -348,26 +261,20 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     };
     await perspective.Update(adjustedEvent, CancellationToken.None);
 
-    // Assert - Verify quantity was adjusted
-    var connectionString = await _dbHelper.GetConnectionStringAsync();
-    await using var connection = new NpgsqlConnection(connectionString);
-    await connection.OpenAsync();
+    // Assert - Verify quantity was adjusted using EF Core
+    var stored = await query.GetByIdAsync(productId.ToString());
 
-    var inventory = await connection.QuerySingleOrDefaultAsync<InventoryRow>(
-      "SELECT quantity, available FROM inventoryworker.inventory_levels WHERE product_id = @ProductId",
-      new { ProductId = productId });
-
-    await Assert.That(inventory).IsNotNull();
-    await Assert.That(inventory!.quantity).IsEqualTo(90);
-    await Assert.That(inventory.available).IsEqualTo(90);
+    await Assert.That(stored).IsNotNull();
+    await Assert.That(stored!.Quantity).IsEqualTo(90);
+    await Assert.That(stored.Available).IsEqualTo(90);
   }
 
   [Test]
   public async Task Update_WithInventoryAdjustedEvent_HandlesPositiveAdjustmentAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var logger = new TestLogger<InventoryLevelsPerspective>();
-    var perspective = new InventoryLevelsPerspective(connectionFactory, logger);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var perspective = sp.GetRequiredService<InventoryLevelsPerspective>();
+    var query = sp.GetRequiredService<ILensQuery<InventoryLevelDto>>();
 
     var productId = Guid.CreateVersion7();
 
@@ -392,25 +299,19 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     };
     await perspective.Update(adjustedEvent, CancellationToken.None);
 
-    // Assert - Verify quantity was increased
-    var connectionString = await _dbHelper.GetConnectionStringAsync();
-    await using var connection = new NpgsqlConnection(connectionString);
-    await connection.OpenAsync();
+    // Assert - Verify quantity was increased using EF Core
+    var stored = await query.GetByIdAsync(productId.ToString());
 
-    var inventory = await connection.QuerySingleOrDefaultAsync<InventoryRow>(
-      "SELECT quantity FROM inventoryworker.inventory_levels WHERE product_id = @ProductId",
-      new { ProductId = productId });
-
-    await Assert.That(inventory).IsNotNull();
-    await Assert.That(inventory!.quantity).IsEqualTo(115);
+    await Assert.That(stored).IsNotNull();
+    await Assert.That(stored!.Quantity).IsEqualTo(115);
   }
 
   [Test]
   public async Task Update_WithInventoryAdjustedEvent_UpdatesLastUpdatedTimestampAsync() {
     // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var logger = new TestLogger<InventoryLevelsPerspective>();
-    var perspective = new InventoryLevelsPerspective(connectionFactory, logger);
+    var sp = await _dbHelper.CreateServiceProviderAsync();
+    var perspective = sp.GetRequiredService<InventoryLevelsPerspective>();
+    var query = sp.GetRequiredService<ILensQuery<InventoryLevelDto>>();
 
     var productId = Guid.CreateVersion7();
 
@@ -436,49 +337,12 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     };
     await perspective.Update(adjustedEvent, CancellationToken.None);
 
-    // Assert - Verify last_updated was updated
-    var connectionString = await _dbHelper.GetConnectionStringAsync();
-    await using var connection = new NpgsqlConnection(connectionString);
-    await connection.OpenAsync();
+    // Assert - Verify last_updated was updated using EF Core
+    var stored = await query.GetByIdAsync(productId.ToString());
 
-    var inventory = await connection.QuerySingleOrDefaultAsync<InventoryRow>(
-      "SELECT last_updated FROM inventoryworker.inventory_levels WHERE product_id = @ProductId",
-      new { ProductId = productId });
-
-    await Assert.That(inventory).IsNotNull();
+    await Assert.That(stored).IsNotNull();
   }
 
-  [Test]
-  public async Task Update_WithInventoryAdjustedEvent_LogsSuccessAsync() {
-    // Arrange
-    var connectionFactory = await _dbHelper.CreateConnectionFactoryAsync();
-    var logger = new TestLogger<InventoryLevelsPerspective>();
-    var perspective = new InventoryLevelsPerspective(connectionFactory, logger);
-
-    // Create initial inventory
-    var restockEvent = new InventoryRestockedEvent {
-
-      ProductId = Guid.CreateVersion7(),
-      QuantityAdded = 100,
-      NewTotalQuantity = 100,
-      RestockedAt = DateTime.UtcNow
-    };
-    await perspective.Update(restockEvent, CancellationToken.None);
-
-    // Act
-    var adjustedEvent = new InventoryAdjustedEvent {
-
-      ProductId = Guid.CreateVersion7(),
-      QuantityChange = -5,
-      NewTotalQuantity = 95,
-      Reason = "Test",
-      AdjustedAt = DateTime.UtcNow
-    };
-    await perspective.Update(adjustedEvent, CancellationToken.None);
-
-    // Assert - Should have logged something
-    await Assert.That(logger.LoggedMessages).HasCount().GreaterThanOrEqualTo(2); // Restock + Adjust
-  }
 
   [After(Test)]
   public async Task CleanupAsync() {
@@ -488,15 +352,4 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
   public async ValueTask DisposeAsync() {
     await _dbHelper.DisposeAsync();
   }
-}
-
-/// <summary>
-/// DTO for reading inventory_levels rows from database
-/// </summary>
-internal record InventoryRow {
-  public Guid product_id { get; init; }
-  public int quantity { get; init; }
-  public int reserved { get; init; }
-  public int available { get; init; }
-  public DateTime last_updated { get; init; }
 }

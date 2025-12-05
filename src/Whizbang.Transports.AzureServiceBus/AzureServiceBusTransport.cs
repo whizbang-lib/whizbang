@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using Azure.Messaging.ServiceBus;
@@ -20,6 +21,7 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
   private readonly SemaphoreSlim _senderLock = new(1, 1);
   private readonly AzureServiceBusOptions _options;
   private readonly JsonSerializerContext _jsonContext;
+  private readonly bool _isEmulator;
   private bool _disposed;
 
   public AzureServiceBusTransport(
@@ -28,23 +30,39 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
     AzureServiceBusOptions? options = null,
     ILogger<AzureServiceBusTransport>? logger = null
   ) {
+    using var activity = WhizbangActivitySource.Transport.StartActivity("AzureServiceBusTransport.Initialize");
+
     ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
     ArgumentNullException.ThrowIfNull(jsonContext);
 
-    _client = new ServiceBusClient(connectionString);
+    // Detect if running against emulator (localhost/127.0.0.1)
+    _isEmulator = connectionString.Contains("localhost", StringComparison.OrdinalIgnoreCase) ||
+                  connectionString.Contains("127.0.0.1");
 
-    // Create administration client for managing subscription rules (SQL filters)
-    // This may fail with emulator or certain connection string formats
-    try {
-      _adminClient = new ServiceBusAdministrationClient(connectionString);
-    } catch (Exception ex) {
-      _logger?.LogWarning(ex, "Failed to create ServiceBusAdministrationClient. SQL filters will not be available.");
+    _client = new ServiceBusClient(connectionString);
+    _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<AzureServiceBusTransport>.Instance;
+
+    // Create administration client for managing subscription rules (CorrelationFilter)
+    // Skip for emulator as it doesn't support the Admin API (REST on port 443)
+    if (!_isEmulator) {
+      try {
+        _adminClient = new ServiceBusAdministrationClient(connectionString);
+      } catch (Exception ex) {
+        _logger.LogWarning(ex, "Failed to create ServiceBusAdministrationClient. Filter provisioning will not be available.");
+        _adminClient = null;
+      }
+    } else {
+      _logger.LogInformation("Emulator detected. Administration client disabled. Filters must be provisioned by Aspire AppHost.");
       _adminClient = null;
     }
 
     _jsonContext = jsonContext;
     _options = options ?? new AzureServiceBusOptions();
-    _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<AzureServiceBusTransport>.Instance;
+
+    // Add OTEL tags for observability
+    activity?.SetTag("transport.type", "AzureServiceBus");
+    activity?.SetTag("transport.emulator", _isEmulator);
+    activity?.SetTag("transport.admin_client_available", _adminClient != null);
   }
 
   /// <inheritdoc />
@@ -136,27 +154,29 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
       var topicName = destination.Address;
       var subscriptionName = destination.RoutingKey ?? _options.DefaultSubscriptionName;
 
-      // Apply SQL filter if specified in metadata
-      if (destination.Metadata?.TryGetValue("SqlFilter", out var sqlFilterObj) == true &&
-          sqlFilterObj is string sqlFilter &&
-          !string.IsNullOrWhiteSpace(sqlFilter)) {
+      // Apply CorrelationFilter if specified in metadata (production without Aspire)
+      // Skip if emulator (filters provisioned by Aspire AppHost)
+      if (!_isEmulator &&
+          destination.Metadata?.TryGetValue("DestinationFilter", out var destinationFilterObj) == true &&
+          destinationFilterObj is string destinationFilter &&
+          !string.IsNullOrWhiteSpace(destinationFilter)) {
 
         if (_adminClient != null) {
           try {
-            await ApplySqlFilterAsync(topicName, subscriptionName, sqlFilter, cancellationToken);
+            await ApplyCorrelationFilterAsync(topicName, subscriptionName, destinationFilter, cancellationToken);
           } catch (Exception ex) {
             _logger.LogWarning(
               ex,
-              "Failed to apply SQL filter '{SqlFilter}' to {TopicName}/{SubscriptionName}. Proceeding without filter.",
-              sqlFilter,
+              "Failed to apply CorrelationFilter '{DestinationFilter}' to {TopicName}/{SubscriptionName}. Proceeding without filter.",
+              destinationFilter,
               topicName,
               subscriptionName
             );
           }
         } else {
           _logger.LogWarning(
-            "SQL filter '{SqlFilter}' specified for {TopicName}/{SubscriptionName} but administration client is not available",
-            sqlFilter,
+            "DestinationFilter '{DestinationFilter}' specified for {TopicName}/{SubscriptionName} but administration client is not available",
+            destinationFilter,
             topicName,
             subscriptionName
           );
@@ -332,38 +352,49 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
   }
 
   /// <summary>
-  /// Applies a SQL filter to a subscription by replacing the default rule.
+  /// Applies a CorrelationFilter to a subscription by replacing the default rule.
+  /// Filters messages based on the Destination application property.
   /// </summary>
-  private async Task ApplySqlFilterAsync(
+  private async Task ApplyCorrelationFilterAsync(
     string topicName,
     string subscriptionName,
-    string sqlFilter,
+    string destination,
     CancellationToken cancellationToken
   ) {
+    using var activity = WhizbangActivitySource.Hosting.StartActivity("ApplyCorrelationFilter");
+    activity?.SetTag("servicebus.topic", topicName);
+    activity?.SetTag("servicebus.subscription", subscriptionName);
+    activity?.SetTag("servicebus.filter_type", "CorrelationRuleFilter");
+    activity?.SetTag("servicebus.destination", destination);
+
     if (_adminClient == null) {
       throw new InvalidOperationException("Administration client is not available");
     }
 
     const string defaultRuleName = "$Default";
-    const string customRuleName = "CustomSqlFilter";
+    const string customRuleName = "DestinationFilter";
 
     try {
       // Check if subscription exists
       var subscriptionExists = await _adminClient.SubscriptionExistsAsync(topicName, subscriptionName, cancellationToken);
       if (!subscriptionExists) {
+        activity?.SetTag("servicebus.subscription_exists", false);
         _logger.LogWarning(
-          "Subscription {TopicName}/{SubscriptionName} does not exist. Cannot apply SQL filter.",
+          "Subscription {TopicName}/{SubscriptionName} does not exist. Cannot apply CorrelationFilter.",
           topicName,
           subscriptionName
         );
         return;
       }
+      activity?.SetTag("servicebus.subscription_exists", true);
 
       // Remove default rule if it exists
       var rules = _adminClient.GetRulesAsync(topicName, subscriptionName, cancellationToken);
+      var deletedRules = 0;
       await foreach (var rule in rules) {
         if (rule.Name == defaultRuleName || rule.Name == customRuleName) {
           await _adminClient.DeleteRuleAsync(topicName, subscriptionName, rule.Name, cancellationToken);
+          deletedRules++;
           _logger.LogDebug(
             "Deleted rule '{RuleName}' from {TopicName}/{SubscriptionName}",
             rule.Name,
@@ -372,26 +403,31 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
           );
         }
       }
+      activity?.SetTag("servicebus.rules_deleted", deletedRules);
 
-      // Create new rule with SQL filter
+      // Create new rule with CorrelationFilter on Destination application property
       var ruleOptions = new CreateRuleOptions {
         Name = customRuleName,
-        Filter = new SqlRuleFilter(sqlFilter)
+        Filter = new CorrelationRuleFilter {
+          ApplicationProperties = { ["Destination"] = destination }
+        }
       };
 
       await _adminClient.CreateRuleAsync(topicName, subscriptionName, ruleOptions, cancellationToken);
+      activity?.SetTag("servicebus.rule_created", true);
 
       _logger.LogInformation(
-        "Applied SQL filter '{SqlFilter}' to {TopicName}/{SubscriptionName}",
-        sqlFilter,
+        "Applied CorrelationFilter for Destination='{Destination}' to {TopicName}/{SubscriptionName}",
+        destination,
         topicName,
         subscriptionName
       );
     } catch (Exception ex) {
+      activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
       _logger.LogError(
         ex,
-        "Error applying SQL filter '{SqlFilter}' to {TopicName}/{SubscriptionName}",
-        sqlFilter,
+        "Error applying CorrelationFilter for Destination='{Destination}' to {TopicName}/{SubscriptionName}",
+        destination,
         topicName,
         subscriptionName
       );

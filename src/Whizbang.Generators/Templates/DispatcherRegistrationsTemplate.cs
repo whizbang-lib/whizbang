@@ -16,7 +16,9 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Transports;
 
+#region NAMESPACE
 namespace Whizbang.Core.Generated {
+#endregion
   /// <summary>
   /// Auto-generated registrations for receptors, dispatcher, and perspective invoker.
   /// </summary>
@@ -64,7 +66,7 @@ namespace Whizbang.Core.Generated {
         // The Dispatcher will resolve them per-call from the active service provider
         return new GeneratedDispatcher(sp, traceStore, null, transport, jsonOptions);
       });
-      services.AddSingleton<Dispatcher>(sp => (GeneratedDispatcher)sp.GetRequiredService<IDispatcher>());
+      services.AddSingleton<global::Whizbang.Core.Dispatcher>(sp => (GeneratedDispatcher)sp.GetRequiredService<IDispatcher>());
       return services;
     }
   }

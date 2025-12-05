@@ -74,12 +74,12 @@ public class OutboxPublisher(IOutbox outbox, ITransport transport, System.Text.J
           Timestamp = DateTimeOffset.UtcNow
         });
 
-        // Include Destination in metadata for SQL filter support
+        // Include Destination in metadata for CorrelationFilter support
         var destination = new TransportDestination(
           message.Destination,
           null,  // No routing key
           new Dictionary<string, object> {
-            ["Destination"] = message.Destination  // Used by SQL filters in inbox pattern
+            ["Destination"] = message.Destination  // Used by CorrelationFilter in inbox pattern
           }
         );
 

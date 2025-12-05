@@ -70,15 +70,34 @@ public class InventoryLevelsPerspective(
   /// <summary>
   /// Handles InventoryRestockedEvent by upserting inventory levels.
   /// Creates new record if product doesn't exist, updates if it does.
+  /// Preserves existing Reserved count - only updates Quantity.
   /// Sends real-time SignalR notification after successful database update.
   /// </summary>
   public async Task Update(InventoryRestockedEvent @event, CancellationToken cancellationToken = default) {
     try {
+      // Get existing inventory to preserve reserved count
+      var existing = await _query.GetByIdAsync(@event.ProductId.ToString(), cancellationToken);
+
+      if (existing is null) {
+        _logger.LogInformation(
+          "Product {ProductId} not found for restock - creating new entry",
+          @event.ProductId);
+
+        // Create new entry with no reservations
+        existing = new InventoryLevelDto {
+          ProductId = @event.ProductId,
+          Quantity = 0,
+          Reserved = 0,
+          Available = 0,
+          LastUpdated = @event.RestockedAt
+        };
+      }
+
       var model = new InventoryLevelDto {
         ProductId = @event.ProductId,
         Quantity = @event.NewTotalQuantity,
-        Reserved = 0,
-        Available = @event.NewTotalQuantity,
+        Reserved = existing.Reserved,  // Preserve existing reserved count
+        Available = @event.NewTotalQuantity - existing.Reserved,
         LastUpdated = @event.RestockedAt
       };
 
@@ -86,9 +105,11 @@ public class InventoryLevelsPerspective(
       await _store.UpsertAsync(@event.ProductId.ToString(), model, cancellationToken);
 
       _logger.LogInformation(
-        "BFF inventory levels updated: Product {ProductId} restocked to {Quantity}",
+        "BFF inventory levels updated: Product {ProductId} restocked to {Quantity} (Reserved: {Reserved}, Available: {Available})",
         @event.ProductId,
-        @event.NewTotalQuantity);
+        @event.NewTotalQuantity,
+        model.Reserved,
+        model.Available);
 
       // Send real-time notification
       await SendInventoryNotificationAsync(

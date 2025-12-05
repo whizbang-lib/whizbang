@@ -1,44 +1,58 @@
 using ECommerce.Contracts.Generated;
 using ECommerce.NotificationWorker;
+using ECommerce.NotificationWorker.Generated;
+using Microsoft.EntityFrameworkCore;
 using Whizbang.Core;
 using Whizbang.Core.Generated;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Workers;
+using Whizbang.Data.EFCore.Postgres;
 using Whizbang.Transports.AzureServiceBus;
 
 var builder = Host.CreateApplicationBuilder(args);
 
-// Add service defaults (telemetry, health checks, service discovery)
 builder.AddServiceDefaults();
 
-// Get connection strings from Aspire configuration
+var postgresConnection = builder.Configuration.GetConnectionString("notificationdb")
+    ?? throw new InvalidOperationException("PostgreSQL connection string 'notificationdb' not found");
 var serviceBusConnection = builder.Configuration.GetConnectionString("servicebus")
     ?? throw new InvalidOperationException("Azure Service Bus connection string 'servicebus' not found");
 
-// TODO: Migrate to EF Core implementations
-// The NotificationWorker needs EF Core implementations of:
-// - Inbox (for reliable event consumption)
-// - Outbox (for reliable notification sending)
-// Migration plan: builder.Services.AddWhizbang().WithEFCore<NotificationDbContext>().WithDriver.Postgres
-
-// Register Azure Service Bus transport
 builder.Services.AddAzureServiceBusTransport(serviceBusConnection, ECommerce.Contracts.Generated.WhizbangJsonContext.Default);
 builder.Services.AddAzureServiceBusHealthChecks();
-
-// Add trace store for observability
 builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
 
-// TODO: Re-enable after EF Core implementations
-// builder.Services.AddReceptors();
-// builder.Services.AddWhizbangDispatcher();
-// builder.Services.AddHostedService<OutboxPublisherWorker>();
+builder.Services.AddDbContext<NotificationDbContext>(options =>
+  options.UseNpgsql(postgresConnection));
 
-// TODO: Re-enable after EF Core inbox
-// var consumerOptions = new ServiceBusConsumerOptions();
-// consumerOptions.Subscriptions.Add(new TopicSubscription("orders", "notification-service"));
-// builder.Services.AddSingleton(consumerOptions);
-// builder.Services.AddHostedService<ServiceBusConsumerWorker>();
+_ = builder.Services
+  .AddWhizbang()
+  .WithEFCore<NotificationDbContext>()
+  .WithDriver.Postgres;
+
+builder.Services.AddReceptors();
+builder.Services.AddWhizbangDispatcher();
+builder.Services.AddWhizbangAggregateIdExtractor();
+
+// WorkCoordinator publisher - atomic coordination with lease-based work claiming
+builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
+
+var consumerOptions = new ServiceBusConsumerOptions();
+consumerOptions.Subscriptions.Add(new TopicSubscription("orders", "sub-notification-orders"));
+builder.Services.AddSingleton(consumerOptions);
+builder.Services.AddHostedService<ServiceBusConsumerWorker>();
 
 builder.Services.AddHostedService<Worker>();
 
 var host = builder.Build();
+
+// Initialize database schema on startup
+// Creates Inbox/Outbox/EventStore tables + PostgreSQL functions
+using (var scope = host.Services.CreateScope()) {
+  var dbContext = scope.ServiceProvider.GetRequiredService<NotificationDbContext>();
+  var logger = scope.ServiceProvider.GetRequiredService<ILogger<Program>>();
+  await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger);
+}
+
 host.Run();

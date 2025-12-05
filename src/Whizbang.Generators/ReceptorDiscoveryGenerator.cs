@@ -34,10 +34,18 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var combined = receptorCandidates.Collect()
         .Combine(perspectiveCandidates.Collect());
 
+    // Combine with compilation to get assembly name for namespace
+    var compilationAndData = context.CompilationProvider.Combine(combined);
+
     // Generate registration code with awareness of both receptors and perspectives
     context.RegisterSourceOutput(
-        combined,
-        static (ctx, data) => GenerateDispatcherRegistrations(ctx, data.Left!, data.Right)
+        compilationAndData,
+        static (ctx, data) => {
+          var compilation = data.Left;
+          var receptors = data.Right.Left;
+          var perspectives = data.Right.Right;
+          GenerateDispatcherRegistrations(ctx, compilation, receptors!, perspectives);
+        }
     );
   }
 
@@ -113,9 +121,11 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates the dispatcher registration code for all discovered receptors.
   /// Only reports WHIZ002 warning if BOTH receptors and perspectives are absent.
+  /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
   private static void GenerateDispatcherRegistrations(
       SourceProductionContext context,
+      Compilation compilation,
       ImmutableArray<ReceptorInfo> receptors,
       ImmutableArray<bool> hasPerspectives) {
 
@@ -145,13 +155,13 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       ));
     }
 
-    var registrationSource = GenerateRegistrationSource(receptors);
+    var registrationSource = GenerateRegistrationSource(compilation, receptors);
     context.AddSource("DispatcherRegistrations.g.cs", registrationSource);
 
-    var dispatcherSource = GenerateDispatcherSource(receptors);
+    var dispatcherSource = GenerateDispatcherSource(compilation, receptors);
     context.AddSource("Dispatcher.g.cs", dispatcherSource);
 
-    var diagnosticsSource = GenerateDiagnosticsSource(receptors);
+    var diagnosticsSource = GenerateDiagnosticsSource(compilation, receptors);
     context.AddSource("ReceptorDiscoveryDiagnostics.g.cs", diagnosticsSource);
   }
 
@@ -159,8 +169,13 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// Generates the C# source code for the registration extension method.
   /// Uses template-based generation for IDE support.
   /// Handles both IReceptor&lt;TMessage, TResponse&gt; and IReceptor&lt;TMessage&gt; (void) patterns.
+  /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
-  private static string GenerateRegistrationSource(ImmutableArray<ReceptorInfo> receptors) {
+  private static string GenerateRegistrationSource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
+    // Determine namespace from assembly name
+    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var namespaceName = $"{assemblyName}.Generated";
+
     // Load template from embedded resource
     var template = TemplateUtilities.GetEmbeddedTemplate(
         typeof(ReceptorDiscoveryGenerator).Assembly,
@@ -206,6 +221,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Replace template markers
     var result = template;
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(ReceptorDiscoveryGenerator).Assembly, result);
+    result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName} {{");
     result = result.Replace("{{RECEPTOR_COUNT}}", receptors.Length.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "RECEPTOR_REGISTRATIONS", registrations.ToString());
 
@@ -216,8 +232,12 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// Generates a complete Dispatcher implementation with zero-reflection routing.
   /// Uses the DispatcherTemplate.cs file for full analyzer support.
   /// Handles both IReceptor&lt;TMessage, TResponse&gt; and IReceptor&lt;TMessage&gt; (void) patterns.
+  /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
-  private static string GenerateDispatcherSource(ImmutableArray<ReceptorInfo> receptors) {
+  private static string GenerateDispatcherSource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
+    // Determine namespace from assembly name
+    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var namespaceName = $"{assemblyName}.Generated";
     // Separate void receptors from regular receptors
     var regularReceptors = receptors.Where(r => !r.IsVoid).ToImmutableArray();
     var voidReceptors = receptors.Where(r => r.IsVoid).ToImmutableArray();
@@ -309,6 +329,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Replace header with timestamp
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(ReceptorDiscoveryGenerator).Assembly, result);
 
+    // Replace namespace with assembly-specific namespace
+    result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName};");
+
     // Replace {{VARIABLE}} markers with simple string replacement
     result = result.Replace("{{RECEPTOR_COUNT}}", receptors.Length.ToString());
 
@@ -324,8 +347,13 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// Generates diagnostic registration code that adds receptor discovery
   /// information to the central WhizbangDiagnostics collection.
   /// Uses template-based generation for IDE support.
+  /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
-  private static string GenerateDiagnosticsSource(ImmutableArray<ReceptorInfo> receptors) {
+  private static string GenerateDiagnosticsSource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
+    // Determine namespace from assembly name
+    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var namespaceName = $"{assemblyName}.Generated";
+
     var timestamp = System.DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss UTC");
 
     // Load template from embedded resource
@@ -363,6 +391,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Replace template markers
     var result = template;
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(ReceptorDiscoveryGenerator).Assembly, result);
+    result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName} {{");
     result = result.Replace("{{RECEPTOR_COUNT}}", receptors.Length.ToString());
     result = result.Replace("{{TIMESTAMP}}", timestamp);
     result = TemplateUtilities.ReplaceRegion(result, "DIAGNOSTIC_MESSAGES", messages.ToString());

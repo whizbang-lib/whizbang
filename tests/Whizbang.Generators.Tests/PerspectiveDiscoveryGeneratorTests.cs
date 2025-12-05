@@ -257,7 +257,7 @@ namespace TestNamespace {
     // Assert
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
     await Assert.That(generatedSource).IsNotNull();
-    await Assert.That(generatedSource!).Contains("namespace Whizbang.Core.Generated");
+    await Assert.That(generatedSource!).Contains("namespace TestAssembly.Generated");
     await Assert.That(generatedSource!).Contains("using Microsoft.Extensions.DependencyInjection");
     await Assert.That(generatedSource!).Contains("using Whizbang.Core");
   }

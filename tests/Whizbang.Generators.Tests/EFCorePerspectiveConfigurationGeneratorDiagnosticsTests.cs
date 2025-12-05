@@ -21,7 +21,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
     var source = @"
       using Whizbang.Core;
 
-      namespace Whizbang.Core.Lenses {
+      namespace Whizbang.Core.Perspectives {
         public interface IPerspectiveStore<TModel> { }
       }
 
@@ -29,7 +29,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
 
       public record ProductDto(string Name, decimal Price);
 
-      public class ProductPerspective(Whizbang.Core.Lenses.IPerspectiveStore<ProductDto> store)
+      public class ProductPerspective(Whizbang.Core.Perspectives.IPerspectiveStore<ProductDto> store)
         : IPerspectiveOf<ProductCreated> {
 
         public Task Update(ProductCreated @event, CancellationToken ct) {
@@ -63,7 +63,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
     var source = @"
       using Whizbang.Core;
 
-      namespace Whizbang.Core.Lenses {
+      namespace Whizbang.Core.Perspectives {
         public interface IPerspectiveStore<TModel> { }
       }
 
@@ -71,7 +71,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
 
       public record ProductDto(string Name);
 
-      public class ProductPerspective(Whizbang.Core.Lenses.IPerspectiveStore<ProductDto> store)
+      public class ProductPerspective(Whizbang.Core.Perspectives.IPerspectiveStore<ProductDto> store)
         : IPerspectiveOf<ProductCreated> {
         public Task Update(ProductCreated @event, CancellationToken ct) => Task.CompletedTask;
       }
@@ -100,7 +100,13 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
     var source = @"
       using Whizbang.Core;
 
-      namespace Whizbang.Core.Lenses {
+      namespace Whizbang.Core {
+        public interface IPerspectiveOf<in TEvent> where TEvent : IEvent {
+          Task Update(TEvent @event, CancellationToken cancellationToken = default);
+        }
+      }
+
+      namespace Whizbang.Core.Perspectives {
         public interface IPerspectiveStore<TModel> { }
       }
 
@@ -108,7 +114,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
 
       public record ProductDto(string Name);
 
-      public class ProductPerspective(Whizbang.Core.Lenses.IPerspectiveStore<ProductDto> store)
+      public class ProductPerspective(Whizbang.Core.Perspectives.IPerspectiveStore<ProductDto> store)
         : IPerspectiveOf<ProductCreated> {
         public Task Update(ProductCreated @event, CancellationToken ct) => Task.CompletedTask;
       }
@@ -124,7 +130,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
       .First(s => s.HintName == "WhizbangModelBuilderExtensions.g.cs")
       .SourceText.ToString();
 
-    // Should contain "1 perspective(s)" in the documentation
+    // Should contain perspective count in the diagnostics output (no deduplication for single perspective)
     await Assert.That(generatedCode).Contains("1 perspective(s)");
 
     // TotalDiscoveredCount should return 1
@@ -141,7 +147,13 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
     var source = @"
       using Whizbang.Core;
 
-      namespace Whizbang.Core.Lenses {
+      namespace Whizbang.Core {
+        public interface IPerspectiveOf<in TEvent> where TEvent : IEvent {
+          Task Update(TEvent @event, CancellationToken cancellationToken = default);
+        }
+      }
+
+      namespace Whizbang.Core.Perspectives {
         public interface IPerspectiveStore<TModel> { }
       }
 
@@ -149,7 +161,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
 
       public record ProductDto(string Name);
 
-      public class ProductPerspective(Whizbang.Core.Lenses.IPerspectiveStore<ProductDto> store)
+      public class ProductPerspective(Whizbang.Core.Perspectives.IPerspectiveStore<ProductDto> store)
         : IPerspectiveOf<ProductCreated> {
         public Task Update(ProductCreated @event, CancellationToken ct) => Task.CompletedTask;
       }
@@ -167,7 +179,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
 
     await Assert.That(generatedCode).Contains("LogDiscoveryDiagnostics");
     await Assert.That(generatedCode).Contains("ProductDto");
-    await Assert.That(generatedCode).Contains("product_dto");  // snake_case table name
+    await Assert.That(generatedCode).Contains("wh_per_product_dto");  // Whizbang table name with prefix
   }
 
   /// <summary>
@@ -210,7 +222,13 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
     var source = @"
       using Whizbang.Core;
 
-      namespace Whizbang.Core.Lenses {
+      namespace Whizbang.Core {
+        public interface IPerspectiveOf<in TEvent> where TEvent : IEvent {
+          Task Update(TEvent @event, CancellationToken cancellationToken = default);
+        }
+      }
+
+      namespace Whizbang.Core.Perspectives {
         public interface IPerspectiveStore<TModel> { }
       }
 
@@ -218,12 +236,12 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
 
       public record ProductDto(string Name);
 
-      public class ProductCreatedPerspective(Whizbang.Core.Lenses.IPerspectiveStore<ProductDto> store)
+      public class ProductCreatedPerspective(Whizbang.Core.Perspectives.IPerspectiveStore<ProductDto> store)
         : IPerspectiveOf<ProductCreated> {
         public Task Update(ProductCreated @event, CancellationToken ct) => Task.CompletedTask;
       }
 
-      public class ProductUpdatedPerspective(Whizbang.Core.Lenses.IPerspectiveStore<ProductDto> store)
+      public class ProductUpdatedPerspective(Whizbang.Core.Perspectives.IPerspectiveStore<ProductDto> store)
         : IPerspectiveOf<ProductUpdated> {
         public Task Update(ProductUpdated @event, CancellationToken ct) => Task.CompletedTask;
       }

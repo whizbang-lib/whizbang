@@ -20,16 +20,24 @@ public class DapperWorkCoordinator(
 
   public async Task<WorkBatch> ProcessWorkBatchAsync(
     Guid instanceId,
+    string serviceName,
+    string hostName,
+    int processId,
+    Dictionary<string, object>? metadata,
     Guid[] outboxCompletedIds,
     FailedMessage[] outboxFailedMessages,
     Guid[] inboxCompletedIds,
     FailedMessage[] inboxFailedMessages,
     int leaseSeconds = 300,
+    int staleThresholdSeconds = 600,
     CancellationToken cancellationToken = default
   ) {
     _logger?.LogDebug(
-      "Processing work batch for instance {InstanceId}: {OutboxCompleted} outbox completed, {OutboxFailed} outbox failed, {InboxCompleted} inbox completed, {InboxFailed} inbox failed",
+      "Processing work batch for instance {InstanceId} ({ServiceName}@{HostName}:{ProcessId}): {OutboxCompleted} outbox completed, {OutboxFailed} outbox failed, {InboxCompleted} inbox completed, {InboxFailed} inbox failed",
       instanceId,
+      serviceName,
+      hostName,
+      processId,
       outboxCompletedIds.Length,
       outboxFailedMessages.Length,
       inboxCompletedIds.Length,
@@ -39,28 +47,39 @@ public class DapperWorkCoordinator(
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
 
-    // Convert failed messages to JSON
+    // Convert failed messages and metadata to JSON
     var outboxFailedJson = SerializeFailedMessages(outboxFailedMessages);
     var inboxFailedJson = SerializeFailedMessages(inboxFailedMessages);
+    var metadataJson = SerializeMetadata(metadata);
 
     // Execute the process_work_batch function
     var sql = @"
       SELECT * FROM process_work_batch(
         @p_instance_id::uuid,
+        @p_service_name::varchar,
+        @p_host_name::varchar,
+        @p_process_id::int,
+        @p_metadata::jsonb,
         @p_outbox_completed_ids::uuid[],
         @p_outbox_failed_messages::jsonb,
         @p_inbox_completed_ids::uuid[],
         @p_inbox_failed_messages::jsonb,
-        @p_lease_seconds::int
+        @p_lease_seconds::int,
+        @p_stale_threshold_seconds::int
       )";
 
     var parameters = new {
       p_instance_id = instanceId,
+      p_service_name = serviceName,
+      p_host_name = hostName,
+      p_process_id = processId,
+      p_metadata = metadataJson,
       p_outbox_completed_ids = outboxCompletedIds,
       p_outbox_failed_messages = outboxFailedJson,
       p_inbox_completed_ids = inboxCompletedIds,
       p_inbox_failed_messages = inboxFailedJson,
-      p_lease_seconds = leaseSeconds
+      p_lease_seconds = leaseSeconds,
+      p_stale_threshold_seconds = staleThresholdSeconds
     };
 
     var commandDefinition = new CommandDefinition(
@@ -73,9 +92,9 @@ public class DapperWorkCoordinator(
     var resultList = results.ToList();
 
     // Map results to WorkBatch
-    var orphanedOutbox = resultList
+    var outboxWork = resultList
       .Where(r => r.source == "outbox")
-      .Select(r => new OrphanedOutboxMessage {
+      .Select(r => new OutboxWork {
         MessageId = r.msg_id,
         Destination = r.destination!,
         MessageType = r.event_type,
@@ -86,9 +105,9 @@ public class DapperWorkCoordinator(
       })
       .ToList();
 
-    var orphanedInbox = resultList
+    var inboxWork = resultList
       .Where(r => r.source == "inbox")
-      .Select(r => new OrphanedInboxMessage {
+      .Select(r => new InboxWork {
         MessageId = r.msg_id,
         MessageType = r.event_type,
         MessageData = r.event_data,
@@ -98,14 +117,14 @@ public class DapperWorkCoordinator(
       .ToList();
 
     _logger?.LogInformation(
-      "Work batch processed: {OrphanedOutbox} orphaned outbox, {OrphanedInbox} orphaned inbox",
-      orphanedOutbox.Count,
-      orphanedInbox.Count
+      "Work batch processed: {OutboxWork} outbox work, {InboxWork} inbox work",
+      outboxWork.Count,
+      inboxWork.Count
     );
 
     return new WorkBatch {
-      OrphanedOutbox = orphanedOutbox,
-      OrphanedInbox = orphanedInbox
+      OutboxWork = outboxWork,
+      InboxWork = inboxWork
     };
   }
 
@@ -128,6 +147,24 @@ public class DapperWorkCoordinator(
       .Replace("\n", "\\n")
       .Replace("\r", "\\r")
       .Replace("\t", "\\t");
+  }
+
+  private static string? SerializeMetadata(Dictionary<string, object>? metadata) {
+    if (metadata == null || metadata.Count == 0) {
+      return null;
+    }
+
+    // Simple JSON object serialization (AOT-safe)
+    var items = metadata.Select(kvp => {
+      var value = kvp.Value switch {
+        string s => $"\"{EscapeJson(s)}\"",
+        bool b => b.ToString().ToLowerInvariant(),
+        null => "null",
+        _ => kvp.Value.ToString()
+      };
+      return $"\"{EscapeJson(kvp.Key)}\":{value}";
+    });
+    return $"{{{string.Join(",", items)}}}";
   }
 }
 

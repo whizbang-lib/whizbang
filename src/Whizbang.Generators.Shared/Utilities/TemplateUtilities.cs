@@ -53,8 +53,11 @@ public static class TemplateUtilities {
     // Indent the replacement code to match the region's indentation
     var indentedReplacement = IndentCode(replacement.TrimEnd(), indentation);
 
+    // Escape $ as $$ for Regex.Replace ($ has special meaning in replacement strings)
+    var escapedReplacement = indentedReplacement.Replace("$", "$$");
+
     // Replace the entire region block with the indented code
-    return Regex.Replace(template, pattern, indentedReplacement, RegexOptions.Singleline);
+    return Regex.Replace(template, pattern, escapedReplacement, RegexOptions.Singleline);
   }
 
   /// <summary>

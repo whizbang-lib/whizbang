@@ -11,11 +11,14 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 
+#region NAMESPACE
 namespace Whizbang.Core.Generated;
+#endregion
 
 /// <summary>
 /// Generated Dispatcher implementation with zero-reflection routing for {{RECEPTOR_COUNT}} receptor(s).
@@ -24,7 +27,7 @@ namespace Whizbang.Core.Generated;
 /// </summary>
 [ExcludeFromCodeCoverage]
 [DebuggerNonUserCode]
-internal sealed class GeneratedDispatcher : Dispatcher {
+internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
   public GeneratedDispatcher(
     IServiceProvider serviceProvider,
     ITraceStore? traceStore = null,
