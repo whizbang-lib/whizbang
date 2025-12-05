@@ -41,6 +41,9 @@ builder.Services.AddAzureServiceBusHealthChecks();
 // Add trace store for observability
 builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
 
+// Register service instance provider (MUST be before workers that depend on it)
+builder.Services.AddSingleton<IServiceInstanceProvider, ServiceInstanceProvider>();
+
 // Register JsonSerializerOptions for dispatcher (used by outbox fallback)
 builder.Services.AddSingleton(ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions());
 
