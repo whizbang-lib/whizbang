@@ -419,6 +419,582 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await Assert.That(await GetInboxInstanceIdAsync(orphanedInboxId)).IsEqualTo(_instanceId);
   }
 
+  // ========================================
+  // Priority 1 Tests: New Message Storage
+  // ========================================
+
+  [Test]
+  public async Task ProcessWorkBatchAsync_NewOutboxMessage_StoresAndReturnsImmediatelyAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+    var messageId = _idProvider.NewGuid();
+    var streamId = _idProvider.NewGuid();
+
+    var newOutboxMessage = new NewOutboxMessage {
+      MessageId = messageId,
+      Destination = "test-topic",
+      EventType = "TestEvent",
+      EventData = "{\"test\":\"data\"}",
+      Metadata = "{}",
+      Scope = null,
+      StreamId = streamId,
+      IsEvent = true
+    };
+
+    // Act
+    var result = await _sut.ProcessWorkBatchAsync(
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [newOutboxMessage],
+      newInboxMessages: []);
+
+    // Assert - Message should be stored AND returned for immediate processing
+    await Assert.That(result.OutboxWork).HasCount().EqualTo(1);
+    var work = result.OutboxWork[0];
+    await Assert.That(work.MessageId).IsEqualTo(messageId);
+    await Assert.That(work.Destination).IsEqualTo("test-topic");
+    await Assert.That(work.MessageType).IsEqualTo("TestEvent");
+    await Assert.That(work.StreamId).IsEqualTo(streamId);
+
+    // Verify message stored in database
+    var dbStatus = await GetOutboxStatusAsync(messageId);
+    await Assert.That(dbStatus).IsEqualTo("Pending");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatchAsync_NewInboxMessage_StoresWithDeduplicationAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+    var messageId = _idProvider.NewGuid();
+
+    var newInboxMessage = new NewInboxMessage {
+      MessageId = messageId,
+      HandlerName = "TestHandler",
+      EventType = "TestEvent",
+      EventData = "{\"test\":\"data\"}",
+      Metadata = "{}",
+      Scope = null,
+      StreamId = _idProvider.NewGuid(),
+      IsEvent = true
+    };
+
+    // Act - First call should store and return work
+    var result1 = await _sut.ProcessWorkBatchAsync(
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: [newInboxMessage]);
+
+    // Act - Second call with same message ID should return empty (duplicate)
+    var result2 = await _sut.ProcessWorkBatchAsync(
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: [newInboxMessage]);
+
+    // Assert - First call returns work
+    await Assert.That(result1.InboxWork).HasCount().EqualTo(1);
+    await Assert.That(result1.InboxWork[0].MessageId).IsEqualTo(messageId);
+
+    // Assert - Second call returns empty (duplicate detected via INSERT ... ON CONFLICT DO NOTHING)
+    await Assert.That(result2.InboxWork).HasCount().EqualTo(0);
+
+    // Verify only one message in database
+    var count = await CountInboxMessagesAsync(messageId);
+    await Assert.That(count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task ProcessWorkBatchAsync_NewInboxMessage_WithStreamId_AssignsPartitionAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+    var streamId = _idProvider.NewGuid();
+
+    var newInboxMessage = new NewInboxMessage {
+      MessageId = _idProvider.NewGuid(),
+      HandlerName = "TestHandler",
+      EventType = "TestEvent",
+      EventData = "{\"test\":\"data\"}",
+      Metadata = "{}",
+      Scope = null,
+      StreamId = streamId,
+      IsEvent = true
+    };
+
+    // Act
+    var result = await _sut.ProcessWorkBatchAsync(
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: [newInboxMessage]);
+
+    // Assert
+    await Assert.That(result.InboxWork).HasCount().EqualTo(1);
+    var work = result.InboxWork[0];
+
+    // Verify partition was assigned via consistent hashing
+    await Assert.That(work.PartitionNumber).IsNotNull();
+    await Assert.That(work.PartitionNumber!.Value).IsGreaterThanOrEqualTo(0);
+    await Assert.That(work.PartitionNumber!.Value).IsLessThanOrEqualTo(9999);
+
+    // Verify sequence_order was set
+    await Assert.That(work.SequenceOrder).IsGreaterThan(0);
+  }
+
+  [Test]
+  public async Task ProcessWorkBatchAsync_NewOutboxMessage_WithStreamId_AssignsPartitionAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+    var streamId = _idProvider.NewGuid();
+
+    var newOutboxMessage = new NewOutboxMessage {
+      MessageId = _idProvider.NewGuid(),
+      Destination = "test-topic",
+      EventType = "TestEvent",
+      EventData = "{\"test\":\"data\"}",
+      Metadata = "{}",
+      Scope = null,
+      StreamId = streamId,
+      IsEvent = true
+    };
+
+    // Act
+    var result = await _sut.ProcessWorkBatchAsync(
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [newOutboxMessage],
+      newInboxMessages: []);
+
+    // Assert
+    await Assert.That(result.OutboxWork).HasCount().EqualTo(1);
+    var work = result.OutboxWork[0];
+
+    // Verify partition was assigned via consistent hashing
+    await Assert.That(work.PartitionNumber).IsNotNull();
+    await Assert.That(work.PartitionNumber!.Value).IsGreaterThanOrEqualTo(0);
+    await Assert.That(work.PartitionNumber!.Value).IsLessThanOrEqualTo(9999);
+
+    // Verify sequence_order was set
+    await Assert.That(work.SequenceOrder).IsGreaterThan(0);
+  }
+
+  // ========================================
+  // Priority 1 Tests: Event Store Integration
+  // ========================================
+
+  [Test]
+  public async Task ProcessWorkBatchAsync_WithEventOutbox_PersistsToEventStoreAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+    var messageId = _idProvider.NewGuid();
+    var streamId = _idProvider.NewGuid();
+
+    // Insert outbox message with IsEvent=true
+    await InsertOutboxMessageAsync(
+      messageId,
+      "test-topic",
+      "TestEvent",
+      "{\"test\":\"data\"}",
+      status: "Publishing",
+      instanceId: _instanceId,
+      streamId: streamId,
+      isEvent: true);
+
+    // Act - Complete the outbox message
+    var result = await _sut.ProcessWorkBatchAsync(
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [
+        new MessageCompletion { MessageId = messageId, Status = MessageProcessingStatus.Published }
+      ],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: []);
+
+    // Assert - Event should be persisted to event store
+    var eventVersion = await GetEventStoreVersionAsync(streamId, messageId);
+    await Assert.That(eventVersion).IsNotNull()
+      .Because("Completing an event outbox message should persist it to wb_event_store");
+    await Assert.That(eventVersion!.Value).IsEqualTo(1)
+      .Because("First event in stream should have version 1");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatchAsync_WithEventInbox_PersistsToEventStoreAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+    var messageId = _idProvider.NewGuid();
+    var streamId = _idProvider.NewGuid();
+
+    // Insert inbox message with IsEvent=true
+    await InsertInboxMessageAsync(
+      messageId,
+      "TestHandler",
+      "TestEvent",
+      "{\"test\":\"data\"}",
+      status: "Processing",
+      instanceId: _instanceId,
+      streamId: streamId,
+      isEvent: true);
+
+    // Act - Complete the inbox message
+    var result = await _sut.ProcessWorkBatchAsync(
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [
+        new MessageCompletion { MessageId = messageId, Status = MessageProcessingStatus.ReceptorProcessed }
+      ],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: []);
+
+    // Assert - Event should be persisted to event store
+    var eventVersion = await GetEventStoreVersionAsync(streamId, messageId);
+    await Assert.That(eventVersion).IsNotNull()
+      .Because("Completing an event inbox message should persist it to wb_event_store");
+    await Assert.That(eventVersion!.Value).IsEqualTo(1)
+      .Because("First event in stream should have version 1");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatchAsync_EventVersionConflict_HandlesOptimisticConcurrencyAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+    var streamId = _idProvider.NewGuid();
+    var messageId1 = _idProvider.NewGuid();
+    var messageId2 = _idProvider.NewGuid();
+
+    // Insert first event already in event store (simulating conflict)
+    await InsertEventStoreRecordAsync(streamId, messageId1, "TestEvent", "{}", version: 1);
+
+    // Insert inbox message trying to use same version
+    await InsertInboxMessageAsync(
+      messageId2,
+      "TestHandler",
+      "TestEvent",
+      "{\"test\":\"data\"}",
+      status: "Processing",
+      instanceId: _instanceId,
+      streamId: streamId,
+      isEvent: true);
+
+    // Act - Try to complete inbox message (should handle version conflict)
+    var result = await _sut.ProcessWorkBatchAsync(
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [
+        new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.ReceptorProcessed }
+      ],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: []);
+
+    // Assert - Should handle optimistic concurrency (either increment version or fail gracefully)
+    var event1 = await GetEventStoreVersionAsync(streamId, messageId1);
+    await Assert.That(event1).IsEqualTo(1)
+      .Because("First event should remain at version 1");
+
+    // Either the second event gets version 2, or the operation fails gracefully
+    var event2 = await GetEventStoreVersionAsync(streamId, messageId2);
+    if (event2 is not null) {
+      await Assert.That(event2.Value).IsEqualTo(2)
+        .Because("If optimistic concurrency succeeds, second event gets version 2");
+    } else {
+      // If it failed, inbox should be marked as Failed
+      var inboxStatus = await GetInboxStatusAsync(messageId2);
+      await Assert.That(inboxStatus).IsEqualTo("Failed")
+        .Because("If optimistic concurrency fails, inbox should be marked Failed");
+    }
+  }
+
+  [Test]
+  public async Task ProcessWorkBatchAsync_MultipleEventsInStream_IncrementsVersionAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+    var streamId = _idProvider.NewGuid();
+    var messageId1 = _idProvider.NewGuid();
+    var messageId2 = _idProvider.NewGuid();
+    var messageId3 = _idProvider.NewGuid();
+
+    // Insert three outbox messages for the same stream
+    await InsertOutboxMessageAsync(messageId1, "topic1", "Event1", "{}", status: "Publishing", instanceId: _instanceId, streamId: streamId, isEvent: true);
+    await InsertOutboxMessageAsync(messageId2, "topic1", "Event2", "{}", status: "Publishing", instanceId: _instanceId, streamId: streamId, isEvent: true);
+    await InsertOutboxMessageAsync(messageId3, "topic1", "Event3", "{}", status: "Publishing", instanceId: _instanceId, streamId: streamId, isEvent: true);
+
+    // Act - Complete all three messages
+    var result = await _sut.ProcessWorkBatchAsync(
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [
+        new MessageCompletion { MessageId = messageId1, Status = MessageProcessingStatus.Published },
+        new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.Published },
+        new MessageCompletion { MessageId = messageId3, Status = MessageProcessingStatus.Published }
+      ],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: []);
+
+    // Assert - Events should have sequential versions
+    var version1 = await GetEventStoreVersionAsync(streamId, messageId1);
+    var version2 = await GetEventStoreVersionAsync(streamId, messageId2);
+    var version3 = await GetEventStoreVersionAsync(streamId, messageId3);
+
+    await Assert.That(version1).IsEqualTo(1);
+    await Assert.That(version2).IsEqualTo(2);
+    await Assert.That(version3).IsEqualTo(3);
+  }
+
+  [Test]
+  public async Task ProcessWorkBatchAsync_NonEvent_DoesNotPersistToEventStoreAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+    var messageId = _idProvider.NewGuid();
+    var streamId = _idProvider.NewGuid();
+
+    // Insert outbox message with IsEvent=false (command, not event)
+    await InsertOutboxMessageAsync(
+      messageId,
+      "test-topic",
+      "TestCommand",
+      "{\"test\":\"data\"}",
+      status: "Publishing",
+      instanceId: _instanceId,
+      streamId: streamId,
+      isEvent: false);
+
+    // Act - Complete the outbox message
+    var result = await _sut.ProcessWorkBatchAsync(
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [
+        new MessageCompletion { MessageId = messageId, Status = MessageProcessingStatus.Published }
+      ],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: []);
+
+    // Assert - Non-event should NOT be persisted to event store
+    var eventVersion = await GetEventStoreVersionAsync(streamId, messageId);
+    await Assert.That(eventVersion).IsNull()
+      .Because("Non-events (IsEvent=false) should not be persisted to wb_event_store");
+
+    // Verify outbox was still marked as Published
+    var outboxStatus = await GetOutboxStatusAsync(messageId);
+    await Assert.That(outboxStatus).IsEqualTo("Published");
+  }
+
+  // ========================================
+  // Priority 1 Tests: IsEvent Serialization
+  // ========================================
+
+  [Test]
+  public async Task ProcessWorkBatchAsync_NewOutboxMessage_WithIsEventTrue_StoresIsEventFlagAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+    var messageId = _idProvider.NewGuid();
+
+    var newOutboxMessage = new NewOutboxMessage {
+      MessageId = messageId,
+      Destination = "test-topic",
+      EventType = "TestEvent",
+      EventData = "{\"test\":\"data\"}",
+      Metadata = "{}",
+      Scope = null,
+      StreamId = _idProvider.NewGuid(),
+      IsEvent = true  // CRITICAL: IsEvent = true
+    };
+
+    // Act
+    var result = await _sut.ProcessWorkBatchAsync(
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [newOutboxMessage],
+      newInboxMessages: []);
+
+    // Assert - Verify is_event flag is stored correctly
+    var isEvent = await GetOutboxIsEventAsync(messageId);
+    await Assert.That(isEvent).IsTrue()
+      .Because("NewOutboxMessage with IsEvent=true should persist is_event=true to wb_outbox");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatchAsync_NewOutboxMessage_WithIsEventFalse_StoresIsEventFlagAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+    var messageId = _idProvider.NewGuid();
+
+    var newOutboxMessage = new NewOutboxMessage {
+      MessageId = messageId,
+      Destination = "test-topic",
+      EventType = "TestCommand",
+      EventData = "{\"test\":\"data\"}",
+      Metadata = "{}",
+      Scope = null,
+      StreamId = _idProvider.NewGuid(),
+      IsEvent = false  // CRITICAL: IsEvent = false
+    };
+
+    // Act
+    var result = await _sut.ProcessWorkBatchAsync(
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [newOutboxMessage],
+      newInboxMessages: []);
+
+    // Assert - Verify is_event flag is stored correctly
+    var isEvent = await GetOutboxIsEventAsync(messageId);
+    await Assert.That(isEvent).IsFalse()
+      .Because("NewOutboxMessage with IsEvent=false should persist is_event=false to wb_outbox");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatchAsync_NewInboxMessage_WithIsEventTrue_StoresIsEventFlagAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+    var messageId = _idProvider.NewGuid();
+
+    var newInboxMessage = new NewInboxMessage {
+      MessageId = messageId,
+      HandlerName = "TestHandler",
+      EventType = "TestEvent",
+      EventData = "{\"test\":\"data\"}",
+      Metadata = "{}",
+      Scope = null,
+      StreamId = _idProvider.NewGuid(),
+      IsEvent = true  // CRITICAL: IsEvent = true
+    };
+
+    // Act
+    var result = await _sut.ProcessWorkBatchAsync(
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: [newInboxMessage]);
+
+    // Assert - Verify is_event flag is stored correctly
+    var isEvent = await GetInboxIsEventAsync(messageId);
+    await Assert.That(isEvent).IsTrue()
+      .Because("NewInboxMessage with IsEvent=true should persist is_event=true to wb_inbox");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatchAsync_NewInboxMessage_WithIsEventFalse_StoresIsEventFlagAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+    var messageId = _idProvider.NewGuid();
+
+    var newInboxMessage = new NewInboxMessage {
+      MessageId = messageId,
+      HandlerName = "TestHandler",
+      EventType = "TestCommand",
+      EventData = "{\"test\":\"data\"}",
+      Metadata = "{}",
+      Scope = null,
+      StreamId = _idProvider.NewGuid(),
+      IsEvent = false  // CRITICAL: IsEvent = false
+    };
+
+    // Act
+    var result = await _sut.ProcessWorkBatchAsync(
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: [newInboxMessage]);
+
+    // Assert - Verify is_event flag is stored correctly
+    var isEvent = await GetInboxIsEventAsync(messageId);
+    await Assert.That(isEvent).IsFalse()
+      .Because("NewInboxMessage with IsEvent=false should persist is_event=false to wb_inbox");
+  }
+
   // Helper methods for test data setup and verification
 
   private async Task InsertServiceInstanceAsync(Guid instanceId, string serviceName, string hostName, int processId) {
@@ -444,17 +1020,19 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     string messageData,
     string status = "Pending",
     Guid? instanceId = null,
-    DateTimeOffset? leaseExpiry = null) {
+    DateTimeOffset? leaseExpiry = null,
+    Guid? streamId = null,
+    bool isEvent = false) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     await connection.ExecuteAsync(@"
       INSERT INTO wb_outbox (
         message_id, destination, event_type, event_data, metadata, scope,
         status, attempts, error, created_at, published_at,
-        instance_id, lease_expiry
+        instance_id, lease_expiry, stream_id, is_event
       ) VALUES (
         @messageId, @destination, @messageType, @messageData::jsonb, '{}'::jsonb, NULL,
         @status, 0, NULL, @now, NULL,
-        @instanceId, @leaseExpiry
+        @instanceId, @leaseExpiry, @streamId, @isEvent
       )",
       new {
         messageId,
@@ -464,6 +1042,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         status,
         instanceId,
         leaseExpiry,
+        streamId,
+        isEvent,
         now = DateTimeOffset.UtcNow
       });
   }
@@ -503,15 +1083,19 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     string messageData,
     string status = "Pending",
     Guid? instanceId = null,
-    DateTimeOffset? leaseExpiry = null) {
+    DateTimeOffset? leaseExpiry = null,
+    Guid? streamId = null,
+    bool isEvent = false) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     await connection.ExecuteAsync(@"
       INSERT INTO wb_inbox (
         message_id, handler_name, event_type, event_data, metadata, scope,
-        status, attempts, received_at, processed_at, instance_id, lease_expiry
+        status, attempts, received_at, processed_at, instance_id, lease_expiry,
+        stream_id, is_event
       ) VALUES (
         @messageId, @handlerName, @messageType, @messageData::jsonb, '{}'::jsonb, NULL,
-        @status, 0, @now, NULL, @instanceId, @leaseExpiry
+        @status, 0, @now, NULL, @instanceId, @leaseExpiry,
+        @streamId, @isEvent
       )",
       new {
         messageId,
@@ -521,6 +1105,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         status,
         instanceId,
         leaseExpiry,
+        streamId,
+        isEvent,
         now = DateTimeOffset.UtcNow
       });
   }
@@ -543,6 +1129,57 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     return await connection.QueryFirstOrDefaultAsync<Guid?>(@"
       SELECT instance_id FROM wb_inbox WHERE message_id = @messageId",
+      new { messageId });
+  }
+
+  private async Task<int> CountInboxMessagesAsync(Guid messageId) {
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    return await connection.QuerySingleAsync<int>(@"
+      SELECT COUNT(*) FROM wb_inbox WHERE message_id = @messageId",
+      new { messageId });
+  }
+
+  private async Task InsertEventStoreRecordAsync(
+    Guid streamId,
+    Guid messageId,
+    string eventType,
+    string eventData,
+    int version) {
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    await connection.ExecuteAsync(@"
+      INSERT INTO wb_event_store (
+        stream_id, message_id, event_type, event_data, version, timestamp
+      ) VALUES (
+        @streamId, @messageId, @eventType, @eventData::jsonb, @version, @now
+      )",
+      new {
+        streamId,
+        messageId,
+        eventType,
+        eventData,
+        version,
+        now = DateTimeOffset.UtcNow
+      });
+  }
+
+  private async Task<int?> GetEventStoreVersionAsync(Guid streamId, Guid messageId) {
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    return await connection.QueryFirstOrDefaultAsync<int?>(@"
+      SELECT version FROM wb_event_store WHERE stream_id = @streamId AND message_id = @messageId",
+      new { streamId, messageId });
+  }
+
+  private async Task<bool> GetOutboxIsEventAsync(Guid messageId) {
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    return await connection.QueryFirstOrDefaultAsync<bool>(@"
+      SELECT is_event FROM wb_outbox WHERE message_id = @messageId",
+      new { messageId });
+  }
+
+  private async Task<bool> GetInboxIsEventAsync(Guid messageId) {
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    return await connection.QueryFirstOrDefaultAsync<bool>(@"
+      SELECT is_event FROM wb_inbox WHERE message_id = @messageId",
       new { messageId });
   }
 }
