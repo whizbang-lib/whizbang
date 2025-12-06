@@ -41,19 +41,19 @@ public delegate Task ReceptorPublisher<in TEvent>(TEvent @event);
 /// </summary>
 public abstract class Dispatcher(
   IServiceProvider serviceProvider,
-  IServiceInstanceProvider? instanceProvider = null,
+  IServiceInstanceProvider instanceProvider,
   ITraceStore? traceStore = null,
-  IOutbox? outbox = null,
   ITransport? transport = null,
-  JsonSerializerOptions? jsonOptions = null
+  JsonSerializerOptions? jsonOptions = null,
+  IWorkCoordinatorStrategy? strategy = null
   ) : IDispatcher {
   private readonly IServiceProvider _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
-  private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
+  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly ITraceStore? _traceStore = traceStore;
-  private readonly IOutbox? _outbox = outbox;
   private readonly ITransport? _transport = transport;
   private readonly JsonSerializerOptions? _jsonOptions = jsonOptions;
+  private readonly IWorkCoordinatorStrategy? _strategy = strategy;
 
   /// <summary>
   /// Gets the service provider for receptor resolution.
@@ -118,26 +118,15 @@ public abstract class Dispatcher(
     // Get strongly-typed delegate from generated code
     var invoker = _getReceptorInvoker<object>(message, messageType);
 
-    // If no local receptor exists, check for outbox fallback
+    // If no local receptor exists, check for work coordinator strategy
     if (invoker == null) {
-      // Try to resolve IOutbox from constructor parameter first, then from a scope (it may be Scoped, e.g., EF Core implementation)
-      var scope = _scopeFactory.CreateScope();
-      try {
-        var outbox = _outbox ?? scope.ServiceProvider.GetService<IOutbox>();
-        if (outbox != null && _jsonOptions != null) {
-          // Route to outbox for remote delivery (AOT-compatible, no reflection)
-          return await SendToOutboxViaScopeAsync(message, messageType, context, outbox, callerMemberName, callerFilePath, callerLineNumber);
-        }
-      } finally {
-        // Dispose scope asynchronously to properly handle services that only implement IAsyncDisposable
-        if (scope is IAsyncDisposable asyncDisposable) {
-          await asyncDisposable.DisposeAsync();
-        } else {
-          scope.Dispose();
-        }
+      // Try strategy-based outbox pattern (new work coordinator pattern)
+      if (_strategy != null && _jsonOptions != null) {
+        // Route to outbox for remote delivery (AOT-compatible, no reflection)
+        return await SendToOutboxViaScopeAsync(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
       }
 
-      // No receptor and no outbox - throw
+      // No receptor and no strategy - throw
       throw new HandlerNotFoundException(messageType);
     }
 
@@ -401,12 +390,7 @@ public abstract class Dispatcher(
 
     var hop = new MessageHop {
       Type = HopType.Current,
-      ServiceInstance = _instanceProvider?.ToInfo() ?? new ServiceInstanceInfo(
-        System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name ?? "Unknown",
-        Guid.Empty,
-        Environment.MachineName,
-        Environment.ProcessId
-      ),
+      ServiceInstance = _instanceProvider.ToInfo(),
       Timestamp = DateTimeOffset.UtcNow,
       CorrelationId = context.CorrelationId,
       CausationId = context.CausationId,
@@ -455,12 +439,7 @@ public abstract class Dispatcher(
         // Add hop indicating message is being stored to event store
         var hop = new MessageHop {
           Type = HopType.Current,
-          ServiceInstance = _instanceProvider?.ToInfo() ?? new ServiceInstanceInfo(
-            System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name ?? "Unknown",
-            Guid.Empty,
-            Environment.MachineName,
-            Environment.ProcessId
-          ),
+          ServiceInstance = _instanceProvider.ToInfo(),
           Timestamp = DateTimeOffset.UtcNow
         };
         envelope.AddHop(hop);
@@ -499,30 +478,27 @@ public abstract class Dispatcher(
     // Invoke local handlers - zero reflection, strongly typed
     await publisher(@event);
 
-    // If outbox is configured, publish event for cross-service delivery
-    // Resolve IOutbox from a scope (it may be Scoped, e.g., EF Core implementation)
-    var publishScope = _scopeFactory.CreateScope();
-    try {
-      var publishOutbox = publishScope.ServiceProvider.GetService<IOutbox>();
-      if (publishOutbox != null && _jsonOptions != null) {
-        await PublishToOutboxViaScopeAsync(@event, eventType, publishOutbox);
-      }
-    } finally {
-      // Dispose scope asynchronously to properly handle services that only implement IAsyncDisposable
-      if (publishScope is IAsyncDisposable asyncDisposable) {
-        await asyncDisposable.DisposeAsync();
-      } else {
-        publishScope.Dispose();
-      }
+    // If work coordinator strategy is configured, publish event for cross-service delivery
+    if (_strategy != null && _jsonOptions != null) {
+      await PublishToOutboxViaScopeAsync(@event, eventType);
     }
   }
 
   /// <summary>
-  /// Publishes an event to the outbox for cross-service delivery using a scoped outbox instance.
-  /// The OutboxPublisherWorker will poll the outbox and publish to the transport.
+  /// Publishes an event to the outbox for cross-service delivery using work coordinator strategy.
+  /// Queues event for batched processing.
+  /// Requires IWorkCoordinatorStrategy to be configured.
   /// Creates a complete MessageEnvelope with a hop indicating "stored to outbox".
   /// </summary>
-  private async Task PublishToOutboxViaScopeAsync<TEvent>(TEvent @event, Type eventType, IOutbox outbox) {
+  private async Task PublishToOutboxViaScopeAsync<TEvent>(TEvent @event, Type eventType) {
+    if (_strategy == null) {
+      throw new InvalidOperationException("IWorkCoordinatorStrategy required for cross-service event publishing. Register a strategy in DI container.");
+    }
+
+    if (_jsonOptions == null) {
+      throw new InvalidOperationException("JsonSerializerOptions required for event serialization. Register JsonSerializerOptions in DI container.");
+    }
+
     // Determine destination topic from event type name
     // TODO: Make this configurable via IEventRoutingConfiguration
     var destination = DetermineEventTopic(eventType);
@@ -538,21 +514,24 @@ public abstract class Dispatcher(
     // Add hop indicating message is being stored to outbox
     var hop = new MessageHop {
       Type = HopType.Current,
-      ServiceInstance = _instanceProvider?.ToInfo() ?? new ServiceInstanceInfo(
-        System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name ?? "Unknown",
-        Guid.Empty,
-        Environment.MachineName,
-        Environment.ProcessId
-      ),
+      ServiceInstance = _instanceProvider.ToInfo(),
       Topic = destination,
       Timestamp = DateTimeOffset.UtcNow
     };
     envelope.AddHop(hop);
 
-    // Store complete envelope in outbox (will be serialized to JSONB)
-    System.Diagnostics.Debug.WriteLine($"[Dispatcher] Storing event {eventType.Name} to outbox with destination '{destination}'");
-    await outbox.StoreAsync<TEvent>(envelope, destination);
-    System.Diagnostics.Debug.WriteLine($"[Dispatcher] Successfully stored event {eventType.Name} to outbox");
+    System.Diagnostics.Debug.WriteLine($"[Dispatcher] Queueing event {eventType.Name} to work coordinator with destination '{destination}'");
+
+    // Serialize envelope to NewOutboxMessage
+    var newOutboxMessage = _serializeToNewOutboxMessage(envelope, @event!, eventType, destination);
+
+    // Queue event for batched processing
+    _strategy.QueueOutboxMessage(newOutboxMessage);
+
+    // Flush strategy to execute the batch
+    await _strategy.FlushAsync(WorkBatchFlags.None);
+
+    System.Diagnostics.Debug.WriteLine($"[Dispatcher] Successfully queued event {eventType.Name} via work coordinator");
   }
 
   /// <summary>
@@ -604,30 +583,46 @@ public abstract class Dispatcher(
   }
 
   /// <summary>
-  /// Sends a message to the outbox for remote delivery using a scoped outbox instance.
-  /// Creates a MessageEnvelope with proper type information and stores it in the outbox.
-  /// The OutboxPublisherWorker will poll the outbox and publish to the transport.
-  /// AOT-compatible - uses non-generic IOutbox.StoreAsync overload, no reflection.
+  /// Sends a message to the outbox for remote delivery using work coordinator strategy.
+  /// Creates a MessageEnvelope with proper type information and queues for batched processing.
+  /// Requires IWorkCoordinatorStrategy to be configured.
+  /// AOT-compatible - uses JsonTypeInfo for serialization, no reflection.
   /// </summary>
   private async Task<IDeliveryReceipt> SendToOutboxViaScopeAsync(
     object message,
     Type messageType,
     IMessageContext context,
-    IOutbox outbox,
     string callerMemberName,
     string callerFilePath,
     int callerLineNumber
   ) {
+    if (_strategy == null) {
+      throw new InvalidOperationException("IWorkCoordinatorStrategy required for remote message delivery. Register a strategy in DI container.");
+    }
+
+    if (_jsonOptions == null) {
+      throw new InvalidOperationException("JsonSerializerOptions required for message serialization. Register JsonSerializerOptions in DI container.");
+    }
+
     // Determine destination topic from message type name
     var destination = DetermineCommandDestination(messageType);
 
     // Create envelope with hop for observability (returns IMessageEnvelope)
     var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
 
-    // Store in outbox using non-generic overload (AOT-compatible, no reflection)
-    await outbox.StoreAsync(envelope, destination);
+    // Serialize envelope to NewOutboxMessage
+    var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination);
 
-    // Return delivery receipt with Accepted status (message queued, not yet delivered)
+    // Queue message for batched processing
+    _strategy.QueueOutboxMessage(newOutboxMessage);
+
+    // Flush strategy to execute the batch (strategy determines when to actually flush)
+    // For immediate strategy, this happens right away
+    // For scoped strategy, this happens on scope disposal
+    // For interval strategy, this happens on timer
+    await _strategy.FlushAsync(WorkBatchFlags.None);
+
+    // Return delivery receipt with Accepted status (message queued)
     return DeliveryReceipt.Accepted(
       envelope.MessageId,
       destination,
@@ -675,6 +670,105 @@ public abstract class Dispatcher(
       results.Add(result);
     }
     return results;
+  }
+
+  // ========================================
+  // SERIALIZATION HELPERS
+  // ========================================
+
+  /// <summary>
+  /// Serializes a message envelope to NewOutboxMessage for work coordinator pattern.
+  /// Extracts stream_id from aggregate ID or falls back to message ID.
+  /// AOT-compatible - uses JsonTypeInfo for serialization.
+  /// </summary>
+  private NewOutboxMessage _serializeToNewOutboxMessage(
+    IMessageEnvelope envelope,
+    object payload,
+    Type payloadType,
+    string destination
+  ) {
+    if (_jsonOptions == null) {
+      throw new InvalidOperationException("JsonSerializerOptions required for envelope serialization");
+    }
+
+    // Serialize payload to JSON using JsonTypeInfo (AOT-compatible)
+    var typeInfo = _jsonOptions.GetTypeInfo(payloadType);
+    var eventDataJson = JsonSerializer.Serialize(payload, typeInfo);
+
+    // Serialize metadata (MessageId + Hops)
+    var metadata = _serializeEnvelopeMetadata(envelope);
+
+    // Serialize security scope (nullable)
+    var scope = _serializeSecurityScope(envelope);
+
+    // Extract stream_id: try aggregate ID from first hop, fall back to message ID
+    var streamId = _extractStreamId(envelope);
+
+    return new NewOutboxMessage {
+      MessageId = envelope.MessageId.Value,
+      Destination = destination,
+      EventType = payloadType.FullName ?? throw new InvalidOperationException("Message type has no FullName"),
+      EventData = eventDataJson,
+      Metadata = metadata,
+      Scope = scope,
+      StreamId = streamId,
+      IsEvent = payload is IEvent
+    };
+  }
+
+  /// <summary>
+  /// Serializes envelope metadata (MessageId + Hops) to JSON string.
+  /// </summary>
+  private string _serializeEnvelopeMetadata(IMessageEnvelope envelope) {
+    if (_jsonOptions == null) {
+      throw new InvalidOperationException("JsonSerializerOptions required for metadata serialization");
+    }
+
+    var metadata = new EnvelopeMetadata {
+      MessageId = envelope.MessageId,
+      Hops = envelope.Hops.ToList()
+    };
+
+    var metadataTypeInfo = (JsonTypeInfo<EnvelopeMetadata>)_jsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
+    return JsonSerializer.Serialize(metadata, metadataTypeInfo);
+  }
+
+  /// <summary>
+  /// Serializes security scope (tenant, user) from first hop's security context.
+  /// Returns null if no security context is present.
+  /// </summary>
+  private static string? _serializeSecurityScope(IMessageEnvelope envelope) {
+    // Extract security context from first hop if available
+    var firstHop = envelope.Hops.FirstOrDefault();
+    if (firstHop?.SecurityContext == null) {
+      return null;
+    }
+
+    // Manual JSON construction for AOT compatibility
+    var userId = firstHop.SecurityContext.UserId?.ToString();
+    var tenantId = firstHop.SecurityContext.TenantId?.ToString();
+
+    return $"{{\"UserId\":{(userId == null ? "null" : $"\"{userId}\"")},\"TenantId\":{(tenantId == null ? "null" : $"\"{tenantId}\"")}}}";
+  }
+
+  /// <summary>
+  /// Extracts stream_id from envelope for stream-based ordering.
+  /// Tries to get aggregate ID from first hop metadata, falls back to message ID.
+  /// </summary>
+  private static Guid _extractStreamId(IMessageEnvelope envelope) {
+    // Check first hop for aggregate ID or stream key
+    var firstHop = envelope.Hops.FirstOrDefault();
+    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var aggregateIdObj)) {
+      if (aggregateIdObj is Guid aggregateId) {
+        return aggregateId;
+      }
+      if (aggregateIdObj is string aggregateIdStr && Guid.TryParse(aggregateIdStr, out var parsedAggregateId)) {
+        return parsedAggregateId;
+      }
+    }
+
+    // Fall back to message ID (ensures all messages have a stream)
+    return envelope.MessageId.Value;
   }
 
   /// <summary>

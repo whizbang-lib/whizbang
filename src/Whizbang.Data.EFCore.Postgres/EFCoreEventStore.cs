@@ -14,6 +14,16 @@ using Whizbang.Data.EFCore.Postgres.Serialization;
 namespace Whizbang.Data.EFCore.Postgres;
 
 /// <summary>
+/// Metadata structure for serializing envelope metadata to JSONB.
+/// Contains MessageId and Hops - serialized directly by System.Text.Json.
+/// Public for AOT source generation, but not intended for external use.
+/// </summary>
+public sealed class EnvelopeMetadata {
+  public required MessageId MessageId { get; init; }
+  public required List<MessageHop> Hops { get; init; }
+}
+
+/// <summary>
 /// EF Core implementation of IEventStore using PostgreSQL with JSONB columns.
 /// Provides append-only event storage for event sourcing and streaming scenarios.
 /// Stores events with stream-based organization using sequence numbers.
@@ -50,20 +60,26 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     var lastSequence = await GetLastSequenceAsync(streamId, cancellationToken);
     var nextSequence = lastSequence + 1;
 
-    // Serialize envelope data to JSON using JsonTypeInfo for AOT compatibility
+    // Serialize envelope.Payload to EventData using JsonTypeInfo for AOT compatibility
     var typeInfo = (JsonTypeInfo<TMessage>)_jsonOptions.GetTypeInfo(typeof(TMessage));
     var eventDataJson = JsonSerializer.Serialize(envelope.Payload, typeInfo);
     var eventData = JsonDocument.Parse(eventDataJson);
-    var metadata = SerializeMetadata(envelope);
-    var scope = SerializeScope(envelope);
+
+    // Serialize envelope metadata (MessageId + Hops) directly - no DTO mapping
+    var metadata = new EnvelopeMetadata {
+      MessageId = envelope.MessageId,
+      Hops = envelope.Hops.ToList()
+    };
+    var metadataTypeInfo = (JsonTypeInfo<EnvelopeMetadata>)_jsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
+    var metadataJson = JsonSerializer.Serialize(metadata, metadataTypeInfo);
+    var metadataDoc = JsonDocument.Parse(metadataJson);
 
     var record = new EventStoreRecord {
       StreamId = streamId,
       Sequence = nextSequence,
       EventType = typeof(TMessage).FullName ?? "Unknown",
       EventData = eventData,
-      Metadata = metadata,
-      Scope = scope,
+      Metadata = metadataDoc,
       CreatedAt = DateTime.UtcNow
     };
 
@@ -102,7 +118,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       .AsAsyncEnumerable();
 
     await foreach (var record in query.WithCancellation(cancellationToken)) {
-      // Deserialize the event data using JsonTypeInfo for AOT compatibility
+      // Deserialize the event payload using JsonTypeInfo for AOT compatibility
       var eventDataJson = record.EventData.RootElement.GetRawText();
       var typeInfo = (JsonTypeInfo<TMessage>)_jsonOptions.GetTypeInfo(typeof(TMessage));
       var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo);
@@ -110,55 +126,20 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
         throw new InvalidOperationException($"Failed to deserialize event at sequence {record.Sequence}");
       }
 
-      // Deserialize metadata to reconstruct envelope
+      // Deserialize metadata (MessageId + Hops) directly - no DTO mapping
       var metadataJson = record.Metadata.RootElement.GetRawText();
-      var metadata = JsonSerializer.Deserialize(metadataJson, EFCoreJsonContext.Default.EnvelopeMetadataDto);
+      var metadataTypeInfo = (JsonTypeInfo<EnvelopeMetadata>)_jsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
+      var metadata = JsonSerializer.Deserialize(metadataJson, metadataTypeInfo);
       if (metadata == null) {
         throw new InvalidOperationException($"Failed to deserialize metadata at sequence {record.Sequence}");
       }
 
-      // Reconstruct message hops from metadata
-      var hops = new List<MessageHop>();
-      foreach (var hop in metadata.Hops) {
-        // Parse HopType enum
-        var hopType = Enum.TryParse<HopType>(hop.Type, out var parsedType) ? parsedType : HopType.Current;
-
-        // Reconstruct security context if present
-        SecurityContext? securityContext = null;
-        if (hop.SecurityContext != null) {
-          securityContext = new SecurityContext {
-            UserId = hop.SecurityContext.UserId,
-            TenantId = hop.SecurityContext.TenantId
-          };
-        }
-
-        var messageHop = new MessageHop {
-          Type = hopType,
-          Topic = hop.Topic,
-          StreamKey = hop.StreamKey,
-          PartitionIndex = hop.PartitionIndex,
-          SequenceNumber = hop.SequenceNumber,
-          SecurityContext = securityContext,
-          Metadata = hop.Metadata,
-          CallerMemberName = hop.CallerMemberName,
-          CallerFilePath = hop.CallerFilePath,
-          CallerLineNumber = hop.CallerLineNumber,
-          Timestamp = hop.Timestamp,
-          Duration = hop.Duration ?? TimeSpan.Zero,
-          ServiceName = "Unknown", // Not serialized in old data, default value
-          ServiceInstanceId = Guid.Empty, // Not serialized in old data, use empty guid
-          CorrelationId = metadata.CorrelationId != null ? CorrelationId.Parse(metadata.CorrelationId) : null,
-          CausationId = metadata.CausationId != null ? MessageId.Parse(metadata.CausationId) : null
-        };
-        hops.Add(messageHop);
-      }
-
-      // Reconstruct the message envelope using the constructor
-      var envelope = new MessageEnvelope<TMessage>(
-        MessageId.Parse(record.StreamId.ToString()), // Use StreamId as message context
-        eventData!,
-        hops
-      );
+      // Reconstruct the message envelope - ServiceInstanceInfo is already in the hops
+      var envelope = new MessageEnvelope<TMessage> {
+        MessageId = metadata.MessageId,
+        Payload = eventData,
+        Hops = metadata.Hops
+      };
 
       yield return envelope;
     }
@@ -177,56 +158,6 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       .MaxAsync(e => (long?)e.Sequence, cancellationToken);
 
     return lastSequence ?? -1;
-  }
-
-  /// <summary>
-  /// Serializes envelope metadata (correlation, causation, hops) to JSON.
-  /// </summary>
-  private static JsonDocument SerializeMetadata(IMessageEnvelope envelope) {
-    var metadata = new EnvelopeMetadataDto {
-      CorrelationId = envelope.GetCorrelationId()?.ToString(),
-      CausationId = envelope.GetCausationId()?.ToString(),
-      Timestamp = envelope.GetMessageTimestamp(),
-      Hops = envelope.Hops.Select(h => new HopMetadataDto {
-        Type = h.Type.ToString(),
-        Topic = h.Topic,
-        StreamKey = h.StreamKey,
-        PartitionIndex = h.PartitionIndex,
-        SequenceNumber = h.SequenceNumber,
-        SecurityContext = h.SecurityContext != null ? new SecurityContextDto {
-          UserId = h.SecurityContext.UserId?.ToString(),
-          TenantId = h.SecurityContext.TenantId?.ToString()
-        } : null,
-        Metadata = h.Metadata,
-        CallerMemberName = h.CallerMemberName,
-        CallerFilePath = h.CallerFilePath,
-        CallerLineNumber = h.CallerLineNumber,
-        Timestamp = h.Timestamp,
-        Duration = h.Duration
-      }).ToList()
-    };
-
-    var json = JsonSerializer.Serialize(metadata, EFCoreJsonContext.Default.EnvelopeMetadataDto);
-    return JsonDocument.Parse(json);
-  }
-
-  /// <summary>
-  /// Serializes security scope (tenant, user) to JSON if present.
-  /// </summary>
-  private static JsonDocument? SerializeScope(IMessageEnvelope envelope) {
-    // Extract security context from first hop if available
-    var firstHop = envelope.Hops.FirstOrDefault();
-    if (firstHop?.SecurityContext == null) {
-      return null;
-    }
-
-    var scope = new ScopeDto {
-      UserId = firstHop.SecurityContext.UserId?.ToString(),
-      TenantId = firstHop.SecurityContext.TenantId?.ToString()
-    };
-
-    var json = JsonSerializer.Serialize(scope, EFCoreJsonContext.Default.ScopeDto);
-    return JsonDocument.Parse(json);
   }
 
   /// <summary>

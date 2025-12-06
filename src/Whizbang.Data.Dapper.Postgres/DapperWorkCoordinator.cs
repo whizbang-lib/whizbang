@@ -24,32 +24,44 @@ public class DapperWorkCoordinator(
     string hostName,
     int processId,
     Dictionary<string, object>? metadata,
-    Guid[] outboxCompletedIds,
-    FailedMessage[] outboxFailedMessages,
-    Guid[] inboxCompletedIds,
-    FailedMessage[] inboxFailedMessages,
+    MessageCompletion[] outboxCompletions,
+    MessageFailure[] outboxFailures,
+    MessageCompletion[] inboxCompletions,
+    MessageFailure[] inboxFailures,
+    NewOutboxMessage[] newOutboxMessages,
+    NewInboxMessage[] newInboxMessages,
+    WorkBatchFlags flags = WorkBatchFlags.None,
+    int partitionCount = 10_000,
+    int maxPartitionsPerInstance = 100,
     int leaseSeconds = 300,
     int staleThresholdSeconds = 600,
     CancellationToken cancellationToken = default
   ) {
     _logger?.LogDebug(
-      "Processing work batch for instance {InstanceId} ({ServiceName}@{HostName}:{ProcessId}): {OutboxCompleted} outbox completed, {OutboxFailed} outbox failed, {InboxCompleted} inbox completed, {InboxFailed} inbox failed",
+      "Processing work batch for instance {InstanceId} ({ServiceName}@{HostName}:{ProcessId}): {OutboxCompletions} outbox completions, {OutboxFailures} outbox failures, {InboxCompletions} inbox completions, {InboxFailures} inbox failures, {NewOutbox} new outbox, {NewInbox} new inbox, Flags={Flags}",
       instanceId,
       serviceName,
       hostName,
       processId,
-      outboxCompletedIds.Length,
-      outboxFailedMessages.Length,
-      inboxCompletedIds.Length,
-      inboxFailedMessages.Length
+      outboxCompletions.Length,
+      outboxFailures.Length,
+      inboxCompletions.Length,
+      inboxFailures.Length,
+      newOutboxMessages.Length,
+      newInboxMessages.Length,
+      flags
     );
 
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
 
-    // Convert failed messages and metadata to JSON
-    var outboxFailedJson = SerializeFailedMessages(outboxFailedMessages);
-    var inboxFailedJson = SerializeFailedMessages(inboxFailedMessages);
+    // Convert to JSON
+    var outboxCompletionsJson = SerializeCompletions(outboxCompletions);
+    var outboxFailuresJson = SerializeFailures(outboxFailures);
+    var inboxCompletionsJson = SerializeCompletions(inboxCompletions);
+    var inboxFailuresJson = SerializeFailures(inboxFailures);
+    var newOutboxJson = SerializeNewOutboxMessages(newOutboxMessages);
+    var newInboxJson = SerializeNewInboxMessages(newInboxMessages);
     var metadataJson = SerializeMetadata(metadata);
 
     // Execute the process_work_batch function
@@ -60,12 +72,17 @@ public class DapperWorkCoordinator(
         @p_host_name::varchar,
         @p_process_id::int,
         @p_metadata::jsonb,
-        @p_outbox_completed_ids::uuid[],
-        @p_outbox_failed_messages::jsonb,
-        @p_inbox_completed_ids::uuid[],
-        @p_inbox_failed_messages::jsonb,
+        @p_outbox_completions::jsonb,
+        @p_outbox_failures::jsonb,
+        @p_inbox_completions::jsonb,
+        @p_inbox_failures::jsonb,
+        @p_new_outbox_messages::jsonb,
+        @p_new_inbox_messages::jsonb,
         @p_lease_seconds::int,
-        @p_stale_threshold_seconds::int
+        @p_stale_threshold_seconds::int,
+        @p_flags::int,
+        @p_partition_count::int,
+        @p_max_partitions_per_instance::int
       )";
 
     var parameters = new {
@@ -74,12 +91,17 @@ public class DapperWorkCoordinator(
       p_host_name = hostName,
       p_process_id = processId,
       p_metadata = metadataJson,
-      p_outbox_completed_ids = outboxCompletedIds,
-      p_outbox_failed_messages = outboxFailedJson,
-      p_inbox_completed_ids = inboxCompletedIds,
-      p_inbox_failed_messages = inboxFailedJson,
+      p_outbox_completions = outboxCompletionsJson,
+      p_outbox_failures = outboxFailuresJson,
+      p_inbox_completions = inboxCompletionsJson,
+      p_inbox_failures = inboxFailuresJson,
+      p_new_outbox_messages = newOutboxJson,
+      p_new_inbox_messages = newInboxJson,
       p_lease_seconds = leaseSeconds,
-      p_stale_threshold_seconds = staleThresholdSeconds
+      p_stale_threshold_seconds = staleThresholdSeconds,
+      p_flags = (int)flags,
+      p_partition_count = partitionCount,
+      p_max_partitions_per_instance = maxPartitionsPerInstance
     };
 
     var commandDefinition = new CommandDefinition(
@@ -101,7 +123,12 @@ public class DapperWorkCoordinator(
         MessageData = r.event_data,
         Metadata = r.metadata,
         Scope = r.scope,
-        Attempts = r.attempts
+        StreamId = r.stream_id,
+        PartitionNumber = r.partition_number,
+        Attempts = r.attempts,
+        Status = (MessageProcessingStatus)r.status,
+        Flags = (WorkBatchFlags)r.flags,
+        SequenceOrder = r.sequence_order
       })
       .ToList();
 
@@ -112,7 +139,12 @@ public class DapperWorkCoordinator(
         MessageType = r.event_type,
         MessageData = r.event_data,
         Metadata = r.metadata,
-        Scope = r.scope
+        Scope = r.scope,
+        StreamId = r.stream_id,
+        PartitionNumber = r.partition_number,
+        Status = (MessageProcessingStatus)r.status,
+        Flags = (WorkBatchFlags)r.flags,
+        SequenceOrder = r.sequence_order
       })
       .ToList();
 
@@ -128,15 +160,57 @@ public class DapperWorkCoordinator(
     };
   }
 
-  private static string SerializeFailedMessages(FailedMessage[] messages) {
+  private static string SerializeCompletions(MessageCompletion[] completions) {
+    if (completions.Length == 0) {
+      return "[]";
+    }
+
+    // Simple JSON array serialization (AOT-safe)
+    var items = completions.Select(c =>
+      $"{{\"message_id\":\"{c.MessageId}\",\"status\":{(int)c.Status}}}"
+    );
+    return $"[{string.Join(",", items)}]";
+  }
+
+  private static string SerializeFailures(MessageFailure[] failures) {
+    if (failures.Length == 0) {
+      return "[]";
+    }
+
+    // Simple JSON array serialization (AOT-safe)
+    var items = failures.Select(f =>
+      $"{{\"message_id\":\"{f.MessageId}\",\"completed_status\":{(int)f.CompletedStatus},\"error\":\"{EscapeJson(f.Error)}\"}}"
+    );
+    return $"[{string.Join(",", items)}]";
+  }
+
+  private static string SerializeNewOutboxMessages(NewOutboxMessage[] messages) {
     if (messages.Length == 0) {
       return "[]";
     }
 
     // Simple JSON array serialization (AOT-safe)
-    var items = messages.Select(m =>
-      $"{{\"MessageId\":\"{m.MessageId}\",\"Error\":\"{EscapeJson(m.Error)}\"}}"
-    );
+    var items = messages.Select(m => {
+      var streamId = m.StreamId.HasValue ? $"\"{m.StreamId.Value}\"" : "null";
+      var scope = m.Scope != null ? m.Scope : "null";
+      var isEvent = m.IsEvent.ToString().ToLowerInvariant();
+      return $"{{\"message_id\":\"{m.MessageId}\",\"destination\":\"{EscapeJson(m.Destination)}\",\"event_type\":\"{EscapeJson(m.EventType)}\",\"event_data\":{m.EventData},\"metadata\":{m.Metadata},\"scope\":{scope},\"stream_id\":{streamId},\"is_event\":{isEvent}}}";
+    });
+    return $"[{string.Join(",", items)}]";
+  }
+
+  private static string SerializeNewInboxMessages(NewInboxMessage[] messages) {
+    if (messages.Length == 0) {
+      return "[]";
+    }
+
+    // Simple JSON array serialization (AOT-safe)
+    var items = messages.Select(m => {
+      var streamId = m.StreamId.HasValue ? $"\"{m.StreamId.Value}\"" : "null";
+      var scope = m.Scope != null ? m.Scope : "null";
+      var isEvent = m.IsEvent.ToString().ToLowerInvariant();
+      return $"{{\"message_id\":\"{m.MessageId}\",\"handler_name\":\"{EscapeJson(m.HandlerName)}\",\"event_type\":\"{EscapeJson(m.EventType)}\",\"event_data\":{m.EventData},\"metadata\":{m.Metadata},\"scope\":{scope},\"stream_id\":{streamId},\"is_event\":{isEvent}}}";
+    });
     return $"[{string.Join(",", items)}]";
   }
 
@@ -180,5 +254,10 @@ internal class WorkBatchRow {
   public required string event_data { get; set; }  // JSON string
   public required string metadata { get; set; }  // JSON string
   public string? scope { get; set; }  // JSON string (nullable)
+  public Guid? stream_id { get; set; }  // Stream ID for ordering
+  public int? partition_number { get; set; }  // Partition number
   public required int attempts { get; set; }
+  public required int status { get; set; }  // MessageProcessingStatus flags
+  public required int flags { get; set; }  // WorkBatchFlags
+  public required long sequence_order { get; set; }  // Epoch milliseconds for ordering
 }

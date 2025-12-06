@@ -31,7 +31,8 @@ public class DispatcherTransportBridgeTests {
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var dispatcher = CreateTestDispatcher();
-    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer);
+    var instanceProvider = new TestServiceInstanceProvider();
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer, instanceProvider);
     var destination = new TransportDestination("remote-service");
 
     var messageReceived = false;
@@ -70,7 +71,8 @@ public class DispatcherTransportBridgeTests {
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var dispatcher = CreateTestDispatcher();
-    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer);
+    var instanceProvider = new TestServiceInstanceProvider();
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer, instanceProvider);
     var destination = new TransportDestination("remote-service");
 
     byte[]? serializedBytes = null;
@@ -102,7 +104,8 @@ public class DispatcherTransportBridgeTests {
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var dispatcher = CreateTestDispatcher();
-    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer);
+    var instanceProvider = new TestServiceInstanceProvider();
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer, instanceProvider);
     var destination = new TransportDestination("remote-calculator");
 
     // Setup remote responder (simulates remote service)
@@ -116,7 +119,12 @@ public class DispatcherTransportBridgeTests {
           Payload = response,
           Hops = [
             new MessageHop {
-              ServiceName = "RemoteCalculator",
+              ServiceInstance = new ServiceInstanceInfo {
+                ServiceName = "TestService",
+                InstanceId = Guid.NewGuid(),
+                HostName = "test-host",
+                ProcessId = 12345
+              },
               Timestamp = DateTimeOffset.UtcNow,
               CorrelationId = requestEnvelope.GetCorrelationId(),
               CausationId = requestEnvelope.MessageId
@@ -147,7 +155,8 @@ public class DispatcherTransportBridgeTests {
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var dispatcher = CreateTestDispatcher();
-    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer);
+    var instanceProvider = new TestServiceInstanceProvider();
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer, instanceProvider);
     var destination = new TransportDestination("local-commands");
 
     var dispatcherInvoked = false;
@@ -173,7 +182,12 @@ public class DispatcherTransportBridgeTests {
       Payload = message,
       Hops = [
         new MessageHop {
-          ServiceName = "RemoteSender",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Timestamp = DateTimeOffset.UtcNow
         }
       ]
@@ -196,7 +210,8 @@ public class DispatcherTransportBridgeTests {
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var dispatcher = CreateTestDispatcher();
-    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer);
+    var instanceProvider = new TestServiceInstanceProvider();
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer, instanceProvider);
     var destination = new TransportDestination("local-commands");
 
     TestCommand? receivedMessage = null;
@@ -222,7 +237,12 @@ public class DispatcherTransportBridgeTests {
       Payload = message,
       Hops = [
         new MessageHop {
-          ServiceName = "RemoteSender",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Timestamp = DateTimeOffset.UtcNow
         }
       ]
@@ -247,7 +267,8 @@ public class DispatcherTransportBridgeTests {
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var dispatcher = CreateTestDispatcher();
-    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer);
+    var instanceProvider = new TestServiceInstanceProvider();
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer, instanceProvider);
     var destination = new TransportDestination("remote-service");
     var correlationId = CorrelationId.New();
 
@@ -283,7 +304,8 @@ public class DispatcherTransportBridgeTests {
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var dispatcher = CreateTestDispatcher();
-    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer);
+    var instanceProvider = new TestServiceInstanceProvider();
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer, instanceProvider);
     var destination = new TransportDestination("remote-service");
 
     IMessageEnvelope? receivedEnvelope = null;
@@ -304,7 +326,7 @@ public class DispatcherTransportBridgeTests {
     await Assert.That(receivedEnvelope).IsNotNull();
     if (receivedEnvelope != null) {
       await Assert.That(receivedEnvelope.Hops).HasCount().GreaterThanOrEqualTo(1);
-      await Assert.That(receivedEnvelope.Hops[0].ServiceName).IsNotNull();
+      await Assert.That(receivedEnvelope.Hops[0].ServiceInstance.ServiceName).IsNotNull();
     }
   }
 
@@ -315,7 +337,8 @@ public class DispatcherTransportBridgeTests {
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var dispatcher = CreateTestDispatcher();
-    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer);
+    var instanceProvider = new TestServiceInstanceProvider();
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer, instanceProvider);
     var destination = new TransportDestination("remote-calculator");
     var correlationId = CorrelationId.New();
 
@@ -333,7 +356,12 @@ public class DispatcherTransportBridgeTests {
           Payload = response,
           Hops = [
             new MessageHop {
-              ServiceName = "RemoteCalculator",
+              ServiceInstance = new ServiceInstanceInfo {
+                ServiceName = "TestService",
+                InstanceId = Guid.NewGuid(),
+                HostName = "test-host",
+                ProcessId = 12345
+              },
               Timestamp = DateTimeOffset.UtcNow,
               CorrelationId = requestEnvelope.GetCorrelationId(),
               CausationId = requestEnvelope.MessageId
@@ -368,7 +396,8 @@ public class DispatcherTransportBridgeTests {
   // Helper methods
   private static TestDispatcher CreateTestDispatcher() {
     var serviceProvider = new TestServiceProvider();
-    return new TestDispatcher(serviceProvider);
+    var instanceProvider = new TestServiceInstanceProvider();
+    return new TestDispatcher(serviceProvider, instanceProvider);
   }
 
   // Test message types
@@ -386,7 +415,7 @@ public class DispatcherTransportBridgeTests {
   }
 
   // Test dispatcher with hooks for verification
-  private class TestDispatcher(IServiceProvider serviceProvider) : Dispatcher(serviceProvider) {
+  private class TestDispatcher(IServiceProvider serviceProvider, IServiceInstanceProvider instanceProvider) : Dispatcher(serviceProvider, instanceProvider) {
     public Func<object, Task<IDeliveryReceipt>>? OnSendAsync { get; set; }
 
     protected override ReceptorInvoker<TResult>? _getReceptorInvoker<TResult>(object message, Type messageType) {
@@ -439,6 +468,24 @@ public class DispatcherTransportBridgeTests {
 
     public void Dispose() {
       // No-op for testing
+    }
+  }
+
+  private class TestServiceInstanceProvider : IServiceInstanceProvider {
+    private readonly Guid _instanceId = Guid.NewGuid();
+
+    public Guid InstanceId => _instanceId;
+    public string ServiceName => "test-service";
+    public string HostName => "test-host";
+    public int ProcessId => 12345;
+
+    public ServiceInstanceInfo ToInfo() {
+      return new ServiceInstanceInfo {
+        ServiceName = ServiceName,
+        InstanceId = InstanceId,
+        HostName = HostName,
+        ProcessId = ProcessId
+      };
     }
   }
 }

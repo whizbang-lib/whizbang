@@ -219,7 +219,12 @@ public abstract class EventStoreContractTests {
     // Add the first hop (dispatch hop)
     envelope.AddHop(new MessageHop {
       Type = HopType.Current,
-      ServiceName = "EventStoreContractTests"
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "EventStoreContractTests",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      }
     });
 
     return envelope;

@@ -16,15 +16,20 @@ public class MessageHopTests {
   public async Task MessageHop_WithRequiredProperties_InitializesWithDefaultsAsync() {
     // Arrange & Act
     var hop = new MessageHop {
-      ServiceName = "TestService"
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      }
     };
 
     // Assert - Verify required property
-    await Assert.That(hop.ServiceName).IsEqualTo("TestService");
+    await Assert.That(hop.ServiceInstance.ServiceName).IsEqualTo("TestService");
 
     // Assert - Verify default values are accessible
-    await Assert.That(hop.MachineName).IsNotNull();
-    await Assert.That(hop.MachineName).IsNotEqualTo(string.Empty);
+    await Assert.That(hop.ServiceInstance.HostName).IsNotNull();
+    await Assert.That(hop.ServiceInstance.HostName).IsNotEqualTo(string.Empty);
     await Assert.That(hop.Timestamp).IsNotEqualTo(default);
     await Assert.That(hop.Topic).IsEqualTo(string.Empty);
     await Assert.That(hop.StreamKey).IsEqualTo(string.Empty);
@@ -35,7 +40,12 @@ public class MessageHopTests {
   public async Task MessageHop_WithCausationType_StoresCausationTypeAsync() {
     // Arrange & Act
     var hop = new MessageHop {
-      ServiceName = "TestService",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Type = HopType.Causation,
       CausationType = "ParentMessage"
     };
@@ -53,8 +63,12 @@ public class MessageHopTests {
 
     // Act
     var hop = new MessageHop {
-      ServiceName = "TestService",
-      MachineName = "TestMachine",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "TestMachine",
+        ProcessId = 12345
+      },
       Timestamp = timestamp,
       Topic = "TestTopic",
       StreamKey = "TestStream",
@@ -68,8 +82,8 @@ public class MessageHopTests {
     };
 
     // Assert
-    await Assert.That(hop.ServiceName).IsEqualTo("TestService");
-    await Assert.That(hop.MachineName).IsEqualTo("TestMachine");
+    await Assert.That(hop.ServiceInstance.ServiceName).IsEqualTo("TestService");
+    await Assert.That(hop.ServiceInstance.HostName).IsEqualTo("TestMachine");
     await Assert.That(hop.Timestamp).IsEqualTo(timestamp);
     await Assert.That(hop.Topic).IsEqualTo("TestTopic");
     await Assert.That(hop.StreamKey).IsEqualTo("TestStream");
@@ -86,7 +100,12 @@ public class MessageHopTests {
   public async Task MessageHop_TypeDefaultsToCurrent_WhenNotSpecifiedAsync() {
     // Arrange & Act
     var hop = new MessageHop {
-      ServiceName = "TestService"
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      }
     };
 
     // Assert
@@ -97,11 +116,16 @@ public class MessageHopTests {
   public async Task MessageHop_MachineName_UsesEnvironmentMachineName_ByDefaultAsync() {
     // Arrange & Act
     var hop = new MessageHop {
-      ServiceName = "TestService"
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = Environment.MachineName,
+        ProcessId = 12345
+      }
     };
 
     // Assert - Should default to Environment.MachineName
-    await Assert.That(hop.MachineName).IsEqualTo(Environment.MachineName);
+    await Assert.That(hop.ServiceInstance.HostName).IsEqualTo(Environment.MachineName);
   }
 
   [Test]
@@ -112,7 +136,12 @@ public class MessageHopTests {
 
     // Act
     var hop = new MessageHop {
-      ServiceName = "TestService",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Type = HopType.Causation,
       CausationId = causationId,
       CorrelationId = correlationId
@@ -133,7 +162,12 @@ public class MessageHopTests {
 
     // Act
     var hop = new MessageHop {
-      ServiceName = "TestService",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       SecurityContext = securityContext
     };
 
@@ -153,7 +187,12 @@ public class MessageHopTests {
 
     // Act
     var hop = new MessageHop {
-      ServiceName = "TestService",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Metadata = metadata
     };
 
@@ -172,7 +211,12 @@ public class MessageHopTests {
 
     // Act
     var hop = new MessageHop {
-      ServiceName = "TestService",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Trail = trail
     };
 
@@ -186,24 +230,34 @@ public class MessageHopTests {
   public async Task MessageHop_WithExpression_CreatesModifiedCopyAsync() {
     // Arrange
     var original = new MessageHop {
-      ServiceName = "OriginalService",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "OriginalService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "original-host",
+        ProcessId = 12345
+      },
       Topic = "OriginalTopic",
       ExecutionStrategy = "SerialExecutor"
     };
 
     // Act - Use 'with' expression to create a modified copy (covers copy constructor)
     var copy = original with {
-      ServiceName = "ModifiedService",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "ModifiedService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "modified-host",
+        ProcessId = 67890
+      },
       Topic = "ModifiedTopic"
     };
 
     // Assert - Original unchanged
-    await Assert.That(original.ServiceName).IsEqualTo("OriginalService");
+    await Assert.That(original.ServiceInstance.ServiceName).IsEqualTo("OriginalService");
     await Assert.That(original.Topic).IsEqualTo("OriginalTopic");
     await Assert.That(original.ExecutionStrategy).IsEqualTo("SerialExecutor");
 
     // Assert - Copy has modifications
-    await Assert.That(copy.ServiceName).IsEqualTo("ModifiedService");
+    await Assert.That(copy.ServiceInstance.ServiceName).IsEqualTo("ModifiedService");
     await Assert.That(copy.Topic).IsEqualTo("ModifiedTopic");
     await Assert.That(copy.ExecutionStrategy).IsEqualTo("SerialExecutor"); // Unchanged property carried over
   }

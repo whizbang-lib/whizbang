@@ -460,7 +460,7 @@ public class DispatcherReceptorIntegrationTests {
 
     var hop = envelope.Hops[0];
     await Assert.That(hop.Type).IsEqualTo(Whizbang.Core.Observability.HopType.Current);
-    await Assert.That(hop.ServiceName).IsNotEqualTo(string.Empty);
+    await Assert.That(hop.ServiceInstance.ServiceName).IsNotEqualTo(string.Empty);
     await Assert.That(hop.Timestamp).IsLessThanOrEqualTo(DateTimeOffset.UtcNow);
   }
 

@@ -28,8 +28,13 @@ public class TracingBenchmarks {
   [Benchmark]
   public static MessageHop CreateMessageHop() {
     return new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "benchmark-host",
+        ProcessId = 12345
+      },
       Type = HopType.Current,
-      ServiceName = "TestService",
       Timestamp = DateTimeOffset.UtcNow,
       Topic = "test-topic",
       StreamKey = "stream-123",
@@ -47,8 +52,13 @@ public class TracingBenchmarks {
       Hops = []
     };
     envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "benchmark-host",
+        ProcessId = 12345
+      },
       Type = HopType.Current,
-      ServiceName = "TestService",
       Timestamp = DateTimeOffset.UtcNow
     });
     return envelope;
@@ -70,8 +80,13 @@ public class TracingBenchmarks {
     }
 
     var hop = new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "benchmark-host",
+        ProcessId = 12345
+      },
       Type = HopType.Current,
-      ServiceName = "TestService",
       Timestamp = DateTimeOffset.UtcNow,
       Metadata = metadata
     };
@@ -91,20 +106,35 @@ public class TracingBenchmarks {
 
     // Add 3 hops (current + 2 causation)
     envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service1",
+        InstanceId = Guid.NewGuid(),
+        HostName = "benchmark-host",
+        ProcessId = 12345
+      },
       Type = HopType.Current,
-      ServiceName = "Service1",
       Timestamp = DateTimeOffset.UtcNow
     });
     envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service2",
+        InstanceId = Guid.NewGuid(),
+        HostName = "benchmark-host",
+        ProcessId = 12345
+      },
       Type = HopType.Causation,
-      ServiceName = "Service2",
       Timestamp = DateTimeOffset.UtcNow.AddSeconds(-1),
       CausationId = MessageId.New(),
       CausationType = "ParentCommand"
     });
     envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service3",
+        InstanceId = Guid.NewGuid(),
+        HostName = "benchmark-host",
+        ProcessId = 12345
+      },
       Type = HopType.Causation,
-      ServiceName = "Service3",
       Timestamp = DateTimeOffset.UtcNow.AddSeconds(-2),
       CausationId = MessageId.New(),
       CausationType = "GrandparentCommand"
@@ -168,8 +198,13 @@ public class TracingBenchmarks {
       Hops = []
     };
     envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "benchmark-host",
+        ProcessId = 12345
+      },
       Type = HopType.Current,
-      ServiceName = "TestService",
       Timestamp = DateTimeOffset.UtcNow,
       Topic = "test-topic"
     });
@@ -185,18 +220,33 @@ public class TracingBenchmarks {
     };
 
     envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service1",
+        InstanceId = Guid.NewGuid(),
+        HostName = "benchmark-host",
+        ProcessId = 12345
+      },
       Type = HopType.Current,
-      ServiceName = "Service1",
       Timestamp = DateTimeOffset.UtcNow
     });
     envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service2",
+        InstanceId = Guid.NewGuid(),
+        HostName = "benchmark-host",
+        ProcessId = 12345
+      },
       Type = HopType.Causation,
-      ServiceName = "Service2",
       Timestamp = DateTimeOffset.UtcNow.AddSeconds(-1)
     });
     envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service3",
+        InstanceId = Guid.NewGuid(),
+        HostName = "benchmark-host",
+        ProcessId = 12345
+      },
       Type = HopType.Causation,
-      ServiceName = "Service3",
       Timestamp = DateTimeOffset.UtcNow.AddSeconds(-2)
     });
 

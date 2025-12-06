@@ -51,8 +51,13 @@ public class SimpleBenchmarks {
   [Benchmark]
   public static MessageHop CreateSimpleHop() {
     return new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "benchmark-host",
+        ProcessId = 12345
+      },
       Type = HopType.Current,
-      ServiceName = "TestService",
       Timestamp = DateTimeOffset.UtcNow
     };
   }
@@ -60,8 +65,13 @@ public class SimpleBenchmarks {
   [Benchmark]
   public static MessageHop CreateComplexHop() {
     return new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "benchmark-host",
+        ProcessId = 12345
+      },
       Type = HopType.Current,
-      ServiceName = "TestService",
       Timestamp = DateTimeOffset.UtcNow,
       Topic = "test-topic",
       StreamKey = "stream-123",
@@ -80,8 +90,13 @@ public class SimpleBenchmarks {
       Hops = []
     };
     envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "benchmark-host",
+        ProcessId = 12345
+      },
       Type = HopType.Current,
-      ServiceName = "TestService",
       Timestamp = DateTimeOffset.UtcNow
     });
     return envelope;

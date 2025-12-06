@@ -34,13 +34,14 @@ public sealed class EventStoreRecord {
   /// <summary>
   /// Event payload stored as JSONB.
   /// Contains the actual event data (e.g., { "OrderId": "123", "Total": 99.99 }).
+  /// Serialized directly from MessageEnvelope.Payload.
   /// </summary>
   public required JsonDocument EventData { get; set; }
 
   /// <summary>
   /// Event metadata stored as JSONB.
-  /// Contains correlation ID, causation ID, timestamp, security context, etc.
-  /// Schema: { "CorrelationId": "guid", "CausationId": "guid", "Timestamp": "ISO8601", "UserId": "...", "TenantId": "..." }
+  /// Contains MessageId and complete Hops chain with all observability data.
+  /// Serialized directly from MessageEnvelope using System.Text.Json (no DTO mapping).
   /// </summary>
   public required JsonDocument Metadata { get; set; }
 

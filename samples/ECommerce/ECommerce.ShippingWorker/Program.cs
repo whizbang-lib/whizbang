@@ -22,7 +22,8 @@ var serviceBusConnection = builder.Configuration.GetConnectionString("servicebus
     ?? throw new InvalidOperationException("Azure Service Bus connection string 'servicebus' not found");
 
 // Register Azure Service Bus transport
-builder.Services.AddAzureServiceBusTransport(serviceBusConnection, ECommerce.Contracts.Generated.WhizbangJsonContext.Default);
+// Note: Transport uses JsonContextRegistry internally for serialization
+builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
 builder.Services.AddAzureServiceBusHealthChecks();
 
 // Add trace store for observability

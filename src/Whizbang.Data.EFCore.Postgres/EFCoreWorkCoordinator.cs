@@ -24,43 +24,60 @@ public class EFCoreWorkCoordinator<TDbContext>(
     string hostName,
     int processId,
     Dictionary<string, object>? metadata,
-    Guid[] outboxCompletedIds,
-    FailedMessage[] outboxFailedMessages,
-    Guid[] inboxCompletedIds,
-    FailedMessage[] inboxFailedMessages,
+    MessageCompletion[] outboxCompletions,
+    MessageFailure[] outboxFailures,
+    MessageCompletion[] inboxCompletions,
+    MessageFailure[] inboxFailures,
+    NewOutboxMessage[] newOutboxMessages,
+    NewInboxMessage[] newInboxMessages,
+    WorkBatchFlags flags = WorkBatchFlags.None,
+    int partitionCount = 10_000,
+    int maxPartitionsPerInstance = 100,
     int leaseSeconds = 300,
     int staleThresholdSeconds = 600,
     CancellationToken cancellationToken = default
   ) {
     _logger?.LogDebug(
-      "Processing work batch for instance {InstanceId} ({ServiceName}@{HostName}:{ProcessId}): {OutboxCompleted} outbox completed, {OutboxFailed} outbox failed, {InboxCompleted} inbox completed, {InboxFailed} inbox failed",
+      "Processing work batch for instance {InstanceId} ({ServiceName}@{HostName}:{ProcessId}): {OutboxCompletions} outbox completions, {OutboxFailures} outbox failures, {InboxCompletions} inbox completions, {InboxFailures} inbox failures, {NewOutbox} new outbox, {NewInbox} new inbox, Flags={Flags}",
       instanceId,
       serviceName,
       hostName,
       processId,
-      outboxCompletedIds.Length,
-      outboxFailedMessages.Length,
-      inboxCompletedIds.Length,
-      inboxFailedMessages.Length
+      outboxCompletions.Length,
+      outboxFailures.Length,
+      inboxCompletions.Length,
+      inboxFailures.Length,
+      newOutboxMessages.Length,
+      newInboxMessages.Length,
+      flags
     );
 
-    // Convert arrays to PostgreSQL-compatible parameters
-    var outboxCompletedIdsParam = PostgresArrayHelper.ToUuidArray(outboxCompletedIds);
-    outboxCompletedIdsParam.ParameterName = "p_outbox_completed_ids";
-
-    var inboxCompletedIdsParam = PostgresArrayHelper.ToUuidArray(inboxCompletedIds);
-    inboxCompletedIdsParam.ParameterName = "p_inbox_completed_ids";
-
-    // Convert failed messages and metadata to JSONB
-    var outboxFailedJson = SerializeFailedMessages(outboxFailedMessages);
-    var inboxFailedJson = SerializeFailedMessages(inboxFailedMessages);
+    // Convert to JSONB parameters
+    var outboxCompletionsJson = SerializeCompletions(outboxCompletions);
+    var outboxFailuresJson = SerializeFailures(outboxFailures);
+    var inboxCompletionsJson = SerializeCompletions(inboxCompletions);
+    var inboxFailuresJson = SerializeFailures(inboxFailures);
+    var newOutboxJson = SerializeNewOutboxMessages(newOutboxMessages);
+    var newInboxJson = SerializeNewInboxMessages(newInboxMessages);
     var metadataJson = SerializeMetadata(metadata);
 
-    var outboxFailedParam = PostgresJsonHelper.JsonStringToJsonb(outboxFailedJson);
-    outboxFailedParam.ParameterName = "p_outbox_failed_messages";
+    var outboxCompletionsParam = PostgresJsonHelper.JsonStringToJsonb(outboxCompletionsJson);
+    outboxCompletionsParam.ParameterName = "p_outbox_completions";
 
-    var inboxFailedParam = PostgresJsonHelper.JsonStringToJsonb(inboxFailedJson);
-    inboxFailedParam.ParameterName = "p_inbox_failed_messages";
+    var outboxFailuresParam = PostgresJsonHelper.JsonStringToJsonb(outboxFailuresJson);
+    outboxFailuresParam.ParameterName = "p_outbox_failures";
+
+    var inboxCompletionsParam = PostgresJsonHelper.JsonStringToJsonb(inboxCompletionsJson);
+    inboxCompletionsParam.ParameterName = "p_inbox_completions";
+
+    var inboxFailuresParam = PostgresJsonHelper.JsonStringToJsonb(inboxFailuresJson);
+    inboxFailuresParam.ParameterName = "p_inbox_failures";
+
+    var newOutboxParam = PostgresJsonHelper.JsonStringToJsonb(newOutboxJson);
+    newOutboxParam.ParameterName = "p_new_outbox_messages";
+
+    var newInboxParam = PostgresJsonHelper.JsonStringToJsonb(newInboxJson);
+    newInboxParam.ParameterName = "p_new_inbox_messages";
 
     var metadataParam = metadataJson != null
       ? PostgresJsonHelper.JsonStringToJsonb(metadataJson)
@@ -76,12 +93,17 @@ public class EFCoreWorkCoordinator<TDbContext>(
         @p_host_name,
         @p_process_id,
         @p_metadata,
-        @p_outbox_completed_ids,
-        @p_outbox_failed_messages,
-        @p_inbox_completed_ids,
-        @p_inbox_failed_messages,
+        @p_outbox_completions,
+        @p_outbox_failures,
+        @p_inbox_completions,
+        @p_inbox_failures,
+        @p_new_outbox_messages,
+        @p_new_inbox_messages,
         @p_lease_seconds,
-        @p_stale_threshold_seconds
+        @p_stale_threshold_seconds,
+        @p_flags,
+        @p_partition_count,
+        @p_max_partitions_per_instance
       )";
 
     var results = await _dbContext.Database
@@ -92,12 +114,17 @@ public class EFCoreWorkCoordinator<TDbContext>(
         new Npgsql.NpgsqlParameter("p_host_name", hostName),
         new Npgsql.NpgsqlParameter("p_process_id", processId),
         metadataParam,
-        outboxCompletedIdsParam,
-        outboxFailedParam,
-        inboxCompletedIdsParam,
-        inboxFailedParam,
+        outboxCompletionsParam,
+        outboxFailuresParam,
+        inboxCompletionsParam,
+        inboxFailuresParam,
+        newOutboxParam,
+        newInboxParam,
         new Npgsql.NpgsqlParameter("p_lease_seconds", leaseSeconds),
-        new Npgsql.NpgsqlParameter("p_stale_threshold_seconds", staleThresholdSeconds)
+        new Npgsql.NpgsqlParameter("p_stale_threshold_seconds", staleThresholdSeconds),
+        new Npgsql.NpgsqlParameter("p_flags", (int)flags),
+        new Npgsql.NpgsqlParameter("p_partition_count", partitionCount),
+        new Npgsql.NpgsqlParameter("p_max_partitions_per_instance", maxPartitionsPerInstance)
       )
       .ToListAsync(cancellationToken);
 
@@ -111,7 +138,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
         MessageData = r.EventData,
         Metadata = r.Metadata,
         Scope = r.Scope,
-        Attempts = r.Attempts
+        StreamId = r.StreamId,
+        PartitionNumber = r.PartitionNumber,
+        Attempts = r.Attempts,
+        Status = (MessageProcessingStatus)r.Status,
+        Flags = (WorkBatchFlags)r.Flags,
+        SequenceOrder = r.SequenceOrder
       })
       .ToList();
 
@@ -122,7 +154,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
         MessageType = r.EventType,
         MessageData = r.EventData,
         Metadata = r.Metadata,
-        Scope = r.Scope
+        Scope = r.Scope,
+        StreamId = r.StreamId,
+        PartitionNumber = r.PartitionNumber,
+        Status = (MessageProcessingStatus)r.Status,
+        Flags = (WorkBatchFlags)r.Flags,
+        SequenceOrder = r.SequenceOrder
       })
       .ToList();
 
@@ -138,15 +175,57 @@ public class EFCoreWorkCoordinator<TDbContext>(
     };
   }
 
-  private static string SerializeFailedMessages(FailedMessage[] messages) {
+  private static string SerializeCompletions(MessageCompletion[] completions) {
+    if (completions.Length == 0) {
+      return "[]";
+    }
+
+    // Simple JSON array serialization (AOT-safe)
+    var items = completions.Select(c =>
+      $"{{\"message_id\":\"{c.MessageId}\",\"status\":{(int)c.Status}}}"
+    );
+    return $"[{string.Join(",", items)}]";
+  }
+
+  private static string SerializeFailures(MessageFailure[] failures) {
+    if (failures.Length == 0) {
+      return "[]";
+    }
+
+    // Simple JSON array serialization (AOT-safe)
+    var items = failures.Select(f =>
+      $"{{\"message_id\":\"{f.MessageId}\",\"completed_status\":{(int)f.CompletedStatus},\"error\":\"{EscapeJson(f.Error)}\"}}"
+    );
+    return $"[{string.Join(",", items)}]";
+  }
+
+  private static string SerializeNewOutboxMessages(NewOutboxMessage[] messages) {
     if (messages.Length == 0) {
       return "[]";
     }
 
     // Simple JSON array serialization (AOT-safe)
-    var items = messages.Select(m =>
-      $"{{\"MessageId\":\"{m.MessageId}\",\"Error\":\"{EscapeJson(m.Error)}\"}}"
-    );
+    var items = messages.Select(m => {
+      var streamId = m.StreamId.HasValue ? $"\"{m.StreamId.Value}\"" : "null";
+      var scope = m.Scope != null ? m.Scope : "null";
+      var isEvent = m.IsEvent.ToString().ToLowerInvariant();
+      return $"{{\"message_id\":\"{m.MessageId}\",\"destination\":\"{EscapeJson(m.Destination)}\",\"event_type\":\"{EscapeJson(m.EventType)}\",\"event_data\":{m.EventData},\"metadata\":{m.Metadata},\"scope\":{scope},\"stream_id\":{streamId},\"is_event\":{isEvent}}}";
+    });
+    return $"[{string.Join(",", items)}]";
+  }
+
+  private static string SerializeNewInboxMessages(NewInboxMessage[] messages) {
+    if (messages.Length == 0) {
+      return "[]";
+    }
+
+    // Simple JSON array serialization (AOT-safe)
+    var items = messages.Select(m => {
+      var streamId = m.StreamId.HasValue ? $"\"{m.StreamId.Value}\"" : "null";
+      var scope = m.Scope != null ? m.Scope : "null";
+      var isEvent = m.IsEvent.ToString().ToLowerInvariant();
+      return $"{{\"message_id\":\"{m.MessageId}\",\"handler_name\":\"{EscapeJson(m.HandlerName)}\",\"event_type\":\"{EscapeJson(m.EventType)}\",\"event_data\":{m.EventData},\"metadata\":{m.Metadata},\"scope\":{scope},\"stream_id\":{streamId},\"is_event\":{isEvent}}}";
+    });
     return $"[{string.Join(",", items)}]";
   }
 
@@ -190,5 +269,10 @@ internal class WorkBatchRow {
   public required string EventData { get; set; }  // JSON string
   public required string Metadata { get; set; }  // JSON string
   public string? Scope { get; set; }  // JSON string (nullable)
+  public Guid? StreamId { get; set; }  // Stream ID for ordering
+  public int? PartitionNumber { get; set; }  // Partition number
   public required int Attempts { get; set; }
+  public required int Status { get; set; }  // MessageProcessingStatus flags
+  public required int Flags { get; set; }  // WorkBatchFlags
+  public required long SequenceOrder { get; set; }  // Epoch milliseconds for ordering
 }

@@ -50,8 +50,13 @@ public class InMemorySerializerTests {
       Payload = message,
       Hops = [
         new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Type = HopType.Current,
-          ServiceName = "Test",
           Timestamp = DateTimeOffset.UtcNow,
           Metadata = new Dictionary<string, object> {
             ["key1"] = "value1",
@@ -95,8 +100,13 @@ public class InMemorySerializerTests {
       Payload = new TestMessage { Content = "test", Value = 1 },
       Hops = [
         new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Type = HopType.Current,
-          ServiceName = "Test",
           Timestamp = DateTimeOffset.UtcNow
         }
       ]

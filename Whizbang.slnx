@@ -33,7 +33,6 @@
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/Whizbang.Core/Whizbang.Core.csproj" />
-    <Project Path="src/Whizbang.Data.Dapper.Custom/Whizbang.Data.Dapper.Custom.csproj" />
     <Project Path="src/Whizbang.Data.Dapper.Postgres/Whizbang.Data.Dapper.Postgres.csproj" />
     <Project Path="src/Whizbang.Data.Dapper.Sqlite/Whizbang.Data.Dapper.Sqlite.csproj" />
     <Project Path="src/Whizbang.Data.EFCore.Custom/Whizbang.Data.EFCore.Custom.csproj" />

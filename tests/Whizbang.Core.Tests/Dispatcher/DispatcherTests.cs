@@ -246,6 +246,10 @@ public class DispatcherTests {
   private static IDispatcher CreateDispatcher() {
     var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
 
+    // Register service instance provider (required dependency)
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+
     // Register receptors
     services.AddReceptors();
 
@@ -441,6 +445,11 @@ public class DispatcherTests {
     // Arrange
     LogReceptor.Reset();
     var services = new ServiceCollection();
+
+    // Register service instance provider (required dependency)
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
@@ -526,7 +535,7 @@ public class DispatcherTests {
       Whizbang.Core.Observability.ITraceStore? traceStore = null,
       Whizbang.Core.Messaging.IOutbox? outbox = null,
       System.Text.Json.JsonSerializerOptions? jsonOptions = null
-    ) : base(services, traceStore, outbox, transport: null, jsonOptions) { }
+    ) : base(services, new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null), traceStore, outbox, transport: null, jsonOptions) { }
 
     // All receptor lookups return null (0 receptors)
     protected override ReceptorInvoker<TResult>? _getReceptorInvoker<TResult>(object message, Type messageType) => null;

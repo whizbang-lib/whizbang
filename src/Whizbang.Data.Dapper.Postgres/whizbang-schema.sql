@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS wb_service_instances (
 CREATE INDEX IF NOT EXISTS idx_service_instances_last_heartbeat ON wb_service_instances (last_heartbeat_at);
 
 -- Inbox - Message deduplication and idempotency
+-- Updated: 2025-12-06 - Added partitioning support for stream ordering
 CREATE TABLE IF NOT EXISTS wb_inbox (
   message_id UUID NOT NULL PRIMARY KEY,
   handler_name VARCHAR(500) NOT NULL,
@@ -24,20 +25,27 @@ CREATE TABLE IF NOT EXISTS wb_inbox (
   event_data JSONB NOT NULL,
   metadata JSONB NOT NULL,
   scope JSONB NULL,
-  status VARCHAR(50) NOT NULL DEFAULT 'Pending',
+  status INTEGER NOT NULL DEFAULT 1,  -- MessageProcessingStatus flags (1 = Stored)
   attempts INTEGER NOT NULL DEFAULT 0,
   error TEXT NULL,
   received_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   processed_at TIMESTAMPTZ NULL,
   instance_id UUID NULL,
-  lease_expiry TIMESTAMPTZ NULL
+  lease_expiry TIMESTAMPTZ NULL,
+  stream_id UUID NULL,  -- For stream ordering (aggregate ID or message ID)
+  partition_number INTEGER NULL  -- Computed from stream_id for load distribution
 );
 
-CREATE INDEX IF NOT EXISTS idx_inbox_status_received_at ON wb_inbox (status, received_at);
+-- Partition-based indexes for efficient work claiming
+CREATE INDEX IF NOT EXISTS idx_inbox_partition_status ON wb_inbox (partition_number, status)
+  WHERE (status & 32768) = 0 AND (status & 24) != 24;  -- Not failed AND not fully completed
+
+CREATE INDEX IF NOT EXISTS idx_inbox_partition_stream_order ON wb_inbox (partition_number, stream_id, received_at);
 CREATE INDEX IF NOT EXISTS idx_inbox_processed_at ON wb_inbox (processed_at);
-CREATE INDEX IF NOT EXISTS idx_inbox_lease_expiry ON wb_inbox (lease_expiry) WHERE status = 'Processing';
+CREATE INDEX IF NOT EXISTS idx_inbox_lease_expiry ON wb_inbox (lease_expiry) WHERE (status & 24) != 24;
 
 -- Outbox - Transactional messaging pattern with lease-based coordination
+-- Updated: 2025-12-06 - Added partitioning support for stream ordering
 CREATE TABLE IF NOT EXISTS wb_outbox (
   message_id UUID NOT NULL PRIMARY KEY,
   destination VARCHAR(500) NOT NULL,
@@ -45,18 +53,25 @@ CREATE TABLE IF NOT EXISTS wb_outbox (
   event_data JSONB NOT NULL,
   metadata JSONB NOT NULL,
   scope JSONB NULL,
-  status VARCHAR(50) NOT NULL DEFAULT 'Pending',
+  status INTEGER NOT NULL DEFAULT 1,  -- MessageProcessingStatus flags (1 = Stored)
   attempts INTEGER NOT NULL DEFAULT 0,
   error TEXT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   published_at TIMESTAMPTZ NULL,
+  processed_at TIMESTAMPTZ NULL,  -- When fully completed
   instance_id UUID NULL,
-  lease_expiry TIMESTAMPTZ NULL
+  lease_expiry TIMESTAMPTZ NULL,
+  stream_id UUID NULL,  -- For stream ordering (aggregate ID or message ID)
+  partition_number INTEGER NULL  -- Computed from stream_id for load distribution
 );
 
-CREATE INDEX IF NOT EXISTS idx_outbox_status_created_at ON wb_outbox (status, created_at);
+-- Partition-based indexes for efficient work claiming
+CREATE INDEX IF NOT EXISTS idx_outbox_partition_status ON wb_outbox (partition_number, status)
+  WHERE (status & 32768) = 0 AND (status & 24) != 24;  -- Not failed AND not fully completed
+
+CREATE INDEX IF NOT EXISTS idx_outbox_partition_stream_order ON wb_outbox (partition_number, stream_id, created_at);
 CREATE INDEX IF NOT EXISTS idx_outbox_published_at ON wb_outbox (published_at);
-CREATE INDEX IF NOT EXISTS idx_outbox_lease_expiry ON wb_outbox (lease_expiry) WHERE status = 'Publishing';
+CREATE INDEX IF NOT EXISTS idx_outbox_lease_expiry ON wb_outbox (lease_expiry) WHERE (status & 24) != 24;
 
 -- Event Store - Event sourcing and audit trail
 -- Uses stream_id as the primary event stream identifier (preferred)
@@ -107,6 +122,37 @@ CREATE TABLE IF NOT EXISTS wb_sequences (
   last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Event Store Sequence - Global sequence for event ordering across all streams
+CREATE SEQUENCE IF NOT EXISTS wb_event_sequence START WITH 1 INCREMENT BY 1;
+
+-- Partition Assignments - Track which partitions are owned by which service instances
+-- Updated: 2025-12-06 - Partition-based stream ordering support
+CREATE TABLE IF NOT EXISTS wb_partition_assignments (
+  partition_number INTEGER NOT NULL PRIMARY KEY,
+  instance_id UUID NOT NULL REFERENCES wb_service_instances(instance_id) ON DELETE CASCADE,
+  assigned_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_partition_instance ON wb_partition_assignments(instance_id);
+CREATE INDEX IF NOT EXISTS idx_partition_heartbeat ON wb_partition_assignments(last_heartbeat);
+
+-- Helper function: Compute partition number from stream_id
+-- Uses hashtext for consistent hashing across all stream IDs
+CREATE OR REPLACE FUNCTION compute_partition(p_stream_id UUID, p_partition_count INTEGER DEFAULT 10000)
+RETURNS INTEGER AS $$
+BEGIN
+  -- Use hashtext on UUID string for consistent hashing
+  -- Modulo to get partition number (0 to partition_count-1)
+  -- Handle NULL stream_id by using random partition (for non-event messages)
+  IF p_stream_id IS NULL THEN
+    RETURN floor(random() * p_partition_count)::INTEGER;
+  END IF;
+
+  RETURN (abs(hashtext(p_stream_id::TEXT)) % p_partition_count)::INTEGER;
+END;
+$$ LANGUAGE plpgsql IMMUTABLE;
+
 -- Legacy table name aliases for backwards compatibility
 CREATE OR REPLACE VIEW whizbang_event_store AS SELECT * FROM wb_event_store;
 CREATE OR REPLACE VIEW whizbang_outbox AS SELECT * FROM wb_outbox;
@@ -114,22 +160,34 @@ CREATE OR REPLACE VIEW whizbang_inbox AS SELECT * FROM wb_inbox;
 CREATE OR REPLACE VIEW whizbang_request_response AS SELECT * FROM wb_request_response;
 CREATE OR REPLACE VIEW whizbang_sequences AS SELECT * FROM wb_sequences;
 
--- Coordinated Work Processing Function
--- Atomically processes work batches with heartbeat updates, orphaned message recovery,
--- message completion, and failure tracking in a single transaction.
--- Updated: 2025-12-04 - Added instance management and stale cleanup
+-- Coordinated Work Processing Function with Partitioning and Stream Ordering
+-- Atomically processes work batches with partition assignment, event store integration,
+-- and granular status tracking in a single transaction.
+-- Updated: 2025-12-06 - Complete rewrite for partition-based stream ordering
 CREATE OR REPLACE FUNCTION process_work_batch(
+  -- Instance identification
   p_instance_id UUID,
   p_service_name VARCHAR(200),
   p_host_name VARCHAR(200),
   p_process_id INTEGER,
   p_metadata JSONB DEFAULT NULL,
-  p_outbox_completed_ids UUID[] DEFAULT ARRAY[]::UUID[],
-  p_outbox_failed_messages JSONB DEFAULT '[]'::JSONB,
-  p_inbox_completed_ids UUID[] DEFAULT ARRAY[]::UUID[],
-  p_inbox_failed_messages JSONB DEFAULT '[]'::JSONB,
+
+  -- Completion tracking (with status pairing)
+  p_outbox_completions JSONB DEFAULT '[]'::JSONB,  -- [{"message_id": "uuid", "status": 12}, ...]
+  p_outbox_failures JSONB DEFAULT '[]'::JSONB,     -- [{"message_id": "uuid", "status": 8, "error": "..."}, ...]
+  p_inbox_completions JSONB DEFAULT '[]'::JSONB,
+  p_inbox_failures JSONB DEFAULT '[]'::JSONB,
+
+  -- Immediate processing support
+  p_new_outbox_messages JSONB DEFAULT '[]'::JSONB,  -- Array of new messages to store
+  p_new_inbox_messages JSONB DEFAULT '[]'::JSONB,
+
+  -- Configuration
   p_lease_seconds INTEGER DEFAULT 300,
-  p_stale_threshold_seconds INTEGER DEFAULT 600
+  p_stale_threshold_seconds INTEGER DEFAULT 600,
+  p_flags INTEGER DEFAULT 0,  -- WorkBatchFlags
+  p_partition_count INTEGER DEFAULT 10000,
+  p_max_partitions_per_instance INTEGER DEFAULT 100
 )
 RETURNS TABLE(
   source VARCHAR,
@@ -139,173 +197,399 @@ RETURNS TABLE(
   event_data TEXT,
   metadata TEXT,
   scope TEXT,
-  attempts INTEGER
+  stream_id UUID,
+  partition_number INTEGER,
+  attempts INTEGER,
+  status INTEGER,  -- MessageProcessingStatus flags
+  flags INTEGER,   -- WorkBatchFlags
+  sequence_order BIGINT
 ) AS $$
 DECLARE
   v_now TIMESTAMPTZ := CURRENT_TIMESTAMP;
   v_lease_expiry TIMESTAMPTZ := v_now + (p_lease_seconds || ' seconds')::INTERVAL;
   v_stale_cutoff TIMESTAMPTZ := v_now - (p_stale_threshold_seconds || ' seconds')::INTERVAL;
-  v_active_instance_count INT;
-  v_inbox_batch_size INT;
-  v_max_batch_size INT := 100;  -- Base batch size
-  v_failed_msg JSONB;
-  v_msg_id UUID;
-  v_error TEXT;
+  v_debug_mode BOOLEAN := (p_flags & 4) = 4;  -- DebugMode flag
+  v_new_msg RECORD;
+  v_partition INTEGER;
+  v_completion RECORD;
+  v_failure RECORD;
 BEGIN
-  -- 1. Register/update this instance with real metadata (upsert)
+  -- 1. Register/update this instance with heartbeat
   INSERT INTO wb_service_instances (
-    instance_id,
-    service_name,
-    host_name,
-    process_id,
-    started_at,
-    last_heartbeat_at,
-    metadata
+    instance_id, service_name, host_name, process_id, started_at, last_heartbeat_at, metadata
+  ) VALUES (
+    p_instance_id, p_service_name, p_host_name, p_process_id, v_now, v_now, p_metadata
   )
-  VALUES (
-    p_instance_id,
-    p_service_name,
-    p_host_name,
-    p_process_id,
-    v_now,
-    v_now,
-    p_metadata
-  )
-  ON CONFLICT (instance_id)
-  DO UPDATE SET
+  ON CONFLICT (instance_id) DO UPDATE SET
     last_heartbeat_at = v_now,
     metadata = COALESCE(EXCLUDED.metadata, wb_service_instances.metadata);
 
-  -- 2. Clean up stale instances (haven't heartbeat in stale_threshold_seconds)
+  -- 2. Clean up stale instances
   DELETE FROM wb_service_instances
-  WHERE last_heartbeat_at < v_stale_cutoff
-    AND instance_id != p_instance_id;
+  WHERE last_heartbeat_at < v_stale_cutoff AND instance_id != p_instance_id;
 
-  -- 2a. Calculate dynamic batch size for inbox based on active instance count
-  -- This ensures fair work distribution: with 1 instance = 100%, 3 instances = 34% each (rounding up)
-  SELECT COUNT(*) INTO v_active_instance_count
-  FROM wb_service_instances
-  WHERE last_heartbeat_at >= v_stale_cutoff;
+  -- Partition assignments will cascade delete automatically (ON DELETE CASCADE)
 
-  -- Divide batch size by instance count, rounding up (CEILING ensures at least 1 per instance)
-  v_inbox_batch_size := CEILING(v_max_batch_size::NUMERIC / GREATEST(v_active_instance_count, 1));
+  -- 3. Claim partitions for this instance (consistent hashing)
+  WITH available_partitions AS (
+    SELECT gs.partition_num
+    FROM generate_series(0, p_partition_count - 1) AS gs(partition_num)
+    WHERE gs.partition_num NOT IN (SELECT partition_number FROM wb_partition_assignments)
+    LIMIT p_max_partitions_per_instance
+  ),
+  partitions_to_claim AS (
+    SELECT
+      partition_num,
+      ROW_NUMBER() OVER (
+        ORDER BY abs(hashtext(p_instance_id::TEXT || partition_num::TEXT))
+      ) as priority
+    FROM available_partitions
+    LIMIT p_max_partitions_per_instance - (
+      SELECT COUNT(*) FROM wb_partition_assignments WHERE instance_id = p_instance_id
+    )
+  )
+  INSERT INTO wb_partition_assignments (partition_number, instance_id, assigned_at, last_heartbeat)
+  SELECT partition_num, p_instance_id, v_now, v_now
+  FROM partitions_to_claim
+  ON CONFLICT (partition_number) DO NOTHING;
 
-  -- 3. Mark completed outbox messages as Published
-  IF array_length(p_outbox_completed_ids, 1) > 0 THEN
-    UPDATE wb_outbox o
-    SET status = 'Published',
-        published_at = v_now,
-        instance_id = NULL,
-        lease_expiry = NULL
-    WHERE o.message_id = ANY(p_outbox_completed_ids);
-  END IF;
+  -- Update heartbeat for already-owned partitions
+  UPDATE wb_partition_assignments
+  SET last_heartbeat = v_now
+  WHERE instance_id = p_instance_id;
 
-  -- 4. Mark failed outbox messages as Failed (with error text)
-  IF jsonb_array_length(p_outbox_failed_messages) > 0 THEN
-    FOR v_failed_msg IN SELECT * FROM jsonb_array_elements(p_outbox_failed_messages)
+  -- 4. Process completions (with status pairing)
+  IF jsonb_array_length(p_outbox_completions) > 0 THEN
+    FOR v_completion IN
+      SELECT
+        (elem->>'message_id')::UUID as message_id,
+        (elem->>'status')::INTEGER as status
+      FROM jsonb_array_elements(p_outbox_completions) as elem
     LOOP
-      v_msg_id := (v_failed_msg->>'MessageId')::UUID;
-      v_error := v_failed_msg->>'Error';
-
-      UPDATE wb_outbox o
-      SET status = 'Failed',
-          attempts = o.attempts + 1,
-          error = v_error,
-          instance_id = NULL,
-          lease_expiry = NULL
-      WHERE o.message_id = v_msg_id;
+      IF v_debug_mode THEN
+        -- Keep completed messages, update status and timestamps
+        UPDATE wb_outbox
+        SET status = status | v_completion.status,  -- Bitwise OR to add new flags
+            processed_at = v_now,
+            published_at = CASE WHEN (v_completion.status & 4) = 4 THEN v_now ELSE published_at END,
+            instance_id = NULL,
+            lease_expiry = NULL
+        WHERE message_id = v_completion.message_id;
+      ELSE
+        -- Delete if fully completed (both ReceptorProcessed AND PerspectiveProcessed)
+        IF ((status | v_completion.status) & 24) = 24 THEN
+          DELETE FROM wb_outbox WHERE message_id = v_completion.message_id;
+        ELSE
+          -- Partially completed - update status
+          UPDATE wb_outbox
+          SET status = status | v_completion.status,
+              processed_at = v_now,
+              published_at = CASE WHEN (v_completion.status & 4) = 4 THEN v_now ELSE published_at END,
+              instance_id = NULL,
+              lease_expiry = NULL
+          WHERE message_id = v_completion.message_id;
+        END IF;
+      END IF;
     END LOOP;
   END IF;
 
-  -- 5. Mark completed inbox messages as Completed
-  IF array_length(p_inbox_completed_ids, 1) > 0 THEN
-    UPDATE wb_inbox i
-    SET status = 'Completed',
-        processed_at = v_now,
-        instance_id = NULL,
-        lease_expiry = NULL
-    WHERE i.message_id = ANY(p_inbox_completed_ids);
-  END IF;
-
-  -- 6. Mark failed inbox messages as Failed (with error text)
-  IF jsonb_array_length(p_inbox_failed_messages) > 0 THEN
-    FOR v_failed_msg IN SELECT * FROM jsonb_array_elements(p_inbox_failed_messages)
+  -- Similar for inbox completions
+  IF jsonb_array_length(p_inbox_completions) > 0 THEN
+    FOR v_completion IN
+      SELECT
+        (elem->>'message_id')::UUID as message_id,
+        (elem->>'status')::INTEGER as status
+      FROM jsonb_array_elements(p_inbox_completions) as elem
     LOOP
-      v_msg_id := (v_failed_msg->>'MessageId')::UUID;
-      v_error := v_failed_msg->>'Error';
-
-      UPDATE wb_inbox i
-      SET status = 'Failed',
-          attempts = i.attempts + 1,
-          error = v_error,
-          instance_id = NULL,
-          lease_expiry = NULL
-      WHERE i.message_id = v_msg_id;
+      IF v_debug_mode THEN
+        UPDATE wb_inbox
+        SET status = status | v_completion.status,
+            processed_at = v_now,
+            instance_id = NULL,
+            lease_expiry = NULL
+        WHERE message_id = v_completion.message_id;
+      ELSE
+        IF ((status | v_completion.status) & 24) = 24 THEN
+          DELETE FROM wb_inbox WHERE message_id = v_completion.message_id;
+        ELSE
+          UPDATE wb_inbox
+          SET status = status | v_completion.status,
+              processed_at = v_now,
+              instance_id = NULL,
+              lease_expiry = NULL
+          WHERE message_id = v_completion.message_id;
+        END IF;
+      END IF;
     END LOOP;
   END IF;
 
-  -- 7. Claim and return orphaned outbox messages
-  RETURN QUERY
-  WITH to_claim AS (
-    SELECT message_id AS claim_id
-    FROM wb_outbox
-    WHERE status = 'Publishing'
-      AND (lease_expiry IS NULL OR lease_expiry < v_now)
-    ORDER BY created_at
-    LIMIT 100
-    FOR UPDATE SKIP LOCKED
-  ),
-  claimed_outbox AS (
-    UPDATE wb_outbox o
-    SET instance_id = p_instance_id,
-        lease_expiry = v_lease_expiry,
-        attempts = o.attempts + 1
-    FROM to_claim tc
-    WHERE o.message_id = tc.claim_id
-    RETURNING o.message_id, o.destination, o.event_type, o.event_data::TEXT, o.metadata::TEXT, o.scope::TEXT, o.attempts
-  )
-  SELECT
-    'outbox'::VARCHAR as source,
-    co.message_id as msg_id,
-    co.destination,
-    co.event_type,
-    co.event_data,
-    co.metadata,
-    co.scope,
-    co.attempts
-  FROM claimed_outbox co;
+  -- 5. Process failures (with partial status tracking)
+  IF jsonb_array_length(p_outbox_failures) > 0 THEN
+    FOR v_failure IN
+      SELECT
+        (elem->>'message_id')::UUID as message_id,
+        (elem->>'status')::INTEGER as status,
+        elem->>'error' as error
+      FROM jsonb_array_elements(p_outbox_failures) as elem
+    LOOP
+      UPDATE wb_outbox
+      SET status = (status | v_failure.status | 32768),  -- Add completed flags + Failed flag (bit 15)
+          error = v_failure.error,
+          attempts = attempts + 1,
+          instance_id = NULL,
+          lease_expiry = NULL
+      WHERE message_id = v_failure.message_id;
+    END LOOP;
+  END IF;
 
-  -- 8. Claim and return next inbox work (with dynamic batch sizing)
-  -- Batch size is distributed fairly across active instances
-  RETURN QUERY
-  WITH to_claim AS (
-    SELECT message_id AS claim_id
-    FROM wb_inbox
-    WHERE status = 'Processing'
-      AND (lease_expiry IS NULL OR lease_expiry < v_now)
-    ORDER BY received_at
-    LIMIT v_inbox_batch_size  -- Dynamic batch size based on instance count
-    FOR UPDATE SKIP LOCKED
-  ),
-  claimed_inbox AS (
-    UPDATE wb_inbox i
-    SET instance_id = p_instance_id,
-        lease_expiry = v_lease_expiry,
-        attempts = i.attempts + 1
-    FROM to_claim tc
-    WHERE i.message_id = tc.claim_id
-    RETURNING i.message_id, i.event_type, i.event_data::TEXT, i.metadata::TEXT, i.scope::TEXT, i.attempts
+  IF jsonb_array_length(p_inbox_failures) > 0 THEN
+    FOR v_failure IN
+      SELECT
+        (elem->>'message_id')::UUID as message_id,
+        (elem->>'status')::INTEGER as status,
+        elem->>'error' as error
+      FROM jsonb_array_elements(p_inbox_failures) as elem
+    LOOP
+      UPDATE wb_inbox
+      SET status = (status | v_failure.status | 32768),
+          error = v_failure.error,
+          attempts = attempts + 1,
+          instance_id = NULL,
+          lease_expiry = NULL
+      WHERE message_id = v_failure.message_id;
+    END LOOP;
+  END IF;
+
+  -- 6. Store new outbox messages (with partition assignment)
+  IF jsonb_array_length(p_new_outbox_messages) > 0 THEN
+    FOR v_new_msg IN
+      SELECT
+        (elem->>'message_id')::UUID as message_id,
+        elem->>'destination' as destination,
+        elem->>'message_type' as message_type,
+        elem->>'message_data' as message_data,
+        elem->>'metadata' as metadata,
+        elem->>'scope' as scope,
+        (elem->>'is_event')::BOOLEAN as is_event,
+        (elem->>'stream_id')::UUID as stream_id
+      FROM jsonb_array_elements(p_new_outbox_messages) as elem
+    LOOP
+      -- Compute partition from stream_id
+      v_partition := compute_partition(v_new_msg.stream_id, p_partition_count);
+
+      -- Store in outbox with lease
+      INSERT INTO wb_outbox (
+        message_id, destination, event_type, event_data, metadata, scope,
+        stream_id, partition_number,
+        status, attempts, instance_id, lease_expiry, created_at
+      ) VALUES (
+        v_new_msg.message_id,
+        v_new_msg.destination,
+        v_new_msg.message_type,
+        v_new_msg.message_data::JSONB,
+        v_new_msg.metadata::JSONB,
+        CASE WHEN v_new_msg.scope IS NOT NULL THEN v_new_msg.scope::JSONB ELSE NULL END,
+        v_new_msg.stream_id,
+        v_partition,
+        1 | CASE WHEN v_new_msg.is_event THEN 2 ELSE 0 END,  -- Stored | EventStored (if event)
+        0,
+        p_instance_id,
+        v_lease_expiry,
+        v_now
+      );
+    END LOOP;
+  END IF;
+
+  -- 7. Store new inbox messages (with partition assignment and deduplication)
+  IF jsonb_array_length(p_new_inbox_messages) > 0 THEN
+    FOR v_new_msg IN
+      SELECT
+        (elem->>'message_id')::UUID as message_id,
+        elem->>'handler_name' as handler_name,
+        elem->>'message_type' as message_type,
+        elem->>'message_data' as message_data,
+        elem->>'metadata' as metadata,
+        elem->>'scope' as scope,
+        (elem->>'is_event')::BOOLEAN as is_event,
+        (elem->>'stream_id')::UUID as stream_id
+      FROM jsonb_array_elements(p_new_inbox_messages) as elem
+    LOOP
+      -- Compute partition
+      v_partition := compute_partition(v_new_msg.stream_id, p_partition_count);
+
+      -- Atomic deduplication via ON CONFLICT
+      INSERT INTO wb_inbox (
+        message_id, handler_name, event_type, event_data, metadata, scope,
+        stream_id, partition_number,
+        status, attempts, instance_id, lease_expiry, received_at
+      ) VALUES (
+        v_new_msg.message_id,
+        v_new_msg.handler_name,
+        v_new_msg.message_type,
+        v_new_msg.message_data::JSONB,
+        v_new_msg.metadata::JSONB,
+        CASE WHEN v_new_msg.scope IS NOT NULL THEN v_new_msg.scope::JSONB ELSE NULL END,
+        v_new_msg.stream_id,
+        v_partition,
+        1,  -- Stored
+        0,
+        p_instance_id,
+        v_lease_expiry,
+        v_now
+      )
+      ON CONFLICT (message_id) DO NOTHING;  -- Idempotent deduplication!
+    END LOOP;
+  END IF;
+
+  -- 7.5. Event Store Integration (Phase 7)
+  -- Atomically persist events from both inbox and outbox to event store
+  -- Convention: Events end with "Event" suffix and have stream_id
+
+  -- Insert events from outbox (published events)
+  INSERT INTO wb_event_store (
+    event_id,
+    stream_id,
+    aggregate_id,
+    aggregate_type,
+    event_type,
+    event_data,
+    metadata,
+    scope,
+    sequence_number,
+    version,
+    created_at
   )
   SELECT
-    'inbox'::VARCHAR as source,
-    ci.message_id as msg_id,
-    NULL::VARCHAR as destination,
-    ci.event_type,
-    ci.event_data,
-    ci.metadata,
-    ci.scope,
-    ci.attempts
-  FROM claimed_inbox ci;
+    gen_random_uuid(),  -- Generate new event ID
+    (elem->>'stream_id')::UUID,
+    (elem->>'stream_id')::UUID,  -- For now, aggregate_id = stream_id
+    -- Extract aggregate type from event_type (e.g., "Product.ProductCreatedEvent" → "Product")
+    CASE
+      WHEN (elem->>'message_type') LIKE '%.%' THEN
+        split_part(elem->>'message_type', '.', -2)  -- Get second-to-last segment
+      WHEN (elem->>'message_type') LIKE '%Event' THEN
+        regexp_replace(elem->>'message_type', '([A-Z][a-z]+).*Event$', '\1')  -- Extract leading word
+      ELSE 'Unknown'
+    END,
+    elem->>'message_type',
+    (elem->>'message_data')::JSONB,
+    (elem->>'metadata')::JSONB,
+    CASE WHEN (elem->>'scope') IS NOT NULL THEN (elem->>'scope')::JSONB ELSE NULL END,
+    nextval('wb_event_sequence'),  -- Global sequence for event ordering
+    COALESCE(
+      (SELECT MAX(version) + 1 FROM wb_event_store WHERE stream_id = (elem->>'stream_id')::UUID),
+      1
+    ),  -- Auto-increment version per stream
+    v_now
+  FROM jsonb_array_elements(p_new_outbox_messages) as elem
+  WHERE (elem->>'is_event')::BOOLEAN = true
+    AND (elem->>'stream_id') IS NOT NULL
+    AND (elem->>'message_type') LIKE '%Event'  -- Convention: events end with "Event"
+  ON CONFLICT (stream_id, version) DO NOTHING;  -- Optimistic concurrency
+
+  -- Insert events from inbox (received events)
+  INSERT INTO wb_event_store (
+    event_id,
+    stream_id,
+    aggregate_id,
+    aggregate_type,
+    event_type,
+    event_data,
+    metadata,
+    scope,
+    sequence_number,
+    version,
+    created_at
+  )
+  SELECT
+    gen_random_uuid(),
+    (elem->>'stream_id')::UUID,
+    (elem->>'stream_id')::UUID,
+    CASE
+      WHEN (elem->>'message_type') LIKE '%.%' THEN
+        split_part(elem->>'message_type', '.', -2)
+      WHEN (elem->>'message_type') LIKE '%Event' THEN
+        regexp_replace(elem->>'message_type', '([A-Z][a-z]+).*Event$', '\1')
+      ELSE 'Unknown'
+    END,
+    elem->>'message_type',
+    (elem->>'message_data')::JSONB,
+    (elem->>'metadata')::JSONB,
+    CASE WHEN (elem->>'scope') IS NOT NULL THEN (elem->>'scope')::JSONB ELSE NULL END,
+    nextval('wb_event_sequence'),
+    COALESCE(
+      (SELECT MAX(version) + 1 FROM wb_event_store WHERE stream_id = (elem->>'stream_id')::UUID),
+      1
+    ),
+    v_now
+  FROM jsonb_array_elements(p_new_inbox_messages) as elem
+  WHERE (elem->>'is_event')::BOOLEAN = true
+    AND (elem->>'stream_id') IS NOT NULL
+    AND (elem->>'message_type') LIKE '%Event'
+  ON CONFLICT (stream_id, version) DO NOTHING;
+
+  -- 8. Return work from OWNED PARTITIONS ONLY, maintaining stream order
+  RETURN QUERY
+  WITH owned_partitions AS (
+    SELECT partition_number FROM wb_partition_assignments WHERE instance_id = p_instance_id
+  )
+  SELECT
+    'outbox'::VARCHAR,
+    o.message_id,
+    o.destination,
+    o.event_type,
+    o.event_data::TEXT,
+    o.metadata::TEXT,
+    o.scope::TEXT,
+    o.stream_id,
+    o.partition_number,
+    o.attempts,
+    o.status,
+    CASE
+      WHEN o.message_id IN (
+        SELECT (jsonb_array_elements(p_new_outbox_messages)->>'message_id')::UUID
+      ) THEN 1  -- NewlyStored
+      ELSE 2    -- Orphaned
+    END::INTEGER,
+    EXTRACT(EPOCH FROM o.created_at)::BIGINT * 1000  -- Epoch ms
+  FROM wb_outbox o
+  WHERE o.partition_number IN (SELECT partition_number FROM owned_partitions)
+    AND o.instance_id = p_instance_id
+    AND o.lease_expiry > v_now
+    AND (o.status & 32768) = 0  -- Not failed
+    AND (o.status & 24) != 24   -- Not fully completed
+  ORDER BY o.stream_id, o.created_at;  -- CRITICAL: Stream ordering
+
+  RETURN QUERY
+  WITH owned_partitions AS (
+    SELECT partition_number FROM wb_partition_assignments WHERE instance_id = p_instance_id
+  )
+  SELECT
+    'inbox'::VARCHAR,
+    i.message_id,
+    i.handler_name,
+    i.event_type,
+    i.event_data::TEXT,
+    i.metadata::TEXT,
+    i.scope::TEXT,
+    i.stream_id,
+    i.partition_number,
+    i.attempts,
+    i.status,
+    CASE
+      WHEN i.message_id IN (
+        SELECT (jsonb_array_elements(p_new_inbox_messages)->>'message_id')::UUID
+      ) THEN 1
+      ELSE 2
+    END::INTEGER,
+    EXTRACT(EPOCH FROM i.received_at)::BIGINT * 1000
+  FROM wb_inbox i
+  WHERE i.partition_number IN (SELECT partition_number FROM owned_partitions)
+    AND i.instance_id = p_instance_id
+    AND i.lease_expiry > v_now
+    AND (i.status & 32768) = 0
+    AND (i.status & 24) != 24
+  ORDER BY i.stream_id, i.received_at;  -- CRITICAL: Stream ordering
 
 END;
 $$ LANGUAGE plpgsql;

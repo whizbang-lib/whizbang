@@ -202,8 +202,13 @@ public class SerializationThroughputBenchmarks {
         };
 
         envelope.AddHop(new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "BenchmarkService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "benchmark-host",
+            ProcessId = 12345
+          },
           Type = HopType.Current,
-          ServiceName = "BenchmarkService",
           Timestamp = DateTimeOffset.UtcNow,
           CorrelationId = CorrelationId.New(),
           CausationId = MessageId.New(),
@@ -293,8 +298,13 @@ public class SerializationThroughputBenchmarks {
     };
 
     envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "BenchmarkService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "benchmark-host",
+        ProcessId = 12345
+      },
       Type = HopType.Current,
-      ServiceName = "BenchmarkService",
       Timestamp = DateTimeOffset.UtcNow,
       CorrelationId = CorrelationId.New(),
       CausationId = MessageId.New()
@@ -312,8 +322,13 @@ public class SerializationThroughputBenchmarks {
 
     // Add current hop
     envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "CurrentService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "benchmark-host",
+        ProcessId = 12345
+      },
       Type = HopType.Current,
-      ServiceName = "CurrentService",
       Timestamp = DateTimeOffset.UtcNow,
       CorrelationId = CorrelationId.New(),
       CausationId = MessageId.New()
@@ -321,16 +336,26 @@ public class SerializationThroughputBenchmarks {
 
     // Add causation hops (simulating message chain)
     envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "ParentService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "benchmark-host",
+        ProcessId = 12345
+      },
       Type = HopType.Causation,
-      ServiceName = "ParentService",
       Timestamp = DateTimeOffset.UtcNow.AddMilliseconds(-100),
       CorrelationId = CorrelationId.New(),
       CausationId = MessageId.New()
     });
 
     envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "OriginService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "benchmark-host",
+        ProcessId = 12345
+      },
       Type = HopType.Causation,
-      ServiceName = "OriginService",
       Timestamp = DateTimeOffset.UtcNow.AddMilliseconds(-200),
       CorrelationId = CorrelationId.New(),
       CausationId = MessageId.New()

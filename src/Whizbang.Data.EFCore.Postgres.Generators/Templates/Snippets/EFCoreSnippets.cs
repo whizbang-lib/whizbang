@@ -163,13 +163,26 @@ public class EFCoreSnippets {
   public void RegisterInfrastructure(IServiceCollection services) {
     #region REGISTER_INFRASTRUCTURE_SNIPPET
     // Register core infrastructure (Inbox, Outbox, EventStore, WorkCoordinator) - AOT compatible
-    services.AddScoped<Whizbang.Core.Messaging.IInbox, Whizbang.Data.EFCore.Postgres.EFCoreInbox<__DBCONTEXT_FQN__>>();
-    services.AddScoped<Whizbang.Core.Messaging.IOutbox, Whizbang.Data.EFCore.Postgres.EFCoreOutbox<__DBCONTEXT_FQN__>>();
+    // JsonSerializerOptions are created from JsonContextRegistry (auto-discovers all registered contexts)
+    services.AddScoped<Whizbang.Core.Messaging.IInbox>(sp => {
+      var context = sp.GetRequiredService<__DBCONTEXT_FQN__>();
+      var jsonOptions = Whizbang.Data.EFCore.Postgres.Serialization.EFCoreJsonContext.CreateCombinedOptions();
+      return new Whizbang.Data.EFCore.Postgres.EFCoreInbox<__DBCONTEXT_FQN__>(context, jsonOptions);
+    });
+    services.AddScoped<Whizbang.Core.Messaging.IOutbox>(sp => {
+      var context = sp.GetRequiredService<__DBCONTEXT_FQN__>();
+      var jsonOptions = Whizbang.Data.EFCore.Postgres.Serialization.EFCoreJsonContext.CreateCombinedOptions();
+      return new Whizbang.Data.EFCore.Postgres.EFCoreOutbox<__DBCONTEXT_FQN__>(context, jsonOptions);
+    });
     services.AddScoped<Whizbang.Core.Messaging.IEventStore>(sp => {
       var context = sp.GetRequiredService<__DBCONTEXT_FQN__>();
-      var jsonOptions = sp.GetService<System.Text.Json.JsonSerializerOptions>();
+      var jsonOptions = Whizbang.Data.EFCore.Postgres.Serialization.EFCoreJsonContext.CreateCombinedOptions();
       var perspectiveInvoker = sp.GetService<Whizbang.Core.Perspectives.IPerspectiveInvoker>();
-      return new Whizbang.Data.EFCore.Postgres.EFCoreEventStore<__DBCONTEXT_FQN__>(context, jsonOptions, perspectiveInvoker);
+      return new Whizbang.Data.EFCore.Postgres.EFCoreEventStore<__DBCONTEXT_FQN__>(
+        context,
+        jsonOptions,
+        perspectiveInvoker
+      );
     });
     services.AddScoped<Whizbang.Core.Messaging.IWorkCoordinator, Whizbang.Data.EFCore.Postgres.EFCoreWorkCoordinator<__DBCONTEXT_FQN__>>();
     #endregion

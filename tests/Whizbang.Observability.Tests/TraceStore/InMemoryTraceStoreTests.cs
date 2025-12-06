@@ -36,8 +36,13 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
     };
 
     envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Type = HopType.Current,
-      ServiceName = "TestService",
       Timestamp = timestamp ?? DateTimeOffset.UtcNow,
       CorrelationId = correlationId,
       CausationId = causationId
@@ -286,8 +291,13 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
     };
 
     envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Type = HopType.Causation, // Not Current!
-      ServiceName = "TestService",
       Timestamp = now
     });
 

@@ -195,26 +195,16 @@ private JsonTypeInfo<T> GetOrCreateTypeInfo<T>(JsonSerializerOptions options) {
 
 #region HELPER_CREATE_OPTIONS
 /// <summary>
-/// Creates JsonSerializerOptions with all required contexts for Whizbang serialization.
-/// Includes Whizbang types (MessageId, CorrelationId, MessageEnvelope), discovered message types,
-/// and primitive types (string, int, etc.). For complex types (List, Dictionary, custom classes),
-/// pass a JsonSerializerContext with [JsonSerializable] attributes as userResolvers.
+/// Module initializer that registers this assembly's JsonSerializerContext instances.
+/// Runs automatically when the assembly is loaded - no explicit call needed.
+/// Registers WhizbangIdJsonContext and MessageJsonContext with the global JsonContextRegistry.
 /// </summary>
-/// <param name="userResolvers">Optional user JsonSerializerContext instances for complex types</param>
-/// <returns>AOT-compatible JsonSerializerOptions ready for use</returns>
-public static JsonSerializerOptions CreateOptions(params IJsonTypeInfoResolver[] userResolvers) {
-  // Create fully AOT-compatible resolver chain:
-  // 1. WhizbangJsonContext (message types, MessageEnvelope<T>, MessageId, CorrelationId)
-  // 2. User resolvers (custom application types)
-  // 3. InfrastructureJsonContext (MessageHop, SecurityContext, etc.)
-  var resolvers = new List<IJsonTypeInfoResolver> { Default };
-  resolvers.AddRange(userResolvers);
-  resolvers.Add(global::Whizbang.Core.Generated.InfrastructureJsonContext.Default);
-
-  return new JsonSerializerOptions {
-    TypeInfoResolver = JsonTypeInfoResolver.Combine(resolvers.ToArray()),
-    DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
-  };
+[System.Runtime.CompilerServices.ModuleInitializer]
+public static void Initialize() {
+  // Register local contexts with the global registry
+  // These will be combined with Core's contexts (InfrastructureJsonContext, etc.)
+  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterContext(WhizbangIdJsonContext.Default);
+  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterContext(MessageJsonContext.Default);
 }
 #endregion
 

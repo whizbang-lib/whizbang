@@ -26,7 +26,12 @@ public class SerializationTests {
       Payload = new TestMessage("test", 42),
       Hops = [
         new MessageHop {
-          ServiceName = "Origin",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "Origin",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Topic = "test-topic",
           Timestamp = DateTimeOffset.UtcNow
         }
@@ -50,12 +55,22 @@ public class SerializationTests {
   public async Task MessageEnvelope_SerializesAndDeserializes_WithMultipleHopsAsync() {
     // Arrange
     var hop1 = new MessageHop {
-      ServiceName = "Service1",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service1",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Topic = "orders",
       Timestamp = DateTimeOffset.UtcNow
     };
     var hop2 = new MessageHop {
-      ServiceName = "Service2",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service2",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       StreamKey = "order-123",
       Timestamp = DateTimeOffset.UtcNow.AddSeconds(1)
     };
@@ -73,15 +88,20 @@ public class SerializationTests {
 
     // Assert
     await Assert.That(deserialized!.Hops).HasCount().EqualTo(2);
-    await Assert.That(deserialized!.Hops[0].ServiceName).IsEqualTo("Service1");
-    await Assert.That(deserialized!.Hops[1].ServiceName).IsEqualTo("Service2");
+    await Assert.That(deserialized!.Hops[0].ServiceInstance.ServiceName).IsEqualTo("Service1");
+    await Assert.That(deserialized!.Hops[1].ServiceInstance.ServiceName).IsEqualTo("Service2");
   }
 
   [Test]
   public async Task MessageEnvelope_WithCausationHops_SerializesCorrectlyAsync() {
     // Arrange
     var causationHop = new MessageHop {
-      ServiceName = "ParentService",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "ParentService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Type = HopType.Causation,
       CausationId = MessageId.New(),
       CausationType = "OrderCreated",
@@ -89,7 +109,12 @@ public class SerializationTests {
     };
 
     var currentHop = new MessageHop {
-      ServiceName = "CurrentService",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "CurrentService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow
     };
@@ -108,7 +133,7 @@ public class SerializationTests {
     // Assert
     var deserializedCausationHops = deserialized!.GetCausationHops();
     await Assert.That(deserializedCausationHops).HasCount().EqualTo(1);
-    await Assert.That(deserializedCausationHops[0].ServiceName).IsEqualTo("ParentService");
+    await Assert.That(deserializedCausationHops[0].ServiceInstance.ServiceName).IsEqualTo("ParentService");
   }
 
   #endregion
@@ -122,7 +147,14 @@ public class SerializationTests {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test", 1),
       Hops = [
-        new MessageHop { ServiceName = "Test" }
+        new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "Test",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          }
+        }
       ]
     };
 
@@ -145,7 +177,12 @@ public class SerializationTests {
       Payload = new TestMessage("test", 1),
       Hops = [
         new MessageHop {
-          ServiceName = "Test",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "Test",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Topic = "orders",
           StreamKey = "order-1"
         }
@@ -176,8 +213,12 @@ public class SerializationTests {
       Payload = new TestMessage("complex test", 999),
       Hops = [
         new MessageHop {
-          ServiceName = "Dispatcher",
-          MachineName = "machine-1",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "Dispatcher",
+            InstanceId = Guid.NewGuid(),
+            HostName = "machine-1",
+            ProcessId = 12345
+          },
           Timestamp = DateTimeOffset.UtcNow,
           Topic = "orders",
           StreamKey = "order-123",
@@ -212,7 +253,7 @@ public class SerializationTests {
     await Assert.That(deserialized!.Payload.Count).IsEqualTo(999);
 
     var hop = deserialized!.Hops[0];
-    await Assert.That(hop.ServiceName).IsEqualTo("Dispatcher");
+    await Assert.That(hop.ServiceInstance.ServiceName).IsEqualTo("Dispatcher");
     await Assert.That(hop.Topic).IsEqualTo("orders");
     await Assert.That(hop.PartitionIndex).IsEqualTo(5);
     await Assert.That(hop.SecurityContext!.UserId).IsEqualTo("user-1");

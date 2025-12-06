@@ -38,8 +38,13 @@ public abstract class TraceStoreContractTests {
     };
 
     envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Test",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Type = HopType.Current,
-      ServiceName = "Test",
       Timestamp = timestamp ?? DateTimeOffset.UtcNow,
       CorrelationId = correlationId ?? CorrelationId.New(),
       CausationId = causationId

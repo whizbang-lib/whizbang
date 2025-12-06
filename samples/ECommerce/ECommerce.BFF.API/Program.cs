@@ -35,7 +35,8 @@ var angularUrl = builder.Configuration["services:ui:http:0"]
     ?? "http://localhost:4200";  // Fallback for local development without Aspire
 
 // Register Azure Service Bus transport
-builder.Services.AddAzureServiceBusTransport(serviceBusConnection, ECommerce.Contracts.Generated.WhizbangJsonContext.Default);
+// Note: Transport uses its own JsonSerializerOptions from the registry
+builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
 builder.Services.AddAzureServiceBusHealthChecks();
 
 // Add trace store for observability
@@ -44,8 +45,8 @@ builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
 // Register service instance provider (MUST be before workers that depend on it)
 builder.Services.AddSingleton<IServiceInstanceProvider, ServiceInstanceProvider>();
 
-// Register JsonSerializerOptions for dispatcher (used by outbox fallback)
-builder.Services.AddSingleton(ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions());
+// Register JsonSerializerOptions from global registry (includes all registered contexts)
+builder.Services.AddSingleton(Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 
 // Register EF Core DbContext for perspectives with PostgreSQL
 builder.Services.AddDbContext<BffDbContext>(options =>
@@ -107,8 +108,8 @@ builder.Services.SwaggerDocument();
 // Add SignalR for real-time client updates (AOT-compatible with typed hub)
 builder.Services.AddSignalR()
   .AddJsonProtocol(options => {
-    // Use source-generated JSON context for AOT compatibility
-    options.PayloadSerializerOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
+    // Use global registry for AOT compatibility (includes all registered contexts)
+    options.PayloadSerializerOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
   });
 
 // Add CORS for Angular - uses Aspire service discovery to get Angular URL

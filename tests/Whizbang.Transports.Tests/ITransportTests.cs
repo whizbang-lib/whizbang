@@ -85,7 +85,15 @@ public class ITransportTests {
           MessageId = MessageId.New(),
           Payload = new TestResponse { Result = "response" },
           Hops = [
-            new MessageHop { ServiceName = "Test", Timestamp = DateTimeOffset.UtcNow }
+            new MessageHop {
+              ServiceInstance = new ServiceInstanceInfo {
+                ServiceName = "TestService",
+                InstanceId = Guid.NewGuid(),
+                HostName = "test-host",
+                ProcessId = 12345
+              },
+              Timestamp = DateTimeOffset.UtcNow
+            }
           ]
         };
         var responseDestination = new TransportDestination($"response-{env.MessageId.Value}");
@@ -138,7 +146,15 @@ public class ITransportTests {
       MessageId = MessageId.New(),
       Payload = message,
       Hops = [
-        new MessageHop { ServiceName = "Test", Timestamp = DateTimeOffset.UtcNow }
+        new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
+          Timestamp = DateTimeOffset.UtcNow
+        }
       ]
     };
   }

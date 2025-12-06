@@ -58,13 +58,14 @@ namespace Whizbang.Core.Generated {
     [DebuggerNonUserCode]
     public static IServiceCollection AddWhizbangDispatcher(this IServiceCollection services) {
       services.AddSingleton<IDispatcher>(sp => {
+        var instanceProvider = sp.GetRequiredService<IServiceInstanceProvider>();
         var traceStore = sp.GetService<ITraceStore>();
         var transport = sp.GetService<ITransport>();
         var jsonOptions = sp.GetService<JsonSerializerOptions>();
 
         // Do NOT resolve IOutbox, IEventStore, or IAggregateIdExtractor here - they may be Scoped
         // The Dispatcher will resolve them per-call from the active service provider
-        return new GeneratedDispatcher(sp, traceStore, null, transport, jsonOptions);
+        return new GeneratedDispatcher(sp, instanceProvider, traceStore, null, transport, jsonOptions);
       });
       services.AddSingleton<global::Whizbang.Core.Dispatcher>(sp => (GeneratedDispatcher)sp.GetRequiredService<IDispatcher>());
       return services;

@@ -521,14 +521,14 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
   private async Task<DateTimeOffset?> GetInstanceHeartbeatAsync(Guid instanceId) {
     await using var dbContext = CreateDbContext();
     var instance = await dbContext.Set<ServiceInstanceRecord>()
-      .FirstOrDefaultAsync(i => i.InstanceId == instanceId);
+      .FirstOrDefaultAsync(i => i.ServiceInstance.InstanceId == instanceId);
     return instance?.LastHeartbeatAt;
   }
 
   private async Task<string?> GetInstanceMetadataAsync(Guid instanceId) {
     await using var dbContext = CreateDbContext();
     var instance = await dbContext.Set<ServiceInstanceRecord>()
-      .FirstOrDefaultAsync(i => i.InstanceId == instanceId);
+      .FirstOrDefaultAsync(i => i.ServiceInstance.InstanceId == instanceId);
     return instance?.Metadata?.RootElement.GetRawText();
   }
 
@@ -575,7 +575,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     var messageIdStr = messageId.ToString();
     var record = await dbContext.Set<OutboxRecord>()
       .FirstOrDefaultAsync(r => r.MessageId == messageIdStr);
-    return record?.InstanceId;
+    return record?.ServiceInstance.InstanceId;
   }
 
   private async Task<DateTimeOffset?> GetOutboxLeaseExpiryAsync(Guid messageId) {
@@ -626,6 +626,6 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     var messageIdStr = messageId.ToString();
     var record = await dbContext.Set<InboxRecord>()
       .FirstOrDefaultAsync(r => r.MessageId == messageIdStr);
-    return record?.InstanceId;
+    return record?.ServiceInstance.InstanceId;
   }
 }

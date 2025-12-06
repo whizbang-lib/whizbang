@@ -280,7 +280,12 @@ public abstract class InboxContractTests {
       Payload = message,
       Hops = [
         new MessageHop {
-          ServiceName = "TestService",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Timestamp = DateTimeOffset.UtcNow
         }
       ]

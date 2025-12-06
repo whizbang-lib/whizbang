@@ -27,7 +27,12 @@ public class MessageTracingTests {
     var metadata = new Dictionary<string, object> { ["key"] = "value" };
 
     var firstHop = new MessageHop {
-      ServiceName = "TestService",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Timestamp = timestamp,
       Metadata = metadata,
       CorrelationId = correlationId,
@@ -61,7 +66,14 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = [new MessageHop { ServiceName = "Test" }]
+      Hops = [new MessageHop {
+        ServiceInstance = new ServiceInstanceInfo {
+          ServiceName = "Test",
+          InstanceId = Guid.NewGuid(),
+          HostName = "test-host",
+          ProcessId = 12345
+        }
+      }]
     };
 
     // Assert
@@ -73,7 +85,12 @@ public class MessageTracingTests {
   public async Task MessageEnvelope_RequiresAtLeastOneHopAsync() {
     // Arrange
     var firstHop = new MessageHop {
-      ServiceName = "OriginService",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "OriginService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Timestamp = DateTimeOffset.UtcNow
     };
 
@@ -95,12 +112,23 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = [new MessageHop { ServiceName = "Origin" }]
+      Hops = [new MessageHop {
+        ServiceInstance = new ServiceInstanceInfo {
+          ServiceName = "Origin",
+          InstanceId = Guid.NewGuid(),
+          HostName = "test-host",
+          ProcessId = 12345
+        }
+      }]
     };
 
     var hop = new MessageHop {
-      ServiceName = "TestService",
-      MachineName = "test-machine",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-machine",
+        ProcessId = 12345
+      },
       Timestamp = DateTimeOffset.UtcNow,
       Topic = "test-topic",
       StreamKey = "test-stream",
@@ -119,7 +147,12 @@ public class MessageTracingTests {
   public async Task MessageEnvelope_AddHop_MaintainsOrderedListAsync() {
     // Arrange
     var hop0 = new MessageHop {
-      ServiceName = "Origin",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Origin",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Timestamp = DateTimeOffset.UtcNow
     };
 
@@ -130,14 +163,24 @@ public class MessageTracingTests {
     };
 
     var hop1 = new MessageHop {
-      ServiceName = "Service1",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service1",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Timestamp = DateTimeOffset.UtcNow
     };
 
     await Task.Delay(10); // Ensure different timestamps
 
     var hop2 = new MessageHop {
-      ServiceName = "Service2",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service2",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Timestamp = DateTimeOffset.UtcNow
     };
 
@@ -147,9 +190,9 @@ public class MessageTracingTests {
 
     // Assert
     await Assert.That(envelope.Hops).HasCount().EqualTo(3);
-    await Assert.That(envelope.Hops[0].ServiceName).IsEqualTo("Origin");
-    await Assert.That(envelope.Hops[1].ServiceName).IsEqualTo("Service1");
-    await Assert.That(envelope.Hops[2].ServiceName).IsEqualTo("Service2");
+    await Assert.That(envelope.Hops[0].ServiceInstance.ServiceName).IsEqualTo("Origin");
+    await Assert.That(envelope.Hops[1].ServiceInstance.ServiceName).IsEqualTo("Service1");
+    await Assert.That(envelope.Hops[2].ServiceInstance.ServiceName).IsEqualTo("Service2");
   }
 
   [Test]
@@ -159,7 +202,15 @@ public class MessageTracingTests {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
       Hops = [
-        new MessageHop { ServiceName = "Origin", Topic = "" } // No topic
+        new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "Origin",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
+          Topic = ""
+        } // No topic
       ]
     };
 
@@ -176,21 +227,43 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = [new MessageHop { ServiceName = "Test" }]
+      Hops = [new MessageHop {
+        ServiceInstance = new ServiceInstanceInfo {
+          ServiceName = "Test",
+          InstanceId = Guid.NewGuid(),
+          HostName = "test-host",
+          ProcessId = 12345
+        }
+      }]
     };
 
     envelope.AddHop(new MessageHop {
-      ServiceName = "Service1",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service1",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Topic = "orders"
     });
 
     envelope.AddHop(new MessageHop {
-      ServiceName = "Service2",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service2",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Topic = "inventory"
     });
 
     envelope.AddHop(new MessageHop {
-      ServiceName = "Service3",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service3",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Topic = "" // Empty should be skipped
     });
 
@@ -207,7 +280,14 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = [new MessageHop { ServiceName = "Test" }]
+      Hops = [new MessageHop {
+        ServiceInstance = new ServiceInstanceInfo {
+          ServiceName = "Test",
+          InstanceId = Guid.NewGuid(),
+          HostName = "test-host",
+          ProcessId = 12345
+        }
+      }]
     };
 
     // Act
@@ -223,21 +303,43 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = [new MessageHop { ServiceName = "Test" }]
+      Hops = [new MessageHop {
+        ServiceInstance = new ServiceInstanceInfo {
+          ServiceName = "Test",
+          InstanceId = Guid.NewGuid(),
+          HostName = "test-host",
+          ProcessId = 12345
+        }
+      }]
     };
 
     envelope.AddHop(new MessageHop {
-      ServiceName = "Service1",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service1",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       StreamKey = "stream-1"
     });
 
     envelope.AddHop(new MessageHop {
-      ServiceName = "Service2",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service2",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       StreamKey = "stream-2"
     });
 
     envelope.AddHop(new MessageHop {
-      ServiceName = "Service3",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service3",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       StreamKey = "" // Empty should be skipped
     });
 
@@ -254,7 +356,14 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = [new MessageHop { ServiceName = "Test" }]
+      Hops = [new MessageHop {
+        ServiceInstance = new ServiceInstanceInfo {
+          ServiceName = "Test",
+          InstanceId = Guid.NewGuid(),
+          HostName = "test-host",
+          ProcessId = 12345
+        }
+      }]
     };
 
     // Act
@@ -270,21 +379,43 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = [new MessageHop { ServiceName = "Test" }]
+      Hops = [new MessageHop {
+        ServiceInstance = new ServiceInstanceInfo {
+          ServiceName = "Test",
+          InstanceId = Guid.NewGuid(),
+          HostName = "test-host",
+          ProcessId = 12345
+        }
+      }]
     };
 
     envelope.AddHop(new MessageHop {
-      ServiceName = "Service1",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service1",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       PartitionIndex = 0
     });
 
     envelope.AddHop(new MessageHop {
-      ServiceName = "Service2",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service2",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       PartitionIndex = 3
     });
 
     envelope.AddHop(new MessageHop {
-      ServiceName = "Service3",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service3",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       PartitionIndex = null // Null should be skipped
     });
 
@@ -301,7 +432,14 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = [new MessageHop { ServiceName = "Test" }]
+      Hops = [new MessageHop {
+        ServiceInstance = new ServiceInstanceInfo {
+          ServiceName = "Test",
+          InstanceId = Guid.NewGuid(),
+          HostName = "test-host",
+          ProcessId = 12345
+        }
+      }]
     };
 
     // Act
@@ -317,21 +455,43 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = [new MessageHop { ServiceName = "Test" }]
+      Hops = [new MessageHop {
+        ServiceInstance = new ServiceInstanceInfo {
+          ServiceName = "Test",
+          InstanceId = Guid.NewGuid(),
+          HostName = "test-host",
+          ProcessId = 12345
+        }
+      }]
     };
 
     envelope.AddHop(new MessageHop {
-      ServiceName = "Service1",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service1",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       SequenceNumber = 100
     });
 
     envelope.AddHop(new MessageHop {
-      ServiceName = "Service2",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service2",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       SequenceNumber = 200
     });
 
     envelope.AddHop(new MessageHop {
-      ServiceName = "Service3",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service3",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       SequenceNumber = null // Null should be skipped
     });
 
@@ -348,7 +508,14 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = [new MessageHop { ServiceName = "Test" }]
+      Hops = [new MessageHop {
+        ServiceInstance = new ServiceInstanceInfo {
+          ServiceName = "Test",
+          InstanceId = Guid.NewGuid(),
+          HostName = "test-host",
+          ProcessId = 12345
+        }
+      }]
     };
 
     // Act
@@ -364,7 +531,14 @@ public class MessageTracingTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
-      Hops = [new MessageHop { ServiceName = "Test" }]
+      Hops = [new MessageHop {
+        ServiceInstance = new ServiceInstanceInfo {
+          ServiceName = "Test",
+          InstanceId = Guid.NewGuid(),
+          HostName = "test-host",
+          ProcessId = 12345
+        }
+      }]
     };
 
     var context1 = new SecurityContext {
@@ -378,17 +552,32 @@ public class MessageTracingTests {
     };
 
     envelope.AddHop(new MessageHop {
-      ServiceName = "Service1",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service1",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       SecurityContext = context1
     });
 
     envelope.AddHop(new MessageHop {
-      ServiceName = "Service2",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service2",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       SecurityContext = context2
     });
 
     envelope.AddHop(new MessageHop {
-      ServiceName = "Service3",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Service3",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       SecurityContext = null // Null should be skipped
     });
 
@@ -410,7 +599,12 @@ public class MessageTracingTests {
       Payload = new TestMessage("test"),
       Hops = [
         new MessageHop {
-          ServiceName = "Origin",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "Origin",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Timestamp = timestamp
         }
       ]
@@ -431,7 +625,12 @@ public class MessageTracingTests {
       Payload = new TestMessage("test"),
       Hops = [
         new MessageHop {
-          ServiceName = "Origin",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "Origin",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Metadata = new Dictionary<string, object> { ["key1"] = "value1" }
         }
       ]
@@ -452,19 +651,34 @@ public class MessageTracingTests {
       Payload = new TestMessage("test"),
       Hops = [
         new MessageHop {
-          ServiceName = "Hop1",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "Hop1",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Metadata = new Dictionary<string, object> { ["priority"] = 5 }
         }
       ]
     };
 
     envelope.AddHop(new MessageHop {
-      ServiceName = "Hop2",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Hop2",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Metadata = new Dictionary<string, object> { ["priority"] = 10 }
     });
 
     envelope.AddHop(new MessageHop {
-      ServiceName = "Hop3",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Hop3",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Metadata = null // No metadata, should use previous
     });
 
@@ -483,7 +697,12 @@ public class MessageTracingTests {
       Payload = new TestMessage("test"),
       Hops = [
         new MessageHop {
-          ServiceName = "Hop1",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "Hop1",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Metadata = new Dictionary<string, object> {
             ["priority"] = 5,
             ["tenant"] = "acme"
@@ -493,7 +712,12 @@ public class MessageTracingTests {
     };
 
     envelope.AddHop(new MessageHop {
-      ServiceName = "Hop2",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Hop2",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Metadata = new Dictionary<string, object> {
         ["priority"] = 10, // Override
         ["enriched"] = true // New key
@@ -501,7 +725,12 @@ public class MessageTracingTests {
     });
 
     envelope.AddHop(new MessageHop {
-      ServiceName = "Hop3",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Hop3",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Metadata = null // Skip this hop
     });
 
@@ -523,7 +752,12 @@ public class MessageTracingTests {
       Payload = new TestMessage("test"),
       Hops = [
         new MessageHop {
-          ServiceName = "Origin",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "Origin",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Metadata = null
         }
       ]
@@ -547,7 +781,12 @@ public class MessageTracingTests {
       Payload = new TestMessage("test"),
       Hops = [
         new MessageHop {
-          ServiceName = "Origin",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "Origin",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Trail = trail
         }
       ]
@@ -578,12 +817,40 @@ public class MessageTracingTests {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
       Hops = [
-        new MessageHop { ServiceName = "Origin", Trail = trail1 }
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "Origin",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Trail = trail1 }
       ]
     };
 
-    envelope.AddHop(new MessageHop { ServiceName = "Router", Trail = trail2 });
-    envelope.AddHop(new MessageHop { ServiceName = "Executor", Trail = trail3 });
+    envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Router",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
+      Trail = trail2
+    });
+    envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Executor",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
+      Trail = trail3
+    });
 
     // Act
     var decisions = envelope.GetAllPolicyDecisions();
@@ -611,11 +878,31 @@ public class MessageTracingTests {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
       Hops = [
-        new MessageHop { ServiceName = "Hop1", Trail = trail1 }
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "Hop1",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Trail = trail1 }
       ]
     };
 
-    envelope.AddHop(new MessageHop { ServiceName = "Hop2", Trail = trail2 });
+    envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Hop2",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
+      Trail = trail2
+    });
 
     // Act
     var decisions = envelope.GetAllPolicyDecisions();
@@ -644,12 +931,40 @@ public class MessageTracingTests {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
       Hops = [
-        new MessageHop { ServiceName = "Hop1", Trail = trail1 }
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "Hop1",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Trail = trail1 }
       ]
     };
 
-    envelope.AddHop(new MessageHop { ServiceName = "Hop2", Trail = null }); // No trail
-    envelope.AddHop(new MessageHop { ServiceName = "Hop3", Trail = trail3 });
+    envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Hop2",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
+      Trail = null
+    }); // No trail
+    envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Hop3",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
+      Trail = trail3
+    });
 
     // Act
     var decisions = envelope.GetAllPolicyDecisions();
@@ -675,8 +990,12 @@ public class MessageTracingTests {
 
     // Act
     var hop = new MessageHop {
-      ServiceName = "TestService",
-      MachineName = "test-machine",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-machine",
+        ProcessId = 12345
+      },
       Timestamp = timestamp,
       Topic = "test-topic",
       StreamKey = "test-stream",
@@ -691,8 +1010,8 @@ public class MessageTracingTests {
     };
 
     // Assert
-    await Assert.That(hop.ServiceName).IsEqualTo("TestService");
-    await Assert.That(hop.MachineName).IsEqualTo("test-machine");
+    await Assert.That(hop.ServiceInstance.ServiceName).IsEqualTo("TestService");
+    await Assert.That(hop.ServiceInstance.HostName).IsEqualTo("test-machine");
     await Assert.That(hop.Timestamp).IsEqualTo(timestamp);
     await Assert.That(hop.Topic).IsEqualTo("test-topic");
     await Assert.That(hop.StreamKey).IsEqualTo("test-stream");
@@ -710,7 +1029,12 @@ public class MessageTracingTests {
   public async Task MessageHop_CallerInfo_CanBeNullAsync() {
     // Arrange & Act
     var hop = new MessageHop {
-      ServiceName = "TestService",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       CallerMemberName = null,
       CallerFilePath = null,
       CallerLineNumber = null
@@ -726,7 +1050,12 @@ public class MessageTracingTests {
   public async Task MessageHop_SecurityContext_CanBeNullAsync() {
     // Arrange & Act
     var hop = new MessageHop {
-      ServiceName = "TestService",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       SecurityContext = null
     };
 
@@ -744,7 +1073,12 @@ public class MessageTracingTests {
 
     // Act
     var hop = new MessageHop {
-      ServiceName = "TestService",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       SecurityContext = securityContext
     };
 
@@ -758,7 +1092,12 @@ public class MessageTracingTests {
   public async Task MessageHop_Trail_CanBeNullAsync() {
     // Arrange & Act
     var hop = new MessageHop {
-      ServiceName = "TestService",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Trail = null
     };
 
@@ -774,7 +1113,12 @@ public class MessageTracingTests {
 
     // Act
     var hop = new MessageHop {
-      ServiceName = "TestService",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Trail = trail
     };
 
@@ -788,7 +1132,12 @@ public class MessageTracingTests {
   public async Task MessageHop_Type_DefaultsToCurrentAsync() {
     // Arrange & Act
     var hop = new MessageHop {
-      ServiceName = "TestService"
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      }
     };
 
     // Assert
@@ -799,7 +1148,12 @@ public class MessageTracingTests {
   public async Task MessageHop_Type_CanBeSetToCausationAsync() {
     // Arrange & Act
     var hop = new MessageHop {
-      ServiceName = "TestService",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Type = HopType.Causation,
       CausationId = MessageId.New(),
       CausationType = "OrderCreated"
@@ -815,7 +1169,12 @@ public class MessageTracingTests {
   public async Task MessageHop_CausationFields_AreNullForCurrentHopsAsync() {
     // Arrange & Act
     var hop = new MessageHop {
-      ServiceName = "TestService",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Type = HopType.Current
     };
 
@@ -835,8 +1194,32 @@ public class MessageTracingTests {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
       Hops = [
-        new MessageHop { ServiceName = "Service1", Type = HopType.Current },
-        new MessageHop { ServiceName = "Service2", Type = HopType.Current }
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "Service1",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Type = HopType.Current },
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "Service2",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Type = HopType.Current }
       ]
     };
 
@@ -857,10 +1240,58 @@ public class MessageTracingTests {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
       Hops = [
-        new MessageHop { ServiceName = "CausationHop1", Type = HopType.Causation, CausationId = causationId1, CausationType = "OrderCreated" },
-        new MessageHop { ServiceName = "CurrentHop1", Type = HopType.Current },
-        new MessageHop { ServiceName = "CausationHop2", Type = HopType.Causation, CausationId = causationId2, CausationType = "PaymentProcessed" },
-        new MessageHop { ServiceName = "CurrentHop2", Type = HopType.Current }
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "CausationHop1",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Type = HopType.Causation, CausationId = causationId1, CausationType = "OrderCreated" },
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "CurrentHop1",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Type = HopType.Current },
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "CausationHop2",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Type = HopType.Causation, CausationId = causationId2, CausationType = "PaymentProcessed" },
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "CurrentHop2",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Type = HopType.Current }
       ]
     };
 
@@ -869,10 +1300,10 @@ public class MessageTracingTests {
 
     // Assert
     await Assert.That(causationHops).HasCount().EqualTo(2);
-    await Assert.That(causationHops[0].ServiceName).IsEqualTo("CausationHop1");
+    await Assert.That(causationHops[0].ServiceInstance.ServiceName).IsEqualTo("CausationHop1");
     await Assert.That(causationHops[0].CausationId).IsEqualTo(causationId1);
     await Assert.That(causationHops[0].CausationType).IsEqualTo("OrderCreated");
-    await Assert.That(causationHops[1].ServiceName).IsEqualTo("CausationHop2");
+    await Assert.That(causationHops[1].ServiceInstance.ServiceName).IsEqualTo("CausationHop2");
     await Assert.That(causationHops[1].CausationId).IsEqualTo(causationId2);
     await Assert.That(causationHops[1].CausationType).IsEqualTo("PaymentProcessed");
   }
@@ -884,10 +1315,58 @@ public class MessageTracingTests {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
       Hops = [
-        new MessageHop { ServiceName = "CausationHop1", Type = HopType.Causation },
-        new MessageHop { ServiceName = "CurrentHop1", Type = HopType.Current },
-        new MessageHop { ServiceName = "CausationHop2", Type = HopType.Causation },
-        new MessageHop { ServiceName = "CurrentHop2", Type = HopType.Current }
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "CausationHop1",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Type = HopType.Causation },
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "CurrentHop1",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Type = HopType.Current },
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "CausationHop2",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Type = HopType.Causation },
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "CurrentHop2",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Type = HopType.Current }
       ]
     };
 
@@ -896,8 +1375,8 @@ public class MessageTracingTests {
 
     // Assert
     await Assert.That(currentHops).HasCount().EqualTo(2);
-    await Assert.That(currentHops[0].ServiceName).IsEqualTo("CurrentHop1");
-    await Assert.That(currentHops[1].ServiceName).IsEqualTo("CurrentHop2");
+    await Assert.That(currentHops[0].ServiceInstance.ServiceName).IsEqualTo("CurrentHop1");
+    await Assert.That(currentHops[1].ServiceInstance.ServiceName).IsEqualTo("CurrentHop2");
   }
 
   [Test]
@@ -907,8 +1386,32 @@ public class MessageTracingTests {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
       Hops = [
-        new MessageHop { ServiceName = "CausationHop", Type = HopType.Causation, Topic = "old-topic" },
-        new MessageHop { ServiceName = "CurrentHop", Type = HopType.Current, Topic = "current-topic" }
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "CausationHop",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Type = HopType.Causation, Topic = "old-topic" },
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "CurrentHop",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Type = HopType.Current, Topic = "current-topic" }
       ]
     };
 
@@ -926,8 +1429,32 @@ public class MessageTracingTests {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
       Hops = [
-        new MessageHop { ServiceName = "CausationHop", Type = HopType.Causation, StreamKey = "old-stream" },
-        new MessageHop { ServiceName = "CurrentHop", Type = HopType.Current, StreamKey = "current-stream" }
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "CausationHop",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Type = HopType.Causation, StreamKey = "old-stream" },
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "CurrentHop",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Type = HopType.Current, StreamKey = "current-stream" }
       ]
     };
 
@@ -945,8 +1472,32 @@ public class MessageTracingTests {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
       Hops = [
-        new MessageHop { ServiceName = "CausationHop", Type = HopType.Causation, PartitionIndex = 5 },
-        new MessageHop { ServiceName = "CurrentHop", Type = HopType.Current, PartitionIndex = 3 }
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "CausationHop",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Type = HopType.Causation, PartitionIndex = 5 },
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "CurrentHop",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Type = HopType.Current, PartitionIndex = 3 }
       ]
     };
 
@@ -964,8 +1515,32 @@ public class MessageTracingTests {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
       Hops = [
-        new MessageHop { ServiceName = "CausationHop", Type = HopType.Causation, SequenceNumber = 100 },
-        new MessageHop { ServiceName = "CurrentHop", Type = HopType.Current, SequenceNumber = 200 }
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "CausationHop",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Type = HopType.Causation, SequenceNumber = 100 },
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "CurrentHop",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Type = HopType.Current, SequenceNumber = 200 }
       ]
     };
 
@@ -986,8 +1561,32 @@ public class MessageTracingTests {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
       Hops = [
-        new MessageHop { ServiceName = "CausationHop", Type = HopType.Causation, SecurityContext = causationContext },
-        new MessageHop { ServiceName = "CurrentHop", Type = HopType.Current, SecurityContext = currentContext }
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "CausationHop",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Type = HopType.Causation, SecurityContext = causationContext },
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "CurrentHop",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Type = HopType.Current, SecurityContext = currentContext }
       ]
     };
 
@@ -1007,12 +1606,22 @@ public class MessageTracingTests {
       Payload = new TestMessage("test"),
       Hops = [
         new MessageHop {
-          ServiceName = "CausationHop",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "CausationHop",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Type = HopType.Causation,
           Metadata = new Dictionary<string, object> { ["key"] = "old-value" }
         },
         new MessageHop {
-          ServiceName = "CurrentHop",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "CurrentHop",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Type = HopType.Current,
           Metadata = new Dictionary<string, object> { ["key"] = "current-value" }
         }
@@ -1034,12 +1643,22 @@ public class MessageTracingTests {
       Payload = new TestMessage("test"),
       Hops = [
         new MessageHop {
-          ServiceName = "CausationHop",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "CausationHop",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Type = HopType.Causation,
           Metadata = new Dictionary<string, object> { ["old-key"] = "old-value" }
         },
         new MessageHop {
-          ServiceName = "CurrentHop",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "CurrentHop",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Type = HopType.Current,
           Metadata = new Dictionary<string, object> { ["current-key"] = "current-value" }
         }
@@ -1068,8 +1687,32 @@ public class MessageTracingTests {
       MessageId = MessageId.New(),
       Payload = new TestMessage("test"),
       Hops = [
-        new MessageHop { ServiceName = "CausationHop", Type = HopType.Causation, Trail = causationTrail },
-        new MessageHop { ServiceName = "CurrentHop", Type = HopType.Current, Trail = currentTrail }
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "CausationHop",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Type = HopType.Causation, Trail = causationTrail },
+        new MessageHop {
+
+          ServiceInstance = new ServiceInstanceInfo {
+
+            ServiceName = "CurrentHop",
+
+            InstanceId = Guid.NewGuid(),
+
+            HostName = "test-host",
+
+            ProcessId = 12345
+
+          }, Type = HopType.Current, Trail = currentTrail }
       ]
     };
 
@@ -1116,30 +1759,52 @@ public class MessageTracingTests {
 
   [Test]
   public async Task RecordHop_SetsServiceName_ToEntryAssemblyAsync() {
-    // Arrange & Act
-    var hop = MessageTracing.RecordHop("test-topic", "test-stream", "TestExecutor");
+    // Arrange
+    var serviceInstance = new ServiceInstanceInfo {
+      ServiceName = "TestService",
+      InstanceId = Guid.NewGuid(),
+      HostName = "test-host",
+      ProcessId = 12345
+    };
+
+    // Act
+    var hop = MessageTracing.RecordHop(serviceInstance, "test-topic", "test-stream", "TestExecutor");
 
     // Assert
-    await Assert.That(hop.ServiceName).IsNotNull();
-    await Assert.That(hop.ServiceName).IsNotEqualTo("Unknown");
+    await Assert.That(hop.ServiceInstance.ServiceName).IsNotNull();
+    await Assert.That(hop.ServiceInstance.ServiceName).IsNotEqualTo("Unknown");
   }
 
   [Test]
   public async Task RecordHop_SetsMachineName_ToEnvironmentMachineNameAsync() {
-    // Arrange & Act
-    var hop = MessageTracing.RecordHop("test-topic", "test-stream", "TestExecutor");
+    // Arrange
+    var serviceInstance = new ServiceInstanceInfo {
+      ServiceName = "TestService",
+      InstanceId = Guid.NewGuid(),
+      HostName = Environment.MachineName,
+      ProcessId = 12345
+    };
+
+    // Act
+    var hop = MessageTracing.RecordHop(serviceInstance, "test-topic", "test-stream", "TestExecutor");
 
     // Assert
-    await Assert.That(hop.MachineName).IsEqualTo(Environment.MachineName);
+    await Assert.That(hop.ServiceInstance.HostName).IsEqualTo(Environment.MachineName);
   }
 
   [Test]
   public async Task RecordHop_SetsTimestamp_ToApproximatelyNowAsync() {
     // Arrange
+    var serviceInstance = new ServiceInstanceInfo {
+      ServiceName = "TestService",
+      InstanceId = Guid.NewGuid(),
+      HostName = "test-host",
+      ProcessId = 12345
+    };
     var before = DateTimeOffset.UtcNow;
 
     // Act
-    var hop = MessageTracing.RecordHop("test-topic", "test-stream", "TestExecutor");
+    var hop = MessageTracing.RecordHop(serviceInstance, "test-topic", "test-stream", "TestExecutor");
 
     // Assert
     var after = DateTimeOffset.UtcNow;
@@ -1149,8 +1814,16 @@ public class MessageTracingTests {
 
   [Test]
   public async Task RecordHop_SetsTopicStreamAndStrategyAsync() {
-    // Arrange & Act
-    var hop = MessageTracing.RecordHop("orders", "order-123", "SerialExecutor");
+    // Arrange
+    var serviceInstance = new ServiceInstanceInfo {
+      ServiceName = "TestService",
+      InstanceId = Guid.NewGuid(),
+      HostName = "test-host",
+      ProcessId = 12345
+    };
+
+    // Act
+    var hop = MessageTracing.RecordHop(serviceInstance, "orders", "order-123", "SerialExecutor");
 
     // Assert
     await Assert.That(hop.Topic).IsEqualTo("orders");
@@ -1172,8 +1845,17 @@ public class MessageTracingTests {
 
   [Test]
   public async Task RecordHop_WithPartitionAndSequence_SetsOptionalFieldsAsync() {
-    // Arrange & Act
+    // Arrange
+    var serviceInstance = new ServiceInstanceInfo {
+      ServiceName = "TestService",
+      InstanceId = Guid.NewGuid(),
+      HostName = "test-host",
+      ProcessId = 12345
+    };
+
+    // Act
     var hop = MessageTracing.RecordHop(
+      serviceInstance: serviceInstance,
       topic: "test-topic",
       streamKey: "test-stream",
       executionStrategy: "TestExecutor",
@@ -1188,8 +1870,17 @@ public class MessageTracingTests {
 
   [Test]
   public async Task RecordHop_WithDuration_SetsDurationFieldAsync() {
-    // Arrange & Act
+    // Arrange
+    var serviceInstance = new ServiceInstanceInfo {
+      ServiceName = "TestService",
+      InstanceId = Guid.NewGuid(),
+      HostName = "test-host",
+      ProcessId = 12345
+    };
+
+    // Act
     var hop = MessageTracing.RecordHop(
+      serviceInstance: serviceInstance,
       topic: "test-topic",
       streamKey: "test-stream",
       executionStrategy: "TestExecutor",
@@ -1240,7 +1931,14 @@ public class MessageTracingTests {
   public async Task MessageTrace_AddHop_AddsToHopsListAsync() {
     // Arrange
     var trace = new MessageTrace(MessageId.New());
-    var hop = new MessageHop { ServiceName = "TestService" };
+    var hop = new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      }
+    };
 
     // Act
     trace.AddHop(hop);
@@ -1329,10 +2027,22 @@ public class MessageTracingTests {
 
   // Helper methods for testing caller info capture
   private static MessageHop TestMethod_ThatRecordsHop() {
-    return MessageTracing.RecordHop("test-topic", "test-stream", "TestExecutor");
+    var serviceInstance = new ServiceInstanceInfo {
+      ServiceName = "TestService",
+      InstanceId = Guid.NewGuid(),
+      HostName = "test-host",
+      ProcessId = 12345
+    };
+    return MessageTracing.RecordHop(serviceInstance, "test-topic", "test-stream", "TestExecutor");
   }
 
   private static MessageHop AnotherTestMethod_ThatRecordsHop() {
-    return MessageTracing.RecordHop("test-topic", "test-stream", "TestExecutor");
+    var serviceInstance = new ServiceInstanceInfo {
+      ServiceName = "TestService",
+      InstanceId = Guid.NewGuid(),
+      HostName = "test-host",
+      ProcessId = 12345
+    };
+    return MessageTracing.RecordHop(serviceInstance, "test-topic", "test-stream", "TestExecutor");
   }
 }

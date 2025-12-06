@@ -9,9 +9,12 @@ namespace Whizbang.Core.Generated;
 /// Manual JsonSerializerContext for Whizbang infrastructure types.
 /// This provides AOT-compatible JSON serialization for types used by MessageEnvelope
 /// and other core Whizbang infrastructure.
+/// NOTE: MessageId and CorrelationId (including nullable versions) are provided by WhizbangIdJsonContext
+/// with custom converters. WhizbangIdJsonContext is registered FIRST in the resolver chain.
 /// </summary>
 [JsonSerializable(typeof(MessageHop))]
 [JsonSerializable(typeof(List<MessageHop>))]
+[JsonSerializable(typeof(ServiceInstanceInfo))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSerializable(typeof(Dictionary<string, object>))]
 [JsonSerializable(typeof(Dictionary<string, object?>))]

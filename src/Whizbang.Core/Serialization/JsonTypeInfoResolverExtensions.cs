@@ -1,63 +1,59 @@
+using System;
+using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 
 namespace Whizbang.Core.Serialization;
 
 /// <summary>
-/// Extension methods for IJsonTypeInfoResolver to simplify combining user contexts with WhizbangJsonContext.
+/// Extension methods for IJsonTypeInfoResolver to simplify combining user contexts with Whizbang contexts.
+/// NOTE: With the JsonContextRegistry pattern, these methods are typically not needed.
+/// Instead, register your contexts via ModuleInitializer and use JsonContextRegistry.CreateCombinedOptions().
 /// </summary>
+[Obsolete("Use JsonContextRegistry.RegisterContext() with ModuleInitializer pattern instead. " +
+          "See Whizbang documentation for the recommended pattern.")]
 public static class JsonTypeInfoResolverExtensions {
   /// <summary>
-  /// Combines a user's JsonTypeInfoResolver with WhizbangJsonContext.
-  /// This is the recommended pattern for adding custom types while using Whizbang.
+  /// Combines a user's JsonTypeInfoResolver with all registered Whizbang contexts.
+  /// DEPRECATED: Use JsonContextRegistry.RegisterContext() with ModuleInitializer instead.
   /// </summary>
   /// <param name="userResolver">User's JsonSerializerContext or custom IJsonTypeInfoResolver</param>
-  /// <returns>Combined resolver that checks Whizbang types first, then user types</returns>
-  /// <example>
-  /// <code>
-  /// // User defines their context
-  /// [JsonSerializable(typeof(MyCustomDto))]
-  /// public partial class MyAppContext : JsonSerializerContext { }
-  ///
-  /// // Combine with Whizbang - beautiful one-liner!
-  /// var options = new JsonSerializerOptions {
-  ///     TypeInfoResolver = MyAppContext.Default.CombineWithWhizbangContext()
-  /// };
-  /// </code>
-  /// </example>
+  /// <returns>Combined resolver with all registered contexts plus user resolver</returns>
+  [Obsolete("Use JsonContextRegistry.RegisterContext() with ModuleInitializer pattern instead.")]
   public static IJsonTypeInfoResolver CombineWithWhizbangContext(
     this IJsonTypeInfoResolver userResolver) {
 
     ArgumentNullException.ThrowIfNull(userResolver);
 
+    // Get combined options from registry, then add user resolver
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var whizbangResolver = options.TypeInfoResolver
+      ?? throw new InvalidOperationException("JsonContextRegistry has no registered contexts");
+
     return JsonTypeInfoResolver.Combine(
-      Generated.WhizbangJsonContext.Default,
+      whizbangResolver,
       userResolver
     );
   }
 
   /// <summary>
-  /// Combines multiple user JsonTypeInfoResolvers with WhizbangJsonContext.
-  /// Use this when you need to combine several user contexts.
+  /// Combines multiple user JsonTypeInfoResolvers with all registered Whizbang contexts.
+  /// DEPRECATED: Use JsonContextRegistry.RegisterContext() with ModuleInitializer instead.
   /// </summary>
   /// <param name="userResolvers">One or more user contexts/resolvers</param>
-  /// <returns>Combined resolver with Whizbang types resolved first</returns>
-  /// <example>
-  /// <code>
-  /// var resolver = JsonTypeInfoResolverExtensions.CombineWithWhizbangContext(
-  ///     MyAppContext.Default,
-  ///     ThirdPartyContext.Default
-  /// );
-  /// </code>
-  /// </example>
+  /// <returns>Combined resolver with all registered contexts plus user resolvers</returns>
+  [Obsolete("Use JsonContextRegistry.RegisterContext() with ModuleInitializer pattern instead.")]
   public static IJsonTypeInfoResolver CombineWithWhizbangContext(
     params IJsonTypeInfoResolver[] userResolvers) {
 
     ArgumentNullException.ThrowIfNull(userResolvers);
 
-    var resolvers = new List<IJsonTypeInfoResolver> {
-      Generated.WhizbangJsonContext.Default
-    };
+    // Get combined options from registry
+    var options = JsonContextRegistry.CreateCombinedOptions();
+    var whizbangResolver = options.TypeInfoResolver
+      ?? throw new InvalidOperationException("JsonContextRegistry has no registered contexts");
+
+    var resolvers = new List<IJsonTypeInfoResolver> { whizbangResolver };
     resolvers.AddRange(userResolvers);
 
     return JsonTypeInfoResolver.Combine(resolvers.ToArray());

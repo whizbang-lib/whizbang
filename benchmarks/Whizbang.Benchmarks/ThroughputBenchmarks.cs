@@ -305,8 +305,13 @@ public class ThroughputBenchmarks {
     };
 
     envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "BenchmarkPublisher",
+        InstanceId = Guid.NewGuid(),
+        HostName = "benchmark-host",
+        ProcessId = 12345
+      },
       Type = HopType.Current,
-      ServiceName = "BenchmarkPublisher",
       Timestamp = DateTimeOffset.UtcNow,
       CorrelationId = correlationId ?? CorrelationId.New(),
       CausationId = MessageId.New()
@@ -323,8 +328,13 @@ public class ThroughputBenchmarks {
     };
 
     var hop = new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "BenchmarkPublisher",
+        InstanceId = Guid.NewGuid(),
+        HostName = "benchmark-host",
+        ProcessId = 12345
+      },
       Type = HopType.Current,
-      ServiceName = "BenchmarkPublisher",
       Timestamp = DateTimeOffset.UtcNow,
       CorrelationId = CorrelationId.New(),
       CausationId = MessageId.New(),

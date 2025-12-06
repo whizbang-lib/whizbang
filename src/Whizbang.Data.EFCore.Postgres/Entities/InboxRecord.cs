@@ -12,7 +12,7 @@ public sealed class InboxRecord {
   /// Unique message ID (idempotency key).
   /// Primary key for fast deduplication checks.
   /// </summary>
-  public required string MessageId { get; set; }
+  public required Guid MessageId { get; set; }
 
   /// <summary>
   /// The name of the handler that will process this message.
@@ -90,4 +90,43 @@ public sealed class InboxRecord {
   /// Null if message is not currently being processed or has been completed/failed.
   /// </summary>
   public DateTimeOffset? LeaseExpiry { get; set; }
+
+  // ========================================
+  // Work Coordinator Pattern (Phase 1-7)
+  // ========================================
+
+  /// <summary>
+  /// Stream ID for ordering (aggregate ID or message ID).
+  /// Events from the same stream must be processed in order.
+  /// Used for partition-based work distribution via consistent hashing.
+  /// </summary>
+  public Guid? StreamId { get; set; }
+
+  /// <summary>
+  /// Partition number (computed from stream_id via consistent hashing).
+  /// Used for load distribution and ensuring same stream goes to same instance.
+  /// Range: 0-9999 (10,000 partitions by default).
+  /// </summary>
+  public int? PartitionNumber { get; set; }
+
+  /// <summary>
+  /// Current processing status flags (bitwise).
+  /// Indicates which stages have been completed (e.g., Stored, ReceptorProcessed, PerspectiveProcessed).
+  /// Uses MessageProcessingStatus enum.
+  /// </summary>
+  public int StatusFlags { get; set; }
+
+  /// <summary>
+  /// Work batch flags indicating metadata about this work item.
+  /// Examples: NewlyStored, Orphaned, FromEventStore, RetryAfterFailure.
+  /// Uses WorkBatchFlags enum.
+  /// </summary>
+  public int Flags { get; set; }
+
+  /// <summary>
+  /// Sequence order for maintaining ordering within a stream.
+  /// Epoch milliseconds from received_at timestamp.
+  /// Used by OrderedStreamProcessor to process messages in correct order.
+  /// </summary>
+  public long SequenceOrder { get; set; }
 }

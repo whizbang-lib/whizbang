@@ -123,7 +123,12 @@ public class IMessageSerializerTests {
       Payload = new TestMessage { Content = "Test", Value = 1 },
       Hops = [
         new MessageHop {
-          ServiceName = "TestService",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Timestamp = DateTimeOffset.UtcNow,
           CorrelationId = correlationId
         }
@@ -148,7 +153,12 @@ public class IMessageSerializerTests {
       Payload = new TestMessage { Content = "Test", Value = 1 },
       Hops = [
         new MessageHop {
-          ServiceName = "TestService",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Timestamp = DateTimeOffset.UtcNow,
           CausationId = causationId
         }
@@ -172,7 +182,12 @@ public class IMessageSerializerTests {
       Payload = new TestMessage { Content = "Test", Value = 1 },
       Hops = [
         new MessageHop {
-          ServiceName = "TestService",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Timestamp = DateTimeOffset.UtcNow,
           Metadata = new Dictionary<string, object> {
             ["priority"] = "high",
@@ -202,7 +217,12 @@ public class IMessageSerializerTests {
       Payload = new TestMessage { Content = "Test", Value = 1 },
       Hops = [
         new MessageHop {
-          ServiceName = "OrderService",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "OrderService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Timestamp = DateTimeOffset.UtcNow
         }
       ]
@@ -213,7 +233,7 @@ public class IMessageSerializerTests {
     var deserialized = await serializer.DeserializeAsync<TestMessage>(bytes);
 
     // Assert
-    await Assert.That(deserialized.Hops[0].ServiceName).IsEqualTo("OrderService");
+    await Assert.That(deserialized.Hops[0].ServiceInstance.ServiceName).IsEqualTo("OrderService");
   }
 
   [Test]
@@ -225,7 +245,12 @@ public class IMessageSerializerTests {
       Payload = new TestMessage { Content = "Test", Value = 1 },
       Hops = [
         new MessageHop {
-          ServiceName = "TestService",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Timestamp = DateTimeOffset.UtcNow,
           Topic = "orders.events",
           StreamKey = "order-123",
@@ -254,7 +279,12 @@ public class IMessageSerializerTests {
       Payload = new TestMessage { Content = "Test", Value = 1 },
       Hops = [
         new MessageHop {
-          ServiceName = "TestService",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Timestamp = DateTimeOffset.UtcNow,
           SequenceNumber = 42
         }
@@ -280,7 +310,12 @@ public class IMessageSerializerTests {
       Payload = new TestMessage { Content = "Test", Value = 1 },
       Hops = [
         new MessageHop {
-          ServiceName = "TestService",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Timestamp = timestamp
         }
       ]
@@ -303,7 +338,12 @@ public class IMessageSerializerTests {
       Payload = new TestMessage { Content = "Test", Value = 1 },
       Hops = [
         new MessageHop {
-          ServiceName = "TestService",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Timestamp = DateTimeOffset.UtcNow,
           Topic = null,
           StreamKey = null,
@@ -337,7 +377,12 @@ public class IMessageSerializerTests {
       Payload = msg,
       Hops = [
         new MessageHop {
-          ServiceName = "TestService",
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Timestamp = DateTimeOffset.UtcNow
         }
       ]
@@ -350,18 +395,33 @@ public class IMessageSerializerTests {
       Payload = new TestMessage { Content = "Test", Value = 1 },
       Hops = [
         new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "CurrentService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Type = HopType.Current,
-          ServiceName = "CurrentService",
           Timestamp = DateTimeOffset.UtcNow
         },
         new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "ParentService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Type = HopType.Causation,
-          ServiceName = "ParentService",
           Timestamp = DateTimeOffset.UtcNow.AddSeconds(-1)
         },
         new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "GrandparentService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Type = HopType.Causation,
-          ServiceName = "GrandparentService",
           Timestamp = DateTimeOffset.UtcNow.AddSeconds(-2)
         }
       ]

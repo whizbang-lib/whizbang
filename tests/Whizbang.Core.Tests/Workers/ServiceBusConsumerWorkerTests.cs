@@ -67,6 +67,7 @@ public class ServiceBusConsumerWorkerTests {
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
     // Create test dependencies
+    var instanceProvider = new TestServiceInstanceProvider();
     var transport = new TestTransport();
     var jsonOptions = new JsonSerializerOptions();
     var logger = new TestLogger<ServiceBusConsumerWorker>();
@@ -75,6 +76,7 @@ public class ServiceBusConsumerWorkerTests {
     // so we'll test the underlying HandleMessageAsync behavior through
     // a reflection call (not ideal, but necessary for regression test)
     var worker = new ServiceBusConsumerWorker(
+      instanceProvider,
       transport,
       scopeFactory,
       jsonOptions,
@@ -122,11 +124,13 @@ public class ServiceBusConsumerWorkerTests {
     var serviceProvider = services.BuildServiceProvider();
     var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
 
+    var instanceProvider = new TestServiceInstanceProvider();
     var transport = new TestTransport();
     var jsonOptions = new JsonSerializerOptions();
     var logger = new TestLogger<ServiceBusConsumerWorker>();
 
     var worker = new ServiceBusConsumerWorker(
+      instanceProvider,
       transport,
       scopeFactory,
       jsonOptions,
@@ -150,7 +154,12 @@ public class ServiceBusConsumerWorkerTests {
     // In production, PayloadType would be a JsonElement from Service Bus deserialization
     var hop = new MessageHop {
       Type = HopType.Current,
-      ServiceName = "TestService",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Topic = "test-topic",
       Timestamp = DateTimeOffset.UtcNow
     };
@@ -304,5 +313,26 @@ internal class TestLogger<T> : ILogger<T> {
     Exception? exception,
     Func<TState, Exception?, string> formatter) {
     // No-op for testing
+  }
+}
+
+/// <summary>
+/// Test double for IServiceInstanceProvider
+/// </summary>
+internal class TestServiceInstanceProvider : IServiceInstanceProvider {
+  private readonly Guid _instanceId = Guid.NewGuid();
+
+  public Guid InstanceId => _instanceId;
+  public string ServiceName => "test-service";
+  public string HostName => "test-host";
+  public int ProcessId => 12345;
+
+  public ServiceInstanceInfo ToInfo() {
+    return new ServiceInstanceInfo {
+      ServiceName = ServiceName,
+      InstanceId = InstanceId,
+      HostName = HostName,
+      ProcessId = ProcessId
+    };
   }
 }

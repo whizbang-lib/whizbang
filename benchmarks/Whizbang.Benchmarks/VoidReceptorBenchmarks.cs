@@ -86,7 +86,11 @@ public class VoidReceptorBenchmarks {
     var providerWithTracing = servicesWithTracing.BuildServiceProvider();
     _dispatcherWithTracing = new Benchmarks.Generated.GeneratedDispatcher(
       providerWithTracing,
-      new InMemoryTraceStore()
+      new ServiceInstanceProvider(Guid.NewGuid(), "BenchmarkService", "benchmark-host", 12345),
+      new InMemoryTraceStore(),
+      null,  // outbox
+      null,  // transport
+      null   // jsonOptions
     );
 
     // Dispatcher WITHOUT tracing (fast path - zero allocations target)
@@ -98,7 +102,11 @@ public class VoidReceptorBenchmarks {
     var providerNoTracing = servicesNoTracing.BuildServiceProvider();
     _dispatcherNoTracing = new Benchmarks.Generated.GeneratedDispatcher(
       providerNoTracing,
-      traceStore: null  // No tracing = fast path
+      new ServiceInstanceProvider(Guid.NewGuid(), "BenchmarkService", "benchmark-host", 12345),
+      traceStore: null,  // No tracing = fast path
+      outbox: null,
+      transport: null,
+      jsonOptions: null
     );
 
     // Pre-allocate commands to measure ONLY framework overhead

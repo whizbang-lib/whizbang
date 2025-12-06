@@ -11,8 +11,8 @@ namespace Whizbang.Core.Workers;
 
 /// <summary>
 /// Background service that subscribes to messages from Azure Service Bus and invokes local perspectives.
-/// IMPORTANT: Does NOT re-publish events to avoid infinite loops.
-/// Events from remote services are stored in inbox for deduplication and perspectives are invoked directly.
+/// Uses work coordinator pattern for atomic deduplication and stream-based ordering.
+/// Events from remote services are stored in inbox via process_work_batch and perspectives are invoked with ordering guarantees.
 /// </summary>
 public class ServiceBusConsumerWorker(
   IServiceInstanceProvider instanceProvider,
@@ -20,6 +20,7 @@ public class ServiceBusConsumerWorker(
   IServiceScopeFactory scopeFactory,
   JsonSerializerOptions jsonOptions,
   ILogger<ServiceBusConsumerWorker> logger,
+  OrderedStreamProcessor orderedProcessor,
   ServiceBusConsumerOptions? options = null
   ) : BackgroundService {
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -27,6 +28,7 @@ public class ServiceBusConsumerWorker(
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<ServiceBusConsumerWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+  private readonly OrderedStreamProcessor _orderedProcessor = orderedProcessor ?? throw new ArgumentNullException(nameof(orderedProcessor));
   private readonly List<ISubscription> _subscriptions = [];
   private readonly ServiceBusConsumerOptions _options = options ?? new ServiceBusConsumerOptions();
 
@@ -78,157 +80,89 @@ public class ServiceBusConsumerWorker(
 
   private async Task HandleMessageAsync(IMessageEnvelope envelope, CancellationToken ct) {
     try {
-      // Create scope early to resolve scoped services (IInbox, IPerspectiveInvoker)
+      // Create scope to resolve scoped services (IWorkCoordinatorStrategy, IPerspectiveInvoker)
       await using var scope = _scopeFactory.CreateAsyncScope();
-      var inbox = scope.ServiceProvider.GetRequiredService<IInbox>();
-
-      // Check inbox for deduplication
-      if (await inbox.HasProcessedAsync(envelope.MessageId, ct)) {
-        _logger.LogInformation(
-          "Message {MessageId} already processed, skipping",
-          envelope.MessageId
-        );
-        return;
-      }
+      var strategy = scope.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
 
       _logger.LogInformation(
         "Processing message {MessageId} from Service Bus",
         envelope.MessageId
       );
 
-      // Deserialize the JsonElement payload to the actual event type
-      // The PayloadType is stored in the last hop's metadata by OutboxPublisherWorker
-      // IMPORTANT: Do this BEFORE adding receivedHop so lastHop refers to OutboxPublisherWorker's hop
-      var payload = envelope.GetPayload();
-      object? deserializedEvent = null;
+      // 1. Serialize envelope to NewInboxMessage
+      var newInboxMessage = _serializeToNewInboxMessage(envelope);
 
-      // DEBUG: Log hop information
-      _logger.LogInformation("DEBUG: Envelope has {HopCount} hops", envelope.Hops.Count);
+      // 2. Queue for atomic deduplication via process_work_batch
+      strategy.QueueInboxMessage(newInboxMessage);
 
-      // Try to find PayloadType in the most recent hop metadata
-      var lastHop = envelope.Hops.LastOrDefault();
-      _logger.LogInformation("DEBUG: Last hop exists: {Exists}, Has metadata: {HasMetadata}",
-        lastHop != null,
-        lastHop?.Metadata != null);
+      // 3. Flush - calls process_work_batch with atomic INSERT ... ON CONFLICT DO NOTHING
+      var workBatch = await strategy.FlushAsync(WorkBatchFlags.None, ct);
 
-      if (lastHop?.Metadata != null && lastHop.Metadata.TryGetValue("PayloadType", out var payloadTypeObj)) {
-        _logger.LogInformation("DEBUG: PayloadType found in metadata");
+      // 4. Check if work was returned - empty means duplicate (already processed)
+      var myWork = workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value).ToList();
 
-        var payloadTypeElem = (System.Text.Json.JsonElement)payloadTypeObj;
-        var payloadTypeName = payloadTypeElem.GetString();
-        _logger.LogInformation("DEBUG: PayloadType name: '{PayloadTypeName}'", payloadTypeName);
-
-        if (!string.IsNullOrEmpty(payloadTypeName)) {
-          // Get the Type from the fully-qualified name
-          var payloadType = Type.GetType(payloadTypeName);
-          _logger.LogInformation("DEBUG: Type.GetType() returned: {TypeFound} (Type: {TypeName})",
-            payloadType != null,
-            payloadType?.FullName ?? "null");
-
-          if (payloadType != null) {
-            // Get the JsonTypeInfo for this type from the JSON context
-            var typeInfo = _jsonOptions.GetTypeInfo(payloadType);
-            _logger.LogInformation("DEBUG: GetTypeInfo() returned: {TypeInfoFound}", typeInfo != null);
-
-            if (typeInfo != null && payload is System.Text.Json.JsonElement jsonElem) {
-              _logger.LogInformation("DEBUG: Payload is JsonElement, attempting deserialization...");
-              // Re-serialize the JsonElement and deserialize to the correct type
-              var json = jsonElem.GetRawText();
-              deserializedEvent = JsonSerializer.Deserialize(json, typeInfo);
-              _logger.LogInformation("DEBUG: Deserialization result: {Success} (Type: {TypeName})",
-                deserializedEvent != null,
-                deserializedEvent?.GetType().Name ?? "null");
-              _logger.LogInformation("DEBUG: AFTER DESERIALIZATION - Event is IEvent: {IsIEvent}",
-                deserializedEvent is IEvent);
-            } else {
-              _logger.LogWarning("DEBUG: Deserialization skipped - TypeInfo: {HasTypeInfo}, IsJsonElement: {IsJsonElement}",
-                typeInfo != null,
-                payload is System.Text.Json.JsonElement);
-            }
-          }
-        }
-      } else {
-        _logger.LogWarning("DEBUG: PayloadType NOT found in last hop metadata");
-        if (lastHop?.Metadata != null) {
-          _logger.LogWarning("DEBUG: Last hop metadata keys: {Keys}",
-            string.Join(", ", lastHop.Metadata.Keys));
-        }
-      }
-
-      // Fallback: If deserialization didn't produce an event, use payload if it's already an IEvent
-      // This happens in test scenarios or when the envelope already contains a typed event
-      if (deserializedEvent == null && payload is IEvent typedPayload) {
-        deserializedEvent = typedPayload;
+      if (myWork.Count == 0) {
         _logger.LogInformation(
-          "DEBUG: Using typed payload directly as event: {EventType}",
-          typedPayload.GetType().Name
+          "Message {MessageId} already processed (duplicate), skipping",
+          envelope.MessageId
         );
+        return;
       }
 
-      _logger.LogInformation("DEBUG: BEFORE ADDING HOP");
+      _logger.LogInformation(
+        "Message {MessageId} accepted for processing ({WorkCount} inbox work items)",
+        envelope.MessageId,
+        myWork.Count
+      );
 
-      // Add hop indicating message was received from Service Bus
-      // This preserves the distributed trace from the sending service
-      // IMPORTANT: Add AFTER deserialization so PayloadType lookup works correctly
-      var receivedHop = new MessageHop {
-        Type = HopType.Current,
-        ServiceInstance = _instanceProvider.ToInfo(),
-        Topic = _options.Subscriptions.FirstOrDefault()?.TopicName ?? "unknown-topic",
-        Timestamp = DateTimeOffset.UtcNow
-      };
-      envelope.AddHop(receivedHop);
-
-      _logger.LogInformation("DEBUG: BEFORE RESOLVING INVOKER");
-
-      // Resolve perspective invoker from the scope (already created at method start)
+      // 5. Process using OrderedStreamProcessor (maintains stream ordering)
+      // Resolve perspective invoker once for all work items
       var perspectiveInvoker = scope.ServiceProvider.GetService<Perspectives.IPerspectiveInvoker>();
 
-      _logger.LogInformation("DEBUG: INVOKER RESOLVED: {InvokerType}",
-        perspectiveInvoker?.GetType().FullName ?? "NULL");
+      await _orderedProcessor.ProcessInboxWorkAsync(
+        myWork,
+        processor: async (work) => {
+          // Deserialize event from work item
+          var @event = _deserializeEvent(work);
 
-      _logger.LogInformation("DEBUG: ABOUT TO LOG INVOKER TYPE");
+          // Queue event to perspective invoker if available
+          if (perspectiveInvoker != null && @event is IEvent typedEvent) {
+            perspectiveInvoker.QueueEvent(typedEvent);
 
-      // DEBUG: Log which invoker type is being resolved
-      _logger.LogInformation(
-        "DEBUG: PerspectiveInvoker type: {InvokerType}, Assembly: {Assembly}",
-        perspectiveInvoker?.GetType().FullName ?? "null",
-        perspectiveInvoker?.GetType().Assembly.GetName().Name ?? "null"
+            // Invoke perspectives for this event
+            await perspectiveInvoker.InvokePerspectivesAsync(ct);
+
+            _logger.LogInformation(
+              "Invoked perspectives for {EventType} (message {MessageId})",
+              typedEvent.GetType().Name,
+              work.MessageId
+            );
+
+            return MessageProcessingStatus.ReceptorProcessed | MessageProcessingStatus.PerspectiveProcessed;
+          } else {
+            _logger.LogWarning(
+              "Failed to invoke perspectives - Event: {EventType}, HasInvoker: {HasInvoker}",
+              @event?.GetType().Name ?? "null",
+              perspectiveInvoker != null
+            );
+
+            // Still mark as processed even if perspective invocation failed
+            return MessageProcessingStatus.ReceptorProcessed;
+          }
+        },
+        completionHandler: (msgId, status) => {
+          strategy.QueueInboxCompletion(msgId, status);
+          _logger.LogDebug("Queued completion for {MessageId} with status {Status}", msgId, status);
+        },
+        failureHandler: (msgId, status, error) => {
+          strategy.QueueInboxFailure(msgId, status, error);
+          _logger.LogError("Queued failure for {MessageId}: {Error}", msgId, error);
+        },
+        ct
       );
 
-      // Log deserialization result
-      _logger.LogInformation(
-        "Deserialized event: {EventType}, PerspectiveInvoker: {HasInvoker}",
-        deserializedEvent?.GetType().Name ?? "null",
-        perspectiveInvoker != null
-      );
-
-      // Queue event to perspective invoker if available and if deserialized event is IEvent
-      if (perspectiveInvoker != null && deserializedEvent is IEvent @event) {
-        perspectiveInvoker.QueueEvent(@event);
-        _logger.LogInformation(
-          "Queued event {EventType} to perspective invoker",
-          @event.GetType().Name
-        );
-
-        // IMPORTANT: Invoke perspectives BEFORE disposing scope
-        // If we wait for scope disposal, the service provider will already be disposed
-        // when the invoker tries to resolve perspectives via GetServices()
-        await perspectiveInvoker.InvokePerspectivesAsync(ct);
-        _logger.LogInformation(
-          "Invoked perspectives for {EventType}",
-          @event.GetType().Name
-        );
-      } else {
-        _logger.LogWarning(
-          "Failed to queue event - Deserialized: {Deserialized}, IsIEvent: {IsIEvent}, HasInvoker: {HasInvoker}",
-          deserializedEvent != null,
-          deserializedEvent is IEvent,
-          perspectiveInvoker != null
-        );
-      }
-
-      // Mark as processed in inbox (for deduplication)
-      await inbox.MarkProcessedAsync(envelope.MessageId, ct);
+      // 6. Report completions/failures back to database
+      await strategy.FlushAsync(WorkBatchFlags.None, ct);
 
       _logger.LogInformation(
         "Successfully processed message {MessageId}",
@@ -244,6 +178,126 @@ public class ServiceBusConsumerWorker(
       );
       throw; // Let the transport handle retry/dead-letter
     }
+  }
+
+  /// <summary>
+  /// Serializes message envelope to NewInboxMessage for work coordinator pattern.
+  /// Extracts payload type, serializes data, and determines stream ID.
+  /// </summary>
+  private NewInboxMessage _serializeToNewInboxMessage(IMessageEnvelope envelope) {
+    // Get payload and its type
+    var payload = envelope.GetPayload();
+    var payloadType = payload.GetType();
+
+    // Determine handler name from payload type
+    var handlerName = payloadType.Name + "Handler";
+
+    // Serialize payload to JSON
+    var typeInfo = _jsonOptions.GetTypeInfo(payloadType);
+    var eventDataJson = JsonSerializer.Serialize(payload, typeInfo);
+
+    // Serialize metadata (MessageId + Hops)
+    var metadata = _serializeEnvelopeMetadata(envelope);
+
+    // Serialize security scope (nullable)
+    var scope = _serializeSecurityScope(envelope);
+
+    // Extract stream_id from envelope (aggregate ID or message ID)
+    var streamId = _extractStreamId(envelope);
+
+    return new NewInboxMessage {
+      MessageId = envelope.MessageId.Value,
+      HandlerName = handlerName,
+      EventType = payloadType.FullName ?? throw new InvalidOperationException("Event type has no FullName"),
+      EventData = eventDataJson,
+      Metadata = metadata,
+      Scope = scope,
+      StreamId = streamId,
+      IsEvent = payload is IEvent
+    };
+  }
+
+  /// <summary>
+  /// Deserializes event from InboxWork for processing.
+  /// Uses MessageType to determine correct type and deserialize MessageData JSON.
+  /// </summary>
+  private object? _deserializeEvent(InboxWork work) {
+    // Get the Type from the fully-qualified name
+    var messageType = Type.GetType(work.MessageType);
+
+    if (messageType == null) {
+      _logger.LogError("Failed to resolve message type: {MessageType}", work.MessageType);
+      return null;
+    }
+
+    // Get JsonTypeInfo for this type
+    var typeInfo = _jsonOptions.GetTypeInfo(messageType);
+
+    if (typeInfo == null) {
+      _logger.LogError("No JsonTypeInfo found for type: {MessageType}", work.MessageType);
+      return null;
+    }
+
+    // Deserialize JSON to typed event
+    var @event = JsonSerializer.Deserialize(work.MessageData, typeInfo);
+
+    if (@event == null) {
+      _logger.LogError("Failed to deserialize message data for type: {MessageType}", work.MessageType);
+      return null;
+    }
+
+    return @event;
+  }
+
+  /// <summary>
+  /// Serializes envelope metadata (MessageId + Hops) to JSON string.
+  /// </summary>
+  private string _serializeEnvelopeMetadata(IMessageEnvelope envelope) {
+    var metadata = new EnvelopeMetadata {
+      MessageId = envelope.MessageId,
+      Hops = envelope.Hops.ToList()
+    };
+
+    var metadataTypeInfo = (System.Text.Json.Serialization.Metadata.JsonTypeInfo<EnvelopeMetadata>)_jsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
+    return JsonSerializer.Serialize(metadata, metadataTypeInfo);
+  }
+
+  /// <summary>
+  /// Serializes security scope (tenant, user) from first hop's security context.
+  /// Returns null if no security context is present.
+  /// </summary>
+  private static string? _serializeSecurityScope(IMessageEnvelope envelope) {
+    // Extract security context from first hop if available
+    var firstHop = envelope.Hops.FirstOrDefault();
+    if (firstHop?.SecurityContext == null) {
+      return null;
+    }
+
+    // Manual JSON construction for AOT compatibility
+    var userId = firstHop.SecurityContext.UserId?.ToString();
+    var tenantId = firstHop.SecurityContext.TenantId?.ToString();
+
+    return $"{{\"UserId\":{(userId == null ? "null" : $"\"{userId}\"")},\"TenantId\":{(tenantId == null ? "null" : $"\"{tenantId}\"")}}}";
+  }
+
+  /// <summary>
+  /// Extracts stream_id from envelope for stream-based ordering.
+  /// Tries to get aggregate ID from first hop metadata, falls back to message ID.
+  /// </summary>
+  private static Guid _extractStreamId(IMessageEnvelope envelope) {
+    // Check first hop for aggregate ID or stream key
+    var firstHop = envelope.Hops.FirstOrDefault();
+    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var aggregateIdObj)) {
+      if (aggregateIdObj is Guid aggregateId) {
+        return aggregateId;
+      }
+      if (aggregateIdObj is string aggregateIdStr && Guid.TryParse(aggregateIdStr, out var parsedAggregateId)) {
+        return parsedAggregateId;
+      }
+    }
+
+    // Fall back to message ID (ensures all messages have a stream)
+    return envelope.MessageId.Value;
   }
 
   public override async Task StopAsync(CancellationToken cancellationToken) {

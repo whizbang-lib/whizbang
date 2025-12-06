@@ -108,8 +108,13 @@ public class PolicyContextPoolTests {
       Payload = new TestMessage(),
       Hops = [
         new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Type = HopType.Current,
-          ServiceName = "Test",
           Timestamp = DateTimeOffset.UtcNow
         }
       ]

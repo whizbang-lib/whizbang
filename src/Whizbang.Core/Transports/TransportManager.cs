@@ -173,8 +173,7 @@ public class TransportManager(IMessageSerializer serializer, IServiceInstancePro
       Hops = [
         new MessageHop {
           Type = HopType.Current,
-          ServiceName = _instanceProvider?.ServiceName ?? "TransportManager",
-          ServiceInstanceId = _instanceProvider?.InstanceId ?? Guid.Empty,
+          ServiceInstance = _instanceProvider!.ToInfo(),
           Timestamp = DateTimeOffset.UtcNow,
           Metadata = new Dictionary<string, object> {
             ["CorrelationId"] = context.CorrelationId.ToString(),

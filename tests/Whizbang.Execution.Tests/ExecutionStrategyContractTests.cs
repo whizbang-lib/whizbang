@@ -43,8 +43,13 @@ public abstract class ExecutionStrategyContractTests {
       Hops = []
     };
     envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Type = HopType.Current,
-      ServiceName = "Test",
       Timestamp = DateTimeOffset.UtcNow,
       CorrelationId = CorrelationId.New(),
       CausationId = MessageId.New()

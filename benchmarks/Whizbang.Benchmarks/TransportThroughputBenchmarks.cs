@@ -308,8 +308,13 @@ public class TransportThroughputBenchmarks {
     };
 
     envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TransportBenchmark",
+        InstanceId = Guid.NewGuid(),
+        HostName = "benchmark-host",
+        ProcessId = 12345
+      },
       Type = HopType.Current,
-      ServiceName = "TransportBenchmark",
       Timestamp = DateTimeOffset.UtcNow,
       CorrelationId = CorrelationId.New(),
       CausationId = MessageId.New()

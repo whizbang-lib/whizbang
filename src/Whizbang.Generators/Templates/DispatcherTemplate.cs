@@ -30,11 +30,12 @@ namespace Whizbang.Core.Generated;
 internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
   public GeneratedDispatcher(
     IServiceProvider serviceProvider,
+    IServiceInstanceProvider instanceProvider,
     ITraceStore? traceStore = null,
     IOutbox? outbox = null,
     ITransport? transport = null,
     JsonSerializerOptions? jsonOptions = null
-  ) : base(serviceProvider, traceStore, outbox, transport, jsonOptions) {
+  ) : base(serviceProvider, instanceProvider, traceStore, outbox, transport, jsonOptions) {
   }
 
   /// <summary>

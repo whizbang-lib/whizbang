@@ -8,7 +8,6 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Transports.Tests.Generated;
-using Whizbang.Transports.Tests.Generated;
 
 namespace Whizbang.Transports.Tests;
 
@@ -66,8 +65,13 @@ public class JsonMessageSerializerTests {
       Payload = new TestMessage { Content = "test", Value = 1 },
       Hops = [
         new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "Test",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Type = HopType.Current,
-          ServiceName = "Test",
           Timestamp = DateTimeOffset.UtcNow,
           Metadata = metadata
         }
@@ -99,8 +103,13 @@ public class JsonMessageSerializerTests {
       Payload = new TestMessage { Content = "test", Value = 1 },
       Hops = [
         new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "Test",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Type = HopType.Current,
-          ServiceName = "Test",
           Timestamp = DateTimeOffset.UtcNow,
           Metadata = null
         }
@@ -237,8 +246,13 @@ public class JsonMessageSerializerTests {
       Payload = new TestMessage { Content = "test payload", Value = 1 },
       Hops = [
         new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "Test",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Type = HopType.Current,
-          ServiceName = "Test",
           Timestamp = DateTimeOffset.UtcNow,
           CorrelationId = correlationId
         }
@@ -340,8 +354,13 @@ public class JsonMessageSerializerTests {
       Payload = new TestMessage { Content = "test", Value = 1 },
       Hops = [
         new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "Test",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Type = HopType.Current,
-          ServiceName = "Test",
           Timestamp = DateTimeOffset.UtcNow,
           Metadata = metadata
         }
@@ -396,8 +415,13 @@ public class JsonMessageSerializerTests {
       Payload = new TestMessage { Content = "test", Value = 1 },
       Hops = [
         new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "Test",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Type = HopType.Current,
-          ServiceName = "Test",
           Timestamp = DateTimeOffset.UtcNow,
           Metadata = metadata
         }
@@ -431,8 +455,13 @@ public class JsonMessageSerializerTests {
       Payload = new TestMessage { Content = "test", Value = 1 },
       Hops = [
         new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "Test",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Type = HopType.Current,
-          ServiceName = "Test",
           Timestamp = DateTimeOffset.UtcNow,
           Metadata = metadata
         }
@@ -459,8 +488,13 @@ public class JsonMessageSerializerTests {
       Payload = new TestMessage { Content = "test", Value = 42 },
       Hops = [
         new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
           Type = HopType.Current,
-          ServiceName = "TestService",
           Timestamp = DateTimeOffset.UtcNow,
           Metadata = new Dictionary<string, object> {
             ["string"] = "value",

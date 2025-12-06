@@ -39,10 +39,12 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       "test-host",
       12345,
       metadata: null,
-      [],
-      [],
-      [],
-      [],
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: [],
       leaseSeconds: 300);
 
     // Assert
@@ -72,10 +74,15 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       "test-host",
       12345,
       metadata: null,
-      [messageId1, messageId2],
-      [],
-      [],
-      []);
+      outboxCompletions: [
+        new MessageCompletion { MessageId = messageId1, Status = MessageProcessingStatus.Published },
+        new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.Published }
+      ],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: []);
 
     // Assert
     await Assert.That(result.OutboxWork).HasCount().EqualTo(0);
@@ -102,10 +109,18 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       "test-host",
       12345,
       metadata: null,
-      [],
-      [new FailedMessage { MessageId = messageId, Error = "Network timeout" }],
-      [],
-      []);
+      outboxCompletions: [],
+      outboxFailures: [
+        new MessageFailure {
+          MessageId = messageId,
+          CompletedStatus = MessageProcessingStatus.Stored,  // What succeeded before failure
+          Error = "Network timeout"
+        }
+      ],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: []);
 
     // Assert
     await Assert.That(result.OutboxWork).HasCount().EqualTo(0);
@@ -134,10 +149,15 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       "test-host",
       12345,
       metadata: null,
-      [],
-      [],
-      [messageId1, messageId2],
-      []);
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [
+        new MessageCompletion { MessageId = messageId1, Status = MessageProcessingStatus.ReceptorProcessed },
+        new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.ReceptorProcessed }
+      ],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: []);
 
     // Assert
     await Assert.That(result.InboxWork).HasCount().EqualTo(0);
@@ -164,10 +184,18 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       "test-host",
       12345,
       metadata: null,
-      [],
-      [],
-      [],
-      [new FailedMessage { MessageId = messageId, Error = "Handler exception" }]);
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [
+        new MessageFailure {
+          MessageId = messageId,
+          CompletedStatus = MessageProcessingStatus.Stored,  // What succeeded before failure
+          Error = "Handler exception"
+        }
+      ],
+      newOutboxMessages: [],
+      newInboxMessages: []);
 
     // Assert
     await Assert.That(result.InboxWork).HasCount().EqualTo(0);
@@ -223,10 +251,12 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       "test-host",
       12345,
       metadata: null,
-      [],
-      [],
-      [],
-      []);
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: []);
 
     // Assert - Should return 2 work items, not the active one
     await Assert.That(result.OutboxWork).HasCount().EqualTo(2);
@@ -281,10 +311,12 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       "test-host",
       12345,
       metadata: null,
-      [],
-      [],
-      [],
-      []);
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: []);
 
     // Assert
     await Assert.That(result.OutboxWork).HasCount().EqualTo(0);
@@ -345,10 +377,28 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       "test-host",
       12345,
       metadata: null,
-      [completedOutboxId],
-      [new FailedMessage { MessageId = failedOutboxId, Error = "Outbox error" }],
-      [completedInboxId],
-      [new FailedMessage { MessageId = failedInboxId, Error = "Inbox error" }]);
+      outboxCompletions: [
+        new MessageCompletion { MessageId = completedOutboxId, Status = MessageProcessingStatus.Published }
+      ],
+      outboxFailures: [
+        new MessageFailure {
+          MessageId = failedOutboxId,
+          CompletedStatus = MessageProcessingStatus.Stored,
+          Error = "Outbox error"
+        }
+      ],
+      inboxCompletions: [
+        new MessageCompletion { MessageId = completedInboxId, Status = MessageProcessingStatus.ReceptorProcessed }
+      ],
+      inboxFailures: [
+        new MessageFailure {
+          MessageId = failedInboxId,
+          CompletedStatus = MessageProcessingStatus.Stored,
+          Error = "Inbox error"
+        }
+      ],
+      newOutboxMessages: [],
+      newInboxMessages: []);
 
     // Assert
     await Assert.That(result.OutboxWork).HasCount().EqualTo(1);

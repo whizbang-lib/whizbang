@@ -31,7 +31,15 @@ public abstract class OutboxContractTests {
     var destination = "test-topic";
     var testEvent = new OutboxTestEvent("test-value");
     var envelope = new MessageEnvelope<OutboxTestEvent>(messageId, testEvent, []);
-    envelope.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxContractTests" });
+    envelope.AddHop(new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "OutboxContractTests",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      }
+    });
 
     // Act
     await outbox.StoreAsync(envelope, destination);
@@ -50,7 +58,15 @@ public abstract class OutboxContractTests {
     var outbox = await CreateOutboxAsync();
     var testEvent = new OutboxTestEvent("test-value");
     var envelope = new MessageEnvelope<OutboxTestEvent>(MessageId.New(), testEvent, []);
-    envelope.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxContractTests" });
+    envelope.AddHop(new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "OutboxContractTests",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      }
+    });
 
     // Act & Assert
     await Assert.That(() => outbox.StoreAsync(envelope, null!))
@@ -85,7 +101,15 @@ public abstract class OutboxContractTests {
     var outbox = await CreateOutboxAsync();
     for (int i = 0; i < 5; i++) {
       var envelope = new MessageEnvelope<OutboxTestEvent>(MessageId.New(), new OutboxTestEvent($"value-{i}"), []);
-      envelope.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxContractTests" });
+      envelope.AddHop(new MessageHop {
+        Type = HopType.Current,
+        ServiceInstance = new ServiceInstanceInfo {
+          ServiceName = "OutboxContractTests",
+          InstanceId = Guid.NewGuid(),
+          HostName = "test-host",
+          ProcessId = 12345
+        }
+      });
       await outbox.StoreAsync(envelope, $"topic-{i}");
     }
 
@@ -102,7 +126,15 @@ public abstract class OutboxContractTests {
     var outbox = await CreateOutboxAsync();
     var messageId = MessageId.New();
     var envelope = new MessageEnvelope<OutboxTestEvent>(messageId, new OutboxTestEvent("test-value"), []);
-    envelope.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxContractTests" });
+    envelope.AddHop(new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "OutboxContractTests",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      }
+    });
     await outbox.StoreAsync(envelope, "test-topic");
 
     // Act
@@ -130,9 +162,25 @@ public abstract class OutboxContractTests {
     var messageId1 = MessageId.New();
     var messageId2 = MessageId.New();
     var envelope1 = new MessageEnvelope<OutboxTestEvent>(messageId1, new OutboxTestEvent("value-1"), []);
-    envelope1.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxContractTests" });
+    envelope1.AddHop(new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "OutboxContractTests",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      }
+    });
     var envelope2 = new MessageEnvelope<OutboxTestEvent>(messageId2, new OutboxTestEvent("value-2"), []);
-    envelope2.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxContractTests" });
+    envelope2.AddHop(new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "OutboxContractTests",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      }
+    });
     await outbox.StoreAsync(envelope1, "topic-1");
     await outbox.StoreAsync(envelope2, "topic-2");
     await outbox.MarkPublishedAsync(messageId1);
@@ -154,7 +202,15 @@ public abstract class OutboxContractTests {
     // Act - Concurrent stores
     var tasks = messageIds.Select(id => {
       var envelope = new MessageEnvelope<OutboxTestEvent>(id, new OutboxTestEvent("test-value"), []);
-      envelope.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxContractTests" });
+      envelope.AddHop(new MessageHop {
+        Type = HopType.Current,
+        ServiceInstance = new ServiceInstanceInfo {
+          ServiceName = "OutboxContractTests",
+          InstanceId = Guid.NewGuid(),
+          HostName = "test-host",
+          ProcessId = 12345
+        }
+      });
       return Task.Run(async () => await outbox.StoreAsync(envelope, "test-topic"));
     });
     await Task.WhenAll(tasks);

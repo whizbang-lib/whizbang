@@ -19,7 +19,9 @@ var postgresConnection = builder.Configuration.GetConnectionString("notification
 var serviceBusConnection = builder.Configuration.GetConnectionString("servicebus")
     ?? throw new InvalidOperationException("Azure Service Bus connection string 'servicebus' not found");
 
-builder.Services.AddAzureServiceBusTransport(serviceBusConnection, ECommerce.Contracts.Generated.WhizbangJsonContext.Default);
+// Register Azure Service Bus transport
+// Note: Transport uses JsonContextRegistry internally for serialization
+builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
 builder.Services.AddAzureServiceBusHealthChecks();
 builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
 

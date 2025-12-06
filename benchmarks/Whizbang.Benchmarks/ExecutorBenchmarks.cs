@@ -39,8 +39,13 @@ public class ExecutorBenchmarks {
       Hops = []
     };
     _envelope.AddHop(new MessageHop {
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "Benchmark",
+        InstanceId = Guid.NewGuid(),
+        HostName = "benchmark-host",
+        ProcessId = 12345
+      },
       Type = HopType.Current,
-      ServiceName = "Benchmark",
       Timestamp = DateTimeOffset.UtcNow,
       CorrelationId = CorrelationId.New(),
       CausationId = MessageId.New()

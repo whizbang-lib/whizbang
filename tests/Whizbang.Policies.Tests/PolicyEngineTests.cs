@@ -32,7 +32,12 @@ public class PolicyEngineTests {
       Hops = []
     };
     envelope.AddHop(new MessageHop {
-      ServiceName = "Test",
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "TestService",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
       Timestamp = DateTimeOffset.UtcNow,
       CorrelationId = CorrelationId.New(),
       CausationId = MessageId.New()

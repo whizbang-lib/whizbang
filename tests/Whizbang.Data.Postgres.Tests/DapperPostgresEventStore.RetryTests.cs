@@ -217,8 +217,13 @@ public class DapperPostgresEventStoreRetryTests {
 
     // Add the first hop (dispatch hop)
     envelope.AddHop(new MessageHop {
-      Type = HopType.Current,
-      ServiceName = "DapperPostgresEventStoreRetryTests"
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "DapperPostgresEventStoreRetryTests",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      },
+      Type = HopType.Current
     });
 
     return envelope;

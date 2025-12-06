@@ -38,7 +38,15 @@ public class OutboxPublisherTests {
       Payload = new OutboxPublisherTestEvent("test-value"),
       Hops = []
     };
-    envelope.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxPublisherTests" });
+    envelope.AddHop(new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "OutboxPublisherTests",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      }
+    });
     await outbox.StoreAsync(envelope, "test-topic");
 
     // Act
@@ -81,7 +89,15 @@ public class OutboxPublisherTests {
     // Store 5 messages
     for (int i = 0; i < 5; i++) {
       var envelope = new MessageEnvelope<OutboxPublisherTestEvent>(MessageId.New(), new OutboxPublisherTestEvent($"value-{i}"), []);
-      envelope.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxPublisherTests" });
+      envelope.AddHop(new MessageHop {
+        Type = HopType.Current,
+        ServiceInstance = new ServiceInstanceInfo {
+          ServiceName = "OutboxPublisherTests",
+          InstanceId = Guid.NewGuid(),
+          HostName = "test-host",
+          ProcessId = 12345
+        }
+      });
       await outbox.StoreAsync(envelope, $"topic-{i}");
     }
 
@@ -111,7 +127,15 @@ public class OutboxPublisherTests {
       Payload = new OutboxPublisherTestEvent("test-value"),
       Hops = []
     };
-    envelope.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxPublisherTests" });
+    envelope.AddHop(new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "OutboxPublisherTests",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      }
+    });
     await outbox.StoreAsync(envelope, "test-topic");
 
     // Act - Should not throw, but log/handle error
@@ -137,11 +161,35 @@ public class OutboxPublisherTests {
     var id3 = MessageId.New();
 
     var envelope1 = new MessageEnvelope<OutboxPublisherTestEvent>(id1, new OutboxPublisherTestEvent("value-1"), []);
-    envelope1.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxPublisherTests" });
+    envelope1.AddHop(new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "OutboxPublisherTests",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      }
+    });
     var envelope2 = new MessageEnvelope<OutboxPublisherTestEvent>(id2, new OutboxPublisherTestEvent("value-2"), []);
-    envelope2.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxPublisherTests" });
+    envelope2.AddHop(new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "OutboxPublisherTests",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      }
+    });
     var envelope3 = new MessageEnvelope<OutboxPublisherTestEvent>(id3, new OutboxPublisherTestEvent("value-3"), []);
-    envelope3.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxPublisherTests" });
+    envelope3.AddHop(new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "OutboxPublisherTests",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      }
+    });
 
     await outbox.StoreAsync(envelope1, "topic-1");
     await outbox.StoreAsync(envelope2, "topic-2");
@@ -172,11 +220,35 @@ public class OutboxPublisherTests {
     var id3 = MessageId.New();
 
     var envelope1 = new MessageEnvelope<OutboxPublisherTestEvent>(id1, new OutboxPublisherTestEvent("value-1"), []);
-    envelope1.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxPublisherTests" });
+    envelope1.AddHop(new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "OutboxPublisherTests",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      }
+    });
     var envelope2 = new MessageEnvelope<OutboxPublisherTestEvent>(id2, new OutboxPublisherTestEvent("value-2"), []);
-    envelope2.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxPublisherTests" });
+    envelope2.AddHop(new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "OutboxPublisherTests",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      }
+    });
     var envelope3 = new MessageEnvelope<OutboxPublisherTestEvent>(id3, new OutboxPublisherTestEvent("value-3"), []);
-    envelope3.AddHop(new MessageHop { Type = HopType.Current, ServiceName = "OutboxPublisherTests" });
+    envelope3.AddHop(new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = new ServiceInstanceInfo {
+        ServiceName = "OutboxPublisherTests",
+        InstanceId = Guid.NewGuid(),
+        HostName = "test-host",
+        ProcessId = 12345
+      }
+    });
 
     await outbox.StoreAsync(envelope1, "topic-1");
     await outbox.StoreAsync(envelope2, "fail-topic"); // This will fail

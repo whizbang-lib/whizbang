@@ -13,6 +13,8 @@ namespace ECommerce.PaymentWorker;
 /// </summary>
 [WhizbangDbContext]
 public partial class PaymentDbContext : DbContext {
+  [RequiresDynamicCode()]
+  [RequiresUnreferencedCode()]
   public PaymentDbContext(DbContextOptions<PaymentDbContext> options) : base(options) { }
   // DbSet properties and OnModelCreating are auto-generated in partial class
 }

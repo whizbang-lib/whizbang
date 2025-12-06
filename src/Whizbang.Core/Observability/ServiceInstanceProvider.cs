@@ -12,6 +12,8 @@ namespace Whizbang.Core.Observability;
 /// Register as a singleton to ensure consistent instance identity throughout the application lifetime.
 /// </summary>
 public sealed class ServiceInstanceProvider : IServiceInstanceProvider {
+  private ServiceInstanceInfo? _cachedInfo;
+
   /// <inheritdoc />
   public Guid InstanceId { get; }
 
@@ -64,7 +66,9 @@ public sealed class ServiceInstanceProvider : IServiceInstanceProvider {
 
   /// <inheritdoc />
   public ServiceInstanceInfo ToInfo() {
-    return new ServiceInstanceInfo {
+    // Lazily initialize and cache the ServiceInstanceInfo object
+    // This avoids recreating the same immutable object on every call
+    return _cachedInfo ??= new ServiceInstanceInfo {
       ServiceName = ServiceName,
       InstanceId = InstanceId,
       HostName = HostName,

@@ -30,12 +30,12 @@ public class DispatcherTransportBridge(
   IDispatcher dispatcher,
   ITransport transport,
   IMessageSerializer serializer,
-  IServiceInstanceProvider? instanceProvider = null
+  IServiceInstanceProvider instanceProvider
   ) {
   private readonly IDispatcher _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
   private readonly IMessageSerializer _serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
-  private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
+  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
 
   /// <summary>
   /// Publishes a message to a remote transport destination.
@@ -142,12 +142,7 @@ public class DispatcherTransportBridge(
 
     var hop = new MessageHop {
       Type = HopType.Current,
-      ServiceInstance = _instanceProvider?.ToInfo() ?? new ServiceInstanceInfo(
-        System.Reflection.Assembly.GetEntryAssembly()?.GetName().Name ?? "Unknown",
-        Guid.Empty,
-        Environment.MachineName,
-        Environment.ProcessId
-      ),
+      ServiceInstance = _instanceProvider.ToInfo(),
       Timestamp = DateTimeOffset.UtcNow,
       CorrelationId = context.CorrelationId,
       CausationId = context.CausationId

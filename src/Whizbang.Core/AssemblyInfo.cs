@@ -8,7 +8,13 @@ using System.Runtime.CompilerServices;
 
 // Testing Support - Allow test assemblies to access internal members
 [assembly: InternalsVisibleTo("Whizbang.Core.Tests")]
+[assembly: InternalsVisibleTo("Whizbang.Observability.Tests")]
+[assembly: InternalsVisibleTo("Whizbang.Transports.Tests")]
+[assembly: InternalsVisibleTo("Whizbang.Policies.Tests")]
+[assembly: InternalsVisibleTo("Whizbang.Execution.Tests")]
 [assembly: InternalsVisibleTo("Whizbang.Documentation.Tests")]
+[assembly: InternalsVisibleTo("Whizbang.Data.Postgres.Tests")]
+[assembly: InternalsVisibleTo("Whizbang.Benchmarks")]
 
 // Allow generated code to access internals
 [assembly: InternalsVisibleTo("Whizbang.Core.Generated")]

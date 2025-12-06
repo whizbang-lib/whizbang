@@ -32,7 +32,8 @@ public record ServiceInstanceInfo {
   public required int ProcessId { get; init; }
 
   /// <summary>
-  /// Internal constructor - only ServiceInstanceProvider can create instances.
+  /// Public parameterless constructor required for JSON deserialization.
+  /// The 'required' modifier on properties ensures all fields are set during initialization.
   /// </summary>
-  internal ServiceInstanceInfo() { }
+  public ServiceInstanceInfo() { }
 };

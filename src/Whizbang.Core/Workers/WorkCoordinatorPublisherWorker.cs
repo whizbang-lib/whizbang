@@ -35,10 +35,10 @@ public class WorkCoordinatorPublisherWorker(
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
 
   // Track results from previous cycle (for next ProcessWorkBatchAsync call)
-  private List<Guid> _outboxCompletedIds = [];
-  private List<FailedMessage> _outboxFailedMessages = [];
-  private List<Guid> _inboxCompletedIds = [];
-  private List<FailedMessage> _inboxFailedMessages = [];
+  private List<MessageCompletion> _outboxCompletions = [];
+  private List<MessageFailure> _outboxFailures = [];
+  private List<MessageCompletion> _inboxCompletions = [];
+  private List<MessageFailure> _inboxFailures = [];
 
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     _logger.LogInformation(
@@ -78,28 +78,30 @@ public class WorkCoordinatorPublisherWorker(
     // This atomic call:
     // 1. Registers/updates this instance + heartbeat
     // 2. Cleans up stale instances
-    // 3. Marks previous cycle's completed/failed messages
-    // 4. Claims and returns orphaned work
+    // 3. Reports previous cycle's completions/failures with granular status
+    // 4. Claims partitions and returns work for this instance
     var workBatch = await workCoordinator.ProcessWorkBatchAsync(
       _instanceProvider.InstanceId,
       _instanceProvider.ServiceName,
       _instanceProvider.HostName,
       _instanceProvider.ProcessId,
       metadata: _options.InstanceMetadata,
-      outboxCompletedIds: [.. _outboxCompletedIds],
-      outboxFailedMessages: [.. _outboxFailedMessages],
-      inboxCompletedIds: [.. _inboxCompletedIds],
-      inboxFailedMessages: [.. _inboxFailedMessages],
+      outboxCompletions: [.. _outboxCompletions],
+      outboxFailures: [.. _outboxFailures],
+      inboxCompletions: [.. _inboxCompletions],
+      inboxFailures: [.. _inboxFailures],
+      newOutboxMessages: [],  // Not used in publisher worker (dispatcher handles new messages)
+      newInboxMessages: [],   // Not used in publisher worker (consumer handles new messages)
       leaseSeconds: _options.LeaseSeconds,
       staleThresholdSeconds: _options.StaleThresholdSeconds,
       cancellationToken: cancellationToken
     );
 
     // Clear previous cycle's results
-    _outboxCompletedIds.Clear();
-    _outboxFailedMessages.Clear();
-    _inboxCompletedIds.Clear();
-    _inboxFailedMessages.Clear();
+    _outboxCompletions.Clear();
+    _outboxFailures.Clear();
+    _inboxCompletions.Clear();
+    _inboxFailures.Clear();
 
     // Process outbox work
     if (workBatch.OutboxWork.Count > 0) {
@@ -117,8 +119,9 @@ public class WorkCoordinatorPublisherWorker(
       );
 
       foreach (var inboxMessage in workBatch.InboxWork) {
-        _inboxFailedMessages.Add(new FailedMessage {
+        _inboxFailures.Add(new MessageFailure {
           MessageId = inboxMessage.MessageId,
+          CompletedStatus = inboxMessage.Status,  // Preserve what was already completed
           Error = "Inbox processing not yet implemented"
         });
       }
@@ -137,7 +140,12 @@ public class WorkCoordinatorPublisherWorker(
 
       try {
         await PublishMessageAsync(outboxMessage, cancellationToken);
-        _outboxCompletedIds.Add(outboxMessage.MessageId);
+
+        // Mark as published successfully (Stored + EventStored + Published)
+        _outboxCompletions.Add(new MessageCompletion {
+          MessageId = outboxMessage.MessageId,
+          Status = outboxMessage.Status | MessageProcessingStatus.Published
+        });
 
         _logger.LogDebug(
           "Published outbox message {MessageId} to {Destination}",
@@ -152,8 +160,10 @@ public class WorkCoordinatorPublisherWorker(
           outboxMessage.Destination
         );
 
-        _outboxFailedMessages.Add(new FailedMessage {
+        // Report failure, preserving what was already completed (e.g., Stored, EventStored)
+        _outboxFailures.Add(new MessageFailure {
           MessageId = outboxMessage.MessageId,
+          CompletedStatus = outboxMessage.Status,  // What succeeded before this failure
           Error = ex.Message
         });
       }

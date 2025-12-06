@@ -77,6 +77,8 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
   /// <summary>
   /// Initializes the test fixture: starts containers, initializes schemas, and starts service hosts.
   /// </summary>
+  [RequiresDynamicCode()]
+  [RequiresUnreferencedCode()]
   public async Task InitializeAsync(CancellationToken cancellationToken = default) {
     if (_isInitialized) {
       return;
@@ -114,6 +116,8 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
   /// <summary>
   /// Creates the IHost for InventoryWorker with all required services and background workers.
   /// </summary>
+  [RequiresDynamicCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
+  [RequiresUnreferencedCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
   private IHost CreateInventoryHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
 
@@ -172,6 +176,8 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
   /// <summary>
   /// Creates the IHost for BFF with all required services and background workers.
   /// </summary>
+  [RequiresDynamicCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
+  [RequiresUnreferencedCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
   private IHost CreateBffHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
 

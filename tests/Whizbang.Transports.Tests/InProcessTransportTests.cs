@@ -20,7 +20,15 @@ public class InProcessTransportTests {
       MessageId = MessageId.New(),
       Payload = message,
       Hops = [
-        new MessageHop { ServiceName = "Test", Timestamp = DateTimeOffset.UtcNow }
+        new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          },
+          Timestamp = DateTimeOffset.UtcNow
+        }
       ]
     };
   }
