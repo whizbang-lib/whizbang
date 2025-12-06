@@ -1261,6 +1261,83 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   }
 
   // ========================================
+  // Priority 3 Tests: Stale Instance Cleanup
+  // ========================================
+
+  [Test]
+  public async Task ProcessWorkBatchAsync_StaleInstances_CleanedUpAsync() {
+    // Arrange
+    var staleInstanceId = _idProvider.NewGuid();
+    var activeInstanceId = _instanceId;
+
+    // Insert stale instance (heartbeat > 300 seconds old, default staleThresholdSeconds)
+    await InsertServiceInstanceAsync(staleInstanceId, "StaleService", "stale-host", 999);
+    await MarkInstanceHeartbeatOldAsync(staleInstanceId, DateTimeOffset.UtcNow.AddSeconds(-400));
+
+    // Insert active instance
+    await InsertServiceInstanceAsync(activeInstanceId, "ActiveService", "active-host", 123);
+
+    // Act - Active instance calls ProcessWorkBatchAsync (triggers cleanup)
+    var result = await _sut.ProcessWorkBatchAsync(
+      activeInstanceId,
+      "ActiveService",
+      "active-host",
+      123,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      staleThresholdSeconds: 300);
+
+    // Assert - Stale instance should be deleted
+    var staleExists = await ServiceInstanceExistsAsync(staleInstanceId);
+    var activeExists = await ServiceInstanceExistsAsync(activeInstanceId);
+
+    await Assert.That(staleExists).IsFalse()
+      .Because("Instance with heartbeat older than staleThresholdSeconds should be deleted");
+    await Assert.That(activeExists).IsTrue()
+      .Because("Active instance should remain");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatchAsync_ActiveInstances_NotCleanedAsync() {
+    // Arrange
+    var instance1 = _idProvider.NewGuid();
+    var instance2 = _idProvider.NewGuid();
+
+    // Insert two instances with recent heartbeats
+    await InsertServiceInstanceAsync(instance1, "Service1", "host1", 111);
+    await InsertServiceInstanceAsync(instance2, "Service2", "host2", 222);
+
+    // Act - Instance 1 calls ProcessWorkBatchAsync
+    var result = await _sut.ProcessWorkBatchAsync(
+      instance1,
+      "Service1",
+      "host1",
+      111,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      staleThresholdSeconds: 300);
+
+    // Assert - Both instances should still exist
+    var exists1 = await ServiceInstanceExistsAsync(instance1);
+    var exists2 = await ServiceInstanceExistsAsync(instance2);
+
+    await Assert.That(exists1).IsTrue()
+      .Because("Active instance 1 should not be deleted");
+    await Assert.That(exists2).IsTrue()
+      .Because("Active instance 2 with recent heartbeat should not be deleted");
+  }
+
+  // ========================================
   // Priority 1 Tests: IsEvent Serialization
   // ========================================
 
@@ -1639,5 +1716,13 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       SELECT status_flags FROM wb_inbox WHERE message_id = @messageId",
       new { messageId });
     return (MessageProcessingStatus)statusFlags;
+  }
+
+  private async Task<bool> ServiceInstanceExistsAsync(Guid instanceId) {
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    var count = await connection.QuerySingleAsync<int>(@"
+      SELECT COUNT(*) FROM wb_service_instances WHERE instance_id = @instanceId",
+      new { instanceId });
+    return count > 0;
   }
 }
