@@ -14,7 +14,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// </summary>
 public static class ServiceCollectionExtensions {
   /// <summary>
-  /// Registers all Whizbang PostgreSQL stores (EventStore, Inbox, Outbox, RequestResponseStore, SequenceProvider)
+  /// Registers all Whizbang PostgreSQL stores (EventStore, WorkCoordinator, RequestResponseStore, SequenceProvider)
   /// along with the required database infrastructure (connection factory and executor).
   /// </summary>
   /// <param name="services">The service collection to register services with.</param>
@@ -56,8 +56,7 @@ public static class ServiceCollectionExtensions {
     // Register Whizbang stores
     // IEventStore is registered as Scoped to allow injection of scoped IPerspectiveInvoker
     services.AddScoped<IEventStore, DapperPostgresEventStore>();
-    services.AddSingleton<IInbox, DapperPostgresInbox>();
-    services.AddSingleton<IOutbox, DapperPostgresOutbox>();
+    services.AddSingleton<IWorkCoordinator, DapperWorkCoordinator>();
     services.AddSingleton<IRequestResponseStore, DapperPostgresRequestResponseStore>();
     services.AddSingleton<ISequenceProvider, DapperPostgresSequenceProvider>();
 
