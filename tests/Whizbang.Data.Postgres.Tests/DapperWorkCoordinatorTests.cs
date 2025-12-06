@@ -844,6 +844,423 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   }
 
   // ========================================
+  // Priority 2 Tests: Partition Distribution
+  // ========================================
+
+  [Test]
+  public async Task ProcessWorkBatchAsync_ConsistentHashing_SameStreamSamePartitionAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+    var streamId = _idProvider.NewGuid();
+
+    // Act - Insert 10 messages with same stream_id
+    var messageIds = new List<Guid>();
+    for (int i = 0; i < 10; i++) {
+      var messageId = _idProvider.NewGuid();
+      messageIds.Add(messageId);
+
+      var newOutboxMessage = new NewOutboxMessage {
+        MessageId = messageId,
+        Destination = "test-topic",
+        EventType = "TestEvent",
+        EventData = $"{{\"sequence\":{i}}}",
+        Metadata = "{}",
+        Scope = null,
+        StreamId = streamId,  // SAME stream_id for all
+        IsEvent = true
+      };
+
+      await _sut.ProcessWorkBatchAsync(
+        _instanceId,
+        "TestService",
+        "test-host",
+        12345,
+        metadata: null,
+        outboxCompletions: [],
+        outboxFailures: [],
+        inboxCompletions: [],
+        inboxFailures: [],
+        newOutboxMessages: [newOutboxMessage],
+        newInboxMessages: []);
+    }
+
+    // Assert - All messages should have same partition_number
+    var partitions = new HashSet<int>();
+    foreach (var messageId in messageIds) {
+      var partition = await GetOutboxPartitionNumberAsync(messageId);
+      await Assert.That(partition).IsNotNull()
+        .Because("Messages with stream_id should have partition assigned");
+      partitions.Add(partition!.Value);
+    }
+
+    await Assert.That(partitions).HasCount().EqualTo(1)
+      .Because("All messages from same stream should map to same partition via consistent hashing");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatchAsync_PartitionAssignment_WithinRangeAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+
+    // Act - Insert messages with various stream_ids
+    var messageIds = new List<Guid>();
+    for (int i = 0; i < 20; i++) {
+      var messageId = _idProvider.NewGuid();
+      var streamId = _idProvider.NewGuid();  // Different stream_id each time
+      messageIds.Add(messageId);
+
+      var newOutboxMessage = new NewOutboxMessage {
+        MessageId = messageId,
+        Destination = "test-topic",
+        EventType = "TestEvent",
+        EventData = "{}",
+        Metadata = "{}",
+        Scope = null,
+        StreamId = streamId,
+        IsEvent = true
+      };
+
+      await _sut.ProcessWorkBatchAsync(
+        _instanceId,
+        "TestService",
+        "test-host",
+        12345,
+        metadata: null,
+        outboxCompletions: [],
+        outboxFailures: [],
+        inboxCompletions: [],
+        inboxFailures: [],
+        newOutboxMessages: [newOutboxMessage],
+        newInboxMessages: []);
+    }
+
+    // Assert - All partition_numbers in range 0-9999
+    foreach (var messageId in messageIds) {
+      var partition = await GetOutboxPartitionNumberAsync(messageId);
+      await Assert.That(partition).IsNotNull();
+      await Assert.That(partition!.Value).IsGreaterThanOrEqualTo(0);
+      await Assert.That(partition!.Value).IsLessThanOrEqualTo(9999)
+        .Because("Partition numbers must be in range 0-9999");
+    }
+  }
+
+  [Test]
+  public async Task ProcessWorkBatchAsync_LoadBalancing_DistributesAcrossInstancesAsync() {
+    // Arrange - Create 3 service instances
+    var instance1 = _idProvider.NewGuid();
+    var instance2 = _idProvider.NewGuid();
+    var instance3 = _idProvider.NewGuid();
+
+    await InsertServiceInstanceAsync(instance1, "Service1", "host1", 1);
+    await InsertServiceInstanceAsync(instance2, "Service2", "host2", 2);
+    await InsertServiceInstanceAsync(instance3, "Service3", "host3", 3);
+
+    // Insert 30 messages (30 different streams)
+    for (int i = 0; i < 30; i++) {
+      var messageId = _idProvider.NewGuid();
+      var streamId = _idProvider.NewGuid();
+
+      await InsertOutboxMessageAsync(
+        messageId,
+        "test-topic",
+        "TestEvent",
+        "{}",
+        status: "Pending",
+        instanceId: null,
+        leaseExpiry: null,
+        streamId: streamId,
+        isEvent: true);
+    }
+
+    // Act - Each instance claims work
+    var result1 = await _sut.ProcessWorkBatchAsync(
+      instance1, "Service1", "host1", 1,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      maxPartitionsPerInstance: 10);
+
+    var result2 = await _sut.ProcessWorkBatchAsync(
+      instance2, "Service2", "host2", 2,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      maxPartitionsPerInstance: 10);
+
+    var result3 = await _sut.ProcessWorkBatchAsync(
+      instance3, "Service3", "host3", 3,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      maxPartitionsPerInstance: 10);
+
+    // Assert - Work distributed across instances
+    var totalWork = result1.OutboxWork.Count + result2.OutboxWork.Count + result3.OutboxWork.Count;
+    await Assert.That(totalWork).IsEqualTo(30)
+      .Because("All 30 messages should be claimed across instances");
+
+    // Each instance should claim some work (not all to one instance)
+    await Assert.That(result1.OutboxWork.Count).IsGreaterThan(0)
+      .Because("Instance 1 should claim some partitions");
+    await Assert.That(result2.OutboxWork.Count).IsGreaterThan(0)
+      .Because("Instance 2 should claim some partitions");
+    await Assert.That(result3.OutboxWork.Count).IsGreaterThan(0)
+      .Because("Instance 3 should claim some partitions");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatchAsync_InstanceFailover_RedistributesPartitionsAsync() {
+    // Arrange - Instance A claims partitions
+    var instanceA = _idProvider.NewGuid();
+    var instanceB = _idProvider.NewGuid();
+
+    await InsertServiceInstanceAsync(instanceA, "ServiceA", "hostA", 1);
+    await InsertServiceInstanceAsync(instanceB, "ServiceB", "hostB", 2);
+
+    // Insert messages
+    var messageIds = new List<Guid>();
+    for (int i = 0; i < 10; i++) {
+      var messageId = _idProvider.NewGuid();
+      messageIds.Add(messageId);
+
+      await InsertOutboxMessageAsync(
+        messageId,
+        "test-topic",
+        "TestEvent",
+        "{}",
+        status: "Pending",
+        instanceId: null,
+        leaseExpiry: null,
+        streamId: _idProvider.NewGuid(),
+        isEvent: true);
+    }
+
+    // Instance A claims work
+    var resultA = await _sut.ProcessWorkBatchAsync(
+      instanceA, "ServiceA", "hostA", 1,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: []);
+
+    await Assert.That(resultA.OutboxWork.Count).IsEqualTo(10)
+      .Because("Instance A should claim all work initially");
+
+    // Act - Mark Instance A as stale (simulate failure)
+    await MarkInstanceHeartbeatOldAsync(instanceA, DateTimeOffset.UtcNow.AddHours(-2));
+
+    // Mark all messages as having expired leases
+    foreach (var messageId in messageIds) {
+      await UpdateOutboxLeaseExpiryAsync(messageId, DateTimeOffset.UtcNow.AddMinutes(-10));
+    }
+
+    // Instance B calls ProcessWorkBatchAsync
+    var resultB = await _sut.ProcessWorkBatchAsync(
+      instanceB, "ServiceB", "hostB", 2,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: []);
+
+    // Assert - Instance B claims orphaned partitions
+    await Assert.That(resultB.OutboxWork.Count).IsEqualTo(10)
+      .Because("Instance B should claim all orphaned work from failed Instance A");
+
+    // Verify all messages now leased to Instance B
+    foreach (var messageId in messageIds) {
+      var currentInstance = await GetOutboxInstanceIdAsync(messageId);
+      await Assert.That(currentInstance).IsEqualTo(instanceB)
+        .Because("Failed instance's work should be redistributed to active instance");
+    }
+  }
+
+  // ========================================
+  // Priority 2 Tests: Granular Status Tracking
+  // ========================================
+
+  [Test]
+  public async Task ProcessWorkBatchAsync_StatusFlags_AccumulateCorrectlyAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+    var messageId = _idProvider.NewGuid();
+
+    await InsertOutboxMessageAsync(messageId, "test-topic", "TestEvent", "{}", status: "Publishing", instanceId: _instanceId);
+
+    // Act 1 - Complete with Stored status
+    await _sut.ProcessWorkBatchAsync(
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [
+        new MessageCompletion { MessageId = messageId, Status = MessageProcessingStatus.Stored }
+      ],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: []);
+
+    // Verify status after first completion
+    var status1 = await GetOutboxStatusFlagsAsync(messageId);
+    await Assert.That((status1 & MessageProcessingStatus.Stored) == MessageProcessingStatus.Stored).IsTrue()
+      .Because("Status should include Stored flag");
+
+    // Act 2 - Complete with Published status (simulating next stage)
+    await _sut.ProcessWorkBatchAsync(
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [
+        new MessageCompletion { MessageId = messageId, Status = MessageProcessingStatus.Published }
+      ],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: []);
+
+    // Assert - Status should accumulate (bitwise OR)
+    var status2 = await GetOutboxStatusFlagsAsync(messageId);
+    await Assert.That((status2 & MessageProcessingStatus.Stored) == MessageProcessingStatus.Stored).IsTrue()
+      .Because("Status should retain Stored flag");
+    await Assert.That((status2 & MessageProcessingStatus.Published) == MessageProcessingStatus.Published).IsTrue()
+      .Because("Status should include Published flag");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatchAsync_PartialCompletion_TracksCorrectlyAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+    var messageId = _idProvider.NewGuid();
+
+    await InsertInboxMessageAsync(
+      messageId,
+      "TestHandler",
+      "TestEvent",
+      "{}",
+      status: "Processing",
+      instanceId: _instanceId,
+      streamId: _idProvider.NewGuid(),
+      isEvent: true);
+
+    // Act - Fail message with CompletedStatus = Stored | EventStored
+    var partialStatus = MessageProcessingStatus.Stored | MessageProcessingStatus.EventStored;
+    await _sut.ProcessWorkBatchAsync(
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [
+        new MessageFailure {
+          MessageId = messageId,
+          CompletedStatus = partialStatus,
+          Error = "Failed at receptor processing"
+        }
+      ],
+      newOutboxMessages: [],
+      newInboxMessages: []);
+
+    // Assert - Database should reflect partial completion
+    var status = await GetInboxStatusFlagsAsync(messageId);
+    await Assert.That((status & MessageProcessingStatus.Stored) == MessageProcessingStatus.Stored).IsTrue()
+      .Because("Partial completion should include Stored flag");
+    await Assert.That((status & MessageProcessingStatus.EventStored) == MessageProcessingStatus.EventStored).IsTrue()
+      .Because("Partial completion should include EventStored flag");
+    await Assert.That((status & MessageProcessingStatus.ReceptorProcessed) != MessageProcessingStatus.ReceptorProcessed).IsTrue()
+      .Because("Partial completion should NOT include ReceptorProcessed flag (this is where it failed)");
+
+    var dbStatus = await GetInboxStatusAsync(messageId);
+    await Assert.That(dbStatus).IsEqualTo("Failed")
+      .Because("Overall status should be Failed");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatchAsync_WorkBatchFlags_SetCorrectlyAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+    var newMessageId = _idProvider.NewGuid();
+    var orphanedMessageId = _idProvider.NewGuid();
+
+    // Insert orphaned message (expired lease)
+    await InsertOutboxMessageAsync(
+      orphanedMessageId,
+      "test-topic",
+      "OrphanedEvent",
+      "{}",
+      status: "Publishing",
+      instanceId: _idProvider.NewGuid(),
+      leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-10),
+      streamId: _idProvider.NewGuid(),
+      isEvent: true);
+
+    var newOutboxMessage = new NewOutboxMessage {
+      MessageId = newMessageId,
+      Destination = "test-topic",
+      EventType = "NewEvent",
+      EventData = "{}",
+      Metadata = "{}",
+      Scope = null,
+      StreamId = _idProvider.NewGuid(),
+      IsEvent = true
+    };
+
+    // Act
+    var result = await _sut.ProcessWorkBatchAsync(
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      newOutboxMessages: [newOutboxMessage],
+      newInboxMessages: []);
+
+    // Assert - Check flags for both messages
+    var newMessage = result.OutboxWork.FirstOrDefault(w => w.MessageId == newMessageId);
+    var orphanedMessage = result.OutboxWork.FirstOrDefault(w => w.MessageId == orphanedMessageId);
+
+    await Assert.That(newMessage).IsNotNull()
+      .Because("Newly stored message should be returned");
+    await Assert.That(orphanedMessage).IsNotNull()
+      .Because("Orphaned message should be returned");
+
+    await Assert.That((newMessage!.Flags & WorkBatchFlags.NewlyStored) == WorkBatchFlags.NewlyStored).IsTrue()
+      .Because("Newly stored message should have NewlyStored flag");
+
+    await Assert.That((orphanedMessage!.Flags & WorkBatchFlags.Orphaned) == WorkBatchFlags.Orphaned).IsTrue()
+      .Because("Orphaned message should have Orphaned flag");
+  }
+
+  // ========================================
   // Priority 1 Tests: IsEvent Serialization
   // ========================================
 
@@ -1181,5 +1598,46 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     return await connection.QueryFirstOrDefaultAsync<bool>(@"
       SELECT is_event FROM wb_inbox WHERE message_id = @messageId",
       new { messageId });
+  }
+
+  private async Task<int?> GetOutboxPartitionNumberAsync(Guid messageId) {
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    return await connection.QueryFirstOrDefaultAsync<int?>(@"
+      SELECT partition_number FROM wb_outbox WHERE message_id = @messageId",
+      new { messageId });
+  }
+
+  private async Task MarkInstanceHeartbeatOldAsync(Guid instanceId, DateTimeOffset oldHeartbeat) {
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    await connection.ExecuteAsync(@"
+      UPDATE wb_service_instances
+      SET last_heartbeat_at = @oldHeartbeat
+      WHERE instance_id = @instanceId",
+      new { instanceId, oldHeartbeat });
+  }
+
+  private async Task UpdateOutboxLeaseExpiryAsync(Guid messageId, DateTimeOffset leaseExpiry) {
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    await connection.ExecuteAsync(@"
+      UPDATE wb_outbox
+      SET lease_expiry = @leaseExpiry
+      WHERE message_id = @messageId",
+      new { messageId, leaseExpiry });
+  }
+
+  private async Task<MessageProcessingStatus> GetOutboxStatusFlagsAsync(Guid messageId) {
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    var statusFlags = await connection.QueryFirstOrDefaultAsync<int>(@"
+      SELECT status_flags FROM wb_outbox WHERE message_id = @messageId",
+      new { messageId });
+    return (MessageProcessingStatus)statusFlags;
+  }
+
+  private async Task<MessageProcessingStatus> GetInboxStatusFlagsAsync(Guid messageId) {
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    var statusFlags = await connection.QueryFirstOrDefaultAsync<int>(@"
+      SELECT status_flags FROM wb_inbox WHERE message_id = @messageId",
+      new { messageId });
+    return (MessageProcessingStatus)statusFlags;
   }
 }
