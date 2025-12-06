@@ -119,6 +119,8 @@ public class DispatcherReceptorIntegrationTests {
   public async Task Integration_SimpleCommandFlow_ShouldProcessCompletelyAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var provider = services.BuildServiceProvider();
@@ -150,6 +152,8 @@ public class DispatcherReceptorIntegrationTests {
   public async Task Integration_SequentialMessages_ShouldProcessInOrderAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var provider = services.BuildServiceProvider();
@@ -184,6 +188,8 @@ public class DispatcherReceptorIntegrationTests {
   public async Task Integration_ParallelMessages_ShouldProcessConcurrentlyAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var provider = services.BuildServiceProvider();
@@ -221,6 +227,8 @@ public class DispatcherReceptorIntegrationTests {
   public async Task Integration_ReceptorValidationFailure_ShouldPropagateExceptionAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var provider = services.BuildServiceProvider();
@@ -246,6 +254,8 @@ public class DispatcherReceptorIntegrationTests {
   public async Task Integration_UnregisteredMessage_ShouldThrowHandlerNotFoundAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
     // Intentionally NOT registering any receptors - only dispatcher
     services.AddWhizbangDispatcher();
     var provider = services.BuildServiceProvider();
@@ -271,6 +281,8 @@ public class DispatcherReceptorIntegrationTests {
   public async Task Integration_WithContext_ShouldPreserveContextThroughFlowAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var provider = services.BuildServiceProvider();
@@ -303,6 +315,8 @@ public class DispatcherReceptorIntegrationTests {
   public async Task Integration_CompleteWorkflow_ShouldProcessMultiStepFlowAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var provider = services.BuildServiceProvider();
@@ -334,6 +348,8 @@ public class DispatcherReceptorIntegrationTests {
   public async Task Integration_MultipleReceptorTypes_ShouldRouteCorrectlyAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var provider = services.BuildServiceProvider();
@@ -373,6 +389,8 @@ public class DispatcherReceptorIntegrationTests {
   public async Task Integration_AsyncReceptorExecution_ShouldCompleteAsyncWorkAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var provider = services.BuildServiceProvider();
@@ -400,6 +418,8 @@ public class DispatcherReceptorIntegrationTests {
   public async Task Integration_ServiceProvider_ShouldResolveAllDependenciesAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
     services.AddReceptors();
     services.AddWhizbangDispatcher();
     var provider = services.BuildServiceProvider();
@@ -433,6 +453,8 @@ public class DispatcherReceptorIntegrationTests {
   public async Task Integration_Dispatcher_ShouldCreateEnvelopeWithInitialHopAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
@@ -471,6 +493,8 @@ public class DispatcherReceptorIntegrationTests {
   public async Task Integration_Hops_ShouldCaptureCallerInformationAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
@@ -504,6 +528,8 @@ public class DispatcherReceptorIntegrationTests {
   public async Task Integration_MultipleMessages_ShouldCreateSeparateEnvelopesAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
@@ -544,6 +570,8 @@ public class DispatcherReceptorIntegrationTests {
   public async Task Integration_Workflow_ShouldCarryForwardCausationHopsAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
@@ -591,6 +619,8 @@ public class DispatcherReceptorIntegrationTests {
 
     // Arrange
     var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
     services.AddReceptors();
     var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
     services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);

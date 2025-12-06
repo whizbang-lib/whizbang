@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using TUnit.Assertions.Extensions;
@@ -35,6 +36,9 @@ public class ServiceBusConsumerWorkerTests {
   [Test]
   public async Task HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync() {
     // Arrange
+    // Register test context with global registry for this test
+    Whizbang.Core.Serialization.JsonContextRegistry.RegisterContext(TestWorkerJsonContext.Default);
+
     var invokedWhileScopeActive = false;
     var perspectiveInvokerCalled = false;
 
@@ -48,8 +52,24 @@ public class ServiceBusConsumerWorkerTests {
     // Register scoped marker service to verify scope is active
     services.AddScoped<ScopeMarker>();
 
-    // Register test inbox (resolved from scope in HandleMessageAsync)
-    services.AddScoped<IInbox, TestInbox>();
+    // Register test work coordinator strategy that returns the message for processing
+    services.AddScoped<IWorkCoordinatorStrategy>(sp => new TestWorkCoordinatorStrategy(() => {
+      var inboxWork = new List<InboxWork> {
+        new() {
+          MessageId = envelope.MessageId.Value,
+          MessageType = "Whizbang.Core.Tests.Workers.ServiceBusWorkerTestEvent, Whizbang.Core.Tests",
+          MessageData = "{\"Data\":\"test data\"}",
+          Metadata = "{}",
+          Scope = null,
+          StreamId = Guid.NewGuid(),
+          PartitionNumber = 1,
+          Status = MessageProcessingStatus.Stored,
+          Flags = WorkBatchFlags.None,
+          SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        }
+      };
+      return new WorkBatch { InboxWork = inboxWork, OutboxWork = new List<OutboxWork>() };
+    }));
 
     // Register test perspective invoker that verifies scope is active
     services.AddScoped<IPerspectiveInvoker>(sp => {
@@ -69,18 +89,20 @@ public class ServiceBusConsumerWorkerTests {
     // Create test dependencies
     var instanceProvider = new TestServiceInstanceProvider();
     var transport = new TestTransport();
-    var jsonOptions = new JsonSerializerOptions();
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var logger = new TestLogger<ServiceBusConsumerWorker>();
 
     // We can't easily test the protected ExecuteAsync method directly,
     // so we'll test the underlying HandleMessageAsync behavior through
     // a reflection call (not ideal, but necessary for regression test)
+    var orderedProcessor = new OrderedStreamProcessor();
     var worker = new ServiceBusConsumerWorker(
       instanceProvider,
       transport,
       scopeFactory,
       jsonOptions,
       logger,
+      orderedProcessor,
       options: null
     );
 
@@ -106,17 +128,25 @@ public class ServiceBusConsumerWorkerTests {
   [Test]
   public async Task HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync() {
     // Arrange
+    // Register test context with global registry for this test
+    Whizbang.Core.Serialization.JsonContextRegistry.RegisterContext(TestWorkerJsonContext.Default);
+
     var perspectiveInvokerCalled = false;
 
     var testEvent = new ServiceBusWorkerTestEvent { Data = "test data" };
     var envelope = CreateTestEnvelope(testEvent);
 
-    // Create test inbox that's already processed the message
-    var testInbox = new TestInbox();
-    await testInbox.MarkProcessedAsync(envelope.MessageId, CancellationToken.None);
-
+    // Register test work coordinator strategy that returns EMPTY work (duplicate message)
     var services = new ServiceCollection();
-    services.AddScoped<IInbox>(sp => testInbox);
+    services.AddScoped<IWorkCoordinatorStrategy>(sp => new TestWorkCoordinatorStrategy(() => {
+      // Return empty work batch - this simulates the message being a duplicate
+      // (atomic INSERT ... ON CONFLICT DO NOTHING at database level)
+      return new WorkBatch {
+        InboxWork = new List<InboxWork>(),  // Empty - message was duplicate
+        OutboxWork = new List<OutboxWork>()
+      };
+    }));
+
     services.AddScoped<IPerspectiveInvoker>(sp => new TestPerspectiveInvoker(() => {
       perspectiveInvokerCalled = true;
     }));
@@ -126,8 +156,9 @@ public class ServiceBusConsumerWorkerTests {
 
     var instanceProvider = new TestServiceInstanceProvider();
     var transport = new TestTransport();
-    var jsonOptions = new JsonSerializerOptions();
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var logger = new TestLogger<ServiceBusConsumerWorker>();
+    var orderedProcessor = new OrderedStreamProcessor();
 
     var worker = new ServiceBusConsumerWorker(
       instanceProvider,
@@ -135,6 +166,7 @@ public class ServiceBusConsumerWorkerTests {
       scopeFactory,
       jsonOptions,
       logger,
+      orderedProcessor,
       options: null
     );
 
@@ -178,7 +210,16 @@ public class ServiceBusConsumerWorkerTests {
 /// Test event for ServiceBusConsumerWorker tests (Worker-specific to avoid naming conflicts)
 /// </summary>
 public record ServiceBusWorkerTestEvent : IEvent {
-  public required string Data { get; init; }
+  public string Data { get; init; } = string.Empty;
+}
+
+/// <summary>
+/// JsonSerializerContext for test event types
+/// </summary>
+[JsonSerializable(typeof(ServiceBusWorkerTestEvent))]
+[JsonSerializable(typeof(MessageEnvelope<ServiceBusWorkerTestEvent>))]
+[JsonSerializable(typeof(EnvelopeMetadata))]
+internal partial class TestWorkerJsonContext : JsonSerializerContext {
 }
 
 /// <summary>
@@ -271,30 +312,24 @@ internal class TestSubscription : ISubscription {
 }
 
 /// <summary>
-/// Test double for IInbox
+/// Test double for IWorkCoordinatorStrategy
 /// </summary>
-internal class TestInbox : IInbox {
-  private readonly HashSet<MessageId> _processed = [];
+internal class TestWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
+  private readonly Func<WorkBatch> _flushFunc;
 
-  public Task<bool> HasProcessedAsync(MessageId messageId, CancellationToken cancellationToken = default) {
-    return Task.FromResult(_processed.Contains(messageId));
+  public TestWorkCoordinatorStrategy(Func<WorkBatch> flushFunc) {
+    _flushFunc = flushFunc;
   }
 
-  public Task MarkProcessedAsync(MessageId messageId, CancellationToken cancellationToken = default) {
-    _processed.Add(messageId);
-    return Task.CompletedTask;
-  }
+  public void QueueOutboxMessage(NewOutboxMessage message) { }
+  public void QueueInboxMessage(NewInboxMessage message) { }
+  public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
+  public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
+  public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }
+  public void QueueInboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
 
-  public Task StoreAsync<TMessage>(MessageEnvelope<TMessage> envelope, string handlerName, CancellationToken cancellationToken = default) {
-    return Task.CompletedTask;
-  }
-
-  public Task<IReadOnlyList<InboxMessage>> GetPendingAsync(int maxMessages = 100, CancellationToken cancellationToken = default) {
-    return Task.FromResult<IReadOnlyList<InboxMessage>>([]);
-  }
-
-  public Task CleanupExpiredAsync(TimeSpan retentionPeriod, CancellationToken cancellationToken = default) {
-    return Task.CompletedTask;
+  public Task<WorkBatch> FlushAsync(WorkBatchFlags flags, CancellationToken ct = default) {
+    return Task.FromResult(_flushFunc());
   }
 }
 

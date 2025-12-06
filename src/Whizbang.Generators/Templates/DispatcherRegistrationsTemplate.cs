@@ -51,7 +51,7 @@ namespace Whizbang.Core.Generated {
     /// <summary>
     /// Registers the generated zero-reflection dispatcher.
     /// Automatically resolves optional Singleton dependencies: ITraceStore, ITransport, JsonSerializerOptions.
-    /// NOTE: IOutbox, IEventStore, and IAggregateIdExtractor are resolved per-call from the active scope, not captured in constructor.
+    /// NOTE: IEventStore and IAggregateIdExtractor are resolved per-call from the active scope, not captured in constructor.
     /// This is required because they may be registered as Scoped (e.g., EF Core implementations).
     /// </summary>
     [ExcludeFromCodeCoverage]
@@ -63,9 +63,9 @@ namespace Whizbang.Core.Generated {
         var transport = sp.GetService<ITransport>();
         var jsonOptions = sp.GetService<JsonSerializerOptions>();
 
-        // Do NOT resolve IOutbox, IEventStore, or IAggregateIdExtractor here - they may be Scoped
+        // Do NOT resolve IEventStore or IAggregateIdExtractor here - they may be Scoped
         // The Dispatcher will resolve them per-call from the active service provider
-        return new GeneratedDispatcher(sp, instanceProvider, traceStore, null, transport, jsonOptions);
+        return new GeneratedDispatcher(sp, instanceProvider, traceStore, transport, jsonOptions);
       });
       services.AddSingleton<global::Whizbang.Core.Dispatcher>(sp => (GeneratedDispatcher)sp.GetRequiredService<IDispatcher>());
       return services;

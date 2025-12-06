@@ -32,10 +32,9 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
     IServiceProvider serviceProvider,
     IServiceInstanceProvider instanceProvider,
     ITraceStore? traceStore = null,
-    IOutbox? outbox = null,
     ITransport? transport = null,
     JsonSerializerOptions? jsonOptions = null
-  ) : base(serviceProvider, instanceProvider, traceStore, outbox, transport, jsonOptions) {
+  ) : base(serviceProvider, instanceProvider, traceStore, transport, jsonOptions) {
   }
 
   /// <summary>
