@@ -162,18 +162,8 @@ public class EFCoreSnippets {
   /// </summary>
   public void RegisterInfrastructure(IServiceCollection services) {
     #region REGISTER_INFRASTRUCTURE_SNIPPET
-    // Register core infrastructure (Inbox, Outbox, EventStore, WorkCoordinator) - AOT compatible
+    // Register core infrastructure (EventStore, WorkCoordinator) - AOT compatible
     // JsonSerializerOptions are created from JsonContextRegistry (auto-discovers all registered contexts)
-    services.AddScoped<Whizbang.Core.Messaging.IInbox>(sp => {
-      var context = sp.GetRequiredService<__DBCONTEXT_FQN__>();
-      var jsonOptions = Whizbang.Data.EFCore.Postgres.Serialization.EFCoreJsonContext.CreateCombinedOptions();
-      return new Whizbang.Data.EFCore.Postgres.EFCoreInbox<__DBCONTEXT_FQN__>(context, jsonOptions);
-    });
-    services.AddScoped<Whizbang.Core.Messaging.IOutbox>(sp => {
-      var context = sp.GetRequiredService<__DBCONTEXT_FQN__>();
-      var jsonOptions = Whizbang.Data.EFCore.Postgres.Serialization.EFCoreJsonContext.CreateCombinedOptions();
-      return new Whizbang.Data.EFCore.Postgres.EFCoreOutbox<__DBCONTEXT_FQN__>(context, jsonOptions);
-    });
     services.AddScoped<Whizbang.Core.Messaging.IEventStore>(sp => {
       var context = sp.GetRequiredService<__DBCONTEXT_FQN__>();
       var jsonOptions = Whizbang.Data.EFCore.Postgres.Serialization.EFCoreJsonContext.CreateCombinedOptions();

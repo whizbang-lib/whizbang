@@ -88,7 +88,6 @@ public class VoidReceptorBenchmarks {
       providerWithTracing,
       new ServiceInstanceProvider(Guid.NewGuid(), "BenchmarkService", "benchmark-host", 12345),
       new InMemoryTraceStore(),
-      null,  // outbox
       null,  // transport
       null   // jsonOptions
     );
@@ -104,7 +103,6 @@ public class VoidReceptorBenchmarks {
       providerNoTracing,
       new ServiceInstanceProvider(Guid.NewGuid(), "BenchmarkService", "benchmark-host", 12345),
       traceStore: null,  // No tracing = fast path
-      outbox: null,
       transport: null,
       jsonOptions: null
     );

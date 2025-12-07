@@ -26,8 +26,6 @@ public sealed class EFCoreTestHelper : IAsyncDisposable {
   private readonly BffDbContext _dbContext;
   private readonly PostgreSqlContainer _postgresContainer;
 
-  [RequiresDynamicCode()]
-  [RequiresUnreferencedCode()]
   public EFCoreTestHelper() {
     // Create and start PostgreSQL container
     _postgresContainer = new PostgreSqlBuilder()

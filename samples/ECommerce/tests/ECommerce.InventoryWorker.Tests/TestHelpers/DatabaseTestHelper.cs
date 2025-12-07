@@ -36,8 +36,6 @@ public sealed class DatabaseTestHelper : IAsyncDisposable {
   /// <summary>
   /// Creates and returns a configured IServiceProvider with all EF Core infrastructure registered.
   /// </summary>
-  [RequiresDynamicCode()]
-  [RequiresUnreferencedCode()]
   public async Task<IServiceProvider> CreateServiceProviderAsync(CancellationToken cancellationToken = default) {
     if (!_isInitialized) {
       await _container.StartAsync(cancellationToken);

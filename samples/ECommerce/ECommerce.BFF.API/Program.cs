@@ -45,6 +45,9 @@ builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
 // Register service instance provider (MUST be before workers that depend on it)
 builder.Services.AddSingleton<IServiceInstanceProvider, ServiceInstanceProvider>();
 
+// Register OrderedStreamProcessor for message ordering in ServiceBusConsumerWorker
+builder.Services.AddSingleton<OrderedStreamProcessor>();
+
 // Register JsonSerializerOptions from global registry (includes all registered contexts)
 builder.Services.AddSingleton(Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 

@@ -97,8 +97,6 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   /// Initializes the test fixture: starts containers, initializes schemas, and starts service hosts.
   /// This is called ONCE for all tests in the test run.
   /// </summary>
-  [RequiresDynamicCode()]
-  [RequiresUnreferencedCode()]
   public async Task InitializeAsync(CancellationToken cancellationToken = default) {
     if (_isInitialized) {
       return;
@@ -146,17 +144,18 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Creates the IHost for InventoryWorker with all required services and background workers.
   /// </summary>
-  [RequiresDynamicCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
-  [RequiresUnreferencedCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
   private IHost CreateInventoryHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
 
     // Register Azure Service Bus transport
     var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
-    builder.Services.AddAzureServiceBusTransport(serviceBusConnection, ECommerce.Contracts.Generated.WhizbangJsonContext.Default);
+    builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
 
     // Add trace store for observability
     builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
+
+    // Register OrderedStreamProcessor for message ordering
+    builder.Services.AddSingleton<OrderedStreamProcessor>();
 
     // Register JsonSerializerOptions for Npgsql JSONB serialization
     builder.Services.AddSingleton(jsonOptions);
@@ -216,7 +215,8 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
         sp.GetRequiredService<IServiceScopeFactory>(),
         jsonOptions,  // Pass JSON options for event deserialization
         sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
-        sp.GetRequiredService<ServiceBusConsumerOptions>()
+        sp.GetRequiredService<OrderedStreamProcessor>(),
+        consumerOptions
       )
     );
 
@@ -226,18 +226,19 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Creates the IHost for BFF with all required services and background workers.
   /// </summary>
-  [RequiresDynamicCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
-  [RequiresUnreferencedCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
   private IHost CreateBffHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
 
     var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
 
     // Register Azure Service Bus transport
-    builder.Services.AddAzureServiceBusTransport(serviceBusConnection, ECommerce.Contracts.Generated.WhizbangJsonContext.Default);
+    builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
 
     // Add trace store for observability
     builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
+
+    // Register OrderedStreamProcessor for message ordering
+    builder.Services.AddSingleton<OrderedStreamProcessor>();
 
     // Register JsonSerializerOptions for Npgsql JSONB serialization
     builder.Services.AddSingleton(jsonOptions);
@@ -298,7 +299,8 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
         sp.GetRequiredService<IServiceScopeFactory>(),
         jsonOptions,  // Pass JSON options for event deserialization
         sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
-        sp.GetRequiredService<ServiceBusConsumerOptions>()
+        sp.GetRequiredService<OrderedStreamProcessor>(),
+        consumerOptions
       )
     );
 

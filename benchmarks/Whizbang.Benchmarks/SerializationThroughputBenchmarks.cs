@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using BenchmarkDotNet.Attributes;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 
@@ -33,7 +34,7 @@ public class SerializationThroughputBenchmarks {
 
   [GlobalSetup]
   public void Setup() {
-    _serializer = new JsonMessageSerializer(new Whizbang.Core.Generated.WhizbangJsonContext());
+    _serializer = new JsonMessageSerializer(JsonContextRegistry.CreateCombinedOptions());
 
     // Pre-generate test envelopes
     _tinyEnvelopes = [.. Enumerable.Range(0, 100_000).Select(i => _createEnvelope(new TinyMessage(i)))];

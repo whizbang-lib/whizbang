@@ -32,6 +32,9 @@ builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
 // Register service instance provider (MUST be before workers that depend on it)
 builder.Services.AddSingleton<IServiceInstanceProvider, ServiceInstanceProvider>();
 
+// Register OrderedStreamProcessor for message ordering in ServiceBusConsumerWorker
+builder.Services.AddSingleton<OrderedStreamProcessor>();
+
 // Register EF Core DbContext for Inbox/Outbox/EventStore
 builder.Services.AddDbContext<PaymentDbContext>(options =>
   options.UseNpgsql(postgresConnection));

@@ -9,7 +9,8 @@ namespace ECommerce.BFF.API.GraphQL;
 /// GraphQL mutations for data seeding operations.
 /// Used for development seeding and admin-triggered production seeding.
 /// </summary>
-public class SeedMutations {
+public class SeedMutations
+{
   private readonly IDispatcher _dispatcher;
   private readonly IProductCatalogLens _productLens;
   private readonly ILogger<SeedMutations> _logger;
@@ -17,7 +18,8 @@ public class SeedMutations {
   public SeedMutations(
     IDispatcher dispatcher,
     IProductCatalogLens productLens,
-    ILogger<SeedMutations> logger) {
+    ILogger<SeedMutations> logger)
+  {
     _dispatcher = dispatcher;
     _productLens = productLens;
     _logger = logger;
@@ -29,7 +31,8 @@ public class SeedMutations {
   /// Dispatches CreateProductCommand to InventoryWorker via Service Bus.
   /// </summary>
   /// <returns>Number of products seeded</returns>
-  public async Task<int> SeedProducts(CancellationToken cancellationToken = default) {
+  public async Task<int> SeedProducts(CancellationToken cancellationToken = default)
+  {
     _logger.LogInformation("SeedProducts mutation called - checking if seeding is needed...");
 
     // Generate deterministic UUIDv7 IDs for the 12 products
@@ -55,7 +58,8 @@ public class SeedMutations {
 
     var existingProducts = await _productLens.GetByIdsAsync(productIds, cancellationToken);
 
-    if (existingProducts.Count > 0) {
+    if (existingProducts.Count > 0)
+    {
       _logger.LogInformation(
         "Products already exist ({Count} found), skipping seed",
         existingProducts.Count);
@@ -166,8 +170,10 @@ public class SeedMutations {
 
     // Dispatch all create product commands
     int seededCount = 0;
-    foreach (var command in createProductCommands) {
-      try {
+    foreach (var command in createProductCommands)
+    {
+      try
+      {
         await _dispatcher.SendAsync(command);
         seededCount++;
         _logger.LogInformation(
@@ -175,7 +181,9 @@ public class SeedMutations {
           command.ProductId,
           command.Name,
           command.InitialStock);
-      } catch (Exception ex) {
+      }
+      catch (Exception ex)
+      {
         _logger.LogError(ex,
           "Failed to dispatch CreateProductCommand for {ProductId}",
           command.ProductId);
