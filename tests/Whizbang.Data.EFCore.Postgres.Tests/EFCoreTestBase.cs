@@ -62,19 +62,19 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
 
   private async Task InitializeDatabaseAsync() {
     // Let EF Core create the schema from the entity model
-    // This ensures column names match entity properties (PascalCase with quotes)
+    // This ensures column names match entity properties (snake_case via EF Core naming conventions)
     await using var dbContext = CreateDbContext();
     await dbContext.Database.EnsureCreatedAsync();
 
-    // Load and execute the EF Core-specific process_work_batch function
+    // Load and execute the canonical process_work_batch function from shared library
+    // This ensures Dapper and EF Core use the exact same function
     await using var connection = new NpgsqlConnection(ConnectionString);
     await connection.OpenAsync();
 
     var functionPath = Path.Combine(
       AppContext.BaseDirectory,
       "..", "..", "..", "..", "..",
-      "src", "Whizbang.Data.EFCore.Postgres.Generators", "Templates", "Migrations",
-      "003_CreateProcessWorkBatchFunction.sql");
+      "src", "Whizbang.Data.Postgres", "Migrations", "004_CreateProcessWorkBatchFunction.sql");
 
     var functionSql = await File.ReadAllTextAsync(functionPath);
     await using var functionCommand = new NpgsqlCommand(functionSql, connection);

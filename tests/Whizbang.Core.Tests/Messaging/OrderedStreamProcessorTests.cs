@@ -118,7 +118,9 @@ public class OrderedStreamProcessorTests {
           break;
         }
       }
-      if (hasOverlap) break;
+      if (hasOverlap) {
+        break;
+      }
     }
 
     await Assert.That(hasOverlap).IsTrue()

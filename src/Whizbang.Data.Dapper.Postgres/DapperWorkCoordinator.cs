@@ -167,7 +167,7 @@ public class DapperWorkCoordinator(
 
     // Simple JSON array serialization (AOT-safe)
     var items = completions.Select(c =>
-      $"{{\"message_id\":\"{c.MessageId}\",\"status\":{(int)c.Status}}}"
+      $"{{\"messageId\":\"{c.MessageId}\",\"status\":{(int)c.Status}}}"
     );
     return $"[{string.Join(",", items)}]";
   }
@@ -179,7 +179,7 @@ public class DapperWorkCoordinator(
 
     // Simple JSON array serialization (AOT-safe)
     var items = failures.Select(f =>
-      $"{{\"message_id\":\"{f.MessageId}\",\"completed_status\":{(int)f.CompletedStatus},\"error\":\"{EscapeJson(f.Error)}\"}}"
+      $"{{\"messageId\":\"{f.MessageId}\",\"completedStatus\":{(int)f.CompletedStatus},\"error\":\"{EscapeJson(f.Error)}\"}}"
     );
     return $"[{string.Join(",", items)}]";
   }
@@ -194,7 +194,7 @@ public class DapperWorkCoordinator(
       var streamId = m.StreamId.HasValue ? $"\"{m.StreamId.Value}\"" : "null";
       var scope = m.Scope != null ? m.Scope : "null";
       var isEvent = m.IsEvent.ToString().ToLowerInvariant();
-      return $"{{\"message_id\":\"{m.MessageId}\",\"destination\":\"{EscapeJson(m.Destination)}\",\"event_type\":\"{EscapeJson(m.EventType)}\",\"event_data\":{m.EventData},\"metadata\":{m.Metadata},\"scope\":{scope},\"stream_id\":{streamId},\"is_event\":{isEvent}}}";
+      return $"{{\"messageId\":\"{m.MessageId}\",\"destination\":\"{EscapeJson(m.Destination)}\",\"eventType\":\"{EscapeJson(m.EventType)}\",\"eventData\":{m.EventData},\"metadata\":{m.Metadata},\"scope\":{scope},\"streamId\":{streamId},\"isEvent\":{isEvent}}}";
     });
     return $"[{string.Join(",", items)}]";
   }
@@ -209,7 +209,7 @@ public class DapperWorkCoordinator(
       var streamId = m.StreamId.HasValue ? $"\"{m.StreamId.Value}\"" : "null";
       var scope = m.Scope != null ? m.Scope : "null";
       var isEvent = m.IsEvent.ToString().ToLowerInvariant();
-      return $"{{\"message_id\":\"{m.MessageId}\",\"handler_name\":\"{EscapeJson(m.HandlerName)}\",\"event_type\":\"{EscapeJson(m.EventType)}\",\"event_data\":{m.EventData},\"metadata\":{m.Metadata},\"scope\":{scope},\"stream_id\":{streamId},\"is_event\":{isEvent}}}";
+      return $"{{\"messageId\":\"{m.MessageId}\",\"handlerName\":\"{EscapeJson(m.HandlerName)}\",\"eventType\":\"{EscapeJson(m.EventType)}\",\"eventData\":{m.EventData},\"metadata\":{m.Metadata},\"scope\":{scope},\"streamId\":{streamId},\"isEvent\":{isEvent}}}";
     });
     return $"[{string.Join(",", items)}]";
   }

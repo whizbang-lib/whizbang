@@ -55,7 +55,8 @@ public abstract class PostgresTestBase : IAsyncDisposable {
     // Create connection factory with DateTimeOffset support
     var baseConnectionString = _postgresContainer.GetConnectionString();
     // Add Timezone=UTC to ensure TIMESTAMPTZ columns map to DateTimeOffset
-    var connectionString = $"{baseConnectionString};Timezone=UTC";
+    // Add Include Error Detail=true to get detailed PostgreSQL error messages
+    var connectionString = $"{baseConnectionString};Timezone=UTC;Include Error Detail=true";
     _connectionFactory = new PostgresConnectionFactory(connectionString);
 
     // Setup per-test instances
@@ -86,7 +87,7 @@ public abstract class PostgresTestBase : IAsyncDisposable {
     using var connection = await _connectionFactory!.CreateConnectionAsync();
     // Connection is already opened by PostgresConnectionFactory
 
-    // Read and execute schema SQL
+    // Read and execute base schema SQL (tables, indexes, helper functions)
     var schemaPath = Path.Combine(
       AppContext.BaseDirectory,
       "..", "..", "..", "..", "..",
@@ -94,8 +95,20 @@ public abstract class PostgresTestBase : IAsyncDisposable {
 
     var schemaSql = await File.ReadAllTextAsync(schemaPath);
 
-    using var command = (NpgsqlCommand)connection.CreateCommand();
-    command.CommandText = schemaSql;
-    await command.ExecuteNonQueryAsync();
+    using var schemaCommand = (NpgsqlCommand)connection.CreateCommand();
+    schemaCommand.CommandText = schemaSql;
+    await schemaCommand.ExecuteNonQueryAsync();
+
+    // Read and execute process_work_batch function from shared library
+    var functionPath = Path.Combine(
+      AppContext.BaseDirectory,
+      "..", "..", "..", "..", "..",
+      "src", "Whizbang.Data.Postgres", "Migrations", "004_CreateProcessWorkBatchFunction.sql");
+
+    var functionSql = await File.ReadAllTextAsync(functionPath);
+
+    using var functionCommand = (NpgsqlCommand)connection.CreateCommand();
+    functionCommand.CommandText = functionSql;
+    await functionCommand.ExecuteNonQueryAsync();
   }
 }

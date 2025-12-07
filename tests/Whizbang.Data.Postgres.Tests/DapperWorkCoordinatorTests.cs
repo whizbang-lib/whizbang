@@ -152,8 +152,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxCompletions: [],
       outboxFailures: [],
       inboxCompletions: [
-        new MessageCompletion { MessageId = messageId1, Status = MessageProcessingStatus.ReceptorProcessed },
-        new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.ReceptorProcessed }
+        new MessageCompletion { MessageId = messageId1, Status = MessageProcessingStatus.FullyCompleted },
+        new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.FullyCompleted }
       ],
       inboxFailures: [],
       newOutboxMessages: [],
@@ -162,11 +162,13 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     // Assert
     await Assert.That(result.InboxWork).HasCount().EqualTo(0);
 
-    // Verify messages marked as Completed
+    // Verify messages deleted (FullyCompleted messages are deleted in non-debug mode)
     var status1 = await GetInboxStatusAsync(messageId1);
     var status2 = await GetInboxStatusAsync(messageId2);
-    await Assert.That(status1).IsEqualTo("Completed");
-    await Assert.That(status2).IsEqualTo("Completed");
+    await Assert.That(status1).IsNull()
+      .Because("Fully completed messages should be deleted from inbox");
+    await Assert.That(status2).IsNull()
+      .Because("Fully completed messages should be deleted from inbox");
   }
 
   [Test]
@@ -223,7 +225,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       "{\"data\":1}",
       status: "Publishing",
       instanceId: _idProvider.NewGuid(),
-      leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-10));
+      leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-10),
+      streamId: _idProvider.NewGuid());
 
     await InsertOutboxMessageAsync(
       orphanedId2,
@@ -232,7 +235,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       "{\"data\":2}",
       status: "Publishing",
       instanceId: _idProvider.NewGuid(),
-      leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-5));
+      leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-5),
+      streamId: _idProvider.NewGuid());
 
     // Active message (not expired)
     await InsertOutboxMessageAsync(
@@ -242,7 +246,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       "{\"data\":3}",
       status: "Publishing",
       instanceId: _idProvider.NewGuid(),
-      leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(5));
+      leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(5),
+      streamId: _idProvider.NewGuid());
 
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
@@ -293,7 +298,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       "{\"data\":1}",
       status: "Processing",
       instanceId: _idProvider.NewGuid(),
-      leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-10));
+      leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-10),
+      streamId: _idProvider.NewGuid());
 
     await InsertInboxMessageAsync(
       orphanedId2,
@@ -302,7 +308,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       "{\"data\":2}",
       status: "Processing",
       instanceId: _idProvider.NewGuid(),
-      leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-5));
+      leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-5),
+      streamId: _idProvider.NewGuid());
 
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
@@ -360,7 +367,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       "{}",
       status: "Publishing",
       instanceId: _idProvider.NewGuid(),
-      leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-10));
+      leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-10),
+      streamId: _idProvider.NewGuid());
     await InsertInboxMessageAsync(
       orphanedInboxId,
       "Handler3",
@@ -368,7 +376,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       "{}",
       status: "Processing",
       instanceId: _idProvider.NewGuid(),
-      leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-10));
+      leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-10),
+      streamId: _idProvider.NewGuid());
 
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
@@ -388,7 +397,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         }
       ],
       inboxCompletions: [
-        new MessageCompletion { MessageId = completedInboxId, Status = MessageProcessingStatus.ReceptorProcessed }
+        new MessageCompletion { MessageId = completedInboxId, Status = MessageProcessingStatus.FullyCompleted }
       ],
       inboxFailures: [
         new MessageFailure {
@@ -406,7 +415,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Verify completed
     await Assert.That(await GetOutboxStatusAsync(completedOutboxId)).IsEqualTo("Published");
-    await Assert.That(await GetInboxStatusAsync(completedInboxId)).IsEqualTo("Completed");
+    await Assert.That(await GetInboxStatusAsync(completedInboxId)).IsNull()
+      .Because("Fully completed inbox messages should be deleted");
 
     // Verify failed
     await Assert.That(await GetOutboxStatusAsync(failedOutboxId)).IsEqualTo("Failed");
@@ -624,37 +634,35 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var messageId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
 
-    // Insert outbox message with IsEvent=true
-    await InsertOutboxMessageAsync(
-      messageId,
-      "test-topic",
-      "TestEvent",
-      "{\"test\":\"data\"}",
-      status: "Publishing",
-      instanceId: _instanceId,
-      streamId: streamId,
-      isEvent: true);
+    var newOutboxMessage = new NewOutboxMessage {
+      MessageId = messageId,
+      Destination = "test-topic",
+      EventType = "TestEvent",
+      EventData = "{\"test\":\"data\"}",
+      Metadata = "{}",
+      Scope = null,
+      StreamId = streamId,
+      IsEvent = true
+    };
 
-    // Act - Complete the outbox message
+    // Act - Create new outbox message with IsEvent=true
     var result = await _sut.ProcessWorkBatchAsync(
       _instanceId,
       "TestService",
       "test-host",
       12345,
       metadata: null,
-      outboxCompletions: [
-        new MessageCompletion { MessageId = messageId, Status = MessageProcessingStatus.Published }
-      ],
+      outboxCompletions: [],
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
-      newOutboxMessages: [],
+      newOutboxMessages: [newOutboxMessage],
       newInboxMessages: []);
 
     // Assert - Event should be persisted to event store
-    var eventVersion = await GetEventStoreVersionAsync(streamId, messageId);
+    var eventVersion = await GetEventStoreVersionAsync(streamId, expectedVersion: 1);
     await Assert.That(eventVersion).IsNotNull()
-      .Because("Completing an event outbox message should persist it to wb_event_store");
+      .Because("Creating a new event outbox message should persist it to wh_event_store");
     await Assert.That(eventVersion!.Value).IsEqualTo(1)
       .Because("First event in stream should have version 1");
   }
@@ -666,18 +674,18 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var messageId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
 
-    // Insert inbox message with IsEvent=true
-    await InsertInboxMessageAsync(
-      messageId,
-      "TestHandler",
-      "TestEvent",
-      "{\"test\":\"data\"}",
-      status: "Processing",
-      instanceId: _instanceId,
-      streamId: streamId,
-      isEvent: true);
+    var newInboxMessage = new NewInboxMessage {
+      MessageId = messageId,
+      HandlerName = "TestHandler",
+      EventType = "TestEvent",
+      EventData = "{\"test\":\"data\"}",
+      Metadata = "{}",
+      Scope = null,
+      StreamId = streamId,
+      IsEvent = true
+    };
 
-    // Act - Complete the inbox message
+    // Act - Create new inbox message with IsEvent=true
     var result = await _sut.ProcessWorkBatchAsync(
       _instanceId,
       "TestService",
@@ -686,17 +694,15 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       metadata: null,
       outboxCompletions: [],
       outboxFailures: [],
-      inboxCompletions: [
-        new MessageCompletion { MessageId = messageId, Status = MessageProcessingStatus.ReceptorProcessed }
-      ],
+      inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [newInboxMessage]);
 
     // Assert - Event should be persisted to event store
-    var eventVersion = await GetEventStoreVersionAsync(streamId, messageId);
+    var eventVersion = await GetEventStoreVersionAsync(streamId, expectedVersion: 1);
     await Assert.That(eventVersion).IsNotNull()
-      .Because("Completing an event inbox message should persist it to wb_event_store");
+      .Because("Creating a new event inbox message should persist it to wh_event_store");
     await Assert.That(eventVersion!.Value).IsEqualTo(1)
       .Because("First event in stream should have version 1");
   }
@@ -709,21 +715,21 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var messageId1 = _idProvider.NewGuid();
     var messageId2 = _idProvider.NewGuid();
 
-    // Insert first event already in event store (simulating conflict)
+    // Insert first event already in event store (simulating existing event at version 1)
     await InsertEventStoreRecordAsync(streamId, messageId1, "TestEvent", "{}", version: 1);
 
-    // Insert inbox message trying to use same version
-    await InsertInboxMessageAsync(
-      messageId2,
-      "TestHandler",
-      "TestEvent",
-      "{\"test\":\"data\"}",
-      status: "Processing",
-      instanceId: _instanceId,
-      streamId: streamId,
-      isEvent: true);
+    var newInboxMessage = new NewInboxMessage {
+      MessageId = messageId2,
+      HandlerName = "TestHandler",
+      EventType = "TestEvent",
+      EventData = "{\"test\":\"data\"}",
+      Metadata = "{}",
+      Scope = null,
+      StreamId = streamId,
+      IsEvent = true
+    };
 
-    // Act - Try to complete inbox message (should handle version conflict)
+    // Act - Try to create new inbox message (should handle version conflict)
     var result = await _sut.ProcessWorkBatchAsync(
       _instanceId,
       "TestService",
@@ -732,29 +738,22 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       metadata: null,
       outboxCompletions: [],
       outboxFailures: [],
-      inboxCompletions: [
-        new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.ReceptorProcessed }
-      ],
+      inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [newInboxMessage]);
 
-    // Assert - Should handle optimistic concurrency (either increment version or fail gracefully)
-    var event1 = await GetEventStoreVersionAsync(streamId, messageId1);
+    // Assert - Should handle optimistic concurrency (sequential versioning)
+    var event1 = await GetEventStoreVersionAsync(streamId, expectedVersion: 1);
     await Assert.That(event1).IsEqualTo(1)
       .Because("First event should remain at version 1");
 
-    // Either the second event gets version 2, or the operation fails gracefully
-    var event2 = await GetEventStoreVersionAsync(streamId, messageId2);
-    if (event2 is not null) {
-      await Assert.That(event2.Value).IsEqualTo(2)
-        .Because("If optimistic concurrency succeeds, second event gets version 2");
-    } else {
-      // If it failed, inbox should be marked as Failed
-      var inboxStatus = await GetInboxStatusAsync(messageId2);
-      await Assert.That(inboxStatus).IsEqualTo("Failed")
-        .Because("If optimistic concurrency fails, inbox should be marked Failed");
-    }
+    // Second event should get version 2 (sequential versioning)
+    var event2 = await GetEventStoreVersionAsync(streamId, expectedVersion: 2);
+    await Assert.That(event2).IsNotNull()
+      .Because("New event should be persisted with next sequential version");
+    await Assert.That(event2!.Value).IsEqualTo(2)
+      .Because("Second event in stream should have version 2");
   }
 
   [Test]
@@ -766,33 +765,57 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var messageId2 = _idProvider.NewGuid();
     var messageId3 = _idProvider.NewGuid();
 
-    // Insert three outbox messages for the same stream
-    await InsertOutboxMessageAsync(messageId1, "topic1", "Event1", "{}", status: "Publishing", instanceId: _instanceId, streamId: streamId, isEvent: true);
-    await InsertOutboxMessageAsync(messageId2, "topic1", "Event2", "{}", status: "Publishing", instanceId: _instanceId, streamId: streamId, isEvent: true);
-    await InsertOutboxMessageAsync(messageId3, "topic1", "Event3", "{}", status: "Publishing", instanceId: _instanceId, streamId: streamId, isEvent: true);
+    var newOutboxMessages = new[] {
+      new NewOutboxMessage {
+        MessageId = messageId1,
+        Destination = "topic1",
+        EventType = "FirstEvent",
+        EventData = "{}",
+        Metadata = "{}",
+        Scope = null,
+        StreamId = streamId,
+        IsEvent = true
+      },
+      new NewOutboxMessage {
+        MessageId = messageId2,
+        Destination = "topic1",
+        EventType = "SecondEvent",
+        EventData = "{}",
+        Metadata = "{}",
+        Scope = null,
+        StreamId = streamId,
+        IsEvent = true
+      },
+      new NewOutboxMessage {
+        MessageId = messageId3,
+        Destination = "topic1",
+        EventType = "ThirdEvent",
+        EventData = "{}",
+        Metadata = "{}",
+        Scope = null,
+        StreamId = streamId,
+        IsEvent = true
+      }
+    };
 
-    // Act - Complete all three messages
+    // Act - Create all three messages in a single batch
     var result = await _sut.ProcessWorkBatchAsync(
       _instanceId,
       "TestService",
       "test-host",
       12345,
       metadata: null,
-      outboxCompletions: [
-        new MessageCompletion { MessageId = messageId1, Status = MessageProcessingStatus.Published },
-        new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.Published },
-        new MessageCompletion { MessageId = messageId3, Status = MessageProcessingStatus.Published }
-      ],
+      outboxCompletions: [],
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
-      newOutboxMessages: [],
+      newOutboxMessages: newOutboxMessages,
       newInboxMessages: []);
 
     // Assert - Events should have sequential versions
-    var version1 = await GetEventStoreVersionAsync(streamId, messageId1);
-    var version2 = await GetEventStoreVersionAsync(streamId, messageId2);
-    var version3 = await GetEventStoreVersionAsync(streamId, messageId3);
+    var version1 = await GetEventStoreVersionAsync(streamId, expectedVersion: 1);
+    var version2 = await GetEventStoreVersionAsync(streamId, expectedVersion: 2);
+    var version3 = await GetEventStoreVersionAsync(streamId, expectedVersion: 3);
 
     await Assert.That(version1).IsEqualTo(1);
     await Assert.That(version2).IsEqualTo(2);
@@ -806,41 +829,40 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var messageId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
 
-    // Insert outbox message with IsEvent=false (command, not event)
-    await InsertOutboxMessageAsync(
-      messageId,
-      "test-topic",
-      "TestCommand",
-      "{\"test\":\"data\"}",
-      status: "Publishing",
-      instanceId: _instanceId,
-      streamId: streamId,
-      isEvent: false);
+    var newOutboxMessage = new NewOutboxMessage {
+      MessageId = messageId,
+      Destination = "test-topic",
+      EventType = "TestCommand",
+      EventData = "{\"test\":\"data\"}",
+      Metadata = "{}",
+      Scope = null,
+      StreamId = streamId,
+      IsEvent = false  // CRITICAL: IsEvent = false (command, not event)
+    };
 
-    // Act - Complete the outbox message
+    // Act - Create new outbox message with IsEvent=false
     var result = await _sut.ProcessWorkBatchAsync(
       _instanceId,
       "TestService",
       "test-host",
       12345,
       metadata: null,
-      outboxCompletions: [
-        new MessageCompletion { MessageId = messageId, Status = MessageProcessingStatus.Published }
-      ],
+      outboxCompletions: [],
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
-      newOutboxMessages: [],
+      newOutboxMessages: [newOutboxMessage],
       newInboxMessages: []);
 
     // Assert - Non-event should NOT be persisted to event store
-    var eventVersion = await GetEventStoreVersionAsync(streamId, messageId);
+    var eventVersion = await GetEventStoreVersionAsync(streamId, expectedVersion: 1);
     await Assert.That(eventVersion).IsNull()
-      .Because("Non-events (IsEvent=false) should not be persisted to wb_event_store");
+      .Because("Non-events (IsEvent=false) should not be persisted to wh_event_store");
 
-    // Verify outbox was still marked as Published
+    // Verify outbox message was still stored (just not in event store)
     var outboxStatus = await GetOutboxStatusAsync(messageId);
-    await Assert.That(outboxStatus).IsEqualTo("Published");
+    await Assert.That(outboxStatus).IsEqualTo("Pending")
+      .Because("Non-event messages should still be stored in outbox");
   }
 
   // ========================================
@@ -1375,7 +1397,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     // Assert - Verify is_event flag is stored correctly
     var isEvent = await GetOutboxIsEventAsync(messageId);
     await Assert.That(isEvent).IsTrue()
-      .Because("NewOutboxMessage with IsEvent=true should persist is_event=true to wb_outbox");
+      .Because("NewOutboxMessage with IsEvent=true should persist is_event=true to wh_outbox");
   }
 
   [Test]
@@ -1412,7 +1434,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     // Assert - Verify is_event flag is stored correctly
     var isEvent = await GetOutboxIsEventAsync(messageId);
     await Assert.That(isEvent).IsFalse()
-      .Because("NewOutboxMessage with IsEvent=false should persist is_event=false to wb_outbox");
+      .Because("NewOutboxMessage with IsEvent=false should persist is_event=false to wh_outbox");
   }
 
   [Test]
@@ -1449,7 +1471,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     // Assert - Verify is_event flag is stored correctly
     var isEvent = await GetInboxIsEventAsync(messageId);
     await Assert.That(isEvent).IsTrue()
-      .Because("NewInboxMessage with IsEvent=true should persist is_event=true to wb_inbox");
+      .Because("NewInboxMessage with IsEvent=true should persist is_event=true to wh_inbox");
   }
 
   [Test]
@@ -1486,7 +1508,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     // Assert - Verify is_event flag is stored correctly
     var isEvent = await GetInboxIsEventAsync(messageId);
     await Assert.That(isEvent).IsFalse()
-      .Because("NewInboxMessage with IsEvent=false should persist is_event=false to wb_inbox");
+      .Because("NewInboxMessage with IsEvent=false should persist is_event=false to wh_inbox");
   }
 
   // Helper methods for test data setup and verification
@@ -1495,7 +1517,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     var now = DateTimeOffset.UtcNow;
     await connection.ExecuteAsync(@"
-      INSERT INTO wb_service_instances (instance_id, service_name, host_name, process_id, started_at, last_heartbeat_at, metadata)
+      INSERT INTO wh_service_instances (instance_id, service_name, host_name, process_id, started_at, last_heartbeat_at, metadata)
       VALUES (@instanceId, @serviceName, @hostName, @processId, @now, @now, NULL)",
       new { instanceId, serviceName, hostName, processId, now });
   }
@@ -1503,7 +1525,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   private async Task<DateTimeOffset?> GetInstanceHeartbeatAsync(Guid instanceId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     return await connection.QueryFirstOrDefaultAsync<DateTimeOffset?>(@"
-      SELECT last_heartbeat_at FROM wb_service_instances WHERE instance_id = @instanceId",
+      SELECT last_heartbeat_at FROM wh_service_instances WHERE instance_id = @instanceId",
       new { instanceId });
   }
 
@@ -1518,55 +1540,95 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     Guid? streamId = null,
     bool isEvent = false) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Map status string to MessageProcessingStatus flags
+    var statusFlags = status switch {
+      "Pending" => 1,  // Stored
+      "Publishing" => 1,  // Stored
+      "Published" => 5,  // Stored | Published
+      "Failed" => 32769,  // Stored | Failed
+      _ => 1  // Default to Stored
+    };
+
+    // Add EventStored flag if isEvent=true
+    if (isEvent) {
+      statusFlags |= 2;  // Add EventStored bit
+    }
+
     await connection.ExecuteAsync(@"
-      INSERT INTO wb_outbox (
+      INSERT INTO wh_outbox (
         message_id, destination, event_type, event_data, metadata, scope,
         status, attempts, error, created_at, published_at,
-        instance_id, lease_expiry, stream_id, is_event
+        instance_id, lease_expiry, stream_id, partition_number
       ) VALUES (
         @messageId, @destination, @messageType, @messageData::jsonb, '{}'::jsonb, NULL,
-        @status, 0, NULL, @now, NULL,
-        @instanceId, @leaseExpiry, @streamId, @isEvent
+        @statusFlags, 0, NULL, @now, NULL,
+        @instanceId, @leaseExpiry, @streamId,
+        CASE WHEN @streamId IS NULL THEN NULL ELSE compute_partition(@streamId::uuid, 10000) END
       )",
       new {
         messageId,
         destination,
         messageType,
         messageData,
-        status,
+        statusFlags,
         instanceId,
         leaseExpiry,
         streamId,
-        isEvent,
         now = DateTimeOffset.UtcNow
       });
   }
 
   private async Task<string?> GetOutboxStatusAsync(Guid messageId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
-    return await connection.QueryFirstOrDefaultAsync<string?>(@"
-      SELECT status FROM wb_outbox WHERE message_id = @messageId",
+    var statusFlags = await connection.QueryFirstOrDefaultAsync<int?>(@"
+      SELECT status FROM wh_outbox WHERE message_id = @messageId",
       new { messageId });
+
+    if (statusFlags == null) {
+      return null;
+    }
+
+    // Convert status flags to human-readable string
+    var status = (MessageProcessingStatus)statusFlags.Value;
+
+    // Check for Failed first (highest priority)
+    if ((status & MessageProcessingStatus.Failed) == MessageProcessingStatus.Failed) {
+      return "Failed";
+    }
+
+    // Check for Completed (both ReceptorProcessed AND PerspectiveProcessed)
+    if ((status & MessageProcessingStatus.FullyCompleted) == MessageProcessingStatus.FullyCompleted) {
+      return "Completed";
+    }
+
+    // Check for Published
+    if ((status & MessageProcessingStatus.Published) == MessageProcessingStatus.Published) {
+      return "Published";
+    }
+
+    // Default to Pending (only Stored flag)
+    return "Pending";
   }
 
   private async Task<string?> GetOutboxErrorAsync(Guid messageId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     return await connection.QueryFirstOrDefaultAsync<string?>(@"
-      SELECT error FROM wb_outbox WHERE message_id = @messageId",
+      SELECT error FROM wh_outbox WHERE message_id = @messageId",
       new { messageId });
   }
 
   private async Task<Guid?> GetOutboxInstanceIdAsync(Guid messageId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     return await connection.QueryFirstOrDefaultAsync<Guid?>(@"
-      SELECT instance_id FROM wb_outbox WHERE message_id = @messageId",
+      SELECT instance_id FROM wh_outbox WHERE message_id = @messageId",
       new { messageId });
   }
 
   private async Task<DateTimeOffset?> GetOutboxLeaseExpiryAsync(Guid messageId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     return await connection.QueryFirstOrDefaultAsync<DateTimeOffset?>(@"
-      SELECT lease_expiry FROM wb_outbox WHERE message_id = @messageId",
+      SELECT lease_expiry FROM wh_outbox WHERE message_id = @messageId",
       new { messageId });
   }
 
@@ -1581,74 +1643,109 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     Guid? streamId = null,
     bool isEvent = false) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Map status string to MessageProcessingStatus flags
+    var statusFlags = status switch {
+      "Pending" => 1,  // Stored
+      "Processing" => 1,  // Stored
+      "Completed" => 25,  // Stored | ReceptorProcessed | PerspectiveProcessed
+      "Failed" => 32769,  // Stored | Failed
+      _ => 1  // Default to Stored
+    };
+
+    // Add EventStored flag if isEvent=true
+    if (isEvent) {
+      statusFlags |= 2;  // Add EventStored bit
+    }
+
     await connection.ExecuteAsync(@"
-      INSERT INTO wb_inbox (
+      INSERT INTO wh_inbox (
         message_id, handler_name, event_type, event_data, metadata, scope,
         status, attempts, received_at, processed_at, instance_id, lease_expiry,
-        stream_id, is_event
+        stream_id, partition_number
       ) VALUES (
         @messageId, @handlerName, @messageType, @messageData::jsonb, '{}'::jsonb, NULL,
-        @status, 0, @now, NULL, @instanceId, @leaseExpiry,
-        @streamId, @isEvent
+        @statusFlags, 0, @now, NULL, @instanceId, @leaseExpiry,
+        @streamId,
+        CASE WHEN @streamId IS NULL THEN NULL ELSE compute_partition(@streamId::uuid, 10000) END
       )",
       new {
         messageId,
         handlerName,
         messageType,
         messageData,
-        status,
+        statusFlags,
         instanceId,
         leaseExpiry,
         streamId,
-        isEvent,
         now = DateTimeOffset.UtcNow
       });
   }
 
   private async Task<string?> GetInboxStatusAsync(Guid messageId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
-    return await connection.QueryFirstOrDefaultAsync<string?>(@"
-      SELECT status FROM wb_inbox WHERE message_id = @messageId",
+    var statusFlags = await connection.QueryFirstOrDefaultAsync<int?>(@"
+      SELECT status FROM wh_inbox WHERE message_id = @messageId",
       new { messageId });
+
+    if (statusFlags == null) {
+      return null;
+    }
+
+    // Convert status flags to human-readable string
+    var status = (MessageProcessingStatus)statusFlags.Value;
+
+    // Check for Failed first (highest priority)
+    if ((status & MessageProcessingStatus.Failed) == MessageProcessingStatus.Failed) {
+      return "Failed";
+    }
+
+    // Check for Completed (both ReceptorProcessed AND PerspectiveProcessed)
+    if ((status & MessageProcessingStatus.FullyCompleted) == MessageProcessingStatus.FullyCompleted) {
+      return "Completed";
+    }
+
+    // Default to Pending (only Stored flag)
+    return "Pending";
   }
 
   private async Task<string?> GetInboxErrorAsync(Guid messageId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     return await connection.QueryFirstOrDefaultAsync<string?>(@"
-      SELECT error FROM wb_inbox WHERE message_id = @messageId",
+      SELECT error FROM wh_inbox WHERE message_id = @messageId",
       new { messageId });
   }
 
   private async Task<Guid?> GetInboxInstanceIdAsync(Guid messageId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     return await connection.QueryFirstOrDefaultAsync<Guid?>(@"
-      SELECT instance_id FROM wb_inbox WHERE message_id = @messageId",
+      SELECT instance_id FROM wh_inbox WHERE message_id = @messageId",
       new { messageId });
   }
 
   private async Task<int> CountInboxMessagesAsync(Guid messageId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     return await connection.QuerySingleAsync<int>(@"
-      SELECT COUNT(*) FROM wb_inbox WHERE message_id = @messageId",
+      SELECT COUNT(*) FROM wh_inbox WHERE message_id = @messageId",
       new { messageId });
   }
 
   private async Task InsertEventStoreRecordAsync(
     Guid streamId,
-    Guid messageId,
+    Guid eventId,
     string eventType,
     string eventData,
     int version) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     await connection.ExecuteAsync(@"
-      INSERT INTO wb_event_store (
-        stream_id, message_id, event_type, event_data, version, timestamp
+      INSERT INTO wh_event_store (
+        event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, scope, sequence_number, version, created_at
       ) VALUES (
-        @streamId, @messageId, @eventType, @eventData::jsonb, @version, @now
+        @eventId, @streamId, @streamId, 'Test', @eventType, @eventData::jsonb, '{}'::jsonb, NULL, nextval('wh_event_sequence'), @version, @now
       )",
       new {
+        eventId,
         streamId,
-        messageId,
         eventType,
         eventData,
         version,
@@ -1656,38 +1753,42 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       });
   }
 
-  private async Task<int?> GetEventStoreVersionAsync(Guid streamId, Guid messageId) {
+  private async Task<int?> GetEventStoreVersionAsync(Guid streamId, int expectedVersion) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     return await connection.QueryFirstOrDefaultAsync<int?>(@"
-      SELECT version FROM wb_event_store WHERE stream_id = @streamId AND message_id = @messageId",
-      new { streamId, messageId });
+      SELECT version FROM wh_event_store WHERE stream_id = @streamId AND version = @expectedVersion",
+      new { streamId, expectedVersion });
   }
 
   private async Task<bool> GetOutboxIsEventAsync(Guid messageId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
-    return await connection.QueryFirstOrDefaultAsync<bool>(@"
-      SELECT is_event FROM wb_outbox WHERE message_id = @messageId",
+    var status = await connection.QueryFirstOrDefaultAsync<int>(@"
+      SELECT status FROM wh_outbox WHERE message_id = @messageId",
       new { messageId });
+    // Check if EventStored bit (bit 2, value 2) is set
+    return (status & 2) == 2;
   }
 
   private async Task<bool> GetInboxIsEventAsync(Guid messageId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
-    return await connection.QueryFirstOrDefaultAsync<bool>(@"
-      SELECT is_event FROM wb_inbox WHERE message_id = @messageId",
+    var status = await connection.QueryFirstOrDefaultAsync<int>(@"
+      SELECT status FROM wh_inbox WHERE message_id = @messageId",
       new { messageId });
+    // Check if EventStored bit (bit 2, value 2) is set
+    return (status & 2) == 2;
   }
 
   private async Task<int?> GetOutboxPartitionNumberAsync(Guid messageId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     return await connection.QueryFirstOrDefaultAsync<int?>(@"
-      SELECT partition_number FROM wb_outbox WHERE message_id = @messageId",
+      SELECT partition_number FROM wh_outbox WHERE message_id = @messageId",
       new { messageId });
   }
 
   private async Task MarkInstanceHeartbeatOldAsync(Guid instanceId, DateTimeOffset oldHeartbeat) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     await connection.ExecuteAsync(@"
-      UPDATE wb_service_instances
+      UPDATE wh_service_instances
       SET last_heartbeat_at = @oldHeartbeat
       WHERE instance_id = @instanceId",
       new { instanceId, oldHeartbeat });
@@ -1696,7 +1797,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   private async Task UpdateOutboxLeaseExpiryAsync(Guid messageId, DateTimeOffset leaseExpiry) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     await connection.ExecuteAsync(@"
-      UPDATE wb_outbox
+      UPDATE wh_outbox
       SET lease_expiry = @leaseExpiry
       WHERE message_id = @messageId",
       new { messageId, leaseExpiry });
@@ -1705,7 +1806,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   private async Task<MessageProcessingStatus> GetOutboxStatusFlagsAsync(Guid messageId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     var statusFlags = await connection.QueryFirstOrDefaultAsync<int>(@"
-      SELECT status_flags FROM wb_outbox WHERE message_id = @messageId",
+      SELECT status FROM wh_outbox WHERE message_id = @messageId",
       new { messageId });
     return (MessageProcessingStatus)statusFlags;
   }
@@ -1713,7 +1814,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   private async Task<MessageProcessingStatus> GetInboxStatusFlagsAsync(Guid messageId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     var statusFlags = await connection.QueryFirstOrDefaultAsync<int>(@"
-      SELECT status_flags FROM wb_inbox WHERE message_id = @messageId",
+      SELECT status FROM wh_inbox WHERE message_id = @messageId",
       new { messageId });
     return (MessageProcessingStatus)statusFlags;
   }
@@ -1721,7 +1822,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   private async Task<bool> ServiceInstanceExistsAsync(Guid instanceId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     var count = await connection.QuerySingleAsync<int>(@"
-      SELECT COUNT(*) FROM wb_service_instances WHERE instance_id = @instanceId",
+      SELECT COUNT(*) FROM wh_service_instances WHERE instance_id = @instanceId",
       new { instanceId });
     return count > 0;
   }
