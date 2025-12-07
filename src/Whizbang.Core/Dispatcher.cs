@@ -44,8 +44,7 @@ public abstract class Dispatcher(
   IServiceInstanceProvider instanceProvider,
   ITraceStore? traceStore = null,
   ITransport? transport = null,
-  JsonSerializerOptions? jsonOptions = null,
-  IWorkCoordinatorStrategy? strategy = null
+  JsonSerializerOptions? jsonOptions = null
   ) : IDispatcher {
   private readonly IServiceProvider _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -53,7 +52,6 @@ public abstract class Dispatcher(
   private readonly ITraceStore? _traceStore = traceStore;
   private readonly ITransport? _transport = transport;
   private readonly JsonSerializerOptions? _jsonOptions = jsonOptions;
-  private readonly IWorkCoordinatorStrategy? _strategy = strategy;
 
   /// <summary>
   /// Gets the service provider for receptor resolution.
@@ -121,13 +119,8 @@ public abstract class Dispatcher(
     // If no local receptor exists, check for work coordinator strategy
     if (invoker == null) {
       // Try strategy-based outbox pattern (new work coordinator pattern)
-      if (_strategy != null && _jsonOptions != null) {
-        // Route to outbox for remote delivery (AOT-compatible, no reflection)
-        return await SendToOutboxViaScopeAsync(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
-      }
-
-      // No receptor and no strategy - throw
-      throw new HandlerNotFoundException(messageType);
+      // Route to outbox for remote delivery (AOT-compatible, no reflection)
+      return await SendToOutboxViaScopeAsync(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
     }
 
     // Create envelope with hop for observability
@@ -478,60 +471,72 @@ public abstract class Dispatcher(
     // Invoke local handlers - zero reflection, strongly typed
     await publisher(@event);
 
-    // If work coordinator strategy is configured, publish event for cross-service delivery
-    if (_strategy != null && _jsonOptions != null) {
-      await PublishToOutboxViaScopeAsync(@event, eventType);
-    }
+    // Publish event for cross-service delivery if work coordinator strategy is available
+    await PublishToOutboxViaScopeAsync(@event, eventType);
   }
 
   /// <summary>
   /// Publishes an event to the outbox for cross-service delivery using work coordinator strategy.
   /// Queues event for batched processing.
-  /// Requires IWorkCoordinatorStrategy to be configured.
+  /// Resolves IWorkCoordinatorStrategy from active scope (scoped service).
   /// Creates a complete MessageEnvelope with a hop indicating "stored to outbox".
   /// </summary>
   private async Task PublishToOutboxViaScopeAsync<TEvent>(TEvent @event, Type eventType) {
-    if (_strategy == null) {
-      throw new InvalidOperationException("IWorkCoordinatorStrategy required for cross-service event publishing. Register a strategy in DI container.");
-    }
-
     if (_jsonOptions == null) {
       throw new InvalidOperationException("JsonSerializerOptions required for event serialization. Register JsonSerializerOptions in DI container.");
     }
 
-    // Determine destination topic from event type name
-    // TODO: Make this configurable via IEventRoutingConfiguration
-    var destination = DetermineEventTopic(eventType);
+    // Create scope to resolve scoped IWorkCoordinatorStrategy
+    var scope = _scopeFactory.CreateScope();
+    try {
+      var strategy = scope.ServiceProvider.GetService<IWorkCoordinatorStrategy>();
 
-    // Create MessageEnvelope wrapping the event
-    var messageId = MessageId.New();
-    var envelope = new MessageEnvelope<TEvent> {
-      MessageId = messageId,
-      Payload = @event,
-      Hops = []
-    };
+      // If no strategy is registered, skip outbox routing (local-only event)
+      if (strategy == null) {
+        return;
+      }
 
-    // Add hop indicating message is being stored to outbox
-    var hop = new MessageHop {
-      Type = HopType.Current,
-      ServiceInstance = _instanceProvider.ToInfo(),
-      Topic = destination,
-      Timestamp = DateTimeOffset.UtcNow
-    };
-    envelope.AddHop(hop);
+      // Determine destination topic from event type name
+      // TODO: Make this configurable via IEventRoutingConfiguration
+      var destination = DetermineEventTopic(eventType);
 
-    System.Diagnostics.Debug.WriteLine($"[Dispatcher] Queueing event {eventType.Name} to work coordinator with destination '{destination}'");
+      // Create MessageEnvelope wrapping the event
+      var messageId = MessageId.New();
+      var envelope = new MessageEnvelope<TEvent> {
+        MessageId = messageId,
+        Payload = @event,
+        Hops = []
+      };
 
-    // Serialize envelope to NewOutboxMessage
-    var newOutboxMessage = _serializeToNewOutboxMessage(envelope, @event!, eventType, destination);
+      // Add hop indicating message is being stored to outbox
+      var hop = new MessageHop {
+        Type = HopType.Current,
+        ServiceInstance = _instanceProvider.ToInfo(),
+        Topic = destination,
+        Timestamp = DateTimeOffset.UtcNow
+      };
+      envelope.AddHop(hop);
 
-    // Queue event for batched processing
-    _strategy.QueueOutboxMessage(newOutboxMessage);
+      System.Diagnostics.Debug.WriteLine($"[Dispatcher] Queueing event {eventType.Name} to work coordinator with destination '{destination}'");
 
-    // Flush strategy to execute the batch
-    await _strategy.FlushAsync(WorkBatchFlags.None);
+      // Serialize envelope to NewOutboxMessage
+      var newOutboxMessage = _serializeToNewOutboxMessage(envelope, @event!, eventType, destination);
 
-    System.Diagnostics.Debug.WriteLine($"[Dispatcher] Successfully queued event {eventType.Name} via work coordinator");
+      // Queue event for batched processing
+      strategy.QueueOutboxMessage(newOutboxMessage);
+
+      // Flush strategy to execute the batch
+      await strategy.FlushAsync(WorkBatchFlags.None);
+
+      System.Diagnostics.Debug.WriteLine($"[Dispatcher] Successfully queued event {eventType.Name} via work coordinator");
+    } finally {
+      // Dispose scope asynchronously to properly handle services that only implement IAsyncDisposable
+      if (scope is IAsyncDisposable asyncDisposable) {
+        await asyncDisposable.DisposeAsync();
+      } else {
+        scope.Dispose();
+      }
+    }
   }
 
   /// <summary>
@@ -585,7 +590,7 @@ public abstract class Dispatcher(
   /// <summary>
   /// Sends a message to the outbox for remote delivery using work coordinator strategy.
   /// Creates a MessageEnvelope with proper type information and queues for batched processing.
-  /// Requires IWorkCoordinatorStrategy to be configured.
+  /// Resolves IWorkCoordinatorStrategy from active scope (scoped service).
   /// AOT-compatible - uses JsonTypeInfo for serialization, no reflection.
   /// </summary>
   private async Task<IDeliveryReceipt> SendToOutboxViaScopeAsync(
@@ -596,39 +601,53 @@ public abstract class Dispatcher(
     string callerFilePath,
     int callerLineNumber
   ) {
-    if (_strategy == null) {
-      throw new InvalidOperationException("IWorkCoordinatorStrategy required for remote message delivery. Register a strategy in DI container.");
-    }
-
     if (_jsonOptions == null) {
       throw new InvalidOperationException("JsonSerializerOptions required for message serialization. Register JsonSerializerOptions in DI container.");
     }
 
-    // Determine destination topic from message type name
-    var destination = DetermineCommandDestination(messageType);
+    // Create scope to resolve scoped IWorkCoordinatorStrategy
+    var scope = _scopeFactory.CreateScope();
+    try {
+      var strategy = scope.ServiceProvider.GetService<IWorkCoordinatorStrategy>();
 
-    // Create envelope with hop for observability (returns IMessageEnvelope)
-    var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
+      // If no strategy is registered, throw - no local receptor and no outbox
+      if (strategy == null) {
+        throw new HandlerNotFoundException(messageType);
+      }
 
-    // Serialize envelope to NewOutboxMessage
-    var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination);
+      // Determine destination topic from message type name
+      var destination = DetermineCommandDestination(messageType);
 
-    // Queue message for batched processing
-    _strategy.QueueOutboxMessage(newOutboxMessage);
+      // Create envelope with hop for observability (returns IMessageEnvelope)
+      var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
 
-    // Flush strategy to execute the batch (strategy determines when to actually flush)
-    // For immediate strategy, this happens right away
-    // For scoped strategy, this happens on scope disposal
-    // For interval strategy, this happens on timer
-    await _strategy.FlushAsync(WorkBatchFlags.None);
+      // Serialize envelope to NewOutboxMessage
+      var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination);
 
-    // Return delivery receipt with Accepted status (message queued)
-    return DeliveryReceipt.Accepted(
-      envelope.MessageId,
-      destination,
-      context.CorrelationId,
-      context.CausationId
-    );
+      // Queue message for batched processing
+      strategy.QueueOutboxMessage(newOutboxMessage);
+
+      // Flush strategy to execute the batch (strategy determines when to actually flush)
+      // For immediate strategy, this happens right away
+      // For scoped strategy, this happens on scope disposal
+      // For interval strategy, this happens on timer
+      await strategy.FlushAsync(WorkBatchFlags.None);
+
+      // Return delivery receipt with Accepted status (message queued)
+      return DeliveryReceipt.Accepted(
+        envelope.MessageId,
+        destination,
+        context.CorrelationId,
+        context.CausationId
+      );
+    } finally {
+      // Dispose scope asynchronously to properly handle services that only implement IAsyncDisposable
+      if (scope is IAsyncDisposable asyncDisposable) {
+        await asyncDisposable.DisposeAsync();
+      } else {
+        scope.Dispose();
+      }
+    }
   }
 
   // ========================================
