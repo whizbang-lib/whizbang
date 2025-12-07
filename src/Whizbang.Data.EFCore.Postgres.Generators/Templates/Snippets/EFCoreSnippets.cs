@@ -162,7 +162,7 @@ public class EFCoreSnippets {
   /// </summary>
   public void RegisterInfrastructure(IServiceCollection services) {
     #region REGISTER_INFRASTRUCTURE_SNIPPET
-    // Register core infrastructure (EventStore, WorkCoordinator) - AOT compatible
+    // Register core infrastructure (EventStore, WorkCoordinator, WorkCoordinatorStrategy) - AOT compatible
     // JsonSerializerOptions are created from JsonContextRegistry (auto-discovers all registered contexts)
     services.AddScoped<Whizbang.Core.Messaging.IEventStore>(sp => {
       var context = sp.GetRequiredService<__DBCONTEXT_FQN__>();
@@ -175,6 +175,17 @@ public class EFCoreSnippets {
       );
     });
     services.AddScoped<Whizbang.Core.Messaging.IWorkCoordinator, Whizbang.Data.EFCore.Postgres.EFCoreWorkCoordinator<__DBCONTEXT_FQN__>>();
+
+    // Register WorkCoordinatorOptions (if not already registered)
+    // This is defensive - users can override by registering their own options before calling .WithDriver.Postgres
+    if (!services.Any(sd => sd.ServiceType == typeof(Whizbang.Core.Messaging.WorkCoordinatorOptions))) {
+      services.AddSingleton(new Whizbang.Core.Messaging.WorkCoordinatorOptions());
+    }
+
+    // Register scoped work coordinator strategy for dispatcher outbox routing
+    // ScopedWorkCoordinatorStrategy batches operations within a scope (e.g., HTTP request)
+    // This enables the dispatcher to route messages to outbox when no local receptor exists
+    services.AddScoped<Whizbang.Core.Messaging.IWorkCoordinatorStrategy, Whizbang.Core.Messaging.ScopedWorkCoordinatorStrategy>();
     #endregion
   }
 
