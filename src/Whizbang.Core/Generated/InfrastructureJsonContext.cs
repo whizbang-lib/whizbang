@@ -14,6 +14,7 @@ namespace Whizbang.Core.Generated;
 /// </summary>
 [JsonSerializable(typeof(MessageHop))]
 [JsonSerializable(typeof(List<MessageHop>))]
+[JsonSerializable(typeof(EnvelopeMetadata))]
 [JsonSerializable(typeof(ServiceInstanceInfo))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
 [JsonSerializable(typeof(Dictionary<string, object>))]
