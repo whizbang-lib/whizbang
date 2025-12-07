@@ -48,6 +48,10 @@ builder.Services.AddSingleton<IServiceInstanceProvider, ServiceInstanceProvider>
 // Register OrderedStreamProcessor for message ordering in ServiceBusConsumerWorker
 builder.Services.AddSingleton<OrderedStreamProcessor>();
 
+// Force Contracts assembly to load so its ModuleInitializer runs
+// This ensures ECommerce.Contracts.Generated.MessageJsonContext is registered before we create JsonSerializerOptions
+_ = typeof(ECommerce.Contracts.Commands.CreateProductCommand).Assembly;
+
 // Register JsonSerializerOptions from global registry (includes all registered contexts)
 builder.Services.AddSingleton(Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 
