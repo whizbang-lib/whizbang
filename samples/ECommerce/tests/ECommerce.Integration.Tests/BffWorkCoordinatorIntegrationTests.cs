@@ -153,7 +153,9 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
             StreamId = streamId
           }
         ],
-        newInboxMessages: []
+        newInboxMessages: [],
+        renewOutboxLeaseIds: [],
+        renewInboxLeaseIds: []
       );
     }
 
@@ -269,7 +271,9 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
             StreamId = streamId
           }
         ],
-        newInboxMessages: []
+        newInboxMessages: [],
+        renewOutboxLeaseIds: [],
+        renewInboxLeaseIds: []
       );
     }
 
@@ -340,6 +344,8 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
           }
         ],
         newInboxMessages: [],
+        renewOutboxLeaseIds: [],
+        renewInboxLeaseIds: [],
         leaseSeconds: -1  // Immediately expired!
       );
     }
