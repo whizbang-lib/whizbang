@@ -650,12 +650,71 @@ public abstract class Dispatcher(
     }
   }
 
+  /// <summary>
+  /// Sends multiple messages to the outbox in a single batch operation.
+  /// Creates ONE scope, queues all messages, and flushes once for optimal performance.
+  /// </summary>
+  private async Task<List<IDeliveryReceipt>> SendManyToOutboxAsync(
+    List<(object message, Type messageType, IMessageContext context)> messages,
+    [CallerMemberName] string callerMemberName = "",
+    [CallerFilePath] string callerFilePath = "",
+    [CallerLineNumber] int callerLineNumber = 0
+  ) {
+    if (_jsonOptions == null) {
+      throw new InvalidOperationException("JsonSerializerOptions required for message serialization. Register JsonSerializerOptions in DI container.");
+    }
+
+    var receipts = new List<IDeliveryReceipt>();
+
+    // Create ONE scope for all messages
+    var scope = _scopeFactory.CreateScope();
+    try {
+      var strategy = scope.ServiceProvider.GetService<IWorkCoordinatorStrategy>();
+
+      // If no strategy is registered, throw
+      if (strategy == null) {
+        throw new InvalidOperationException("No IWorkCoordinatorStrategy registered. Cannot route messages to outbox.");
+      }
+
+      // Queue ALL messages to the strategy
+      foreach (var (message, messageType, context) in messages) {
+        var destination = DetermineCommandDestination(messageType);
+        var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
+        var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination);
+
+        strategy.QueueOutboxMessage(newOutboxMessage);
+
+        // Create receipt for this message
+        receipts.Add(DeliveryReceipt.Accepted(
+          envelope.MessageId,
+          destination,
+          context.CorrelationId,
+          context.CausationId
+        ));
+      }
+
+      // Flush ONCE for all messages
+      await strategy.FlushAsync(WorkBatchFlags.None);
+
+    } finally {
+      // Dispose scope asynchronously
+      if (scope is IAsyncDisposable asyncDisposable) {
+        await asyncDisposable.DisposeAsync();
+      } else {
+        scope.Dispose();
+      }
+    }
+
+    return receipts;
+  }
+
   // ========================================
   // BATCH OPERATIONS
   // ========================================
 
   /// <summary>
   /// Sends multiple messages and collects all delivery receipts.
+  /// Optimized for batch operations - creates a single scope and flushes once.
   /// </summary>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
@@ -664,11 +723,38 @@ public abstract class Dispatcher(
   public async Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages) {
     ArgumentNullException.ThrowIfNull(messages);
 
+    var messageList = messages.ToList();
     var receipts = new List<IDeliveryReceipt>();
-    foreach (var message in messages) {
+
+    // Separate messages into local and outbox-bound
+    var localMessages = new List<(object message, Type messageType)>();
+    var outboxMessages = new List<(object message, Type messageType, IMessageContext context)>();
+
+    foreach (var message in messageList) {
+      var messageType = message.GetType();
+      var invoker = _getReceptorInvoker<object>(message, messageType);
+
+      if (invoker != null) {
+        // Has local receptor
+        localMessages.Add((message, messageType));
+      } else {
+        // No local receptor - route to outbox
+        outboxMessages.Add((message, messageType, MessageContext.New()));
+      }
+    }
+
+    // Process local messages individually (fast path)
+    foreach (var (message, messageType) in localMessages) {
       var receipt = await SendAsync(message);
       receipts.Add(receipt);
     }
+
+    // Process outbox messages in a single batch (optimized)
+    if (outboxMessages.Count > 0) {
+      var outboxReceipts = await SendManyToOutboxAsync(outboxMessages);
+      receipts.AddRange(outboxReceipts);
+    }
+
     return receipts;
   }
 
