@@ -1,12 +1,12 @@
-using TUnit.Assertions;
-using TUnit.Core;
+using ECommerce.BFF.API;
+using ECommerce.BFF.API.Generated;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Microsoft.EntityFrameworkCore;
 using Testcontainers.PostgreSql;
-using ECommerce.BFF.API;
-using ECommerce.BFF.API.Generated;
+using TUnit.Assertions;
+using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;

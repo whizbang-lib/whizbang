@@ -164,26 +164,31 @@ public class SeedMutations {
       }
     };
 
-    // Dispatch all create product commands
-    int seededCount = 0;
-    foreach (var command in createProductCommands) {
-      try {
-        await _dispatcher.SendAsync(command);
-        seededCount++;
+    // Dispatch all create product commands in a single batch
+    // This uses SendManyAsync which creates ONE scope and flushes ONCE
+    // instead of creating 12 scopes and 12 flushes (massive performance improvement)
+    try {
+      _logger.LogInformation("Dispatching {Count} CreateProductCommands in a single batch...", createProductCommands.Length);
+
+      var receipts = await _dispatcher.SendManyAsync(createProductCommands);
+      var seededCount = receipts.Count();
+
+      _logger.LogInformation("Product seeding complete - dispatched {Count} commands in batch", seededCount);
+
+      // Log individual product details
+      for (int i = 0; i < createProductCommands.Length; i++) {
+        var command = createProductCommands[i];
         _logger.LogInformation(
           "Dispatched CreateProductCommand for {ProductId} ({Name}) with {Stock} units",
           command.ProductId,
           command.Name,
           command.InitialStock);
-      } catch (Exception ex) {
-        _logger.LogError(ex,
-          "Failed to dispatch CreateProductCommand for {ProductId}",
-          command.ProductId);
-        throw;
       }
-    }
 
-    _logger.LogInformation("Product seeding complete - dispatched {Count} commands", seededCount);
-    return seededCount;
+      return seededCount;
+    } catch (Exception ex) {
+      _logger.LogError(ex, "Failed to dispatch batch of CreateProductCommands");
+      throw;
+    }
   }
 }

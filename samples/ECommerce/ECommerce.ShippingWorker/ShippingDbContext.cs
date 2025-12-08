@@ -13,6 +13,8 @@ namespace ECommerce.ShippingWorker;
 /// </summary>
 [WhizbangDbContext]
 public partial class ShippingDbContext : DbContext {
+  [RequiresUnreferencedCode()]
+  [RequiresDynamicCode()]
   public ShippingDbContext(DbContextOptions<ShippingDbContext> options) : base(options) { }
   // DbSet properties and OnModelCreating are auto-generated in partial class
 }

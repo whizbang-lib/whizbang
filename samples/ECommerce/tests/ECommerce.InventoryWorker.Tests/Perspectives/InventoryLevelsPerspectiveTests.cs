@@ -18,6 +18,8 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
   private readonly DatabaseTestHelper _dbHelper = new();
 
   [Test]
+  [RequiresUnreferencedCode()]
+  [RequiresDynamicCode()]
   public async Task Update_WithInventoryRestockedEvent_CreatesNewInventoryRecordAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();
@@ -46,6 +48,8 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
   }
 
   [Test]
+  [RequiresUnreferencedCode()]
+  [RequiresDynamicCode()]
   public async Task Update_WithInventoryRestockedEvent_UpdatesExistingInventoryAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();
@@ -84,6 +88,8 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
   }
 
   [Test]
+  [RequiresUnreferencedCode()]
+  [RequiresDynamicCode()]
   public async Task Update_WithInventoryRestockedEvent_UpdatesLastUpdatedTimestampAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();
@@ -111,6 +117,8 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
 
 
   [Test]
+  [RequiresUnreferencedCode()]
+  [RequiresDynamicCode()]
   public async Task Update_WithInventoryReservedEvent_UpdatesReservedQuantityAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();
@@ -149,6 +157,8 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
   }
 
   [Test]
+  [RequiresUnreferencedCode()]
+  [RequiresDynamicCode()]
   public async Task Update_WithInventoryReservedEvent_AccumulatesReservationsAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();
@@ -196,6 +206,8 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
   }
 
   [Test]
+  [RequiresUnreferencedCode()]
+  [RequiresDynamicCode()]
   public async Task Update_WithInventoryReservedEvent_UpdatesLastUpdatedTimestampAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();
@@ -233,6 +245,8 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
 
 
   [Test]
+  [RequiresUnreferencedCode()]
+  [RequiresDynamicCode()]
   public async Task Update_WithInventoryAdjustedEvent_UpdatesQuantityAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();
@@ -271,6 +285,8 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
   }
 
   [Test]
+  [RequiresUnreferencedCode()]
+  [RequiresDynamicCode()]
   public async Task Update_WithInventoryAdjustedEvent_HandlesPositiveAdjustmentAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();
@@ -308,6 +324,8 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
   }
 
   [Test]
+  [RequiresUnreferencedCode()]
+  [RequiresDynamicCode()]
   public async Task Update_WithInventoryAdjustedEvent_UpdatesLastUpdatedTimestampAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();

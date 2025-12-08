@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using ECommerce.BFF.API.GraphQL;
 using ECommerce.Integration.Tests.Fixtures;
 
@@ -12,6 +13,8 @@ public class SeedProductsWorkflowTests {
   private static SharedIntegrationFixture? _fixture;
 
   [Before(Test)]
+  [RequiresUnreferencedCode()]
+  [RequiresDynamicCode()]
   public async Task SetupAsync() {
     _fixture = await SharedFixtureSource.GetFixtureAsync();
   }

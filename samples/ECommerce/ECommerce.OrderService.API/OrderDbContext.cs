@@ -13,6 +13,8 @@ namespace ECommerce.OrderService.API;
 /// </summary>
 [WhizbangDbContext]
 public partial class OrderDbContext : DbContext {
+  [RequiresUnreferencedCode()]
+  [RequiresDynamicCode()]
   public OrderDbContext(DbContextOptions<OrderDbContext> options) : base(options) { }
   // DbSet properties and OnModelCreating are auto-generated in partial class
 }
