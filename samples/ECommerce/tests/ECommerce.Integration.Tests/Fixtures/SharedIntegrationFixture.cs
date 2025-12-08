@@ -307,6 +307,17 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     builder.Services.AddScoped<IProductCatalogLens, ProductCatalogLens>();
     builder.Services.AddScoped<IInventoryLevelsLens, InventoryLevelsLens>();
 
+    // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
+    builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
+      new TransportPublishStrategy(
+        sp.GetRequiredService<ITransport>(),
+        jsonOptions
+      )
+    );
+
+    // Register background workers
+    builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
+
     // Register Service Bus consumer to receive events
     var consumerOptions = new ServiceBusConsumerOptions();
     consumerOptions.Subscriptions.Add(new TopicSubscription("products", "bff-service"));
