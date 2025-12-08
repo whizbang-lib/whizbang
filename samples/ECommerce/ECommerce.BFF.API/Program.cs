@@ -107,11 +107,15 @@ builder.Services
 // Create JsonSerializerOptions from global registry (required by workers)
 var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
+// Register transport readiness check (ServiceBusReadinessCheck for Azure Service Bus)
+builder.Services.AddSingleton<ITransportReadinessCheck, Whizbang.Hosting.Azure.ServiceBus.ServiceBusReadinessCheck>();
+
 // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
 builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
   new TransportPublishStrategy(
     sp.GetRequiredService<ITransport>(),
-    jsonOptions
+    jsonOptions,
+    sp.GetRequiredService<ITransportReadinessCheck>()
   )
 );
 

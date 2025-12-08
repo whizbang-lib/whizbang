@@ -56,6 +56,9 @@ _ = builder.Services
 builder.Services.AddReceptors();
 builder.Services.AddWhizbangAggregateIdExtractor();
 
+// Register transport readiness check (ServiceBusReadinessCheck for Azure Service Bus)
+builder.Services.AddSingleton<ITransportReadinessCheck, Whizbang.Hosting.Azure.ServiceBus.ServiceBusReadinessCheck>();
+
 // Register perspectives (ProductCatalogPerspective, InventoryLevelsPerspective, OrderInventoryPerspective)
 // These materialize events into read models using EF Core
 _ = builder.Services.AddWhizbangPerspectives();
@@ -74,7 +77,8 @@ var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombined
 builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
   new TransportPublishStrategy(
     sp.GetRequiredService<ITransport>(),
-    jsonOptions
+    jsonOptions,
+    sp.GetRequiredService<ITransportReadinessCheck>()
   )
 );
 

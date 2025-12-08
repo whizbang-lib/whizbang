@@ -16,15 +16,27 @@ namespace Whizbang.Core.Workers;
 public class TransportPublishStrategy : IMessagePublishStrategy {
   private readonly ITransport _transport;
   private readonly JsonSerializerOptions _jsonOptions;
+  private readonly ITransportReadinessCheck _readinessCheck;
 
   /// <summary>
   /// Creates a new TransportPublishStrategy.
   /// </summary>
   /// <param name="transport">The transport to publish messages to</param>
   /// <param name="jsonOptions">JSON serialization options for deserializing message data</param>
-  public TransportPublishStrategy(ITransport transport, JsonSerializerOptions jsonOptions) {
+  /// <param name="readinessCheck">Readiness check to verify transport is ready before publishing</param>
+  public TransportPublishStrategy(ITransport transport, JsonSerializerOptions jsonOptions, ITransportReadinessCheck readinessCheck) {
     _transport = transport ?? throw new ArgumentNullException(nameof(transport));
     _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
+    _readinessCheck = readinessCheck ?? throw new ArgumentNullException(nameof(readinessCheck));
+  }
+
+  /// <summary>
+  /// Checks if the transport is ready to accept messages by delegating to the readiness check.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>True if transport is ready, false otherwise</returns>
+  public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
+    return _readinessCheck.IsReadyAsync(cancellationToken);
   }
 
   /// <summary>

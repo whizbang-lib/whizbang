@@ -53,12 +53,16 @@ builder.Services.AddReceptors();
 builder.Services.AddWhizbangDispatcher();
 builder.Services.AddWhizbangAggregateIdExtractor();
 
+// Register transport readiness check (ServiceBusReadinessCheck for Azure Service Bus)
+builder.Services.AddSingleton<ITransportReadinessCheck, Whizbang.Hosting.Azure.ServiceBus.ServiceBusReadinessCheck>();
+
 // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
 var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
   new TransportPublishStrategy(
     sp.GetRequiredService<ITransport>(),
-    jsonOptions
+    jsonOptions,
+    sp.GetRequiredService<ITransportReadinessCheck>()
   )
 );
 

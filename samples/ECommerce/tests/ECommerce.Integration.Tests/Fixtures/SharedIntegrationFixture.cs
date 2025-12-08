@@ -217,7 +217,8 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
         sp.GetRequiredService<ITransport>(),
-        jsonOptions
+        jsonOptions,
+        new DefaultTransportReadinessCheck()
       )
     );
 
@@ -311,7 +312,8 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
         sp.GetRequiredService<ITransport>(),
-        jsonOptions
+        jsonOptions,
+        new DefaultTransportReadinessCheck()
       )
     );
 

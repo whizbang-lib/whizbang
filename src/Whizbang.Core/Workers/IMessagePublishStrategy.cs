@@ -13,15 +13,11 @@ namespace Whizbang.Core.Workers;
 public interface IMessagePublishStrategy {
   /// <summary>
   /// Checks if the transport is ready to accept messages.
-  /// Default implementation returns true (always ready).
-  /// Override this method if your transport requires readiness checks (e.g., Azure Service Bus connectivity).
+  /// Implementations should check transport connectivity and return false if not ready.
   /// </summary>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>True if the transport is ready to accept messages, false otherwise</returns>
-  Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
-    cancellationToken.ThrowIfCancellationRequested();
-    return Task.FromResult(true);
-  }
+  Task<bool> IsReadyAsync(CancellationToken cancellationToken = default);
 
   /// <summary>
   /// Publishes a single outbox message to the configured transport.

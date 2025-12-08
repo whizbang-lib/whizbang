@@ -59,11 +59,64 @@ public class TransportPublishStrategyTests {
   }
 
   [Test]
+  public async Task Constructor_NullTransport_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+
+    // Act & Assert
+    await Assert.That(() => new TransportPublishStrategy(null!, jsonOptions, readinessCheck))
+      .Throws<ArgumentNullException>()
+      .Because("Transport cannot be null");
+  }
+
+  [Test]
+  public async Task Constructor_NullJsonOptions_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var transport = new TestTransport();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+
+    // Act & Assert
+    await Assert.That(() => new TransportPublishStrategy(transport, null!, readinessCheck))
+      .Throws<ArgumentNullException>()
+      .Because("JsonOptions cannot be null");
+  }
+
+  [Test]
+  public async Task Constructor_NullReadinessCheck_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var transport = new TestTransport();
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+
+    // Act & Assert
+    await Assert.That(() => new TransportPublishStrategy(transport, jsonOptions, null!))
+      .Throws<ArgumentNullException>()
+      .Because("ReadinessCheck cannot be null");
+  }
+
+  [Test]
+  public async Task IsReadyAsync_DefaultReadinessCheck_ReturnsTrueAsync() {
+    // Arrange
+    var transport = new TestTransport();
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, jsonOptions, readinessCheck);
+
+    // Act
+    var result = await strategy.IsReadyAsync();
+
+    // Assert
+    await Assert.That(result).IsTrue()
+      .Because("DefaultTransportReadinessCheck always returns true");
+  }
+
+  [Test]
   public async Task PublishAsync_SuccessfulPublish_ShouldReturnSuccessResultAsync() {
     // Arrange
     var transport = new TestTransport();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var strategy = new TransportPublishStrategy(transport, jsonOptions);
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, jsonOptions, readinessCheck);
 
     var messageId = Guid.NewGuid();
     var work = new OutboxWork {
@@ -100,7 +153,8 @@ public class TransportPublishStrategyTests {
       PublishResult = Task.FromResult<Exception?>(new InvalidOperationException("Transport unavailable"))
     };
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var strategy = new TransportPublishStrategy(transport, jsonOptions);
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, jsonOptions, readinessCheck);
 
     var messageId = Guid.NewGuid();
     var work = new OutboxWork {
@@ -134,7 +188,8 @@ public class TransportPublishStrategyTests {
     // Arrange
     var transport = new TestTransport();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var strategy = new TransportPublishStrategy(transport, jsonOptions);
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, jsonOptions, readinessCheck);
 
     var messageId = Guid.NewGuid();
     var work = new OutboxWork {
@@ -165,7 +220,8 @@ public class TransportPublishStrategyTests {
     // Arrange
     var transport = new TestTransport();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var strategy = new TransportPublishStrategy(transport, jsonOptions);
+    var readinessCheck = new DefaultTransportReadinessCheck();
+    var strategy = new TransportPublishStrategy(transport, jsonOptions, readinessCheck);
 
     var messageId = Guid.NewGuid();
     var streamId = Guid.NewGuid();

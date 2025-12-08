@@ -23,6 +23,7 @@
     <ProjectReference Include="../../../src/Whizbang.Transports.AzureServiceBus/Whizbang.Transports.AzureServiceBus.csproj" />
     <ProjectReference Include="../ECommerce.Contracts/ECommerce.Contracts.csproj" />
     <ProjectReference Include="..\ECommerce.ServiceDefaults\ECommerce.ServiceDefaults.csproj" />
+    <ProjectReference Include="..\..\..\src\Whizbang.Hosting.Azure.ServiceBus\Whizbang.Hosting.Azure.ServiceBus.csproj" />
   </ItemGroup>
 
 </Project>

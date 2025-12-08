@@ -59,6 +59,10 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
     public Func<OutboxWork, MessagePublishResult>? PublishResultFunc { get; set; }
     public TimeSpan PublishDelay { get; set; } = TimeSpan.Zero;
 
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
+      return Task.FromResult(true);
+    }
+
     public async Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
       if (PublishDelay > TimeSpan.Zero) {
         await Task.Delay(PublishDelay, cancellationToken);

@@ -82,7 +82,8 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
         services.AddSingleton<IMessagePublishStrategy>(sp =>
           new TransportPublishStrategy(
             sp.GetRequiredService<ITransport>(),
-            jsonOptions
+            jsonOptions,
+            new DefaultTransportReadinessCheck()
           )
         );
 

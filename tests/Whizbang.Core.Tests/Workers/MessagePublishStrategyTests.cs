@@ -115,6 +115,11 @@ public class MessagePublishStrategyTests {
   // ========================================
 
   private class DefaultPublishStrategy : IMessagePublishStrategy {
+    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
+      cancellationToken.ThrowIfCancellationRequested();
+      return Task.FromResult(true);
+    }
+
     public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
       return Task.FromResult(new MessagePublishResult {
         MessageId = work.MessageId,
