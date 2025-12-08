@@ -46,6 +46,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       leaseSeconds: 300);
 
     // Assert
@@ -80,6 +82,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: [],
       leaseSeconds: 300);
@@ -117,6 +121,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -158,6 +164,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -201,6 +209,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
+      renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
     // Assert - Should not throw, error should be recorded
@@ -236,6 +246,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -278,6 +290,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       ],
       newOutboxMessages: [],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -341,6 +355,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
+      renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
     // Assert - Should return 2 work items, not the active one
@@ -402,6 +418,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -487,6 +505,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
+      renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
     // Assert
@@ -544,6 +564,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
+      renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
     // Assert - All fields should be populated correctly (not null/default)
@@ -589,6 +611,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -825,6 +849,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
+      renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
     // Act - Instance 2 claims work (should be instance index 1 based on UUID sort order)
@@ -841,6 +867,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -920,6 +948,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
+      renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
     var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext());
@@ -936,6 +966,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
+      renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
     var coordinator3 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext());
@@ -951,6 +983,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -1071,6 +1105,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
+      renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
     // Act - Instance 2 tries to claim work
@@ -1087,6 +1123,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -1154,6 +1192,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -1234,6 +1274,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
+      renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
     // Assert - Message 1 should be marked as failed
@@ -1293,6 +1335,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
+      renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
     // Act - Instance 2 tries to claim work
@@ -1309,6 +1353,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -1363,6 +1409,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 

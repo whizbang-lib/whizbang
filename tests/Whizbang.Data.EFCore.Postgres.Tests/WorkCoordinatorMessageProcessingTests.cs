@@ -54,6 +54,8 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
       ],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
+      renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []
     );
 
@@ -99,6 +101,8 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       leaseSeconds: -1  // Immediately expired lease!
     );
 
@@ -115,6 +119,8 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
       inboxFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []
     );
@@ -159,6 +165,8 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       leaseSeconds: 300  // Long lease
     );
 
@@ -175,6 +183,8 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
       inboxFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []
     );

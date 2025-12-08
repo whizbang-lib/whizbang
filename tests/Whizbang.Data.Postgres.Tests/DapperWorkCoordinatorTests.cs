@@ -45,6 +45,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       leaseSeconds: 300);
 
     // Assert
@@ -1004,6 +1006,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       maxPartitionsPerInstance: 10);
 
     var result2 = await _sut.ProcessWorkBatchAsync(
@@ -1015,6 +1019,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       maxPartitionsPerInstance: 10);
 
     var result3 = await _sut.ProcessWorkBatchAsync(
@@ -1026,6 +1032,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       maxPartitionsPerInstance: 10);
 
     // Assert - Work distributed across instances
@@ -1312,6 +1320,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       staleThresholdSeconds: 300);
 
     // Assert - Stale instance should be deleted
@@ -1347,6 +1357,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       staleThresholdSeconds: 300);
 
     // Assert - Both instances should still exist
