@@ -16,8 +16,6 @@ namespace ECommerce.BFF.API.Tests;
 /// Integration tests for OrderPerspective using unified Whizbang API with EF Core.
 /// Tests verify that the perspective correctly updates the BFF read model when OrderCreatedEvent is received.
 /// </summary>
-[RequiresUnreferencedCode()]
-[RequiresDynamicCode()]
 public class OrderPerspectiveTests : IAsyncDisposable {
   private readonly EFCoreTestHelper _helper = new();
 

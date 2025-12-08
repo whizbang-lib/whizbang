@@ -16,8 +16,6 @@ public class ProductLensTests : IAsyncDisposable {
   private readonly DatabaseTestHelper _dbHelper = new();
 
   [Test]
-  [RequiresUnreferencedCode()]
-  [RequiresDynamicCode()]
   public async Task GetByIdAsync_WithExistingProduct_ReturnsProductDtoAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();
@@ -49,8 +47,6 @@ public class ProductLensTests : IAsyncDisposable {
   }
 
   [Test]
-  [RequiresUnreferencedCode()]
-  [RequiresDynamicCode()]
   public async Task GetByIdAsync_WithNonExistentProduct_ReturnsNullAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();
@@ -64,8 +60,6 @@ public class ProductLensTests : IAsyncDisposable {
   }
 
   [Test]
-  [RequiresUnreferencedCode()]
-  [RequiresDynamicCode()]
   public async Task GetByIdAsync_WithDeletedProduct_ReturnsNullAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();
@@ -97,8 +91,6 @@ public class ProductLensTests : IAsyncDisposable {
   }
 
   [Test]
-  [RequiresUnreferencedCode()]
-  [RequiresDynamicCode()]
   public async Task GetAllAsync_WithNoProducts_ReturnsEmptyListAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();
@@ -113,8 +105,6 @@ public class ProductLensTests : IAsyncDisposable {
   }
 
   [Test]
-  [RequiresUnreferencedCode()]
-  [RequiresDynamicCode()]
   public async Task GetAllAsync_WithMultipleProducts_ReturnsAllNonDeletedAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();
@@ -169,8 +159,6 @@ public class ProductLensTests : IAsyncDisposable {
   }
 
   [Test]
-  [RequiresUnreferencedCode()]
-  [RequiresDynamicCode()]
   public async Task GetAllAsync_WithIncludeDeleted_ReturnsAllProductsAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();
@@ -214,8 +202,6 @@ public class ProductLensTests : IAsyncDisposable {
   }
 
   [Test]
-  [RequiresUnreferencedCode()]
-  [RequiresDynamicCode()]
   public async Task GetByIdsAsync_WithExistingIds_ReturnsMatchingProductsAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();
@@ -263,8 +249,6 @@ public class ProductLensTests : IAsyncDisposable {
   }
 
   [Test]
-  [RequiresUnreferencedCode()]
-  [RequiresDynamicCode()]
   public async Task GetByIdsAsync_WithEmptyList_ReturnsEmptyListAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();
@@ -279,8 +263,6 @@ public class ProductLensTests : IAsyncDisposable {
   }
 
   [Test]
-  [RequiresUnreferencedCode()]
-  [RequiresDynamicCode()]
   public async Task GetByIdsAsync_WithMixedIds_ReturnsOnlyExistingAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();

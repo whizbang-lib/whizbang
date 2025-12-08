@@ -13,8 +13,6 @@ namespace ECommerce.BFF.API.Tests.Lenses;
 /// <summary>
 /// Integration tests for InventoryLevelsLens (BFF) using unified Whizbang API
 /// </summary>
-[RequiresUnreferencedCode()]
-[RequiresDynamicCode()]
 public class InventoryLevelsLensTests : IAsyncDisposable {
   private readonly EFCoreTestHelper _helper = new();
 

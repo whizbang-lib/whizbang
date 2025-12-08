@@ -13,8 +13,6 @@ namespace ECommerce.BFF.API.Tests.Perspectives;
 /// <summary>
 /// Integration tests for InventoryLevelsPerspective (BFF) using unified Whizbang API
 /// </summary>
-[RequiresUnreferencedCode()]
-[RequiresDynamicCode()]
 public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
   private readonly EFCoreTestHelper _helper = new();
 
