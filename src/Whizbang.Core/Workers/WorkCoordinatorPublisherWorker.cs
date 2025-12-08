@@ -42,13 +42,24 @@ public class WorkCoordinatorPublisherWorker(
 
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     _logger.LogInformation(
-      "WorkCoordinator publisher starting: Instance {InstanceId} ({ServiceName}@{HostName}:{ProcessId}), interval: {Interval}ms",
+      "WorkCoordinator publisher starting: Instance {InstanceId} ({ServiceName}@{HostName}:{ProcessId}), interval: {Interval}ms, startup delay: {StartupDelay}ms",
       _instanceProvider.InstanceId,
       _instanceProvider.ServiceName,
       _instanceProvider.HostName,
       _instanceProvider.ProcessId,
-      _options.PollingIntervalMilliseconds
+      _options.PollingIntervalMilliseconds,
+      _options.StartupDelayMilliseconds
     );
+
+    // Wait for startup delay to ensure transport and other dependencies are fully initialized
+    if (_options.StartupDelayMilliseconds > 0) {
+      try {
+        await Task.Delay(_options.StartupDelayMilliseconds, stoppingToken);
+      } catch (OperationCanceledException) {
+        _logger.LogInformation("WorkCoordinator publisher cancelled during startup delay");
+        return;
+      }
+    }
 
     // Start both loops concurrently
     var coordinatorTask = CoordinatorLoopAsync(stoppingToken);
@@ -203,6 +214,13 @@ public class WorkCoordinatorPublisherWorker(
 /// Configuration options for the WorkCoordinator publisher worker.
 /// </summary>
 public class WorkCoordinatorPublisherOptions {
+  /// <summary>
+  /// Milliseconds to wait before starting to process messages.
+  /// Ensures transport and other dependencies are fully initialized.
+  /// Default: 2000 (2 seconds)
+  /// </summary>
+  public int StartupDelayMilliseconds { get; set; } = 2000;
+
   /// <summary>
   /// Milliseconds to wait between polling for work.
   /// Default: 1000 (1 second)
