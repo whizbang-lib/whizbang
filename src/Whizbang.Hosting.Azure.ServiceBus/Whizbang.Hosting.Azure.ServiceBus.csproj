@@ -8,5 +8,11 @@
 
   <ItemGroup>
     <PackageReference Include="Aspire.Hosting.Azure.ServiceBus" />
+    <PackageReference Include="Azure.Messaging.ServiceBus" />
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Whizbang.Core\Whizbang.Core.csproj" />
   </ItemGroup>
 </Project>
