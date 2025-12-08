@@ -164,11 +164,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
       })
       .ToList();
 
-    _logger?.LogInformation(
-      "Work batch processed: {OutboxWork} outbox work, {InboxWork} inbox work",
-      outboxWork.Count,
-      inboxWork.Count
-    );
+    // Only log when there's actual work to report
+    if (outboxWork.Count > 0 || inboxWork.Count > 0) {
+      _logger?.LogInformation(
+        "Work batch processed: {OutboxWork} outbox work, {InboxWork} inbox work",
+        outboxWork.Count,
+        inboxWork.Count
+      );
+    }
 
     return new WorkBatch {
       OutboxWork = outboxWork,
