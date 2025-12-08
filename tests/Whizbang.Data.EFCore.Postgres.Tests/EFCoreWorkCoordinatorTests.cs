@@ -44,6 +44,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       leaseSeconds: 300);
 
     // Assert
@@ -78,6 +80,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       leaseSeconds: 300);
 
     // Assert
@@ -112,7 +116,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert
     await Assert.That(result.OutboxWork).HasCount().EqualTo(0)
@@ -151,7 +157,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert
     await Assert.That(result.OutboxWork).HasCount().EqualTo(0);
@@ -191,7 +199,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Should not throw, error should be recorded
     await Assert.That(result.OutboxWork).HasCount().EqualTo(0);
@@ -225,7 +235,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       ],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert
     await Assert.That(result.InboxWork).HasCount().EqualTo(0);
@@ -265,7 +277,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
         }
       ],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert
     await Assert.That(result.InboxWork).HasCount().EqualTo(0);
@@ -325,7 +339,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Should return 2 work items, not the active one
     await Assert.That(result.OutboxWork).HasCount().EqualTo(2);
@@ -385,7 +401,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert
     await Assert.That(result.OutboxWork).HasCount().EqualTo(0);
@@ -467,7 +485,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
         }
       ],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert
     await Assert.That(result.OutboxWork).HasCount().EqualTo(1)
@@ -522,7 +542,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - All fields should be populated correctly (not null/default)
     await Assert.That(result.OutboxWork).HasCount().EqualTo(1);
@@ -566,7 +588,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - JSON should be returned as text strings
     await Assert.That(result.OutboxWork).HasCount().EqualTo(1);
@@ -799,7 +823,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Act - Instance 2 claims work (should be instance index 1 based on UUID sort order)
     var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext());
@@ -814,7 +840,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Verify each instance only claimed messages with matching modulo
     var claimedByInstance1 = result1.OutboxWork.Select(w => w.MessageId).ToHashSet();
@@ -890,7 +918,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext());
     var result2 = await coordinator2.ProcessWorkBatchAsync(
@@ -904,7 +934,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     var coordinator3 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext());
     var result3 = await coordinator3.ProcessWorkBatchAsync(
@@ -918,7 +950,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert
     var claimedByInstance1 = result1.OutboxWork.Select(w => w.MessageId).ToHashSet();
@@ -1035,7 +1069,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Act - Instance 2 tries to claim work
     var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext());
@@ -1050,7 +1086,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - If instance 1 claimed any messages, instance 2 should NOT claim later messages in the same stream
     var claimed1 = result1.OutboxWork.OrderBy(w => w.SequenceOrder).ToList();
@@ -1115,7 +1153,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Status flags should remain unchanged
     var statusFlags = await GetOutboxStatusFlagsAsync(messageId);
@@ -1192,7 +1232,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Message 1 should be marked as failed
     var message1Status = await GetOutboxStatusFlagsAsync(message1Id);
@@ -1249,7 +1291,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Act - Instance 2 tries to claim work
     var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext());
@@ -1264,7 +1308,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Combined results should include the message
     // The message will be claimed by whichever instance owns its partition (based on modulo distribution)
@@ -1316,7 +1362,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Verify all results were processed correctly in single transaction
     var status1 = await GetOutboxStatusFlagsAsync(message1Id);

@@ -30,6 +30,8 @@ public class DapperWorkCoordinator(
     MessageFailure[] inboxFailures,
     NewOutboxMessage[] newOutboxMessages,
     NewInboxMessage[] newInboxMessages,
+    Guid[] renewOutboxLeaseIds,
+    Guid[] renewInboxLeaseIds,
     WorkBatchFlags flags = WorkBatchFlags.None,
     int partitionCount = 10_000,
     int maxPartitionsPerInstance = 100,
@@ -63,6 +65,8 @@ public class DapperWorkCoordinator(
     var newOutboxJson = SerializeNewOutboxMessages(newOutboxMessages);
     var newInboxJson = SerializeNewInboxMessages(newInboxMessages);
     var metadataJson = SerializeMetadata(metadata);
+    var renewOutboxJson = SerializeLeaseRenewals(renewOutboxLeaseIds);
+    var renewInboxJson = SerializeLeaseRenewals(renewInboxLeaseIds);
 
     // Execute the process_work_batch function
     var sql = @"
@@ -78,6 +82,8 @@ public class DapperWorkCoordinator(
         @p_inbox_failures::jsonb,
         @p_new_outbox_messages::jsonb,
         @p_new_inbox_messages::jsonb,
+        @p_renew_outbox_lease_ids::jsonb,
+        @p_renew_inbox_lease_ids::jsonb,
         @p_lease_seconds::int,
         @p_stale_threshold_seconds::int,
         @p_flags::int,
@@ -97,6 +103,8 @@ public class DapperWorkCoordinator(
       p_inbox_failures = inboxFailuresJson,
       p_new_outbox_messages = newOutboxJson,
       p_new_inbox_messages = newInboxJson,
+      p_renew_outbox_lease_ids = renewOutboxJson,
+      p_renew_inbox_lease_ids = renewInboxJson,
       p_lease_seconds = leaseSeconds,
       p_stale_threshold_seconds = staleThresholdSeconds,
       p_flags = (int)flags,
@@ -239,6 +247,17 @@ public class DapperWorkCoordinator(
       return $"\"{EscapeJson(kvp.Key)}\":{value}";
     });
     return $"{{{string.Join(",", items)}}}";
+  }
+
+  private static string SerializeLeaseRenewals(Guid[] messageIds) {
+    if (messageIds.Length == 0) {
+      return "[]";
+    }
+
+    // Simple JSON array of UUID strings (AOT-safe)
+    // PostgreSQL expects: ["uuid1", "uuid2", ...]
+    var items = messageIds.Select(id => $"\"{id}\"");
+    return $"[{string.Join(",", items)}]";
   }
 }
 

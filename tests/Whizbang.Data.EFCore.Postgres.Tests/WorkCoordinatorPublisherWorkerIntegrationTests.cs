@@ -57,7 +57,9 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
               StreamId = streamId
             }
           ],
-          newInboxMessages: []
+          newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []
     );
 
     // The function should return the newly stored message as work
@@ -99,7 +101,9 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []
     );
 
     // Assert - Database was updated
@@ -172,7 +176,9 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
           StreamId = streamId
         }
       ],
-      newInboxMessages: []
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []
     );
 
     // All 3 messages should be returned as work
@@ -240,7 +246,9 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
           StreamId = streamId
         }
       ],
-      newInboxMessages: []
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []
     );
 
     // First message should be returned
@@ -278,7 +286,9 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
           StreamId = streamId
         }
       ],
-      newInboxMessages: []
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []
     );
 
     // Second message should be returned (because it was just stored)
@@ -322,7 +332,9 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
           StreamId = streamId
         }
       ],
-      newInboxMessages: []
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []
     );
 
     await Assert.That(workBatch1.OutboxWork).HasCount().EqualTo(1);
@@ -355,7 +367,9 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
           StreamId = streamId
         }
       ],
-      newInboxMessages: []
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []
     );
 
     await Assert.That(workBatch2.OutboxWork).HasCount().EqualTo(1);
@@ -388,7 +402,9 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
           StreamId = streamId
         }
       ],
-      newInboxMessages: []
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []
     );
 
     await Assert.That(workBatch3.OutboxWork).HasCount().EqualTo(1);
@@ -410,7 +426,9 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []
     );
 
     // No more work should be returned
@@ -436,7 +454,9 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []
     );
 
     await Assert.That(workBatch.OutboxWork).HasCount().EqualTo(0);

@@ -52,7 +52,9 @@ public class DiagnosticProcessWorkBatchTest : EFCoreTestBase {
           StreamId = streamId
         }
       ],
-      newInboxMessages: []
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []
     );
 
     Console.WriteLine($"WorkBatch1 returned {workBatch1.OutboxWork.Count} messages");
@@ -103,7 +105,9 @@ public class DiagnosticProcessWorkBatchTest : EFCoreTestBase {
           StreamId = streamId
         }
       ],
-      newInboxMessages: []
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []
     );
 
     Console.WriteLine($"WorkBatch2 returned {workBatch2.OutboxWork.Count} messages:");

@@ -207,6 +207,8 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
         inboxFailures: inboxFailures,
         newOutboxMessages: outboxMessages,
         newInboxMessages: inboxMessages,
+        renewOutboxLeaseIds: [],
+        renewInboxLeaseIds: [],
         flags: flags | (_options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None),
         partitionCount: _options.PartitionCount,
         maxPartitionsPerInstance: _options.MaxPartitionsPerInstance,

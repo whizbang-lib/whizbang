@@ -29,6 +29,8 @@ public interface IWorkCoordinator {
   /// <param name="inboxFailures">Inbox message failures with partial completion tracking</param>
   /// <param name="newOutboxMessages">New outbox messages to store (for immediate processing)</param>
   /// <param name="newInboxMessages">New inbox messages to store (with deduplication)</param>
+  /// <param name="renewOutboxLeaseIds">Message IDs to renew lease for (outbox) - for buffered messages awaiting transport</param>
+  /// <param name="renewInboxLeaseIds">Message IDs to renew lease for (inbox) - for buffered messages awaiting processing</param>
   /// <param name="flags">Work batch flags (e.g., DebugMode to preserve completed messages)</param>
   /// <param name="partitionCount">Total number of partitions (default 10,000)</param>
   /// <param name="maxPartitionsPerInstance">Max partitions per instance (default 100)</param>
@@ -48,6 +50,8 @@ public interface IWorkCoordinator {
     MessageFailure[] inboxFailures,
     NewOutboxMessage[] newOutboxMessages,
     NewInboxMessage[] newInboxMessages,
+    Guid[] renewOutboxLeaseIds,
+    Guid[] renewInboxLeaseIds,
     WorkBatchFlags flags = WorkBatchFlags.None,
     int partitionCount = 10_000,
     int maxPartitionsPerInstance = 100,

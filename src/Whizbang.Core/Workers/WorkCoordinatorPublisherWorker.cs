@@ -154,6 +154,11 @@ public class WorkCoordinatorPublisherWorker(
       inboxFailures: [],
       newOutboxMessages: [],  // Not used in publisher worker (dispatcher handles new messages)
       newInboxMessages: [],   // Not used in publisher worker (consumer handles new messages)
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
+      flags: WorkBatchFlags.None,
+      partitionCount: 10_000,
+      maxPartitionsPerInstance: 100,
       leaseSeconds: _options.LeaseSeconds,
       staleThresholdSeconds: _options.StaleThresholdSeconds,
       cancellationToken: cancellationToken

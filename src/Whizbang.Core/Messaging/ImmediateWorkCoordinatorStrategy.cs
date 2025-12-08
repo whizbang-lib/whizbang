@@ -105,6 +105,8 @@ public class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
       inboxFailures: [.. _queuedInboxFailures],
       newOutboxMessages: [.. _queuedOutboxMessages],
       newInboxMessages: [.. _queuedInboxMessages],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       flags: flags | (_options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None),
       partitionCount: _options.PartitionCount,
       maxPartitionsPerInstance: _options.MaxPartitionsPerInstance,

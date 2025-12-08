@@ -52,7 +52,9 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
           StreamId = streamId
         }
       ],
-      newInboxMessages: []
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []
     );
 
     // Assert - Message should be returned in THIS CALL
@@ -95,6 +97,8 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
         }
       ],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       leaseSeconds: -1  // Immediately expired lease!
     );
 
@@ -110,7 +114,9 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []
     );
 
     // Assert - Expired message should be reclaimed
@@ -151,6 +157,8 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
         }
       ],
       newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
       leaseSeconds: 300  // Long lease
     );
 
@@ -166,7 +174,9 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []
     );
 
     // Assert - Should NOT return the message again (still leased)

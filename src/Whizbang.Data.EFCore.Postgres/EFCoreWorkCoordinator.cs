@@ -31,6 +31,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     MessageFailure[] inboxFailures,
     NewOutboxMessage[] newOutboxMessages,
     NewInboxMessage[] newInboxMessages,
+    Guid[] renewOutboxLeaseIds,
+    Guid[] renewInboxLeaseIds,
     WorkBatchFlags flags = WorkBatchFlags.None,
     int partitionCount = 10_000,
     int maxPartitionsPerInstance = 100,
@@ -61,6 +63,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var newOutboxJson = SerializeNewOutboxMessages(newOutboxMessages);
     var newInboxJson = SerializeNewInboxMessages(newInboxMessages);
     var metadataJson = SerializeMetadata(metadata);
+    var renewOutboxJson = SerializeLeaseRenewals(renewOutboxLeaseIds);
+    var renewInboxJson = SerializeLeaseRenewals(renewInboxLeaseIds);
 
     var outboxCompletionsParam = PostgresJsonHelper.JsonStringToJsonb(outboxCompletionsJson);
     outboxCompletionsParam.ParameterName = "p_outbox_completions";
@@ -85,6 +89,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
       : PostgresJsonHelper.NullJsonb();
     metadataParam.ParameterName = "p_metadata";
 
+    var renewOutboxParam = PostgresJsonHelper.JsonStringToJsonb(renewOutboxJson);
+    renewOutboxParam.ParameterName = "p_renew_outbox_lease_ids";
+
+    var renewInboxParam = PostgresJsonHelper.JsonStringToJsonb(renewInboxJson);
+    renewInboxParam.ParameterName = "p_renew_inbox_lease_ids";
+
     // Execute the process_work_batch function
     // Note: Type casts removed because NpgsqlParameter.NpgsqlDbType handles typing
     var sql = @"
@@ -100,6 +110,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
         @p_inbox_failures,
         @p_new_outbox_messages,
         @p_new_inbox_messages,
+        @p_renew_outbox_lease_ids,
+        @p_renew_inbox_lease_ids,
         @p_lease_seconds,
         @p_stale_threshold_seconds,
         @p_flags,
@@ -121,6 +133,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
         inboxFailuresParam,
         newOutboxParam,
         newInboxParam,
+        renewOutboxParam,
+        renewInboxParam,
         new Npgsql.NpgsqlParameter("p_lease_seconds", leaseSeconds),
         new Npgsql.NpgsqlParameter("p_stale_threshold_seconds", staleThresholdSeconds),
         new Npgsql.NpgsqlParameter("p_flags", (int)flags),
@@ -262,6 +276,17 @@ public class EFCoreWorkCoordinator<TDbContext>(
       return $"\"{EscapeJson(kvp.Key)}\":{value}";
     });
     return $"{{{string.Join(",", items)}}}";
+  }
+
+  private static string SerializeLeaseRenewals(Guid[] messageIds) {
+    if (messageIds.Length == 0) {
+      return "[]";
+    }
+
+    // Simple JSON array of UUID strings (AOT-safe)
+    // PostgreSQL expects: ["uuid1", "uuid2", ...]
+    var items = messageIds.Select(id => $"\"{id}\"");
+    return $"[{string.Join(",", items)}]";
   }
 }
 
