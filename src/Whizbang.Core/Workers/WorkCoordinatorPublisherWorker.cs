@@ -39,6 +39,7 @@ public class WorkCoordinatorPublisherWorker(
   private readonly Channel<OutboxWork> _workChannel = Channel.CreateUnbounded<OutboxWork>();
   private readonly ConcurrentBag<MessageCompletion> _completions = new();
   private readonly ConcurrentBag<MessageFailure> _failures = new();
+  private readonly ConcurrentBag<Guid> _leaseRenewals = new();
 
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     _logger.LogInformation(
@@ -84,6 +85,19 @@ public class WorkCoordinatorPublisherWorker(
   private async Task PublisherLoopAsync(CancellationToken stoppingToken) {
     await foreach (var work in _workChannel.Reader.ReadAllAsync(stoppingToken)) {
       try {
+        // Check transport readiness before attempting publish
+        var isReady = await _publishStrategy.IsReadyAsync(stoppingToken);
+        if (!isReady) {
+          // Transport not ready - renew lease to buffer message
+          _leaseRenewals.Add(work.MessageId);
+          _logger.LogDebug(
+            "Transport not ready, buffering message {MessageId} (destination: {Destination})",
+            work.MessageId,
+            work.Destination
+          );
+          continue;
+        }
+
         // Publish via strategy
         var result = await _publishStrategy.PublishAsync(work, stoppingToken);
 
@@ -97,15 +111,17 @@ public class WorkCoordinatorPublisherWorker(
           _failures.Add(new MessageFailure {
             MessageId = work.MessageId,
             CompletedStatus = result.CompletedStatus,
-            Error = result.Error ?? "Unknown error"
+            Error = result.Error ?? "Unknown error",
+            Reason = result.Reason
           });
 
           // Still log individual errors for debugging
           _logger.LogError(
-            "Failed to publish outbox message {MessageId} to {Destination}: {Error}",
+            "Failed to publish outbox message {MessageId} to {Destination}: {Error} (Reason: {Reason})",
             work.MessageId,
             work.Destination,
-            result.Error
+            result.Error,
+            result.Reason
           );
         }
       } catch (Exception ex) when (ex is not OperationCanceledException) {
@@ -118,7 +134,8 @@ public class WorkCoordinatorPublisherWorker(
         _failures.Add(new MessageFailure {
           MessageId = work.MessageId,
           CompletedStatus = work.Status,
-          Error = ex.Message
+          Error = ex.Message,
+          Reason = MessageFailureReason.Unknown
         });
       }
     }
@@ -132,8 +149,10 @@ public class WorkCoordinatorPublisherWorker(
     // Collect accumulated results from publisher loop
     var outboxCompletions = _completions.ToArray();
     var outboxFailures = _failures.ToArray();
+    var renewOutboxLeaseIds = _leaseRenewals.ToArray();
     _completions.Clear();
     _failures.Clear();
+    _leaseRenewals.Clear();
 
     // Get work batch (heartbeat, claim work, return for processing)
     // Each call:
@@ -141,6 +160,7 @@ public class WorkCoordinatorPublisherWorker(
     // - Registers/updates instance + heartbeat
     // - Cleans up stale instances
     // - Claims orphaned work via modulo-based partition distribution
+    // - Renews leases for buffered messages awaiting transport readiness
     // - Returns work for this instance to process
     var workBatch = await workCoordinator.ProcessWorkBatchAsync(
       _instanceProvider.InstanceId,
@@ -154,7 +174,7 @@ public class WorkCoordinatorPublisherWorker(
       inboxFailures: [],
       newOutboxMessages: [],  // Not used in publisher worker (dispatcher handles new messages)
       newInboxMessages: [],   // Not used in publisher worker (consumer handles new messages)
-      renewOutboxLeaseIds: [],
+      renewOutboxLeaseIds: renewOutboxLeaseIds,
       renewInboxLeaseIds: [],
       flags: WorkBatchFlags.None,
       partitionCount: 10_000,
@@ -165,12 +185,13 @@ public class WorkCoordinatorPublisherWorker(
     );
 
     // Log a summary of message processing activity (only if non-zero)
-    int totalActivity = outboxCompletions.Length + outboxFailures.Length + workBatch.OutboxWork.Count + workBatch.InboxWork.Count;
+    int totalActivity = outboxCompletions.Length + outboxFailures.Length + renewOutboxLeaseIds.Length + workBatch.OutboxWork.Count + workBatch.InboxWork.Count;
     if (totalActivity > 0) {
       _logger.LogInformation(
-        "Message batch: Outbox published={Published}, failed={OutboxFailed}, claimed={Claimed} | Inbox claimed={InboxClaimed}, failed={InboxFailed}",
+        "Message batch: Outbox published={Published}, failed={OutboxFailed}, buffered={Buffered}, claimed={Claimed} | Inbox claimed={InboxClaimed}, failed={InboxFailed}",
         outboxCompletions.Length,
         outboxFailures.Length,
+        renewOutboxLeaseIds.Length,
         workBatch.OutboxWork.Count,
         workBatch.InboxWork.Count,
         workBatch.InboxWork.Count  // All inbox currently marked as failed (not yet implemented)
@@ -195,7 +216,8 @@ public class WorkCoordinatorPublisherWorker(
         _failures.Add(new MessageFailure {
           MessageId = inboxMessage.MessageId,
           CompletedStatus = inboxMessage.Status,  // Preserve what was already completed
-          Error = "Inbox processing not yet implemented"
+          Error = "Inbox processing not yet implemented",
+          Reason = MessageFailureReason.Unknown
         });
       }
     }
