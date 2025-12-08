@@ -6,6 +6,7 @@ using Whizbang.Core;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
 using Whizbang.Transports.AzureServiceBus;
@@ -36,6 +37,15 @@ _ = builder.Services
 builder.Services.AddReceptors();
 builder.Services.AddWhizbangDispatcher();
 builder.Services.AddWhizbangAggregateIdExtractor();
+
+// Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
+var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
+  new TransportPublishStrategy(
+    sp.GetRequiredService<ITransport>(),
+    jsonOptions
+  )
+);
 
 // WorkCoordinator publisher - atomic coordination with lease-based work claiming
 builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();

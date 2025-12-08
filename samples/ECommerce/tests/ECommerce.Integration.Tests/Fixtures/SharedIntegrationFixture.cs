@@ -213,6 +213,14 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     consumerOptions.Subscriptions.Add(new TopicSubscription("inventory", "inventory-worker"));
     builder.Services.AddSingleton(consumerOptions);
 
+    // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
+    builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
+      new TransportPublishStrategy(
+        sp.GetRequiredService<ITransport>(),
+        jsonOptions
+      )
+    );
+
     // Register background workers
     builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>

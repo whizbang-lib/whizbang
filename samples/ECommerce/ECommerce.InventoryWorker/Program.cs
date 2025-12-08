@@ -70,6 +70,14 @@ builder.Services.AddScoped<IInventoryLens, InventoryLens>();
 // Create JsonSerializerOptions from global registry (required by workers)
 var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
+// Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
+builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
+  new TransportPublishStrategy(
+    sp.GetRequiredService<ITransport>(),
+    jsonOptions
+  )
+);
+
 // Service Bus consumer - receives events and commands
 var consumerOptions = new ServiceBusConsumerOptions();
 // Event subscription - receives all events published to "products" topic
@@ -95,8 +103,7 @@ builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>(sp =>
   new WorkCoordinatorPublisherWorker(
     sp.GetRequiredService<IServiceInstanceProvider>(),
     sp.GetRequiredService<IServiceScopeFactory>(),
-    sp.GetRequiredService<ITransport>(),
-    jsonOptions,
+    sp.GetRequiredService<IMessagePublishStrategy>(),
     options: null,  // Use default options
     logger: sp.GetRequiredService<ILogger<WorkCoordinatorPublisherWorker>>()
   )

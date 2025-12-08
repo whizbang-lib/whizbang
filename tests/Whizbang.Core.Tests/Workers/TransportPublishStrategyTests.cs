@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -8,11 +10,24 @@ using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
 public class TransportPublishStrategyTests {
+  // Helper to create properly serialized metadata
+  [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = "Test helper - serialization is safe in test context")]
+  [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = "Test helper - not used in AOT context")]
+  private static string CreateMetadata(Guid messageId) {
+    var options = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var metadata = new EnvelopeMetadata {
+      MessageId = MessageId.From(messageId),
+      Hops = new List<MessageHop>()
+    };
+    return JsonSerializer.Serialize(metadata, options);
+  }
+
   private class TestTransport : ITransport {
     public TransportCapabilities Capabilities => new();
 
@@ -47,7 +62,8 @@ public class TransportPublishStrategyTests {
   public async Task PublishAsync_SuccessfulPublish_ShouldReturnSuccessResultAsync() {
     // Arrange
     var transport = new TestTransport();
-    var strategy = new TransportPublishStrategy(transport, new JsonSerializerOptions());
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var strategy = new TransportPublishStrategy(transport, jsonOptions);
 
     var messageId = Guid.NewGuid();
     var work = new OutboxWork {
@@ -55,7 +71,7 @@ public class TransportPublishStrategyTests {
       Destination = "test-topic",
       MessageType = "TestMessage",
       MessageData = "{}",
-      Metadata = "{}",
+      Metadata = CreateMetadata(messageId),
       Scope = null,
       StreamId = Guid.NewGuid(),
       PartitionNumber = 1,
@@ -83,7 +99,8 @@ public class TransportPublishStrategyTests {
     var transport = new TestTransport {
       PublishResult = Task.FromResult<Exception?>(new InvalidOperationException("Transport unavailable"))
     };
-    var strategy = new TransportPublishStrategy(transport, new JsonSerializerOptions());
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var strategy = new TransportPublishStrategy(transport, jsonOptions);
 
     var messageId = Guid.NewGuid();
     var work = new OutboxWork {
@@ -91,7 +108,7 @@ public class TransportPublishStrategyTests {
       Destination = "test-topic",
       MessageType = "TestMessage",
       MessageData = "{}",
-      Metadata = "{}",
+      Metadata = CreateMetadata(messageId),
       Scope = null,
       StreamId = Guid.NewGuid(),
       PartitionNumber = 1,
@@ -116,14 +133,16 @@ public class TransportPublishStrategyTests {
   public async Task PublishAsync_WithNullScope_ShouldPublishSuccessfullyAsync() {
     // Arrange
     var transport = new TestTransport();
-    var strategy = new TransportPublishStrategy(transport, new JsonSerializerOptions());
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var strategy = new TransportPublishStrategy(transport, jsonOptions);
 
+    var messageId = Guid.NewGuid();
     var work = new OutboxWork {
-      MessageId = Guid.NewGuid(),
+      MessageId = messageId,
       Destination = "test-topic",
       MessageType = "TestMessage",
       MessageData = "{}",
-      Metadata = "{}",
+      Metadata = CreateMetadata(messageId),
       Scope = null,  // Explicitly null scope
       StreamId = Guid.NewGuid(),
       PartitionNumber = 1,
@@ -145,15 +164,17 @@ public class TransportPublishStrategyTests {
   public async Task PublishAsync_WithStreamId_ShouldIncludeInEnvelopeAsync() {
     // Arrange
     var transport = new TestTransport();
-    var strategy = new TransportPublishStrategy(transport, new JsonSerializerOptions());
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var strategy = new TransportPublishStrategy(transport, jsonOptions);
 
+    var messageId = Guid.NewGuid();
     var streamId = Guid.NewGuid();
     var work = new OutboxWork {
-      MessageId = Guid.NewGuid(),
+      MessageId = messageId,
       Destination = "test-topic",
       MessageType = "TestMessage",
       MessageData = "{}",
-      Metadata = "{}",
+      Metadata = CreateMetadata(messageId),
       Scope = null,
       StreamId = streamId,
       PartitionNumber = 1,

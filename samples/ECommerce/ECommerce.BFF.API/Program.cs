@@ -107,6 +107,14 @@ builder.Services
 // Create JsonSerializerOptions from global registry (required by workers)
 var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
+// Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
+builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
+  new TransportPublishStrategy(
+    sp.GetRequiredService<ITransport>(),
+    jsonOptions
+  )
+);
+
 // Service Bus consumer - receives events from all services
 // Perspectives are invoked automatically via PerspectiveInvoker
 // NOTE: Subscription names must be unique across all topics in Aspire AppHost model
@@ -133,8 +141,7 @@ builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>(sp =>
   new WorkCoordinatorPublisherWorker(
     sp.GetRequiredService<IServiceInstanceProvider>(),
     sp.GetRequiredService<IServiceScopeFactory>(),
-    sp.GetRequiredService<ITransport>(),
-    jsonOptions,
+    sp.GetRequiredService<IMessagePublishStrategy>(),
     options: null,  // Use default options
     logger: sp.GetRequiredService<ILogger<WorkCoordinatorPublisherWorker>>()
   )

@@ -163,6 +163,15 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
     builder.Services.AddScoped<IProductLens, ProductLens>();
     builder.Services.AddScoped<IInventoryLens, InventoryLens>();
 
+    // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
+      new TransportPublishStrategy(
+        sp.GetRequiredService<ITransport>(),
+        jsonOptions
+      )
+    );
+
     // Service Bus consumer
     var consumerOptions = new ServiceBusConsumerOptions();
     consumerOptions.Subscriptions.Add(new TopicSubscription("products", "inventory-worker"));

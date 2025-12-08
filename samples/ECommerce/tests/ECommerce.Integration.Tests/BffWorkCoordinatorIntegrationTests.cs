@@ -77,6 +77,15 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
           StaleThresholdSeconds = 600
         });
 
+        // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
+        var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+        services.AddSingleton<IMessagePublishStrategy>(sp =>
+          new TransportPublishStrategy(
+            sp.GetRequiredService<ITransport>(),
+            jsonOptions
+          )
+        );
+
         // Register the worker (same as Program.cs)
         services.AddHostedService<WorkCoordinatorPublisherWorker>();
       })
