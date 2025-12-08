@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Events;
 using ECommerce.InventoryWorker.Lenses;
 using ECommerce.InventoryWorker.Perspectives;

@@ -25,25 +25,31 @@ public class EFCoreSnippets {
       entity.ToTable("__TABLE_NAME__");
       entity.HasKey(e => e.Id);
 
+      // Primary key
+      entity.Property(e => e.Id).HasColumnName("id");
+
       // JSONB columns (Npgsql JSONB mapping)
       // Using HasColumnType("jsonb") tells Npgsql to store as JSONB
       // Npgsql automatically handles JSON serialization for complex types
       entity.Property(e => e.Data)
+        .HasColumnName("data")
         .HasColumnType("jsonb")
         .IsRequired();
 
       entity.Property(e => e.Metadata)
+        .HasColumnName("metadata")
         .HasColumnType("jsonb")
         .IsRequired();
 
       entity.Property(e => e.Scope)
+        .HasColumnName("scope")
         .HasColumnType("jsonb")
         .IsRequired();
 
       // System fields
-      entity.Property(e => e.CreatedAt).IsRequired();
-      entity.Property(e => e.UpdatedAt).IsRequired();
-      entity.Property(e => e.Version).IsRequired();
+      entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
+      entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
+      entity.Property(e => e.Version).HasColumnName("version").IsRequired();
 
       // Indexes
       entity.HasIndex(e => e.CreatedAt);
@@ -51,110 +57,8 @@ public class EFCoreSnippets {
     #endregion
   }
 
-  /// <summary>
-  /// Configuration for InboxRecord entity.
-  /// No placeholders.
-  /// </summary>
-  public void InboxEntityConfiguration(ModelBuilder modelBuilder) {
-    #region INBOX_ENTITY_CONFIG_SNIPPET
-    // InboxRecord - Message deduplication
-    modelBuilder.Entity<InboxRecord>(entity => {
-      entity.ToTable("wh_inbox");
-      entity.HasKey(e => e.MessageId);
 
-      entity.Property(e => e.MessageId).IsRequired();
-      entity.Property(e => e.HandlerName).IsRequired();
-      entity.Property(e => e.MessageType).IsRequired();
-      entity.Property(e => e.MessageData).IsRequired().HasColumnType("jsonb");
-      entity.Property(e => e.Metadata).IsRequired().HasColumnType("jsonb");
-      entity.Property(e => e.Scope).HasColumnType("jsonb");
-      entity.Property(e => e.Status).IsRequired();
-      entity.Property(e => e.ReceivedAt).IsRequired();
 
-      entity.HasIndex(e => e.Status);
-      entity.HasIndex(e => e.ReceivedAt);
-    });
-    #endregion
-  }
-
-  /// <summary>
-  /// Configuration for OutboxRecord entity.
-  /// No placeholders.
-  /// </summary>
-  public void OutboxEntityConfiguration(ModelBuilder modelBuilder) {
-    #region OUTBOX_ENTITY_CONFIG_SNIPPET
-    // OutboxRecord - Transactional messaging
-    modelBuilder.Entity<OutboxRecord>(entity => {
-      entity.ToTable("wh_outbox");
-      entity.HasKey(e => e.Id);
-
-      entity.Property(e => e.MessageId).IsRequired();
-      entity.Property(e => e.Destination).IsRequired();
-      entity.Property(e => e.MessageType).IsRequired();
-      entity.Property(e => e.MessageData).IsRequired().HasColumnType("jsonb");
-      entity.Property(e => e.Metadata).IsRequired().HasColumnType("jsonb");
-      entity.Property(e => e.Scope).HasColumnType("jsonb");
-      entity.Property(e => e.Status).IsRequired();
-      entity.Property(e => e.CreatedAt).IsRequired();
-
-      entity.HasIndex(e => e.MessageId);
-      entity.HasIndex(e => e.Status);
-      entity.HasIndex(e => e.CreatedAt);
-    });
-    #endregion
-  }
-
-  /// <summary>
-  /// Configuration for EventStoreRecord entity.
-  /// No placeholders.
-  /// </summary>
-  public void EventStoreEntityConfiguration(ModelBuilder modelBuilder) {
-    #region EVENTSTORE_ENTITY_CONFIG_SNIPPET
-    // EventStoreRecord - Event sourcing
-    modelBuilder.Entity<EventStoreRecord>(entity => {
-      entity.ToTable("wh_events");
-      entity.HasKey(e => e.Id);
-
-      entity.Property(e => e.StreamId).IsRequired();
-      entity.Property(e => e.Sequence).IsRequired();
-      entity.Property(e => e.EventType).IsRequired();
-      entity.Property(e => e.EventData).IsRequired().HasColumnType("jsonb");
-      entity.Property(e => e.Metadata).IsRequired().HasColumnType("jsonb");
-      entity.Property(e => e.Scope).HasColumnType("jsonb");
-      entity.Property(e => e.CreatedAt).IsRequired();
-
-      // Unique constraint on (StreamId, Sequence) for optimistic concurrency
-      entity.HasIndex(e => new { e.StreamId, e.Sequence }).IsUnique();
-      entity.HasIndex(e => e.StreamId);
-      entity.HasIndex(e => e.CreatedAt);
-    });
-    #endregion
-  }
-
-  /// <summary>
-  /// Configuration for ServiceInstanceRecord entity.
-  /// No placeholders.
-  /// </summary>
-  public void ServiceInstanceEntityConfiguration(ModelBuilder modelBuilder) {
-    #region SERVICE_INSTANCE_ENTITY_CONFIG_SNIPPET
-    // ServiceInstanceRecord - Service instance tracking
-    modelBuilder.Entity<ServiceInstanceRecord>(entity => {
-      entity.ToTable("wh_service_instances");
-      entity.HasKey(e => e.InstanceId);
-
-      entity.Property(e => e.InstanceId).IsRequired();
-      entity.Property(e => e.ServiceName).IsRequired().HasMaxLength(200);
-      entity.Property(e => e.HostName).IsRequired().HasMaxLength(200);
-      entity.Property(e => e.ProcessId).IsRequired();
-      entity.Property(e => e.StartedAt).IsRequired();
-      entity.Property(e => e.LastHeartbeatAt).IsRequired();
-      entity.Property(e => e.Metadata).HasColumnType("jsonb");
-
-      entity.HasIndex(e => new { e.ServiceName, e.LastHeartbeatAt });
-      entity.HasIndex(e => e.LastHeartbeatAt);
-    });
-    #endregion
-  }
 
   /// <summary>
   /// AOT-compatible registration for core infrastructure (Inbox, Outbox, EventStore, WorkCoordinator).

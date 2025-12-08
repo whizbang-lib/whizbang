@@ -15,12 +15,22 @@ using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
 using Whizbang.Data.EFCore.Postgres.Generated;
 using Whizbang.Transports.AzureServiceBus;
 
 var builder = WebApplication.CreateBuilder(args);
+
+// Configure detailed console logging for WorkCoordinator
+builder.Logging.ClearProviders();
+builder.Logging.AddSimpleConsole(options => {
+  options.SingleLine = true;
+  options.TimestampFormat = "[HH:mm:ss] ";
+  options.IncludeScopes = true;
+});
+builder.Logging.SetMinimumLevel(Microsoft.Extensions.Logging.LogLevel.Debug);
 
 // Add service defaults (telemetry, health checks, service discovery)
 builder.AddServiceDefaults();
@@ -94,6 +104,9 @@ builder.Services
   .AddSorting()    // Enable ORDER BY clauses
   .AddProjections();  // Enable field selection optimization
 
+// Create JsonSerializerOptions from global registry (required by workers)
+var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+
 // Service Bus consumer - receives events from all services
 // Perspectives are invoked automatically via PerspectiveInvoker
 // NOTE: Subscription names must be unique across all topics in Aspire AppHost model
@@ -103,10 +116,29 @@ consumerOptions.Subscriptions.Add(new TopicSubscription("orders", "sub-bff-order
 consumerOptions.Subscriptions.Add(new TopicSubscription("payments", "sub-bff-payments"));
 consumerOptions.Subscriptions.Add(new TopicSubscription("shipping", "sub-bff-shipping"));
 builder.Services.AddSingleton(consumerOptions);
-builder.Services.AddHostedService<ServiceBusConsumerWorker>();
+builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
+  new ServiceBusConsumerWorker(
+    sp.GetRequiredService<IServiceInstanceProvider>(),
+    sp.GetRequiredService<ITransport>(),
+    sp.GetRequiredService<IServiceScopeFactory>(),
+    jsonOptions,
+    sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
+    sp.GetRequiredService<OrderedStreamProcessor>(),
+    consumerOptions
+  )
+);
 
 // Outbox publisher worker - publishes pending messages from outbox to Service Bus
-builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
+builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>(sp =>
+  new WorkCoordinatorPublisherWorker(
+    sp.GetRequiredService<IServiceInstanceProvider>(),
+    sp.GetRequiredService<IServiceScopeFactory>(),
+    sp.GetRequiredService<ITransport>(),
+    jsonOptions,
+    options: null,  // Use default options
+    logger: sp.GetRequiredService<ILogger<WorkCoordinatorPublisherWorker>>()
+  )
+);
 
 // Add FastEndpoints for REST API (AOT-compatible)
 builder.Services.AddFastEndpoints();

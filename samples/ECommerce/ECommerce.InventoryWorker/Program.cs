@@ -8,6 +8,7 @@ using Whizbang.Core;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
 using Whizbang.Transports.AzureServiceBus;
@@ -66,6 +67,9 @@ builder.Services.AddWhizbangDispatcher();
 builder.Services.AddScoped<IProductLens, ProductLens>();
 builder.Services.AddScoped<IInventoryLens, InventoryLens>();
 
+// Create JsonSerializerOptions from global registry (required by workers)
+var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+
 // Service Bus consumer - receives events and commands
 var consumerOptions = new ServiceBusConsumerOptions();
 // Event subscription - receives all events published to "products" topic
@@ -74,10 +78,29 @@ consumerOptions.Subscriptions.Add(new TopicSubscription("products", "sub-invento
 // Note: Subscription name and destination filter must match those registered in AppHost
 consumerOptions.Subscriptions.Add(new TopicSubscription("inbox", "sub-inbox-inventory", "inventory-service"));
 builder.Services.AddSingleton(consumerOptions);
-builder.Services.AddHostedService<ServiceBusConsumerWorker>();
+builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
+  new ServiceBusConsumerWorker(
+    sp.GetRequiredService<IServiceInstanceProvider>(),
+    sp.GetRequiredService<ITransport>(),
+    sp.GetRequiredService<IServiceScopeFactory>(),
+    jsonOptions,
+    sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
+    sp.GetRequiredService<OrderedStreamProcessor>(),
+    consumerOptions
+  )
+);
 
 // WorkCoordinator publisher - atomic coordination with lease-based work claiming
-builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
+builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>(sp =>
+  new WorkCoordinatorPublisherWorker(
+    sp.GetRequiredService<IServiceInstanceProvider>(),
+    sp.GetRequiredService<IServiceScopeFactory>(),
+    sp.GetRequiredService<ITransport>(),
+    jsonOptions,
+    options: null,  // Use default options
+    logger: sp.GetRequiredService<ILogger<WorkCoordinatorPublisherWorker>>()
+  )
+);
 
 builder.Services.AddHostedService<Worker>();
 

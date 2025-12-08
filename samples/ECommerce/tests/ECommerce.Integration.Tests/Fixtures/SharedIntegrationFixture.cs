@@ -97,6 +97,8 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   /// Initializes the test fixture: starts containers, initializes schemas, and starts service hosts.
   /// This is called ONCE for all tests in the test run.
   /// </summary>
+  [RequiresDynamicCode("EF Core in tests may use dynamic code")]
+  [RequiresUnreferencedCode("EF Core in tests may use unreferenced code")]
   public async Task InitializeAsync(CancellationToken cancellationToken = default) {
     if (_isInitialized) {
       return;
@@ -144,8 +146,13 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Creates the IHost for InventoryWorker with all required services and background workers.
   /// </summary>
+  [RequiresUnreferencedCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
+  [RequiresDynamicCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
   private IHost CreateInventoryHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
+
+    // Register service instance provider
+    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(Guid.CreateVersion7(), "InventoryWorker"));
 
     // Register Azure Service Bus transport
     var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
@@ -226,8 +233,13 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Creates the IHost for BFF with all required services and background workers.
   /// </summary>
+  [RequiresUnreferencedCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
+  [RequiresDynamicCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
   private IHost CreateBffHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
+
+    // Register service instance provider
+    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(Guid.CreateVersion7(), "BFF.API"));
 
     var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
 
@@ -384,4 +396,26 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       );
     }
   }
+}
+
+/// <summary>
+/// Test service instance provider with fixed instance ID and service name.
+/// </summary>
+internal sealed class TestServiceInstanceProvider : IServiceInstanceProvider {
+  public TestServiceInstanceProvider(Guid instanceId, string serviceName) {
+    InstanceId = instanceId;
+    ServiceName = serviceName;
+  }
+
+  public Guid InstanceId { get; }
+  public string ServiceName { get; }
+  public string HostName => "test-host";
+  public int ProcessId => 12345;
+
+  public ServiceInstanceInfo ToInfo() => new() {
+    InstanceId = InstanceId,
+    ServiceName = ServiceName,
+    HostName = HostName,
+    ProcessId = ProcessId
+  };
 }

@@ -8,10 +8,6 @@ namespace Whizbang.Data.EFCore.Postgres.Entities;
 /// Uses PostgreSQL JSONB columns for efficient querying and indexing.
 /// </summary>
 public sealed class OutboxRecord {
-  /// <summary>
-  /// Auto-incrementing primary key for database ordering and batch processing.
-  /// </summary>
-  public long Id { get; set; }
 
   /// <summary>
   /// Unique message ID (idempotency key for downstream consumers).
@@ -52,11 +48,6 @@ public sealed class OutboxRecord {
   /// </summary>
   public JsonDocument? Scope { get; set; }
 
-  /// <summary>
-  /// Publishing status: "Pending", "Publishing", "Published", "Failed".
-  /// Indexed for efficient status queries and batch selection.
-  /// </summary>
-  public required string Status { get; set; }
 
   /// <summary>
   /// Number of publishing attempts (starts at 0).
@@ -83,6 +74,12 @@ public sealed class OutboxRecord {
   public DateTime? PublishedAt { get; set; }
 
   /// <summary>
+  /// UTC timestamp when the message processing was fully completed.
+  /// Used to track completion time separate from published_at.
+  /// </summary>
+  public DateTime? ProcessedAt { get; set; }
+
+  /// <summary>
   /// Service instance ID currently processing this message.
   /// Used for multi-instance coordination and tracking which instance owns the lease.
   /// Null if message is not currently being processed.
@@ -96,17 +93,6 @@ public sealed class OutboxRecord {
   /// </summary>
   public DateTimeOffset? LeaseExpiry { get; set; }
 
-  /// <summary>
-  /// Topic/queue name for routing (e.g., "orders", "inventory").
-  /// Used by outbox processor to route messages to correct destination.
-  /// </summary>
-  public string? Topic { get; set; }
-
-  /// <summary>
-  /// Partition key for ordered processing within a partition.
-  /// Null for messages that don't require ordered processing.
-  /// </summary>
-  public string? PartitionKey { get; set; }
 
   // ========================================
   // Work Coordinator Pattern (Phase 1-7)
@@ -133,17 +119,4 @@ public sealed class OutboxRecord {
   /// </summary>
   public int StatusFlags { get; set; }
 
-  /// <summary>
-  /// Work batch flags indicating metadata about this work item.
-  /// Examples: NewlyStored, Orphaned, FromEventStore, RetryAfterFailure.
-  /// Uses WorkBatchFlags enum.
-  /// </summary>
-  public int Flags { get; set; }
-
-  /// <summary>
-  /// Sequence order for maintaining ordering within a stream.
-  /// Epoch milliseconds from created_at timestamp.
-  /// Used by OrderedStreamProcessor to process messages in correct order.
-  /// </summary>
-  public long SequenceOrder { get; set; }
 }

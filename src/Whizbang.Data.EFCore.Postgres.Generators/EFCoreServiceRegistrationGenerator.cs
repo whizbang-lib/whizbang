@@ -716,9 +716,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
       // Escape the SQL content for C# verbatim string literal (@"...")
       // In verbatim strings, only quotes need escaping (by doubling them)
-      // All other characters (newlines, tabs, backslashes, $, etc.) are preserved literally
+      // IMPORTANT: Also escape curly braces because ExecuteSqlRawAsync treats the string as a format string
       var escapedContent = content
-          .Replace("\"", "\"\"");  // Escape quotes by doubling them (verbatim string rule)
+          .Replace("\"", "\"\"")  // Escape quotes for verbatim string
+          .Replace("{", "{{")     // Escape opening braces for ExecuteSqlRawAsync
+          .Replace("}", "}}");    // Escape closing braces for ExecuteSqlRawAsync
 
       sb.Append($"      (\"{fileName}\", @\"{escapedContent}\")");
 

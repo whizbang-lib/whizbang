@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
-using Npgsql;
 using Testcontainers.PostgreSql;
 using TUnit.Core;
+using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -35,7 +35,8 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
     // Create connection string with DateTimeOffset support
     var baseConnectionString = _postgresContainer.GetConnectionString();
     // Add Timezone=UTC to ensure TIMESTAMPTZ columns map to DateTimeOffset
-    ConnectionString = $"{baseConnectionString};Timezone=UTC";
+    // Add Include Error Detail=true to see detailed error messages for debugging
+    ConnectionString = $"{baseConnectionString};Timezone=UTC;Include Error Detail=true";
 
     // Configure DbContext options
     var optionsBuilder = new DbContextOptionsBuilder<WorkCoordinationDbContext>();
@@ -61,24 +62,10 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
   }
 
   private async Task InitializeDatabaseAsync() {
-    // Let EF Core create the schema from the entity model
-    // This ensures column names match entity properties (snake_case via EF Core naming conventions)
+    // Use generated EnsureWhizbangDatabaseInitializedAsync extension method
+    // This creates all tables, functions, and sequences needed by the EF Core implementation
     await using var dbContext = CreateDbContext();
-    await dbContext.Database.EnsureCreatedAsync();
-
-    // Load and execute the canonical process_work_batch function from shared library
-    // This ensures Dapper and EF Core use the exact same function
-    await using var connection = new NpgsqlConnection(ConnectionString);
-    await connection.OpenAsync();
-
-    var functionPath = Path.Combine(
-      AppContext.BaseDirectory,
-      "..", "..", "..", "..", "..",
-      "src", "Whizbang.Data.Postgres", "Migrations", "004_CreateProcessWorkBatchFunction.sql");
-
-    var functionSql = await File.ReadAllTextAsync(functionPath);
-    await using var functionCommand = new NpgsqlCommand(functionSql, connection);
-    await functionCommand.ExecuteNonQueryAsync();
+    await dbContext.EnsureWhizbangDatabaseInitializedAsync();
   }
 
   /// <summary>

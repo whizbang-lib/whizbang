@@ -8,6 +8,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core;
 using Whizbang.Core.Lenses;
+using Whizbang.Data.EFCore.Postgres.Configuration;
 using Whizbang.Data.EFCore.Postgres.Entities;
 
 namespace Whizbang.Data.EFCore.Postgres.Generated;
@@ -25,26 +26,12 @@ public static class WhizbangModelBuilderExtensions {
   /// <returns>The ModelBuilder for method chaining</returns>
   public static ModelBuilder ConfigureWhizbang(this ModelBuilder modelBuilder) {
 
+    // Configure infrastructure entities (static configuration from library)
+    modelBuilder.ConfigureWhizbangInfrastructure();
+
     #region PERSPECTIVE_CONFIGURATIONS
-    // Discovered Perspective Entities - this region will be replaced
-    #endregion
-
-    // ===== Fixed Whizbang Entities =====
-
-    #region INBOX_CONFIGURATION
-    // InboxRecord configuration - this region will be replaced
-    #endregion
-
-    #region OUTBOX_CONFIGURATION
-    // OutboxRecord configuration - this region will be replaced
-    #endregion
-
-    #region EVENTSTORE_CONFIGURATION
-    // EventStoreRecord configuration - this region will be replaced
-    #endregion
-
-    #region SERVICE_INSTANCE_CONFIGURATION
-    // ServiceInstanceRecord configuration - this region will be replaced
+    // ===== Discovered Perspective Entities =====
+    // Perspective configurations injected here by source generator
     #endregion
 
     return modelBuilder;

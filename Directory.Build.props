@@ -23,10 +23,12 @@
     <WarningsAsErrors>$(WarningsAsErrors);IL2026;IL2046;IL2075</WarningsAsErrors>
   </PropertyGroup>
 
-  <!-- BannedApiAnalyzers - Ban reflection attributes everywhere -->
+  <!-- BannedApiAnalyzers - Ban reflection attributes (except in test projects) -->
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all" />
-    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" />
+    <!-- Only include BannedSymbols.txt for non-test projects -->
+    <!-- Test projects may need RequiresDynamicCode/RequiresUnreferencedCode for test infrastructure (e.g., Npgsql.EnableDynamicJson) -->
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" Condition="'$(IsTestProject)' != 'true' and !$(MSBuildProjectName.Contains('.Tests'))" />
   </ItemGroup>
 
 </Project>

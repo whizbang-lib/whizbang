@@ -213,41 +213,8 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     template = TemplateUtilities.ReplaceRegion(template, "PERSPECTIVE_CONFIGURATIONS", perspectiveConfigs.ToString());
 
-    // Generate inbox configuration
-    var inboxSnippet = TemplateUtilities.ExtractSnippet(
-        assembly,
-        "EFCoreSnippets.cs",
-        "INBOX_ENTITY_CONFIG_SNIPPET",
-        "Whizbang.Data.EFCore.Postgres.Generators.Templates.Snippets"
-    );
-    template = TemplateUtilities.ReplaceRegion(template, "INBOX_CONFIGURATION", inboxSnippet);
-
-    // Generate outbox configuration
-    var outboxSnippet = TemplateUtilities.ExtractSnippet(
-        assembly,
-        "EFCoreSnippets.cs",
-        "OUTBOX_ENTITY_CONFIG_SNIPPET",
-        "Whizbang.Data.EFCore.Postgres.Generators.Templates.Snippets"
-    );
-    template = TemplateUtilities.ReplaceRegion(template, "OUTBOX_CONFIGURATION", outboxSnippet);
-
-    // Generate event store configuration
-    var eventStoreSnippet = TemplateUtilities.ExtractSnippet(
-        assembly,
-        "EFCoreSnippets.cs",
-        "EVENTSTORE_ENTITY_CONFIG_SNIPPET",
-        "Whizbang.Data.EFCore.Postgres.Generators.Templates.Snippets"
-    );
-    template = TemplateUtilities.ReplaceRegion(template, "EVENTSTORE_CONFIGURATION", eventStoreSnippet);
-
-    // Generate service instance configuration
-    var serviceInstanceSnippet = TemplateUtilities.ExtractSnippet(
-        assembly,
-        "EFCoreSnippets.cs",
-        "SERVICE_INSTANCE_ENTITY_CONFIG_SNIPPET",
-        "Whizbang.Data.EFCore.Postgres.Generators.Templates.Snippets"
-    );
-    template = TemplateUtilities.ReplaceRegion(template, "SERVICE_INSTANCE_CONFIGURATION", serviceInstanceSnippet);
+    // Infrastructure configuration is now handled by static WhizbangModelBuilderExtensions.ConfigureWhizbangInfrastructure()
+    // No need to extract and inject infrastructure snippets here
 
     // Generate diagnostic perspective list
     var diagnosticList = new StringBuilder();

@@ -47,11 +47,6 @@ public sealed class InboxRecord {
   /// </summary>
   public JsonDocument? Scope { get; set; }
 
-  /// <summary>
-  /// Processing status: "Pending", "Processing", "Completed", "Failed".
-  /// Indexed for efficient status queries.
-  /// </summary>
-  public required string Status { get; set; }
 
   /// <summary>
   /// Number of processing attempts (starts at 0).
@@ -116,17 +111,4 @@ public sealed class InboxRecord {
   /// </summary>
   public int StatusFlags { get; set; }
 
-  /// <summary>
-  /// Work batch flags indicating metadata about this work item.
-  /// Examples: NewlyStored, Orphaned, FromEventStore, RetryAfterFailure.
-  /// Uses WorkBatchFlags enum.
-  /// </summary>
-  public int Flags { get; set; }
-
-  /// <summary>
-  /// Sequence order for maintaining ordering within a stream.
-  /// Epoch milliseconds from received_at timestamp.
-  /// Used by OrderedStreamProcessor to process messages in correct order.
-  /// </summary>
-  public long SequenceOrder { get; set; }
 }

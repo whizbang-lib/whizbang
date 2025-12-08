@@ -1,3 +1,4 @@
+using System.ComponentModel.DataAnnotations.Schema;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
@@ -181,8 +182,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     // Simple JSON array serialization (AOT-safe)
+    // Property names must match PostgreSQL function expectations (camelCase)
     var items = completions.Select(c =>
-      $"{{\"message_id\":\"{c.MessageId}\",\"status\":{(int)c.Status}}}"
+      $"{{\"messageId\":\"{c.MessageId}\",\"status\":{(int)c.Status}}}"
     );
     return $"[{string.Join(",", items)}]";
   }
@@ -193,8 +195,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     // Simple JSON array serialization (AOT-safe)
+    // Property names must match PostgreSQL function expectations (camelCase)
     var items = failures.Select(f =>
-      $"{{\"message_id\":\"{f.MessageId}\",\"completed_status\":{(int)f.CompletedStatus},\"error\":\"{EscapeJson(f.Error)}\"}}"
+      $"{{\"messageId\":\"{f.MessageId}\",\"completedStatus\":{(int)f.CompletedStatus},\"error\":\"{EscapeJson(f.Error)}\"}}"
     );
     return $"[{string.Join(",", items)}]";
   }
@@ -205,11 +208,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     // Simple JSON array serialization (AOT-safe)
+    // Property names must match PostgreSQL function expectations (camelCase)
     var items = messages.Select(m => {
       var streamId = m.StreamId.HasValue ? $"\"{m.StreamId.Value}\"" : "null";
       var scope = m.Scope != null ? m.Scope : "null";
       var isEvent = m.IsEvent.ToString().ToLowerInvariant();
-      return $"{{\"message_id\":\"{m.MessageId}\",\"destination\":\"{EscapeJson(m.Destination)}\",\"event_type\":\"{EscapeJson(m.EventType)}\",\"event_data\":{m.EventData},\"metadata\":{m.Metadata},\"scope\":{scope},\"stream_id\":{streamId},\"is_event\":{isEvent}}}";
+      return $"{{\"messageId\":\"{m.MessageId}\",\"destination\":\"{EscapeJson(m.Destination)}\",\"eventType\":\"{EscapeJson(m.EventType)}\",\"eventData\":{m.EventData},\"metadata\":{m.Metadata},\"scope\":{scope},\"streamId\":{streamId},\"isEvent\":{isEvent}}}";
     });
     return $"[{string.Join(",", items)}]";
   }
@@ -220,11 +224,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     // Simple JSON array serialization (AOT-safe)
+    // Property names must match PostgreSQL function expectations (camelCase)
     var items = messages.Select(m => {
       var streamId = m.StreamId.HasValue ? $"\"{m.StreamId.Value}\"" : "null";
       var scope = m.Scope != null ? m.Scope : "null";
       var isEvent = m.IsEvent.ToString().ToLowerInvariant();
-      return $"{{\"message_id\":\"{m.MessageId}\",\"handler_name\":\"{EscapeJson(m.HandlerName)}\",\"event_type\":\"{EscapeJson(m.EventType)}\",\"event_data\":{m.EventData},\"metadata\":{m.Metadata},\"scope\":{scope},\"stream_id\":{streamId},\"is_event\":{isEvent}}}";
+      return $"{{\"messageId\":\"{m.MessageId}\",\"handlerName\":\"{EscapeJson(m.HandlerName)}\",\"eventType\":\"{EscapeJson(m.EventType)}\",\"eventData\":{m.EventData},\"metadata\":{m.Metadata},\"scope\":{scope},\"streamId\":{streamId},\"isEvent\":{isEvent}}}";
     });
     return $"[{string.Join(",", items)}]";
   }
@@ -262,17 +267,42 @@ public class EFCoreWorkCoordinator<TDbContext>(
 /// Matches the function's return type structure.
 /// </summary>
 internal class WorkBatchRow {
+  [Column("source")]
   public required string Source { get; set; }  // 'outbox' or 'inbox'
+
+  [Column("msg_id")]
   public required Guid MessageId { get; set; }
+
+  [Column("destination")]
   public string? Destination { get; set; }  // null for inbox
+
+  [Column("event_type")]
   public required string EventType { get; set; }
+
+  [Column("event_data")]
   public required string EventData { get; set; }  // JSON string
+
+  [Column("metadata")]
   public required string Metadata { get; set; }  // JSON string
+
+  [Column("scope")]
   public string? Scope { get; set; }  // JSON string (nullable)
+
+  [Column("stream_uuid")]
   public Guid? StreamId { get; set; }  // Stream ID for ordering
+
+  [Column("partition_num")]
   public int? PartitionNumber { get; set; }  // Partition number
-  public required int Attempts { get; set; }
+
+  [Column("attempts")]
+  public int Attempts { get; set; }
+
+  [Column("status")]
   public required int Status { get; set; }  // MessageProcessingStatus flags
+
+  [Column("flags")]
   public required int Flags { get; set; }  // WorkBatchFlags
+
+  [Column("sequence_order")]
   public required long SequenceOrder { get; set; }  // Epoch milliseconds for ordering
 }

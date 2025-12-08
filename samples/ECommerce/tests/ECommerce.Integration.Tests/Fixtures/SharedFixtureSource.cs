@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+
 namespace ECommerce.Integration.Tests.Fixtures;
 
 /// <summary>
@@ -8,6 +10,8 @@ public static class SharedFixtureSource {
   private static SharedIntegrationFixture? _fixture;
   private static readonly SemaphoreSlim _lock = new(1, 1);
 
+  [RequiresUnreferencedCode("EF Core in tests may use unreferenced code")]
+  [RequiresDynamicCode("EF Core in tests may use dynamic code")]
   public static async Task<SharedIntegrationFixture> GetFixtureAsync() {
     await _lock.WaitAsync();
     try {

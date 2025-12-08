@@ -76,7 +76,10 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
 
     var record = new EventStoreRecord {
       StreamId = streamId,
+      AggregateId = streamId,  // Backwards compatibility: AggregateId = StreamId
+      AggregateType = typeof(TMessage).FullName ?? "Unknown",  // Aggregate type from event type
       Sequence = nextSequence,
+      Version = (int)nextSequence,  // Backwards compatibility: Version = Sequence
       EventType = typeof(TMessage).FullName ?? "Unknown",
       EventData = eventData,
       Metadata = metadataDoc,

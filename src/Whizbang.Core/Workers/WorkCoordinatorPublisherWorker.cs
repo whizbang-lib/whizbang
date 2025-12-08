@@ -34,12 +34,6 @@ public class WorkCoordinatorPublisherWorker(
   private readonly WorkCoordinatorPublisherOptions _options = options ?? new WorkCoordinatorPublisherOptions();
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
 
-  // Track results from previous cycle (for next ProcessWorkBatchAsync call)
-  private List<MessageCompletion> _outboxCompletions = [];
-  private List<MessageFailure> _outboxFailures = [];
-  private List<MessageCompletion> _inboxCompletions = [];
-  private List<MessageFailure> _inboxFailures = [];
-
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     _logger.LogInformation(
       "WorkCoordinator publisher starting: Instance {InstanceId} ({ServiceName}@{HostName}:{ProcessId}), interval: {Interval}ms",
@@ -74,65 +68,104 @@ public class WorkCoordinatorPublisherWorker(
     using var scope = _scopeFactory.CreateScope();
     var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
-    // Call ProcessWorkBatchAsync with results from previous cycle
-    // This atomic call:
-    // 1. Registers/updates this instance + heartbeat
-    // 2. Cleans up stale instances
-    // 3. Reports previous cycle's completions/failures with granular status
-    // 4. Claims partitions and returns work for this instance
-    var workBatch = await workCoordinator.ProcessWorkBatchAsync(
-      _instanceProvider.InstanceId,
-      _instanceProvider.ServiceName,
-      _instanceProvider.HostName,
-      _instanceProvider.ProcessId,
-      metadata: _options.InstanceMetadata,
-      outboxCompletions: [.. _outboxCompletions],
-      outboxFailures: [.. _outboxFailures],
-      inboxCompletions: [.. _inboxCompletions],
-      inboxFailures: [.. _inboxFailures],
-      newOutboxMessages: [],  // Not used in publisher worker (dispatcher handles new messages)
-      newInboxMessages: [],   // Not used in publisher worker (consumer handles new messages)
-      leaseSeconds: _options.LeaseSeconds,
-      staleThresholdSeconds: _options.StaleThresholdSeconds,
-      cancellationToken: cancellationToken
-    );
+    // Result collections persist across loop iterations
+    // This allows us to accumulate results and report them in the next call
+    var outboxCompletions = new List<MessageCompletion>();
+    var outboxFailures = new List<MessageFailure>();
+    var inboxCompletions = new List<MessageCompletion>();
+    var inboxFailures = new List<MessageFailure>();
 
-    // Clear previous cycle's results
-    _outboxCompletions.Clear();
-    _outboxFailures.Clear();
-    _inboxCompletions.Clear();
-    _inboxFailures.Clear();
+    WorkBatch? workBatch;
+    var iterationCount = 0;
 
-    // Process outbox work
-    if (workBatch.OutboxWork.Count > 0) {
-      _logger.LogInformation("Processing {Count} outbox messages", workBatch.OutboxWork.Count);
-      await ProcessOutboxWorkAsync(workBatch.OutboxWork, cancellationToken);
-    }
+    // Keep processing until no more work is returned
+    // This handles:
+    // 1. Initial poll returns work → process it
+    // 2. Reporting results returns NEW work (from concurrent dispatcher calls) → process it
+    // 3. Loop until no work returned AND no results to report
+    do {
+      iterationCount++;
 
-    // Process inbox work
-    // TODO: Implement inbox processing - requires deserializing to typed messages and invoking receptors
-    // For now, log and mark as failed to prevent infinite retry loops
-    if (workBatch.InboxWork.Count > 0) {
-      _logger.LogWarning(
-        "Found {Count} inbox messages - inbox processing not yet implemented, marking as failed",
-        workBatch.InboxWork.Count
+      // Get work batch (heartbeat, claim work, return for processing)
+      // Each call:
+      // - Reports previous results (if any)
+      // - Registers/updates instance + heartbeat
+      // - Cleans up stale instances
+      // - Claims orphaned work via modulo-based partition distribution
+      // - Returns work for this instance to process
+      workBatch = await workCoordinator.ProcessWorkBatchAsync(
+        _instanceProvider.InstanceId,
+        _instanceProvider.ServiceName,
+        _instanceProvider.HostName,
+        _instanceProvider.ProcessId,
+        metadata: _options.InstanceMetadata,
+        outboxCompletions: [.. outboxCompletions],
+        outboxFailures: [.. outboxFailures],
+        inboxCompletions: [.. inboxCompletions],
+        inboxFailures: [.. inboxFailures],
+        newOutboxMessages: [],  // Not used in publisher worker (dispatcher handles new messages)
+        newInboxMessages: [],   // Not used in publisher worker (consumer handles new messages)
+        leaseSeconds: _options.LeaseSeconds,
+        staleThresholdSeconds: _options.StaleThresholdSeconds,
+        cancellationToken: cancellationToken
       );
 
-      foreach (var inboxMessage in workBatch.InboxWork) {
-        _inboxFailures.Add(new MessageFailure {
-          MessageId = inboxMessage.MessageId,
-          CompletedStatus = inboxMessage.Status,  // Preserve what was already completed
-          Error = "Inbox processing not yet implemented"
-        });
-      }
-    }
+      // Clear result collections for next iteration
+      outboxCompletions.Clear();
+      outboxFailures.Clear();
+      inboxCompletions.Clear();
+      inboxFailures.Clear();
 
-    if (workBatch.OutboxWork.Count == 0 && workBatch.InboxWork.Count == 0) {
+      // Process outbox work in UUIDv7 order (chronological)
+      if (workBatch.OutboxWork.Count > 0) {
+        _logger.LogInformation(
+          "Processing {Count} outbox messages (iteration {Iteration})",
+          workBatch.OutboxWork.Count,
+          iterationCount
+        );
+
+        // Sort by MessageId (UUIDv7 has time-based ordering)
+        var orderedOutboxWork = workBatch.OutboxWork.OrderBy(m => m.MessageId).ToList();
+
+        await ProcessOutboxWorkAsync(orderedOutboxWork, outboxCompletions, outboxFailures, cancellationToken);
+      }
+
+      // Process inbox work
+      // TODO: Implement inbox processing - requires deserializing to typed messages and invoking receptors
+      // For now, log and mark as failed to prevent infinite retry loops
+      if (workBatch.InboxWork.Count > 0) {
+        _logger.LogWarning(
+          "Found {Count} inbox messages - inbox processing not yet implemented, marking as failed",
+          workBatch.InboxWork.Count
+        );
+
+        foreach (var inboxMessage in workBatch.InboxWork) {
+          inboxFailures.Add(new MessageFailure {
+            MessageId = inboxMessage.MessageId,
+            CompletedStatus = inboxMessage.Status,  // Preserve what was already completed
+            Error = "Inbox processing not yet implemented"
+          });
+        }
+      }
+
+      // Continue loop if we have results to report (which might return more work)
+    } while (outboxCompletions.Count > 0 || outboxFailures.Count > 0 ||
+             inboxCompletions.Count > 0 || inboxFailures.Count > 0);
+
+    if (iterationCount == 1 && workBatch?.OutboxWork.Count == 0 && workBatch?.InboxWork.Count == 0) {
       _logger.LogTrace("No work to process");
+    } else if (iterationCount > 1) {
+      _logger.LogDebug("Completed {Iterations} processing iterations", iterationCount);
     }
   }
 
-  private async Task ProcessOutboxWorkAsync(List<OutboxWork> messages, CancellationToken cancellationToken) {
+  private async Task ProcessOutboxWorkAsync(
+    List<OutboxWork> messages,
+    List<MessageCompletion> completions,
+    List<MessageFailure> failures,
+    CancellationToken cancellationToken) {
+
+    // Process messages in order (already sorted by MessageId/UUIDv7)
     foreach (var outboxMessage in messages) {
       if (cancellationToken.IsCancellationRequested) {
         break;
@@ -142,7 +175,7 @@ public class WorkCoordinatorPublisherWorker(
         await PublishMessageAsync(outboxMessage, cancellationToken);
 
         // Mark as published successfully (Stored + EventStored + Published)
-        _outboxCompletions.Add(new MessageCompletion {
+        completions.Add(new MessageCompletion {
           MessageId = outboxMessage.MessageId,
           Status = outboxMessage.Status | MessageProcessingStatus.Published
         });
@@ -161,11 +194,37 @@ public class WorkCoordinatorPublisherWorker(
         );
 
         // Report failure, preserving what was already completed (e.g., Stored, EventStored)
-        _outboxFailures.Add(new MessageFailure {
+        failures.Add(new MessageFailure {
           MessageId = outboxMessage.MessageId,
           CompletedStatus = outboxMessage.Status,  // What succeeded before this failure
           Error = ex.Message
         });
+
+        // Stream-based failure cascade: Release all subsequent messages in same stream
+        // This unblocks the stream - later messages can't make progress until this one succeeds
+        var laterInStream = messages
+          .Where(m =>
+            m.StreamId == outboxMessage.StreamId &&
+            m.MessageId.CompareTo(outboxMessage.MessageId) > 0  // UUIDv7 comparison
+          )
+          .ToList();
+
+        if (laterInStream.Count > 0) {
+          _logger.LogWarning(
+            "Releasing {Count} messages in stream {StreamId} due to failure of message {MessageId}",
+            laterInStream.Count,
+            outboxMessage.StreamId,
+            outboxMessage.MessageId
+          );
+
+          // Add to completions to clear leases (Status = 0 means clear lease without marking as processed)
+          foreach (var laterMessage in laterInStream) {
+            completions.Add(new MessageCompletion {
+              MessageId = laterMessage.MessageId,
+              Status = 0  // Clear lease, don't mark any status bits
+            });
+          }
+        }
       }
     }
   }

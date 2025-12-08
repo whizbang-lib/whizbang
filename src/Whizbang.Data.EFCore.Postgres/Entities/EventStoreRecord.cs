@@ -9,9 +9,9 @@ namespace Whizbang.Data.EFCore.Postgres.Entities;
 /// </summary>
 public sealed class EventStoreRecord {
   /// <summary>
-  /// Auto-incrementing primary key for database ordering.
+  /// UUID primary key for the event record.
   /// </summary>
-  public long Id { get; set; }
+  public Guid Id { get; set; }
 
   /// <summary>
   /// Stream identifier (aggregate ID as UUID).
@@ -20,10 +20,26 @@ public sealed class EventStoreRecord {
   public required Guid StreamId { get; set; }
 
   /// <summary>
+  /// Aggregate ID for backwards compatibility.
+  /// Prefer using StreamId for new code.
+  /// </summary>
+  public required Guid AggregateId { get; set; }
+
+  /// <summary>
+  /// Aggregate type name for backwards compatibility.
+  /// </summary>
+  public required string AggregateType { get; set; }
+
+  /// <summary>
   /// Sequence number within the stream (starts at 0, sequential).
   /// Combined with StreamId forms unique constraint for optimistic concurrency.
   /// </summary>
   public required long Sequence { get; set; }
+
+  /// <summary>
+  /// Version number within the stream for optimistic concurrency.
+  /// </summary>
+  public required int Version { get; set; }
 
   /// <summary>
   /// Fully-qualified event type name (e.g., "MyApp.Events.OrderCreated").

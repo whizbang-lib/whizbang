@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using ECommerce.BFF.API.Lenses;
 using ECommerce.BFF.API.Perspectives;
 using ECommerce.BFF.API.Tests.TestHelpers;

@@ -1,6 +1,6 @@
 using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Whizbang.Data.EFCore.Custom;
+using Whizbang.Data.EFCore.Postgres.Configuration;
 using Whizbang.Data.EFCore.Postgres.Entities;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -14,27 +14,23 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public partial class WorkCoordinationDbContext : DbContext {
   public WorkCoordinationDbContext(DbContextOptions<WorkCoordinationDbContext> options) : base(options) { }
 
+  // DbSet properties for infrastructure entities not auto-generated
+  // These are needed so EF Core creates the tables (otherwise only migrations create them)
+  public DbSet<ServiceInstanceRecord> ServiceInstances => Set<ServiceInstanceRecord>();
+  public DbSet<MessageDeduplicationRecord> MessageDeduplication => Set<MessageDeduplicationRecord>();
+  public DbSet<InboxRecord> Inbox => Set<InboxRecord>();
+  public DbSet<OutboxRecord> Outbox => Set<OutboxRecord>();
+  public DbSet<EventStoreRecord> Events => Set<EventStoreRecord>();
+
   // DbSet properties and OnModelCreating are auto-generated in the partial class
   // The generator will configure Inbox, Outbox, EventStore, and ServiceInstance entities
 
   /// <summary>
   /// Extends the auto-generated model configuration.
-  /// ServiceInstanceRecord is now auto-configured in ConfigureWhizbang() with PascalCase.
-  /// Inbox/Outbox/Events are auto-generated with PascalCase (matches SQL function).
+  /// Note: ConfigureWhizbangInfrastructure() is already called by the generated ConfigureWhizbang() method,
+  /// so we don't need to call it here. This method is available for any additional custom configurations.
   /// </summary>
   partial void OnModelCreatingExtended(ModelBuilder modelBuilder) {
-    // Value converter for MessageId: string (C#) to Guid (database)
-    var stringToGuidConverter = new ValueConverter<string, Guid>(
-      v => Guid.Parse(v),
-      v => v.ToString());
-
-    // Add MessageId converters for Outbox and Inbox (MessageId is string in C#, UUID in DB)
-    modelBuilder.Entity<OutboxRecord>(entity => {
-      entity.Property(e => e.MessageId).HasConversion(stringToGuidConverter);
-    });
-
-    modelBuilder.Entity<InboxRecord>(entity => {
-      entity.Property(e => e.MessageId).HasConversion(stringToGuidConverter);
-    });
+    // No additional configuration needed - ConfigureWhizbang() already handles infrastructure entities
   }
 }

@@ -122,11 +122,11 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
     // Act - Initialize database schema
     await MinimalDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(dbContext);
 
-    // Assert - Verify wh_outbox has InstanceId and LeaseExpiry columns (from migration 001)
+    // Assert - Verify wh_outbox has instance_id and lease_expiry columns (from migration 001)
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync();
 
-    var columnNames = new[] { "InstanceId", "LeaseExpiry" };
+    var columnNames = new[] { "instance_id", "lease_expiry" };
 
     foreach (var columnName in columnNames) {
       await using var command = new NpgsqlCommand(
@@ -146,11 +146,11 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
     // Act - Initialize database schema
     await MinimalDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(dbContext);
 
-    // Assert - Verify wh_inbox has InstanceId, LeaseExpiry, and Status columns (from migration 002)
+    // Assert - Verify wh_inbox has instance_id, lease_expiry, and status columns (from migration 002)
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync();
 
-    var columnNames = new[] { "InstanceId", "LeaseExpiry", "Status" };
+    var columnNames = new[] { "instance_id", "lease_expiry", "status" };
 
     foreach (var columnName in columnNames) {
       await using var command = new NpgsqlCommand(

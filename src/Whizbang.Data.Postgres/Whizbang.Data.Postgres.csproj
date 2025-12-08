@@ -18,9 +18,4 @@
     <PackageReference Include="Npgsql" />
   </ItemGroup>
 
-  <ItemGroup>
-    <!-- Embed SQL migration scripts as resources -->
-    <EmbeddedResource Include="Migrations/*.sql" />
-  </ItemGroup>
-
 </Project>
