@@ -84,7 +84,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert
     await Assert.That(result.OutboxWork).HasCount().EqualTo(0);
@@ -122,7 +124,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert
     await Assert.That(result.OutboxWork).HasCount().EqualTo(0);
@@ -159,7 +163,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       ],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert
     await Assert.That(result.InboxWork).HasCount().EqualTo(0);
@@ -199,7 +205,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         }
       ],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert
     await Assert.That(result.InboxWork).HasCount().EqualTo(0);
@@ -263,7 +271,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Should return 2 work items, not the active one
     await Assert.That(result.OutboxWork).HasCount().EqualTo(2);
@@ -325,7 +335,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert
     await Assert.That(result.OutboxWork).HasCount().EqualTo(0);
@@ -409,7 +421,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         }
       ],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert
     await Assert.That(result.OutboxWork).HasCount().EqualTo(1);
@@ -465,7 +479,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [newOutboxMessage],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Message should be stored AND returned for immediate processing
     await Assert.That(result.OutboxWork).HasCount().EqualTo(1);
@@ -509,7 +525,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: [newInboxMessage]);
+      newInboxMessages: [newInboxMessage],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Act - Second call with same message ID should return empty (duplicate)
     var result2 = await _sut.ProcessWorkBatchAsync(
@@ -523,7 +541,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: [newInboxMessage]);
+      newInboxMessages: [newInboxMessage],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - First call returns work
     await Assert.That(result1.InboxWork).HasCount().EqualTo(1);
@@ -566,7 +586,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: [newInboxMessage]);
+      newInboxMessages: [newInboxMessage],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert
     await Assert.That(result.InboxWork).HasCount().EqualTo(1);
@@ -610,7 +632,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [newOutboxMessage],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert
     await Assert.That(result.OutboxWork).HasCount().EqualTo(1);
@@ -659,7 +683,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [newOutboxMessage],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Event should be persisted to event store
     var eventVersion = await GetEventStoreVersionAsync(streamId, expectedVersion: 1);
@@ -699,7 +725,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: [newInboxMessage]);
+      newInboxMessages: [newInboxMessage],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Event should be persisted to event store
     var eventVersion = await GetEventStoreVersionAsync(streamId, expectedVersion: 1);
@@ -743,7 +771,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: [newInboxMessage]);
+      newInboxMessages: [newInboxMessage],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Should handle optimistic concurrency (sequential versioning)
     var event1 = await GetEventStoreVersionAsync(streamId, expectedVersion: 1);
@@ -812,7 +842,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: newOutboxMessages,
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Events should have sequential versions
     var version1 = await GetEventStoreVersionAsync(streamId, expectedVersion: 1);
@@ -854,7 +886,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [newOutboxMessage],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Non-event should NOT be persisted to event store
     var eventVersion = await GetEventStoreVersionAsync(streamId, expectedVersion: 1);
@@ -905,7 +939,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         inboxCompletions: [],
         inboxFailures: [],
         newOutboxMessages: [newOutboxMessage],
-        newInboxMessages: []);
+        newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
     }
 
     // Assert - All messages should have same partition_number
@@ -955,7 +991,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         inboxCompletions: [],
         inboxFailures: [],
         newOutboxMessages: [newOutboxMessage],
-        newInboxMessages: []);
+        newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
     }
 
     // Assert - All partition_numbers in range 0-9999
@@ -1086,7 +1124,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     await Assert.That(resultA.OutboxWork.Count).IsEqualTo(10)
       .Because("Instance A should claim all work initially");
@@ -1108,7 +1148,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Instance B claims orphaned partitions
     await Assert.That(resultB.OutboxWork.Count).IsEqualTo(10)
@@ -1148,7 +1190,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Verify status after first completion
     var status1 = await GetOutboxStatusFlagsAsync(messageId);
@@ -1169,7 +1213,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Status should accumulate (bitwise OR)
     var status2 = await GetOutboxStatusFlagsAsync(messageId);
@@ -1214,7 +1260,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         }
       ],
       newOutboxMessages: [],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Database should reflect partial completion
     var status = await GetInboxStatusFlagsAsync(messageId);
@@ -1272,7 +1320,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [newOutboxMessage],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Check flags for both messages
     var newMessage = result.OutboxWork.FirstOrDefault(w => w.MessageId == newMessageId);
@@ -1404,7 +1454,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [newOutboxMessage],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Verify is_event flag is stored correctly
     var isEvent = await GetOutboxIsEventAsync(messageId);
@@ -1441,7 +1493,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [newOutboxMessage],
-      newInboxMessages: []);
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Verify is_event flag is stored correctly
     var isEvent = await GetOutboxIsEventAsync(messageId);
@@ -1478,7 +1532,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: [newInboxMessage]);
+      newInboxMessages: [newInboxMessage],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Verify is_event flag is stored correctly
     var isEvent = await GetInboxIsEventAsync(messageId);
@@ -1515,7 +1571,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       inboxCompletions: [],
       inboxFailures: [],
       newOutboxMessages: [],
-      newInboxMessages: [newInboxMessage]);
+      newInboxMessages: [newInboxMessage],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Verify is_event flag is stored correctly
     var isEvent = await GetInboxIsEventAsync(messageId);
