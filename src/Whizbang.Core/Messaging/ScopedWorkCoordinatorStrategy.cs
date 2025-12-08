@@ -107,21 +107,17 @@ public class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncDis
         _queuedOutboxFailures.Count == 0 &&
         _queuedInboxCompletions.Count == 0 &&
         _queuedInboxFailures.Count == 0) {
-      _logger?.LogTrace("Scoped flush: No queued operations");
       return new WorkBatch {
         OutboxWork = [],
         InboxWork = []
       };
     }
 
-    _logger?.LogDebug(
-      "Scoped flush: {OutboxMsg} outbox messages, {InboxMsg} inbox messages, {OutboxComp} outbox completions, {OutboxFail} outbox failures, {InboxComp} inbox completions, {InboxFail} inbox failures",
+    // Log a summary of what's being flushed to the database
+    _logger?.LogInformation(
+      "Outbox flush: Queued={Queued} | Inbox flush: Queued={InboxQueued}",
       _queuedOutboxMessages.Count,
-      _queuedInboxMessages.Count,
-      _queuedOutboxCompletions.Count,
-      _queuedOutboxFailures.Count,
-      _queuedInboxCompletions.Count,
-      _queuedInboxFailures.Count
+      _queuedInboxMessages.Count
     );
 
     // Call process_work_batch with all queued operations
@@ -152,12 +148,6 @@ public class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncDis
     _queuedOutboxFailures.Clear();
     _queuedInboxCompletions.Clear();
     _queuedInboxFailures.Clear();
-
-    _logger?.LogInformation(
-      "Scoped flush completed: {OutboxWork} outbox work, {InboxWork} inbox work returned",
-      workBatch.OutboxWork.Count,
-      workBatch.InboxWork.Count
-    );
 
     return workBatch;
   }

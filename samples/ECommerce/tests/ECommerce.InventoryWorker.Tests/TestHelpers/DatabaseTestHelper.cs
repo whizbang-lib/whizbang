@@ -99,6 +99,8 @@ public sealed class DatabaseTestHelper : IAsyncDisposable {
   /// <summary>
   /// Gets the connection string for raw SQL operations if needed.
   /// </summary>
+  [RequiresUnreferencedCode("Test code - reflection allowed")]
+  [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task<string> GetConnectionStringAsync(CancellationToken cancellationToken = default) {
     if (!_isInitialized) {
       await CreateServiceProviderAsync(cancellationToken);

@@ -93,12 +93,6 @@ public class WorkCoordinatorPublisherWorker(
             MessageId = work.MessageId,
             Status = result.CompletedStatus
           });
-
-          _logger.LogDebug(
-            "Published outbox message {MessageId} to {Destination}",
-            work.MessageId,
-            work.Destination
-          );
         } else {
           _failures.Add(new MessageFailure {
             MessageId = work.MessageId,
@@ -106,6 +100,7 @@ public class WorkCoordinatorPublisherWorker(
             Error = result.Error ?? "Unknown error"
           });
 
+          // Still log individual errors for debugging
           _logger.LogError(
             "Failed to publish outbox message {MessageId} to {Destination}: {Error}",
             work.MessageId,
@@ -164,13 +159,21 @@ public class WorkCoordinatorPublisherWorker(
       cancellationToken: cancellationToken
     );
 
+    // Log a summary of message processing activity (only if non-zero)
+    int totalActivity = outboxCompletions.Length + outboxFailures.Length + workBatch.OutboxWork.Count + workBatch.InboxWork.Count;
+    if (totalActivity > 0) {
+      _logger.LogInformation(
+        "Message batch: Outbox published={Published}, failed={OutboxFailed}, claimed={Claimed} | Inbox claimed={InboxClaimed}, failed={InboxFailed}",
+        outboxCompletions.Length,
+        outboxFailures.Length,
+        workBatch.OutboxWork.Count,
+        workBatch.InboxWork.Count,
+        workBatch.InboxWork.Count  // All inbox currently marked as failed (not yet implemented)
+      );
+    }
+
     // Write outbox work to channel for publisher loop
     if (workBatch.OutboxWork.Count > 0) {
-      _logger.LogInformation(
-        "Received {Count} outbox messages from coordinator",
-        workBatch.OutboxWork.Count
-      );
-
       // Sort by MessageId (UUIDv7 has time-based ordering)
       var orderedOutboxWork = workBatch.OutboxWork.OrderBy(m => m.MessageId).ToList();
 
@@ -181,13 +184,8 @@ public class WorkCoordinatorPublisherWorker(
 
     // Process inbox work
     // TODO: Implement inbox processing - requires deserializing to typed messages and invoking receptors
-    // For now, log and mark as failed to prevent infinite retry loops
+    // For now, mark as failed to prevent infinite retry loops
     if (workBatch.InboxWork.Count > 0) {
-      _logger.LogWarning(
-        "Found {Count} inbox messages - inbox processing not yet implemented, marking as failed",
-        workBatch.InboxWork.Count
-      );
-
       foreach (var inboxMessage in workBatch.InboxWork) {
         _failures.Add(new MessageFailure {
           MessageId = inboxMessage.MessageId,
@@ -195,10 +193,6 @@ public class WorkCoordinatorPublisherWorker(
           Error = "Inbox processing not yet implemented"
         });
       }
-    }
-
-    if (workBatch.OutboxWork.Count == 0 && workBatch.InboxWork.Count == 0) {
-      _logger.LogTrace("No work to process");
     }
   }
 

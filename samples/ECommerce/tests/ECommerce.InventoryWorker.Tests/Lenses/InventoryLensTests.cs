@@ -16,6 +16,8 @@ public class InventoryLensTests : IAsyncDisposable {
   private readonly DatabaseTestHelper _dbHelper = new();
 
   [Test]
+  [RequiresUnreferencedCode("Test code - reflection allowed")]
+  [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task GetByProductIdAsync_WithExistingInventory_ReturnsInventoryDtoAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();
@@ -42,6 +44,8 @@ public class InventoryLensTests : IAsyncDisposable {
   }
 
   [Test]
+  [RequiresUnreferencedCode("Test code - reflection allowed")]
+  [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task GetByProductIdAsync_WithNonExistent_ReturnsNullAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();
@@ -55,6 +59,8 @@ public class InventoryLensTests : IAsyncDisposable {
   }
 
   [Test]
+  [RequiresUnreferencedCode("Test code - reflection allowed")]
+  [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task GetAllAsync_WithNoInventory_ReturnsEmptyListAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();
@@ -69,6 +75,8 @@ public class InventoryLensTests : IAsyncDisposable {
   }
 
   [Test]
+  [RequiresUnreferencedCode("Test code - reflection allowed")]
+  [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task GetAllAsync_WithMultipleEntries_ReturnsAllAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();
@@ -108,6 +116,8 @@ public class InventoryLensTests : IAsyncDisposable {
   }
 
   [Test]
+  [RequiresUnreferencedCode("Test code - reflection allowed")]
+  [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task GetAllAsync_CalculatesAvailableCorrectlyAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();
@@ -141,6 +151,8 @@ public class InventoryLensTests : IAsyncDisposable {
   }
 
   [Test]
+  [RequiresUnreferencedCode("Test code - reflection allowed")]
+  [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task GetLowStockAsync_WithDefaultThreshold_ReturnsLowStockAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();
@@ -176,6 +188,8 @@ public class InventoryLensTests : IAsyncDisposable {
   }
 
   [Test]
+  [RequiresUnreferencedCode("Test code - reflection allowed")]
+  [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task GetLowStockAsync_WithCustomThreshold_UsesThresholdAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();
@@ -213,6 +227,8 @@ public class InventoryLensTests : IAsyncDisposable {
   }
 
   [Test]
+  [RequiresUnreferencedCode("Test code - reflection allowed")]
+  [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task GetLowStockAsync_WithNoLowStock_ReturnsEmptyListAsync() {
     // Arrange
     var sp = await _dbHelper.CreateServiceProviderAsync();

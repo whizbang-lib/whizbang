@@ -13,6 +13,8 @@ public class SeedProductsWorkflowTests {
   private static SharedIntegrationFixture? _fixture;
 
   [Before(Test)]
+  [RequiresUnreferencedCode("Test code - reflection allowed")]
+  [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
     _fixture = await SharedFixtureSource.GetFixtureAsync();
   }

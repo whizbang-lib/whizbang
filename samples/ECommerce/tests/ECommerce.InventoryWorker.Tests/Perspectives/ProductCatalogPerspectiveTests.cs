@@ -17,6 +17,8 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
   private readonly DatabaseTestHelper _dbHelper = new();
 
   [Test]
+  [RequiresUnreferencedCode("Test code - reflection allowed")]
+  [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task Update_WithProductCreatedEvent_InsertsProductRecordAsync() {
     // Arrange
     var productId = Guid.CreateVersion7();
@@ -51,6 +53,8 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
   }
 
   [Test]
+  [RequiresUnreferencedCode("Test code - reflection allowed")]
+  [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task Update_WithProductCreatedEvent_HandlesNullImageUrlAsync() {
     // Arrange
     var productId = Guid.CreateVersion7();
@@ -80,6 +84,8 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
 
 
   [Test]
+  [RequiresUnreferencedCode("Test code - reflection allowed")]
+  [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task Update_WithProductUpdatedEvent_UpdatesExistingProductAsync() {
     // Arrange
     var productId = Guid.CreateVersion7();
@@ -123,6 +129,8 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
   }
 
   [Test]
+  [RequiresUnreferencedCode("Test code - reflection allowed")]
+  [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task Update_WithProductUpdatedEvent_HandlesPartialUpdatesAsync() {
     // Arrange
     var productId = Guid.CreateVersion7();
@@ -165,6 +173,8 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
   }
 
   [Test]
+  [RequiresUnreferencedCode("Test code - reflection allowed")]
+  [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task Update_WithProductUpdatedEvent_SetsUpdatedAtTimestampAsync() {
     // Arrange
     var productId = Guid.CreateVersion7();
@@ -205,6 +215,8 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
 
 
   [Test]
+  [RequiresUnreferencedCode("Test code - reflection allowed")]
+  [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task Update_WithProductDeletedEvent_SoftDeletesProductAsync() {
     // Arrange
     var productId = Guid.CreateVersion7();
@@ -243,6 +255,8 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
   }
 
   [Test]
+  [RequiresUnreferencedCode("Test code - reflection allowed")]
+  [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task Update_WithProductDeletedEvent_DoesNotHardDeleteAsync() {
     // Arrange
     var productId = Guid.CreateVersion7();

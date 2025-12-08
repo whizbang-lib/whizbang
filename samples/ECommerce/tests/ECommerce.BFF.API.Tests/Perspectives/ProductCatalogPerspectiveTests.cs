@@ -13,6 +13,8 @@ namespace ECommerce.BFF.API.Tests.Perspectives;
 /// <summary>
 /// Integration tests for ProductCatalogPerspective (BFF) using unified Whizbang API
 /// </summary>
+[RequiresUnreferencedCode("Test code - reflection allowed")]
+[RequiresDynamicCode("Test code - reflection allowed")]
 public class ProductCatalogPerspectiveTests : IAsyncDisposable {
   private readonly EFCoreTestHelper _helper = new();
 

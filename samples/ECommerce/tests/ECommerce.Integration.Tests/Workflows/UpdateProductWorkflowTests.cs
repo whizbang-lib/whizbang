@@ -21,6 +21,8 @@ public class UpdateProductWorkflowTests {
   private static readonly ProductId TestProdUpdateNoInventory = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000206"));
 
   [Before(Test)]
+  [RequiresUnreferencedCode("Test code - reflection allowed")]
+  [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
     _fixture = await SharedFixtureSource.GetFixtureAsync();
   }

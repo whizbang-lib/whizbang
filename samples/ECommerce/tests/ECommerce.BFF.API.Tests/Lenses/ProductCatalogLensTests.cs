@@ -13,6 +13,8 @@ namespace ECommerce.BFF.API.Tests.Lenses;
 /// <summary>
 /// Integration tests for ProductCatalogLens (BFF) using unified Whizbang API
 /// </summary>
+[RequiresUnreferencedCode("Test code - reflection allowed")]
+[RequiresDynamicCode("Test code - reflection allowed")]
 public class ProductCatalogLensTests : IAsyncDisposable {
   private readonly EFCoreTestHelper _helper = new();
 
