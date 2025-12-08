@@ -34,6 +34,8 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
       MessageFailure[] inboxFailures,
       NewOutboxMessage[] newOutboxMessages,
       NewInboxMessage[] newInboxMessages,
+      Guid[] renewOutboxLeaseIds,
+      Guid[] renewInboxLeaseIds,
       WorkBatchFlags flags = WorkBatchFlags.None,
       int partitionCount = 10000,
       int maxPartitionsPerInstance = 100,
