@@ -210,6 +210,13 @@ public record MessageFailure {
   /// Error message or exception details.
   /// </summary>
   public required string Error { get; init; }
+
+  /// <summary>
+  /// Classified reason for the failure.
+  /// Enables typed filtering and handling of different failure scenarios.
+  /// Defaults to Unknown if not specified.
+  /// </summary>
+  public MessageFailureReason Reason { get; init; } = MessageFailureReason.Unknown;
 }
 
 /// <summary>

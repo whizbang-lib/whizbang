@@ -50,4 +50,11 @@ public record MessagePublishResult {
   /// Contains exception details or transport-specific error information.
   /// </summary>
   public string? Error { get; init; }
+
+  /// <summary>
+  /// Classified reason for the failure.
+  /// Enables typed filtering and handling of different failure scenarios.
+  /// Defaults to Unknown for failures, None for successes.
+  /// </summary>
+  public MessageFailureReason Reason { get; init; } = MessageFailureReason.Unknown;
 }

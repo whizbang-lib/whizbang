@@ -16,6 +16,8 @@ namespace ECommerce.BFF.API;
 /// </summary>
 [WhizbangDbContext]
 public partial class BffDbContext : DbContext {
+  [RequiresDynamicCode()]
+  [RequiresUnreferencedCode()]
   public BffDbContext(DbContextOptions<BffDbContext> options) : base(options) { }
 
   // DbSet properties auto-generated in BffDbContext.Generated.g.cs

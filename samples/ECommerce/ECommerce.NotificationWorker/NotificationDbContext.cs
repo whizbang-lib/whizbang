@@ -13,6 +13,8 @@ namespace ECommerce.NotificationWorker;
 /// </summary>
 [WhizbangDbContext]
 public partial class NotificationDbContext : DbContext {
+  [RequiresDynamicCode()]
+  [RequiresUnreferencedCode()]
   public NotificationDbContext(DbContextOptions<NotificationDbContext> options) : base(options) { }
   // DbSet properties and OnModelCreating are auto-generated in partial class
 }
