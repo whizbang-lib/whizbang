@@ -1,5 +1,4 @@
 using System;
-using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -67,8 +66,9 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
   /// <summary>
   /// Reconstructs a MessageEnvelope from OutboxWork data.
   /// Deserializes the stored JSON data and metadata to rebuild the original envelope.
+  /// AOT-safe: Uses JsonSerializerOptions with registered type resolvers from JsonContextRegistry.
   /// </summary>
-  [RequiresUnreferencedCode("Calls System.Text.Json.JsonSerializer.Deserialize<TValue>(String, JsonSerializerOptions)")]
+#pragma warning disable IL2026 // Suppressed because we use AOT-compatible JsonSerializerOptions with type resolvers
   private IMessageEnvelope ReconstructEnvelope(OutboxWork work) {
     // Deserialize metadata to get envelope properties (MessageId, Hops, etc.)
     var metadata = JsonSerializer.Deserialize<EnvelopeMetadata>(work.Metadata, _jsonOptions)
@@ -87,5 +87,6 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
 
     return envelope;
   }
+#pragma warning restore IL2026
 }
 

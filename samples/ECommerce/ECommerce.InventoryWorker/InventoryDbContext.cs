@@ -13,8 +13,6 @@ namespace ECommerce.InventoryWorker;
 /// </summary>
 [WhizbangDbContext]
 public partial class InventoryDbContext : DbContext {
-  [RequiresUnreferencedCode()]
-  [RequiresDynamicCode()]
   public InventoryDbContext(DbContextOptions<InventoryDbContext> options) : base(options) { }
 
   // DbSet properties and OnModelCreating are auto-generated in partial class

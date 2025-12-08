@@ -20,8 +20,6 @@ public class RestockInventoryWorkflowTests {
   private static readonly ProductId TestProdLargeRestock = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000105"));
 
   [Before(Test)]
-  [RequiresUnreferencedCode()]
-  [RequiresDynamicCode()]
   public async Task SetupAsync() {
     _fixture = await SharedFixtureSource.GetFixtureAsync();
   }

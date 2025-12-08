@@ -21,8 +21,6 @@ public class CreateProductWorkflowTests {
   private static readonly ProductId TestProdNoImage = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000030"));
 
   [Before(Test)]
-  [RequiresUnreferencedCode()]
-  [RequiresDynamicCode()]
   public async Task SetupAsync() {
     _fixture = await SharedFixtureSource.GetFixtureAsync();
   }
