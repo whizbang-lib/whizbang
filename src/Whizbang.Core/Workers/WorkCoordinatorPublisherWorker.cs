@@ -97,9 +97,13 @@ public class WorkCoordinatorPublisherWorker(
     // Process any pending outbox messages IMMEDIATELY on startup (before first polling delay)
     // This ensures seeded or pre-existing messages are published right away
     try {
+      _logger.LogDebug("Checking for pending outbox messages on startup...");
       var isDatabaseReady = await _databaseReadinessCheck.IsReadyAsync(stoppingToken);
       if (isDatabaseReady) {
         await ProcessWorkBatchAsync(stoppingToken);
+        _logger.LogDebug("Initial work batch processing complete");
+      } else {
+        _logger.LogWarning("Database not ready on startup - skipping initial work batch processing");
       }
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       _logger.LogError(ex, "Error processing initial work batch on startup");
@@ -272,7 +276,7 @@ public class WorkCoordinatorPublisherWorker(
       cancellationToken: cancellationToken
     );
 
-    // Log a summary of message processing activity (only if non-zero)
+    // Log a summary of message processing activity
     int totalActivity = outboxCompletions.Length + outboxFailures.Length + renewOutboxLeaseIds.Length + workBatch.OutboxWork.Count + workBatch.InboxWork.Count;
     if (totalActivity > 0) {
       _logger.LogInformation(
@@ -284,6 +288,8 @@ public class WorkCoordinatorPublisherWorker(
         workBatch.InboxWork.Count,
         workBatch.InboxWork.Count  // All inbox currently marked as failed (not yet implemented)
       );
+    } else {
+      _logger.LogDebug("Work batch processing: no work claimed (all partitions assigned to other instances or no pending messages)");
     }
 
     // Write outbox work to channel for publisher loop
