@@ -94,6 +94,17 @@ public class WorkCoordinatorPublisherWorker(
   }
 
   private async Task CoordinatorLoopAsync(CancellationToken stoppingToken) {
+    // Process any pending outbox messages IMMEDIATELY on startup (before first polling delay)
+    // This ensures seeded or pre-existing messages are published right away
+    try {
+      var isDatabaseReady = await _databaseReadinessCheck.IsReadyAsync(stoppingToken);
+      if (isDatabaseReady) {
+        await ProcessWorkBatchAsync(stoppingToken);
+      }
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      _logger.LogError(ex, "Error processing initial work batch on startup");
+    }
+
     while (!stoppingToken.IsCancellationRequested) {
       try {
         // Check database readiness before attempting work coordinator call
