@@ -41,6 +41,29 @@ public class WorkCoordinatorPublisherWorker(
   private readonly ConcurrentBag<MessageFailure> _failures = new();
   private readonly ConcurrentBag<Guid> _leaseRenewals = new();
 
+  // Metrics tracking
+  private int _consecutiveNotReadyChecks;
+  private long _totalLeaseRenewals;
+  private long _totalBufferedMessages;
+
+  /// <summary>
+  /// Gets the number of consecutive times the transport was not ready.
+  /// Resets to 0 when transport becomes ready.
+  /// </summary>
+  public int ConsecutiveNotReadyChecks => _consecutiveNotReadyChecks;
+
+  /// <summary>
+  /// Gets the total count of messages buffered due to transport not being ready.
+  /// Accumulates across all batches.
+  /// </summary>
+  public long BufferedMessageCount => _totalBufferedMessages;
+
+  /// <summary>
+  /// Gets the total number of lease renewals performed since worker started.
+  /// Accumulates across all batches.
+  /// </summary>
+  public long TotalLeaseRenewals => _totalLeaseRenewals;
+
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     _logger.LogInformation(
       "WorkCoordinator publisher starting: Instance {InstanceId} ({ServiceName}@{HostName}:{ProcessId}), interval: {Interval}ms",
@@ -90,13 +113,30 @@ public class WorkCoordinatorPublisherWorker(
         if (!isReady) {
           // Transport not ready - renew lease to buffer message
           _leaseRenewals.Add(work.MessageId);
-          _logger.LogDebug(
+          Interlocked.Increment(ref _consecutiveNotReadyChecks);
+          Interlocked.Increment(ref _totalLeaseRenewals);
+          Interlocked.Increment(ref _totalBufferedMessages);
+
+          // Log at Information level (important operational event)
+          _logger.LogInformation(
             "Transport not ready, buffering message {MessageId} (destination: {Destination})",
             work.MessageId,
             work.Destination
           );
+
+          // Warn if transport has been continuously unavailable
+          if (_consecutiveNotReadyChecks > 10) {
+            _logger.LogWarning(
+              "Transport not ready for {ConsecutiveCount} consecutive messages. Messages are being buffered with lease renewal.",
+              _consecutiveNotReadyChecks
+            );
+          }
+
           continue;
         }
+
+        // Transport is ready - reset consecutive counter
+        Interlocked.Exchange(ref _consecutiveNotReadyChecks, 0);
 
         // Publish via strategy
         var result = await _publishStrategy.PublishAsync(work, stoppingToken);
