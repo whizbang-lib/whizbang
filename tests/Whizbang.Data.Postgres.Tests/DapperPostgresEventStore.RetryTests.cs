@@ -188,7 +188,7 @@ public class DapperPostgresEventStoreRetryTests {
     using var connection = await _testBase.ConnectionFactory.CreateConnectionAsync();
     await _testBase.Executor.ExecuteAsync(
       connection,
-      "DROP TABLE IF EXISTS wb_event_store CASCADE",
+      "DROP TABLE IF EXISTS wh_event_store CASCADE",
       new { });
 
     // Act & Assert - Should throw exception (not unique violation, so no retry)

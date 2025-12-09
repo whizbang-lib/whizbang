@@ -131,8 +131,8 @@ public class DapperWorkCoordinator(
         MessageData = r.event_data,
         Metadata = r.metadata,
         Scope = r.scope,
-        StreamId = r.stream_id,
-        PartitionNumber = r.partition_number,
+        StreamId = r.stream_uuid,
+        PartitionNumber = r.partition_num,
         Attempts = r.attempts,
         Status = (MessageProcessingStatus)r.status,
         Flags = (WorkBatchFlags)r.flags,
@@ -148,8 +148,8 @@ public class DapperWorkCoordinator(
         MessageData = r.event_data,
         Metadata = r.metadata,
         Scope = r.scope,
-        StreamId = r.stream_id,
-        PartitionNumber = r.partition_number,
+        StreamId = r.stream_uuid,
+        PartitionNumber = r.partition_num,
         Status = (MessageProcessingStatus)r.status,
         Flags = (WorkBatchFlags)r.flags,
         SequenceOrder = r.sequence_order
@@ -273,8 +273,8 @@ internal class WorkBatchRow {
   public required string event_data { get; set; }  // JSON string
   public required string metadata { get; set; }  // JSON string
   public string? scope { get; set; }  // JSON string (nullable)
-  public Guid? stream_id { get; set; }  // Stream ID for ordering
-  public int? partition_number { get; set; }  // Partition number
+  public Guid? stream_uuid { get; set; }  // Stream ID for ordering (matches SQL column name)
+  public int? partition_num { get; set; }  // Partition number (matches SQL column name)
   public required int attempts { get; set; }
   public required int status { get; set; }  // MessageProcessingStatus flags
   public required int flags { get; set; }  // WorkBatchFlags
