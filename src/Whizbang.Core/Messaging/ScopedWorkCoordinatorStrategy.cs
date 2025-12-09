@@ -17,6 +17,7 @@ namespace Whizbang.Core.Messaging;
 public class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncDisposable {
   private readonly IWorkCoordinator _coordinator;
   private readonly IServiceInstanceProvider _instanceProvider;
+  private readonly IWorkChannelWriter? _workChannelWriter;
   private readonly WorkCoordinatorOptions _options;
   private readonly ILogger<ScopedWorkCoordinatorStrategy>? _logger;
 
@@ -33,11 +34,13 @@ public class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncDis
   public ScopedWorkCoordinatorStrategy(
     IWorkCoordinator coordinator,
     IServiceInstanceProvider instanceProvider,
+    IWorkChannelWriter? workChannelWriter,
     WorkCoordinatorOptions options,
     ILogger<ScopedWorkCoordinatorStrategy>? logger = null
   ) {
     _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
+    _workChannelWriter = workChannelWriter;
     _options = options ?? throw new ArgumentNullException(nameof(options));
     _logger = logger;
   }
@@ -150,6 +153,17 @@ public class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncDis
     _queuedOutboxFailures.Clear();
     _queuedInboxCompletions.Clear();
     _queuedInboxFailures.Clear();
+
+    // Write returned work to channel for immediate processing
+    // This is the critical fix: work returned from process_work_batch should be
+    // queued for processing immediately, not returned to the caller (Dispatcher)
+    if (_workChannelWriter != null && workBatch.OutboxWork.Count > 0) {
+      _logger?.LogDebug("Writing {Count} returned outbox messages to channel for immediate processing", workBatch.OutboxWork.Count);
+
+      foreach (var work in workBatch.OutboxWork) {
+        await _workChannelWriter.WriteAsync(work, ct);
+      }
+    }
 
     return workBatch;
   }

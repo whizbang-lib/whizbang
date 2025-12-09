@@ -33,6 +33,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     var sut = new ScopedWorkCoordinatorStrategy(
       fakeCoordinator,
       instanceProvider,
+      null,  // IWorkChannelWriter (not needed for these tests)
       options
     );
 
@@ -90,6 +91,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     var sut = new ScopedWorkCoordinatorStrategy(
       fakeCoordinator,
       instanceProvider,
+      null,  // IWorkChannelWriter (not needed for these tests)
       options
     );
 
@@ -139,6 +141,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     var sut = new ScopedWorkCoordinatorStrategy(
       fakeCoordinator,
       instanceProvider,
+      null,  // IWorkChannelWriter (not needed for these tests)
       options
     );
 
