@@ -482,10 +482,6 @@ public abstract class Dispatcher(
   /// Creates a complete MessageEnvelope with a hop indicating "stored to outbox".
   /// </summary>
   private async Task PublishToOutboxViaScopeAsync<TEvent>(TEvent @event, Type eventType) {
-    if (_jsonOptions == null) {
-      throw new InvalidOperationException("JsonSerializerOptions required for event serialization. Register JsonSerializerOptions in DI container.");
-    }
-
     // Create scope to resolve scoped IWorkCoordinatorStrategy
     var scope = _scopeFactory.CreateScope();
     try {
@@ -494,6 +490,10 @@ public abstract class Dispatcher(
       // If no strategy is registered, skip outbox routing (local-only event)
       if (strategy == null) {
         return;
+      }
+
+      if (_jsonOptions == null) {
+        throw new InvalidOperationException("JsonSerializerOptions required for event serialization. Register JsonSerializerOptions in DI container.");
       }
 
       // Determine destination topic from event type name
@@ -601,10 +601,6 @@ public abstract class Dispatcher(
     string callerFilePath,
     int callerLineNumber
   ) {
-    if (_jsonOptions == null) {
-      throw new InvalidOperationException("JsonSerializerOptions required for message serialization. Register JsonSerializerOptions in DI container.");
-    }
-
     // Create scope to resolve scoped IWorkCoordinatorStrategy
     var scope = _scopeFactory.CreateScope();
     try {
@@ -613,6 +609,10 @@ public abstract class Dispatcher(
       // If no strategy is registered, throw - no local receptor and no outbox
       if (strategy == null) {
         throw new HandlerNotFoundException(messageType);
+      }
+
+      if (_jsonOptions == null) {
+        throw new InvalidOperationException("JsonSerializerOptions required for message serialization. Register JsonSerializerOptions in DI container.");
       }
 
       // Determine destination topic from message type name
