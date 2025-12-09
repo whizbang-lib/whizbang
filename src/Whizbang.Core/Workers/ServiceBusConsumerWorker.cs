@@ -32,15 +32,19 @@ public class ServiceBusConsumerWorker(
   private readonly List<ISubscription> _subscriptions = [];
   private readonly ServiceBusConsumerOptions _options = options ?? new ServiceBusConsumerOptions();
 
-  protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
+  /// <summary>
+  /// Starts the worker and creates all subscriptions BEFORE background processing begins.
+  /// This ensures subscriptions are ready before ExecuteAsync runs (blocking initialization).
+  /// </summary>
+  public override async Task StartAsync(CancellationToken cancellationToken) {
     using var activity = WhizbangActivitySource.Hosting.StartActivity("ServiceBusConsumerWorker.Start");
     activity?.SetTag("worker.subscriptions_count", _options.Subscriptions.Count);
     activity?.SetTag("servicebus.has_filter", _options.Subscriptions.Any(s => !string.IsNullOrWhiteSpace(s.DestinationFilter)));
 
-    _logger.LogInformation("ServiceBusConsumerWorker starting...");
+    _logger.LogInformation("ServiceBusConsumerWorker starting - creating subscriptions...");
 
     try {
-      // Subscribe to configured topics
+      // Subscribe to configured topics (BLOCKING - ensures subscriptions ready before ExecuteAsync)
       foreach (var topicConfig in _options.Subscriptions) {
         // Create destination with DestinationFilter metadata if specified
         var metadata = !string.IsNullOrWhiteSpace(topicConfig.DestinationFilter)
@@ -56,7 +60,7 @@ public class ServiceBusConsumerWorker(
         var subscription = await _transport.SubscribeAsync(
           async (envelope, ct) => await HandleMessageAsync(envelope, ct),
           destination,
-          stoppingToken
+          cancellationToken
         );
 
         _subscriptions.Add(subscription);
@@ -68,6 +72,24 @@ public class ServiceBusConsumerWorker(
         );
       }
 
+      _logger.LogInformation("ServiceBusConsumerWorker subscriptions ready ({Count} subscriptions)", _subscriptions.Count);
+
+      // Call base.StartAsync to trigger ExecuteAsync
+      await base.StartAsync(cancellationToken);
+    } catch (Exception ex) {
+      _logger.LogError(ex, "Failed to start ServiceBusConsumerWorker - subscriptions not ready");
+      throw;
+    }
+  }
+
+  /// <summary>
+  /// Background processing loop - keeps worker alive while subscriptions process messages.
+  /// Subscriptions are already created in StartAsync (blocking), so this just waits.
+  /// </summary>
+  protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
+    _logger.LogInformation("ServiceBusConsumerWorker background processing started");
+
+    try {
       // Keep the worker running while subscriptions are active
       await Task.Delay(Timeout.Infinite, stoppingToken);
     } catch (OperationCanceledException) {
