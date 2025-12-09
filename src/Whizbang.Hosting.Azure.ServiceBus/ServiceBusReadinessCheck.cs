@@ -6,9 +6,11 @@ namespace Whizbang.Hosting.Azure.ServiceBus;
 
 /// <summary>
 /// Checks if Azure Service Bus is ready to accept messages.
+/// Leverages transport initialization state for accurate readiness tracking.
 /// Implements caching to avoid excessive health checks.
 /// </summary>
 public class ServiceBusReadinessCheck : ITransportReadinessCheck {
+  private readonly ITransport _transport;
   private readonly ServiceBusClient _client;
   private readonly ILogger<ServiceBusReadinessCheck> _logger;
   private readonly TimeSpan _cacheDuration;
@@ -16,15 +18,24 @@ public class ServiceBusReadinessCheck : ITransportReadinessCheck {
   private readonly SemaphoreSlim _lock = new(1, 1);
 
   public ServiceBusReadinessCheck(
+    ITransport transport,
     ServiceBusClient client,
     ILogger<ServiceBusReadinessCheck> logger,
     TimeSpan? cacheDuration = null) {
+    _transport = transport ?? throw new ArgumentNullException(nameof(transport));
     _client = client ?? throw new ArgumentNullException(nameof(client));
     _logger = logger ?? throw new ArgumentNullException(nameof(logger));
     _cacheDuration = cacheDuration ?? TimeSpan.FromSeconds(30);
   }
 
   public async Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
+    // CRITICAL: Check if transport is initialized first
+    // Transport.InitializeAsync() verifies actual connectivity to Service Bus
+    if (!_transport.IsInitialized) {
+      _logger.LogDebug("Service Bus readiness check: Transport not initialized");
+      return false;
+    }
+
     // Check cache first (only for successful checks)
     if (_lastSuccessfulCheck.HasValue &&
         DateTimeOffset.UtcNow - _lastSuccessfulCheck.Value < _cacheDuration) {
@@ -34,6 +45,12 @@ public class ServiceBusReadinessCheck : ITransportReadinessCheck {
 
     await _lock.WaitAsync(cancellationToken);
     try {
+      // Double-check transport initialization after acquiring lock
+      if (!_transport.IsInitialized) {
+        _logger.LogDebug("Service Bus readiness check: Transport not initialized");
+        return false;
+      }
+
       // Double-check cache after acquiring lock
       if (_lastSuccessfulCheck.HasValue &&
           DateTimeOffset.UtcNow - _lastSuccessfulCheck.Value < _cacheDuration) {
@@ -41,7 +58,7 @@ public class ServiceBusReadinessCheck : ITransportReadinessCheck {
         return true;
       }
 
-      // Check if client is closed
+      // Check if client is closed (transport could become disconnected after initialization)
       if (_client.IsClosed) {
         _logger.LogWarning("Service Bus readiness check: Client is closed");
         return false;

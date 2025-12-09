@@ -35,10 +35,25 @@ public static class ServiceCollectionExtensions {
     // This allows workers to deserialize messages using the same JSON context
     services.AddSingleton(jsonOptions);
 
+    // Register ServiceBusClient as singleton (needed by ServiceBusReadinessCheck)
+    services.AddSingleton(sp => new Azure.Messaging.ServiceBus.ServiceBusClient(connectionString));
+
     // Register transport as singleton
     services.AddSingleton<ITransport>(sp => {
       var logger = sp.GetService<ILogger<AzureServiceBusTransport>>();
-      return new AzureServiceBusTransport(connectionString, jsonOptions, options, logger);
+      var transport = new AzureServiceBusTransport(connectionString, jsonOptions, options, logger);
+
+      // IMPORTANT: Initialize transport during registration to verify connectivity
+      // This ensures the application won't start if Service Bus is unreachable
+      try {
+        transport.InitializeAsync().GetAwaiter().GetResult();
+        logger?.LogInformation("Azure Service Bus transport initialized successfully during registration");
+      } catch (Exception ex) {
+        logger?.LogError(ex, "Failed to initialize Azure Service Bus transport during registration - application startup will fail");
+        throw;
+      }
+
+      return transport;
     });
 
     return services;

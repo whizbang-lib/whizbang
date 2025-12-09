@@ -22,6 +22,7 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly bool _isEmulator;
   private bool _disposed;
+  private bool _isInitialized;
 
   public AzureServiceBusTransport(
     string connectionString,
@@ -62,6 +63,61 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
     activity?.SetTag("transport.type", "AzureServiceBus");
     activity?.SetTag("transport.emulator", _isEmulator);
     activity?.SetTag("transport.admin_client_available", _adminClient != null);
+  }
+
+  /// <inheritdoc />
+  public bool IsInitialized => _isInitialized;
+
+  /// <inheritdoc />
+  public async Task InitializeAsync(CancellationToken cancellationToken = default) {
+    using var activity = WhizbangActivitySource.Transport.StartActivity("AzureServiceBusTransport.Initialize");
+
+    cancellationToken.ThrowIfCancellationRequested();
+
+    // Idempotent - only initialize once
+    if (_isInitialized) {
+      _logger.LogDebug("Transport already initialized, skipping");
+      return;
+    }
+
+    try {
+      // Verify client is not closed
+      if (_client.IsClosed) {
+        throw new InvalidOperationException("ServiceBusClient is closed and cannot be initialized");
+      }
+
+      // For emulator, we can't verify connectivity via admin API (not supported)
+      // Just mark as initialized if client is not closed
+      if (_isEmulator) {
+        _logger.LogInformation("Emulator detected - marking transport as initialized (admin verification skipped)");
+        _isInitialized = true;
+        activity?.SetTag("transport.initialized", true);
+        activity?.SetTag("transport.verification_method", "emulator_skip");
+        return;
+      }
+
+      // For production Service Bus, verify connectivity via admin client
+      if (_adminClient != null) {
+        // Simple connectivity check - try to list namespaces (lightweight operation)
+        // This will throw if Service Bus is not reachable
+        await _adminClient.GetNamespacePropertiesAsync(cancellationToken);
+
+        _logger.LogInformation("Azure Service Bus transport initialized successfully - connectivity verified");
+        _isInitialized = true;
+        activity?.SetTag("transport.initialized", true);
+        activity?.SetTag("transport.verification_method", "admin_api");
+      } else {
+        // No admin client available - just check if regular client is open
+        _logger.LogWarning("Admin client not available - marking transport as initialized without connectivity verification");
+        _isInitialized = true;
+        activity?.SetTag("transport.initialized", true);
+        activity?.SetTag("transport.verification_method", "client_open_check");
+      }
+    } catch (Exception ex) {
+      _logger.LogError(ex, "Failed to initialize Azure Service Bus transport");
+      activity?.SetStatus(ActivityStatusCode.Error, ex.Message);
+      throw new InvalidOperationException("Failed to initialize Azure Service Bus transport - Service Bus may not be reachable", ex);
+    }
   }
 
   /// <inheritdoc />

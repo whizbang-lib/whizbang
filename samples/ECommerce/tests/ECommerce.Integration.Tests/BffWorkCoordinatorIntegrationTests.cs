@@ -390,10 +390,19 @@ public class OutboxMessageRecord {
 /// </summary>
 public class TestTransport : Whizbang.Core.Transports.ITransport {
   private readonly object _lock = new();
+  private bool _isInitialized;
   public List<PublishedMessageRecord> PublishedMessages { get; } = new();
+
+  public bool IsInitialized => _isInitialized;
 
   public Whizbang.Core.Transports.TransportCapabilities Capabilities =>
     Whizbang.Core.Transports.TransportCapabilities.PublishSubscribe;
+
+  public Task InitializeAsync(CancellationToken cancellationToken = default) {
+    cancellationToken.ThrowIfCancellationRequested();
+    _isInitialized = true;
+    return Task.CompletedTask;
+  }
 
   public Task PublishAsync(
     Whizbang.Core.Observability.IMessageEnvelope envelope,

@@ -108,7 +108,12 @@ builder.Services
 var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
 // Register transport readiness check (ServiceBusReadinessCheck for Azure Service Bus)
-builder.Services.AddSingleton<ITransportReadinessCheck, Whizbang.Hosting.Azure.ServiceBus.ServiceBusReadinessCheck>();
+builder.Services.AddSingleton<ITransportReadinessCheck>(sp => {
+  var transport = sp.GetRequiredService<ITransport>();
+  var client = sp.GetRequiredService<Azure.Messaging.ServiceBus.ServiceBusClient>();
+  var logger = sp.GetRequiredService<ILogger<Whizbang.Hosting.Azure.ServiceBus.ServiceBusReadinessCheck>>();
+  return new Whizbang.Hosting.Azure.ServiceBus.ServiceBusReadinessCheck(transport, client, logger);
+});
 
 // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
 builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
