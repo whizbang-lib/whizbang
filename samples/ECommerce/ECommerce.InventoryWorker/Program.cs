@@ -113,6 +113,8 @@ builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>(sp =>
     sp.GetRequiredService<IServiceInstanceProvider>(),
     sp.GetRequiredService<IServiceScopeFactory>(),
     sp.GetRequiredService<IMessagePublishStrategy>(),
+    sp.GetRequiredService<WorkChannelWriter>(),
+    databaseReadinessCheck: null,  // Use default (DefaultDatabaseReadinessCheck)
     options: null,  // Use default options
     logger: sp.GetRequiredService<ILogger<WorkCoordinatorPublisherWorker>>()
   )

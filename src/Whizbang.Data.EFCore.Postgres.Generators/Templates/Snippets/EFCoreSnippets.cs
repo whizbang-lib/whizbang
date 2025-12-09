@@ -86,10 +86,30 @@ public class EFCoreSnippets {
       services.AddSingleton(new Whizbang.Core.Messaging.WorkCoordinatorOptions());
     }
 
+    // Register shared work channel writer as singleton
+    // Shared between ScopedWorkCoordinatorStrategy (writer) and WorkCoordinatorPublisherWorker (reader)
+    // Enables immediate processing of work returned from process_work_batch
+    if (!services.Any(sd => sd.ServiceType == typeof(Whizbang.Core.Messaging.IWorkChannelWriter))) {
+      services.AddSingleton<Whizbang.Core.Messaging.IWorkChannelWriter, Whizbang.Core.Messaging.WorkChannelWriter>();
+    }
+
     // Register scoped work coordinator strategy for dispatcher outbox routing
     // ScopedWorkCoordinatorStrategy batches operations within a scope (e.g., HTTP request)
     // This enables the dispatcher to route messages to outbox when no local receptor exists
-    services.AddScoped<Whizbang.Core.Messaging.IWorkCoordinatorStrategy, Whizbang.Core.Messaging.ScopedWorkCoordinatorStrategy>();
+    services.AddScoped<Whizbang.Core.Messaging.IWorkCoordinatorStrategy>(sp => {
+      var coordinator = sp.GetRequiredService<Whizbang.Core.Messaging.IWorkCoordinator>();
+      var instanceProvider = sp.GetRequiredService<Whizbang.Core.Observability.IServiceInstanceProvider>();
+      var channelWriter = sp.GetRequiredService<Whizbang.Core.Messaging.IWorkChannelWriter>();
+      var options = sp.GetRequiredService<Whizbang.Core.Messaging.WorkCoordinatorOptions>();
+      var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Messaging.ScopedWorkCoordinatorStrategy>>();
+      return new Whizbang.Core.Messaging.ScopedWorkCoordinatorStrategy(
+        coordinator,
+        instanceProvider,
+        channelWriter,
+        options,
+        logger
+      );
+    });
     #endregion
   }
 

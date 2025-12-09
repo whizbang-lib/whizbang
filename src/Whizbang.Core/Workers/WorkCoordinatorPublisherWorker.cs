@@ -15,7 +15,9 @@ namespace Whizbang.Core.Workers;
 
 /// <summary>
 /// Background worker that uses IWorkCoordinator for lease-based coordination.
-/// Uses channels for async message publishing with concurrent processing.
+/// Uses shared channel for async message publishing with concurrent processing.
+/// The channel is shared with ScopedWorkCoordinatorStrategy to enable immediate
+/// processing of work returned from process_work_batch.
 /// Performs all operations in a single atomic call:
 /// - Registers/updates instance with heartbeat
 /// - Cleans up stale instances
@@ -26,6 +28,7 @@ public class WorkCoordinatorPublisherWorker(
   IServiceInstanceProvider instanceProvider,
   IServiceScopeFactory scopeFactory,
   IMessagePublishStrategy publishStrategy,
+  WorkChannelWriter workChannelWriter,
   IDatabaseReadinessCheck? databaseReadinessCheck = null,
   WorkCoordinatorPublisherOptions? options = null,
   ILogger<WorkCoordinatorPublisherWorker>? logger = null
@@ -33,12 +36,12 @@ public class WorkCoordinatorPublisherWorker(
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly IMessagePublishStrategy _publishStrategy = publishStrategy ?? throw new ArgumentNullException(nameof(publishStrategy));
+  private readonly WorkChannelWriter _workChannelWriter = workChannelWriter ?? throw new ArgumentNullException(nameof(workChannelWriter));
   private readonly IDatabaseReadinessCheck _databaseReadinessCheck = databaseReadinessCheck ?? new DefaultDatabaseReadinessCheck();
   private readonly ILogger<WorkCoordinatorPublisherWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<WorkCoordinatorPublisherWorker>.Instance;
   private readonly WorkCoordinatorPublisherOptions _options = options ?? new WorkCoordinatorPublisherOptions();
 
-  // Channel-based async message processing
-  private readonly Channel<OutboxWork> _workChannel = Channel.CreateUnbounded<OutboxWork>();
+  // Bags for collecting publish results (completions, failures, lease renewals)
   private readonly ConcurrentBag<MessageCompletion> _completions = new();
   private readonly ConcurrentBag<MessageFailure> _failures = new();
   private readonly ConcurrentBag<Guid> _leaseRenewals = new();
@@ -154,11 +157,11 @@ public class WorkCoordinatorPublisherWorker(
     }
 
     // Signal publisher loop to finish
-    _workChannel.Writer.Complete();
+    _workChannelWriter.Complete();
   }
 
   private async Task PublisherLoopAsync(CancellationToken stoppingToken) {
-    await foreach (var work in _workChannel.Reader.ReadAllAsync(stoppingToken)) {
+    await foreach (var work in _workChannelWriter.Reader.ReadAllAsync(stoppingToken)) {
       try {
         // Check transport readiness before attempting publish
         var isReady = await _publishStrategy.IsReadyAsync(stoppingToken);
@@ -298,7 +301,7 @@ public class WorkCoordinatorPublisherWorker(
       var orderedOutboxWork = workBatch.OutboxWork.OrderBy(m => m.MessageId).ToList();
 
       foreach (var work in orderedOutboxWork) {
-        await _workChannel.Writer.WriteAsync(work, cancellationToken);
+        await _workChannelWriter.WriteAsync(work, cancellationToken);
       }
     }
 
