@@ -171,8 +171,7 @@ public abstract class Dispatcher(
     if (invoker == null) {
       // Try strategy-based outbox pattern (new work coordinator pattern)
       // Route to outbox for remote delivery (AOT-compatible, no reflection)
-      // NOTE: This will be updated to call generic SendToOutboxViaScopeAsync<TMessage> in a later task
-      return await SendToOutboxViaScopeAsync(message!, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
+      return await SendToOutboxViaScopeAsync<TMessage>(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
     }
 
     // Create envelope with hop for observability - generic version preserves type!
@@ -782,10 +781,70 @@ public abstract class Dispatcher(
   }
 
   /// <summary>
+  /// Sends a typed message to the outbox for remote delivery using work coordinator strategy (AOT-compatible).
+  /// Creates a MessageEnvelope&lt;TMessage&gt; with proper type information and queues for batched processing.
+  /// Resolves IWorkCoordinatorStrategy from active scope (scoped service).
+  /// Type information is preserved at compile time, avoiding reflection.
+  /// </summary>
+  private async Task<IDeliveryReceipt> SendToOutboxViaScopeAsync<TMessage>(
+    TMessage message,
+    Type messageType,
+    IMessageContext context,
+    string callerMemberName,
+    string callerFilePath,
+    int callerLineNumber
+  ) where TMessage : notnull {
+    // Create scope to resolve scoped IWorkCoordinatorStrategy
+    var scope = _scopeFactory.CreateScope();
+    try {
+      var strategy = scope.ServiceProvider.GetService<IWorkCoordinatorStrategy>();
+
+      // If no strategy is registered, throw - no local receptor and no outbox
+      if (strategy == null) {
+        throw new HandlerNotFoundException(messageType);
+      }
+
+      // Determine destination topic from message type name
+      var destination = DetermineCommandDestination(messageType);
+
+      // Create envelope with hop for observability - generic version preserves type!
+      var envelope = _createEnvelope<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
+
+      // Serialize envelope to NewOutboxMessage
+      var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message!, messageType, destination);
+
+      // Queue message for batched processing
+      strategy.QueueOutboxMessage(newOutboxMessage);
+
+      // Flush strategy to execute the batch (strategy determines when to actually flush)
+      // For immediate strategy, this happens right away
+      // For scoped strategy, this happens on scope disposal
+      // For interval strategy, this happens on timer
+      await strategy.FlushAsync(WorkBatchFlags.None);
+
+      // Return delivery receipt with Accepted status (message queued)
+      return DeliveryReceipt.Accepted(
+        envelope.MessageId,
+        destination,
+        context.CorrelationId,
+        context.CausationId
+      );
+    } finally {
+      // Dispose scope asynchronously to properly handle services that only implement IAsyncDisposable
+      if (scope is IAsyncDisposable asyncDisposable) {
+        await asyncDisposable.DisposeAsync();
+      } else {
+        scope.Dispose();
+      }
+    }
+  }
+
+  /// <summary>
   /// Sends a message to the outbox for remote delivery using work coordinator strategy.
   /// Creates a MessageEnvelope with proper type information and queues for batched processing.
   /// Resolves IWorkCoordinatorStrategy from active scope (scoped service).
   /// AOT-compatible - uses JsonTypeInfo for serialization, no reflection.
+  /// For AOT compatibility, use the generic overload SendToOutboxViaScopeAsync&lt;TMessage&gt;.
   /// </summary>
   private async Task<IDeliveryReceipt> SendToOutboxViaScopeAsync(
     object message,
@@ -809,7 +868,8 @@ public abstract class Dispatcher(
       var destination = DetermineCommandDestination(messageType);
 
       // Create envelope with hop for observability (returns IMessageEnvelope)
-      // TODO: Make SendToOutboxViaScopeAsync generic to preserve type information
+      // WARN: This creates MessageEnvelope<object> - type information is lost
+      // For AOT compatibility, use the generic overload SendToOutboxViaScopeAsync<TMessage>
       var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
 
       // Serialize envelope to NewOutboxMessage
