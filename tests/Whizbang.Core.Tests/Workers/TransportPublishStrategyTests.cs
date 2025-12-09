@@ -29,7 +29,15 @@ public class TransportPublishStrategyTests {
   }
 
   private class TestTransport : ITransport {
+    private bool _isInitialized;
+
+    public bool IsInitialized => _isInitialized;
     public TransportCapabilities Capabilities => new();
+
+    public Task InitializeAsync(CancellationToken cancellationToken = default) {
+      _isInitialized = true;
+      return Task.CompletedTask;
+    }
 
     public Task<Exception?> PublishResult { get; set; } = Task.FromResult<Exception?>(null);
 

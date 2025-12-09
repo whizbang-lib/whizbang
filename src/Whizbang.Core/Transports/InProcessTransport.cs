@@ -14,6 +14,20 @@ namespace Whizbang.Core.Transports;
 /// </summary>
 public class InProcessTransport : ITransport {
   private readonly ConcurrentDictionary<string, List<(Func<IMessageEnvelope, CancellationToken, Task> handler, InProcessSubscription subscription)>> _subscriptions = new();
+  private bool _isInitialized;
+
+  /// <inheritdoc />
+  public bool IsInitialized => _isInitialized;
+
+  /// <inheritdoc />
+  public Task InitializeAsync(CancellationToken cancellationToken = default) {
+    cancellationToken.ThrowIfCancellationRequested();
+
+    // In-process transport is always ready immediately
+    // Idempotent - safe to call multiple times
+    _isInitialized = true;
+    return Task.CompletedTask;
+  }
 
   /// <inheritdoc />
   public TransportCapabilities Capabilities =>

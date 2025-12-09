@@ -12,6 +12,22 @@ namespace Whizbang.Core.Transports;
 /// </summary>
 public interface ITransport {
   /// <summary>
+  /// Gets whether the transport has been successfully initialized.
+  /// Transports must be initialized before they can send or receive messages.
+  /// </summary>
+  bool IsInitialized { get; }
+
+  /// <summary>
+  /// Initializes the transport and verifies connectivity.
+  /// This method is idempotent - calling it multiple times is safe.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>Task that completes when initialization is successful</returns>
+  /// <exception cref="InvalidOperationException">Thrown when transport cannot be initialized</exception>
+  /// <exception cref="OperationCanceledException">Thrown when initialization is cancelled</exception>
+  Task InitializeAsync(CancellationToken cancellationToken = default);
+
+  /// <summary>
   /// Gets the capabilities of this transport.
   /// Describes what patterns and semantics this transport supports.
   /// </summary>

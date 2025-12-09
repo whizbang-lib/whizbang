@@ -259,7 +259,15 @@ internal class TestPerspectiveInvoker(Action onInvoke) : IPerspectiveInvoker {
 /// Test double for ITransport
 /// </summary>
 internal class TestTransport : ITransport {
+  private bool _isInitialized;
+
+  public bool IsInitialized => _isInitialized;
   public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
+
+  public Task InitializeAsync(CancellationToken cancellationToken = default) {
+    _isInitialized = true;
+    return Task.CompletedTask;
+  }
 
   public Task<ISubscription> SubscribeAsync(
     Func<IMessageEnvelope, CancellationToken, Task> handler,
