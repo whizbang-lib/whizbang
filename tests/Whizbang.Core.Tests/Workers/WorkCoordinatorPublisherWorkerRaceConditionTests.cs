@@ -195,6 +195,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
       instanceProvider1,
       services1.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       publishStrategy1,
+      new WorkChannelWriter(),
       databaseReadiness,
       new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 100 }
     );
@@ -203,6 +204,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
       instanceProvider2,
       services2.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       publishStrategy2,
+      new WorkChannelWriter(),
       databaseReadiness,
       new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 100 }
     );
@@ -268,6 +270,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
       instanceProvider,
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       publishStrategy,
+      new WorkChannelWriter(),
       databaseReadiness,
       new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 500 }
     );
@@ -327,6 +330,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
       instanceProvider,
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       publishStrategy,
+      new WorkChannelWriter(),
       databaseReadiness,
       new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 200 }
     );
@@ -382,6 +386,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
       instanceProvider,
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       publishStrategy,
+      new WorkChannelWriter(),
       databaseReadiness,
       new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 200 }
     );
@@ -429,6 +434,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
       instanceProvider,
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       publishStrategy,
+      new WorkChannelWriter(),
       databaseReadiness,
       new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 200 }
     );

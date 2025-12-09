@@ -114,6 +114,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       instanceProvider,
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       publishStrategy,
+      new WorkChannelWriter(),
       databaseReadiness,
       new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 100 }
     );
@@ -159,6 +160,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       instanceProvider,
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       publishStrategy,
+      new WorkChannelWriter(),
       databaseReadiness,
       new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 100 }
     );
@@ -205,6 +207,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       instanceProvider,
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       publishStrategy,
+      new WorkChannelWriter(),
       databaseReadiness,
       new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 100 }
     );
@@ -240,6 +243,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       instanceProvider,
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       publishStrategy,
+      new WorkChannelWriter(),
       databaseReadiness,
       new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 100 }
     );
@@ -280,6 +284,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       instanceProvider,
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       publishStrategy,
+      new WorkChannelWriter(),
       databaseReadiness,
       new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 100 }
     );
