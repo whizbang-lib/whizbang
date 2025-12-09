@@ -10,6 +10,7 @@ using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
@@ -19,6 +20,16 @@ namespace Whizbang.Core.Tests.Workers;
 /// Verifies immediate processing of pending outbox messages on startup.
 /// </summary>
 public class WorkCoordinatorPublisherWorkerStartupTests {
+  private record TestMessage { }
+
+  private static IMessageEnvelope CreateTestEnvelope(Guid messageId) {
+    return new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.From(messageId),
+      Payload = new TestMessage(),
+      Hops = []
+    };
+  }
+
   private class TestWorkCoordinator : IWorkCoordinator {
     public List<OutboxWork> WorkToReturn { get; set; } = [];
     public int ProcessWorkBatchCallCount { get; private set; }
@@ -313,10 +324,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     return new OutboxWork {
       MessageId = messageId,
       Destination = destination,
-      MessageType = "TestMessage",
-      MessageData = "{}",
-      Metadata = "{\"messageId\":\"" + messageId + "\",\"hops\":[]}",
-      Scope = null,
+      Envelope = CreateTestEnvelope(messageId),
       StreamId = Guid.NewGuid(),
       PartitionNumber = 1,
       Attempts = 0,

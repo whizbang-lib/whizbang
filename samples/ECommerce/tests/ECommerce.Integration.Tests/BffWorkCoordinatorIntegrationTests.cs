@@ -28,6 +28,16 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
   private string _connectionString = null!;
   private Guid _instanceId;
 
+  private record TestEvent { }
+
+  private static IMessageEnvelope CreateTestEnvelope(Guid messageId) {
+    return new MessageEnvelope<TestEvent> {
+      MessageId = MessageId.From(messageId),
+      Payload = new TestEvent(),
+      Hops = []
+    };
+  }
+
   [Before(Test)]
   public async Task SetupAsync() {
     // Start PostgreSQL container
@@ -82,7 +92,6 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
         services.AddSingleton<IMessagePublishStrategy>(sp =>
           new TransportPublishStrategy(
             sp.GetRequiredService<ITransport>(),
-            jsonOptions,
             new DefaultTransportReadinessCheck()
           )
         );
@@ -146,10 +155,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
           new NewOutboxMessage {
             MessageId = messageId.Value,
             Destination = "products",
-            EventType = "ProductCreated",
-            EventData = "{\"productId\":\"123\",\"name\":\"Test Product\"}",
-            Metadata = "{\"hops\":[]}",
-            Scope = null,
+            Envelope = CreateTestEnvelope(messageId.Value),
             IsEvent = true,
             StreamId = streamId
           }
@@ -244,30 +250,21 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
           new NewOutboxMessage {
             MessageId = messageId1.Value,
             Destination = "products",
-            EventType = "ProductCreated",
-            EventData = "{\"seq\":1}",
-            Metadata = "{\"hops\":[]}",
-            Scope = null,
+            Envelope = CreateTestEnvelope(messageId1.Value),
             IsEvent = true,
             StreamId = streamId
           },
           new NewOutboxMessage {
             MessageId = messageId2.Value,
             Destination = "products",
-            EventType = "ProductCreated",
-            EventData = "{\"seq\":2}",
-            Metadata = "{\"hops\":[]}",
-            Scope = null,
+            Envelope = CreateTestEnvelope(messageId2.Value),
             IsEvent = true,
             StreamId = streamId
           },
           new NewOutboxMessage {
             MessageId = messageId3.Value,
             Destination = "products",
-            EventType = "ProductCreated",
-            EventData = "{\"seq\":3}",
-            Metadata = "{\"hops\":[]}",
-            Scope = null,
+            Envelope = CreateTestEnvelope(messageId3.Value),
             IsEvent = true,
             StreamId = streamId
           }
@@ -336,10 +333,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
           new NewOutboxMessage {
             MessageId = messageId.Value,
             Destination = "products",
-            EventType = "ProductCreated",
-            EventData = "{\"data\":\"test\"}",
-            Metadata = "{\"hops\":[]}",
-            Scope = null,
+            Envelope = CreateTestEnvelope(messageId.Value),
             IsEvent = true,
             StreamId = streamId
           }

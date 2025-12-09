@@ -308,6 +308,9 @@ internal class TestDispatcher : IDispatcher {
     int callerLineNumber = 0) =>
     throw new NotImplementedException();
 
+  public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull =>
+    throw new NotImplementedException();
+
   public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages) =>
     throw new NotImplementedException();
 

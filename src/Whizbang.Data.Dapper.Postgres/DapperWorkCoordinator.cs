@@ -1,8 +1,10 @@
 using System.Data;
+using System.Text.Json;
 using Dapper;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.Dapper.Postgres;
@@ -13,9 +15,11 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// </summary>
 public class DapperWorkCoordinator(
   string connectionString,
+  JsonSerializerOptions jsonOptions,
   ILogger<DapperWorkCoordinator>? logger = null
 ) : IWorkCoordinator {
   private readonly string _connectionString = connectionString ?? throw new ArgumentNullException(nameof(connectionString));
+  private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<DapperWorkCoordinator>? _logger = logger;
 
   public async Task<WorkBatch> ProcessWorkBatchAsync(
@@ -121,38 +125,38 @@ public class DapperWorkCoordinator(
     var results = await connection.QueryAsync<WorkBatchRow>(commandDefinition);
     var resultList = results.ToList();
 
-    // Map results to WorkBatch
+    // Map results to WorkBatch - deserialize envelopes from database
     var outboxWork = resultList
       .Where(r => r.source == "outbox")
-      .Select(r => new OutboxWork {
-        MessageId = r.msg_id,
-        Destination = r.destination!,
-        MessageType = r.event_type,
-        MessageData = r.event_data,
-        Metadata = r.metadata,
-        Scope = r.scope,
-        StreamId = r.stream_uuid,
-        PartitionNumber = r.partition_num,
-        Attempts = r.attempts,
-        Status = (MessageProcessingStatus)r.status,
-        Flags = (WorkBatchFlags)r.flags,
-        SequenceOrder = r.sequence_order
+      .Select(r => {
+        var envelope = DeserializeEnvelope(r.envelope_type, r.envelope_data);
+        return new OutboxWork {
+          MessageId = r.msg_id,
+          Destination = r.destination!,
+          Envelope = envelope,
+          StreamId = r.stream_uuid,
+          PartitionNumber = r.partition_num,
+          Attempts = r.attempts,
+          Status = (MessageProcessingStatus)r.status,
+          Flags = (WorkBatchFlags)r.flags,
+          SequenceOrder = r.sequence_order
+        };
       })
       .ToList();
 
     var inboxWork = resultList
       .Where(r => r.source == "inbox")
-      .Select(r => new InboxWork {
-        MessageId = r.msg_id,
-        MessageType = r.event_type,
-        MessageData = r.event_data,
-        Metadata = r.metadata,
-        Scope = r.scope,
-        StreamId = r.stream_uuid,
-        PartitionNumber = r.partition_num,
-        Status = (MessageProcessingStatus)r.status,
-        Flags = (WorkBatchFlags)r.flags,
-        SequenceOrder = r.sequence_order
+      .Select(r => {
+        var envelope = DeserializeEnvelope(r.envelope_type, r.envelope_data);
+        return new InboxWork {
+          MessageId = r.msg_id,
+          Envelope = envelope,
+          StreamId = r.stream_uuid,
+          PartitionNumber = r.partition_num,
+          Status = (MessageProcessingStatus)r.status,
+          Flags = (WorkBatchFlags)r.flags,
+          SequenceOrder = r.sequence_order
+        };
       })
       .ToList();
 
@@ -192,33 +196,49 @@ public class DapperWorkCoordinator(
     return $"[{string.Join(",", items)}]";
   }
 
-  private static string SerializeNewOutboxMessages(NewOutboxMessage[] messages) {
+  private string SerializeNewOutboxMessages(NewOutboxMessage[] messages) {
     if (messages.Length == 0) {
       return "[]";
     }
 
-    // Simple JSON array serialization (AOT-safe)
+    // Manually construct JSON array with proper envelope serialization (AOT-safe)
     var items = messages.Select(m => {
-      var streamId = m.StreamId.HasValue ? $"\"{m.StreamId.Value}\"" : "null";
-      var scope = m.Scope != null ? m.Scope : "null";
-      var isEvent = m.IsEvent.ToString().ToLowerInvariant();
-      return $"{{\"messageId\":\"{m.MessageId}\",\"destination\":\"{EscapeJson(m.Destination)}\",\"eventType\":\"{EscapeJson(m.EventType)}\",\"eventData\":{m.EventData},\"metadata\":{m.Metadata},\"scope\":{scope},\"streamId\":{streamId},\"isEvent\":{isEvent}}}";
+      var envelopeType = m.Envelope.GetType();
+      var envelopeTypeInfo = _jsonOptions.GetTypeInfo(envelopeType)
+        ?? throw new InvalidOperationException($"No JsonTypeInfo found for envelope type {envelopeType.Name}");
+      var envelopeDataJson = JsonSerializer.Serialize(m.Envelope, envelopeTypeInfo);
+      var envelopeTypeName = envelopeType.AssemblyQualifiedName
+        ?? throw new InvalidOperationException("Envelope type must have assembly qualified name");
+
+      var streamIdPart = m.StreamId.HasValue ? $"\"{m.StreamId.Value}\"" : "null";
+      var isEventPart = m.IsEvent.ToString().ToLowerInvariant();
+
+      return $"{{\"messageId\":\"{m.MessageId}\",\"destination\":\"{EscapeJson(m.Destination)}\",\"envelopeType\":\"{EscapeJson(envelopeTypeName)}\",\"envelopeData\":{envelopeDataJson},\"streamId\":{streamIdPart},\"isEvent\":{isEventPart}}}";
     });
+
     return $"[{string.Join(",", items)}]";
   }
 
-  private static string SerializeNewInboxMessages(NewInboxMessage[] messages) {
+  private string SerializeNewInboxMessages(NewInboxMessage[] messages) {
     if (messages.Length == 0) {
       return "[]";
     }
 
-    // Simple JSON array serialization (AOT-safe)
+    // Manually construct JSON array with proper envelope serialization (AOT-safe)
     var items = messages.Select(m => {
-      var streamId = m.StreamId.HasValue ? $"\"{m.StreamId.Value}\"" : "null";
-      var scope = m.Scope != null ? m.Scope : "null";
-      var isEvent = m.IsEvent.ToString().ToLowerInvariant();
-      return $"{{\"messageId\":\"{m.MessageId}\",\"handlerName\":\"{EscapeJson(m.HandlerName)}\",\"eventType\":\"{EscapeJson(m.EventType)}\",\"eventData\":{m.EventData},\"metadata\":{m.Metadata},\"scope\":{scope},\"streamId\":{streamId},\"isEvent\":{isEvent}}}";
+      var envelopeType = m.Envelope.GetType();
+      var envelopeTypeInfo = _jsonOptions.GetTypeInfo(envelopeType)
+        ?? throw new InvalidOperationException($"No JsonTypeInfo found for envelope type {envelopeType.Name}");
+      var envelopeDataJson = JsonSerializer.Serialize(m.Envelope, envelopeTypeInfo);
+      var envelopeTypeName = envelopeType.AssemblyQualifiedName
+        ?? throw new InvalidOperationException("Envelope type must have assembly qualified name");
+
+      var streamIdPart = m.StreamId.HasValue ? $"\"{m.StreamId.Value}\"" : "null";
+      var isEventPart = m.IsEvent.ToString().ToLowerInvariant();
+
+      return $"{{\"messageId\":\"{m.MessageId}\",\"handlerName\":\"{EscapeJson(m.HandlerName)}\",\"envelopeType\":\"{EscapeJson(envelopeTypeName)}\",\"envelopeData\":{envelopeDataJson},\"streamId\":{streamIdPart},\"isEvent\":{isEventPart}}}";
     });
+
     return $"[{string.Join(",", items)}]";
   }
 
@@ -259,6 +279,25 @@ public class DapperWorkCoordinator(
     var items = messageIds.Select(id => $"\"{id}\"");
     return $"[{string.Join(",", items)}]";
   }
+
+  /// <summary>
+  /// Deserializes envelope from database envelope_type and envelope_data columns.
+  /// </summary>
+  private IMessageEnvelope DeserializeEnvelope(string envelopeTypeName, string envelopeDataJson) {
+    // Resolve the envelope type from stored type name
+    var envelopeType = Type.GetType(envelopeTypeName)
+      ?? throw new InvalidOperationException($"Could not resolve envelope type '{envelopeTypeName}'");
+
+    // Get JsonTypeInfo for the envelope type
+    var typeInfo = _jsonOptions.GetTypeInfo(envelopeType)
+      ?? throw new InvalidOperationException($"No JsonTypeInfo found for envelope type '{envelopeTypeName}'. Ensure the envelope type is registered via JsonContextRegistry.");
+
+    // Deserialize the complete envelope
+    var envelope = JsonSerializer.Deserialize(envelopeDataJson, typeInfo) as IMessageEnvelope
+      ?? throw new InvalidOperationException($"Failed to deserialize envelope of type '{envelopeTypeName}'");
+
+    return envelope;
+  }
 }
 
 /// <summary>
@@ -269,10 +308,8 @@ internal class WorkBatchRow {
   public required string source { get; set; }  // 'outbox' or 'inbox'
   public required Guid msg_id { get; set; }
   public string? destination { get; set; }  // null for inbox
-  public required string event_type { get; set; }
-  public required string event_data { get; set; }  // JSON string
-  public required string metadata { get; set; }  // JSON string
-  public string? scope { get; set; }  // JSON string (nullable)
+  public required string envelope_type { get; set; }  // Assembly qualified name of envelope type
+  public required string envelope_data { get; set; }  // Complete serialized MessageEnvelope<T> as JSON
   public Guid? stream_uuid { get; set; }  // Stream ID for ordering (matches SQL column name)
   public int? partition_num { get; set; }  // Partition number (matches SQL column name)
   public required int attempts { get; set; }

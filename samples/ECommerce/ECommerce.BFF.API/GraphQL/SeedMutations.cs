@@ -170,7 +170,7 @@ public class SeedMutations {
     try {
       _logger.LogInformation("Dispatching {Count} CreateProductCommands in a single batch...", createProductCommands.Length);
 
-      var receipts = await _dispatcher.SendManyAsync(createProductCommands);
+      var receipts = await _dispatcher.SendManyAsync<CreateProductCommand>(createProductCommands);
       var seededCount = receipts.Count();
 
       _logger.LogInformation("Product seeding complete - dispatched {Count} commands in batch", seededCount);

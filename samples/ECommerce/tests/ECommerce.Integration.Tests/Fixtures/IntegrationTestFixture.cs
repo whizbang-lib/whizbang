@@ -168,7 +168,6 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
         sp.GetRequiredService<ITransport>(),
-        jsonOptions,
         new DefaultTransportReadinessCheck()
       )
     );

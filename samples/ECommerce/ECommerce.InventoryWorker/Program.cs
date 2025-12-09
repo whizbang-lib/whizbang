@@ -82,7 +82,6 @@ var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombined
 builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
   new TransportPublishStrategy(
     sp.GetRequiredService<ITransport>(),
-    jsonOptions,
     sp.GetRequiredService<ITransportReadinessCheck>()
   )
 );

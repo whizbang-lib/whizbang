@@ -201,7 +201,17 @@ public interface IDispatcher {
   // ========================================
 
   /// <summary>
+  /// Sends multiple typed messages and collects all delivery receipts (AOT-compatible).
+  /// Type information is preserved at compile time, avoiding reflection.
+  /// </summary>
+  /// <typeparam name="TMessage">The message type</typeparam>
+  /// <param name="messages">The messages to send</param>
+  /// <returns>All delivery receipts</returns>
+  Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull;
+
+  /// <summary>
   /// Sends multiple messages and collects all delivery receipts.
+  /// For AOT compatibility, use the generic overload SendManyAsync&lt;TMessage&gt;.
   /// </summary>
   /// <param name="messages">The messages to send</param>
   /// <returns>All delivery receipts</returns>

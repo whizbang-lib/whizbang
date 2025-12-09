@@ -1,7 +1,9 @@
 using System.ComponentModel.DataAnnotations.Schema;
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Data.Postgres;
 
 namespace Whizbang.Data.EFCore.Postgres;
@@ -13,10 +15,12 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// <typeparam name="TDbContext">DbContext type containing outbox, inbox, and service instance tables</typeparam>
 public class EFCoreWorkCoordinator<TDbContext>(
   TDbContext dbContext,
+  JsonSerializerOptions jsonOptions,
   ILogger<EFCoreWorkCoordinator<TDbContext>>? logger = null
 ) : IWorkCoordinator
   where TDbContext : DbContext {
   private readonly TDbContext _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+  private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<EFCoreWorkCoordinator<TDbContext>>? _logger = logger;
 
   public async Task<WorkBatch> ProcessWorkBatchAsync(
@@ -143,38 +147,38 @@ public class EFCoreWorkCoordinator<TDbContext>(
       )
       .ToListAsync(cancellationToken);
 
-    // Map results to WorkBatch
+    // Map results to WorkBatch - deserialize envelopes from database
     var outboxWork = results
       .Where(r => r.Source == "outbox")
-      .Select(r => new OutboxWork {
-        MessageId = r.MessageId,
-        Destination = r.Destination!,
-        MessageType = r.EventType,
-        MessageData = r.EventData,
-        Metadata = r.Metadata,
-        Scope = r.Scope,
-        StreamId = r.StreamId,
-        PartitionNumber = r.PartitionNumber,
-        Attempts = r.Attempts,
-        Status = (MessageProcessingStatus)r.Status,
-        Flags = (WorkBatchFlags)r.Flags,
-        SequenceOrder = r.SequenceOrder
+      .Select(r => {
+        var envelope = DeserializeEnvelope(r.EnvelopeType, r.EnvelopeData);
+        return new OutboxWork {
+          MessageId = r.MessageId,
+          Destination = r.Destination!,
+          Envelope = envelope,
+          StreamId = r.StreamId,
+          PartitionNumber = r.PartitionNumber,
+          Attempts = r.Attempts,
+          Status = (MessageProcessingStatus)r.Status,
+          Flags = (WorkBatchFlags)r.Flags,
+          SequenceOrder = r.SequenceOrder
+        };
       })
       .ToList();
 
     var inboxWork = results
       .Where(r => r.Source == "inbox")
-      .Select(r => new InboxWork {
-        MessageId = r.MessageId,
-        MessageType = r.EventType,
-        MessageData = r.EventData,
-        Metadata = r.Metadata,
-        Scope = r.Scope,
-        StreamId = r.StreamId,
-        PartitionNumber = r.PartitionNumber,
-        Status = (MessageProcessingStatus)r.Status,
-        Flags = (WorkBatchFlags)r.Flags,
-        SequenceOrder = r.SequenceOrder
+      .Select(r => {
+        var envelope = DeserializeEnvelope(r.EnvelopeType, r.EnvelopeData);
+        return new InboxWork {
+          MessageId = r.MessageId,
+          Envelope = envelope,
+          StreamId = r.StreamId,
+          PartitionNumber = r.PartitionNumber,
+          Status = (MessageProcessingStatus)r.Status,
+          Flags = (WorkBatchFlags)r.Flags,
+          SequenceOrder = r.SequenceOrder
+        };
       })
       .ToList();
 
@@ -219,35 +223,49 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return $"[{string.Join(",", items)}]";
   }
 
-  private static string SerializeNewOutboxMessages(NewOutboxMessage[] messages) {
+  private string SerializeNewOutboxMessages(NewOutboxMessage[] messages) {
     if (messages.Length == 0) {
       return "[]";
     }
 
-    // Simple JSON array serialization (AOT-safe)
-    // Property names must match PostgreSQL function expectations (camelCase)
+    // Manually construct JSON array with proper envelope serialization (AOT-safe)
     var items = messages.Select(m => {
-      var streamId = m.StreamId.HasValue ? $"\"{m.StreamId.Value}\"" : "null";
-      var scope = m.Scope != null ? m.Scope : "null";
-      var isEvent = m.IsEvent.ToString().ToLowerInvariant();
-      return $"{{\"messageId\":\"{m.MessageId}\",\"destination\":\"{EscapeJson(m.Destination)}\",\"eventType\":\"{EscapeJson(m.EventType)}\",\"eventData\":{m.EventData},\"metadata\":{m.Metadata},\"scope\":{scope},\"streamId\":{streamId},\"isEvent\":{isEvent}}}";
+      var envelopeType = m.Envelope.GetType();
+      var envelopeTypeInfo = _jsonOptions.GetTypeInfo(envelopeType)
+        ?? throw new InvalidOperationException($"No JsonTypeInfo found for envelope type {envelopeType.Name}");
+      var envelopeDataJson = JsonSerializer.Serialize(m.Envelope, envelopeTypeInfo);
+      var envelopeTypeName = envelopeType.AssemblyQualifiedName
+        ?? throw new InvalidOperationException("Envelope type must have assembly qualified name");
+
+      var streamIdPart = m.StreamId.HasValue ? $"\"{m.StreamId.Value}\"" : "null";
+      var isEventPart = m.IsEvent.ToString().ToLowerInvariant();
+
+      return $"{{\"messageId\":\"{m.MessageId}\",\"destination\":\"{EscapeJson(m.Destination)}\",\"envelopeType\":\"{EscapeJson(envelopeTypeName)}\",\"envelopeData\":{envelopeDataJson},\"streamId\":{streamIdPart},\"isEvent\":{isEventPart}}}";
     });
+
     return $"[{string.Join(",", items)}]";
   }
 
-  private static string SerializeNewInboxMessages(NewInboxMessage[] messages) {
+  private string SerializeNewInboxMessages(NewInboxMessage[] messages) {
     if (messages.Length == 0) {
       return "[]";
     }
 
-    // Simple JSON array serialization (AOT-safe)
-    // Property names must match PostgreSQL function expectations (camelCase)
+    // Manually construct JSON array with proper envelope serialization (AOT-safe)
     var items = messages.Select(m => {
-      var streamId = m.StreamId.HasValue ? $"\"{m.StreamId.Value}\"" : "null";
-      var scope = m.Scope != null ? m.Scope : "null";
-      var isEvent = m.IsEvent.ToString().ToLowerInvariant();
-      return $"{{\"messageId\":\"{m.MessageId}\",\"handlerName\":\"{EscapeJson(m.HandlerName)}\",\"eventType\":\"{EscapeJson(m.EventType)}\",\"eventData\":{m.EventData},\"metadata\":{m.Metadata},\"scope\":{scope},\"streamId\":{streamId},\"isEvent\":{isEvent}}}";
+      var envelopeType = m.Envelope.GetType();
+      var envelopeTypeInfo = _jsonOptions.GetTypeInfo(envelopeType)
+        ?? throw new InvalidOperationException($"No JsonTypeInfo found for envelope type {envelopeType.Name}");
+      var envelopeDataJson = JsonSerializer.Serialize(m.Envelope, envelopeTypeInfo);
+      var envelopeTypeName = envelopeType.AssemblyQualifiedName
+        ?? throw new InvalidOperationException("Envelope type must have assembly qualified name");
+
+      var streamIdPart = m.StreamId.HasValue ? $"\"{m.StreamId.Value}\"" : "null";
+      var isEventPart = m.IsEvent.ToString().ToLowerInvariant();
+
+      return $"{{\"messageId\":\"{m.MessageId}\",\"handlerName\":\"{EscapeJson(m.HandlerName)}\",\"envelopeType\":\"{EscapeJson(envelopeTypeName)}\",\"envelopeData\":{envelopeDataJson},\"streamId\":{streamIdPart},\"isEvent\":{isEventPart}}}";
     });
+
     return $"[{string.Join(",", items)}]";
   }
 
@@ -288,6 +306,25 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var items = messageIds.Select(id => $"\"{id}\"");
     return $"[{string.Join(",", items)}]";
   }
+
+  /// <summary>
+  /// Deserializes envelope from database envelope_type and envelope_data columns.
+  /// </summary>
+  private IMessageEnvelope DeserializeEnvelope(string envelopeTypeName, string envelopeDataJson) {
+    // Resolve the envelope type from stored type name
+    var envelopeType = Type.GetType(envelopeTypeName)
+      ?? throw new InvalidOperationException($"Could not resolve envelope type '{envelopeTypeName}'");
+
+    // Get JsonTypeInfo for the envelope type
+    var typeInfo = _jsonOptions.GetTypeInfo(envelopeType)
+      ?? throw new InvalidOperationException($"No JsonTypeInfo found for envelope type '{envelopeTypeName}'. Ensure the envelope type is registered via JsonContextRegistry.");
+
+    // Deserialize the complete envelope
+    var envelope = JsonSerializer.Deserialize(envelopeDataJson, typeInfo) as IMessageEnvelope
+      ?? throw new InvalidOperationException($"Failed to deserialize envelope of type '{envelopeTypeName}'");
+
+    return envelope;
+  }
 }
 
 /// <summary>
@@ -304,17 +341,11 @@ internal class WorkBatchRow {
   [Column("destination")]
   public string? Destination { get; set; }  // null for inbox
 
-  [Column("event_type")]
-  public required string EventType { get; set; }
+  [Column("envelope_type")]
+  public required string EnvelopeType { get; set; }  // Assembly qualified name of envelope type
 
-  [Column("event_data")]
-  public required string EventData { get; set; }  // JSON string
-
-  [Column("metadata")]
-  public required string Metadata { get; set; }  // JSON string
-
-  [Column("scope")]
-  public string? Scope { get; set; }  // JSON string (nullable)
+  [Column("envelope_data")]
+  public required string EnvelopeData { get; set; }  // Complete serialized MessageEnvelope<T> as JSON
 
   [Column("stream_uuid")]
   public Guid? StreamId { get; set; }  // Stream ID for ordering

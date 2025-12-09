@@ -3,6 +3,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -11,6 +12,14 @@ namespace Whizbang.Core.Tests.Messaging;
 /// </summary>
 public class IntervalWorkCoordinatorStrategyTests {
   private readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
+
+  // Helper method to create test envelope
+  private static TestMessageEnvelope CreateTestEnvelope(Guid messageId) {
+    return new TestMessageEnvelope {
+      MessageId = MessageId.From(messageId),
+      Hops = []
+    };
+  }
 
   // ========================================
   // Priority 3 Tests: Interval Strategy
@@ -37,13 +46,11 @@ public class IntervalWorkCoordinatorStrategyTests {
     );
 
     var messageId = _idProvider.NewGuid();
+    var envelope = CreateTestEnvelope(messageId);
     sut.QueueOutboxMessage(new NewOutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
-      EventType = "TestEvent",
-      EventData = "{}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = envelope,
       StreamId = _idProvider.NewGuid(),
       IsEvent = true
     });
@@ -83,26 +90,22 @@ public class IntervalWorkCoordinatorStrategyTests {
     var messageId2 = _idProvider.NewGuid();
 
     // Act - Queue two messages quickly (before timer fires)
+    var envelope1 = CreateTestEnvelope(messageId1);
     sut.QueueOutboxMessage(new NewOutboxMessage {
       MessageId = messageId1,
       Destination = "topic1",
-      EventType = "Event1",
-      EventData = "{}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = envelope1,
       StreamId = _idProvider.NewGuid(),
       IsEvent = true
     });
 
     await Task.Delay(50);  // Small delay, but less than timer interval
 
+    var envelope2 = CreateTestEnvelope(messageId2);
     sut.QueueOutboxMessage(new NewOutboxMessage {
       MessageId = messageId2,
       Destination = "topic2",
-      EventType = "Event2",
-      EventData = "{}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = envelope2,
       StreamId = _idProvider.NewGuid(),
       IsEvent = true
     });
@@ -141,13 +144,11 @@ public class IntervalWorkCoordinatorStrategyTests {
     );
 
     var messageId = _idProvider.NewGuid();
+    var envelope = CreateTestEnvelope(messageId);
     sut.QueueOutboxMessage(new NewOutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
-      EventType = "TestEvent",
-      EventData = "{}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = envelope,
       StreamId = _idProvider.NewGuid(),
       IsEvent = true
     });
@@ -192,13 +193,11 @@ public class IntervalWorkCoordinatorStrategyTests {
     );
 
     var messageId = _idProvider.NewGuid();
+    var envelope = CreateTestEnvelope(messageId);
     sut.QueueOutboxMessage(new NewOutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
-      EventType = "TestEvent",
-      EventData = "{}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = envelope,
       StreamId = _idProvider.NewGuid(),
       IsEvent = true
     });
@@ -269,6 +268,41 @@ public class IntervalWorkCoordinatorStrategyTests {
         HostName = HostName,
         ProcessId = ProcessId
       };
+    }
+  }
+
+  // Test envelope implementation
+  private class TestMessageEnvelope : IMessageEnvelope {
+    public required MessageId MessageId { get; init; }
+    public required List<MessageHop> Hops { get; init; }
+
+    public void AddHop(MessageHop hop) {
+      Hops.Add(hop);
+    }
+
+    public DateTimeOffset GetMessageTimestamp() {
+      return Hops.Count > 0 ? Hops[0].Timestamp : DateTimeOffset.UtcNow;
+    }
+
+    public CorrelationId? GetCorrelationId() {
+      return Hops.Count > 0 ? Hops[0].CorrelationId : null;
+    }
+
+    public MessageId? GetCausationId() {
+      return Hops.Count > 0 ? Hops[0].CausationId : null;
+    }
+
+    public object? GetMetadata(string key) {
+      for (var i = Hops.Count - 1; i >= 0; i--) {
+        if (Hops[i].Type == HopType.Current && Hops[i].Metadata?.ContainsKey(key) == true) {
+          return Hops[i].Metadata[key];
+        }
+      }
+      return null;
+    }
+
+    public object GetPayload() {
+      return new { };
     }
   }
 }

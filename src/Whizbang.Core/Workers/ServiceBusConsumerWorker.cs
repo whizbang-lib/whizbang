@@ -203,26 +203,16 @@ public class ServiceBusConsumerWorker(
   }
 
   /// <summary>
-  /// Serializes message envelope to NewInboxMessage for work coordinator pattern.
-  /// Extracts payload type, serializes data, and determines stream ID.
+  /// Creates NewInboxMessage for work coordinator pattern.
+  /// Envelope remains as object - serialization happens at work coordinator layer.
   /// </summary>
   private NewInboxMessage _serializeToNewInboxMessage(IMessageEnvelope envelope) {
-    // Get payload and its type
+    // Get payload and its type for metadata
     var payload = envelope.GetPayload();
     var payloadType = payload.GetType();
 
     // Determine handler name from payload type
     var handlerName = payloadType.Name + "Handler";
-
-    // Serialize payload to JSON
-    var typeInfo = _jsonOptions.GetTypeInfo(payloadType);
-    var eventDataJson = JsonSerializer.Serialize(payload, typeInfo);
-
-    // Serialize metadata (MessageId + Hops)
-    var metadata = _serializeEnvelopeMetadata(envelope);
-
-    // Serialize security scope (nullable)
-    var scope = _serializeSecurityScope(envelope);
 
     // Extract stream_id from envelope (aggregate ID or message ID)
     var streamId = _extractStreamId(envelope);
@@ -230,45 +220,24 @@ public class ServiceBusConsumerWorker(
     return new NewInboxMessage {
       MessageId = envelope.MessageId.Value,
       HandlerName = handlerName,
-      EventType = payloadType.FullName ?? throw new InvalidOperationException("Event type has no FullName"),
-      EventData = eventDataJson,
-      Metadata = metadata,
-      Scope = scope,
+      Envelope = envelope,  // Pass object, not serialized string
       StreamId = streamId,
       IsEvent = payload is IEvent
     };
   }
 
   /// <summary>
-  /// Deserializes event from InboxWork for processing.
-  /// Uses MessageType to determine correct type and deserialize MessageData JSON.
+  /// Extracts event payload from InboxWork for processing.
+  /// Envelope is already deserialized - just get the payload.
   /// </summary>
   private object? _deserializeEvent(InboxWork work) {
-    // Get the Type from the fully-qualified name
-    var messageType = Type.GetType(work.MessageType);
-
-    if (messageType == null) {
-      _logger.LogError("Failed to resolve message type: {MessageType}", work.MessageType);
+    try {
+      // Extract and return the payload from the envelope object
+      return work.Envelope.GetPayload();
+    } catch (Exception ex) {
+      _logger.LogError(ex, "Failed to extract payload from envelope for message {MessageId}", work.MessageId);
       return null;
     }
-
-    // Get JsonTypeInfo for this type
-    var typeInfo = _jsonOptions.GetTypeInfo(messageType);
-
-    if (typeInfo == null) {
-      _logger.LogError("No JsonTypeInfo found for type: {MessageType}", work.MessageType);
-      return null;
-    }
-
-    // Deserialize JSON to typed event
-    var @event = JsonSerializer.Deserialize(work.MessageData, typeInfo);
-
-    if (@event == null) {
-      _logger.LogError("Failed to deserialize message data for type: {MessageType}", work.MessageType);
-      return null;
-    }
-
-    return @event;
   }
 
   /// <summary>

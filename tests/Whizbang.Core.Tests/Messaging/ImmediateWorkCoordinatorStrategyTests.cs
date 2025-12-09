@@ -3,6 +3,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -11,6 +12,9 @@ namespace Whizbang.Core.Tests.Messaging;
 /// </summary>
 public class ImmediateWorkCoordinatorStrategyTests {
   private readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
+
+  // Simple test message for envelope creation
+  private record TestEvent(string Data);
 
   // ========================================
   // Priority 3 Tests: Immediate Strategy
@@ -37,13 +41,15 @@ public class ImmediateWorkCoordinatorStrategyTests {
     );
 
     var messageId = _idProvider.NewGuid();
+    var envelope = new MessageEnvelope<TestEvent> {
+      MessageId = MessageId.From(messageId),
+      Payload = new TestEvent("test-data"),
+      Hops = new List<MessageHop>()
+    };
     sut.QueueOutboxMessage(new NewOutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
-      EventType = "TestEvent",
-      EventData = "{}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = envelope,
       StreamId = _idProvider.NewGuid(),
       IsEvent = true
     });
@@ -79,13 +85,15 @@ public class ImmediateWorkCoordinatorStrategyTests {
     );
 
     var messageId = _idProvider.NewGuid();
+    var envelope = new MessageEnvelope<TestEvent> {
+      MessageId = MessageId.From(messageId),
+      Payload = new TestEvent("test-data"),
+      Hops = new List<MessageHop>()
+    };
     var outboxMessage = new NewOutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
-      EventType = "TestEvent",
-      EventData = "{}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = envelope,
       StreamId = _idProvider.NewGuid(),
       IsEvent = true
     };
@@ -121,13 +129,15 @@ public class ImmediateWorkCoordinatorStrategyTests {
     );
 
     var messageId = _idProvider.NewGuid();
+    var envelope = new MessageEnvelope<TestEvent> {
+      MessageId = MessageId.From(messageId),
+      Payload = new TestEvent("test-data"),
+      Hops = new List<MessageHop>()
+    };
     var inboxMessage = new NewInboxMessage {
       MessageId = messageId,
       HandlerName = "TestHandler",
-      EventType = "TestEvent",
-      EventData = "{}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = envelope,
       StreamId = _idProvider.NewGuid(),
       IsEvent = true
     };

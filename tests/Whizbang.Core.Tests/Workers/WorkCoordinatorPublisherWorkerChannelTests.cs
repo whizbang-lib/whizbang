@@ -1,5 +1,7 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -11,11 +13,22 @@ using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
 
 public class WorkCoordinatorPublisherWorkerChannelTests {
+  private record TestMessage { }
+
+  private static IMessageEnvelope CreateTestEnvelope(Guid messageId) {
+    return new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.From(messageId),
+      Payload = new TestMessage(),
+      Hops = []
+    };
+  }
+
   private class TestWorkCoordinator : IWorkCoordinator {
     public List<OutboxWork> WorkToReturn { get; set; } = [];
     public List<MessageCompletion> ReceivedCompletions { get; } = [];
@@ -55,7 +68,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
   }
 
   private class TestPublishStrategy : IMessagePublishStrategy {
-    public List<OutboxWork> PublishedWork { get; } = [];
+    public ConcurrentBag<OutboxWork> PublishedWork { get; } = [];
     public Func<OutboxWork, MessagePublishResult>? PublishResultFunc { get; set; }
     public TimeSpan PublishDelay { get; set; } = TimeSpan.Zero;
 
@@ -95,10 +108,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
       new OutboxWork {
         MessageId = messageId,
         Destination = "test-topic",
-        MessageType = "TestMessage",
-        MessageData = "{}",
-        Metadata = "{\"messageId\":\"" + messageId + "\",\"hops\":[]}",
-        Scope = null,
+        Envelope = CreateTestEnvelope(messageId),
         StreamId = Guid.NewGuid(),
         PartitionNumber = 1,
         Attempts = 0,
@@ -117,7 +127,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
 
     await Assert.That(result.Success).IsTrue();
     await Assert.That(publishStrategy.PublishedWork).HasCount().EqualTo(1);
-    await Assert.That(publishStrategy.PublishedWork[0].MessageId).IsEqualTo(messageId);
+    await Assert.That(publishStrategy.PublishedWork.First().MessageId).IsEqualTo(messageId);
   }
 
   [Test]
@@ -139,10 +149,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
       new OutboxWork {
         MessageId = messageId,
         Destination = "test-topic",
-        MessageType = "TestMessage",
-        MessageData = "{}",
-        Metadata = "{\"messageId\":\"" + messageId + "\",\"hops\":[]}",
-        Scope = null,
+        Envelope = CreateTestEnvelope(messageId),
         StreamId = Guid.NewGuid(),
         PartitionNumber = 1,
         Attempts = 0,
@@ -172,13 +179,11 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
 
     var messages = new List<OutboxWork>();
     for (int i = 0; i < 5; i++) {
+      var msgId = Guid.NewGuid();
       messages.Add(new OutboxWork {
-        MessageId = Guid.NewGuid(),
+        MessageId = msgId,
         Destination = "test-topic",
-        MessageType = "TestMessage",
-        MessageData = "{}",
-        Metadata = "{\"messageId\":\"" + Guid.NewGuid() + "\",\"hops\":[]}",
-        Scope = null,
+        Envelope = CreateTestEnvelope(msgId),
         StreamId = Guid.NewGuid(),
         PartitionNumber = 1,
         Attempts = 0,

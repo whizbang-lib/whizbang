@@ -3,6 +3,7 @@ using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -11,6 +12,11 @@ namespace Whizbang.Core.Tests.Messaging;
 /// </summary>
 public class ScopedWorkCoordinatorStrategyTests {
   private readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
+
+  // Test message types
+  private record TestEvent1 { }
+  private record TestEvent2 { }
+  private record TestEvent3 { }
 
   // ========================================
   // Priority 3 Tests: Scoped Strategy
@@ -40,24 +46,48 @@ public class ScopedWorkCoordinatorStrategyTests {
     var messageId1 = _idProvider.NewGuid();
     var messageId2 = _idProvider.NewGuid();
 
+    var envelope1 = new MessageEnvelope<TestEvent1> {
+      MessageId = MessageId.From(messageId1),
+      Payload = new TestEvent1(),
+      Hops = [
+        new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          }
+        }
+      ]
+    };
+
     sut.QueueOutboxMessage(new NewOutboxMessage {
       MessageId = messageId1,
       Destination = "topic1",
-      EventType = "Event1",
-      EventData = "{}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = envelope1,
       StreamId = _idProvider.NewGuid(),
       IsEvent = true
     });
 
+    var envelope2 = new MessageEnvelope<TestEvent2> {
+      MessageId = MessageId.From(messageId2),
+      Payload = new TestEvent2(),
+      Hops = [
+        new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          }
+        }
+      ]
+    };
+
     sut.QueueInboxMessage(new NewInboxMessage {
       MessageId = messageId2,
       HandlerName = "Handler1",
-      EventType = "Event2",
-      EventData = "{}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = envelope2,
       StreamId = _idProvider.NewGuid(),
       IsEvent = true
     });
@@ -96,13 +126,26 @@ public class ScopedWorkCoordinatorStrategyTests {
     );
 
     var messageId = _idProvider.NewGuid();
+
+    var envelope = new MessageEnvelope<TestEvent1> {
+      MessageId = MessageId.From(messageId),
+      Payload = new TestEvent1(),
+      Hops = [
+        new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          }
+        }
+      ]
+    };
+
     sut.QueueOutboxMessage(new NewOutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
-      EventType = "TestEvent",
-      EventData = "{}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = envelope,
       StreamId = _idProvider.NewGuid(),
       IsEvent = true
     });
@@ -152,35 +195,71 @@ public class ScopedWorkCoordinatorStrategyTests {
     var failureId = _idProvider.NewGuid();
 
     // Queue multiple types of operations
+    var envelope1 = new MessageEnvelope<TestEvent1> {
+      MessageId = MessageId.From(outboxId1),
+      Payload = new TestEvent1(),
+      Hops = [
+        new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          }
+        }
+      ]
+    };
+
     sut.QueueOutboxMessage(new NewOutboxMessage {
       MessageId = outboxId1,
       Destination = "topic1",
-      EventType = "Event1",
-      EventData = "{}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = envelope1,
       StreamId = _idProvider.NewGuid(),
       IsEvent = true
     });
+
+    var envelope2 = new MessageEnvelope<TestEvent2> {
+      MessageId = MessageId.From(outboxId2),
+      Payload = new TestEvent2(),
+      Hops = [
+        new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          }
+        }
+      ]
+    };
 
     sut.QueueOutboxMessage(new NewOutboxMessage {
       MessageId = outboxId2,
       Destination = "topic2",
-      EventType = "Event2",
-      EventData = "{}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = envelope2,
       StreamId = _idProvider.NewGuid(),
       IsEvent = true
     });
 
+    var envelope3 = new MessageEnvelope<TestEvent3> {
+      MessageId = MessageId.From(inboxId1),
+      Payload = new TestEvent3(),
+      Hops = [
+        new MessageHop {
+          ServiceInstance = new ServiceInstanceInfo {
+            ServiceName = "TestService",
+            InstanceId = Guid.NewGuid(),
+            HostName = "test-host",
+            ProcessId = 12345
+          }
+        }
+      ]
+    };
+
     sut.QueueInboxMessage(new NewInboxMessage {
       MessageId = inboxId1,
       HandlerName = "Handler1",
-      EventType = "Event3",
-      EventData = "{}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = envelope3,
       StreamId = _idProvider.NewGuid(),
       IsEvent = true
     });

@@ -74,7 +74,7 @@ public abstract class Dispatcher(
 #endif
   public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message) where TMessage : notnull {
     var context = MessageContext.New();
-    return SendAsync((object)message, context);
+    return SendAsyncInternal<TMessage>(message, context);
   }
 
   /// <summary>
@@ -144,6 +144,58 @@ public abstract class Dispatcher(
     );
   }
 
+  /// <summary>
+  /// Internal generic implementation of SendAsync that preserves type information.
+  /// This method is called by the public SendAsync&lt;TMessage&gt; overload to avoid type erasure.
+  /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  private async Task<IDeliveryReceipt> SendAsyncInternal<TMessage>(
+    TMessage message,
+    IMessageContext context,
+    [CallerMemberName] string callerMemberName = "",
+    [CallerFilePath] string callerFilePath = "",
+    [CallerLineNumber] int callerLineNumber = 0
+  ) where TMessage : notnull {
+    ArgumentNullException.ThrowIfNull(message);
+    ArgumentNullException.ThrowIfNull(context);
+
+    var messageType = typeof(TMessage);
+
+    // Get strongly-typed delegate from generated code
+    var invoker = _getReceptorInvoker<object>(message, messageType);
+
+    // If no local receptor exists, check for work coordinator strategy
+    if (invoker == null) {
+      // Try strategy-based outbox pattern (new work coordinator pattern)
+      // Route to outbox for remote delivery (AOT-compatible, no reflection)
+      // NOTE: This will be updated to call generic SendToOutboxViaScopeAsync<TMessage> in a later task
+      return await SendToOutboxViaScopeAsync(message!, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
+    }
+
+    // Create envelope with hop for observability - generic version preserves type!
+    var envelope = _createEnvelope<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
+
+    // Store envelope if trace store is configured
+    if (_traceStore != null) {
+      await _traceStore.StoreAsync(envelope);
+    }
+
+    // Invoke using delegate - zero reflection, strongly typed
+    await invoker(message);
+
+    // Return delivery receipt
+    var destination = messageType.Name; // Will be enhanced with actual receptor name in future
+    return DeliveryReceipt.Delivered(
+      envelope.MessageId,
+      destination,
+      context.CorrelationId,
+      context.CausationId
+    );
+  }
+
   // ========================================
   // LOCAL INVOKE PATTERN - In-Process RPC
   // ========================================
@@ -193,7 +245,7 @@ public abstract class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) where TMessage : notnull {
-    return LocalInvokeAsync<TResult>((object)message, context, callerMemberName, callerFilePath, callerLineNumber);
+    return LocalInvokeAsyncInternal<TMessage, TResult>(message, context, callerMemberName, callerFilePath, callerLineNumber);
   }
 
   /// <summary>
@@ -255,6 +307,62 @@ public abstract class Dispatcher(
     return result;
   }
 
+  /// <summary>
+  /// Internal generic implementation of LocalInvokeAsync that preserves type information.
+  /// This method is called by the public LocalInvokeAsync&lt;TMessage, TResult&gt; overload to avoid type erasure.
+  /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  private ValueTask<TResult> LocalInvokeAsyncInternal<TMessage, TResult>(
+    TMessage message,
+    IMessageContext context,
+    [CallerMemberName] string callerMemberName = "",
+    [CallerFilePath] string callerFilePath = "",
+    [CallerLineNumber] int callerLineNumber = 0
+  ) where TMessage : notnull {
+    ArgumentNullException.ThrowIfNull(message);
+    ArgumentNullException.ThrowIfNull(context);
+
+    var messageType = typeof(TMessage);
+
+    // Get strongly-typed delegate from generated code
+    var invoker = _getReceptorInvoker<TResult>(message, messageType) ?? throw new HandlerNotFoundException(messageType);
+
+    // OPTIMIZATION: Skip envelope creation when trace store is null
+    // This achieves zero allocation for high-throughput scenarios
+    if (_traceStore != null) {
+      return _localInvokeWithTracingAsyncInternal<TMessage, TResult>(message, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
+    }
+
+    // FAST PATH: Zero allocation when no tracing
+    // Invoke using delegate - zero reflection, strongly typed
+    // Avoid async/await state machine allocation by returning task directly
+    return invoker(message);
+  }
+
+  /// <summary>
+  /// Internal generic tracing method for LocalInvoke when tracing is enabled.
+  /// Uses async/await to store envelope before invoking receptor.
+  /// Preserves type information to create correctly-typed MessageEnvelope.
+  /// </summary>
+  private async ValueTask<TResult> _localInvokeWithTracingAsyncInternal<TMessage, TResult>(
+    TMessage message,
+    IMessageContext context,
+    ReceptorInvoker<TResult> invoker,
+    string callerMemberName,
+    string callerFilePath,
+    int callerLineNumber
+  ) {
+    var envelope = _createEnvelope<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
+    await _traceStore!.StoreAsync(envelope);
+
+    // Invoke using delegate - zero reflection, strongly typed
+    var result = await invoker(message);
+    return result;
+  }
+
   // ========================================
   // VOID LOCAL INVOKE PATTERN - Zero Allocation Command/Event Handling
   // ========================================
@@ -304,7 +412,7 @@ public abstract class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) where TMessage : notnull {
-    return LocalInvokeAsync((object)message, context, callerMemberName, callerFilePath, callerLineNumber);
+    return LocalInvokeAsyncInternal<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
   }
 
   /// <summary>
@@ -366,7 +474,63 @@ public abstract class Dispatcher(
   }
 
   /// <summary>
+  /// Internal generic implementation of void LocalInvokeAsync that preserves type information.
+  /// This method is called by the public LocalInvokeAsync&lt;TMessage&gt; overload to avoid type erasure.
+  /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  private ValueTask LocalInvokeAsyncInternal<TMessage>(
+    TMessage message,
+    IMessageContext context,
+    [CallerMemberName] string callerMemberName = "",
+    [CallerFilePath] string callerFilePath = "",
+    [CallerLineNumber] int callerLineNumber = 0
+  ) where TMessage : notnull {
+    ArgumentNullException.ThrowIfNull(message);
+    ArgumentNullException.ThrowIfNull(context);
+
+    var messageType = typeof(TMessage);
+
+    // Get strongly-typed void delegate from generated code
+    var invoker = _getVoidReceptorInvoker(message, messageType) ?? throw new HandlerNotFoundException(messageType);
+
+    // OPTIMIZATION: Skip envelope creation when trace store is null
+    // This achieves zero allocation for high-throughput scenarios
+    if (_traceStore != null) {
+      return _localInvokeVoidWithTracingAsyncInternal<TMessage>(message, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
+    }
+
+    // FAST PATH: Zero allocation when no tracing
+    // Invoke using delegate - zero reflection, strongly typed
+    // Avoid async/await state machine allocation by returning task directly
+    return invoker(message);
+  }
+
+  /// <summary>
+  /// Internal generic tracing method for void LocalInvoke when tracing is enabled.
+  /// Uses async/await to store envelope before invoking receptor.
+  /// Preserves type information to create correctly-typed MessageEnvelope.
+  /// </summary>
+  private async ValueTask _localInvokeVoidWithTracingAsyncInternal<TMessage>(
+    TMessage message,
+    IMessageContext context,
+    VoidReceptorInvoker invoker,
+    string callerMemberName,
+    string callerFilePath,
+    int callerLineNumber
+  ) {
+    var envelope = _createEnvelope<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
+    await _traceStore!.StoreAsync(envelope);
+
+    // Invoke using delegate - zero reflection, strongly typed
+    await invoker(message);
+  }
+
+  /// <summary>
   /// Creates a MessageEnvelope with initial hop containing caller information and context.
+  /// Generic version - preserves type information at compile time.
   /// </summary>
   private IMessageEnvelope _createEnvelope<TMessage>(
     TMessage message,
@@ -395,6 +559,40 @@ public abstract class Dispatcher(
     envelope.AddHop(hop);
     return envelope;
   }
+
+  /// <summary>
+  /// Creates a MessageEnvelope with initial hop containing caller information and context.
+  /// Non-generic version - TEMPORARY WORKAROUND - creates MessageEnvelope&lt;object&gt;.
+  /// TODO: Make all calling methods generic to avoid type erasure.
+  /// </summary>
+  private IMessageEnvelope _createEnvelope(
+    object message,
+    IMessageContext context,
+    string callerMemberName,
+    string callerFilePath,
+    int callerLineNumber
+  ) {
+    var envelope = new MessageEnvelope<object> {
+      MessageId = MessageId.New(),
+      Payload = message,
+      Hops = []
+    };
+
+    var hop = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = _instanceProvider.ToInfo(),
+      Timestamp = DateTimeOffset.UtcNow,
+      CorrelationId = context.CorrelationId,
+      CausationId = context.CausationId,
+      CallerMemberName = callerMemberName,
+      CallerFilePath = callerFilePath,
+      CallerLineNumber = callerLineNumber
+    };
+
+    envelope.AddHop(hop);
+    return envelope;
+  }
+
 
   /// <summary>
   /// Publishes an event to all registered handlers.
@@ -490,10 +688,6 @@ public abstract class Dispatcher(
       // If no strategy is registered, skip outbox routing (local-only event)
       if (strategy == null) {
         return;
-      }
-
-      if (_jsonOptions == null) {
-        throw new InvalidOperationException("JsonSerializerOptions required for event serialization. Register JsonSerializerOptions in DI container.");
       }
 
       // Determine destination topic from event type name
@@ -611,14 +805,11 @@ public abstract class Dispatcher(
         throw new HandlerNotFoundException(messageType);
       }
 
-      if (_jsonOptions == null) {
-        throw new InvalidOperationException("JsonSerializerOptions required for message serialization. Register JsonSerializerOptions in DI container.");
-      }
-
       // Determine destination topic from message type name
       var destination = DetermineCommandDestination(messageType);
 
       // Create envelope with hop for observability (returns IMessageEnvelope)
+      // TODO: Make SendToOutboxViaScopeAsync generic to preserve type information
       var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
 
       // Serialize envelope to NewOutboxMessage
@@ -660,10 +851,6 @@ public abstract class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) {
-    if (_jsonOptions == null) {
-      throw new InvalidOperationException("JsonSerializerOptions required for message serialization. Register JsonSerializerOptions in DI container.");
-    }
-
     var receipts = new List<IDeliveryReceipt>();
 
     // Create ONE scope for all messages
@@ -713,8 +900,30 @@ public abstract class Dispatcher(
   // ========================================
 
   /// <summary>
+  /// Sends multiple typed messages and collects all delivery receipts (AOT-compatible).
+  /// Type information is preserved at compile time, avoiding reflection.
+  /// Optimized for batch operations - processes messages individually to preserve type safety.
+  /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public async Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull {
+    ArgumentNullException.ThrowIfNull(messages);
+
+    var receipts = new List<IDeliveryReceipt>();
+    foreach (var message in messages) {
+      var receipt = await SendAsyncInternal<TMessage>(message, MessageContext.New());
+      receipts.Add(receipt);
+    }
+
+    return receipts;
+  }
+
+  /// <summary>
   /// Sends multiple messages and collects all delivery receipts.
   /// Optimized for batch operations - creates a single scope and flushes once.
+  /// For AOT compatibility, use the generic overload SendManyAsync&lt;TMessage&gt;.
   /// </summary>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
@@ -782,9 +991,9 @@ public abstract class Dispatcher(
   // ========================================
 
   /// <summary>
-  /// Serializes a message envelope to NewOutboxMessage for work coordinator pattern.
+  /// Creates a NewOutboxMessage for work coordinator pattern.
   /// Extracts stream_id from aggregate ID or falls back to message ID.
-  /// AOT-compatible - uses JsonTypeInfo for serialization.
+  /// Envelope remains as object - serialization happens at work coordinator layer.
   /// </summary>
   private NewOutboxMessage _serializeToNewOutboxMessage(
     IMessageEnvelope envelope,
@@ -792,30 +1001,13 @@ public abstract class Dispatcher(
     Type payloadType,
     string destination
   ) {
-    if (_jsonOptions == null) {
-      throw new InvalidOperationException("JsonSerializerOptions required for envelope serialization");
-    }
-
-    // Serialize payload to JSON using JsonTypeInfo (AOT-compatible)
-    var typeInfo = _jsonOptions.GetTypeInfo(payloadType);
-    var eventDataJson = JsonSerializer.Serialize(payload, typeInfo);
-
-    // Serialize metadata (MessageId + Hops)
-    var metadata = _serializeEnvelopeMetadata(envelope);
-
-    // Serialize security scope (nullable)
-    var scope = _serializeSecurityScope(envelope);
-
     // Extract stream_id: try aggregate ID from first hop, fall back to message ID
     var streamId = _extractStreamId(envelope);
 
     return new NewOutboxMessage {
       MessageId = envelope.MessageId.Value,
       Destination = destination,
-      EventType = payloadType.FullName ?? throw new InvalidOperationException("Message type has no FullName"),
-      EventData = eventDataJson,
-      Metadata = metadata,
-      Scope = scope,
+      Envelope = envelope,  // Pass object, not serialized string
       StreamId = streamId,
       IsEvent = payload is IEvent
     };

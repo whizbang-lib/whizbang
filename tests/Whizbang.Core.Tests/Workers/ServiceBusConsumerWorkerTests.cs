@@ -57,10 +57,7 @@ public class ServiceBusConsumerWorkerTests {
       var inboxWork = new List<InboxWork> {
         new() {
           MessageId = envelope.MessageId.Value,
-          MessageType = "Whizbang.Core.Tests.Workers.ServiceBusWorkerTestEvent, Whizbang.Core.Tests",
-          MessageData = "{\"Data\":\"test data\"}",
-          Metadata = "{}",
-          Scope = null,
+          Envelope = envelope,
           StreamId = Guid.NewGuid(),
           PartitionNumber = 1,
           Status = MessageProcessingStatus.Stored,

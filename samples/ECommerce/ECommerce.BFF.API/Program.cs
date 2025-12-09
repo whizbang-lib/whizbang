@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ECommerce.BFF.API;
 using ECommerce.BFF.API.Generated;
 using ECommerce.BFF.API.GraphQL;
@@ -104,9 +105,6 @@ builder.Services
   .AddSorting()    // Enable ORDER BY clauses
   .AddProjections();  // Enable field selection optimization
 
-// Create JsonSerializerOptions from global registry (required by workers)
-var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-
 // Register transport readiness check (ServiceBusReadinessCheck for Azure Service Bus)
 builder.Services.AddSingleton<ITransportReadinessCheck>(sp => {
   var transport = sp.GetRequiredService<ITransport>();
@@ -119,7 +117,6 @@ builder.Services.AddSingleton<ITransportReadinessCheck>(sp => {
 builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
   new TransportPublishStrategy(
     sp.GetRequiredService<ITransport>(),
-    jsonOptions,
     sp.GetRequiredService<ITransportReadinessCheck>()
   )
 );
@@ -138,7 +135,7 @@ builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
     sp.GetRequiredService<IServiceInstanceProvider>(),
     sp.GetRequiredService<ITransport>(),
     sp.GetRequiredService<IServiceScopeFactory>(),
-    jsonOptions,
+    sp.GetRequiredService<JsonSerializerOptions>(),
     sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
     sp.GetRequiredService<OrderedStreamProcessor>(),
     consumerOptions

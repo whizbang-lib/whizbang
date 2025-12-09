@@ -1,3 +1,5 @@
+using Whizbang.Core.Observability;
+
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
@@ -93,26 +95,10 @@ public record NewOutboxMessage {
   public required string Destination { get; init; }
 
   /// <summary>
-  /// Fully-qualified message type name.
+  /// Complete MessageEnvelope object (including payload, message type, hops, metadata).
+  /// Strongly typed - serialization happens at the work coordinator layer.
   /// </summary>
-  public required string EventType { get; init; }
-
-  /// <summary>
-  /// Message payload as JSON string.
-  /// </summary>
-  public required string EventData { get; init; }
-
-  /// <summary>
-  /// Message metadata as JSON string.
-  /// Contains correlation ID, causation ID, hops, etc.
-  /// </summary>
-  public required string Metadata { get; init; }
-
-  /// <summary>
-  /// Scope information as JSON string (nullable).
-  /// Contains tenant/user/partition info.
-  /// </summary>
-  public string? Scope { get; init; }
+  public required IMessageEnvelope Envelope { get; init; }
 
   /// <summary>
   /// Stream ID for ordering (aggregate ID or message ID).
@@ -143,26 +129,10 @@ public record NewInboxMessage {
   public required string HandlerName { get; init; }
 
   /// <summary>
-  /// Fully-qualified message type name.
+  /// Complete MessageEnvelope object (including payload, message type, hops, metadata).
+  /// Strongly typed - serialization happens at the work coordinator layer.
   /// </summary>
-  public required string EventType { get; init; }
-
-  /// <summary>
-  /// Message payload as JSON string.
-  /// </summary>
-  public required string EventData { get; init; }
-
-  /// <summary>
-  /// Message metadata as JSON string.
-  /// Contains correlation ID, causation ID, hops, etc.
-  /// </summary>
-  public required string Metadata { get; init; }
-
-  /// <summary>
-  /// Scope information as JSON string (nullable).
-  /// Contains tenant/user/partition info.
-  /// </summary>
-  public string? Scope { get; init; }
+  public required IMessageEnvelope Envelope { get; init; }
 
   /// <summary>
   /// Stream ID for ordering (aggregate ID or message ID).
@@ -256,26 +226,10 @@ public record OutboxWork {
   public required string Destination { get; init; }
 
   /// <summary>
-  /// Fully-qualified message type name.
+  /// Complete MessageEnvelope object (including payload, message type, hops, metadata).
+  /// Deserialized from database - ready to publish.
   /// </summary>
-  public required string MessageType { get; init; }
-
-  /// <summary>
-  /// Message payload as JSON string.
-  /// </summary>
-  public required string MessageData { get; init; }
-
-  /// <summary>
-  /// Message metadata as JSON string.
-  /// Contains correlation ID, causation ID, hops, etc.
-  /// </summary>
-  public required string Metadata { get; init; }
-
-  /// <summary>
-  /// Scope information as JSON string (nullable).
-  /// Contains tenant/user/partition info.
-  /// </summary>
-  public string? Scope { get; init; }
+  public required IMessageEnvelope Envelope { get; init; }
 
   /// <summary>
   /// Stream ID for ordering (aggregate ID or message ID).
@@ -325,26 +279,10 @@ public record InboxWork {
   public required Guid MessageId { get; init; }
 
   /// <summary>
-  /// Fully-qualified message type name.
+  /// Complete MessageEnvelope object (including payload, message type, hops, metadata).
+  /// Deserialized from database - ready to process.
   /// </summary>
-  public required string MessageType { get; init; }
-
-  /// <summary>
-  /// Message payload as JSON string.
-  /// </summary>
-  public required string MessageData { get; init; }
-
-  /// <summary>
-  /// Message metadata as JSON string.
-  /// Contains correlation ID, causation ID, hops, etc.
-  /// </summary>
-  public required string Metadata { get; init; }
-
-  /// <summary>
-  /// Scope information as JSON string (nullable).
-  /// Contains tenant/user/partition info.
-  /// </summary>
-  public string? Scope { get; init; }
+  public required IMessageEnvelope Envelope { get; init; }
 
   /// <summary>
   /// Stream ID for ordering (aggregate ID or message ID).

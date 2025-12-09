@@ -8,6 +8,7 @@ using TUnit.Assertions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 
 namespace Whizbang.Core.Tests.Workers;
@@ -17,6 +18,16 @@ namespace Whizbang.Core.Tests.Workers;
 /// Phase 2: Verifies that transport readiness buffering is properly tracked and logged.
 /// </summary>
 public class WorkCoordinatorPublisherWorkerMetricsTests {
+  private record TestMessage { }
+
+  private static IMessageEnvelope CreateTestEnvelope(Guid messageId) {
+    return new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.From(messageId),
+      Payload = new TestMessage(),
+      Hops = []
+    };
+  }
+
   [Test]
   public async Task TransportNotReady_SingleBuffer_LogsInformationAsync() {
     // Arrange
@@ -293,10 +304,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     return new OutboxWork {
       MessageId = messageId,
       Destination = "test-topic",
-      MessageType = "TestMessage",
-      MessageData = "{}",
-      Metadata = "{\"messageId\":\"" + messageId + "\",\"hops\":[]}",
-      Scope = null,
+      Envelope = CreateTestEnvelope(messageId),
       StreamId = Guid.NewGuid(),
       PartitionNumber = 1,
       Attempts = 0,
@@ -325,6 +333,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     services.AddSingleton(workCoordinator);
     services.AddSingleton(publishStrategy);
     services.AddSingleton(instanceProvider);
+    services.AddSingleton<WorkChannelWriter>();  // Required by WorkCoordinatorPublisherWorker
     services.AddSingleton(new WorkCoordinatorPublisherOptions {
       PollingIntervalMilliseconds = 100  // Fast polling for tests
     });

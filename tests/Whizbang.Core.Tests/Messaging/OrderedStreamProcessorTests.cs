@@ -4,6 +4,8 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Messaging;
 
@@ -261,12 +263,11 @@ public class OrderedStreamProcessorTests {
   // Helper methods
 
   private InboxWork CreateInboxWork(Guid streamId, long sequenceOrder) {
+    var messageId = _idProvider.NewGuid();
+    var envelope = CreateTestEnvelope(messageId);
     return new InboxWork {
-      MessageId = _idProvider.NewGuid(),
-      MessageType = "TestEvent",
-      MessageData = "{}",
-      Metadata = "{}",
-      Scope = null,
+      MessageId = messageId,
+      Envelope = envelope,
       StreamId = streamId,
       PartitionNumber = 0,
       Status = MessageProcessingStatus.Stored,
@@ -276,13 +277,12 @@ public class OrderedStreamProcessorTests {
   }
 
   private OutboxWork CreateOutboxWork(Guid streamId, long sequenceOrder) {
+    var messageId = _idProvider.NewGuid();
+    var envelope = CreateTestEnvelope(messageId);
     return new OutboxWork {
-      MessageId = _idProvider.NewGuid(),
+      MessageId = messageId,
       Destination = "test-topic",
-      MessageType = "TestEvent",
-      MessageData = "{}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = envelope,
       StreamId = streamId,
       PartitionNumber = 0,
       Attempts = 0,
@@ -290,5 +290,47 @@ public class OrderedStreamProcessorTests {
       Flags = WorkBatchFlags.None,
       SequenceOrder = sequenceOrder
     };
+  }
+
+  private static TestMessageEnvelope CreateTestEnvelope(Guid messageId) {
+    return new TestMessageEnvelope {
+      MessageId = MessageId.From(messageId),
+      Hops = []
+    };
+  }
+
+  // Test envelope implementation
+  private class TestMessageEnvelope : IMessageEnvelope {
+    public required MessageId MessageId { get; init; }
+    public required List<MessageHop> Hops { get; init; }
+
+    public void AddHop(MessageHop hop) {
+      Hops.Add(hop);
+    }
+
+    public DateTimeOffset GetMessageTimestamp() {
+      return Hops.Count > 0 ? Hops[0].Timestamp : DateTimeOffset.UtcNow;
+    }
+
+    public CorrelationId? GetCorrelationId() {
+      return Hops.Count > 0 ? Hops[0].CorrelationId : null;
+    }
+
+    public MessageId? GetCausationId() {
+      return Hops.Count > 0 ? Hops[0].CausationId : null;
+    }
+
+    public object? GetMetadata(string key) {
+      for (var i = Hops.Count - 1; i >= 0; i--) {
+        if (Hops[i].Type == HopType.Current && Hops[i].Metadata?.ContainsKey(key) == true) {
+          return Hops[i].Metadata[key];
+        }
+      }
+      return null;
+    }
+
+    public object GetPayload() {
+      return new { };
+    }
   }
 }

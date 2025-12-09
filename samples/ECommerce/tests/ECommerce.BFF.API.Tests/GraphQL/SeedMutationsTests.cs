@@ -41,6 +41,14 @@ public class SeedMutationsTests {
     public ValueTask LocalInvokeAsync(object message) => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
     public Task PublishAsync<TEvent>(TEvent @event) => throw new NotImplementedException();
+    public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull {
+      var receipts = new List<IDeliveryReceipt>();
+      foreach (var message in messages) {
+        SentCommands.Add(message);
+        receipts.Add(DeliveryReceipt.Accepted(MessageId.New(), "test-dispatcher"));
+      }
+      return Task.FromResult<IEnumerable<IDeliveryReceipt>>(receipts);
+    }
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages) => throw new NotImplementedException();
     public ValueTask<IEnumerable<TResult>> LocalInvokeManyAsync<TResult>(IEnumerable<object> messages) => throw new NotImplementedException();
   }
@@ -192,6 +200,9 @@ public class SeedMutationsTests {
     public ValueTask LocalInvokeAsync(object message) => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
     public Task PublishAsync<TEvent>(TEvent @event) => throw new NotImplementedException();
+    public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull {
+      throw new InvalidOperationException("Dispatcher failure");
+    }
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages) => throw new NotImplementedException();
     public ValueTask<IEnumerable<TResult>> LocalInvokeManyAsync<TResult>(IEnumerable<object> messages) => throw new NotImplementedException();
   }

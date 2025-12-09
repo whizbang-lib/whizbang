@@ -16,16 +16,16 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Tests.Workers;
 
 public class TransportPublishStrategyTests {
-  // Helper to create properly serialized metadata
-  [UnconditionalSuppressMessage("Trimming", "IL2026:RequiresUnreferencedCode", Justification = "Test helper - serialization is safe in test context")]
-  [UnconditionalSuppressMessage("AOT", "IL3050:RequiresDynamicCode", Justification = "Test helper - not used in AOT context")]
-  private static string CreateMetadata(Guid messageId) {
-    var options = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var metadata = new EnvelopeMetadata {
-      MessageId = MessageId.From(messageId),
-      Hops = new List<MessageHop>()
-    };
-    return JsonSerializer.Serialize(metadata, options);
+  // Simple test message type for envelope creation
+  public record TestMessage : IEvent { }
+
+  // Helper to create a MessageEnvelope for testing
+  private static MessageEnvelope<TestMessage> CreateTestEnvelope(Guid messageId) {
+    return new MessageEnvelope<TestMessage>(
+      messageId: MessageId.From(messageId),
+      payload: new TestMessage(),
+      hops: new List<MessageHop>()
+    );
   }
 
   private class TestTransport : ITransport {
@@ -73,21 +73,9 @@ public class TransportPublishStrategyTests {
     var readinessCheck = new DefaultTransportReadinessCheck();
 
     // Act & Assert
-    await Assert.That(() => new TransportPublishStrategy(null!, jsonOptions, readinessCheck))
+    await Assert.That(() => new TransportPublishStrategy(null!, readinessCheck))
       .Throws<ArgumentNullException>()
       .Because("Transport cannot be null");
-  }
-
-  [Test]
-  public async Task Constructor_NullJsonOptions_ThrowsArgumentNullExceptionAsync() {
-    // Arrange
-    var transport = new TestTransport();
-    var readinessCheck = new DefaultTransportReadinessCheck();
-
-    // Act & Assert
-    await Assert.That(() => new TransportPublishStrategy(transport, null!, readinessCheck))
-      .Throws<ArgumentNullException>()
-      .Because("JsonOptions cannot be null");
   }
 
   [Test]
@@ -97,7 +85,7 @@ public class TransportPublishStrategyTests {
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
     // Act & Assert
-    await Assert.That(() => new TransportPublishStrategy(transport, jsonOptions, null!))
+    await Assert.That(() => new TransportPublishStrategy(transport, null!))
       .Throws<ArgumentNullException>()
       .Because("ReadinessCheck cannot be null");
   }
@@ -108,7 +96,7 @@ public class TransportPublishStrategyTests {
     var transport = new TestTransport();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, jsonOptions, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
 
     // Act
     var result = await strategy.IsReadyAsync();
@@ -124,16 +112,13 @@ public class TransportPublishStrategyTests {
     var transport = new TestTransport();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, jsonOptions, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
 
     var messageId = Guid.NewGuid();
     var work = new OutboxWork {
       MessageId = messageId,
       Destination = "test-topic",
-      MessageType = "TestMessage",
-      MessageData = "{}",
-      Metadata = CreateMetadata(messageId),
-      Scope = null,
+      Envelope = CreateTestEnvelope(messageId),
       StreamId = Guid.NewGuid(),
       PartitionNumber = 1,
       Attempts = 0,
@@ -162,16 +147,13 @@ public class TransportPublishStrategyTests {
     };
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, jsonOptions, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
 
     var messageId = Guid.NewGuid();
     var work = new OutboxWork {
       MessageId = messageId,
       Destination = "test-topic",
-      MessageType = "TestMessage",
-      MessageData = "{}",
-      Metadata = CreateMetadata(messageId),
-      Scope = null,
+      Envelope = CreateTestEnvelope(messageId),
       StreamId = Guid.NewGuid(),
       PartitionNumber = 1,
       Attempts = 1,
@@ -197,16 +179,13 @@ public class TransportPublishStrategyTests {
     var transport = new TestTransport();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, jsonOptions, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
 
     var messageId = Guid.NewGuid();
     var work = new OutboxWork {
       MessageId = messageId,
       Destination = "test-topic",
-      MessageType = "TestMessage",
-      MessageData = "{}",
-      Metadata = CreateMetadata(messageId),
-      Scope = null,  // Explicitly null scope
+      Envelope = CreateTestEnvelope(messageId),
       StreamId = Guid.NewGuid(),
       PartitionNumber = 1,
       Attempts = 0,
@@ -229,17 +208,14 @@ public class TransportPublishStrategyTests {
     var transport = new TestTransport();
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var readinessCheck = new DefaultTransportReadinessCheck();
-    var strategy = new TransportPublishStrategy(transport, jsonOptions, readinessCheck);
+    var strategy = new TransportPublishStrategy(transport, readinessCheck);
 
     var messageId = Guid.NewGuid();
     var streamId = Guid.NewGuid();
     var work = new OutboxWork {
       MessageId = messageId,
       Destination = "test-topic",
-      MessageType = "TestMessage",
-      MessageData = "{}",
-      Metadata = CreateMetadata(messageId),
-      Scope = null,
+      Envelope = CreateTestEnvelope(messageId),
       StreamId = streamId,
       PartitionNumber = 1,
       Attempts = 0,

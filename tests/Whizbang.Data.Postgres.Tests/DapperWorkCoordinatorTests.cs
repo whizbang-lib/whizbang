@@ -5,6 +5,8 @@ using TUnit.Assertions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Dapper.Postgres;
 
 namespace Whizbang.Data.Postgres.Tests;
@@ -18,12 +20,24 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   private DapperWorkCoordinator _sut = null!;
   private Guid _instanceId;
   private readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
+  private static readonly JsonSerializerOptions _jsonOptions = new();
+
+  // Test helper record and envelope creation
+  private record TestEvent { }
+
+  private static IMessageEnvelope CreateTestEnvelope(Guid messageId) {
+    return new MessageEnvelope<TestEvent> {
+      MessageId = MessageId.From(messageId),
+      Payload = new TestEvent(),
+      Hops = []
+    };
+  }
 
   [Before(Test)]
   public async Task TestSetupAsync() {
     _instanceId = _idProvider.NewGuid();
     // Get connection string from base class (before any connections are opened)
-    _sut = new DapperWorkCoordinator(ConnectionString);
+    _sut = new DapperWorkCoordinator(ConnectionString, _jsonOptions);
     await Task.CompletedTask;  // Keep async signature for consistency
   }
 
@@ -283,9 +297,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var work2 = result.OutboxWork.First(m => m.MessageId == orphanedId2);
 
     await Assert.That(work1.Destination).IsEqualTo("topic1");
-    await Assert.That(work1.MessageType).IsEqualTo("OrphanedEvent1");
     await Assert.That(work2.Destination).IsEqualTo("topic2");
-    await Assert.That(work2.MessageType).IsEqualTo("OrphanedEvent2");
 
     // Verify orphaned messages now have new lease
     var newInstanceId = await GetOutboxInstanceIdAsync(orphanedId1);
@@ -345,9 +357,6 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     var work1 = result.InboxWork.First(m => m.MessageId == orphanedId1);
     var work2 = result.InboxWork.First(m => m.MessageId == orphanedId2);
-
-    await Assert.That(work1.MessageType).IsEqualTo("OrphanedEvent1");
-    await Assert.That(work2.MessageType).IsEqualTo("OrphanedEvent2");
 
     // Verify orphaned messages now have new lease
     var newInstanceId = await GetInboxInstanceIdAsync(orphanedId1);
@@ -459,10 +468,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var newOutboxMessage = new NewOutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
-      EventType = "TestEvent",
-      EventData = "{\"test\":\"data\"}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = CreateTestEnvelope(messageId),
       StreamId = streamId,
       IsEvent = true
     };
@@ -488,7 +494,6 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var work = result.OutboxWork[0];
     await Assert.That(work.MessageId).IsEqualTo(messageId);
     await Assert.That(work.Destination).IsEqualTo("test-topic");
-    await Assert.That(work.MessageType).IsEqualTo("TestEvent");
     await Assert.That(work.StreamId).IsEqualTo(streamId);
 
     // Verify message stored in database
@@ -505,10 +510,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var newInboxMessage = new NewInboxMessage {
       MessageId = messageId,
       HandlerName = "TestHandler",
-      EventType = "TestEvent",
-      EventData = "{\"test\":\"data\"}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = CreateTestEnvelope(messageId),
       StreamId = _idProvider.NewGuid(),
       IsEvent = true
     };
@@ -563,13 +565,11 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
     var streamId = _idProvider.NewGuid();
 
+    var messageId = _idProvider.NewGuid();
     var newInboxMessage = new NewInboxMessage {
-      MessageId = _idProvider.NewGuid(),
+      MessageId = messageId,
       HandlerName = "TestHandler",
-      EventType = "TestEvent",
-      EventData = "{\"test\":\"data\"}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = CreateTestEnvelope(messageId),
       StreamId = streamId,
       IsEvent = true
     };
@@ -609,13 +609,11 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
     var streamId = _idProvider.NewGuid();
 
+    var messageId = _idProvider.NewGuid();
     var newOutboxMessage = new NewOutboxMessage {
-      MessageId = _idProvider.NewGuid(),
+      MessageId = messageId,
       Destination = "test-topic",
-      EventType = "TestEvent",
-      EventData = "{\"test\":\"data\"}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = CreateTestEnvelope(messageId),
       StreamId = streamId,
       IsEvent = true
     };
@@ -663,10 +661,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var newOutboxMessage = new NewOutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
-      EventType = "TestEvent",
-      EventData = "{\"test\":\"data\"}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = CreateTestEnvelope(messageId),
       StreamId = streamId,
       IsEvent = true
     };
@@ -705,10 +700,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var newInboxMessage = new NewInboxMessage {
       MessageId = messageId,
       HandlerName = "TestHandler",
-      EventType = "TestEvent",
-      EventData = "{\"test\":\"data\"}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = CreateTestEnvelope(messageId),
       StreamId = streamId,
       IsEvent = true
     };
@@ -751,10 +743,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var newInboxMessage = new NewInboxMessage {
       MessageId = messageId2,
       HandlerName = "TestHandler",
-      EventType = "TestEvent",
-      EventData = "{\"test\":\"data\"}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = CreateTestEnvelope(messageId2),
       StreamId = streamId,
       IsEvent = true
     };
@@ -801,30 +790,21 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       new NewOutboxMessage {
         MessageId = messageId1,
         Destination = "topic1",
-        EventType = "FirstEvent",
-        EventData = "{}",
-        Metadata = "{}",
-        Scope = null,
+        Envelope = CreateTestEnvelope(messageId1),
         StreamId = streamId,
         IsEvent = true
       },
       new NewOutboxMessage {
         MessageId = messageId2,
         Destination = "topic1",
-        EventType = "SecondEvent",
-        EventData = "{}",
-        Metadata = "{}",
-        Scope = null,
+        Envelope = CreateTestEnvelope(messageId2),
         StreamId = streamId,
         IsEvent = true
       },
       new NewOutboxMessage {
         MessageId = messageId3,
         Destination = "topic1",
-        EventType = "ThirdEvent",
-        EventData = "{}",
-        Metadata = "{}",
-        Scope = null,
+        Envelope = CreateTestEnvelope(messageId3),
         StreamId = streamId,
         IsEvent = true
       }
@@ -866,10 +846,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var newOutboxMessage = new NewOutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
-      EventType = "TestCommand",
-      EventData = "{\"test\":\"data\"}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = CreateTestEnvelope(messageId),
       StreamId = streamId,
       IsEvent = false  // CRITICAL: IsEvent = false (command, not event)
     };
@@ -920,10 +897,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       var newOutboxMessage = new NewOutboxMessage {
         MessageId = messageId,
         Destination = "test-topic",
-        EventType = "TestEvent",
-        EventData = $"{{\"sequence\":{i}}}",
-        Metadata = "{}",
-        Scope = null,
+        Envelope = CreateTestEnvelope(messageId),
         StreamId = streamId,  // SAME stream_id for all
         IsEvent = true
       };
@@ -972,10 +946,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       var newOutboxMessage = new NewOutboxMessage {
         MessageId = messageId,
         Destination = "test-topic",
-        EventType = "TestEvent",
-        EventData = "{}",
-        Metadata = "{}",
-        Scope = null,
+        Envelope = CreateTestEnvelope(messageId),
         StreamId = streamId,
         IsEvent = true
       };
@@ -1312,10 +1283,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var newOutboxMessage = new NewOutboxMessage {
       MessageId = newMessageId,
       Destination = "test-topic",
-      EventType = "NewEvent",
-      EventData = "{}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = CreateTestEnvelope(newMessageId),
       StreamId = _idProvider.NewGuid(),
       IsEvent = true
     };
@@ -1446,10 +1414,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var newOutboxMessage = new NewOutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
-      EventType = "TestEvent",
-      EventData = "{\"test\":\"data\"}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = CreateTestEnvelope(messageId),
       StreamId = _idProvider.NewGuid(),
       IsEvent = true  // CRITICAL: IsEvent = true
     };
@@ -1485,10 +1450,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var newOutboxMessage = new NewOutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
-      EventType = "TestCommand",
-      EventData = "{\"test\":\"data\"}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = CreateTestEnvelope(messageId),
       StreamId = _idProvider.NewGuid(),
       IsEvent = false  // CRITICAL: IsEvent = false
     };
@@ -1524,10 +1486,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var newInboxMessage = new NewInboxMessage {
       MessageId = messageId,
       HandlerName = "TestHandler",
-      EventType = "TestEvent",
-      EventData = "{\"test\":\"data\"}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = CreateTestEnvelope(messageId),
       StreamId = _idProvider.NewGuid(),
       IsEvent = true  // CRITICAL: IsEvent = true
     };
@@ -1563,10 +1522,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var newInboxMessage = new NewInboxMessage {
       MessageId = messageId,
       HandlerName = "TestHandler",
-      EventType = "TestCommand",
-      EventData = "{\"test\":\"data\"}",
-      Metadata = "{}",
-      Scope = null,
+      Envelope = CreateTestEnvelope(messageId),
       StreamId = _idProvider.NewGuid(),
       IsEvent = false  // CRITICAL: IsEvent = false
     };
