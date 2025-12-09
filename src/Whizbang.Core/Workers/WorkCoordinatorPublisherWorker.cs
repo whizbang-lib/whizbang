@@ -26,12 +26,14 @@ public class WorkCoordinatorPublisherWorker(
   IServiceInstanceProvider instanceProvider,
   IServiceScopeFactory scopeFactory,
   IMessagePublishStrategy publishStrategy,
+  IDatabaseReadinessCheck? databaseReadinessCheck = null,
   WorkCoordinatorPublisherOptions? options = null,
   ILogger<WorkCoordinatorPublisherWorker>? logger = null
 ) : BackgroundService {
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly IMessagePublishStrategy _publishStrategy = publishStrategy ?? throw new ArgumentNullException(nameof(publishStrategy));
+  private readonly IDatabaseReadinessCheck _databaseReadinessCheck = databaseReadinessCheck ?? new DefaultDatabaseReadinessCheck();
   private readonly ILogger<WorkCoordinatorPublisherWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<WorkCoordinatorPublisherWorker>.Instance;
   private readonly WorkCoordinatorPublisherOptions _options = options ?? new WorkCoordinatorPublisherOptions();
 
@@ -43,6 +45,7 @@ public class WorkCoordinatorPublisherWorker(
 
   // Metrics tracking
   private int _consecutiveNotReadyChecks;
+  private int _consecutiveDatabaseNotReadyChecks;
   private long _totalLeaseRenewals;
   private long _totalBufferedMessages;
 
@@ -51,6 +54,12 @@ public class WorkCoordinatorPublisherWorker(
   /// Resets to 0 when transport becomes ready.
   /// </summary>
   public int ConsecutiveNotReadyChecks => _consecutiveNotReadyChecks;
+
+  /// <summary>
+  /// Gets the number of consecutive times the database was not ready.
+  /// Resets to 0 when database becomes ready.
+  /// </summary>
+  public int ConsecutiveDatabaseNotReadyChecks => _consecutiveDatabaseNotReadyChecks;
 
   /// <summary>
   /// Gets the total count of messages buffered due to transport not being ready.
@@ -87,6 +96,34 @@ public class WorkCoordinatorPublisherWorker(
   private async Task CoordinatorLoopAsync(CancellationToken stoppingToken) {
     while (!stoppingToken.IsCancellationRequested) {
       try {
+        // Check database readiness before attempting work coordinator call
+        var isDatabaseReady = await _databaseReadinessCheck.IsReadyAsync(stoppingToken);
+        if (!isDatabaseReady) {
+          // Database not ready - skip ProcessWorkBatchAsync, keep buffering in memory
+          Interlocked.Increment(ref _consecutiveDatabaseNotReadyChecks);
+
+          // Log at Information level (important operational event)
+          _logger.LogInformation(
+            "Database not ready, skipping work batch processing (consecutive checks: {ConsecutiveCount})",
+            _consecutiveDatabaseNotReadyChecks
+          );
+
+          // Warn if database has been continuously unavailable
+          if (_consecutiveDatabaseNotReadyChecks > 10) {
+            _logger.LogWarning(
+              "Database not ready for {ConsecutiveCount} consecutive polling cycles. Work coordinator is paused.",
+              _consecutiveDatabaseNotReadyChecks
+            );
+          }
+
+          // Wait before retry
+          await Task.Delay(_options.PollingIntervalMilliseconds, stoppingToken);
+          continue;
+        }
+
+        // Database is ready - reset consecutive counter
+        Interlocked.Exchange(ref _consecutiveDatabaseNotReadyChecks, 0);
+
         await ProcessWorkBatchAsync(stoppingToken);
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         _logger.LogError(ex, "Error processing work batch");

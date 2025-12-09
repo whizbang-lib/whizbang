@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Logging;
 using Npgsql;
+using Whizbang.Core.Messaging;
 
 namespace Whizbang.Data.Postgres;
 
@@ -7,7 +8,7 @@ namespace Whizbang.Data.Postgres;
 /// PostgreSQL database readiness check implementation.
 /// Verifies database connectivity and presence of required Whizbang tables (inbox, outbox, eventstore).
 /// </summary>
-public class PostgresDatabaseReadinessCheck {
+public class PostgresDatabaseReadinessCheck : IDatabaseReadinessCheck {
   private readonly string _connectionString;
   private readonly ILogger<PostgresDatabaseReadinessCheck> _logger;
 
