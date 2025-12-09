@@ -479,4 +479,167 @@ public class DispatcherTests {
   // IWorkCoordinatorStrategy → IWorkCoordinator → process_work_batch
   // The old Dispatcher(outbox: IOutbox) pattern no longer exists.
   // ========================================
+
+  // ========================================
+  // GENERIC TYPE PRESERVATION TESTS (AOT Serialization)
+  // ========================================
+  // These tests verify that generic dispatcher methods preserve compile-time type information
+  // to create MessageEnvelope<TMessage> instead of MessageEnvelope<object>.
+  // This is critical for AOT serialization where JsonTypeInfo must be generated at compile time.
+
+  [Test]
+  [NotInParallel]
+  public async Task SendAsync_Generic_CreatesTypedEnvelopeForTracingAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+    services.AddReceptors();
+    var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
+    services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
+    services.AddWhizbangDispatcher();
+    var serviceProvider = services.BuildServiceProvider();
+    var dispatcher = serviceProvider.GetRequiredService<IDispatcher>();
+
+    var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
+
+    // Act
+    var receipt = await dispatcher.SendAsync(command);
+
+    // Assert - Verify receipt was returned
+    await Assert.That(receipt).IsNotNull();
+    await Assert.That(receipt.MessageId.Value).IsNotEqualTo(Guid.Empty);
+
+    // Assert - Verify envelope was stored with correct type
+    var traces = await traceStore.GetByTimeRangeAsync(
+      DateTimeOffset.UtcNow.AddMinutes(-1),
+      DateTimeOffset.UtcNow.AddMinutes(1)
+    );
+    await Assert.That(traces).HasCount().GreaterThanOrEqualTo(1);
+
+    // Verify the envelope has the correct generic type parameter
+    var envelope = traces.First();
+    var envelopeType = envelope.GetType();
+    await Assert.That(envelopeType.IsGenericType).IsTrue()
+      .Because("MessageEnvelope should be a generic type");
+    await Assert.That(envelopeType.GetGenericTypeDefinition().Name).Contains("MessageEnvelope")
+      .Because("Should be MessageEnvelope<T>");
+
+    // Critical: Verify it's MessageEnvelope<CreateOrder>, NOT MessageEnvelope<object>
+    var typeArguments = envelopeType.GetGenericArguments();
+    await Assert.That(typeArguments).HasCount().EqualTo(1);
+    await Assert.That(typeArguments[0]).IsEqualTo(typeof(CreateOrder))
+      .Because("Type parameter should be CreateOrder, not object - required for AOT serialization");
+  }
+
+  [Test]
+  [NotInParallel]
+  public async Task SendManyAsync_Generic_CreatesTypedEnvelopesAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+    services.AddReceptors();
+    var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
+    services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
+    services.AddWhizbangDispatcher();
+    var serviceProvider = services.BuildServiceProvider();
+    var dispatcher = serviceProvider.GetRequiredService<IDispatcher>();
+
+    var commands = new[] {
+      new CreateOrder(Guid.NewGuid(), ["item1"]),
+      new CreateOrder(Guid.NewGuid(), ["item2"]),
+      new CreateOrder(Guid.NewGuid(), ["item3"])
+    };
+
+    // Act - Use generic SendManyAsync<TMessage>
+    var receipts = await dispatcher.SendManyAsync<CreateOrder>(commands);
+
+    // Assert - Verify all receipts returned
+    await Assert.That(receipts).HasCount().EqualTo(3);
+
+    // Assert - Verify all envelopes have correct type
+    var traces = await traceStore.GetByTimeRangeAsync(
+      DateTimeOffset.UtcNow.AddMinutes(-1),
+      DateTimeOffset.UtcNow.AddMinutes(1)
+    );
+    await Assert.That(traces.Count()).IsGreaterThanOrEqualTo(3);
+
+    // Verify each envelope preserves the CreateOrder type
+    foreach (var envelope in traces) {
+      var envelopeType = envelope.GetType();
+      await Assert.That(envelopeType.IsGenericType).IsTrue();
+
+      var typeArguments = envelopeType.GetGenericArguments();
+      await Assert.That(typeArguments[0]).IsEqualTo(typeof(CreateOrder))
+        .Because("Each envelope should be MessageEnvelope<CreateOrder> for AOT serialization");
+    }
+  }
+
+  [Test]
+  [NotInParallel]
+  public async Task LocalInvokeAsync_DoesNotRequireTypePreservation_ForInProcessRPCAsync() {
+    // LocalInvokeAsync is designed for high-performance in-process RPC.
+    // It never serializes, so type preservation is NOT required - it can use MessageEnvelope<object>
+    // without breaking functionality. Type preservation is only critical for SendAsync (outbox path)
+    // where AOT serialization requires JsonTypeInfo<MessageEnvelope<TMessage>>.
+
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+    services.AddReceptors();
+    var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
+    services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
+    services.AddWhizbangDispatcher();
+    var serviceProvider = services.BuildServiceProvider();
+    var dispatcher = serviceProvider.GetRequiredService<IDispatcher>();
+
+    var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
+
+    // Act
+    var result = await dispatcher.LocalInvokeAsync<OrderCreated>(command);
+
+    // Assert - Verify result was returned (the important part for LocalInvoke)
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result.OrderId).IsNotEqualTo(Guid.Empty);
+
+    // Assert - Verify envelope was stored for tracing
+    var traces = await traceStore.GetByTimeRangeAsync(
+      DateTimeOffset.UtcNow.AddMinutes(-1),
+      DateTimeOffset.UtcNow.AddMinutes(1)
+    );
+    await Assert.That(traces).HasCount().GreaterThanOrEqualTo(1);
+
+    // Note: The envelope type may be MessageEnvelope<object> for LocalInvoke, and that's OK
+    // because LocalInvoke never serializes. The receptor is invoked directly with zero reflection.
+  }
+
+  [Test]
+  public async Task SendManyAsync_Generic_DifferentFromNonGenericVersionAsync() {
+    // This test documents the difference between generic and non-generic SendManyAsync
+    // Generic version: SendManyAsync<TMessage>(IEnumerable<TMessage>) - preserves type
+    // Non-generic version: SendManyAsync(IEnumerable<object>) - type-erased
+
+    // Arrange
+    var dispatcher = CreateDispatcher();
+    var commands = new[] {
+      new CreateOrder(Guid.NewGuid(), ["item1"]),
+      new CreateOrder(Guid.NewGuid(), ["item2"])
+    };
+
+    // Act - Generic version (recommended for AOT)
+    var genericReceipts = await dispatcher.SendManyAsync<CreateOrder>(commands);
+
+    // Act - Non-generic version (backward compatibility)
+    var nonGenericReceipts = await dispatcher.SendManyAsync(commands.Cast<object>());
+
+    // Assert - Both should work, but generic version is AOT-compatible
+    await Assert.That(genericReceipts).HasCount().EqualTo(2);
+    await Assert.That(nonGenericReceipts).HasCount().EqualTo(2);
+
+    // Note: The key difference is internal - generic version creates MessageEnvelope<CreateOrder>
+    // while non-generic creates MessageEnvelope<object>. Both work at runtime but only
+    // generic version works with AOT serialization.
+  }
 }
