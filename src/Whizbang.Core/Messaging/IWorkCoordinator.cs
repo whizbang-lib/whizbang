@@ -186,7 +186,7 @@ public record MessageCompletion {
 
   /// <summary>
   /// Which stages of processing completed successfully.
-  /// Use bitwise OR to combine multiple stages (e.g., ReceptorProcessed | PerspectiveProcessed).
+  /// Use bitwise OR to combine multiple stages (e.g., Stored | EventStored).
   /// </summary>
   public required MessageProcessingStatus Status { get; init; }
 }
@@ -329,7 +329,7 @@ public record InboxWork {
 
   /// <summary>
   /// Current processing status flags.
-  /// Indicates which stages have been completed (e.g., Stored, EventStored, ReceptorProcessed).
+  /// Indicates which stages have been completed (e.g., Stored, EventStored).
   /// </summary>
   public MessageProcessingStatus Status { get; init; }
 

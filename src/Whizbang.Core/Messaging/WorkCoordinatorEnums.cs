@@ -77,45 +77,23 @@ public enum MessageProcessingStatus {
   /// <summary>
   /// Message has been successfully published to transport (outbox only).
   /// Indicates message left this service via Service Bus/transport.
+  /// For outbox messages, this means the message is fully completed and can be deleted.
   /// </summary>
   Published = 1 << 2,
 
-  /// <summary>
-  /// Receptor/handler has processed the message successfully.
-  /// Indicates business logic execution completed.
-  /// </summary>
-  ReceptorProcessed = 1 << 3,
-
-  /// <summary>
-  /// All perspectives have been updated successfully.
-  /// Indicates read model projections completed.
-  /// </summary>
-  PerspectiveProcessed = 1 << 4,
-
-  /// <summary>
-  /// Pre-perspective receptors executed successfully (future enhancement).
-  /// Allows custom logic before perspective updates.
-  /// </summary>
-  PrePerspectiveProcessed = 1 << 5,
-
-  /// <summary>
-  /// Post-perspective receptors executed successfully (future enhancement).
-  /// Allows custom logic after perspective updates (e.g., notifications).
-  /// </summary>
-  PostPerspectiveProcessed = 1 << 6,
-
-  // Bits 7-14 reserved for future pipeline stages
+  // Bits 3-14 reserved for future pipeline stages
 
   /// <summary>
   /// Message processing failed at some stage.
   /// Combined with other flags to indicate which stages succeeded before failure.
   /// For example: (Stored | EventStored | Failed) means storage succeeded but publishing failed.
   /// </summary>
-  Failed = 1 << 15,
+  Failed = 1 << 15
 
-  /// <summary>
-  /// Composite status: Both receptor and perspective processing completed.
-  /// Message is fully processed and can be removed from inbox/outbox.
-  /// </summary>
-  FullyCompleted = ReceptorProcessed | PerspectiveProcessed  // 24 (0x18)
+  // Note: Receptor and perspective processing are now tracked separately in
+  // wh_receptor_processing and wh_perspective_checkpoints tables.
+  // This allows for:
+  // - Multiple receptors to process the same event independently
+  // - Perspectives to catch up via time-travel (replay from event store)
+  // - Better visibility into which handlers have processed which events
 }

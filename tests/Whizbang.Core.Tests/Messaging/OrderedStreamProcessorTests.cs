@@ -41,7 +41,7 @@ public class OrderedStreamProcessorTests {
       messages,
       processor: async work => {
         processedOrder.Add(work.SequenceOrder);
-        return await Task.FromResult(MessageProcessingStatus.ReceptorProcessed);
+        return await Task.FromResult(MessageProcessingStatus.EventStored);
       },
       completionHandler: (_, _) => { },
       failureHandler: (_, _, _) => { }
@@ -98,7 +98,7 @@ public class OrderedStreamProcessorTests {
           processingCompleted[streamId] = DateTimeOffset.UtcNow;
         }
 
-        return MessageProcessingStatus.ReceptorProcessed;
+        return MessageProcessingStatus.EventStored;
       },
       completionHandler: (_, _) => { },
       failureHandler: (_, _, _) => { }
@@ -158,7 +158,7 @@ public class OrderedStreamProcessorTests {
         }
 
         processedMessages.Add(work.MessageId);
-        return await Task.FromResult(MessageProcessingStatus.ReceptorProcessed);
+        return await Task.FromResult(MessageProcessingStatus.EventStored);
       },
       completionHandler: (_, _) => { },
       failureHandler: (messageId, _, _) => {
@@ -190,10 +190,10 @@ public class OrderedStreamProcessorTests {
     MessageProcessingStatus? reportedPartialStatus = null;
     string? reportedError = null;
 
-    // Create work item with partial completion status
+    // Create work item with only Stored status (processing will fail before EventStored)
     var message = CreateInboxWork(streamId, sequenceOrder: 100);
     message = message with {
-      Status = MessageProcessingStatus.Stored | MessageProcessingStatus.EventStored
+      Status = MessageProcessingStatus.Stored
     };
 
     // Act
@@ -214,10 +214,9 @@ public class OrderedStreamProcessorTests {
     await Assert.That(reportedPartialStatus).IsNotNull();
     await Assert.That((reportedPartialStatus!.Value & MessageProcessingStatus.Stored) == MessageProcessingStatus.Stored).IsTrue()
       .Because("Partial completion should include Stored flag");
-    await Assert.That((reportedPartialStatus.Value & MessageProcessingStatus.EventStored) == MessageProcessingStatus.EventStored).IsTrue()
-      .Because("Partial completion should include EventStored flag");
-    await Assert.That((reportedPartialStatus.Value & MessageProcessingStatus.ReceptorProcessed) != MessageProcessingStatus.ReceptorProcessed).IsTrue()
-      .Because("Partial completion should NOT include ReceptorProcessed flag (this is where it failed)");
+    // EventStored flag should NOT be set since that's where processing failed
+    await Assert.That((reportedPartialStatus.Value & MessageProcessingStatus.EventStored) != MessageProcessingStatus.EventStored).IsTrue()
+      .Because("Partial completion should NOT include EventStored flag (processing failed before this stage)");
     await Assert.That(reportedError).Contains("Receptor processing failed");
   }
 

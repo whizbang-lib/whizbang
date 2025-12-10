@@ -106,7 +106,7 @@ public sealed class InboxRecord {
 
   /// <summary>
   /// Current processing status flags (bitwise).
-  /// Indicates which stages have been completed (e.g., Stored, ReceptorProcessed, PerspectiveProcessed).
+  /// Indicates which stages have been completed (e.g., Stored, EventStored).
   /// Uses MessageProcessingStatus enum.
   /// </summary>
   public MessageProcessingStatus StatusFlags { get; set; }

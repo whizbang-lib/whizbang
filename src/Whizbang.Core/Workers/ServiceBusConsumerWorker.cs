@@ -160,7 +160,7 @@ public class ServiceBusConsumerWorker(
               work.MessageId
             );
 
-            return MessageProcessingStatus.ReceptorProcessed | MessageProcessingStatus.PerspectiveProcessed;
+            return MessageProcessingStatus.EventStored;
           } else {
             _logger.LogWarning(
               "Failed to invoke perspectives - Event: {EventType}, HasInvoker: {HasInvoker}",
@@ -168,8 +168,8 @@ public class ServiceBusConsumerWorker(
               perspectiveInvoker != null
             );
 
-            // Still mark as processed even if perspective invocation failed
-            return MessageProcessingStatus.ReceptorProcessed;
+            // Still mark as event stored even if perspective invocation failed
+            return MessageProcessingStatus.EventStored;
           }
         },
         completionHandler: (msgId, status) => {
