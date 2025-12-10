@@ -34,6 +34,10 @@ public class DapperWorkCoordinator(
     MessageFailure[] outboxFailures,
     MessageCompletion[] inboxCompletions,
     MessageFailure[] inboxFailures,
+    ReceptorProcessingCompletion[] receptorCompletions,
+    ReceptorProcessingFailure[] receptorFailures,
+    PerspectiveCheckpointCompletion[] perspectiveCompletions,
+    PerspectiveCheckpointFailure[] perspectiveFailures,
     OutboxMessage[] newOutboxMessages,
     InboxMessage[] newInboxMessages,
     Guid[] renewOutboxLeaseIds,
@@ -68,6 +72,10 @@ public class DapperWorkCoordinator(
     var outboxFailuresJson = SerializeFailures(outboxFailures);
     var inboxCompletionsJson = SerializeCompletions(inboxCompletions);
     var inboxFailuresJson = SerializeFailures(inboxFailures);
+    var receptorCompletionsJson = SerializeReceptorCompletions(receptorCompletions);
+    var receptorFailuresJson = SerializeReceptorFailures(receptorFailures);
+    var perspectiveCompletionsJson = SerializePerspectiveCompletions(perspectiveCompletions);
+    var perspectiveFailuresJson = SerializePerspectiveFailures(perspectiveFailures);
     var newOutboxJson = SerializeNewOutboxMessages(newOutboxMessages);
     var newInboxJson = SerializeNewInboxMessages(newInboxMessages);
     var metadataJson = SerializeMetadata(metadata);
@@ -86,6 +94,10 @@ public class DapperWorkCoordinator(
         @p_outbox_failures::jsonb,
         @p_inbox_completions::jsonb,
         @p_inbox_failures::jsonb,
+        @p_receptor_completions::jsonb,
+        @p_receptor_failures::jsonb,
+        @p_perspective_completions::jsonb,
+        @p_perspective_failures::jsonb,
         @p_new_outbox_messages::jsonb,
         @p_new_inbox_messages::jsonb,
         @p_renew_outbox_lease_ids::jsonb,
@@ -107,6 +119,10 @@ public class DapperWorkCoordinator(
       p_outbox_failures = outboxFailuresJson,
       p_inbox_completions = inboxCompletionsJson,
       p_inbox_failures = inboxFailuresJson,
+      p_receptor_completions = receptorCompletionsJson,
+      p_receptor_failures = receptorFailuresJson,
+      p_perspective_completions = perspectiveCompletionsJson,
+      p_perspective_failures = perspectiveFailuresJson,
       p_new_outbox_messages = newOutboxJson,
       p_new_inbox_messages = newInboxJson,
       p_renew_outbox_lease_ids = renewOutboxJson,
@@ -259,6 +275,42 @@ public class DapperWorkCoordinator(
     var typeInfo = _jsonOptions.GetTypeInfo(typeof(Guid[]))
       ?? throw new InvalidOperationException("No JsonTypeInfo found for Guid[]. Ensure the type is registered in InfrastructureJsonContext.");
     return JsonSerializer.Serialize(messageIds, typeInfo);
+  }
+
+  private string SerializeReceptorCompletions(ReceptorProcessingCompletion[] completions) {
+    if (completions.Length == 0) {
+      return "[]";
+    }
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(ReceptorProcessingCompletion[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for ReceptorProcessingCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(completions, typeInfo);
+  }
+
+  private string SerializeReceptorFailures(ReceptorProcessingFailure[] failures) {
+    if (failures.Length == 0) {
+      return "[]";
+    }
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(ReceptorProcessingFailure[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for ReceptorProcessingFailure[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(failures, typeInfo);
+  }
+
+  private string SerializePerspectiveCompletions(PerspectiveCheckpointCompletion[] completions) {
+    if (completions.Length == 0) {
+      return "[]";
+    }
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCheckpointCompletion[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveCheckpointCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(completions, typeInfo);
+  }
+
+  private string SerializePerspectiveFailures(PerspectiveCheckpointFailure[] failures) {
+    if (failures.Length == 0) {
+      return "[]";
+    }
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCheckpointFailure[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveCheckpointFailure[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(failures, typeInfo);
   }
 
   /// <summary>

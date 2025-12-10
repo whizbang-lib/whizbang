@@ -267,6 +267,10 @@ public class WorkCoordinatorPublisherWorker(
       outboxFailures: outboxFailures,
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],  // TODO: Add receptor processing support
+      receptorFailures: [],
+      perspectiveCompletions: [],  // TODO: Add perspective checkpoint support
+      perspectiveFailures: [],
       newOutboxMessages: [],  // Not used in publisher worker (dispatcher handles new messages)
       newInboxMessages: [],   // Not used in publisher worker (consumer handles new messages)
       renewOutboxLeaseIds: renewOutboxLeaseIds,

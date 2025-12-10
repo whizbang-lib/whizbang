@@ -79,6 +79,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -119,6 +123,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -159,6 +167,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       ],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -198,6 +210,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.EventStored }
       ],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -240,6 +256,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
           Error = "Handler exception"
         }
       ],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -306,6 +326,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -368,6 +392,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -451,6 +479,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
           Error = "Inbox error"
         }
       ],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -508,6 +540,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [newOutboxMessage],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -552,6 +588,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [newInboxMessage],
       renewOutboxLeaseIds: [],
@@ -568,6 +608,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [newInboxMessage],
       renewOutboxLeaseIds: [],
@@ -613,6 +657,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [newInboxMessage],
       renewOutboxLeaseIds: [],
@@ -659,6 +707,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [newOutboxMessage],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -709,6 +761,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [newOutboxMessage],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -750,6 +806,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [newInboxMessage],
       renewOutboxLeaseIds: [],
@@ -795,6 +855,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [newInboxMessage],
       renewOutboxLeaseIds: [],
@@ -863,6 +927,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: newOutboxMessages,
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -906,6 +974,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [newOutboxMessage],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -958,6 +1030,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         outboxFailures: [],
         inboxCompletions: [],
         inboxFailures: [],
+        [],  // receptorCompletions
+        [],  // receptorFailures
+        [],  // perspectiveCompletions
+        [],  // perspectiveFailures
         newOutboxMessages: [newOutboxMessage],
         newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -1009,6 +1085,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         outboxFailures: [],
         inboxCompletions: [],
         inboxFailures: [],
+        [],  // receptorCompletions
+        [],  // receptorFailures
+        [],  // perspectiveCompletions
+        [],  // perspectiveFailures
         newOutboxMessages: [newOutboxMessage],
         newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -1061,6 +1141,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -1074,6 +1158,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -1087,6 +1175,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -1145,6 +1237,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -1173,6 +1269,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -1220,6 +1320,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -1243,6 +1347,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -1290,6 +1398,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
           Error = "Failed at receptor processing"
         }
       ],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -1347,6 +1459,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [newOutboxMessage],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -1396,6 +1512,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -1433,6 +1553,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -1480,6 +1604,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [newOutboxMessage],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -1518,6 +1646,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [newOutboxMessage],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -1556,6 +1688,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [newInboxMessage],
       renewOutboxLeaseIds: [],
@@ -1594,6 +1730,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
       newOutboxMessages: [],
       newInboxMessages: [newInboxMessage],
       renewOutboxLeaseIds: [],

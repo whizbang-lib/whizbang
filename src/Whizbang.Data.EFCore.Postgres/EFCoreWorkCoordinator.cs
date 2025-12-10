@@ -33,6 +33,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     MessageFailure[] outboxFailures,
     MessageCompletion[] inboxCompletions,
     MessageFailure[] inboxFailures,
+    ReceptorProcessingCompletion[] receptorCompletions,
+    ReceptorProcessingFailure[] receptorFailures,
+    PerspectiveCheckpointCompletion[] perspectiveCompletions,
+    PerspectiveCheckpointFailure[] perspectiveFailures,
     OutboxMessage[] newOutboxMessages,
     InboxMessage[] newInboxMessages,
     Guid[] renewOutboxLeaseIds,
@@ -64,6 +68,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var outboxFailuresJson = SerializeFailures(outboxFailures);
     var inboxCompletionsJson = SerializeCompletions(inboxCompletions);
     var inboxFailuresJson = SerializeFailures(inboxFailures);
+    var receptorCompletionsJson = SerializeReceptorCompletions(receptorCompletions);
+    var receptorFailuresJson = SerializeReceptorFailures(receptorFailures);
+    var perspectiveCompletionsJson = SerializePerspectiveCompletions(perspectiveCompletions);
+    var perspectiveFailuresJson = SerializePerspectiveFailures(perspectiveFailures);
     var newOutboxJson = SerializeNewOutboxMessages(newOutboxMessages);
     var newInboxJson = SerializeNewInboxMessages(newInboxMessages);
     var metadataJson = SerializeMetadata(metadata);
@@ -81,6 +89,18 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     var inboxFailuresParam = PostgresJsonHelper.JsonStringToJsonb(inboxFailuresJson);
     inboxFailuresParam.ParameterName = "p_inbox_failures";
+
+    var receptorCompletionsParam = PostgresJsonHelper.JsonStringToJsonb(receptorCompletionsJson);
+    receptorCompletionsParam.ParameterName = "p_receptor_completions";
+
+    var receptorFailuresParam = PostgresJsonHelper.JsonStringToJsonb(receptorFailuresJson);
+    receptorFailuresParam.ParameterName = "p_receptor_failures";
+
+    var perspectiveCompletionsParam = PostgresJsonHelper.JsonStringToJsonb(perspectiveCompletionsJson);
+    perspectiveCompletionsParam.ParameterName = "p_perspective_completions";
+
+    var perspectiveFailuresParam = PostgresJsonHelper.JsonStringToJsonb(perspectiveFailuresJson);
+    perspectiveFailuresParam.ParameterName = "p_perspective_failures";
 
     var newOutboxParam = PostgresJsonHelper.JsonStringToJsonb(newOutboxJson);
     newOutboxParam.ParameterName = "p_new_outbox_messages";
@@ -110,6 +130,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
         @p_outbox_failures,
         @p_inbox_completions,
         @p_inbox_failures,
+        @p_receptor_completions,
+        @p_receptor_failures,
+        @p_perspective_completions,
+        @p_perspective_failures,
         @p_new_outbox_messages,
         @p_new_inbox_messages,
         @p_renew_outbox_lease_ids,
@@ -133,6 +157,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
         outboxFailuresParam,
         inboxCompletionsParam,
         inboxFailuresParam,
+        receptorCompletionsParam,
+        receptorFailuresParam,
+        perspectiveCompletionsParam,
+        perspectiveFailuresParam,
         newOutboxParam,
         newInboxParam,
         renewOutboxParam,
@@ -280,6 +308,42 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var typeInfo = _jsonOptions.GetTypeInfo(typeof(Guid[]))
       ?? throw new InvalidOperationException("No JsonTypeInfo found for Guid[]. Ensure the type is registered in InfrastructureJsonContext.");
     return JsonSerializer.Serialize(messageIds, typeInfo);
+  }
+
+  private string SerializeReceptorCompletions(ReceptorProcessingCompletion[] completions) {
+    if (completions.Length == 0) {
+      return "[]";
+    }
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(ReceptorProcessingCompletion[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for ReceptorProcessingCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(completions, typeInfo);
+  }
+
+  private string SerializeReceptorFailures(ReceptorProcessingFailure[] failures) {
+    if (failures.Length == 0) {
+      return "[]";
+    }
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(ReceptorProcessingFailure[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for ReceptorProcessingFailure[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(failures, typeInfo);
+  }
+
+  private string SerializePerspectiveCompletions(PerspectiveCheckpointCompletion[] completions) {
+    if (completions.Length == 0) {
+      return "[]";
+    }
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCheckpointCompletion[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveCheckpointCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(completions, typeInfo);
+  }
+
+  private string SerializePerspectiveFailures(PerspectiveCheckpointFailure[] failures) {
+    if (failures.Length == 0) {
+      return "[]";
+    }
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(PerspectiveCheckpointFailure[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for PerspectiveCheckpointFailure[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(failures, typeInfo);
   }
 
   /// <summary>

@@ -103,6 +103,10 @@ public class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
       outboxFailures: [.. _queuedOutboxFailures],
       inboxCompletions: [.. _queuedInboxCompletions],
       inboxFailures: [.. _queuedInboxFailures],
+      receptorCompletions: [],  // TODO: Add receptor processing support
+      receptorFailures: [],
+      perspectiveCompletions: [],  // TODO: Add perspective checkpoint support
+      perspectiveFailures: [],
       newOutboxMessages: [.. _queuedOutboxMessages],
       newInboxMessages: [.. _queuedInboxMessages],
       renewOutboxLeaseIds: [],

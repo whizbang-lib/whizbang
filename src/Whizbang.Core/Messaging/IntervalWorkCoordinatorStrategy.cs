@@ -205,6 +205,10 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
         outboxFailures: outboxFailures,
         inboxCompletions: inboxCompletions,
         inboxFailures: inboxFailures,
+        receptorCompletions: [],  // TODO: Add receptor processing support
+        receptorFailures: [],
+        perspectiveCompletions: [],  // TODO: Add perspective checkpoint support
+        perspectiveFailures: [],
         newOutboxMessages: outboxMessages,
         newInboxMessages: inboxMessages,
         renewOutboxLeaseIds: [],

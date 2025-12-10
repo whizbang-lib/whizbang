@@ -154,6 +154,10 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
         outboxFailures: [],
         inboxCompletions: [],
         inboxFailures: [],
+        receptorCompletions: [],
+        receptorFailures: [],
+        perspectiveCompletions: [],
+        perspectiveFailures: [],
         newOutboxMessages: [
           new OutboxMessage {
             MessageId = messageId.Value,
@@ -251,6 +255,10 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
         outboxFailures: [],
         inboxCompletions: [],
         inboxFailures: [],
+        receptorCompletions: [],
+        receptorFailures: [],
+        perspectiveCompletions: [],
+        perspectiveFailures: [],
         newOutboxMessages: [
           new OutboxMessage {
             MessageId = messageId1.Value,
@@ -340,6 +348,10 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
         outboxFailures: [],
         inboxCompletions: [],
         inboxFailures: [],
+        receptorCompletions: [],
+        receptorFailures: [],
+        perspectiveCompletions: [],
+        perspectiveFailures: [],
         newOutboxMessages: [
           new OutboxMessage {
             MessageId = messageId.Value,

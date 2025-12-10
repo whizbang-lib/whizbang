@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using ECommerce.Contracts.Commands;
 using TUnit.Assertions;
@@ -35,6 +36,8 @@ public class MessageSerializationTests {
   /// If this fails, the MessageIdJsonConverter is not working.
   /// </summary>
   [Test]
+  [RequiresDynamicCode("JSON serialization may require dynamic code generation")]
+  [RequiresUnreferencedCode("JSON serialization may require unreferenced code")]
   public async Task MessageId_Serializes_AsNonEmptyStringAsync() {
     // Arrange
     var messageId = MessageId.New();
@@ -58,6 +61,8 @@ public class MessageSerializationTests {
   /// If this fails, the MessageIdJsonConverter Read() method is broken.
   /// </summary>
   [Test]
+  [RequiresDynamicCode("JSON serialization may require dynamic code generation")]
+  [RequiresUnreferencedCode("JSON serialization may require unreferenced code")]
   public async Task MessageId_RoundTrip_PreservesValueAsync() {
     // Arrange
     var originalId = MessageId.New();
@@ -76,6 +81,7 @@ public class MessageSerializationTests {
   /// This is THE critical test - these are the types showing as all zeros in the logs!
   /// </summary>
   [Test]
+  [RequiresUnreferencedCode("JSON serialization may require unreferenced code")]
   public async Task WhizbangIds_Serialize_AsNonEmptyStringsAsync() {
     // Arrange
     var orderId = OrderId.New();
@@ -104,6 +110,7 @@ public class MessageSerializationTests {
   /// This tests the EXACT scenario: MessageEnvelope with a command containing WhizbangId.
   /// </summary>
   [Test]
+  [RequiresUnreferencedCode("JSON serialization may require unreferenced code")]
   public async Task MessageEnvelope_WithCreateProductCommand_SerializesWhizbangIdsCorrectlyAsync() {
     // Arrange - Create a real CreateProductCommand with ProductId (WhizbangId)
     var productId = ProductId.New();
@@ -146,6 +153,7 @@ public class MessageSerializationTests {
   /// This is the most comprehensive test - OrderId, CustomerId, and ProductId all in one message.
   /// </summary>
   [Test]
+  [RequiresUnreferencedCode("JSON serialization may require unreferenced code")]
   public async Task MessageEnvelope_WithCreateOrderCommand_SerializesAllWhizbangIdsCorrectlyAsync() {
     // Arrange - Create CreateOrderCommand with all three WhizbangId types
     var orderId = OrderId.New();
