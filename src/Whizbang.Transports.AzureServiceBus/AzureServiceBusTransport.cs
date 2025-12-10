@@ -212,29 +212,32 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
       // Apply CorrelationFilter if specified in metadata (production without Aspire)
       // Skip if emulator (filters provisioned by Aspire AppHost)
       if (!_isEmulator &&
-          destination.Metadata?.TryGetValue("DestinationFilter", out var destinationFilterObj) == true &&
-          destinationFilterObj is string destinationFilter &&
-          !string.IsNullOrWhiteSpace(destinationFilter)) {
+          destination.Metadata?.TryGetValue("DestinationFilter", out var destinationFilterElem) == true &&
+          destinationFilterElem.ValueKind == JsonValueKind.String) {
 
-        if (_adminClient != null) {
-          try {
-            await ApplyCorrelationFilterAsync(topicName, subscriptionName, destinationFilter, cancellationToken);
-          } catch (Exception ex) {
+        var destinationFilter = destinationFilterElem.GetString();
+        if (!string.IsNullOrWhiteSpace(destinationFilter)) {
+
+          if (_adminClient != null) {
+            try {
+              await ApplyCorrelationFilterAsync(topicName, subscriptionName, destinationFilter, cancellationToken);
+            } catch (Exception ex) {
+              _logger.LogWarning(
+                ex,
+                "Failed to apply CorrelationFilter '{DestinationFilter}' to {TopicName}/{SubscriptionName}. Proceeding without filter.",
+                destinationFilter,
+                topicName,
+                subscriptionName
+              );
+            }
+          } else {
             _logger.LogWarning(
-              ex,
-              "Failed to apply CorrelationFilter '{DestinationFilter}' to {TopicName}/{SubscriptionName}. Proceeding without filter.",
+              "DestinationFilter '{DestinationFilter}' specified for {TopicName}/{SubscriptionName} but administration client is not available",
               destinationFilter,
               topicName,
               subscriptionName
             );
           }
-        } else {
-          _logger.LogWarning(
-            "DestinationFilter '{DestinationFilter}' specified for {TopicName}/{SubscriptionName} but administration client is not available",
-            destinationFilter,
-            topicName,
-            subscriptionName
-          );
         }
       }
 

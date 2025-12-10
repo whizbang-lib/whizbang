@@ -57,7 +57,7 @@ public class JsonMessageSerializer : IMessageSerializer {
       options.Converters.Add(new CorrelationIdConverter());
     }
 
-    if (!HasConverter<IReadOnlyDictionary<string, object>>(options)) {
+    if (!HasConverter<IReadOnlyDictionary<string, JsonElement>>(options)) {
       options.Converters.Add(new MetadataConverter());
     }
 
@@ -131,10 +131,10 @@ public class CorrelationIdConverter : JsonConverter<CorrelationId> {
 
 /// <summary>
 /// JSON converter for metadata dictionaries.
-/// Handles JsonElement deserialization back to original types (string, int, bool, etc.).
+/// Supports any JSON value type (string, number, boolean, object, array) via JsonElement.
 /// </summary>
-internal class MetadataConverter : JsonConverter<IReadOnlyDictionary<string, object>?> {
-  public override IReadOnlyDictionary<string, object>? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {
+internal class MetadataConverter : JsonConverter<IReadOnlyDictionary<string, JsonElement>?> {
+  public override IReadOnlyDictionary<string, JsonElement>? Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {
     if (reader.TokenType == JsonTokenType.Null) {
       return null;
     }
@@ -143,7 +143,7 @@ internal class MetadataConverter : JsonConverter<IReadOnlyDictionary<string, obj
       throw new JsonException($"Expected StartObject token, got {reader.TokenType}");
     }
 
-    var dictionary = new Dictionary<string, object>();
+    var dictionary = new Dictionary<string, JsonElement>();
 
     while (reader.Read()) {
       if (reader.TokenType == JsonTokenType.EndObject) {
@@ -155,28 +155,17 @@ internal class MetadataConverter : JsonConverter<IReadOnlyDictionary<string, obj
       }
 
       var key = reader.GetString() ?? throw new JsonException("Property name cannot be null");
+
+      // Read the value as a JsonElement to preserve its type
       reader.Read();
-      var value = ReadValue(ref reader);
+      var value = JsonElement.ParseValue(ref reader);
       dictionary[key] = value;
     }
 
     throw new JsonException("Unexpected end of JSON");
   }
 
-  private static object ReadValue(ref Utf8JsonReader reader) {
-    return reader.TokenType switch {
-      JsonTokenType.String => reader.GetString()!,
-      JsonTokenType.Number when reader.TryGetInt32(out var intValue) => intValue,
-      JsonTokenType.Number when reader.TryGetInt64(out var longValue) => longValue,
-      JsonTokenType.Number => reader.GetDouble(),
-      JsonTokenType.True => true,
-      JsonTokenType.False => false,
-      JsonTokenType.Null => null!,
-      _ => throw new JsonException($"Unsupported JSON token type: {reader.TokenType}")
-    };
-  }
-
-  public override void Write(Utf8JsonWriter writer, IReadOnlyDictionary<string, object>? value, JsonSerializerOptions options) {
+  public override void Write(Utf8JsonWriter writer, IReadOnlyDictionary<string, JsonElement>? value, JsonSerializerOptions options) {
     if (value is null) {
       writer.WriteNullValue();
       return;
@@ -185,33 +174,8 @@ internal class MetadataConverter : JsonConverter<IReadOnlyDictionary<string, obj
     writer.WriteStartObject();
     foreach (var kvp in value) {
       writer.WritePropertyName(kvp.Key);
-      WriteValue(writer, kvp.Value);
+      kvp.Value.WriteTo(writer);
     }
     writer.WriteEndObject();
-  }
-
-  private static void WriteValue(Utf8JsonWriter writer, object value) {
-    switch (value) {
-      case null:
-        writer.WriteNullValue();
-        break;
-      case string s:
-        writer.WriteStringValue(s);
-        break;
-      case int i:
-        writer.WriteNumberValue(i);
-        break;
-      case long l:
-        writer.WriteNumberValue(l);
-        break;
-      case double d:
-        writer.WriteNumberValue(d);
-        break;
-      case bool b:
-        writer.WriteBooleanValue(b);
-        break;
-      default:
-        throw new JsonException($"Unsupported metadata value type: {value.GetType().Name}");
-    }
   }
 }

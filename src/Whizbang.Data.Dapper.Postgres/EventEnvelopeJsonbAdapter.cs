@@ -22,34 +22,47 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
     ArgumentNullException.ThrowIfNull(source);
 
     // 1. Event data: The actual event payload (AOT-compatible)
-    var payload = source.GetPayload();
+    var payload = source.Payload;
     var payloadType = payload.GetType();
     var payloadTypeInfo = _jsonOptions.GetTypeInfo(payloadType) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {payloadType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
     var eventDataJson = JsonSerializer.Serialize(payload, payloadTypeInfo);
 
-    // 2. Metadata: Correlation, Causation, Hops, Message ID (AOT-compatible)
+    // 2. Metadata: Correlation, Causation, Hops, Message ID (AOT-compatible with JsonElement)
     var correlationId = source.GetCorrelationId();
     var causationId = source.GetCausationId();
 
-    var metadataDict = new Dictionary<string, object> {
-      ["message_id"] = source.MessageId.Value.ToString(),
-      ["correlation_id"] = correlationId?.Value.ToString() ?? string.Empty,
-      ["causation_id"] = causationId?.Value.ToString() ?? string.Empty,
-      ["hops"] = source.Hops.ToList()  // Serialize full MessageHop objects to preserve all properties
+    // Serialize individual values using JsonTypeInfo
+    var stringTypeInfo = _jsonOptions.GetTypeInfo(typeof(string)) ?? throw new InvalidOperationException("No JsonTypeInfo found for string");
+    var hopsTypeInfo = _jsonOptions.GetTypeInfo(typeof(List<MessageHop>)) ?? throw new InvalidOperationException("No JsonTypeInfo found for List<MessageHop>");
+
+    var messageIdJson = JsonSerializer.Serialize(source.MessageId.Value.ToString(), stringTypeInfo);
+    var correlationIdJson = JsonSerializer.Serialize(correlationId?.Value.ToString() ?? string.Empty, stringTypeInfo);
+    var causationIdJson = JsonSerializer.Serialize(causationId?.Value.ToString() ?? string.Empty, stringTypeInfo);
+    var hopsJson = JsonSerializer.Serialize(source.Hops.ToList(), hopsTypeInfo);
+
+    var metadataDict = new Dictionary<string, JsonElement> {
+      ["message_id"] = JsonDocument.Parse(messageIdJson).RootElement.Clone(),
+      ["correlation_id"] = JsonDocument.Parse(correlationIdJson).RootElement.Clone(),
+      ["causation_id"] = JsonDocument.Parse(causationIdJson).RootElement.Clone(),
+      ["hops"] = JsonDocument.Parse(hopsJson).RootElement.Clone()
     };
 
-    var metadataDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, object>)) ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, object>. Ensure the type is registered in WhizbangJsonContext.");
+    var metadataDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>)) ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement>. Ensure the type is registered in WhizbangJsonContext.");
     var metadataJson = JsonSerializer.Serialize(metadataDict, metadataDictTypeInfo);
 
-    // 3. Scope: Extract from first hop's SecurityContext if available (AOT-compatible)
+    // 3. Scope: Extract from first hop's SecurityContext if available (AOT-compatible with JsonElement)
     string? scopeJson = null;
     var firstHop = source.Hops.FirstOrDefault();
     if (firstHop?.SecurityContext != null) {
-      var scopeDict = new Dictionary<string, object?> {
-        ["tenant_id"] = firstHop.SecurityContext.TenantId?.ToString(),
-        ["user_id"] = firstHop.SecurityContext.UserId?.ToString()
+      var scopeDict = new Dictionary<string, JsonElement?> {
+        ["tenant_id"] = !string.IsNullOrEmpty(firstHop.SecurityContext.TenantId)
+          ? JsonDocument.Parse(JsonSerializer.Serialize(firstHop.SecurityContext.TenantId, stringTypeInfo)).RootElement.Clone()
+          : (JsonElement?)null,
+        ["user_id"] = !string.IsNullOrEmpty(firstHop.SecurityContext.UserId)
+          ? JsonDocument.Parse(JsonSerializer.Serialize(firstHop.SecurityContext.UserId, stringTypeInfo)).RootElement.Clone()
+          : (JsonElement?)null
       };
-      var scopeDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, object?>)) ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, object?>. Ensure the type is registered in WhizbangJsonContext.");
+      var scopeDictTypeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement?>)) ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement?>. Ensure the type is registered in WhizbangJsonContext.");
       scopeJson = JsonSerializer.Serialize(scopeDict, scopeDictTypeInfo);
     }
 

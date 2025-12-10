@@ -350,6 +350,7 @@ public class WorkCoordinatorPublisherOptions {
   /// <summary>
   /// Optional metadata to attach to this service instance.
   /// Can include version, environment, etc.
+  /// Supports any JSON value type via JsonElement.
   /// </summary>
-  public Dictionary<string, object>? InstanceMetadata { get; set; }
+  public Dictionary<string, JsonElement>? InstanceMetadata { get; set; }
 }

@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -178,11 +180,13 @@ public class MessageHopTests {
   }
 
   [Test]
+  [RequiresUnreferencedCode("")]
+  [RequiresDynamicCode("")]
   public async Task MessageHop_WithMetadata_SetsMetadataAsync() {
     // Arrange
-    var metadata = new Dictionary<string, object> {
-      ["key1"] = "value1",
-      ["key2"] = 42
+    var metadata = new Dictionary<string, JsonElement> {
+      ["key1"] = JsonSerializer.SerializeToElement("value1"),
+      ["key2"] = JsonSerializer.SerializeToElement(42)
     };
 
     // Act
@@ -199,8 +203,8 @@ public class MessageHopTests {
     // Assert
     await Assert.That(hop.Metadata).IsNotNull();
     await Assert.That(hop.Metadata!.Count).IsEqualTo(2);
-    await Assert.That(hop.Metadata["key1"]).IsEqualTo("value1");
-    await Assert.That(hop.Metadata["key2"]).IsEqualTo(42);
+    await Assert.That(hop.Metadata["key1"].GetString()).IsEqualTo("value1");
+    await Assert.That(hop.Metadata["key2"].GetInt32()).IsEqualTo(42);
   }
 
   [Test]

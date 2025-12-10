@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using Whizbang.Core;
@@ -174,6 +175,8 @@ public class IMessageSerializerTests {
   }
 
   [Test]
+  [RequiresUnreferencedCode("")]
+  [RequiresDynamicCode("")]
   public async Task RoundTrip_PreservesMetadataAsync() {
     // Arrange
     var serializer = CreateTestSerializer();
@@ -189,10 +192,10 @@ public class IMessageSerializerTests {
             ProcessId = 12345
           },
           Timestamp = DateTimeOffset.UtcNow,
-          Metadata = new Dictionary<string, object> {
-            ["priority"] = "high",
-            ["retry-count"] = 3,
-            ["timeout-ms"] = 5000
+          Metadata = new Dictionary<string, JsonElement> {
+            ["priority"] = JsonSerializer.SerializeToElement("high"),
+            ["retry-count"] = JsonSerializer.SerializeToElement(3),
+            ["timeout-ms"] = JsonSerializer.SerializeToElement(5000)
           }
         }
       ]
@@ -203,9 +206,9 @@ public class IMessageSerializerTests {
     var deserialized = await serializer.DeserializeAsync<TestMessage>(bytes);
 
     // Assert
-    await Assert.That(deserialized.GetMetadata("priority")).IsEqualTo("high");
-    await Assert.That(deserialized.GetMetadata("retry-count")).IsEqualTo(3);
-    await Assert.That(deserialized.GetMetadata("timeout-ms")).IsEqualTo(5000);
+    await Assert.That(deserialized.GetMetadata("priority")!.Value.GetString()).IsEqualTo("high");
+    await Assert.That(deserialized.GetMetadata("retry-count")!.Value.GetInt32()).IsEqualTo(3);
+    await Assert.That(deserialized.GetMetadata("timeout-ms")!.Value.GetInt32()).IsEqualTo(5000);
   }
 
   [Test]

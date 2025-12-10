@@ -30,12 +30,15 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
 
   private record TestEvent { }
 
-  private static IMessageEnvelope CreateTestEnvelope(Guid messageId) {
-    return new MessageEnvelope<TestEvent> {
+  private static IMessageEnvelope<object> CreateTestEnvelope(Guid messageId) {
+    var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.From(messageId),
       Payload = new TestEvent(),
       Hops = []
     };
+    // Cast to IMessageEnvelope<object> - safe because MessageEnvelope<TMessage> implements IMessageEnvelope<object> via interface hierarchy
+    return envelope as IMessageEnvelope<object>
+      ?? throw new InvalidOperationException("Envelope must implement IMessageEnvelope<object>");
   }
 
   [Before(Test)]
@@ -152,12 +155,14 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
         inboxCompletions: [],
         inboxFailures: [],
         newOutboxMessages: [
-          new NewOutboxMessage {
+          new OutboxMessage<object> {
             MessageId = messageId.Value,
             Destination = "products",
             Envelope = CreateTestEnvelope(messageId.Value),
+            EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
             IsEvent = true,
-            StreamId = streamId
+            StreamId = streamId,
+            MessageType = "TestMessage, TestAssembly"
           }
         ],
         newInboxMessages: [],
@@ -247,26 +252,32 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
         inboxCompletions: [],
         inboxFailures: [],
         newOutboxMessages: [
-          new NewOutboxMessage {
+          new OutboxMessage<object> {
             MessageId = messageId1.Value,
             Destination = "products",
             Envelope = CreateTestEnvelope(messageId1.Value),
+            EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
             IsEvent = true,
-            StreamId = streamId
+            StreamId = streamId,
+            MessageType = "TestMessage, TestAssembly"
           },
-          new NewOutboxMessage {
+          new OutboxMessage<object> {
             MessageId = messageId2.Value,
             Destination = "products",
             Envelope = CreateTestEnvelope(messageId2.Value),
+            EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
             IsEvent = true,
-            StreamId = streamId
+            StreamId = streamId,
+            MessageType = "TestMessage, TestAssembly"
           },
-          new NewOutboxMessage {
+          new OutboxMessage<object> {
             MessageId = messageId3.Value,
             Destination = "products",
             Envelope = CreateTestEnvelope(messageId3.Value),
+            EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
             IsEvent = true,
-            StreamId = streamId
+            StreamId = streamId,
+            MessageType = "TestMessage, TestAssembly"
           }
         ],
         newInboxMessages: [],
@@ -330,12 +341,14 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
         inboxCompletions: [],
         inboxFailures: [],
         newOutboxMessages: [
-          new NewOutboxMessage {
+          new OutboxMessage<object> {
             MessageId = messageId.Value,
             Destination = "products",
             Envelope = CreateTestEnvelope(messageId.Value),
+            EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
             IsEvent = true,
-            StreamId = streamId
+            StreamId = streamId,
+            MessageType = "TestMessage, TestAssembly"
           }
         ],
         newInboxMessages: [],

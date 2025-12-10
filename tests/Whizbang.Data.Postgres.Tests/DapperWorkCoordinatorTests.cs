@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Dapper;
 using Npgsql;
 using TUnit.Assertions;
@@ -12,6 +13,15 @@ using Whizbang.Data.Dapper.Postgres;
 namespace Whizbang.Data.Postgres.Tests;
 
 /// <summary>
+/// JSON source generation context for test envelope types.
+/// Required for AOT serialization/deserialization of test envelopes.
+/// </summary>
+[JsonSourceGenerationOptions(WriteIndented = false)]
+[JsonSerializable(typeof(MessageEnvelope<DapperWorkCoordinatorTests.TestEvent>))]
+[JsonSerializable(typeof(DapperWorkCoordinatorTests.TestEvent))]
+internal partial class TestEnvelopeJsonContext : JsonSerializerContext { }
+
+/// <summary>
 /// Integration tests for DapperWorkCoordinator.
 /// Tests the process_work_batch PostgreSQL function and lease-based work coordination.
 /// Uses UUIDv7 for all message IDs to ensure proper time-ordered database indexing.
@@ -20,17 +30,29 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   private DapperWorkCoordinator _sut = null!;
   private Guid _instanceId;
   private readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
-  private static readonly JsonSerializerOptions _jsonOptions = new();
+  private static readonly JsonSerializerOptions _jsonOptions;
+
+  static DapperWorkCoordinatorTests() {
+    // Combine all JSON contexts including test-specific ones
+    var baseOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    _jsonOptions = new JsonSerializerOptions(baseOptions) {
+      TypeInfoResolver = System.Text.Json.Serialization.Metadata.JsonTypeInfoResolver.Combine(
+        baseOptions.TypeInfoResolver!,
+        TestEnvelopeJsonContext.Default
+      )
+    };
+  }
 
   // Test helper record and envelope creation
-  private record TestEvent { }
+  public record TestEvent { }
 
-  private static IMessageEnvelope CreateTestEnvelope(Guid messageId) {
-    return new MessageEnvelope<TestEvent> {
+  private static IMessageEnvelope<object> CreateTestEnvelope(Guid messageId) {
+    var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.From(messageId),
       Payload = new TestEvent(),
       Hops = []
     };
+    return envelope as IMessageEnvelope<object> ?? throw new InvalidOperationException("Envelope must implement IMessageEnvelope<object>");
   }
 
   [Before(Test)]
@@ -465,12 +487,14 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var messageId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
 
-    var newOutboxMessage = new NewOutboxMessage {
+    var newOutboxMessage = new OutboxMessage<object> {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = CreateTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = streamId,
-      IsEvent = true
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly"
     };
 
     // Act
@@ -507,12 +531,14 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
     var messageId = _idProvider.NewGuid();
 
-    var newInboxMessage = new NewInboxMessage {
+    var newInboxMessage = new InboxMessage<object> {
       MessageId = messageId,
       HandlerName = "TestHandler",
       Envelope = CreateTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
-      IsEvent = true
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly"
     };
 
     // Act - First call should store and return work
@@ -566,12 +592,14 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var streamId = _idProvider.NewGuid();
 
     var messageId = _idProvider.NewGuid();
-    var newInboxMessage = new NewInboxMessage {
+    var newInboxMessage = new InboxMessage<object> {
       MessageId = messageId,
       HandlerName = "TestHandler",
       Envelope = CreateTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = streamId,
-      IsEvent = true
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly"
     };
 
     // Act
@@ -610,12 +638,14 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var streamId = _idProvider.NewGuid();
 
     var messageId = _idProvider.NewGuid();
-    var newOutboxMessage = new NewOutboxMessage {
+    var newOutboxMessage = new OutboxMessage<object> {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = CreateTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = streamId,
-      IsEvent = true
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly"
     };
 
     // Act
@@ -658,12 +688,14 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var messageId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
 
-    var newOutboxMessage = new NewOutboxMessage {
+    var newOutboxMessage = new OutboxMessage<object> {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = CreateTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = streamId,
-      IsEvent = true
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly"
     };
 
     // Act - Create new outbox message with IsEvent=true
@@ -697,12 +729,14 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var messageId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
 
-    var newInboxMessage = new NewInboxMessage {
+    var newInboxMessage = new InboxMessage<object> {
       MessageId = messageId,
       HandlerName = "TestHandler",
       Envelope = CreateTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = streamId,
-      IsEvent = true
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly"
     };
 
     // Act - Create new inbox message with IsEvent=true
@@ -740,12 +774,14 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     // Insert first event already in event store (simulating existing event at version 1)
     await InsertEventStoreRecordAsync(streamId, messageId1, "TestEvent", "{}", version: 1);
 
-    var newInboxMessage = new NewInboxMessage {
+    var newInboxMessage = new InboxMessage<object> {
       MessageId = messageId2,
       HandlerName = "TestHandler",
       Envelope = CreateTestEnvelope(messageId2),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = streamId,
-      IsEvent = true
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly"
     };
 
     // Act - Try to create new inbox message (should handle version conflict)
@@ -787,26 +823,32 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var messageId3 = _idProvider.NewGuid();
 
     var newOutboxMessages = new[] {
-      new NewOutboxMessage {
+      new OutboxMessage<object> {
         MessageId = messageId1,
         Destination = "topic1",
         Envelope = CreateTestEnvelope(messageId1),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
         StreamId = streamId,
-        IsEvent = true
+        IsEvent = true,
+        MessageType = "TestMessage, TestAssembly"
       },
-      new NewOutboxMessage {
+      new OutboxMessage<object> {
         MessageId = messageId2,
         Destination = "topic1",
         Envelope = CreateTestEnvelope(messageId2),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
         StreamId = streamId,
-        IsEvent = true
+        IsEvent = true,
+        MessageType = "TestMessage, TestAssembly"
       },
-      new NewOutboxMessage {
+      new OutboxMessage<object> {
         MessageId = messageId3,
         Destination = "topic1",
         Envelope = CreateTestEnvelope(messageId3),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
         StreamId = streamId,
-        IsEvent = true
+        IsEvent = true,
+        MessageType = "TestMessage, TestAssembly"
       }
     };
 
@@ -843,12 +885,14 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var messageId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
 
-    var newOutboxMessage = new NewOutboxMessage {
+    var newOutboxMessage = new OutboxMessage<object> {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = CreateTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = streamId,
-      IsEvent = false  // CRITICAL: IsEvent = false (command, not event)
+      IsEvent = false,  // CRITICAL: IsEvent = false (command, not event)
+      MessageType = "TestMessage, TestAssembly"
     };
 
     // Act - Create new outbox message with IsEvent=false
@@ -894,12 +938,14 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       var messageId = _idProvider.NewGuid();
       messageIds.Add(messageId);
 
-      var newOutboxMessage = new NewOutboxMessage {
+      var newOutboxMessage = new OutboxMessage<object> {
         MessageId = messageId,
         Destination = "test-topic",
         Envelope = CreateTestEnvelope(messageId),
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
         StreamId = streamId,  // SAME stream_id for all
-        IsEvent = true
+        IsEvent = true,
+        MessageType = "TestMessage, TestAssembly"
       };
 
       await _sut.ProcessWorkBatchAsync(
@@ -943,12 +989,14 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       var streamId = _idProvider.NewGuid();  // Different stream_id each time
       messageIds.Add(messageId);
 
-      var newOutboxMessage = new NewOutboxMessage {
+      var newOutboxMessage = new OutboxMessage<object> {
         MessageId = messageId,
         Destination = "test-topic",
         Envelope = CreateTestEnvelope(messageId),
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
         StreamId = streamId,
-        IsEvent = true
+        IsEvent = true,
+        MessageType = "TestMessage, TestAssembly"
       };
 
       await _sut.ProcessWorkBatchAsync(
@@ -1280,12 +1328,14 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       streamId: _idProvider.NewGuid(),
       isEvent: true);
 
-    var newOutboxMessage = new NewOutboxMessage {
+    var newOutboxMessage = new OutboxMessage<object> {
       MessageId = newMessageId,
       Destination = "test-topic",
       Envelope = CreateTestEnvelope(newMessageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
-      IsEvent = true
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly"
     };
 
     // Act
@@ -1411,12 +1461,14 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
     var messageId = _idProvider.NewGuid();
 
-    var newOutboxMessage = new NewOutboxMessage {
+    var newOutboxMessage = new OutboxMessage<object> {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = CreateTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
-      IsEvent = true  // CRITICAL: IsEvent = true
+      IsEvent = true,  // CRITICAL: IsEvent = true
+      MessageType = "TestMessage, TestAssembly"
     };
 
     // Act
@@ -1438,7 +1490,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     // Assert - Verify is_event flag is stored correctly
     var isEvent = await GetOutboxIsEventAsync(messageId);
     await Assert.That(isEvent).IsTrue()
-      .Because("NewOutboxMessage with IsEvent=true should persist is_event=true to wh_outbox");
+      .Because("OutboxMessage with IsEvent=true should persist is_event=true to wh_outbox");
   }
 
   [Test]
@@ -1447,12 +1499,14 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
     var messageId = _idProvider.NewGuid();
 
-    var newOutboxMessage = new NewOutboxMessage {
+    var newOutboxMessage = new OutboxMessage<object> {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = CreateTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
-      IsEvent = false  // CRITICAL: IsEvent = false
+      IsEvent = false,  // CRITICAL: IsEvent
+      MessageType = "TestMessage, TestAssembly"
     };
 
     // Act
@@ -1474,7 +1528,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     // Assert - Verify is_event flag is stored correctly
     var isEvent = await GetOutboxIsEventAsync(messageId);
     await Assert.That(isEvent).IsFalse()
-      .Because("NewOutboxMessage with IsEvent=false should persist is_event=false to wh_outbox");
+      .Because("OutboxMessage with IsEvent=false should persist is_event=false to wh_outbox");
   }
 
   [Test]
@@ -1483,12 +1537,14 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
     var messageId = _idProvider.NewGuid();
 
-    var newInboxMessage = new NewInboxMessage {
+    var newInboxMessage = new InboxMessage<object> {
       MessageId = messageId,
       HandlerName = "TestHandler",
       Envelope = CreateTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
-      IsEvent = true  // CRITICAL: IsEvent = true
+      IsEvent = true,  // CRITICAL: IsEvent
+      MessageType = "TestMessage, TestAssembly"
     };
 
     // Act
@@ -1510,7 +1566,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     // Assert - Verify is_event flag is stored correctly
     var isEvent = await GetInboxIsEventAsync(messageId);
     await Assert.That(isEvent).IsTrue()
-      .Because("NewInboxMessage with IsEvent=true should persist is_event=true to wh_inbox");
+      .Because("InboxMessage with IsEvent=true should persist is_event=true to wh_inbox");
   }
 
   [Test]
@@ -1519,12 +1575,14 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
     var messageId = _idProvider.NewGuid();
 
-    var newInboxMessage = new NewInboxMessage {
+    var newInboxMessage = new InboxMessage<object> {
       MessageId = messageId,
       HandlerName = "TestHandler",
       Envelope = CreateTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
-      IsEvent = false  // CRITICAL: IsEvent = false
+      IsEvent = false,  // CRITICAL: IsEvent
+      MessageType = "TestMessage, TestAssembly"
     };
 
     // Act
@@ -1546,7 +1604,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     // Assert - Verify is_event flag is stored correctly
     var isEvent = await GetInboxIsEventAsync(messageId);
     await Assert.That(isEvent).IsFalse()
-      .Because("NewInboxMessage with IsEvent=false should persist is_event=false to wh_inbox");
+      .Because("InboxMessage with IsEvent=false should persist is_event=false to wh_inbox");
   }
 
   // Helper methods for test data setup and verification
@@ -1593,13 +1651,25 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       statusFlags |= 2;  // Add EventStored bit
     }
 
+    // Create envelope for storage (to match what ProcessWorkBatchAsync expects)
+    // Manual JSON construction for test data (avoids AOT serialization complexities)
+    var envelopeType = typeof(MessageEnvelope<TestEvent>).AssemblyQualifiedName!;
+    var envelopeJson = $$"""
+    {
+      "$type": "{{envelopeType}}",
+      "MessageId": "{{messageId}}",
+      "Payload": {},
+      "Hops": []
+    }
+    """;
+
     await connection.ExecuteAsync(@"
       INSERT INTO wh_outbox (
         message_id, destination, event_type, event_data, metadata, scope,
         status, attempts, error, created_at, published_at,
         instance_id, lease_expiry, stream_id, partition_number
       ) VALUES (
-        @messageId, @destination, @messageType, @messageData::jsonb, '{}'::jsonb, NULL,
+        @messageId, @destination, @envelopeType, @envelopeJson::jsonb, '{}'::jsonb, NULL,
         @statusFlags, 0, NULL, @now, NULL,
         @instanceId, @leaseExpiry, @streamId,
         CASE WHEN @streamId IS NULL THEN NULL ELSE compute_partition(@streamId::uuid, 10000) END
@@ -1607,8 +1677,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       new {
         messageId,
         destination,
-        messageType,
-        messageData,
+        envelopeType,
+        envelopeJson,
         statusFlags,
         instanceId,
         leaseExpiry,
@@ -1696,13 +1766,25 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       statusFlags |= 2;  // Add EventStored bit
     }
 
+    // Create envelope for storage (to match what ProcessWorkBatchAsync expects)
+    // Manual JSON construction for test data (avoids AOT serialization complexities)
+    var envelopeType = typeof(MessageEnvelope<TestEvent>).AssemblyQualifiedName!;
+    var envelopeJson = $$"""
+    {
+      "$type": "{{envelopeType}}",
+      "MessageId": "{{messageId}}",
+      "Payload": {},
+      "Hops": []
+    }
+    """;
+
     await connection.ExecuteAsync(@"
       INSERT INTO wh_inbox (
         message_id, handler_name, event_type, event_data, metadata, scope,
         status, attempts, received_at, processed_at, instance_id, lease_expiry,
         stream_id, partition_number
       ) VALUES (
-        @messageId, @handlerName, @messageType, @messageData::jsonb, '{}'::jsonb, NULL,
+        @messageId, @handlerName, @envelopeType, @envelopeJson::jsonb, '{}'::jsonb, NULL,
         @statusFlags, 0, @now, NULL, @instanceId, @leaseExpiry,
         @streamId,
         CASE WHEN @streamId IS NULL THEN NULL ELSE compute_partition(@streamId::uuid, 10000) END
@@ -1710,8 +1792,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       new {
         messageId,
         handlerName,
-        messageType,
-        messageData,
+        envelopeType,
+        envelopeJson,
         statusFlags,
         instanceId,
         leaseExpiry,

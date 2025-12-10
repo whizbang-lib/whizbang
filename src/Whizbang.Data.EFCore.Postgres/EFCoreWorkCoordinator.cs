@@ -28,13 +28,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
     string serviceName,
     string hostName,
     int processId,
-    Dictionary<string, object>? metadata,
+    Dictionary<string, JsonElement>? metadata,
     MessageCompletion[] outboxCompletions,
     MessageFailure[] outboxFailures,
     MessageCompletion[] inboxCompletions,
     MessageFailure[] inboxFailures,
-    NewOutboxMessage[] newOutboxMessages,
-    NewInboxMessage[] newInboxMessages,
+    OutboxMessage[] newOutboxMessages,
+    InboxMessage[] newInboxMessages,
     Guid[] renewOutboxLeaseIds,
     Guid[] renewInboxLeaseIds,
     WorkBatchFlags flags = WorkBatchFlags.None,
@@ -88,9 +88,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var newInboxParam = PostgresJsonHelper.JsonStringToJsonb(newInboxJson);
     newInboxParam.ParameterName = "p_new_inbox_messages";
 
-    var metadataParam = metadataJson != null
-      ? PostgresJsonHelper.JsonStringToJsonb(metadataJson)
-      : PostgresJsonHelper.NullJsonb();
+    var metadataParam = PostgresJsonHelper.JsonStringToJsonb(metadataJson);
     metadataParam.ParameterName = "p_metadata";
 
     var renewOutboxParam = PostgresJsonHelper.JsonStringToJsonb(renewOutboxJson);
@@ -152,10 +150,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
       .Where(r => r.Source == "outbox")
       .Select(r => {
         var envelope = DeserializeEnvelope(r.EnvelopeType, r.EnvelopeData);
-        return new OutboxWork {
+        // Cast to IMessageEnvelope<object> - envelope type is unknown at deserialization
+        var typedEnvelope = envelope as IMessageEnvelope<object>
+          ?? throw new InvalidOperationException($"Envelope must implement IMessageEnvelope<object> for message {r.MessageId}");
+
+        return new OutboxWork<object> {
           MessageId = r.MessageId,
           Destination = r.Destination!,
-          Envelope = envelope,
+          Envelope = typedEnvelope,
           StreamId = r.StreamId,
           PartitionNumber = r.PartitionNumber,
           Attempts = r.Attempts,
@@ -164,15 +166,19 @@ public class EFCoreWorkCoordinator<TDbContext>(
           SequenceOrder = r.SequenceOrder
         };
       })
-      .ToList();
+      .ToList<OutboxWork>();  // Cast to base type for heterogeneous collection
 
     var inboxWork = results
       .Where(r => r.Source == "inbox")
       .Select(r => {
         var envelope = DeserializeEnvelope(r.EnvelopeType, r.EnvelopeData);
-        return new InboxWork {
+        // Cast to IMessageEnvelope<object> - envelope type is unknown at deserialization
+        var typedEnvelope = envelope as IMessageEnvelope<object>
+          ?? throw new InvalidOperationException($"Envelope must implement IMessageEnvelope<object> for message {r.MessageId}");
+
+        return new InboxWork<object> {
           MessageId = r.MessageId,
-          Envelope = envelope,
+          Envelope = typedEnvelope,
           StreamId = r.StreamId,
           PartitionNumber = r.PartitionNumber,
           Status = (MessageProcessingStatus)r.Status,
@@ -180,7 +186,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           SequenceOrder = r.SequenceOrder
         };
       })
-      .ToList();
+      .ToList<InboxWork>();  // Cast to base type for heterogeneous collection
 
     // Only log when there's actual work to report
     if (outboxWork.Count > 0 || inboxWork.Count > 0) {
@@ -197,114 +203,84 @@ public class EFCoreWorkCoordinator<TDbContext>(
     };
   }
 
-  private static string SerializeCompletions(MessageCompletion[] completions) {
+  private string SerializeCompletions(MessageCompletion[] completions) {
     if (completions.Length == 0) {
       return "[]";
     }
 
-    // Simple JSON array serialization (AOT-safe)
-    // Property names must match PostgreSQL function expectations (camelCase)
-    var items = completions.Select(c =>
-      $"{{\"messageId\":\"{c.MessageId}\",\"status\":{(int)c.Status}}}"
-    );
-    return $"[{string.Join(",", items)}]";
+    // Use JsonSerializer with registered type info
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageCompletion[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for MessageCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(completions, typeInfo);
   }
 
-  private static string SerializeFailures(MessageFailure[] failures) {
+  private string SerializeFailures(MessageFailure[] failures) {
     if (failures.Length == 0) {
       return "[]";
     }
 
-    // Simple JSON array serialization (AOT-safe)
-    // Property names must match PostgreSQL function expectations (camelCase)
-    var items = failures.Select(f =>
-      $"{{\"messageId\":\"{f.MessageId}\",\"completedStatus\":{(int)f.CompletedStatus},\"error\":\"{EscapeJson(f.Error)}\"}}"
-    );
-    return $"[{string.Join(",", items)}]";
+    // Use JsonSerializer with registered type info
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageFailure[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for MessageFailure[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(failures, typeInfo);
   }
 
-  private string SerializeNewOutboxMessages(NewOutboxMessage[] messages) {
+  private string SerializeNewOutboxMessages(OutboxMessage[] messages) {
     if (messages.Length == 0) {
       return "[]";
     }
 
-    // Manually construct JSON array with proper envelope serialization (AOT-safe)
-    var items = messages.Select(m => {
-      var envelopeType = m.Envelope.GetType();
-      var envelopeTypeInfo = _jsonOptions.GetTypeInfo(envelopeType)
-        ?? throw new InvalidOperationException($"No JsonTypeInfo found for envelope type {envelopeType.Name}");
-      var envelopeDataJson = JsonSerializer.Serialize(m.Envelope, envelopeTypeInfo);
-      var envelopeTypeName = envelopeType.AssemblyQualifiedName
-        ?? throw new InvalidOperationException("Envelope type must have assembly qualified name");
+    // Use JsonSerializer with registered type info
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(OutboxMessage[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for OutboxMessage[]. Ensure the type is registered in InfrastructureJsonContext.");
+    var json = JsonSerializer.Serialize(messages, typeInfo);
 
-      var streamIdPart = m.StreamId.HasValue ? $"\"{m.StreamId.Value}\"" : "null";
-      var isEventPart = m.IsEvent.ToString().ToLowerInvariant();
+    // Log the first message for debugging
+    if (messages.Length > 0) {
+      // Cast to access Envelope property (base type doesn't have it)
+      var firstMessage = messages[0] as OutboxMessage<object>
+        ?? throw new InvalidOperationException("OutboxMessage must be OutboxMessage<object> for serialization");
 
-      return $"{{\"messageId\":\"{m.MessageId}\",\"destination\":\"{EscapeJson(m.Destination)}\",\"envelopeType\":\"{EscapeJson(envelopeTypeName)}\",\"envelopeData\":{envelopeDataJson},\"streamId\":{streamIdPart},\"isEvent\":{isEventPart}}}";
-    });
+      _logger?.LogDebug("Serializing outbox message: MessageId={MessageId}, Destination={Destination}, EnvelopeType={EnvelopeType}, HopsCount={HopsCount}",
+        firstMessage.MessageId, firstMessage.Destination, firstMessage.EnvelopeType,
+        firstMessage.Envelope.Hops.Count);
+      _logger?.LogDebug("First outbox message JSON (first 500 chars): {Json}", json.Length > 500 ? json.Substring(0, 500) + "..." : json);
+    }
 
-    return $"[{string.Join(",", items)}]";
+    return json;
   }
 
-  private string SerializeNewInboxMessages(NewInboxMessage[] messages) {
+  private string SerializeNewInboxMessages(InboxMessage[] messages) {
     if (messages.Length == 0) {
       return "[]";
     }
 
-    // Manually construct JSON array with proper envelope serialization (AOT-safe)
-    var items = messages.Select(m => {
-      var envelopeType = m.Envelope.GetType();
-      var envelopeTypeInfo = _jsonOptions.GetTypeInfo(envelopeType)
-        ?? throw new InvalidOperationException($"No JsonTypeInfo found for envelope type {envelopeType.Name}");
-      var envelopeDataJson = JsonSerializer.Serialize(m.Envelope, envelopeTypeInfo);
-      var envelopeTypeName = envelopeType.AssemblyQualifiedName
-        ?? throw new InvalidOperationException("Envelope type must have assembly qualified name");
-
-      var streamIdPart = m.StreamId.HasValue ? $"\"{m.StreamId.Value}\"" : "null";
-      var isEventPart = m.IsEvent.ToString().ToLowerInvariant();
-
-      return $"{{\"messageId\":\"{m.MessageId}\",\"handlerName\":\"{EscapeJson(m.HandlerName)}\",\"envelopeType\":\"{EscapeJson(envelopeTypeName)}\",\"envelopeData\":{envelopeDataJson},\"streamId\":{streamIdPart},\"isEvent\":{isEventPart}}}";
-    });
-
-    return $"[{string.Join(",", items)}]";
+    // Use JsonSerializer with registered type info
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(InboxMessage[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for InboxMessage[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(messages, typeInfo);
   }
 
-  private static string EscapeJson(string value) {
-    return value
-      .Replace("\\", "\\\\")
-      .Replace("\"", "\\\"")
-      .Replace("\n", "\\n")
-      .Replace("\r", "\\r")
-      .Replace("\t", "\\t");
-  }
-
-  private static string? SerializeMetadata(Dictionary<string, object>? metadata) {
+  private string SerializeMetadata(Dictionary<string, JsonElement>? metadata) {
     if (metadata == null || metadata.Count == 0) {
-      return null;
+      return "{}";  // Return empty JSON object instead of null (matches NOT NULL constraint)
     }
 
-    // Simple JSON object serialization (AOT-safe)
-    var items = metadata.Select(kvp => {
-      var value = kvp.Value switch {
-        string s => $"\"{EscapeJson(s)}\"",
-        bool b => b.ToString().ToLowerInvariant(),
-        null => "null",
-        _ => kvp.Value.ToString()
-      };
-      return $"\"{EscapeJson(kvp.Key)}\":{value}";
-    });
-    return $"{{{string.Join(",", items)}}}";
+    // Use JsonSerializer with registered type info
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement>. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(metadata, typeInfo);
   }
 
-  private static string SerializeLeaseRenewals(Guid[] messageIds) {
+  private string SerializeLeaseRenewals(Guid[] messageIds) {
     if (messageIds.Length == 0) {
       return "[]";
     }
 
-    // Simple JSON array of UUID strings (AOT-safe)
-    // PostgreSQL expects: ["uuid1", "uuid2", ...]
-    var items = messageIds.Select(id => $"\"{id}\"");
-    return $"[{string.Join(",", items)}]";
+    // Use JsonSerializer with registered type info
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(Guid[]))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for Guid[]. Ensure the type is registered in InfrastructureJsonContext.");
+    return JsonSerializer.Serialize(messageIds, typeInfo);
   }
 
   /// <summary>

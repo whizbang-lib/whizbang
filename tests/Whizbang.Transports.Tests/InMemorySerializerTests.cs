@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using Whizbang.Core.Observability;
@@ -41,6 +43,8 @@ public class InMemorySerializerTests {
   }
 
   [Test]
+  [RequiresUnreferencedCode("")]
+  [RequiresDynamicCode("")]
   public async Task SerializeDeserialize_RoundTrip_PreservesAllDataAsync() {
     // Arrange
     var serializer = new InMemorySerializer();
@@ -58,9 +62,9 @@ public class InMemorySerializerTests {
           },
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
-          Metadata = new Dictionary<string, object> {
-            ["key1"] = "value1",
-            ["key2"] = 123
+          Metadata = new Dictionary<string, JsonElement> {
+            ["key1"] = JsonSerializer.SerializeToElement("value1"),
+            ["key2"] = JsonSerializer.SerializeToElement(123)
           }
         }
       ]

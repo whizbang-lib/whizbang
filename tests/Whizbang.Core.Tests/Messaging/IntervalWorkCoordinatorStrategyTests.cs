@@ -1,3 +1,4 @@
+using System.Text.Json;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -47,12 +48,14 @@ public class IntervalWorkCoordinatorStrategyTests {
 
     var messageId = _idProvider.NewGuid();
     var envelope = CreateTestEnvelope(messageId);
-    sut.QueueOutboxMessage(new NewOutboxMessage {
+    sut.QueueOutboxMessage(new OutboxMessage<object> {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = envelope,
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
-      IsEvent = true
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly"
     });
 
     // Act - Wait for timer to fire (give it 250ms = 2+ intervals)
@@ -91,23 +94,27 @@ public class IntervalWorkCoordinatorStrategyTests {
 
     // Act - Queue two messages quickly (before timer fires)
     var envelope1 = CreateTestEnvelope(messageId1);
-    sut.QueueOutboxMessage(new NewOutboxMessage {
+    sut.QueueOutboxMessage(new OutboxMessage<object> {
       MessageId = messageId1,
       Destination = "topic1",
       Envelope = envelope1,
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
-      IsEvent = true
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly"
     });
 
     await Task.Delay(50);  // Small delay, but less than timer interval
 
     var envelope2 = CreateTestEnvelope(messageId2);
-    sut.QueueOutboxMessage(new NewOutboxMessage {
+    sut.QueueOutboxMessage(new OutboxMessage<object> {
       MessageId = messageId2,
       Destination = "topic2",
       Envelope = envelope2,
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
-      IsEvent = true
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly"
     });
 
     // Wait for timer to fire
@@ -145,12 +152,14 @@ public class IntervalWorkCoordinatorStrategyTests {
 
     var messageId = _idProvider.NewGuid();
     var envelope = CreateTestEnvelope(messageId);
-    sut.QueueOutboxMessage(new NewOutboxMessage {
+    sut.QueueOutboxMessage(new OutboxMessage<object> {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = envelope,
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
-      IsEvent = true
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly"
     });
 
     // Act - Dispose before timer fires (within 1 second)
@@ -194,12 +203,14 @@ public class IntervalWorkCoordinatorStrategyTests {
 
     var messageId = _idProvider.NewGuid();
     var envelope = CreateTestEnvelope(messageId);
-    sut.QueueOutboxMessage(new NewOutboxMessage {
+    sut.QueueOutboxMessage(new OutboxMessage<object> {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = envelope,
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
-      IsEvent = true
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly"
     });
 
     // Act - Manual flush (should not wait for 5 second timer)
@@ -221,21 +232,21 @@ public class IntervalWorkCoordinatorStrategyTests {
 
   private class FakeWorkCoordinator : IWorkCoordinator {
     public int ProcessWorkBatchCallCount { get; private set; }
-    public NewOutboxMessage[] LastNewOutboxMessages { get; private set; } = [];
-    public NewInboxMessage[] LastNewInboxMessages { get; private set; } = [];
+    public OutboxMessage[] LastNewOutboxMessages { get; private set; } = [];
+    public InboxMessage[] LastNewInboxMessages { get; private set; } = [];
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       Guid instanceId,
       string serviceName,
       string hostName,
       int processId,
-      Dictionary<string, object>? metadata,
+      Dictionary<string, JsonElement>? metadata,
       MessageCompletion[] outboxCompletions,
       MessageFailure[] outboxFailures,
       MessageCompletion[] inboxCompletions,
       MessageFailure[] inboxFailures,
-      NewOutboxMessage[] newOutboxMessages,
-      NewInboxMessage[] newInboxMessages,
+      OutboxMessage[] newOutboxMessages,
+      InboxMessage[] newInboxMessages,
       Guid[] renewOutboxLeaseIds,
       Guid[] renewInboxLeaseIds,
       WorkBatchFlags flags = WorkBatchFlags.None,
@@ -272,9 +283,10 @@ public class IntervalWorkCoordinatorStrategyTests {
   }
 
   // Test envelope implementation
-  private class TestMessageEnvelope : IMessageEnvelope {
+  private class TestMessageEnvelope : IMessageEnvelope<object> {
     public required MessageId MessageId { get; init; }
     public required List<MessageHop> Hops { get; init; }
+    public object Payload { get; init; } = new { };  // Test payload
 
     public void AddHop(MessageHop hop) {
       Hops.Add(hop);
@@ -292,17 +304,13 @@ public class IntervalWorkCoordinatorStrategyTests {
       return Hops.Count > 0 ? Hops[0].CausationId : null;
     }
 
-    public object? GetMetadata(string key) {
+    public JsonElement? GetMetadata(string key) {
       for (var i = Hops.Count - 1; i >= 0; i--) {
         if (Hops[i].Type == HopType.Current && Hops[i].Metadata?.ContainsKey(key) == true) {
           return Hops[i].Metadata[key];
         }
       }
       return null;
-    }
-
-    public object GetPayload() {
-      return new { };
     }
   }
 }

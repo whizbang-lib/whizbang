@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Whizbang.Core.Policies;
 using Whizbang.Core.ValueObjects;
 
@@ -98,8 +99,9 @@ public record MessageHop {
   /// Metadata for this hop (tags, flags, custom data).
   /// Later hops override earlier hops for same keys when stitched together.
   /// If null, inherits from previous hop.
+  /// Supports any JSON value type (string, number, boolean, object, array) via JsonElement.
   /// </summary>
-  public IReadOnlyDictionary<string, object>? Metadata { get; init; }
+  public IReadOnlyDictionary<string, JsonElement>? Metadata { get; init; }
 
   /// <summary>
   /// Policy decisions made at this hop.

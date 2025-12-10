@@ -531,7 +531,7 @@ public abstract class Dispatcher(
   /// Creates a MessageEnvelope with initial hop containing caller information and context.
   /// Generic version - preserves type information at compile time.
   /// </summary>
-  private IMessageEnvelope _createEnvelope<TMessage>(
+  private IMessageEnvelope<TMessage> _createEnvelope<TMessage>(
     TMessage message,
     IMessageContext context,
     string callerMemberName,
@@ -561,10 +561,11 @@ public abstract class Dispatcher(
 
   /// <summary>
   /// Creates a MessageEnvelope with initial hop containing caller information and context.
-  /// Non-generic version - TEMPORARY WORKAROUND - creates MessageEnvelope&lt;object&gt;.
-  /// TODO: Make all calling methods generic to avoid type erasure.
+  /// Non-generic version - creates MessageEnvelope&lt;object&gt;.
+  /// Used when compile-time type is unknown (e.g., from non-generic SendAsync).
+  /// For AOT compatibility, prefer using the generic overload when the type is known.
   /// </summary>
-  private IMessageEnvelope _createEnvelope(
+  private IMessageEnvelope<object> _createEnvelope(
     object message,
     IMessageContext context,
     string callerMemberName,
@@ -712,7 +713,7 @@ public abstract class Dispatcher(
 
       System.Diagnostics.Debug.WriteLine($"[Dispatcher] Queueing event {eventType.Name} to work coordinator with destination '{destination}'");
 
-      // Serialize envelope to NewOutboxMessage
+      // Serialize envelope to OutboxMessage
       var newOutboxMessage = _serializeToNewOutboxMessage(envelope, @event!, eventType, destination);
 
       // Queue event for batched processing
@@ -810,7 +811,7 @@ public abstract class Dispatcher(
       // Create envelope with hop for observability - generic version preserves type!
       var envelope = _createEnvelope<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
 
-      // Serialize envelope to NewOutboxMessage
+      // Serialize envelope to OutboxMessage
       var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message!, messageType, destination);
 
       // Queue message for batched processing
@@ -872,7 +873,7 @@ public abstract class Dispatcher(
       // For AOT compatibility, use the generic overload SendToOutboxViaScopeAsync<TMessage>
       var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
 
-      // Serialize envelope to NewOutboxMessage
+      // Serialize envelope to OutboxMessage
       var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination);
 
       // Queue message for batched processing
@@ -1051,25 +1052,34 @@ public abstract class Dispatcher(
   // ========================================
 
   /// <summary>
-  /// Creates a NewOutboxMessage for work coordinator pattern.
+  /// Creates a OutboxMessage for work coordinator pattern.
   /// Extracts stream_id from aggregate ID or falls back to message ID.
-  /// Envelope remains as object - serialization happens at work coordinator layer.
+  /// Generic version preserves type information for AOT serialization.
   /// </summary>
-  private NewOutboxMessage _serializeToNewOutboxMessage(
-    IMessageEnvelope envelope,
-    object payload,
+  private OutboxMessage _serializeToNewOutboxMessage<TMessage>(
+    IMessageEnvelope<TMessage> envelope,
+    TMessage payload,
     Type payloadType,
     string destination
   ) {
     // Extract stream_id: try aggregate ID from first hop, fall back to message ID
     var streamId = _extractStreamId(envelope);
 
-    return new NewOutboxMessage {
+    // Get assembly-qualified name for proper deserialization
+    var messageTypeName = payloadType.AssemblyQualifiedName
+      ?? throw new InvalidOperationException($"Message type {payloadType.Name} must have an assembly-qualified name");
+
+    var envelopeTypeName = envelope.GetType().AssemblyQualifiedName
+      ?? throw new InvalidOperationException($"Envelope type {envelope.GetType().Name} must have an assembly-qualified name");
+
+    return new OutboxMessage<TMessage> {
       MessageId = envelope.MessageId.Value,
       Destination = destination,
-      Envelope = envelope,  // Pass object, not serialized string
+      Envelope = envelope,  // Strongly-typed envelope
+      EnvelopeType = envelopeTypeName,
       StreamId = streamId,
-      IsEvent = payload is IEvent
+      IsEvent = payload is IEvent,
+      MessageType = messageTypeName
     };
   }
 
@@ -1115,12 +1125,13 @@ public abstract class Dispatcher(
   private static Guid _extractStreamId(IMessageEnvelope envelope) {
     // Check first hop for aggregate ID or stream key
     var firstHop = envelope.Hops.FirstOrDefault();
-    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var aggregateIdObj)) {
-      if (aggregateIdObj is Guid aggregateId) {
-        return aggregateId;
-      }
-      if (aggregateIdObj is string aggregateIdStr && Guid.TryParse(aggregateIdStr, out var parsedAggregateId)) {
-        return parsedAggregateId;
+    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var aggregateIdElem)) {
+      // Try to parse as GUID from JsonElement
+      if (aggregateIdElem.ValueKind == JsonValueKind.String) {
+        var aggregateIdStr = aggregateIdElem.GetString();
+        if (aggregateIdStr != null && Guid.TryParse(aggregateIdStr, out var parsedAggregateId)) {
+          return parsedAggregateId;
+        }
       }
     }
 

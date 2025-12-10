@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.ValueObjects;
@@ -17,6 +18,8 @@ public class MessageTracingTests {
   #region MessageEnvelope Tests
 
   [Test]
+  [RequiresUnreferencedCode("")]
+  [RequiresDynamicCode("")]
   public async Task MessageEnvelope_Constructor_SetsAllPropertiesAsync() {
     // Arrange
     var messageId = MessageId.New();
@@ -24,7 +27,7 @@ public class MessageTracingTests {
     var causationId = MessageId.New();
     var timestamp = DateTimeOffset.UtcNow;
     var payload = new TestMessage("test");
-    var metadata = new Dictionary<string, object> { ["key"] = "value" };
+    var metadata = new Dictionary<string, JsonElement> { ["key"] = JsonSerializer.SerializeToElement("value") };
 
     var firstHop = new MessageHop {
       ServiceInstance = new ServiceInstanceInfo {
@@ -618,6 +621,8 @@ public class MessageTracingTests {
   }
 
   [Test]
+  [RequiresUnreferencedCode("")]
+  [RequiresDynamicCode("")]
   public async Task MessageEnvelope_GetMetadata_ReturnsNull_WhenKeyNotFoundAsync() {
     // Arrange
     var envelope = new MessageEnvelope<TestMessage> {
@@ -631,7 +636,7 @@ public class MessageTracingTests {
             HostName = "test-host",
             ProcessId = 12345
           },
-          Metadata = new Dictionary<string, object> { ["key1"] = "value1" }
+          Metadata = new Dictionary<string, JsonElement> { ["key1"] = JsonSerializer.SerializeToElement("value1") }
         }
       ]
     };
@@ -644,6 +649,8 @@ public class MessageTracingTests {
   }
 
   [Test]
+  [RequiresUnreferencedCode("")]
+  [RequiresDynamicCode("")]
   public async Task MessageEnvelope_GetMetadata_ReturnsLatestValue_WhenKeyExistsInMultipleHopsAsync() {
     // Arrange
     var envelope = new MessageEnvelope<TestMessage> {
@@ -657,7 +664,7 @@ public class MessageTracingTests {
             HostName = "test-host",
             ProcessId = 12345
           },
-          Metadata = new Dictionary<string, object> { ["priority"] = 5 }
+          Metadata = new Dictionary<string, JsonElement> { ["priority"] = JsonSerializer.SerializeToElement(5) }
         }
       ]
     };
@@ -669,7 +676,7 @@ public class MessageTracingTests {
         HostName = "test-host",
         ProcessId = 12345
       },
-      Metadata = new Dictionary<string, object> { ["priority"] = 10 }
+      Metadata = new Dictionary<string, JsonElement> { ["priority"] = JsonSerializer.SerializeToElement(10) }
     });
 
     envelope.AddHop(new MessageHop {
@@ -686,10 +693,12 @@ public class MessageTracingTests {
     var result = envelope.GetMetadata("priority");
 
     // Assert
-    await Assert.That(result).IsEqualTo(10);
+    await Assert.That(result!.Value.GetInt32()).IsEqualTo(10);
   }
 
   [Test]
+  [RequiresUnreferencedCode("")]
+  [RequiresDynamicCode("")]
   public async Task MessageEnvelope_GetAllMetadata_StitchesAllMetadataAsync() {
     // Arrange
     var envelope = new MessageEnvelope<TestMessage> {
@@ -703,9 +712,9 @@ public class MessageTracingTests {
             HostName = "test-host",
             ProcessId = 12345
           },
-          Metadata = new Dictionary<string, object> {
-            ["priority"] = 5,
-            ["tenant"] = "acme"
+          Metadata = new Dictionary<string, JsonElement> {
+            ["priority"] = JsonSerializer.SerializeToElement(5),
+            ["tenant"] = JsonSerializer.SerializeToElement("acme")
           }
         }
       ]
@@ -718,9 +727,9 @@ public class MessageTracingTests {
         HostName = "test-host",
         ProcessId = 12345
       },
-      Metadata = new Dictionary<string, object> {
-        ["priority"] = 10, // Override
-        ["enriched"] = true // New key
+      Metadata = new Dictionary<string, JsonElement> {
+        ["priority"] = JsonSerializer.SerializeToElement(10), // Override
+        ["enriched"] = JsonSerializer.SerializeToElement(true) // New key
       }
     });
 
@@ -739,9 +748,9 @@ public class MessageTracingTests {
 
     // Assert
     await Assert.That(result).HasCount().EqualTo(3);
-    await Assert.That(result["priority"]).IsEqualTo(10); // Later hop wins
-    await Assert.That(result["tenant"]).IsEqualTo("acme"); // From first hop
-    await Assert.That(result["enriched"]).IsEqualTo(true); // From second hop
+    await Assert.That(result["priority"].GetInt32()).IsEqualTo(10); // Later hop wins
+    await Assert.That(result["tenant"].GetString()).IsEqualTo("acme"); // From first hop
+    await Assert.That(result["enriched"].GetBoolean()).IsEqualTo(true); // From second hop
   }
 
   [Test]
@@ -1599,6 +1608,8 @@ public class MessageTracingTests {
   }
 
   [Test]
+  [RequiresUnreferencedCode("")]
+  [RequiresDynamicCode("")]
   public async Task MessageEnvelope_GetMetadata_IgnoresCausationHopsAsync() {
     // Arrange
     var envelope = new MessageEnvelope<TestMessage> {
@@ -1613,7 +1624,7 @@ public class MessageTracingTests {
             ProcessId = 12345
           },
           Type = HopType.Causation,
-          Metadata = new Dictionary<string, object> { ["key"] = "old-value" }
+          Metadata = new Dictionary<string, JsonElement> { ["key"] = JsonSerializer.SerializeToElement("old-value") }
         },
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -1623,7 +1634,7 @@ public class MessageTracingTests {
             ProcessId = 12345
           },
           Type = HopType.Current,
-          Metadata = new Dictionary<string, object> { ["key"] = "current-value" }
+          Metadata = new Dictionary<string, JsonElement> { ["key"] = JsonSerializer.SerializeToElement("current-value") }
         }
       ]
     };
@@ -1632,10 +1643,12 @@ public class MessageTracingTests {
     var value = envelope.GetMetadata("key");
 
     // Assert
-    await Assert.That(value).IsEqualTo("current-value");
+    await Assert.That(value!.Value.GetString()).IsEqualTo("current-value");
   }
 
   [Test]
+  [RequiresUnreferencedCode("")]
+  [RequiresDynamicCode("")]
   public async Task MessageEnvelope_GetAllMetadata_IgnoresCausationHopsAsync() {
     // Arrange
     var envelope = new MessageEnvelope<TestMessage> {
@@ -1650,7 +1663,7 @@ public class MessageTracingTests {
             ProcessId = 12345
           },
           Type = HopType.Causation,
-          Metadata = new Dictionary<string, object> { ["old-key"] = "old-value" }
+          Metadata = new Dictionary<string, JsonElement> { ["old-key"] = JsonSerializer.SerializeToElement("old-value") }
         },
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -1660,7 +1673,7 @@ public class MessageTracingTests {
             ProcessId = 12345
           },
           Type = HopType.Current,
-          Metadata = new Dictionary<string, object> { ["current-key"] = "current-value" }
+          Metadata = new Dictionary<string, JsonElement> { ["current-key"] = JsonSerializer.SerializeToElement("current-value") }
         }
       ]
     };

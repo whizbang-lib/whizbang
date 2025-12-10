@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 using BenchmarkDotNet.Attributes;
 using BenchmarkDotNet.Jobs;
 using Whizbang.Core.Observability;
@@ -65,6 +67,8 @@ public class TracingBenchmarks {
   }
 
   [Benchmark]
+  [RequiresUnreferencedCode("")]
+  [RequiresDynamicCode("")]
   public static IMessageEnvelope CreateEnvelopeWithMetadata() {
     var message = new TestCommand("test-123", 42);
     var envelope = new MessageEnvelope<TestCommand> {
@@ -73,10 +77,10 @@ public class TracingBenchmarks {
       Hops = []
     };
 
-    var metadata = new Dictionary<string, object>();
+    var metadata = new Dictionary<string, JsonElement>();
     // Add 10 metadata entries
     for (int i = 0; i < 10; i++) {
-      metadata[$"key{i}"] = $"value{i}";
+      metadata[$"key{i}"] = JsonSerializer.SerializeToElement($"value{i}");
     }
 
     var hop = new MessageHop {

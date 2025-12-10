@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using TUnit.Core;
@@ -29,14 +30,14 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     var messageId2 = System.Guid.NewGuid();
     var coordinator = new TestWorkCoordinator {
       WorkToReturn = [
-        new OutboxWork {
+        new OutboxWork<object> {
           MessageId = messageId1,
           Destination = "test-topic",
           Envelope = CreateTestEnvelope(messageId1),
           Attempts = 0,
           Status = MessageProcessingStatus.None
         },
-        new OutboxWork {
+        new OutboxWork<object> {
           MessageId = messageId2,
           Destination = "test-topic",
           Envelope = CreateTestEnvelope(messageId2),
@@ -52,11 +53,13 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
 
     // Queue a message to trigger flush
     var queuedMessageId = System.Guid.NewGuid();
-    strategy.QueueOutboxMessage(new NewOutboxMessage {
+    strategy.QueueOutboxMessage(new OutboxMessage<object> {
       MessageId = queuedMessageId,
       Destination = "test-topic",
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       Envelope = CreateTestEnvelope(queuedMessageId),
-      IsEvent = false
+      IsEvent = false,
+      MessageType = "TestMessage, TestAssembly"
     });
 
     // Act
@@ -81,11 +84,13 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
 
     // Queue a message to trigger flush
     var queuedMessageId = System.Guid.NewGuid();
-    strategy.QueueOutboxMessage(new NewOutboxMessage {
+    strategy.QueueOutboxMessage(new OutboxMessage<object> {
       MessageId = queuedMessageId,
       Destination = "test-topic",
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       Envelope = CreateTestEnvelope(queuedMessageId),
-      IsEvent = false
+      IsEvent = false,
+      MessageType = "TestMessage, TestAssembly"
     });
 
     // Act
@@ -108,11 +113,18 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     var msg1 = System.Guid.NewGuid();
     var msg2 = System.Guid.NewGuid();
     coordinator.WorkToReturn = [
-      new OutboxWork { MessageId = msg1, Destination = "topic1", Envelope = CreateTestEnvelope(msg1), Attempts = 0, Status = MessageProcessingStatus.None },
-      new OutboxWork { MessageId = msg2, Destination = "topic1", Envelope = CreateTestEnvelope(msg2), Attempts = 0, Status = MessageProcessingStatus.None }
+      new OutboxWork<object> { MessageId = msg1, Destination = "topic1", Envelope = CreateTestEnvelope(msg1), Attempts = 0, Status = MessageProcessingStatus.None },
+      new OutboxWork<object> { MessageId = msg2, Destination = "topic1", Envelope = CreateTestEnvelope(msg2), Attempts = 0, Status = MessageProcessingStatus.None }
     ];
     var queued1 = System.Guid.NewGuid();
-    strategy.QueueOutboxMessage(new NewOutboxMessage { MessageId = queued1, Destination = "topic1", Envelope = CreateTestEnvelope(queued1), IsEvent = false });
+    strategy.QueueOutboxMessage(new OutboxMessage<object> {
+      MessageId = queued1,
+      Destination = "topic1",
+      Envelope = CreateTestEnvelope(queued1),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      IsEvent = false,
+      MessageType = "TestMessage, TestAssembly"
+    });
     await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
 
     // Act - Second flush with 3 messages
@@ -120,12 +132,19 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     var msg4 = System.Guid.NewGuid();
     var msg5 = System.Guid.NewGuid();
     coordinator.WorkToReturn = [
-      new OutboxWork { MessageId = msg3, Destination = "topic2", Envelope = CreateTestEnvelope(msg3), Attempts = 0, Status = MessageProcessingStatus.None },
-      new OutboxWork { MessageId = msg4, Destination = "topic2", Envelope = CreateTestEnvelope(msg4), Attempts = 0, Status = MessageProcessingStatus.None },
-      new OutboxWork { MessageId = msg5, Destination = "topic2", Envelope = CreateTestEnvelope(msg5), Attempts = 0, Status = MessageProcessingStatus.None }
+      new OutboxWork<object> { MessageId = msg3, Destination = "topic2", Envelope = CreateTestEnvelope(msg3), Attempts = 0, Status = MessageProcessingStatus.None },
+      new OutboxWork<object> { MessageId = msg4, Destination = "topic2", Envelope = CreateTestEnvelope(msg4), Attempts = 0, Status = MessageProcessingStatus.None },
+      new OutboxWork<object> { MessageId = msg5, Destination = "topic2", Envelope = CreateTestEnvelope(msg5), Attempts = 0, Status = MessageProcessingStatus.None }
     ];
     var queued2 = System.Guid.NewGuid();
-    strategy.QueueOutboxMessage(new NewOutboxMessage { MessageId = queued2, Destination = "topic2", Envelope = CreateTestEnvelope(queued2), IsEvent = false });
+    strategy.QueueOutboxMessage(new OutboxMessage<object> {
+      MessageId = queued2,
+      Destination = "topic2",
+      Envelope = CreateTestEnvelope(queued2),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      IsEvent = false,
+      MessageType = "TestMessage, TestAssembly"
+    });
     await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
 
     // Assert - All 5 messages written to channel
@@ -142,9 +161,9 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
 
     var coordinator = new TestWorkCoordinator {
       WorkToReturn = [
-        new OutboxWork { MessageId = messageId1, Destination = "topic", Envelope = CreateTestEnvelope(messageId1), Attempts = 0, Status = MessageProcessingStatus.None },
-        new OutboxWork { MessageId = messageId2, Destination = "topic", Envelope = CreateTestEnvelope(messageId2), Attempts = 0, Status = MessageProcessingStatus.None },
-        new OutboxWork { MessageId = messageId3, Destination = "topic", Envelope = CreateTestEnvelope(messageId3), Attempts = 0, Status = MessageProcessingStatus.None }
+        new OutboxWork<object> { MessageId = messageId1, Destination = "topic", Envelope = CreateTestEnvelope(messageId1), Attempts = 0, Status = MessageProcessingStatus.None },
+        new OutboxWork<object> { MessageId = messageId2, Destination = "topic", Envelope = CreateTestEnvelope(messageId2), Attempts = 0, Status = MessageProcessingStatus.None },
+        new OutboxWork<object> { MessageId = messageId3, Destination = "topic", Envelope = CreateTestEnvelope(messageId3), Attempts = 0, Status = MessageProcessingStatus.None }
       ]
     };
 
@@ -153,7 +172,14 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     var strategy = new ScopedWorkCoordinatorStrategy(coordinator, instanceProvider, channelWriter, options);
 
     var queuedMessageId = System.Guid.NewGuid();
-    strategy.QueueOutboxMessage(new NewOutboxMessage { MessageId = queuedMessageId, Destination = "topic", Envelope = CreateTestEnvelope(queuedMessageId), IsEvent = false });
+    strategy.QueueOutboxMessage(new OutboxMessage<object> {
+      MessageId = queuedMessageId,
+      Destination = "topic",
+      Envelope = CreateTestEnvelope(queuedMessageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      IsEvent = false,
+      MessageType = "TestMessage, TestAssembly"
+    });
 
     // Act
     await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
@@ -188,13 +214,13 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
       string serviceName,
       string hostName,
       int processId,
-      System.Collections.Generic.Dictionary<string, object>? metadata,
+      System.Collections.Generic.Dictionary<string, JsonElement>? metadata,
       MessageCompletion[] outboxCompletions,
       MessageFailure[] outboxFailures,
       MessageCompletion[] inboxCompletions,
       MessageFailure[] inboxFailures,
-      NewOutboxMessage[] newOutboxMessages,
-      NewInboxMessage[] newInboxMessages,
+      OutboxMessage[] newOutboxMessages,
+      InboxMessage[] newInboxMessages,
       System.Guid[] renewOutboxLeaseIds,
       System.Guid[] renewInboxLeaseIds,
       WorkBatchFlags flags,
@@ -227,9 +253,10 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
   }
 
   // Test envelope implementation
-  private class TestMessageEnvelope : IMessageEnvelope {
+  private class TestMessageEnvelope : IMessageEnvelope<object> {
     public required MessageId MessageId { get; init; }
     public required List<MessageHop> Hops { get; init; }
+    public object Payload { get; init; } = new { };  // Test payload
 
     public void AddHop(MessageHop hop) {
       Hops.Add(hop);
@@ -247,17 +274,13 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
       return Hops.Count > 0 ? Hops[0].CausationId : null;
     }
 
-    public object? GetMetadata(string key) {
+    public JsonElement? GetMetadata(string key) {
       for (var i = Hops.Count - 1; i >= 0; i--) {
         if (Hops[i].Type == HopType.Current && Hops[i].Metadata?.ContainsKey(key) == true) {
           return Hops[i].Metadata[key];
         }
       }
       return null;
-    }
-
-    public object GetPayload() {
-      return new { };
     }
   }
 }

@@ -13,6 +13,7 @@ namespace Whizbang.Core.Generated;
 // JsonSerializable attributes for MessageEnvelope<T> types
 #endregion
 [JsonSourceGenerationOptions(
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 internal partial class MessageEnvelopeJsonContext : JsonSerializerContext {
 }

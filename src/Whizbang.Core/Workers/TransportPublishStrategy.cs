@@ -48,8 +48,13 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
       // Create transport destination
       var destination = new TransportDestination(work.Destination);
 
+      // Cast to access Envelope property (work is actually OutboxWork<object>)
+      if (work is not OutboxWork<object> typedWork) {
+        throw new InvalidOperationException($"OutboxWork is not OutboxWork<object> for message {work.MessageId}");
+      }
+
       // Publish to transport - envelope is already deserialized
-      await _transport.PublishAsync(work.Envelope, destination, cancellationToken);
+      await _transport.PublishAsync(typedWork.Envelope, destination, cancellationToken);
 
       // Return success result
       return new MessagePublishResult {

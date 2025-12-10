@@ -1,5 +1,7 @@
+using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 
@@ -17,9 +19,9 @@ namespace Whizbang.Core.Generated;
 [JsonSerializable(typeof(EnvelopeMetadata))]
 [JsonSerializable(typeof(ServiceInstanceInfo))]
 [JsonSerializable(typeof(Dictionary<string, string>))]
-[JsonSerializable(typeof(Dictionary<string, object>))]
 [JsonSerializable(typeof(Dictionary<string, object?>))]
 [JsonSerializable(typeof(Dictionary<string, System.Text.Json.JsonElement>))]
+[JsonSerializable(typeof(Dictionary<string, System.Text.Json.JsonElement?>))]
 [JsonSerializable(typeof(SecurityContext))]
 [JsonSerializable(typeof(PolicyDecisionTrail))]
 [JsonSerializable(typeof(List<PolicyDecision>))]
@@ -37,7 +39,18 @@ namespace Whizbang.Core.Generated;
 // JsonElement support for outbox deserialization
 [JsonSerializable(typeof(System.Text.Json.JsonElement))]
 [JsonSerializable(typeof(MessageEnvelope<System.Text.Json.JsonElement>))]
+// Work coordinator types
+[JsonSerializable(typeof(OutboxMessage))]
+[JsonSerializable(typeof(OutboxMessage[]))]
+[JsonSerializable(typeof(InboxMessage))]
+[JsonSerializable(typeof(InboxMessage[]))]
+[JsonSerializable(typeof(MessageCompletion))]
+[JsonSerializable(typeof(MessageCompletion[]))]
+[JsonSerializable(typeof(MessageFailure))]
+[JsonSerializable(typeof(MessageFailure[]))]
+[JsonSerializable(typeof(Guid[]))]
 [JsonSourceGenerationOptions(
+    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 public partial class InfrastructureJsonContext : JsonSerializerContext {
 }

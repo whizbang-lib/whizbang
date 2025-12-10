@@ -1,16 +1,25 @@
+using System.Text.Json;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Observability;
 
 /// <summary>
-/// Non-generic interface for message envelopes.
-/// Provides access to identity and metadata without requiring knowledge of the payload type.
+/// Non-generic base interface for message envelopes.
+/// Provides access to identity, payload (as object), hops, and metadata without requiring knowledge of the payload type.
+/// Use this for heterogeneous collections of envelopes with different payload types.
+/// Use <see cref="IMessageEnvelope{TMessage}"/> when you need strongly-typed access to the payload.
 /// </summary>
 public interface IMessageEnvelope {
   /// <summary>
   /// Unique identifier for this specific message.
   /// </summary>
   MessageId MessageId { get; }
+
+  /// <summary>
+  /// The message payload as an object.
+  /// For strongly-typed access, use <see cref="IMessageEnvelope{TMessage}.Payload"/>.
+  /// </summary>
+  object Payload { get; }
 
   /// <summary>
   /// Hops this message has taken through the system.
@@ -43,12 +52,20 @@ public interface IMessageEnvelope {
   /// that contains the specified key.
   /// </summary>
   /// <param name="key">The metadata key to retrieve</param>
-  /// <returns>The metadata value if found, otherwise null</returns>
-  object? GetMetadata(string key);
+  /// <returns>The JsonElement metadata value if found, otherwise null</returns>
+  JsonElement? GetMetadata(string key);
+}
 
+/// <summary>
+/// Generic interface for message envelopes with strong typing.
+/// Extends <see cref="IMessageEnvelope"/> to add strongly-typed access to the payload.
+/// The 'out' modifier enables covariance for the payload type.
+/// </summary>
+/// <typeparam name="TMessage">The type of the message payload (covariant)</typeparam>
+public interface IMessageEnvelope<out TMessage> : IMessageEnvelope {
   /// <summary>
-  /// Gets the message payload as an object.
+  /// The message payload with strong type information.
+  /// Hides the base interface's object Payload property to provide strong typing.
   /// </summary>
-  /// <returns>The message payload</returns>
-  object GetPayload();
+  new TMessage Payload { get; }
 }

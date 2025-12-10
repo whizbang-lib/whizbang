@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 using BenchmarkDotNet.Attributes;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
@@ -213,17 +214,17 @@ public class SerializationThroughputBenchmarks {
           Timestamp = DateTimeOffset.UtcNow,
           CorrelationId = CorrelationId.New(),
           CausationId = MessageId.New(),
-          Metadata = new Dictionary<string, object> {
-            ["key1"] = $"value1-{i}",
-            ["key2"] = i,
-            ["key3"] = DateTime.UtcNow,
-            ["key4"] = true,
-            ["key5"] = $"value5-{i}",
-            ["key6"] = i * 2,
-            ["key7"] = $"value7-{i}",
-            ["key8"] = i * 3,
-            ["key9"] = $"value9-{i}",
-            ["key10"] = i * 4
+          Metadata = new Dictionary<string, JsonElement> {
+            ["key1"] = JsonSerializer.SerializeToElement($"value1-{i}"),
+            ["key2"] = JsonSerializer.SerializeToElement(i),
+            ["key3"] = JsonSerializer.SerializeToElement(DateTime.UtcNow),
+            ["key4"] = JsonSerializer.SerializeToElement(true),
+            ["key5"] = JsonSerializer.SerializeToElement($"value5-{i}"),
+            ["key6"] = JsonSerializer.SerializeToElement(i * 2),
+            ["key7"] = JsonSerializer.SerializeToElement($"value7-{i}"),
+            ["key8"] = JsonSerializer.SerializeToElement(i * 3),
+            ["key9"] = JsonSerializer.SerializeToElement($"value9-{i}"),
+            ["key10"] = JsonSerializer.SerializeToElement(i * 4)
           }
         });
 

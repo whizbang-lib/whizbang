@@ -48,7 +48,7 @@ public class ServiceBusConsumerWorker(
       foreach (var topicConfig in _options.Subscriptions) {
         // Create destination with DestinationFilter metadata if specified
         var metadata = !string.IsNullOrWhiteSpace(topicConfig.DestinationFilter)
-          ? new Dictionary<string, object> { ["DestinationFilter"] = topicConfig.DestinationFilter }
+          ? new Dictionary<string, JsonElement> { ["DestinationFilter"] = JsonElementHelper.FromString(topicConfig.DestinationFilter) }
           : null;
 
         var destination = new TransportDestination(
@@ -111,7 +111,7 @@ public class ServiceBusConsumerWorker(
         envelope.MessageId
       );
 
-      // 1. Serialize envelope to NewInboxMessage
+      // 1. Serialize envelope to InboxMessage
       var newInboxMessage = _serializeToNewInboxMessage(envelope);
 
       // 2. Queue for atomic deduplication via process_work_batch
@@ -203,12 +203,13 @@ public class ServiceBusConsumerWorker(
   }
 
   /// <summary>
-  /// Creates NewInboxMessage for work coordinator pattern.
-  /// Envelope remains as object - serialization happens at work coordinator layer.
+  /// Creates InboxMessage for work coordinator pattern.
+  /// Uses InboxMessage&lt;object&gt; since the compile-time type is unknown (envelope comes from transport).
+  /// The actual type is preserved in EnvelopeType for deserialization.
   /// </summary>
-  private NewInboxMessage _serializeToNewInboxMessage(IMessageEnvelope envelope) {
+  private InboxMessage _serializeToNewInboxMessage(IMessageEnvelope envelope) {
     // Get payload and its type for metadata
-    var payload = envelope.GetPayload();
+    var payload = envelope.Payload;
     var payloadType = payload.GetType();
 
     // Determine handler name from payload type
@@ -217,12 +218,28 @@ public class ServiceBusConsumerWorker(
     // Extract stream_id from envelope (aggregate ID or message ID)
     var streamId = _extractStreamId(envelope);
 
-    return new NewInboxMessage {
+    // Get assembly-qualified name for proper deserialization
+    var messageTypeName = payloadType.AssemblyQualifiedName
+      ?? throw new InvalidOperationException($"Message type {payloadType.Name} must have an assembly-qualified name");
+
+    var envelopeTypeName = envelope.GetType().AssemblyQualifiedName
+      ?? throw new InvalidOperationException($"Envelope type {envelope.GetType().Name} must have an assembly-qualified name");
+
+    // Create InboxMessage<object> - type is unknown at compile time
+    // The actual envelope is strongly typed (e.g., MessageEnvelope<ProductCreatedEvent>)
+    // but we treat it as IMessageEnvelope to work with heterogeneous collections
+    // Cast to IMessageEnvelope<object> - this is safe because we know it implements that interface
+    var typedEnvelope = envelope as IMessageEnvelope<object>
+      ?? throw new InvalidOperationException($"Envelope must implement IMessageEnvelope<object> for message {envelope.MessageId}");
+
+    return new InboxMessage<object> {
       MessageId = envelope.MessageId.Value,
       HandlerName = handlerName,
-      Envelope = envelope,  // Pass object, not serialized string
+      Envelope = typedEnvelope,  // Cast to generic interface
+      EnvelopeType = envelopeTypeName,
       StreamId = streamId,
-      IsEvent = payload is IEvent
+      IsEvent = payload is IEvent,
+      MessageType = messageTypeName
     };
   }
 
@@ -232,8 +249,14 @@ public class ServiceBusConsumerWorker(
   /// </summary>
   private object? _deserializeEvent(InboxWork work) {
     try {
-      // Extract and return the payload from the envelope object
-      return work.Envelope.GetPayload();
+      // Work is InboxWork<T>, but we receive base type
+      // Cast to access Envelope property
+      if (work is InboxWork<object> typedWork) {
+        return typedWork.Envelope.Payload;
+      }
+
+      _logger.LogError("InboxWork is not InboxWork<object> for message {MessageId}", work.MessageId);
+      return null;
     } catch (Exception ex) {
       _logger.LogError(ex, "Failed to extract payload from envelope for message {MessageId}", work.MessageId);
       return null;
@@ -278,12 +301,13 @@ public class ServiceBusConsumerWorker(
   private static Guid _extractStreamId(IMessageEnvelope envelope) {
     // Check first hop for aggregate ID or stream key
     var firstHop = envelope.Hops.FirstOrDefault();
-    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var aggregateIdObj)) {
-      if (aggregateIdObj is Guid aggregateId) {
-        return aggregateId;
-      }
-      if (aggregateIdObj is string aggregateIdStr && Guid.TryParse(aggregateIdStr, out var parsedAggregateId)) {
-        return parsedAggregateId;
+    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var aggregateIdElem)) {
+      // Try to parse as GUID from JsonElement
+      if (aggregateIdElem.ValueKind == JsonValueKind.String) {
+        var aggregateIdStr = aggregateIdElem.GetString();
+        if (aggregateIdStr != null && Guid.TryParse(aggregateIdStr, out var parsedAggregateId)) {
+          return parsedAggregateId;
+        }
       }
     }
 

@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
 using Whizbang.Core.Observability;
@@ -169,12 +171,14 @@ public class PolicyContextTests {
   }
 
   [Test]
+  [RequiresUnreferencedCode("")]
+  [RequiresDynamicCode("")]
   public async Task GetMetadata_ReturnsValue_WhenKeyExistsAsync() {
     // Arrange
     var message = new TestMessage("test");
-    var metadata = new Dictionary<string, object> {
-      ["tenant"] = "acme-corp",
-      ["priority"] = 5
+    var metadata = new Dictionary<string, JsonElement> {
+      ["tenant"] = JsonSerializer.SerializeToElement("acme-corp"),
+      ["priority"] = JsonSerializer.SerializeToElement(5)
     };
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
@@ -188,8 +192,8 @@ public class PolicyContextTests {
     var priority = context.GetMetadata("priority");
 
     // Assert
-    await Assert.That(tenant).IsEqualTo("acme-corp");
-    await Assert.That(priority).IsEqualTo(5);
+    await Assert.That(((JsonElement)tenant!).GetString()).IsEqualTo("acme-corp");
+    await Assert.That(((JsonElement)priority!).GetInt32()).IsEqualTo(5);
   }
 
   [Test]
@@ -199,7 +203,7 @@ public class PolicyContextTests {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = message,
-      Metadata = new Dictionary<string, object>()
+      Metadata = new Dictionary<string, JsonElement>()
     };
     var context = new PolicyContext(message, envelope);
 
@@ -224,11 +228,12 @@ public class PolicyContextTests {
   }
 
   [Test]
+  [RequiresDynamicCode("")]
   public async Task HasTag_ReturnsTrue_WhenTagExistsInMetadataAsync() {
     // Arrange
     var message = new TestMessage("test");
-    var metadata = new Dictionary<string, object> {
-      ["tags"] = new[] { "high-priority", "customer-vip", "region-us-west" }
+    var metadata = new Dictionary<string, JsonElement> {
+      ["tags"] = JsonSerializer.SerializeToElement(new[] { "high-priority", "customer-vip", "region-us-west" })
     };
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
@@ -244,11 +249,12 @@ public class PolicyContextTests {
   }
 
   [Test]
+  [RequiresDynamicCode("")]
   public async Task HasTag_ReturnsFalse_WhenTagDoesNotExistAsync() {
     // Arrange
     var message = new TestMessage("test");
-    var metadata = new Dictionary<string, object> {
-      ["tags"] = new[] { "high-priority" }
+    var metadata = new Dictionary<string, JsonElement> {
+      ["tags"] = JsonSerializer.SerializeToElement(new[] { "high-priority" })
     };
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
@@ -272,11 +278,12 @@ public class PolicyContextTests {
   }
 
   [Test]
+  [RequiresDynamicCode("")]
   public async Task HasTag_ReturnsTrue_WhenTagsAreIEnumerableAsync() {
     // Arrange
     var message = new TestMessage("test");
-    var metadata = new Dictionary<string, object> {
-      ["tags"] = new List<string> { "high-priority", "customer-vip", "region-us-west" }
+    var metadata = new Dictionary<string, JsonElement> {
+      ["tags"] = JsonSerializer.SerializeToElement(new List<string> { "high-priority", "customer-vip", "region-us-west" })
     };
 
     var envelope = new MessageEnvelope<TestMessage> {
@@ -294,11 +301,12 @@ public class PolicyContextTests {
   }
 
   [Test]
+  [RequiresDynamicCode("")]
   public async Task HasFlag_ReturnsTrue_WhenFlagIsSetAsync() {
     // Arrange
     var message = new TestMessage("test");
-    var metadata = new Dictionary<string, object> {
-      ["flags"] = WhizbangFlags.LoadTesting | WhizbangFlags.VerboseLogging
+    var metadata = new Dictionary<string, JsonElement> {
+      ["flags"] = JsonSerializer.SerializeToElement(WhizbangFlags.LoadTesting | WhizbangFlags.VerboseLogging)
     };
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
@@ -313,11 +321,12 @@ public class PolicyContextTests {
   }
 
   [Test]
+  [RequiresDynamicCode("")]
   public async Task HasFlag_ReturnsFalse_WhenFlagIsNotSetAsync() {
     // Arrange
     var message = new TestMessage("test");
-    var metadata = new Dictionary<string, object> {
-      ["flags"] = WhizbangFlags.LoadTesting
+    var metadata = new Dictionary<string, JsonElement> {
+      ["flags"] = JsonSerializer.SerializeToElement(WhizbangFlags.LoadTesting)
     };
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
@@ -466,14 +475,14 @@ public enum WhizbangFlags {
 
 /// <summary>
 /// Placeholder for MessageEnvelope (will be implemented in observability tests)
-/// Updated to implement IMessageEnvelope for PolicyContext compatibility.
+/// Updated to implement IMessageEnvelope<TMessage> for PolicyContext compatibility.
 /// </summary>
-public class MessageEnvelope<TMessage> : IMessageEnvelope {
+public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   public MessageId MessageId { get; init; }
   public TMessage Payload { get; init; } = default!;
   public string Topic { get; init; } = string.Empty;
   public string StreamKey { get; init; } = string.Empty;
-  public IReadOnlyDictionary<string, object> Metadata { get; init; } = new Dictionary<string, object>();
+  public IReadOnlyDictionary<string, JsonElement> Metadata { get; init; } = new Dictionary<string, JsonElement>();
 
   // IMessageEnvelope implementation
   public List<MessageHop> Hops { get; init; } = [];
@@ -481,6 +490,8 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope {
   public DateTimeOffset GetMessageTimestamp() => Hops.FirstOrDefault()?.Timestamp ?? DateTimeOffset.UtcNow;
   public CorrelationId? GetCorrelationId() => Hops.FirstOrDefault()?.CorrelationId;
   public MessageId? GetCausationId() => Hops.FirstOrDefault()?.CausationId;
-  public object? GetMetadata(string key) => Metadata.TryGetValue(key, out var value) ? value : null;
-  public object GetPayload() => Payload!;
+  public JsonElement? GetMetadata(string key) => Metadata.TryGetValue(key, out var value) ? value : null;
+
+  // Explicit implementation of base interface Payload property
+  object IMessageEnvelope.Payload => Payload!;
 }

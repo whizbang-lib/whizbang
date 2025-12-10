@@ -1,3 +1,4 @@
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Whizbang.Core;
 using Whizbang.Core.Observability;
@@ -203,6 +204,8 @@ public class SerializationTests {
   #region Roundtrip Tests
 
   [Test]
+  [RequiresUnreferencedCode("")]
+  [RequiresDynamicCode("")]
   public async Task ComplexEnvelope_Roundtrips_WithoutDataLossAsync() {
     // Arrange - Create a fully populated envelope
     var trail = new PolicyDecisionTrail();
@@ -226,9 +229,9 @@ public class SerializationTests {
           SequenceNumber = 100,
           ExecutionStrategy = "SerialExecutor",
           SecurityContext = new SecurityContext { UserId = "user-1", TenantId = "tenant-a" },
-          Metadata = new Dictionary<string, object> {
-            ["priority"] = "high",
-            ["retryCount"] = 0
+          Metadata = new Dictionary<string, JsonElement> {
+            ["priority"] = JsonSerializer.SerializeToElement("high"),
+            ["retryCount"] = JsonSerializer.SerializeToElement(0)
           },
           Trail = trail,
           CallerMemberName = "ProcessAsync",

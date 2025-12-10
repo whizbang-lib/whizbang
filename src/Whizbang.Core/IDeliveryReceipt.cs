@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core;
@@ -30,9 +32,10 @@ public interface IDeliveryReceipt {
   DeliveryStatus Status { get; }
 
   /// <summary>
-  /// Extensible metadata for transport-specific information
+  /// Extensible metadata for transport-specific information.
+  /// Supports any JSON value type (string, number, boolean, object, array) via JsonElement.
   /// </summary>
-  IReadOnlyDictionary<string, object> Metadata { get; }
+  IReadOnlyDictionary<string, JsonElement> Metadata { get; }
 
   /// <summary>
   /// Correlation ID from the message context
@@ -82,7 +85,7 @@ public sealed class DeliveryReceipt(
   DeliveryStatus status,
   CorrelationId? correlationId = null,
   MessageId? causationId = null,
-  Dictionary<string, object>? metadata = null
+  Dictionary<string, JsonElement>? metadata = null
   ) : IDeliveryReceipt {
 
   /// <inheritdoc />
@@ -98,8 +101,8 @@ public sealed class DeliveryReceipt(
   public DeliveryStatus Status { get; } = status;
 
   /// <inheritdoc />
-  public IReadOnlyDictionary<string, object> Metadata { get; } = metadata != null
-        ? new Dictionary<string, object>(metadata)
+  public IReadOnlyDictionary<string, JsonElement> Metadata { get; } = metadata != null
+        ? new Dictionary<string, JsonElement>(metadata)
         : [];
 
   /// <inheritdoc />
@@ -173,7 +176,11 @@ public sealed class DeliveryReceipt(
     Exception? exception = null
   ) {
     var metadata = exception != null
-        ? new Dictionary<string, object> { ["Exception"] = exception }
+        ? new Dictionary<string, JsonElement> {
+          ["ExceptionType"] = JsonElementHelper.FromString(exception.GetType().FullName),
+          ["ExceptionMessage"] = JsonElementHelper.FromString(exception.Message),
+          ["ExceptionStackTrace"] = JsonElementHelper.FromString(exception.StackTrace)
+        }
         : null;
 
     return new DeliveryReceipt(

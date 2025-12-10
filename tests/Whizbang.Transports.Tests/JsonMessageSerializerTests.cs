@@ -46,18 +46,19 @@ public class JsonMessageSerializerTests {
   }
 
   [Test]
+  [RequiresUnreferencedCode("")]
+  [RequiresDynamicCode("")]
   public async Task SerializeAsync_WithMetadataContainingAllTypes_ShouldSerializeAsync() {
     // Arrange
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
-    var metadata = new Dictionary<string, object> {
-      ["stringValue"] = "test",
-      ["intValue"] = 42,
-      ["longValue"] = 9999999999L,
-      ["doubleValue"] = 3.14,
-      ["boolTrue"] = true,
-      ["boolFalse"] = false,
-      ["nullValue"] = null!
+    var metadata = new Dictionary<string, JsonElement> {
+      ["stringValue"] = JsonSerializer.SerializeToElement("test"),
+      ["intValue"] = JsonSerializer.SerializeToElement(42),
+      ["longValue"] = JsonSerializer.SerializeToElement(9999999999L),
+      ["doubleValue"] = JsonSerializer.SerializeToElement(3.14),
+      ["boolTrue"] = JsonSerializer.SerializeToElement(true),
+      ["boolFalse"] = JsonSerializer.SerializeToElement(false)
     };
 
     var envelope = new MessageEnvelope<TestMessage> {
@@ -85,12 +86,12 @@ public class JsonMessageSerializerTests {
     // Assert
     var hop = deserialized.Hops[0];
     await Assert.That(hop.Metadata).IsNotNull();
-    await Assert.That(hop.Metadata!["stringValue"]).IsEqualTo("test");
-    await Assert.That(hop.Metadata["intValue"]).IsEqualTo(42);
-    await Assert.That(hop.Metadata["longValue"]).IsEqualTo(9999999999L);
-    await Assert.That(hop.Metadata["doubleValue"]).IsEqualTo(3.14);
-    await Assert.That(hop.Metadata["boolTrue"]).IsEqualTo(true);
-    await Assert.That(hop.Metadata["boolFalse"]).IsEqualTo(false);
+    await Assert.That(hop.Metadata!["stringValue"].GetString()).IsEqualTo("test");
+    await Assert.That(hop.Metadata["intValue"].GetInt32()).IsEqualTo(42);
+    await Assert.That(hop.Metadata["longValue"].GetInt64()).IsEqualTo(9999999999L);
+    await Assert.That(hop.Metadata["doubleValue"].GetDouble()).IsEqualTo(3.14);
+    await Assert.That(hop.Metadata["boolTrue"].GetBoolean()).IsEqualTo(true);
+    await Assert.That(hop.Metadata["boolFalse"].GetBoolean()).IsEqualTo(false);
   }
 
   [Test]
@@ -341,12 +342,14 @@ public class JsonMessageSerializerTests {
   }
 
   [Test]
+  [RequiresUnreferencedCode("")]
+  [RequiresDynamicCode("")]
   public async Task Metadata_WithUnsupportedWriteType_ShouldThrowAsync() {
     // Arrange
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
-    var metadata = new Dictionary<string, object> {
-      ["unsupportedType"] = new DateTime(2025, 1, 1) // DateTime is not supported
+    var metadata = new Dictionary<string, JsonElement> {
+      ["unsupportedType"] = JsonSerializer.SerializeToElement(new DateTime(2025, 1, 1)) // DateTime gets serialized as string
     };
 
     var envelope = new MessageEnvelope<TestMessage> {
@@ -401,13 +404,15 @@ public class JsonMessageSerializerTests {
   }
 
   [Test]
+  [RequiresUnreferencedCode("")]
+  [RequiresDynamicCode("")]
   public async Task Metadata_WithDoubleValue_ShouldRoundTripAsync() {
     // Arrange
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
-    var metadata = new Dictionary<string, object> {
-      ["pi"] = 3.14159265359,
-      ["negativeFloat"] = -42.5
+    var metadata = new Dictionary<string, JsonElement> {
+      ["pi"] = JsonSerializer.SerializeToElement(3.14159265359),
+      ["negativeFloat"] = JsonSerializer.SerializeToElement(-42.5)
     };
 
     var envelope = new MessageEnvelope<TestMessage> {
@@ -435,19 +440,21 @@ public class JsonMessageSerializerTests {
     // Assert
     var hop = deserialized.Hops[0];
     await Assert.That(hop.Metadata).IsNotNull();
-    await Assert.That(hop.Metadata!["pi"]).IsEqualTo(3.14159265359);
-    await Assert.That(hop.Metadata["negativeFloat"]).IsEqualTo(-42.5);
+    await Assert.That(hop.Metadata!["pi"].GetDouble()).IsEqualTo(3.14159265359);
+    await Assert.That(hop.Metadata["negativeFloat"].GetDouble()).IsEqualTo(-42.5);
   }
 
   [Test]
+  [RequiresUnreferencedCode("")]
+  [RequiresDynamicCode("")]
   public async Task Metadata_WithLargeInt64Value_ShouldRoundTripAsync() {
     // Arrange
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     // Use a value larger than int32.MaxValue to ensure it's read as long
     var largeValue = (long)int.MaxValue + 1000L;
-    var metadata = new Dictionary<string, object> {
-      ["largeNumber"] = largeValue
+    var metadata = new Dictionary<string, JsonElement> {
+      ["largeNumber"] = JsonSerializer.SerializeToElement(largeValue)
     };
 
     var envelope = new MessageEnvelope<TestMessage> {
@@ -475,10 +482,12 @@ public class JsonMessageSerializerTests {
     // Assert
     var hop = deserialized.Hops[0];
     await Assert.That(hop.Metadata).IsNotNull();
-    await Assert.That(hop.Metadata!["largeNumber"]).IsEqualTo(largeValue);
+    await Assert.That(hop.Metadata!["largeNumber"].GetInt64()).IsEqualTo(largeValue);
   }
 
   [Test]
+  [RequiresUnreferencedCode("")]
+  [RequiresDynamicCode("")]
   public async Task RoundTrip_WithComplexEnvelope_ShouldPreserveAllDataAsync() {
     // Arrange
     var options = WhizbangJsonContext.CreateOptions();
@@ -496,10 +505,10 @@ public class JsonMessageSerializerTests {
           },
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
-          Metadata = new Dictionary<string, object> {
-            ["string"] = "value",
-            ["int"] = 123,
-            ["bool"] = true
+          Metadata = new Dictionary<string, JsonElement> {
+            ["string"] = JsonSerializer.SerializeToElement("value"),
+            ["int"] = JsonSerializer.SerializeToElement(123),
+            ["bool"] = JsonSerializer.SerializeToElement(true)
           }
         }
       ]

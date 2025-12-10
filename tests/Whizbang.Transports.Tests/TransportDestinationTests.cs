@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -45,12 +47,14 @@ public class TransportDestinationTests {
   }
 
   [Test]
+  [RequiresUnreferencedCode("")]
+  [RequiresDynamicCode("")]
   public async Task TransportDestination_WithMetadata_SetsMetadataAsync() {
     // Arrange
-    var metadata = new Dictionary<string, object> {
-      ["priority"] = "high",
-      ["retry-count"] = 3,
-      ["timeout-ms"] = 5000
+    var metadata = new Dictionary<string, JsonElement> {
+      ["priority"] = JsonSerializer.SerializeToElement("high"),
+      ["retry-count"] = JsonSerializer.SerializeToElement(3),
+      ["timeout-ms"] = JsonSerializer.SerializeToElement(5000)
     };
 
     // Act
@@ -61,9 +65,9 @@ public class TransportDestinationTests {
 
     // Assert
     await Assert.That(destination.Metadata).IsNotNull();
-    await Assert.That(destination.Metadata!["priority"]).IsEqualTo("high");
-    await Assert.That(destination.Metadata["retry-count"]).IsEqualTo(3);
-    await Assert.That(destination.Metadata["timeout-ms"]).IsEqualTo(5000);
+    await Assert.That(destination.Metadata!["priority"].GetString()).IsEqualTo("high");
+    await Assert.That(destination.Metadata["retry-count"].GetInt32()).IsEqualTo(3);
+    await Assert.That(destination.Metadata["timeout-ms"].GetInt32()).IsEqualTo(5000);
   }
 
   [Test]
@@ -163,7 +167,7 @@ public class TransportDestinationTests {
   [Test]
   public async Task TransportDestination_WithEmptyMetadata_PreservesEmptyDictionaryAsync() {
     // Arrange
-    var metadata = new Dictionary<string, object>();
+    var metadata = new Dictionary<string, JsonElement>();
 
     // Act
     var destination = new TransportDestination("topic", Metadata: metadata);
@@ -174,14 +178,15 @@ public class TransportDestinationTests {
   }
 
   [Test]
+  [RequiresDynamicCode("")]
   public async Task TransportDestination_MetadataIsReadOnly_CannotModifyAsync() {
     // Arrange
-    var metadata = new Dictionary<string, object> {
-      ["key"] = "value"
+    var metadata = new Dictionary<string, JsonElement> {
+      ["key"] = JsonSerializer.SerializeToElement("value")
     };
     var destination = new TransportDestination("topic", Metadata: metadata);
 
     // Act & Assert - Metadata should be IReadOnlyDictionary
-    await Assert.That(destination.Metadata).IsTypeOf<IReadOnlyDictionary<string, object>>();
+    await Assert.That(destination.Metadata).IsTypeOf<IReadOnlyDictionary<string, JsonElement>>();
   }
 }

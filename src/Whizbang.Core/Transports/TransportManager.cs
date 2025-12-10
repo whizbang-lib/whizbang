@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core.Observability;
@@ -117,31 +118,31 @@ public class TransportManager(IMessageSerializer serializer, IServiceInstancePro
     var transport = GetTransport(target.TransportType);
 
     // Build metadata dictionary with transport-specific configuration
-    var metadata = new Dictionary<string, object>();
+    var metadata = new Dictionary<string, JsonElement>();
 
     // Add consumer group for Kafka
     if (!string.IsNullOrEmpty(target.ConsumerGroup)) {
-      metadata["ConsumerGroup"] = target.ConsumerGroup;
+      metadata["ConsumerGroup"] = JsonElementHelper.FromString(target.ConsumerGroup);
     }
 
     // Add subscription name for Service Bus
     if (!string.IsNullOrEmpty(target.SubscriptionName)) {
-      metadata["SubscriptionName"] = target.SubscriptionName;
+      metadata["SubscriptionName"] = JsonElementHelper.FromString(target.SubscriptionName);
     }
 
     // Add queue name for RabbitMQ
     if (!string.IsNullOrEmpty(target.QueueName)) {
-      metadata["QueueName"] = target.QueueName;
+      metadata["QueueName"] = JsonElementHelper.FromString(target.QueueName);
     }
 
     // Add SQL filter for Service Bus
     if (!string.IsNullOrEmpty(target.SqlFilter)) {
-      metadata["SqlFilter"] = target.SqlFilter;
+      metadata["SqlFilter"] = JsonElementHelper.FromString(target.SqlFilter);
     }
 
     // Add partition for Kafka
     if (target.Partition.HasValue) {
-      metadata["Partition"] = target.Partition.Value;
+      metadata["Partition"] = JsonElementHelper.FromInt32(target.Partition.Value);
     }
 
     // Create destination from target
@@ -175,9 +176,9 @@ public class TransportManager(IMessageSerializer serializer, IServiceInstancePro
           Type = HopType.Current,
           ServiceInstance = _instanceProvider!.ToInfo(),
           Timestamp = DateTimeOffset.UtcNow,
-          Metadata = new Dictionary<string, object> {
-            ["CorrelationId"] = context.CorrelationId.ToString(),
-            ["CausationId"] = context.CausationId.ToString()
+          Metadata = new Dictionary<string, JsonElement> {
+            ["CorrelationId"] = JsonElementHelper.FromString(context.CorrelationId.ToString()),
+            ["CausationId"] = JsonElementHelper.FromString(context.CausationId.ToString())
           }
         }
       ]

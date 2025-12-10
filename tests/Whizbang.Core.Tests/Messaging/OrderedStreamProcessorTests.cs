@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -265,7 +266,7 @@ public class OrderedStreamProcessorTests {
   private InboxWork CreateInboxWork(Guid streamId, long sequenceOrder) {
     var messageId = _idProvider.NewGuid();
     var envelope = CreateTestEnvelope(messageId);
-    return new InboxWork {
+    return new InboxWork<object> {
       MessageId = messageId,
       Envelope = envelope,
       StreamId = streamId,
@@ -279,7 +280,7 @@ public class OrderedStreamProcessorTests {
   private OutboxWork CreateOutboxWork(Guid streamId, long sequenceOrder) {
     var messageId = _idProvider.NewGuid();
     var envelope = CreateTestEnvelope(messageId);
-    return new OutboxWork {
+    return new OutboxWork<object> {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = envelope,
@@ -300,9 +301,10 @@ public class OrderedStreamProcessorTests {
   }
 
   // Test envelope implementation
-  private class TestMessageEnvelope : IMessageEnvelope {
+  private class TestMessageEnvelope : IMessageEnvelope<object> {
     public required MessageId MessageId { get; init; }
     public required List<MessageHop> Hops { get; init; }
+    public object Payload { get; init; } = new { };  // Test payload
 
     public void AddHop(MessageHop hop) {
       Hops.Add(hop);
@@ -320,17 +322,13 @@ public class OrderedStreamProcessorTests {
       return Hops.Count > 0 ? Hops[0].CausationId : null;
     }
 
-    public object? GetMetadata(string key) {
+    public JsonElement? GetMetadata(string key) {
       for (var i = Hops.Count - 1; i >= 0; i--) {
         if (Hops[i].Type == HopType.Current && Hops[i].Metadata?.ContainsKey(key) == true) {
           return Hops[i].Metadata[key];
         }
       }
       return null;
-    }
-
-    public object GetPayload() {
-      return new { };
     }
   }
 }

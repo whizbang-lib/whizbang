@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 
 namespace Whizbang.Core.Transports;
 
@@ -10,11 +11,11 @@ namespace Whizbang.Core.Transports;
 /// </summary>
 /// <param name="Address">The destination address (queue name, topic, service endpoint, etc.)</param>
 /// <param name="RoutingKey">Optional routing key for topic-based routing (e.g., "orders.created")</param>
-/// <param name="Metadata">Optional transport-specific metadata (priority, TTL, headers, etc.)</param>
+/// <param name="Metadata">Optional transport-specific metadata (priority, TTL, headers, etc.). Supports any JSON value type via JsonElement.</param>
 public record TransportDestination(
   string Address,
   string? RoutingKey = null,
-  IReadOnlyDictionary<string, object>? Metadata = null
+  IReadOnlyDictionary<string, JsonElement>? Metadata = null
 ) {
   /// <summary>
   /// Gets the destination address.

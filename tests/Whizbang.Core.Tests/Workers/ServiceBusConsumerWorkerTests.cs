@@ -55,7 +55,7 @@ public class ServiceBusConsumerWorkerTests {
     // Register test work coordinator strategy that returns the message for processing
     services.AddScoped<IWorkCoordinatorStrategy>(sp => new TestWorkCoordinatorStrategy(() => {
       var inboxWork = new List<InboxWork> {
-        new() {
+        new InboxWork<ServiceBusWorkerTestEvent> {
           MessageId = envelope.MessageId.Value,
           Envelope = envelope,
           StreamId = Guid.NewGuid(),
@@ -326,8 +326,8 @@ internal class TestWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
     _flushFunc = flushFunc;
   }
 
-  public void QueueOutboxMessage(NewOutboxMessage message) { }
-  public void QueueInboxMessage(NewInboxMessage message) { }
+  public void QueueOutboxMessage(OutboxMessage message) { }
+  public void QueueInboxMessage(InboxMessage message) { }
   public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus status) { }
   public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus partialStatus, string error) { }
   public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus status) { }

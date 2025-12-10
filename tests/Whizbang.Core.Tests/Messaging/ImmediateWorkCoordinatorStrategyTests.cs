@@ -1,3 +1,4 @@
+using System.Text.Json;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -46,12 +47,14 @@ public class ImmediateWorkCoordinatorStrategyTests {
       Payload = new TestEvent("test-data"),
       Hops = new List<MessageHop>()
     };
-    sut.QueueOutboxMessage(new NewOutboxMessage {
+    sut.QueueOutboxMessage(new OutboxMessage<object> {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = envelope,
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
-      IsEvent = true
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly"
     });
 
     // Act
@@ -90,12 +93,14 @@ public class ImmediateWorkCoordinatorStrategyTests {
       Payload = new TestEvent("test-data"),
       Hops = new List<MessageHop>()
     };
-    var outboxMessage = new NewOutboxMessage {
+    var outboxMessage = new OutboxMessage<object> {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = envelope,
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
-      IsEvent = true
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly"
     };
 
     // Act
@@ -134,12 +139,14 @@ public class ImmediateWorkCoordinatorStrategyTests {
       Payload = new TestEvent("test-data"),
       Hops = new List<MessageHop>()
     };
-    var inboxMessage = new NewInboxMessage {
+    var inboxMessage = new InboxMessage<object> {
       MessageId = messageId,
       HandlerName = "TestHandler",
       Envelope = envelope,
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
-      IsEvent = true
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly"
     };
 
     // Act
@@ -158,21 +165,21 @@ public class ImmediateWorkCoordinatorStrategyTests {
 
   private class FakeWorkCoordinator : IWorkCoordinator {
     public int ProcessWorkBatchCallCount { get; private set; }
-    public NewOutboxMessage[] LastNewOutboxMessages { get; private set; } = [];
-    public NewInboxMessage[] LastNewInboxMessages { get; private set; } = [];
+    public OutboxMessage[] LastNewOutboxMessages { get; private set; } = [];
+    public InboxMessage[] LastNewInboxMessages { get; private set; } = [];
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       Guid instanceId,
       string serviceName,
       string hostName,
       int processId,
-      Dictionary<string, object>? metadata,
+      Dictionary<string, JsonElement>? metadata,
       MessageCompletion[] outboxCompletions,
       MessageFailure[] outboxFailures,
       MessageCompletion[] inboxCompletions,
       MessageFailure[] inboxFailures,
-      NewOutboxMessage[] newOutboxMessages,
-      NewInboxMessage[] newInboxMessages,
+      OutboxMessage[] newOutboxMessages,
+      InboxMessage[] newInboxMessages,
       Guid[] renewOutboxLeaseIds,
       Guid[] renewInboxLeaseIds,
       WorkBatchFlags flags = WorkBatchFlags.None,

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -61,12 +62,14 @@ public class ScopedWorkCoordinatorStrategyTests {
       ]
     };
 
-    sut.QueueOutboxMessage(new NewOutboxMessage {
+    sut.QueueOutboxMessage(new OutboxMessage<object> {
       MessageId = messageId1,
       Destination = "topic1",
       Envelope = envelope1,
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
-      IsEvent = true
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly"
     });
 
     var envelope2 = new MessageEnvelope<TestEvent2> {
@@ -84,12 +87,14 @@ public class ScopedWorkCoordinatorStrategyTests {
       ]
     };
 
-    sut.QueueInboxMessage(new NewInboxMessage {
+    sut.QueueInboxMessage(new InboxMessage<object> {
       MessageId = messageId2,
       HandlerName = "Handler1",
       Envelope = envelope2,
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
-      IsEvent = true
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly"
     });
 
     // Act - Dispose should flush queued messages
@@ -142,12 +147,14 @@ public class ScopedWorkCoordinatorStrategyTests {
       ]
     };
 
-    sut.QueueOutboxMessage(new NewOutboxMessage {
+    sut.QueueOutboxMessage(new OutboxMessage<object> {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = envelope,
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
-      IsEvent = true
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly"
     });
 
     // Act - Manual flush before disposal
@@ -210,12 +217,14 @@ public class ScopedWorkCoordinatorStrategyTests {
       ]
     };
 
-    sut.QueueOutboxMessage(new NewOutboxMessage {
+    sut.QueueOutboxMessage(new OutboxMessage<object> {
       MessageId = outboxId1,
       Destination = "topic1",
       Envelope = envelope1,
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
-      IsEvent = true
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly"
     });
 
     var envelope2 = new MessageEnvelope<TestEvent2> {
@@ -233,12 +242,14 @@ public class ScopedWorkCoordinatorStrategyTests {
       ]
     };
 
-    sut.QueueOutboxMessage(new NewOutboxMessage {
+    sut.QueueOutboxMessage(new OutboxMessage<object> {
       MessageId = outboxId2,
       Destination = "topic2",
       Envelope = envelope2,
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
-      IsEvent = true
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly"
     });
 
     var envelope3 = new MessageEnvelope<TestEvent3> {
@@ -256,12 +267,14 @@ public class ScopedWorkCoordinatorStrategyTests {
       ]
     };
 
-    sut.QueueInboxMessage(new NewInboxMessage {
+    sut.QueueInboxMessage(new InboxMessage<object> {
       MessageId = inboxId1,
       HandlerName = "Handler1",
       Envelope = envelope3,
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
-      IsEvent = true
+      IsEvent = true,
+      MessageType = "TestMessage, TestAssembly"
     });
 
     sut.QueueOutboxCompletion(completionId, MessageProcessingStatus.Published);
@@ -285,8 +298,8 @@ public class ScopedWorkCoordinatorStrategyTests {
 
   private class FakeWorkCoordinator : IWorkCoordinator {
     public int ProcessWorkBatchCallCount { get; private set; }
-    public NewOutboxMessage[] LastNewOutboxMessages { get; private set; } = [];
-    public NewInboxMessage[] LastNewInboxMessages { get; private set; } = [];
+    public OutboxMessage[] LastNewOutboxMessages { get; private set; } = [];
+    public InboxMessage[] LastNewInboxMessages { get; private set; } = [];
     public MessageCompletion[] LastOutboxCompletions { get; private set; } = [];
     public MessageFailure[] LastInboxFailures { get; private set; } = [];
 
@@ -295,13 +308,13 @@ public class ScopedWorkCoordinatorStrategyTests {
       string serviceName,
       string hostName,
       int processId,
-      Dictionary<string, object>? metadata,
+      Dictionary<string, JsonElement>? metadata,
       MessageCompletion[] outboxCompletions,
       MessageFailure[] outboxFailures,
       MessageCompletion[] inboxCompletions,
       MessageFailure[] inboxFailures,
-      NewOutboxMessage[] newOutboxMessages,
-      NewInboxMessage[] newInboxMessages,
+      OutboxMessage[] newOutboxMessages,
+      InboxMessage[] newInboxMessages,
       Guid[] renewOutboxLeaseIds,
       Guid[] renewInboxLeaseIds,
       WorkBatchFlags flags = WorkBatchFlags.None,

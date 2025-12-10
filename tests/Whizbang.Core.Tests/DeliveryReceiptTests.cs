@@ -1,3 +1,5 @@
+using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -126,13 +128,15 @@ public class DeliveryReceiptTests {
   }
 
   [Test]
+  [RequiresUnreferencedCode("")]
+  [RequiresDynamicCode("")]
   public async Task Constructor_WithMetadata_CopiesMetadataDictionaryAsync() {
     // Arrange
     var messageId = MessageId.New();
     var destination = "TestHandler";
-    var originalMetadata = new Dictionary<string, object> {
-      ["Key1"] = "Value1",
-      ["Key2"] = 42
+    var originalMetadata = new Dictionary<string, JsonElement> {
+      ["Key1"] = JsonSerializer.SerializeToElement("Value1"),
+      ["Key2"] = JsonSerializer.SerializeToElement(42)
     };
 
     // Act
@@ -145,11 +149,11 @@ public class DeliveryReceiptTests {
 
     // Assert - Metadata should be copied, not referenced
     await Assert.That(receipt.Metadata.Count).IsEqualTo(2);
-    await Assert.That(receipt.Metadata["Key1"]).IsEqualTo("Value1");
-    await Assert.That(receipt.Metadata["Key2"]).IsEqualTo(42);
+    await Assert.That(receipt.Metadata["Key1"].GetString()).IsEqualTo("Value1");
+    await Assert.That(receipt.Metadata["Key2"].GetInt32()).IsEqualTo(42);
 
     // Verify it's a copy by modifying original
-    originalMetadata["Key3"] = "Value3";
+    originalMetadata["Key3"] = JsonSerializer.SerializeToElement("Value3");
     await Assert.That(receipt.Metadata.Count).IsEqualTo(2); // Should still be 2
   }
 

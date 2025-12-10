@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
@@ -22,12 +23,13 @@ namespace Whizbang.Core.Tests.Workers;
 public class WorkCoordinatorPublisherWorkerStartupTests {
   private record TestMessage { }
 
-  private static IMessageEnvelope CreateTestEnvelope(Guid messageId) {
-    return new MessageEnvelope<TestMessage> {
+  private static IMessageEnvelope<object> CreateTestEnvelope(Guid messageId) {
+    var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.From(messageId),
       Payload = new TestMessage(),
       Hops = []
     };
+    return envelope as IMessageEnvelope<object> ?? throw new InvalidOperationException("Envelope must implement IMessageEnvelope<object>");
   }
 
   private class TestWorkCoordinator : IWorkCoordinator {
@@ -40,13 +42,13 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       string serviceName,
       string hostName,
       int processId,
-      Dictionary<string, object>? metadata,
+      Dictionary<string, JsonElement>? metadata,
       MessageCompletion[] outboxCompletions,
       MessageFailure[] outboxFailures,
       MessageCompletion[] inboxCompletions,
       MessageFailure[] inboxFailures,
-      NewOutboxMessage[] newOutboxMessages,
-      NewInboxMessage[] newInboxMessages,
+      OutboxMessage[] newOutboxMessages,
+      InboxMessage[] newInboxMessages,
       Guid[] renewOutboxLeaseIds,
       Guid[] renewInboxLeaseIds,
       WorkBatchFlags flags = WorkBatchFlags.None,
@@ -321,7 +323,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
   }
 
   private static OutboxWork CreateOutboxWork(Guid messageId, string destination) {
-    return new OutboxWork {
+    return new OutboxWork<object> {
       MessageId = messageId,
       Destination = destination,
       Envelope = CreateTestEnvelope(messageId),
@@ -369,13 +371,13 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       string serviceName,
       string hostName,
       int processId,
-      Dictionary<string, object>? metadata,
+      Dictionary<string, JsonElement>? metadata,
       MessageCompletion[] outboxCompletions,
       MessageFailure[] outboxFailures,
       MessageCompletion[] inboxCompletions,
       MessageFailure[] inboxFailures,
-      NewOutboxMessage[] newOutboxMessages,
-      NewInboxMessage[] newInboxMessages,
+      OutboxMessage[] newOutboxMessages,
+      InboxMessage[] newInboxMessages,
       Guid[] renewOutboxLeaseIds,
       Guid[] renewInboxLeaseIds,
       WorkBatchFlags flags = WorkBatchFlags.None,

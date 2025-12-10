@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 using BenchmarkDotNet.Attributes;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core;
@@ -320,6 +321,8 @@ public class ThroughputBenchmarks {
     return envelope;
   }
 
+  [RequiresUnreferencedCode("Calls System.Text.Json.JsonSerializer.SerializeToElement<TValue>(TValue, JsonSerializerOptions)")]
+  [RequiresDynamicCode("Calls System.Text.Json.JsonSerializer.SerializeToElement<TValue>(TValue, JsonSerializerOptions)")]
   private static IMessageEnvelope CreateEnvelopeWithTracing<T>(T payload) {
     var envelope = new MessageEnvelope<T> {
       MessageId = MessageId.New(),
@@ -340,9 +343,9 @@ public class ThroughputBenchmarks {
       CausationId = MessageId.New(),
       Topic = "throughput-tracing",
       SequenceNumber = 1,
-      Metadata = new Dictionary<string, object> {
-        ["traceId"] = Guid.NewGuid().ToString(),
-        ["spanId"] = Guid.NewGuid().ToString()
+      Metadata = new Dictionary<string, JsonElement> {
+        ["traceId"] = JsonSerializer.SerializeToElement(Guid.NewGuid().ToString()),
+        ["spanId"] = JsonSerializer.SerializeToElement(Guid.NewGuid().ToString())
       }
     };
 

@@ -10,7 +10,8 @@
   <!-- AOT Compatibility Settings (Production Code Only) -->
   <!-- TEMP: Excluding Whizbang.Core while completing Phases 4-5 (JSON + Dispatcher) -->
   <!-- Exclude all source generator projects (netstandard2.0) - they run at compile-time, not runtime -->
-  <PropertyGroup Condition="'$(IsTestProject)' != 'true' and !$(MSBuildProjectName.Contains('Generators')) and '$(MSBuildProjectName)' != 'Whizbang.Core'">
+  <!-- Exclude test and benchmark projects - they may use reflection for test infrastructure -->
+  <PropertyGroup Condition="'$(IsTestProject)' != 'true' and !$(MSBuildProjectName.Contains('Generators')) and !$(MSBuildProjectName.Contains('.Tests')) and !$(MSBuildProjectName.Contains('Benchmarks')) and '$(MSBuildProjectName)' != 'Whizbang.Core'">
     <!-- Enable AOT analyzers to detect reflection and trim incompatibilities -->
     <IsAotCompatible>true</IsAotCompatible>
     <EnableAotAnalyzer>true</EnableAotAnalyzer>
@@ -23,12 +24,12 @@
     <WarningsAsErrors>$(WarningsAsErrors);IL2026;IL2046;IL2075</WarningsAsErrors>
   </PropertyGroup>
 
-  <!-- BannedApiAnalyzers - Ban reflection attributes (except in test projects) -->
+  <!-- BannedApiAnalyzers - Ban reflection attributes (except in test and benchmark projects) -->
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all" />
-    <!-- Only include BannedSymbols.txt for non-test projects -->
-    <!-- Test projects may need RequiresDynamicCode/RequiresUnreferencedCode for test infrastructure (e.g., Npgsql.EnableDynamicJson) -->
-    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" Condition="'$(IsTestProject)' != 'true' and !$(MSBuildProjectName.Contains('.Tests'))" />
+    <!-- Only include BannedSymbols.txt for production code projects -->
+    <!-- Exclude: test projects, benchmark projects (need RequiresDynamicCode/RequiresUnreferencedCode for test infrastructure) -->
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" Condition="'$(IsTestProject)' != 'true' and !$(MSBuildProjectName.Contains('.Tests')) and !$(MSBuildProjectName.Contains('Benchmarks'))" />
   </ItemGroup>
 
 </Project>

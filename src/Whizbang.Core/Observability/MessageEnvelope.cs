@@ -1,4 +1,5 @@
 using System.Runtime.CompilerServices;
+using System.Text.Json;
 using Whizbang.Core.Policies;
 using Whizbang.Core.ValueObjects;
 
@@ -9,16 +10,23 @@ namespace Whizbang.Core.Observability;
 /// Carries context across network boundaries and through the entire execution pipeline.
 /// </summary>
 /// <typeparam name="TMessage">The type of the message payload</typeparam>
-public class MessageEnvelope<TMessage> : IMessageEnvelope {
+public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// <summary>
   /// Unique identifier for this specific message.
   /// </summary>
   public required MessageId MessageId { get; init; }
 
   /// <summary>
-  /// The actual message payload.
+  /// The actual message payload (strongly-typed).
+  /// Also implements IMessageEnvelope.Payload as object for heterogeneous collections.
   /// </summary>
   public required TMessage Payload { get; init; }
+
+  /// <summary>
+  /// Explicit implementation of non-generic Payload property.
+  /// Returns the same Payload instance, boxed if necessary.
+  /// </summary>
+  object IMessageEnvelope.Payload => Payload!;
 
   /// <summary>
   /// Hops this message has taken through the system.
@@ -157,8 +165,8 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope {
   /// Filters to only HopType.Current hops (ignores causation hops).
   /// </summary>
   /// <param name="key">The metadata key to retrieve</param>
-  /// <returns>The value from the most recent current hop that has this key, or null if not found</returns>
-  public object? GetMetadata(string key) {
+  /// <returns>The JsonElement value from the most recent current hop that has this key, or null if not found</returns>
+  public JsonElement? GetMetadata(string key) {
     for (int i = Hops.Count - 1; i >= 0; i--) {
       if (Hops[i].Type == HopType.Current && Hops[i].Metadata != null && Hops[i].Metadata!.TryGetValue(key, out var value)) {
         return value;
@@ -168,19 +176,13 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope {
   }
 
   /// <summary>
-  /// Gets the message payload as an object.
-  /// </summary>
-  /// <returns>The message payload</returns>
-  public object GetPayload() => Payload!;
-
-  /// <summary>
   /// Gets all metadata by stitching together metadata from all current message hops.
   /// Later hops override earlier hops for the same key (dictionary merge).
   /// Filters to only HopType.Current hops (ignores causation hops).
   /// </summary>
   /// <returns>A dictionary containing all metadata with later hops taking precedence</returns>
-  public IReadOnlyDictionary<string, object> GetAllMetadata() {
-    var result = new Dictionary<string, object>();
+  public IReadOnlyDictionary<string, JsonElement> GetAllMetadata() {
+    var result = new Dictionary<string, JsonElement>();
 
     // Walk forwards through current hops only, later hops override earlier ones
     foreach (var hop in Hops.Where(h => h.Type == HopType.Current)) {
