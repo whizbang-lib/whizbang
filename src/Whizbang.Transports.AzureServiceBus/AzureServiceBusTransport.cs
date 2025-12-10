@@ -148,11 +148,25 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
       var typeInfo = _jsonOptions.GetTypeInfo(envelopeType)
         ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered via JsonContextRegistry.");
       var json = JsonSerializer.Serialize(envelope, typeInfo);
+
+      // DIAGNOSTIC: Log the first 500 chars of JSON to see if MessageId is in there
+      _logger.LogDebug(
+        "DIAGNOSTIC [Publish]: Serialized envelope. MessageId={MessageId}, JSON preview: {JsonPreview}",
+        envelope.MessageId.Value,
+        json.Length > 500 ? json[..500] + "..." : json
+      );
+
       var message = new ServiceBusMessage(json) {
         MessageId = envelope.MessageId.Value.ToString(),
         Subject = destination.RoutingKey ?? "message",
         ContentType = "application/json"
       };
+
+      // DIAGNOSTIC: Log the Service Bus message ID to compare
+      _logger.LogDebug(
+        "DIAGNOSTIC [Publish]: Created ServiceBusMessage with MessageId={ServiceBusMessageId}",
+        message.MessageId
+      );
 
       // Add envelope type information for deserialization
       message.ApplicationProperties["EnvelopeType"] = envelopeTypeName;
@@ -293,6 +307,14 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
 
           // Deserialize envelope using the resolved type and AOT-compatible options from registry
           var json = args.Message.Body.ToString();
+
+          // DIAGNOSTIC: Log the JSON and Service Bus MessageId before deserializing
+          _logger.LogDebug(
+            "DIAGNOSTIC [Subscribe]: Received message. ServiceBusMessageId={ServiceBusMessageId}, JSON preview: {JsonPreview}",
+            args.Message.MessageId,
+            json.Length > 500 ? json[..500] + "..." : json
+          );
+
           var typeInfo = _jsonOptions.GetTypeInfo(envelopeType);
           if (typeInfo == null) {
             _logger.LogError("No JsonTypeInfo found for {EnvelopeType}", envelopeTypeName);
@@ -316,6 +338,12 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
             );
             return;
           }
+
+          // DIAGNOSTIC: Log the deserialized MessageId to see if it survived
+          _logger.LogDebug(
+            "DIAGNOSTIC [Subscribe]: Deserialized envelope. MessageId={MessageId}",
+            envelope.MessageId.Value
+          );
 
           // Invoke handler
           await handler(envelope, args.CancellationToken);
