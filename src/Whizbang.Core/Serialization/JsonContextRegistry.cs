@@ -23,6 +23,14 @@ public static class JsonContextRegistry {
   private static readonly ConcurrentBag<IJsonTypeInfoResolver> _resolvers = new();
 
   /// <summary>
+  /// Thread-safe collection of converter instances to add to JsonSerializerOptions.
+  /// Populated via [ModuleInitializer] methods in each assembly.
+  /// Needed for WhizbangId converters due to STJ source generation limitations.
+  /// Converters are instantiated at compile-time by source generators for AOT compatibility.
+  /// </summary>
+  private static readonly ConcurrentBag<JsonConverter> _converters = new();
+
+  /// <summary>
   /// Registers a JsonSerializerContext resolver.
   /// Called from [ModuleInitializer] methods - runs before Main().
   /// </summary>
@@ -33,6 +41,21 @@ public static class JsonContextRegistry {
     }
 
     _resolvers.Add(resolver);
+  }
+
+  /// <summary>
+  /// Registers a JsonConverter instance to be added to JsonSerializerOptions.
+  /// Called from [ModuleInitializer] methods for WhizbangId converters.
+  /// This is needed because STJ source generation has trouble finding custom converters
+  /// for value types in nested properties without them being in options.Converters.
+  /// </summary>
+  /// <param name="converter">The JsonConverter instance to register (instantiated at compile-time by source generators for AOT compatibility)</param>
+  public static void RegisterConverter(JsonConverter converter) {
+    if (converter == null) {
+      throw new ArgumentNullException(nameof(converter));
+    }
+
+    _converters.Add(converter);
   }
 
   /// <summary>
@@ -58,8 +81,13 @@ public static class JsonContextRegistry {
     // This allows InfrastructureJsonContext's TryGetTypeInfoForRuntimeCustomConverter
     // to find them when deserializing MessageHop properties (MessageId?, CorrelationId?).
     // Without this, STJ falls back to treating MessageId as an empty object {}.
-    options.Converters.Add(new ValueObjects.MessageIdJsonConverter());
-    options.Converters.Add(new ValueObjects.CorrelationIdJsonConverter());
+    //
+    // Converters are instantiated at compile-time by source generators (no reflection!)
+    // and registered via RegisterConverter() from [ModuleInitializer] methods.
+    // This includes ProductId, OrderId, CustomerId, etc. from all application assemblies.
+    foreach (var converter in _converters) {
+      options.Converters.Add(converter);
+    }
 
     return options;
   }

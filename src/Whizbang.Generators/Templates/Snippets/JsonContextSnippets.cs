@@ -205,6 +205,10 @@ public static void Initialize() {
   // These will be combined with Core's contexts (InfrastructureJsonContext, etc.)
   global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterContext(WhizbangIdJsonContext.Default);
   global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterContext(MessageJsonContext.Default);
+
+  // Register WhizbangId converter instances from this assembly (no reflection - AOT compatible!)
+  // This allows InfrastructureJsonContext to find them via TryGetTypeInfoForRuntimeCustomConverter
+__CONVERTER_REGISTRATIONS__
 }
 #endregion
 

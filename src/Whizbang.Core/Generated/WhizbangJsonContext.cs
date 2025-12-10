@@ -31,5 +31,10 @@ public static class WhizbangJsonContext {
     JsonContextRegistry.RegisterContext(WhizbangIdJsonContext.Default);
     JsonContextRegistry.RegisterContext(InfrastructureJsonContext.Default);
     JsonContextRegistry.RegisterContext(MessageJsonContext.Default);
+
+    // Register WhizbangId converter instances from Whizbang.Core (no reflection - AOT compatible!)
+    // This allows InfrastructureJsonContext to find them via TryGetTypeInfoForRuntimeCustomConverter
+    JsonContextRegistry.RegisterConverter(new ValueObjects.MessageIdJsonConverter());
+    JsonContextRegistry.RegisterConverter(new ValueObjects.CorrelationIdJsonConverter());
   }
 }

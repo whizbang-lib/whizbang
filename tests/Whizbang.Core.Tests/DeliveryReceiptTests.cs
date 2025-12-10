@@ -81,7 +81,9 @@ public class DeliveryReceiptTests {
     await Assert.That(receipt.MessageId).IsEqualTo(messageId);
     await Assert.That(receipt.Destination).IsEqualTo(destination);
     await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Failed);
-    await Assert.That(receipt.Metadata.ContainsKey("Exception")).IsTrue();
+    await Assert.That(receipt.Metadata.ContainsKey("ExceptionType")).IsTrue();
+    await Assert.That(receipt.Metadata.ContainsKey("ExceptionMessage")).IsTrue();
+    await Assert.That(receipt.Metadata["ExceptionMessage"].GetString()).IsEqualTo("Test error");
   }
 
   [Test]

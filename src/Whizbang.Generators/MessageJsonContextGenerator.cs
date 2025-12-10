@@ -191,10 +191,13 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     factories.Append(GenerateMessageTypeFactories(assembly, allTypes));
     factories.Append(GenerateListFactories(assembly, listTypes));
 
+    // Discover WhizbangId converters by examining message property types
+    var converters = DiscoverWhizbangIdConverters(allTypes, compilation);
+
     // Generate and replace each region
     template = TemplateUtilities.ReplaceRegion(template, "LAZY_FIELDS", lazyFields.ToString());
     template = TemplateUtilities.ReplaceRegion(template, "LAZY_PROPERTIES", GenerateLazyProperties(assembly, allTypes));
-    template = TemplateUtilities.ReplaceRegion(template, "ASSEMBLY_AWARE_HELPER", GenerateAssemblyAwareHelper(assembly));
+    template = TemplateUtilities.ReplaceRegion(template, "ASSEMBLY_AWARE_HELPER", GenerateAssemblyAwareHelper(assembly, converters));
     template = TemplateUtilities.ReplaceRegion(template, "GET_DISCOVERED_TYPE_INFO", GenerateGetTypeInfo(assembly, allTypes, listTypes));
     template = TemplateUtilities.ReplaceRegion(template, "HELPER_METHODS", GenerateHelperMethods(assembly));
     template = TemplateUtilities.ReplaceRegion(template, "CORE_TYPE_FACTORIES", GenerateCoreTypeFactories(assembly));
@@ -211,9 +214,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       facadeTemplate = facadeTemplate.Replace("__ASSEMBLY_NAME__", assemblyName);
       facadeTemplate = facadeTemplate.Replace("__NAMESPACE__", namespaceName);
 
-      // Discover WhizbangId converters by examining message property types
-      var converters = DiscoverWhizbangIdConverters(allTypes, compilation);
-
+      // Reuse converters already discovered at line 195 for facade generation
       // Generate converter registration code
       var converterRegistrations = new System.Text.StringBuilder();
       if (!converters.IsEmpty) {
@@ -620,12 +621,23 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     return sb.ToString();
   }
 
-  private static string GenerateAssemblyAwareHelper(Assembly assembly) {
+  private static string GenerateAssemblyAwareHelper(Assembly assembly, ImmutableArray<WhizbangIdTypeInfo> converters) {
     // Load snippet
     var createOptionsSnippet = TemplateUtilities.ExtractSnippet(
         assembly,
         "JsonContextSnippets.cs",
         "HELPER_CREATE_OPTIONS");
+
+    // Generate converter instance registration code for ModuleInitializer (no reflection - AOT compatible!)
+    var converterRegistrations = new System.Text.StringBuilder();
+    if (!converters.IsEmpty) {
+      foreach (var converter in converters) {
+        converterRegistrations.AppendLine($"  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterConverter(new global::{converter.FullyQualifiedTypeName}());");
+      }
+    }
+
+    // Replace __CONVERTER_REGISTRATIONS__ placeholder
+    createOptionsSnippet = createOptionsSnippet.Replace("__CONVERTER_REGISTRATIONS__", converterRegistrations.ToString());
 
     return createOptionsSnippet;
   }
