@@ -409,6 +409,6 @@ FodyWeavers.xsd
 # JetBrains Rider
 *.sln.iml
 .DS_Store
-Migrations
+# Migrations - commented to allow src/Whizbang.Data.EFCore.Postgres.Generators/Templates/Migrations/
 coverage[0-9\-a-zA-Z]*
 coverage

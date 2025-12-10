@@ -35,6 +35,14 @@ CREATE OR REPLACE FUNCTION process_work_batch(
   p_inbox_completions JSONB DEFAULT '[]'::JSONB,
   p_inbox_failures JSONB DEFAULT '[]'::JSONB,
 
+  -- Receptor processing completions
+  p_receptor_completions JSONB DEFAULT '[]'::JSONB,  -- [{"event_id": "uuid", "receptor_name": "...", "status": 2}, ...]
+  p_receptor_failures JSONB DEFAULT '[]'::JSONB,     -- [{"event_id": "uuid", "receptor_name": "...", "status": 4, "error": "..."}, ...]
+
+  -- Perspective checkpoint completions
+  p_perspective_completions JSONB DEFAULT '[]'::JSONB,  -- [{"stream_id": "uuid", "perspective_name": "...", "last_event_id": "uuid", "status": 2}, ...]
+  p_perspective_failures JSONB DEFAULT '[]'::JSONB,     -- [{"stream_id": "uuid", "perspective_name": "...", "last_event_id": "uuid", "status": 4, "error": "..."}, ...]
+
   -- Immediate processing support
   p_new_outbox_messages JSONB DEFAULT '[]'::JSONB,  -- Array of new messages to store
   p_new_inbox_messages JSONB DEFAULT '[]'::JSONB,
@@ -167,10 +175,10 @@ BEGIN
         -- Get current status from database
         SELECT wh_outbox.status INTO v_current_status FROM wh_outbox WHERE wh_outbox.message_id = v_completion.msg_id;
 
-        -- Delete if fully completed (both ReceptorProcessed AND PerspectiveProcessed)
-        IF ((v_current_status | v_completion.status_flags) & 24) = 24 THEN
+        -- Delete if Published (outbox messages are done once published to transport)
+        IF ((v_current_status | v_completion.status_flags) & 4) = 4 THEN
           DELETE FROM wh_outbox WHERE wh_outbox.message_id = v_completion.msg_id;
-          RAISE NOTICE 'DELETED message (fully completed): messageId=%', v_completion.msg_id;
+          RAISE NOTICE 'DELETED outbox message (published): messageId=%', v_completion.msg_id;
         ELSE
           -- Partially completed - update status
           UPDATE wh_outbox AS o
@@ -208,8 +216,10 @@ BEGIN
         -- Get current status from database
         SELECT wh_inbox.status INTO v_current_status FROM wh_inbox WHERE wh_inbox.message_id = v_completion.msg_id;
 
-        IF ((v_current_status | v_completion.status_flags) & 24) = 24 THEN
+        -- Delete if EventStored (inbox messages are done once event is stored and handlers invoked)
+        IF ((v_current_status | v_completion.status_flags) & 2) = 2 THEN
           DELETE FROM wh_inbox WHERE wh_inbox.message_id = v_completion.msg_id;
+          RAISE NOTICE 'DELETED inbox message (event stored): messageId=%', v_completion.msg_id;
         ELSE
           UPDATE wh_inbox
           SET status = wh_inbox.status | v_completion.status_flags,
@@ -256,6 +266,84 @@ BEGIN
           instance_id = NULL,
           lease_expiry = NULL
       WHERE wh_inbox.message_id = v_failure.msg_id;
+    END LOOP;
+  END IF;
+
+  -- 5.25. Process receptor processing completions
+  IF jsonb_array_length(p_receptor_completions) > 0 THEN
+    FOR v_completion IN
+      SELECT
+        (elem->>'EventId')::UUID as event_id,
+        elem->>'ReceptorName' as receptor_name,
+        (elem->>'Status')::SMALLINT as status
+      FROM jsonb_array_elements(p_receptor_completions) as elem
+    LOOP
+      PERFORM complete_receptor_processing_work(
+        v_completion.event_id,
+        v_completion.receptor_name,
+        v_completion.status,
+        NULL  -- No error for successful completion
+      );
+    END LOOP;
+  END IF;
+
+  -- 5.3. Process receptor processing failures
+  IF jsonb_array_length(p_receptor_failures) > 0 THEN
+    FOR v_failure IN
+      SELECT
+        (elem->>'EventId')::UUID as event_id,
+        elem->>'ReceptorName' as receptor_name,
+        (elem->>'Status')::SMALLINT as status,
+        elem->>'Error' as error_message
+      FROM jsonb_array_elements(p_receptor_failures) as elem
+    LOOP
+      PERFORM complete_receptor_processing_work(
+        v_failure.event_id,
+        v_failure.receptor_name,
+        v_failure.status,
+        v_failure.error_message
+      );
+    END LOOP;
+  END IF;
+
+  -- 5.35. Process perspective checkpoint completions
+  IF jsonb_array_length(p_perspective_completions) > 0 THEN
+    FOR v_completion IN
+      SELECT
+        (elem->>'StreamId')::UUID as stream_id,
+        elem->>'PerspectiveName' as perspective_name,
+        (elem->>'LastEventId')::UUID as last_event_id,
+        (elem->>'Status')::SMALLINT as status
+      FROM jsonb_array_elements(p_perspective_completions) as elem
+    LOOP
+      PERFORM complete_perspective_checkpoint_work(
+        v_completion.stream_id,
+        v_completion.perspective_name,
+        v_completion.last_event_id,
+        v_completion.status,
+        NULL  -- No error for successful completion
+      );
+    END LOOP;
+  END IF;
+
+  -- 5.4. Process perspective checkpoint failures
+  IF jsonb_array_length(p_perspective_failures) > 0 THEN
+    FOR v_failure IN
+      SELECT
+        (elem->>'StreamId')::UUID as stream_id,
+        elem->>'PerspectiveName' as perspective_name,
+        (elem->>'LastEventId')::UUID as last_event_id,
+        (elem->>'Status')::SMALLINT as status,
+        elem->>'Error' as error_message
+      FROM jsonb_array_elements(p_perspective_failures) as elem
+    LOOP
+      PERFORM complete_perspective_checkpoint_work(
+        v_failure.stream_id,
+        v_failure.perspective_name,
+        v_failure.last_event_id,
+        v_failure.status,
+        v_failure.error_message
+      );
     END LOOP;
   END IF;
 
@@ -417,15 +505,14 @@ BEGIN
     FROM wh_outbox
     WHERE (wh_outbox.instance_id IS NULL OR wh_outbox.lease_expiry IS NULL OR wh_outbox.lease_expiry < v_now)
       AND (wh_outbox.status & 32768) = 0  -- Not failed
-      AND (wh_outbox.status & 4) != 4     -- Not published (prevents reclaiming completed messages)
-      AND (wh_outbox.status & 24) != 24   -- Not fully completed
+      AND (wh_outbox.status & 4) != 4     -- Not published (outbox is done when published)
       AND wh_outbox.partition_number IS NOT NULL
     UNION
     SELECT DISTINCT wh_inbox.partition_number
     FROM wh_inbox
     WHERE (wh_inbox.instance_id IS NULL OR wh_inbox.lease_expiry IS NULL OR wh_inbox.lease_expiry < v_now)
-      AND (wh_inbox.status & 32768) = 0
-      AND (wh_inbox.status & 24) != 24
+      AND (wh_inbox.status & 32768) = 0  -- Not failed
+      AND (wh_inbox.status & 2) != 2     -- Not event stored (inbox is done when event stored)
       AND wh_inbox.partition_number IS NOT NULL
   ),
   available_orphaned_partitions AS (
@@ -632,8 +719,7 @@ BEGIN
     )
     AND (wh_outbox.instance_id IS NULL OR wh_outbox.lease_expiry IS NULL OR wh_outbox.lease_expiry < v_now)
     AND (wh_outbox.status & 32768) = 0  -- Not failed
-    AND (wh_outbox.status & 4) != 4     -- Not published (prevents reclaiming completed messages)
-    AND (wh_outbox.status & 24) != 24   -- Not fully completed
+    AND (wh_outbox.status & 4) != 4     -- Not published (outbox is done when published)
     AND NOT EXISTS (  -- Don't reclaim messages being completed
       SELECT 1 FROM jsonb_array_elements(p_outbox_completions) elem
       WHERE (elem->>'MessageId')::UUID = wh_outbox.message_id
@@ -662,7 +748,7 @@ BEGIN
     )
     AND (wh_inbox.instance_id IS NULL OR wh_inbox.lease_expiry IS NULL OR wh_inbox.lease_expiry < v_now)
     AND (wh_inbox.status & 32768) = 0  -- Not failed
-    AND (wh_inbox.status & 24) != 24  -- Not fully completed
+    AND (wh_inbox.status & 2) != 2     -- Not event stored (inbox is done when event stored)
     AND NOT EXISTS (  -- Don't reclaim messages being completed
       SELECT 1 FROM jsonb_array_elements(p_inbox_completions) elem
       WHERE (elem->>'MessageId')::UUID = wh_inbox.message_id
@@ -714,7 +800,7 @@ BEGIN
   WHERE o.instance_id = p_instance_id
     AND o.lease_expiry > v_now
     AND (o.status & 32768) = 0  -- Not failed
-    AND (o.status & 24) != 24   -- Not fully completed
+    AND (o.status & 4) != 4     -- Not published (outbox is done when published)
     AND (o.message_id = ANY(v_new_outbox_ids) OR o.message_id = ANY(v_orphaned_outbox_ids))  -- Only newly stored OR orphaned/re-leased
   ORDER BY o.stream_id, o.created_at;  -- CRITICAL: Stream ordering
 
@@ -745,8 +831,8 @@ BEGIN
   INNER JOIN owned_partitions op ON i.partition_number = op.part_num
   WHERE i.instance_id = p_instance_id
     AND i.lease_expiry > v_now
-    AND (i.status & 32768) = 0
-    AND (i.status & 24) != 24
+    AND (i.status & 32768) = 0  -- Not failed
+    AND (i.status & 2) != 2     -- Not event stored (inbox is done when event stored)
     AND (i.message_id = ANY(v_new_inbox_ids) OR i.message_id = ANY(v_orphaned_inbox_ids))  -- Only newly stored OR orphaned/re-leased
   ORDER BY i.stream_id, i.received_at;  -- CRITICAL: Stream ordering
 
@@ -754,4 +840,4 @@ END;
 $$ LANGUAGE plpgsql;
 
 -- Add comment for documentation
-COMMENT ON FUNCTION process_work_batch IS 'Atomic work coordination: register/heartbeat instance, cleanup stale instances, mark completed/failed, claim orphaned work, partition-based stream ordering with event store integration';
+COMMENT ON FUNCTION process_work_batch IS 'Atomic work coordination: register/heartbeat instance, cleanup stale instances, mark completed/failed (outbox/inbox/receptor/perspective), claim orphaned work, partition-based stream ordering with event store integration and receptor/perspective tracking';

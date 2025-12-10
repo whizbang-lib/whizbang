@@ -194,8 +194,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       outboxCompletions: [],
       outboxFailures: [],
       inboxCompletions: [
-        new MessageCompletion { MessageId = messageId1, Status = MessageProcessingStatus.FullyCompleted },
-        new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.FullyCompleted }
+        new MessageCompletion { MessageId = messageId1, Status = MessageProcessingStatus.EventStored },
+        new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.EventStored }
       ],
       inboxFailures: [],
       newOutboxMessages: [],
@@ -442,7 +442,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         }
       ],
       inboxCompletions: [
-        new MessageCompletion { MessageId = completedInboxId, Status = MessageProcessingStatus.FullyCompleted }
+        new MessageCompletion { MessageId = completedInboxId, Status = MessageProcessingStatus.EventStored }
       ],
       inboxFailures: [
         new MessageFailure {
@@ -1301,8 +1301,6 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       .Because("Partial completion should include Stored flag");
     await Assert.That((status & MessageProcessingStatus.EventStored) == MessageProcessingStatus.EventStored).IsTrue()
       .Because("Partial completion should include EventStored flag");
-    await Assert.That((status & MessageProcessingStatus.ReceptorProcessed) != MessageProcessingStatus.ReceptorProcessed).IsTrue()
-      .Because("Partial completion should NOT include ReceptorProcessed flag (this is where it failed)");
 
     var dbStatus = await GetInboxStatusAsync(messageId);
     await Assert.That(dbStatus).IsEqualTo("Failed")
@@ -1705,11 +1703,6 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       return "Failed";
     }
 
-    // Check for Completed (both ReceptorProcessed AND PerspectiveProcessed)
-    if ((status & MessageProcessingStatus.FullyCompleted) == MessageProcessingStatus.FullyCompleted) {
-      return "Completed";
-    }
-
     // Check for Published
     if ((status & MessageProcessingStatus.Published) == MessageProcessingStatus.Published) {
       return "Published";
@@ -1756,7 +1749,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var statusFlags = status switch {
       "Pending" => 1,  // Stored
       "Processing" => 1,  // Stored
-      "Completed" => 25,  // Stored | ReceptorProcessed | PerspectiveProcessed
+      "Completed" => 2,  // EventStored (inbox is done when event stored)
       "Failed" => 32769,  // Stored | Failed
       _ => 1  // Default to Stored
     };
@@ -1818,11 +1811,6 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     // Check for Failed first (highest priority)
     if ((status & MessageProcessingStatus.Failed) == MessageProcessingStatus.Failed) {
       return "Failed";
-    }
-
-    // Check for Completed (both ReceptorProcessed AND PerspectiveProcessed)
-    if ((status & MessageProcessingStatus.FullyCompleted) == MessageProcessingStatus.FullyCompleted) {
-      return "Completed";
     }
 
     // Default to Pending (only Stored flag)
