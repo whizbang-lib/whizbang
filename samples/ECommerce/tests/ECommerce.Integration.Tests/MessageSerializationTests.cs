@@ -100,12 +100,12 @@ public class MessageSerializationTests {
   }
 
   /// <summary>
-  /// Verify Create*Command with WhizbangIds serializes correctly.
-  /// Commands use the WhizbangId types (OrderId, ProductId, CustomerId).
+  /// Verify MessageEnvelope with CreateProductCommand serializes correctly.
+  /// This tests the EXACT scenario: MessageEnvelope with a command containing WhizbangId.
   /// </summary>
   [Test]
-  public async Task Command_WithWhizbangIds_SerializesCorrectlyAsync() {
-    // Arrange - Create a real CreateProductCommand with ProductId
+  public async Task MessageEnvelope_WithCreateProductCommand_SerializesWhizbangIdsCorrectlyAsync() {
+    // Arrange - Create a real CreateProductCommand with ProductId (WhizbangId)
     var productId = ProductId.New();
     var command = new CreateProductCommand {
       ProductId = productId,
@@ -114,8 +114,9 @@ public class MessageSerializationTests {
       Price = 99.99m
     };
 
+    var originalMessageId = MessageId.New();
     var envelope = new MessageEnvelope<CreateProductCommand> {
-      MessageId = MessageId.New(),
+      MessageId = originalMessageId,
       Payload = command,
       Hops = new List<MessageHop>()
     };
@@ -126,14 +127,68 @@ public class MessageSerializationTests {
     var json = JsonSerializer.Serialize(envelope, jsonOptions);
 
     // Assert - MessageId and ProductId should NOT be all zeros in JSON
-    await Assert.That(json).DoesNotContain("\"messageId\":\"00000000-0000-0000-0000-000000000000\"");
-    await Assert.That(json).DoesNotContain("\"productId\":\"00000000-0000-0000-0000-000000000000\"");
+    await Assert.That(json).DoesNotContain("\"messageId\":\"00000000-0000-0000-0000-000000000000\"")
+      .Because("MessageId should serialize as a valid UUIDv7, not all zeros");
+    await Assert.That(json).DoesNotContain("\"productId\":\"00000000-0000-0000-0000-000000000000\"")
+      .Because("ProductId (WhizbangId) should serialize as a valid UUIDv7, not all zeros");
 
-    // Deserialize and verify
+    // Deserialize and verify IDs are preserved
     var deserialized = JsonSerializer.Deserialize<MessageEnvelope<CreateProductCommand>>(json, jsonOptions);
     await Assert.That(deserialized).IsNotNull();
-    await Assert.That(deserialized!.MessageId.Value).IsNotEqualTo(Guid.Empty);
-    await Assert.That(deserialized.Payload.ProductId.Value).IsEqualTo(productId.Value);
+    await Assert.That(deserialized!.MessageId.Value).IsEqualTo(originalMessageId.Value)
+      .Because("MessageId must survive JSON round-trip");
+    await Assert.That(deserialized.Payload.ProductId.Value).IsEqualTo(productId.Value)
+      .Because("ProductId (WhizbangId) must survive JSON round-trip");
+  }
+
+  /// <summary>
+  /// Verify MessageEnvelope with CreateOrderCommand serializes all three WhizbangId types.
+  /// This is the most comprehensive test - OrderId, CustomerId, and ProductId all in one message.
+  /// </summary>
+  [Test]
+  public async Task MessageEnvelope_WithCreateOrderCommand_SerializesAllWhizbangIdsCorrectlyAsync() {
+    // Arrange - Create CreateOrderCommand with all three WhizbangId types
+    var orderId = OrderId.New();
+    var customerId = CustomerId.New();
+    var productId = ProductId.New();
+
+    var command = new CreateOrderCommand {
+      OrderId = orderId,
+      CustomerId = customerId,
+      LineItems = new List<OrderLineItem> {
+        new OrderLineItem {
+          ProductId = productId,
+          ProductName = "Test Product",
+          Quantity = 2,
+          UnitPrice = 50.00m
+        }
+      },
+      TotalAmount = 100.00m
+    };
+
+    var originalMessageId = MessageId.New();
+    var envelope = new MessageEnvelope<CreateOrderCommand> {
+      MessageId = originalMessageId,
+      Payload = command,
+      Hops = new List<MessageHop>()
+    };
+
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+
+    // Act - Serialize and deserialize (simulates outbox path)
+    var json = JsonSerializer.Serialize(envelope, jsonOptions);
+    var deserialized = JsonSerializer.Deserialize<MessageEnvelope<CreateOrderCommand>>(json, jsonOptions);
+
+    // Assert - ALL IDs must be preserved!
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.MessageId.Value).IsEqualTo(originalMessageId.Value)
+      .Because("MessageId must survive serialization round-trip");
+    await Assert.That(deserialized.Payload.OrderId.Value).IsEqualTo(orderId.Value)
+      .Because("OrderId (WhizbangId) must survive serialization round-trip");
+    await Assert.That(deserialized.Payload.CustomerId.Value).IsEqualTo(customerId.Value)
+      .Because("CustomerId (WhizbangId) must survive serialization round-trip");
+    await Assert.That(deserialized.Payload.LineItems[0].ProductId.Value).IsEqualTo(productId.Value)
+      .Because("ProductId (WhizbangId) in nested LineItem must survive serialization round-trip");
   }
 
   /// <summary>
