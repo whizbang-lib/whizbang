@@ -62,7 +62,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       ]
     };
 
-    sut.QueueOutboxMessage(new OutboxMessage<object> {
+    sut.QueueOutboxMessage(new OutboxMessage {
       MessageId = messageId1,
       Destination = "topic1",
       Envelope = envelope1,
@@ -87,7 +87,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       ]
     };
 
-    sut.QueueInboxMessage(new InboxMessage<object> {
+    sut.QueueInboxMessage(new InboxMessage {
       MessageId = messageId2,
       HandlerName = "Handler1",
       Envelope = envelope2,
@@ -147,7 +147,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       ]
     };
 
-    sut.QueueOutboxMessage(new OutboxMessage<object> {
+    sut.QueueOutboxMessage(new OutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = envelope,
@@ -217,7 +217,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       ]
     };
 
-    sut.QueueOutboxMessage(new OutboxMessage<object> {
+    sut.QueueOutboxMessage(new OutboxMessage {
       MessageId = outboxId1,
       Destination = "topic1",
       Envelope = envelope1,
@@ -242,7 +242,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       ]
     };
 
-    sut.QueueOutboxMessage(new OutboxMessage<object> {
+    sut.QueueOutboxMessage(new OutboxMessage {
       MessageId = outboxId2,
       Destination = "topic2",
       Envelope = envelope2,
@@ -267,7 +267,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       ]
     };
 
-    sut.QueueInboxMessage(new InboxMessage<object> {
+    sut.QueueInboxMessage(new InboxMessage {
       MessageId = inboxId1,
       HandlerName = "Handler1",
       Envelope = envelope3,

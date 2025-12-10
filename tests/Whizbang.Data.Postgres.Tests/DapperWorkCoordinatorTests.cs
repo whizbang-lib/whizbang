@@ -487,7 +487,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var messageId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
 
-    var newOutboxMessage = new OutboxMessage<object> {
+    var newOutboxMessage = new OutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = CreateTestEnvelope(messageId),
@@ -531,7 +531,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
     var messageId = _idProvider.NewGuid();
 
-    var newInboxMessage = new InboxMessage<object> {
+    var newInboxMessage = new InboxMessage {
       MessageId = messageId,
       HandlerName = "TestHandler",
       Envelope = CreateTestEnvelope(messageId),
@@ -592,7 +592,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var streamId = _idProvider.NewGuid();
 
     var messageId = _idProvider.NewGuid();
-    var newInboxMessage = new InboxMessage<object> {
+    var newInboxMessage = new InboxMessage {
       MessageId = messageId,
       HandlerName = "TestHandler",
       Envelope = CreateTestEnvelope(messageId),
@@ -638,7 +638,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var streamId = _idProvider.NewGuid();
 
     var messageId = _idProvider.NewGuid();
-    var newOutboxMessage = new OutboxMessage<object> {
+    var newOutboxMessage = new OutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = CreateTestEnvelope(messageId),
@@ -688,7 +688,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var messageId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
 
-    var newOutboxMessage = new OutboxMessage<object> {
+    var newOutboxMessage = new OutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = CreateTestEnvelope(messageId),
@@ -729,7 +729,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var messageId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
 
-    var newInboxMessage = new InboxMessage<object> {
+    var newInboxMessage = new InboxMessage {
       MessageId = messageId,
       HandlerName = "TestHandler",
       Envelope = CreateTestEnvelope(messageId),
@@ -774,7 +774,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     // Insert first event already in event store (simulating existing event at version 1)
     await InsertEventStoreRecordAsync(streamId, messageId1, "TestEvent", "{}", version: 1);
 
-    var newInboxMessage = new InboxMessage<object> {
+    var newInboxMessage = new InboxMessage {
       MessageId = messageId2,
       HandlerName = "TestHandler",
       Envelope = CreateTestEnvelope(messageId2),
@@ -823,7 +823,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var messageId3 = _idProvider.NewGuid();
 
     var newOutboxMessages = new[] {
-      new OutboxMessage<object> {
+      new OutboxMessage {
         MessageId = messageId1,
         Destination = "topic1",
         Envelope = CreateTestEnvelope(messageId1),
@@ -832,7 +832,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         IsEvent = true,
         MessageType = "TestMessage, TestAssembly"
       },
-      new OutboxMessage<object> {
+      new OutboxMessage {
         MessageId = messageId2,
         Destination = "topic1",
         Envelope = CreateTestEnvelope(messageId2),
@@ -841,7 +841,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         IsEvent = true,
         MessageType = "TestMessage, TestAssembly"
       },
-      new OutboxMessage<object> {
+      new OutboxMessage {
         MessageId = messageId3,
         Destination = "topic1",
         Envelope = CreateTestEnvelope(messageId3),
@@ -885,7 +885,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var messageId = _idProvider.NewGuid();
     var streamId = _idProvider.NewGuid();
 
-    var newOutboxMessage = new OutboxMessage<object> {
+    var newOutboxMessage = new OutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = CreateTestEnvelope(messageId),
@@ -938,7 +938,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       var messageId = _idProvider.NewGuid();
       messageIds.Add(messageId);
 
-      var newOutboxMessage = new OutboxMessage<object> {
+      var newOutboxMessage = new OutboxMessage {
         MessageId = messageId,
         Destination = "test-topic",
         Envelope = CreateTestEnvelope(messageId),
@@ -989,7 +989,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       var streamId = _idProvider.NewGuid();  // Different stream_id each time
       messageIds.Add(messageId);
 
-      var newOutboxMessage = new OutboxMessage<object> {
+      var newOutboxMessage = new OutboxMessage {
         MessageId = messageId,
         Destination = "test-topic",
         Envelope = CreateTestEnvelope(messageId),
@@ -1328,7 +1328,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       streamId: _idProvider.NewGuid(),
       isEvent: true);
 
-    var newOutboxMessage = new OutboxMessage<object> {
+    var newOutboxMessage = new OutboxMessage {
       MessageId = newMessageId,
       Destination = "test-topic",
       Envelope = CreateTestEnvelope(newMessageId),
@@ -1461,7 +1461,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
     var messageId = _idProvider.NewGuid();
 
-    var newOutboxMessage = new OutboxMessage<object> {
+    var newOutboxMessage = new OutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = CreateTestEnvelope(messageId),
@@ -1499,7 +1499,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
     var messageId = _idProvider.NewGuid();
 
-    var newOutboxMessage = new OutboxMessage<object> {
+    var newOutboxMessage = new OutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = CreateTestEnvelope(messageId),
@@ -1537,7 +1537,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
     var messageId = _idProvider.NewGuid();
 
-    var newInboxMessage = new InboxMessage<object> {
+    var newInboxMessage = new InboxMessage {
       MessageId = messageId,
       HandlerName = "TestHandler",
       Envelope = CreateTestEnvelope(messageId),
@@ -1575,7 +1575,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
     var messageId = _idProvider.NewGuid();
 
-    var newInboxMessage = new InboxMessage<object> {
+    var newInboxMessage = new InboxMessage {
       MessageId = messageId,
       HandlerName = "TestHandler",
       Envelope = CreateTestEnvelope(messageId),

@@ -81,10 +81,11 @@ public record WorkBatch {
 }
 
 /// <summary>
-/// Non-generic base for outbox messages to support heterogeneous collections.
-/// Use OutboxMessage&lt;TMessage&gt; for strongly-typed message handling.
+/// Represents an outbox message to be stored in process_work_batch.
+/// Used for immediate processing pattern (store + immediately return for publishing).
+/// Envelope is IMessageEnvelope&lt;object&gt; to support heterogeneous collections while preserving type info in the envelope itself.
 /// </summary>
-public abstract record OutboxMessage {
+public record OutboxMessage {
   /// <summary>
   /// Unique message ID (should be UUIDv7 for time-ordered, database-friendly IDs).
   /// </summary>
@@ -94,6 +95,12 @@ public abstract record OutboxMessage {
   /// Destination to publish to (topic name).
   /// </summary>
   public required string Destination { get; init; }
+
+  /// <summary>
+  /// Complete MessageEnvelope object (including payload, message type, hops, metadata).
+  /// Type information is preserved in the MessageEnvelope&lt;TMessage&gt; instance itself.
+  /// </summary>
+  public required IMessageEnvelope<object> Envelope { get; init; }
 
   /// <summary>
   /// Assembly-qualified name of the envelope type (e.g., "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.CreateProductCommand, MyApp]], Whizbang.Core").
@@ -121,24 +128,11 @@ public abstract record OutboxMessage {
 }
 
 /// <summary>
-/// Represents an outbox message to be stored in process_work_batch.
-/// Used for immediate processing pattern (store + immediately return for publishing).
-/// Generic to maintain strong typing throughout the system.
+/// Represents an inbox message to be stored in process_work_batch.
+/// Includes atomic deduplication (ON CONFLICT DO NOTHING) and optional event store integration.
+/// Envelope is IMessageEnvelope&lt;object&gt; to support heterogeneous collections while preserving type info in the envelope itself.
 /// </summary>
-/// <typeparam name="TMessage">The type of the message payload</typeparam>
-public record OutboxMessage<TMessage> : OutboxMessage {
-  /// <summary>
-  /// Complete MessageEnvelope object (including payload, message type, hops, metadata).
-  /// Strongly typed - serialization happens at the work coordinator layer.
-  /// </summary>
-  public required IMessageEnvelope<TMessage> Envelope { get; init; }
-}
-
-/// <summary>
-/// Non-generic base for inbox messages to support heterogeneous collections.
-/// Use InboxMessage&lt;TMessage&gt; for strongly-typed message handling.
-/// </summary>
-public abstract record InboxMessage {
+public record InboxMessage {
   /// <summary>
   /// Unique message ID (should be UUIDv7 for time-ordered, database-friendly IDs).
   /// </summary>
@@ -148,6 +142,12 @@ public abstract record InboxMessage {
   /// Handler name (e.g., "ServiceBusConsumer").
   /// </summary>
   public required string HandlerName { get; init; }
+
+  /// <summary>
+  /// Complete MessageEnvelope object (including payload, message type, hops, metadata).
+  /// Type information is preserved in the MessageEnvelope&lt;TMessage&gt; instance itself.
+  /// </summary>
+  public required IMessageEnvelope<object> Envelope { get; init; }
 
   /// <summary>
   /// Assembly-qualified name of the envelope type (e.g., "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.ProductCreatedEvent, MyApp]], Whizbang.Core").
@@ -172,20 +172,6 @@ public abstract record InboxMessage {
   /// Used for deserialization and stored in the event_type database column.
   /// </summary>
   public required string MessageType { get; init; }
-}
-
-/// <summary>
-/// Represents an inbox message to be stored in process_work_batch.
-/// Includes atomic deduplication (ON CONFLICT DO NOTHING) and optional event store integration.
-/// Generic to maintain strong typing throughout the system.
-/// </summary>
-/// <typeparam name="TMessage">The type of the message payload</typeparam>
-public record InboxMessage<TMessage> : InboxMessage {
-  /// <summary>
-  /// Complete MessageEnvelope object (including payload, message type, hops, metadata).
-  /// Strongly typed - serialization happens at the work coordinator layer.
-  /// </summary>
-  public required IMessageEnvelope<TMessage> Envelope { get; init; }
 }
 
 /// <summary>
@@ -252,10 +238,11 @@ public record FailedMessage {
 }
 
 /// <summary>
-/// Non-generic base for outbox work to support heterogeneous collections.
-/// Use OutboxWork&lt;TMessage&gt; for strongly-typed message handling.
+/// Represents outbox work that needs to be published.
+/// Includes both new pending messages and messages with expired leases (orphaned).
+/// Envelope is IMessageEnvelope&lt;object&gt; to support heterogeneous collections while preserving type info in the envelope itself.
 /// </summary>
-public abstract record OutboxWork {
+public record OutboxWork {
   /// <summary>
   /// Unique message ID.
   /// </summary>
@@ -265,6 +252,13 @@ public abstract record OutboxWork {
   /// Destination to publish to (topic name).
   /// </summary>
   public required string Destination { get; init; }
+
+  /// <summary>
+  /// Complete MessageEnvelope object (including payload, message type, hops, metadata).
+  /// Type information is preserved in the MessageEnvelope&lt;TMessage&gt; instance itself.
+  /// Deserialized from database - ready to publish.
+  /// </summary>
+  public required IMessageEnvelope<object> Envelope { get; init; }
 
   /// <summary>
   /// Stream ID for ordering (aggregate ID or message ID).
@@ -303,28 +297,23 @@ public abstract record OutboxWork {
 }
 
 /// <summary>
-/// Represents outbox work that needs to be published.
+/// Represents inbox work that needs to be processed.
 /// Includes both new pending messages and messages with expired leases (orphaned).
-/// Generic to maintain strong typing throughout the system.
+/// From the application's perspective, these are the next messages to handle.
+/// Envelope is IMessageEnvelope&lt;object&gt; to support heterogeneous collections while preserving type info in the envelope itself.
 /// </summary>
-/// <typeparam name="TMessage">The type of the message payload</typeparam>
-public record OutboxWork<TMessage> : OutboxWork {
-  /// <summary>
-  /// Complete MessageEnvelope object (including payload, message type, hops, metadata).
-  /// Deserialized from database - ready to publish.
-  /// </summary>
-  public required IMessageEnvelope<TMessage> Envelope { get; init; }
-}
-
-/// <summary>
-/// Non-generic base for inbox work to support heterogeneous collections.
-/// Use InboxWork&lt;TMessage&gt; for strongly-typed message handling.
-/// </summary>
-public abstract record InboxWork {
+public record InboxWork {
   /// <summary>
   /// Unique message ID.
   /// </summary>
   public required Guid MessageId { get; init; }
+
+  /// <summary>
+  /// Complete MessageEnvelope object (including payload, message type, hops, metadata).
+  /// Type information is preserved in the MessageEnvelope&lt;TMessage&gt; instance itself.
+  /// Deserialized from database - ready to process.
+  /// </summary>
+  public required IMessageEnvelope<object> Envelope { get; init; }
 
   /// <summary>
   /// Stream ID for ordering (aggregate ID or message ID).
@@ -355,19 +344,4 @@ public abstract record InboxWork {
   /// Epoch milliseconds from received_at timestamp.
   /// </summary>
   public long SequenceOrder { get; init; }
-}
-
-/// <summary>
-/// Represents inbox work that needs to be processed.
-/// Includes both new pending messages and messages with expired leases (orphaned).
-/// From the application's perspective, these are the next messages to handle.
-/// Generic to maintain strong typing throughout the system.
-/// </summary>
-/// <typeparam name="TMessage">The type of the message payload</typeparam>
-public record InboxWork<TMessage> : InboxWork {
-  /// <summary>
-  /// Complete MessageEnvelope object (including payload, message type, hops, metadata).
-  /// Deserialized from database - ready to process.
-  /// </summary>
-  public required IMessageEnvelope<TMessage> Envelope { get; init; }
 }

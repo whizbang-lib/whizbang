@@ -328,7 +328,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
   }
 
   private static OutboxWork CreateTestOutboxWork(Guid messageId) {
-    return new OutboxWork<object> {
+    return new OutboxWork {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = CreateTestEnvelope(messageId),

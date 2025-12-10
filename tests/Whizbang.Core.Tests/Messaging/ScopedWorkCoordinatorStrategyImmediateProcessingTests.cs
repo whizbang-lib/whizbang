@@ -30,14 +30,14 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     var messageId2 = System.Guid.NewGuid();
     var coordinator = new TestWorkCoordinator {
       WorkToReturn = [
-        new OutboxWork<object> {
+        new OutboxWork {
           MessageId = messageId1,
           Destination = "test-topic",
           Envelope = CreateTestEnvelope(messageId1),
           Attempts = 0,
           Status = MessageProcessingStatus.None
         },
-        new OutboxWork<object> {
+        new OutboxWork {
           MessageId = messageId2,
           Destination = "test-topic",
           Envelope = CreateTestEnvelope(messageId2),
@@ -53,7 +53,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
 
     // Queue a message to trigger flush
     var queuedMessageId = System.Guid.NewGuid();
-    strategy.QueueOutboxMessage(new OutboxMessage<object> {
+    strategy.QueueOutboxMessage(new OutboxMessage {
       MessageId = queuedMessageId,
       Destination = "test-topic",
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
@@ -84,7 +84,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
 
     // Queue a message to trigger flush
     var queuedMessageId = System.Guid.NewGuid();
-    strategy.QueueOutboxMessage(new OutboxMessage<object> {
+    strategy.QueueOutboxMessage(new OutboxMessage {
       MessageId = queuedMessageId,
       Destination = "test-topic",
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
@@ -113,11 +113,11 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     var msg1 = System.Guid.NewGuid();
     var msg2 = System.Guid.NewGuid();
     coordinator.WorkToReturn = [
-      new OutboxWork<object> { MessageId = msg1, Destination = "topic1", Envelope = CreateTestEnvelope(msg1), Attempts = 0, Status = MessageProcessingStatus.None },
-      new OutboxWork<object> { MessageId = msg2, Destination = "topic1", Envelope = CreateTestEnvelope(msg2), Attempts = 0, Status = MessageProcessingStatus.None }
+      new OutboxWork { MessageId = msg1, Destination = "topic1", Envelope = CreateTestEnvelope(msg1), Attempts = 0, Status = MessageProcessingStatus.None },
+      new OutboxWork { MessageId = msg2, Destination = "topic1", Envelope = CreateTestEnvelope(msg2), Attempts = 0, Status = MessageProcessingStatus.None }
     ];
     var queued1 = System.Guid.NewGuid();
-    strategy.QueueOutboxMessage(new OutboxMessage<object> {
+    strategy.QueueOutboxMessage(new OutboxMessage {
       MessageId = queued1,
       Destination = "topic1",
       Envelope = CreateTestEnvelope(queued1),
@@ -132,12 +132,12 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     var msg4 = System.Guid.NewGuid();
     var msg5 = System.Guid.NewGuid();
     coordinator.WorkToReturn = [
-      new OutboxWork<object> { MessageId = msg3, Destination = "topic2", Envelope = CreateTestEnvelope(msg3), Attempts = 0, Status = MessageProcessingStatus.None },
-      new OutboxWork<object> { MessageId = msg4, Destination = "topic2", Envelope = CreateTestEnvelope(msg4), Attempts = 0, Status = MessageProcessingStatus.None },
-      new OutboxWork<object> { MessageId = msg5, Destination = "topic2", Envelope = CreateTestEnvelope(msg5), Attempts = 0, Status = MessageProcessingStatus.None }
+      new OutboxWork { MessageId = msg3, Destination = "topic2", Envelope = CreateTestEnvelope(msg3), Attempts = 0, Status = MessageProcessingStatus.None },
+      new OutboxWork { MessageId = msg4, Destination = "topic2", Envelope = CreateTestEnvelope(msg4), Attempts = 0, Status = MessageProcessingStatus.None },
+      new OutboxWork { MessageId = msg5, Destination = "topic2", Envelope = CreateTestEnvelope(msg5), Attempts = 0, Status = MessageProcessingStatus.None }
     ];
     var queued2 = System.Guid.NewGuid();
-    strategy.QueueOutboxMessage(new OutboxMessage<object> {
+    strategy.QueueOutboxMessage(new OutboxMessage {
       MessageId = queued2,
       Destination = "topic2",
       Envelope = CreateTestEnvelope(queued2),
@@ -161,9 +161,9 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
 
     var coordinator = new TestWorkCoordinator {
       WorkToReturn = [
-        new OutboxWork<object> { MessageId = messageId1, Destination = "topic", Envelope = CreateTestEnvelope(messageId1), Attempts = 0, Status = MessageProcessingStatus.None },
-        new OutboxWork<object> { MessageId = messageId2, Destination = "topic", Envelope = CreateTestEnvelope(messageId2), Attempts = 0, Status = MessageProcessingStatus.None },
-        new OutboxWork<object> { MessageId = messageId3, Destination = "topic", Envelope = CreateTestEnvelope(messageId3), Attempts = 0, Status = MessageProcessingStatus.None }
+        new OutboxWork { MessageId = messageId1, Destination = "topic", Envelope = CreateTestEnvelope(messageId1), Attempts = 0, Status = MessageProcessingStatus.None },
+        new OutboxWork { MessageId = messageId2, Destination = "topic", Envelope = CreateTestEnvelope(messageId2), Attempts = 0, Status = MessageProcessingStatus.None },
+        new OutboxWork { MessageId = messageId3, Destination = "topic", Envelope = CreateTestEnvelope(messageId3), Attempts = 0, Status = MessageProcessingStatus.None }
       ]
     };
 
@@ -172,7 +172,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     var strategy = new ScopedWorkCoordinatorStrategy(coordinator, instanceProvider, channelWriter, options);
 
     var queuedMessageId = System.Guid.NewGuid();
-    strategy.QueueOutboxMessage(new OutboxMessage<object> {
+    strategy.QueueOutboxMessage(new OutboxMessage {
       MessageId = queuedMessageId,
       Destination = "topic",
       Envelope = CreateTestEnvelope(queuedMessageId),

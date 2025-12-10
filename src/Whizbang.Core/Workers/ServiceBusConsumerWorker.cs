@@ -232,10 +232,10 @@ public class ServiceBusConsumerWorker(
     var typedEnvelope = envelope as IMessageEnvelope<object>
       ?? throw new InvalidOperationException($"Envelope must implement IMessageEnvelope<object> for message {envelope.MessageId}");
 
-    return new InboxMessage<object> {
+    return new InboxMessage {
       MessageId = envelope.MessageId.Value,
       HandlerName = handlerName,
-      Envelope = typedEnvelope,  // Cast to generic interface
+      Envelope = typedEnvelope,  // Cast to IMessageEnvelope<object>
       EnvelopeType = envelopeTypeName,
       StreamId = streamId,
       IsEvent = payload is IEvent,
@@ -249,14 +249,9 @@ public class ServiceBusConsumerWorker(
   /// </summary>
   private object? _deserializeEvent(InboxWork work) {
     try {
-      // Work is InboxWork<T>, but we receive base type
-      // Cast to access Envelope property
-      if (work is InboxWork<object> typedWork) {
-        return typedWork.Envelope.Payload;
-      }
-
-      _logger.LogError("InboxWork is not InboxWork<object> for message {MessageId}", work.MessageId);
-      return null;
+      // InboxWork is non-generic - Envelope is IMessageEnvelope<object>
+      // Just access Payload directly
+      return work.Envelope.Payload;
     } catch (Exception ex) {
       _logger.LogError(ex, "Failed to extract payload from envelope for message {MessageId}", work.MessageId);
       return null;

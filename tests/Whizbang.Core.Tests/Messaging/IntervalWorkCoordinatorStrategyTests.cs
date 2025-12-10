@@ -48,7 +48,7 @@ public class IntervalWorkCoordinatorStrategyTests {
 
     var messageId = _idProvider.NewGuid();
     var envelope = CreateTestEnvelope(messageId);
-    sut.QueueOutboxMessage(new OutboxMessage<object> {
+    sut.QueueOutboxMessage(new OutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = envelope,
@@ -94,7 +94,7 @@ public class IntervalWorkCoordinatorStrategyTests {
 
     // Act - Queue two messages quickly (before timer fires)
     var envelope1 = CreateTestEnvelope(messageId1);
-    sut.QueueOutboxMessage(new OutboxMessage<object> {
+    sut.QueueOutboxMessage(new OutboxMessage {
       MessageId = messageId1,
       Destination = "topic1",
       Envelope = envelope1,
@@ -107,7 +107,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     await Task.Delay(50);  // Small delay, but less than timer interval
 
     var envelope2 = CreateTestEnvelope(messageId2);
-    sut.QueueOutboxMessage(new OutboxMessage<object> {
+    sut.QueueOutboxMessage(new OutboxMessage {
       MessageId = messageId2,
       Destination = "topic2",
       Envelope = envelope2,
@@ -152,7 +152,7 @@ public class IntervalWorkCoordinatorStrategyTests {
 
     var messageId = _idProvider.NewGuid();
     var envelope = CreateTestEnvelope(messageId);
-    sut.QueueOutboxMessage(new OutboxMessage<object> {
+    sut.QueueOutboxMessage(new OutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = envelope,
@@ -203,7 +203,7 @@ public class IntervalWorkCoordinatorStrategyTests {
 
     var messageId = _idProvider.NewGuid();
     var envelope = CreateTestEnvelope(messageId);
-    sut.QueueOutboxMessage(new OutboxMessage<object> {
+    sut.QueueOutboxMessage(new OutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = envelope,

@@ -323,7 +323,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
   }
 
   private static OutboxWork CreateOutboxWork(Guid messageId, string destination) {
-    return new OutboxWork<object> {
+    return new OutboxWork {
       MessageId = messageId,
       Destination = destination,
       Envelope = CreateTestEnvelope(messageId),

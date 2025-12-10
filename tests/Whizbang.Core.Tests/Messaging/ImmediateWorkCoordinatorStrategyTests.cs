@@ -47,7 +47,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
       Payload = new TestEvent("test-data"),
       Hops = new List<MessageHop>()
     };
-    sut.QueueOutboxMessage(new OutboxMessage<object> {
+    sut.QueueOutboxMessage(new OutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = envelope,
@@ -93,7 +93,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
       Payload = new TestEvent("test-data"),
       Hops = new List<MessageHop>()
     };
-    var outboxMessage = new OutboxMessage<object> {
+    var outboxMessage = new OutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = envelope,
@@ -139,7 +139,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
       Payload = new TestEvent("test-data"),
       Hops = new List<MessageHop>()
     };
-    var inboxMessage = new InboxMessage<object> {
+    var inboxMessage = new InboxMessage {
       MessageId = messageId,
       HandlerName = "TestHandler",
       Envelope = envelope,

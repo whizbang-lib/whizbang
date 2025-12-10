@@ -155,7 +155,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
         inboxCompletions: [],
         inboxFailures: [],
         newOutboxMessages: [
-          new OutboxMessage<object> {
+          new OutboxMessage {
             MessageId = messageId.Value,
             Destination = "products",
             Envelope = CreateTestEnvelope(messageId.Value),
@@ -252,7 +252,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
         inboxCompletions: [],
         inboxFailures: [],
         newOutboxMessages: [
-          new OutboxMessage<object> {
+          new OutboxMessage {
             MessageId = messageId1.Value,
             Destination = "products",
             Envelope = CreateTestEnvelope(messageId1.Value),
@@ -261,7 +261,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
             StreamId = streamId,
             MessageType = "TestMessage, TestAssembly"
           },
-          new OutboxMessage<object> {
+          new OutboxMessage {
             MessageId = messageId2.Value,
             Destination = "products",
             Envelope = CreateTestEnvelope(messageId2.Value),
@@ -270,7 +270,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
             StreamId = streamId,
             MessageType = "TestMessage, TestAssembly"
           },
-          new OutboxMessage<object> {
+          new OutboxMessage {
             MessageId = messageId3.Value,
             Destination = "products",
             Envelope = CreateTestEnvelope(messageId3.Value),
@@ -341,7 +341,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
         inboxCompletions: [],
         inboxFailures: [],
         newOutboxMessages: [
-          new OutboxMessage<object> {
+          new OutboxMessage {
             MessageId = messageId.Value,
             Destination = "products",
             Envelope = CreateTestEnvelope(messageId.Value),

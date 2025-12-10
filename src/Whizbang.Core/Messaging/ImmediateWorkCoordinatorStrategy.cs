@@ -20,8 +20,8 @@ public class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
   private readonly ILogger<ImmediateWorkCoordinatorStrategy>? _logger;
 
   // Immediate strategy queues for single flush cycle
-  private readonly List<NewOutboxMessage> _queuedOutboxMessages = [];
-  private readonly List<NewInboxMessage> _queuedInboxMessages = [];
+  private readonly List<OutboxMessage> _queuedOutboxMessages = [];
+  private readonly List<InboxMessage> _queuedInboxMessages = [];
   private readonly List<MessageCompletion> _queuedOutboxCompletions = [];
   private readonly List<MessageCompletion> _queuedInboxCompletions = [];
   private readonly List<MessageFailure> _queuedOutboxFailures = [];
@@ -39,12 +39,12 @@ public class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
     _logger = logger;
   }
 
-  public void QueueOutboxMessage(NewOutboxMessage message) {
+  public void QueueOutboxMessage(OutboxMessage message) {
     _queuedOutboxMessages.Add(message);
     _logger?.LogTrace("Immediate strategy: Outbox message queued (will be sent on next Flush)");
   }
 
-  public void QueueInboxMessage(NewInboxMessage message) {
+  public void QueueInboxMessage(InboxMessage message) {
     _queuedInboxMessages.Add(message);
     _logger?.LogTrace("Immediate strategy: Inbox message queued (will be stored on next Flush)");
   }

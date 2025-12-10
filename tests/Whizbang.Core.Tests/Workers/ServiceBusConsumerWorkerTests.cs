@@ -55,9 +55,9 @@ public class ServiceBusConsumerWorkerTests {
     // Register test work coordinator strategy that returns the message for processing
     services.AddScoped<IWorkCoordinatorStrategy>(sp => new TestWorkCoordinatorStrategy(() => {
       var inboxWork = new List<InboxWork> {
-        new InboxWork<ServiceBusWorkerTestEvent> {
+        new InboxWork {
           MessageId = envelope.MessageId.Value,
-          Envelope = envelope,
+          Envelope = envelope as IMessageEnvelope<object> ?? throw new InvalidOperationException("Envelope must implement IMessageEnvelope<object>"),
           StreamId = Guid.NewGuid(),
           PartitionNumber = 1,
           Status = MessageProcessingStatus.Stored,

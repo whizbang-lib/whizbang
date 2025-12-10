@@ -154,7 +154,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         var typedEnvelope = envelope as IMessageEnvelope<object>
           ?? throw new InvalidOperationException($"Envelope must implement IMessageEnvelope<object> for message {r.MessageId}");
 
-        return new OutboxWork<object> {
+        return new OutboxWork {
           MessageId = r.MessageId,
           Destination = r.Destination!,
           Envelope = typedEnvelope,
@@ -166,7 +166,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           SequenceOrder = r.SequenceOrder
         };
       })
-      .ToList<OutboxWork>();  // Cast to base type for heterogeneous collection
+      .ToList();  // OutboxWork is non-generic
 
     var inboxWork = results
       .Where(r => r.Source == "inbox")
@@ -176,7 +176,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         var typedEnvelope = envelope as IMessageEnvelope<object>
           ?? throw new InvalidOperationException($"Envelope must implement IMessageEnvelope<object> for message {r.MessageId}");
 
-        return new InboxWork<object> {
+        return new InboxWork {
           MessageId = r.MessageId,
           Envelope = typedEnvelope,
           StreamId = r.StreamId,
@@ -186,7 +186,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           SequenceOrder = r.SequenceOrder
         };
       })
-      .ToList<InboxWork>();  // Cast to base type for heterogeneous collection
+      .ToList();  // InboxWork is non-generic
 
     // Only log when there's actual work to report
     if (outboxWork.Count > 0 || inboxWork.Count > 0) {
@@ -237,9 +237,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     // Log the first message for debugging
     if (messages.Length > 0) {
-      // Cast to access Envelope property (base type doesn't have it)
-      var firstMessage = messages[0] as OutboxMessage<object>
-        ?? throw new InvalidOperationException("OutboxMessage must be OutboxMessage<object> for serialization");
+      // OutboxMessage is non-generic - access properties directly
+      var firstMessage = messages[0];
 
       _logger?.LogDebug("Serializing outbox message: MessageId={MessageId}, Destination={Destination}, EnvelopeType={EnvelopeType}, HopsCount={HopsCount}",
         firstMessage.MessageId, firstMessage.Destination, firstMessage.EnvelopeType,

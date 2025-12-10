@@ -136,7 +136,7 @@ public class DapperWorkCoordinator(
         var typedEnvelope = envelope as IMessageEnvelope<object>
           ?? throw new InvalidOperationException($"Envelope must implement IMessageEnvelope<object> for message {r.msg_id}");
 
-        return new OutboxWork<object> {
+        return new OutboxWork {
           MessageId = r.msg_id,
           Destination = r.destination!,
           Envelope = typedEnvelope,
@@ -148,7 +148,7 @@ public class DapperWorkCoordinator(
           SequenceOrder = r.sequence_order
         };
       })
-      .ToList<OutboxWork>();  // Cast to base type for heterogeneous collection
+      .ToList();  // OutboxWork is non-generic
 
     var inboxWork = resultList
       .Where(r => r.source == "inbox")
@@ -158,7 +158,7 @@ public class DapperWorkCoordinator(
         var typedEnvelope = envelope as IMessageEnvelope<object>
           ?? throw new InvalidOperationException($"Envelope must implement IMessageEnvelope<object> for message {r.msg_id}");
 
-        return new InboxWork<object> {
+        return new InboxWork {
           MessageId = r.msg_id,
           Envelope = typedEnvelope,
           StreamId = r.stream_uuid,
@@ -168,7 +168,7 @@ public class DapperWorkCoordinator(
           SequenceOrder = r.sequence_order
         };
       })
-      .ToList<InboxWork>();  // Cast to base type for heterogeneous collection
+      .ToList();  // InboxWork is non-generic
 
     _logger?.LogInformation(
       "Work batch processed: {OutboxWork} outbox work, {InboxWork} inbox work",
@@ -216,9 +216,8 @@ public class DapperWorkCoordinator(
 
     // Log the first message for debugging
     if (messages.Length > 0) {
-      // Cast to access Envelope property (base type doesn't have it)
-      var firstMessage = messages[0] as OutboxMessage<object>
-        ?? throw new InvalidOperationException("OutboxMessage must be OutboxMessage<object> for serialization");
+      // OutboxMessage is non-generic - access properties directly
+      var firstMessage = messages[0];
 
       _logger?.LogDebug("Serializing outbox message: MessageId={MessageId}, Destination={Destination}, EnvelopeType={EnvelopeType}, HopsCount={HopsCount}",
         firstMessage.MessageId, firstMessage.Destination, firstMessage.EnvelopeType,

@@ -1052,9 +1052,9 @@ public abstract class Dispatcher(
   // ========================================
 
   /// <summary>
-  /// Creates a OutboxMessage for work coordinator pattern.
+  /// Creates an OutboxMessage for work coordinator pattern.
   /// Extracts stream_id from aggregate ID or falls back to message ID.
-  /// Generic version preserves type information for AOT serialization.
+  /// Type information is preserved in the MessageEnvelope&lt;TMessage&gt; instance itself.
   /// </summary>
   private OutboxMessage _serializeToNewOutboxMessage<TMessage>(
     IMessageEnvelope<TMessage> envelope,
@@ -1072,10 +1072,15 @@ public abstract class Dispatcher(
     var envelopeTypeName = envelope.GetType().AssemblyQualifiedName
       ?? throw new InvalidOperationException($"Envelope type {envelope.GetType().Name} must have an assembly-qualified name");
 
-    return new OutboxMessage<TMessage> {
+    // Cast envelope to IMessageEnvelope<object> for heterogeneous collections
+    // Type information is preserved in the MessageEnvelope<TMessage> instance itself
+    var objectEnvelope = envelope as IMessageEnvelope<object>
+      ?? throw new InvalidOperationException($"Envelope must implement IMessageEnvelope<object> for message {envelope.MessageId}");
+
+    return new OutboxMessage {
       MessageId = envelope.MessageId.Value,
       Destination = destination,
-      Envelope = envelope,  // Strongly-typed envelope
+      Envelope = objectEnvelope,  // IMessageEnvelope<object> for heterogeneous collections
       EnvelopeType = envelopeTypeName,
       StreamId = streamId,
       IsEvent = payload is IEvent,

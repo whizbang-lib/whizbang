@@ -266,7 +266,7 @@ public class OrderedStreamProcessorTests {
   private InboxWork CreateInboxWork(Guid streamId, long sequenceOrder) {
     var messageId = _idProvider.NewGuid();
     var envelope = CreateTestEnvelope(messageId);
-    return new InboxWork<object> {
+    return new InboxWork {
       MessageId = messageId,
       Envelope = envelope,
       StreamId = streamId,
@@ -280,7 +280,7 @@ public class OrderedStreamProcessorTests {
   private OutboxWork CreateOutboxWork(Guid streamId, long sequenceOrder) {
     var messageId = _idProvider.NewGuid();
     var envelope = CreateTestEnvelope(messageId);
-    return new OutboxWork<object> {
+    return new OutboxWork {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = envelope,

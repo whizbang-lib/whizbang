@@ -22,8 +22,8 @@ public class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncDis
   private readonly ILogger<ScopedWorkCoordinatorStrategy>? _logger;
 
   // Queues for batching operations within the scope
-  private readonly List<NewOutboxMessage> _queuedOutboxMessages = [];
-  private readonly List<NewInboxMessage> _queuedInboxMessages = [];
+  private readonly List<OutboxMessage> _queuedOutboxMessages = [];
+  private readonly List<InboxMessage> _queuedInboxMessages = [];
   private readonly List<MessageCompletion> _queuedOutboxCompletions = [];
   private readonly List<MessageCompletion> _queuedInboxCompletions = [];
   private readonly List<MessageFailure> _queuedOutboxFailures = [];
@@ -45,14 +45,14 @@ public class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncDis
     _logger = logger;
   }
 
-  public void QueueOutboxMessage(NewOutboxMessage message) {
+  public void QueueOutboxMessage(OutboxMessage message) {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
     _queuedOutboxMessages.Add(message);
     _logger?.LogTrace("Queued outbox message {MessageId} for {Destination}", message.MessageId, message.Destination);
   }
 
-  public void QueueInboxMessage(NewInboxMessage message) {
+  public void QueueInboxMessage(InboxMessage message) {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
     _queuedInboxMessages.Add(message);

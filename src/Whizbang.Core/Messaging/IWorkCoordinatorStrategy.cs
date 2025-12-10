@@ -16,14 +16,14 @@ public interface IWorkCoordinatorStrategy {
   /// When it's actually stored depends on the strategy (immediate, on flush, on interval, etc.).
   /// </summary>
   /// <param name="message">Pre-serialized outbox message to store</param>
-  void QueueOutboxMessage(NewOutboxMessage message);
+  void QueueOutboxMessage(OutboxMessage message);
 
   /// <summary>
   /// Queues an inbox message to be stored.
   /// Includes atomic deduplication and optional event store integration.
   /// </summary>
   /// <param name="message">Pre-serialized inbox message to store</param>
-  void QueueInboxMessage(NewInboxMessage message);
+  void QueueInboxMessage(InboxMessage message);
 
   /// <summary>
   /// Queues an outbox message completion with granular status tracking.

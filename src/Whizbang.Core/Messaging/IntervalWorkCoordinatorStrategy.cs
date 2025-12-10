@@ -20,8 +20,8 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
   private readonly Timer _flushTimer;
 
   // Queues for batching operations within the interval
-  private readonly List<NewOutboxMessage> _queuedOutboxMessages = [];
-  private readonly List<NewInboxMessage> _queuedInboxMessages = [];
+  private readonly List<OutboxMessage> _queuedOutboxMessages = [];
+  private readonly List<InboxMessage> _queuedInboxMessages = [];
   private readonly List<MessageCompletion> _queuedOutboxCompletions = [];
   private readonly List<MessageCompletion> _queuedInboxCompletions = [];
   private readonly List<MessageFailure> _queuedOutboxFailures = [];
@@ -56,7 +56,7 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
     );
   }
 
-  public void QueueOutboxMessage(NewOutboxMessage message) {
+  public void QueueOutboxMessage(OutboxMessage message) {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
     lock (_lock) {
@@ -66,7 +66,7 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
     _logger?.LogTrace("Queued outbox message {MessageId} for {Destination}", message.MessageId, message.Destination);
   }
 
-  public void QueueInboxMessage(NewInboxMessage message) {
+  public void QueueInboxMessage(InboxMessage message) {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
     lock (_lock) {
@@ -147,8 +147,8 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
 
     try {
       // Snapshot current queues under lock
-      NewOutboxMessage[] outboxMessages;
-      NewInboxMessage[] inboxMessages;
+      OutboxMessage[] outboxMessages;
+      InboxMessage[] inboxMessages;
       MessageCompletion[] outboxCompletions;
       MessageCompletion[] inboxCompletions;
       MessageFailure[] outboxFailures;
