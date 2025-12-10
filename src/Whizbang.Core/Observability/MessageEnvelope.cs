@@ -138,7 +138,7 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// </summary>
   /// <returns>The timestamp of the first hop</returns>
   public DateTimeOffset GetMessageTimestamp() {
-    return Hops[0].Timestamp;
+    return Hops.Count > 0 ? Hops[0].Timestamp : DateTimeOffset.UtcNow;
   }
 
   /// <summary>
@@ -147,7 +147,7 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// </summary>
   /// <returns>The correlation ID from the first hop, or null if not set</returns>
   public CorrelationId? GetCorrelationId() {
-    return Hops[0].CorrelationId;
+    return Hops.Count > 0 ? Hops[0].CorrelationId : null;
   }
 
   /// <summary>
@@ -156,7 +156,7 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// </summary>
   /// <returns>The causation ID from the first hop, or null if not set</returns>
   public MessageId? GetCausationId() {
-    return Hops[0].CausationId;
+    return Hops.Count > 0 ? Hops[0].CausationId : null;
   }
 
   /// <summary>
