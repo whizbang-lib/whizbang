@@ -286,6 +286,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// Deserializes envelope from database envelope_type and envelope_data columns.
   /// </summary>
   private IMessageEnvelope DeserializeEnvelope(string envelopeTypeName, string envelopeDataJson) {
+    _logger?.LogDebug("Deserializing envelope: Type={EnvelopeType}, Data (first 500 chars)={EnvelopeData}",
+      envelopeTypeName,
+      envelopeDataJson.Length > 500 ? envelopeDataJson.Substring(0, 500) + "..." : envelopeDataJson);
+
     // Resolve the envelope type from stored type name
     var envelopeType = Type.GetType(envelopeTypeName)
       ?? throw new InvalidOperationException($"Could not resolve envelope type '{envelopeTypeName}'");
@@ -297,6 +301,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // Deserialize the complete envelope
     var envelope = JsonSerializer.Deserialize(envelopeDataJson, typeInfo) as IMessageEnvelope
       ?? throw new InvalidOperationException($"Failed to deserialize envelope of type '{envelopeTypeName}'");
+
+    _logger?.LogDebug("Deserialized envelope: MessageId={MessageId}, HopsCount={HopsCount}",
+      envelope.MessageId,
+      envelope.Hops?.Count ?? 0);
 
     return envelope;
   }
