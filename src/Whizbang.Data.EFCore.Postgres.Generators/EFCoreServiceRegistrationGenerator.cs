@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Immutable;
 using System.Linq;
+using System.Reflection;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -682,15 +683,39 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// Generates code for migration tuples to embed in generated file.
-  /// Reads migration SQL files from embedded resources.
+  /// Reads migration SQL files from Whizbang.Data.Postgres assembly (shared migrations).
+  /// Falls back to generator's own Templates/Migrations if Whizbang.Data.Postgres not found.
   /// </summary>
   private static string GenerateMigrationsCode(SourceProductionContext context) {
     var sb = new StringBuilder();
-    var assembly = typeof(EFCoreServiceRegistrationGenerator).Assembly;
+
+    // Try to load migrations from Whizbang.Data.Postgres assembly (shared location)
+    Assembly assembly;
+    string resourcePrefix;
+
+    try {
+      // Try to load Whizbang.Data.Postgres from the current AppDomain
+      // This works because the generator runs in the context of the user's build
+      var loadedAssemblies = AppDomain.CurrentDomain.GetAssemblies();
+      var postgresAssembly = loadedAssemblies.FirstOrDefault(a => a.GetName().Name == "Whizbang.Data.Postgres");
+
+      if (postgresAssembly is not null) {
+        assembly = postgresAssembly;
+        resourcePrefix = "Whizbang.Data.Postgres.Migrations.";
+      } else {
+        // Fall back to generator's own assembly
+        assembly = typeof(EFCoreServiceRegistrationGenerator).Assembly;
+        resourcePrefix = $"{assembly.GetName().Name}.Templates.Migrations.";
+      }
+    } catch {
+      // On any error, fall back to generator's own resources
+      assembly = typeof(EFCoreServiceRegistrationGenerator).Assembly;
+      resourcePrefix = $"{assembly.GetName().Name}.Templates.Migrations.";
+    }
 
     // Get all embedded SQL migration files
     var migrationResources = assembly.GetManifestResourceNames()
-        .Where(name => name.Contains(".Templates.Migrations.") && name.EndsWith(".sql"))
+        .Where(name => name.StartsWith(resourcePrefix) && name.EndsWith(".sql"))
         .OrderBy(name => name)
         .ToArray();
 
@@ -702,8 +727,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     for (int i = 0; i < migrationResources.Length; i++) {
       var resourceName = migrationResources[i];
 
-      // Extract filename from resource name (e.g., "...Migrations.001_Name.sql" -> "001_Name.sql")
-      var fileName = resourceName.Substring(resourceName.LastIndexOf('.', resourceName.Length - 5) + 1);
+      // Extract filename from resource name
+      // From "Whizbang.Data.Postgres.Migrations.001_Name.sql" -> "001_Name.sql"
+      // Or from "...Templates.Migrations.001_Name.sql" -> "001_Name.sql"
+      var fileName = resourceName.Substring(resourcePrefix.Length);
 
       // Read content from embedded resource
       using var stream = assembly.GetManifestResourceStream(resourceName);
