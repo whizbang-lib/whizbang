@@ -127,9 +127,9 @@ public class MessageSerializationTests {
     var json = JsonSerializer.Serialize(envelope, jsonOptions);
 
     // Assert - MessageId and ProductId should NOT be all zeros in JSON
-    await Assert.That(json).DoesNotContain("\"messageId\":\"00000000-0000-0000-0000-000000000000\"")
+    await Assert.That(json).DoesNotContain("\"MessageId\":\"00000000-0000-0000-0000-000000000000\"")
       .Because("MessageId should serialize as a valid UUIDv7, not all zeros");
-    await Assert.That(json).DoesNotContain("\"productId\":\"00000000-0000-0000-0000-000000000000\"")
+    await Assert.That(json).DoesNotContain("\"ProductId\":\"00000000-0000-0000-0000-000000000000\"")
       .Because("ProductId (WhizbangId) should serialize as a valid UUIDv7, not all zeros");
 
     // Deserialize and verify IDs are preserved

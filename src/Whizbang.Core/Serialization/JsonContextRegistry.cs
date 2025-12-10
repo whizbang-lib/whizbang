@@ -73,7 +73,6 @@ public static class JsonContextRegistry {
 
     var options = new JsonSerializerOptions {
       TypeInfoResolver = JsonTypeInfoResolver.Combine(_resolvers.ToArray()),
-      PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
       DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull
     };
 

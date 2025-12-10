@@ -68,8 +68,8 @@ public class JsonContextRegistryTests {
     // Assert - verify options has converters registered
     await Assert.That(options.Converters).IsNotEmpty();
 
-    // Verify camelCase naming policy is configured
-    await Assert.That(options.PropertyNamingPolicy).IsEqualTo(JsonNamingPolicy.CamelCase);
+    // Verify PascalCase naming policy is configured (null = default PascalCase)
+    await Assert.That(options.PropertyNamingPolicy).IsNull();
 
     // Verify WhenWritingNull ignore condition
     await Assert.That(options.DefaultIgnoreCondition).IsEqualTo(JsonIgnoreCondition.WhenWritingNull);

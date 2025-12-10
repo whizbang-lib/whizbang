@@ -8,7 +8,6 @@ using Whizbang.Core.Generated;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.ValueObjects;
-using Whizbang.Data.EFCore.Postgres.Entities;
 using Whizbang.Data.EFCore.Postgres.Serialization;
 
 namespace Whizbang.Data.EFCore.Postgres;

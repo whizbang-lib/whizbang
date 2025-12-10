@@ -2,6 +2,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Whizbang.Core\Whizbang.Core.csproj" />
+    <ProjectReference Include="..\Whizbang.Data.Schema\Whizbang.Data.Schema.csproj" />
     <ProjectReference Include="..\Whizbang.Data.EFCore.Custom\Whizbang.Data.EFCore.Custom.csproj" />
     <ProjectReference Include="..\Whizbang.Data.Postgres\Whizbang.Data.Postgres.csproj" />
     <!-- Reference the generator project -->

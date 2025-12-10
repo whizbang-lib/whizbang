@@ -1,5 +1,5 @@
 using Microsoft.EntityFrameworkCore;
-using Whizbang.Data.EFCore.Postgres.Entities;
+using Whizbang.Core.Messaging;
 
 namespace Whizbang.Data.EFCore.Postgres.Configuration;
 

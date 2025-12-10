@@ -1,11 +1,11 @@
 using System.Text.Json;
 
-namespace Whizbang.Data.EFCore.Postgres.Entities;
+namespace Whizbang.Core.Messaging;
 
 /// <summary>
-/// EF Core entity for event store persistence using 3-column JSONB pattern.
-/// Stores events with universal metadata columns (correlation, causation, timestamps) in JSONB.
-/// Uses PostgreSQL JSONB columns for efficient querying and indexing.
+/// Database entity for event store persistence using 3-column JSON pattern.
+/// Stores events with universal metadata columns (correlation, causation, timestamps) in JSON.
+/// Database-agnostic schema - ORM-specific configuration (e.g., JSONB for PostgreSQL) applied separately.
 /// </summary>
 public sealed class EventStoreRecord {
   /// <summary>
@@ -48,21 +48,21 @@ public sealed class EventStoreRecord {
   public required string EventType { get; set; }
 
   /// <summary>
-  /// Event payload stored as JSONB.
+  /// Event payload stored as JSON.
   /// Contains the actual event data (e.g., { "OrderId": "123", "Total": 99.99 }).
   /// Serialized directly from MessageEnvelope.Payload.
   /// </summary>
   public required JsonDocument EventData { get; set; }
 
   /// <summary>
-  /// Event metadata stored as JSONB.
+  /// Event metadata stored as JSON.
   /// Contains MessageId and complete Hops chain with all observability data.
   /// Serialized directly from MessageEnvelope using System.Text.Json (no DTO mapping).
   /// </summary>
   public required JsonDocument Metadata { get; set; }
 
   /// <summary>
-  /// Scope information for multi-tenancy stored as JSONB.
+  /// Scope information for multi-tenancy stored as JSON.
   /// Contains tenant/user/partition information for query filtering.
   /// Schema: { "TenantId": "...", "UserId": "...", "PartitionKey": "..." }
   /// </summary>

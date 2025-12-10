@@ -4,7 +4,7 @@
 
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Core.Lenses;
-using Whizbang.Data.EFCore.Postgres.Entities;
+using Whizbang.Data.Schema;
 
 namespace Whizbang.Generators.Templates.Snippets;
 

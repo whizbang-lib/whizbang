@@ -333,8 +333,8 @@ public class EFCoreServiceRegistrationGeneratorTests {
     await Assert.That(sourceText).Contains("public static class");
     await Assert.That(sourceText).Contains("SchemaExtensions");
 
-    // Should have EnsureWhizbangTablesCreatedAsync method
-    await Assert.That(sourceText).Contains("EnsureWhizbangTablesCreatedAsync");
+    // Should have EnsureWhizbangDatabaseInitializedAsync method
+    await Assert.That(sourceText).Contains("EnsureWhizbangDatabaseInitializedAsync");
   }
 
   /// <summary>

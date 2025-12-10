@@ -4,7 +4,7 @@ using TUnit.Assertions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
-using Whizbang.Data.EFCore.Postgres.Entities;
+using Whizbang.Data.Schema;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 

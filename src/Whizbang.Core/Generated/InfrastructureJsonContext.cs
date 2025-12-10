@@ -50,7 +50,6 @@ namespace Whizbang.Core.Generated;
 [JsonSerializable(typeof(MessageFailure[]))]
 [JsonSerializable(typeof(Guid[]))]
 [JsonSourceGenerationOptions(
-    PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 public partial class InfrastructureJsonContext : JsonSerializerContext {
 }

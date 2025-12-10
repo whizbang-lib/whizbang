@@ -1,7 +1,7 @@
 using Microsoft.EntityFrameworkCore;
+using Whizbang.Core.Messaging;
 using Whizbang.Data.EFCore.Custom;
 using Whizbang.Data.EFCore.Postgres.Configuration;
-using Whizbang.Data.EFCore.Postgres.Entities;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 

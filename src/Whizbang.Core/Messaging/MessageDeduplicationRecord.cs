@@ -1,4 +1,4 @@
-namespace Whizbang.Data.EFCore.Postgres.Entities;
+namespace Whizbang.Core.Messaging;
 
 /// <summary>
 /// Permanent deduplication tracking for idempotent delivery guarantees.

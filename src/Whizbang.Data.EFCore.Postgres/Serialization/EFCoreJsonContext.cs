@@ -12,7 +12,6 @@ namespace Whizbang.Data.EFCore.Postgres.Serialization;
 /// Note: MessageId, MessageHop, and related types are already handled by WhizbangJsonContext.
 /// </summary>
 [JsonSourceGenerationOptions(
-  PropertyNamingPolicy = JsonKnownNamingPolicy.CamelCase,
   DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
   WriteIndented = false)]
 [JsonSerializable(typeof(EnvelopeMetadata))]

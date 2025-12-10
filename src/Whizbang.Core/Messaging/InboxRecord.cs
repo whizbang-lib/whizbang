@@ -1,48 +1,47 @@
 using System.Text.Json;
 
-namespace Whizbang.Data.EFCore.Postgres.Entities;
+namespace Whizbang.Core.Messaging;
 
 /// <summary>
-/// EF Core entity for outbox (transactional messaging) using 3-column JSONB pattern.
-/// Ensures at-least-once message delivery by persisting messages before publishing.
-/// Uses PostgreSQL JSONB columns for efficient querying and indexing.
+/// Database entity for inbox (deduplication) using 3-column JSON pattern.
+/// Ensures exactly-once message processing by tracking processed messages.
+/// Database-agnostic schema - ORM-specific configuration (e.g., JSONB for PostgreSQL) applied separately.
 /// </summary>
-public sealed class OutboxRecord {
-
+public sealed class InboxRecord {
   /// <summary>
-  /// Unique message ID (idempotency key for downstream consumers).
-  /// Indexed for fast lookups and deduplication.
+  /// Unique message ID (idempotency key).
+  /// Primary key for fast deduplication checks.
   /// </summary>
   public required Guid MessageId { get; set; }
 
   /// <summary>
-  /// The destination to publish to (topic, queue, etc.).
-  /// Used by outbox processor to route messages.
+  /// The name of the handler that will process this message.
+  /// Used to route inbox messages to the correct handler.
   /// </summary>
-  public required string Destination { get; set; }
+  public required string HandlerName { get; set; }
 
   /// <summary>
   /// Fully-qualified message type name (e.g., "MyApp.Events.OrderCreated", "MyApp.Commands.CreateOrder").
-  /// Used for routing and deserialization.
+  /// Used for debugging and monitoring.
   /// </summary>
   public required string MessageType { get; set; }
 
   /// <summary>
-  /// Message payload stored as JSONB.
-  /// Contains the actual message data to be published.
+  /// Message payload stored as JSON.
+  /// Contains the actual message data for debugging/replay.
   /// Schema matches the message type.
   /// </summary>
   public required JsonDocument MessageData { get; set; }
 
   /// <summary>
-  /// Message metadata stored as JSONB.
+  /// Message metadata stored as JSON.
   /// Contains correlation ID, causation ID, timestamp, security context, etc.
   /// Schema: { "CorrelationId": "guid", "CausationId": "guid", "Timestamp": "ISO8601", "UserId": "...", "TenantId": "..." }
   /// </summary>
   public required JsonDocument Metadata { get; set; }
 
   /// <summary>
-  /// Scope information for multi-tenancy stored as JSONB.
+  /// Scope information for multi-tenancy stored as JSON.
   /// Contains tenant/user/partition information for query filtering.
   /// Schema: { "TenantId": "...", "UserId": "...", "PartitionKey": "..." }
   /// </summary>
@@ -50,32 +49,26 @@ public sealed class OutboxRecord {
 
 
   /// <summary>
-  /// Number of publishing attempts (starts at 0).
+  /// Number of processing attempts (starts at 0).
   /// Used for retry logic and poison message detection.
   /// </summary>
   public int Attempts { get; set; }
 
   /// <summary>
-  /// Error message if publishing failed.
-  /// Null if publishing succeeded or not yet attempted.
+  /// Error message if processing failed.
+  /// Null if processing succeeded or not yet attempted.
   /// </summary>
   public string? Error { get; set; }
 
   /// <summary>
-  /// UTC timestamp when the message was first persisted to outbox.
+  /// UTC timestamp when the message was first received.
   /// Automatically set by database on insert.
   /// </summary>
-  public DateTimeOffset CreatedAt { get; set; }
+  public DateTimeOffset ReceivedAt { get; set; }
 
   /// <summary>
-  /// UTC timestamp when the message was last published (attempt made).
-  /// Null if not yet published.
-  /// </summary>
-  public DateTime? PublishedAt { get; set; }
-
-  /// <summary>
-  /// UTC timestamp when the message processing was fully completed.
-  /// Used to track completion time separate from published_at.
+  /// UTC timestamp when the message was last processed (attempt made).
+  /// Null if not yet processed.
   /// </summary>
   public DateTime? ProcessedAt { get; set; }
 
@@ -92,7 +85,6 @@ public sealed class OutboxRecord {
   /// Null if message is not currently being processed or has been completed/failed.
   /// </summary>
   public DateTimeOffset? LeaseExpiry { get; set; }
-
 
   // ========================================
   // Work Coordinator Pattern (Phase 1-7)
@@ -114,9 +106,9 @@ public sealed class OutboxRecord {
 
   /// <summary>
   /// Current processing status flags (bitwise).
-  /// Indicates which stages have been completed (e.g., Stored, EventStored, Published).
+  /// Indicates which stages have been completed (e.g., Stored, ReceptorProcessed, PerspectiveProcessed).
   /// Uses MessageProcessingStatus enum.
   /// </summary>
-  public int StatusFlags { get; set; }
+  public MessageProcessingStatus StatusFlags { get; set; }
 
 }

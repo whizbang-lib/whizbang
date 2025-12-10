@@ -9,7 +9,7 @@ using Microsoft.Extensions.Logging;
 using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Data.EFCore.Postgres.Configuration;
-using Whizbang.Data.EFCore.Postgres.Entities;
+using Whizbang.Data.Schema;
 
 namespace Whizbang.Data.EFCore.Postgres.Generated;
 

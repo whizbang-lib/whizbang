@@ -1,9 +1,9 @@
 using System.Text.Json;
 
-namespace Whizbang.Data.EFCore.Postgres.Entities;
+namespace Whizbang.Core.Messaging;
 
 /// <summary>
-/// EF Core entity for service instance tracking.
+/// Database entity for service instance tracking.
 /// Tracks active service instances with heartbeat timestamps for distributed work coordination
 /// and failure detection. Used by WorkCoordinator to identify orphaned work.
 /// </summary>
@@ -46,7 +46,7 @@ public sealed class ServiceInstanceRecord {
   public DateTimeOffset LastHeartbeatAt { get; set; }
 
   /// <summary>
-  /// Additional instance metadata stored as JSONB.
+  /// Additional instance metadata stored as JSON.
   /// Contains version, environment, configuration, etc.
   /// Schema: { "Version": "1.0.0", "Environment": "Production", "Region": "us-east-1", ... }
   /// </summary>

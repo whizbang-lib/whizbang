@@ -148,8 +148,8 @@ BEGIN
   IF jsonb_array_length(p_outbox_completions) > 0 THEN
     FOR v_completion IN
       SELECT
-        (elem->>'messageId')::UUID as msg_id,
-        (elem->>'status')::INTEGER as status_flags
+        (elem->>'MessageId')::UUID as msg_id,
+        (elem->>'Status')::INTEGER as status_flags
       FROM jsonb_array_elements(p_outbox_completions) as elem
     LOOP
       RAISE NOTICE 'Processing completion: messageId=%, status=%', v_completion.msg_id, v_completion.status_flags;
@@ -193,8 +193,8 @@ BEGIN
   IF jsonb_array_length(p_inbox_completions) > 0 THEN
     FOR v_completion IN
       SELECT
-        (elem->>'messageId')::UUID as msg_id,
-        (elem->>'status')::INTEGER as status_flags
+        (elem->>'MessageId')::UUID as msg_id,
+        (elem->>'Status')::INTEGER as status_flags
       FROM jsonb_array_elements(p_inbox_completions) as elem
     LOOP
       IF v_debug_mode THEN
@@ -226,9 +226,9 @@ BEGIN
   IF jsonb_array_length(p_outbox_failures) > 0 THEN
     FOR v_failure IN
       SELECT
-        (elem->>'messageId')::UUID as msg_id,
-        (elem->>'completedStatus')::INTEGER as status_flags,
-        elem->>'error' as error_message
+        (elem->>'MessageId')::UUID as msg_id,
+        (elem->>'CompletedStatus')::INTEGER as status_flags,
+        elem->>'Error' as error_message
       FROM jsonb_array_elements(p_outbox_failures) as elem
     LOOP
       UPDATE wh_outbox
@@ -244,9 +244,9 @@ BEGIN
   IF jsonb_array_length(p_inbox_failures) > 0 THEN
     FOR v_failure IN
       SELECT
-        (elem->>'messageId')::UUID as msg_id,
-        (elem->>'completedStatus')::INTEGER as status_flags,
-        elem->>'error' as error_message
+        (elem->>'MessageId')::UUID as msg_id,
+        (elem->>'CompletedStatus')::INTEGER as status_flags,
+        elem->>'Error' as error_message
       FROM jsonb_array_elements(p_inbox_failures) as elem
     LOOP
       UPDATE wh_inbox
@@ -289,15 +289,15 @@ BEGIN
   IF jsonb_array_length(p_new_outbox_messages) > 0 THEN
     FOR v_new_msg IN
       SELECT
-        (elem->>'messageId')::UUID as message_id,
-        elem->>'destination' as destination,
-        elem->>'messageType' as message_type,
-        elem->>'envelopeType' as envelope_type,
-        (elem->'envelope')::TEXT as envelope_data,  -- Extract envelope sub-object and serialize as TEXT
-        (elem->'envelope'->'hops'->>0)::TEXT as metadata,  -- Temporary: extract first hop as metadata (FIXME)
+        (elem->>'MessageId')::UUID as message_id,
+        elem->>'Destination' as destination,
+        elem->>'MessageType' as message_type,
+        elem->>'EnvelopeType' as envelope_type,
+        (elem->'Envelope')::TEXT as envelope_data,  -- Extract envelope sub-object and serialize as TEXT
+        (elem->'Envelope'->'Hops'->>0)::TEXT as metadata,  -- Temporary: extract first hop as metadata (FIXME)
         NULL::TEXT as scope,  -- Scope is not currently used in OutboxMessage
-        (elem->>'isEvent')::BOOLEAN as is_event,
-        (elem->>'streamId')::UUID as stream_id
+        (elem->>'IsEvent')::BOOLEAN as is_event,
+        (elem->>'StreamId')::UUID as stream_id
       FROM jsonb_array_elements(p_new_outbox_messages) as elem
     LOOP
       -- Compute partition from stream_id
@@ -339,7 +339,7 @@ BEGIN
     -- Only messages that are actually new will be returned
     WITH new_msgs AS (
       INSERT INTO wh_message_deduplication (message_id, first_seen_at)
-      SELECT (elem->>'messageId')::UUID, v_now
+      SELECT (elem->>'MessageId')::UUID, v_now
       FROM jsonb_array_elements(p_new_inbox_messages) as elem
       ON CONFLICT (message_id) DO NOTHING
       RETURNING message_id
@@ -352,17 +352,17 @@ BEGIN
     -- Now insert only the truly new messages into inbox
     FOR v_new_msg IN
       SELECT
-        (elem->>'messageId')::UUID as message_id,
-        elem->>'handlerName' as handler_name,
-        elem->>'messageType' as message_type,
-        elem->>'envelopeType' as envelope_type,
-        (elem->'envelope')::TEXT as envelope_data,  -- Extract envelope sub-object and serialize as TEXT
-        (elem->'envelope'->'hops'->>0)::TEXT as metadata,  -- Temporary: extract first hop as metadata (FIXME)
+        (elem->>'MessageId')::UUID as message_id,
+        elem->>'HandlerName' as handler_name,
+        elem->>'MessageType' as message_type,
+        elem->>'EnvelopeType' as envelope_type,
+        (elem->'Envelope')::TEXT as envelope_data,  -- Extract envelope sub-object and serialize as TEXT
+        (elem->'Envelope'->'Hops'->>0)::TEXT as metadata,  -- Temporary: extract first hop as metadata (FIXME)
         NULL::TEXT as scope,  -- Scope is not currently used in InboxMessage
-        (elem->>'isEvent')::BOOLEAN as is_event,
-        (elem->>'streamId')::UUID as stream_id
+        (elem->>'IsEvent')::BOOLEAN as is_event,
+        (elem->>'StreamId')::UUID as stream_id
       FROM jsonb_array_elements(p_new_inbox_messages) as elem
-      WHERE (elem->>'messageId')::UUID = ANY(v_new_inbox_ids)
+      WHERE (elem->>'MessageId')::UUID = ANY(v_new_inbox_ids)
     LOOP
       -- Compute partition
       v_partition := compute_partition(v_new_msg.stream_id, p_partition_count);
@@ -478,21 +478,21 @@ BEGIN
   -- DEBUG: Output sample JSON to see structure
   RAISE NOTICE '=== DEBUG: Sample outbox message JSON ===';
   RAISE NOTICE 'First outbox message: %', (SELECT jsonb_array_element(p_new_outbox_messages, 0));
-  RAISE NOTICE 'envelope property: %', (SELECT jsonb_array_element(p_new_outbox_messages, 0)->'envelope');
+  RAISE NOTICE 'Envelope property: %', (SELECT jsonb_array_element(p_new_outbox_messages, 0)->'Envelope');
 
   -- Insert events from outbox (published events)
   -- Uses windowing function to handle multiple events in same stream within a single batch
   WITH outbox_events AS (
     SELECT
       elem,
-      (elem->>'streamId')::UUID as stream_id,
+      (elem->>'StreamId')::UUID as stream_id,
       ROW_NUMBER() OVER (
-        PARTITION BY (elem->>'streamId')::UUID
-        ORDER BY (elem->>'messageId')::UUID
+        PARTITION BY (elem->>'StreamId')::UUID
+        ORDER BY (elem->>'MessageId')::UUID
       ) as row_num
     FROM jsonb_array_elements(p_new_outbox_messages) as elem
-    WHERE (elem->>'isEvent')::BOOLEAN = true
-      AND (elem->>'streamId') IS NOT NULL
+    WHERE (elem->>'IsEvent')::BOOLEAN = true
+      AND (elem->>'StreamId') IS NOT NULL
   ),
   base_versions AS (
     SELECT
@@ -524,15 +524,15 @@ BEGIN
     bv.stream_id,  -- For now, aggregate_id = stream_id
     -- Extract aggregate type from event_type (e.g., "Product.ProductCreatedEvent" → "Product")
     CASE
-      WHEN (bv.elem->>'messageType') LIKE '%.%' THEN
-        split_part(bv.elem->>'messageType', '.', -2)  -- Get second-to-last segment
-      WHEN (bv.elem->>'messageType') LIKE '%Event' THEN
-        regexp_replace(bv.elem->>'messageType', '([A-Z][a-z]+).*Event$', '\1')  -- Extract leading word
+      WHEN (bv.elem->>'MessageType') LIKE '%.%' THEN
+        split_part(bv.elem->>'MessageType', '.', -2)  -- Get second-to-last segment
+      WHEN (bv.elem->>'MessageType') LIKE '%Event' THEN
+        regexp_replace(bv.elem->>'MessageType', '([A-Z][a-z]+).*Event$', '\1')  -- Extract leading word
       ELSE 'Unknown'
     END,
-    bv.elem->>'messageType',
-    (bv.elem->'envelope'->'payload')::JSONB,  -- Extract payload from envelope
-    (bv.elem->'envelope')::JSONB,  -- Store complete envelope as metadata for now
+    bv.elem->>'MessageType',
+    (bv.elem->'Envelope'->'Payload')::JSONB,  -- Extract payload from envelope
+    (bv.elem->'Envelope')::JSONB,  -- Store complete envelope as metadata for now
     NULL,  -- Scope is not currently used
     nextval('wh_event_sequence'),  -- Global sequence for event ordering
     bv.base_version + bv.row_num,  -- Sequential versioning within batch
@@ -545,14 +545,14 @@ BEGIN
   WITH inbox_events AS (
     SELECT
       elem,
-      (elem->>'streamId')::UUID as stream_id,
+      (elem->>'StreamId')::UUID as stream_id,
       ROW_NUMBER() OVER (
-        PARTITION BY (elem->>'streamId')::UUID
-        ORDER BY (elem->>'messageId')::UUID
+        PARTITION BY (elem->>'StreamId')::UUID
+        ORDER BY (elem->>'MessageId')::UUID
       ) as row_num
     FROM jsonb_array_elements(p_new_inbox_messages) as elem
-    WHERE (elem->>'isEvent')::BOOLEAN = true
-      AND (elem->>'streamId') IS NOT NULL
+    WHERE (elem->>'IsEvent')::BOOLEAN = true
+      AND (elem->>'StreamId') IS NOT NULL
   ),
   base_versions AS (
     SELECT
@@ -583,15 +583,15 @@ BEGIN
     bv.stream_id,
     bv.stream_id,
     CASE
-      WHEN (bv.elem->>'messageType') LIKE '%.%' THEN
-        split_part(bv.elem->>'messageType', '.', -2)
-      WHEN (bv.elem->>'messageType') LIKE '%Event' THEN
-        regexp_replace(bv.elem->>'messageType', '([A-Z][a-z]+).*Event$', '\1')
+      WHEN (bv.elem->>'MessageType') LIKE '%.%' THEN
+        split_part(bv.elem->>'MessageType', '.', -2)
+      WHEN (bv.elem->>'MessageType') LIKE '%Event' THEN
+        regexp_replace(bv.elem->>'MessageType', '([A-Z][a-z]+).*Event$', '\1')
       ELSE 'Unknown'
     END,
-    bv.elem->>'messageType',
-    (bv.elem->'envelope'->'payload')::JSONB,  -- Extract payload from envelope
-    (bv.elem->'envelope')::JSONB,  -- Store complete envelope as metadata for now
+    bv.elem->>'MessageType',
+    (bv.elem->'Envelope'->'Payload')::JSONB,  -- Extract payload from envelope
+    (bv.elem->'Envelope')::JSONB,  -- Store complete envelope as metadata for now
     NULL,  -- Scope is not currently used
     nextval('wh_event_sequence'),
     bv.base_version + bv.row_num,  -- Sequential versioning within batch
@@ -636,11 +636,11 @@ BEGIN
     AND (wh_outbox.status & 24) != 24   -- Not fully completed
     AND NOT EXISTS (  -- Don't reclaim messages being completed
       SELECT 1 FROM jsonb_array_elements(p_outbox_completions) elem
-      WHERE (elem->>'messageId')::UUID = wh_outbox.message_id
+      WHERE (elem->>'MessageId')::UUID = wh_outbox.message_id
     )
     AND NOT EXISTS (  -- Don't reclaim messages being failed
       SELECT 1 FROM jsonb_array_elements(p_outbox_failures) elem
-      WHERE (elem->>'messageId')::UUID = wh_outbox.message_id
+      WHERE (elem->>'MessageId')::UUID = wh_outbox.message_id
     )
     RETURNING message_id
   )
@@ -665,11 +665,11 @@ BEGIN
     AND (wh_inbox.status & 24) != 24  -- Not fully completed
     AND NOT EXISTS (  -- Don't reclaim messages being completed
       SELECT 1 FROM jsonb_array_elements(p_inbox_completions) elem
-      WHERE (elem->>'messageId')::UUID = wh_inbox.message_id
+      WHERE (elem->>'MessageId')::UUID = wh_inbox.message_id
     )
     AND NOT EXISTS (  -- Don't reclaim messages being failed
       SELECT 1 FROM jsonb_array_elements(p_inbox_failures) elem
-      WHERE (elem->>'messageId')::UUID = wh_inbox.message_id
+      WHERE (elem->>'MessageId')::UUID = wh_inbox.message_id
     )
     RETURNING message_id
   )
