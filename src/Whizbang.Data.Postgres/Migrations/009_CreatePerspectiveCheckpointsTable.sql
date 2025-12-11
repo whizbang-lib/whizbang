@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS wh_perspective_checkpoints (
   CONSTRAINT pk_perspective_checkpoints PRIMARY KEY (stream_id, perspective_name),
 
   -- Foreign key to event store (last processed event)
-  CONSTRAINT fk_perspective_checkpoints_event FOREIGN KEY (last_event_id) REFERENCES wh_event_store(id) ON DELETE RESTRICT
+  CONSTRAINT fk_perspective_checkpoints_event FOREIGN KEY (last_event_id) REFERENCES wh_event_store(event_id) ON DELETE RESTRICT
 );
 
 -- Index for querying by perspective

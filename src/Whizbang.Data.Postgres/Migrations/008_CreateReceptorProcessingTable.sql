@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS wh_receptor_processing (
   processed_at TIMESTAMPTZ,
 
   -- Foreign key to event store
-  CONSTRAINT fk_receptor_processing_event FOREIGN KEY (event_id) REFERENCES wh_event_store(id) ON DELETE CASCADE,
+  CONSTRAINT fk_receptor_processing_event FOREIGN KEY (event_id) REFERENCES wh_event_store(event_id) ON DELETE CASCADE,
 
   -- Unique constraint: each receptor can only process an event once
   CONSTRAINT uq_receptor_processing_event_receptor UNIQUE (event_id, receptor_name)
