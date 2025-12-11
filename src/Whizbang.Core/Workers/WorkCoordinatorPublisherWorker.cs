@@ -275,9 +275,9 @@ public class WorkCoordinatorPublisherWorker(
       newInboxMessages: [],   // Not used in publisher worker (consumer handles new messages)
       renewOutboxLeaseIds: renewOutboxLeaseIds,
       renewInboxLeaseIds: [],
-      flags: WorkBatchFlags.None,
-      partitionCount: 10_000,
-      maxPartitionsPerInstance: 100,
+      flags: _options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None,
+      partitionCount: _options.PartitionCount,
+      maxPartitionsPerInstance: _options.MaxPartitionsPerInstance,
       leaseSeconds: _options.LeaseSeconds,
       staleThresholdSeconds: _options.StaleThresholdSeconds,
       cancellationToken: cancellationToken
@@ -357,4 +357,22 @@ public class WorkCoordinatorPublisherOptions {
   /// Supports any JSON value type via JsonElement.
   /// </summary>
   public Dictionary<string, JsonElement>? InstanceMetadata { get; set; }
+
+  /// <summary>
+  /// Keep completed messages for debugging (default: false).
+  /// When enabled, completed messages are preserved instead of deleted.
+  /// </summary>
+  public bool DebugMode { get; set; } = false;
+
+  /// <summary>
+  /// Number of partitions for work distribution.
+  /// Default: 10000
+  /// </summary>
+  public int PartitionCount { get; set; } = 10_000;
+
+  /// <summary>
+  /// Maximum number of partitions a single instance can claim.
+  /// Default: 100
+  /// </summary>
+  public int MaxPartitionsPerInstance { get; set; } = 100;
 }
