@@ -107,25 +107,11 @@ builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
 );
 
 // WorkCoordinator publisher - atomic coordination with lease-based work claiming
-builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>(sp =>
-  new WorkCoordinatorPublisherWorker(
-    sp.GetRequiredService<IServiceInstanceProvider>(),
-    sp.GetRequiredService<IServiceScopeFactory>(),
-    sp.GetRequiredService<IMessagePublishStrategy>(),
-    (WorkChannelWriter)sp.GetRequiredService<IWorkChannelWriter>(),
-    databaseReadinessCheck: null,  // Use default (DefaultDatabaseReadinessCheck)
-    options: new WorkCoordinatorPublisherOptions {
-      PollingIntervalMilliseconds = 1000,        // Poll every 1 second
-      LeaseSeconds = 300,                        // 5-minute lease duration
-      StaleThresholdSeconds = 600,               // 10-minute stale threshold
-      DebugMode = false,                         // Set to true to preserve completed messages for debugging
-      PartitionCount = 10_000,                   // Number of partitions for work distribution
-      MaxPartitionsPerInstance = 100,            // Max partitions this instance can claim
-      InstanceMetadata = null                    // Optional metadata (version, environment, etc.)
-    },
-    logger: sp.GetRequiredService<ILogger<WorkCoordinatorPublisherWorker>>()
-  )
+// Options configured via appsettings.json "WorkCoordinatorPublisher" section
+builder.Services.Configure<WorkCoordinatorPublisherOptions>(
+  builder.Configuration.GetSection("WorkCoordinatorPublisher")
 );
+builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
 
 builder.Services.AddHostedService<Worker>();
 

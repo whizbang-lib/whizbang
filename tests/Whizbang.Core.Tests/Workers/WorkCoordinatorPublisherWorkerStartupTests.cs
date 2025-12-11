@@ -132,8 +132,8 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       publishStrategy,
       new WorkChannelWriter(),
-      databaseReadiness,
-      new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 100 }
+      Microsoft.Extensions.Options.Options.Create(new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 100 }),
+      databaseReadiness
     );
 
     using var cts = new CancellationTokenSource();
@@ -178,8 +178,8 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       publishStrategy,
       new WorkChannelWriter(),
-      databaseReadiness,
-      new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 100 }
+      Microsoft.Extensions.Options.Options.Create(new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 100 }),
+      databaseReadiness
     );
 
     using var cts = new CancellationTokenSource();
@@ -225,8 +225,8 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       publishStrategy,
       new WorkChannelWriter(),
-      databaseReadiness,
-      new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 100 }
+      Microsoft.Extensions.Options.Options.Create(new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 100 }),
+      databaseReadiness
     );
 
     using var cts = new CancellationTokenSource();
@@ -261,8 +261,8 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       publishStrategy,
       new WorkChannelWriter(),
-      databaseReadiness,
-      new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 100 }
+      Microsoft.Extensions.Options.Options.Create(new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 100 }),
+      databaseReadiness
     );
 
     using var cts = new CancellationTokenSource();
@@ -302,8 +302,8 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       publishStrategy,
       new WorkChannelWriter(),
-      databaseReadiness,
-      new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 100 }
+      Microsoft.Extensions.Options.Options.Create(new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 100 }),
+      databaseReadiness
     );
 
     using var cts = new CancellationTokenSource();

@@ -65,6 +65,11 @@ builder.Services.AddSingleton<IServiceInstanceProvider, ServiceInstanceProvider>
 // Register OrderedStreamProcessor for message ordering in ServiceBusConsumerWorker
 builder.Services.AddSingleton<OrderedStreamProcessor>();
 
+// Configure WorkCoordinatorPublisherOptions from appsettings.json
+builder.Services.Configure<WorkCoordinatorPublisherOptions>(
+  builder.Configuration.GetSection("WorkCoordinatorPublisher")
+);
+
 // Register EF Core DbContext for perspectives with PostgreSQL
 builder.Services.AddDbContext<BffDbContext>(options =>
   options.UseNpgsql(postgresConnection));
@@ -142,25 +147,8 @@ builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
 );
 
 // Outbox publisher worker - publishes pending messages from outbox to Service Bus
-builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>(sp =>
-  new WorkCoordinatorPublisherWorker(
-    sp.GetRequiredService<IServiceInstanceProvider>(),
-    sp.GetRequiredService<IServiceScopeFactory>(),
-    sp.GetRequiredService<IMessagePublishStrategy>(),
-    (WorkChannelWriter)sp.GetRequiredService<IWorkChannelWriter>(),
-    databaseReadinessCheck: null,  // Use default (DefaultDatabaseReadinessCheck)
-    options: new WorkCoordinatorPublisherOptions {
-      PollingIntervalMilliseconds = 1000,        // Poll every 1 second
-      LeaseSeconds = 300,                        // 5-minute lease duration
-      StaleThresholdSeconds = 600,               // 10-minute stale threshold
-      DebugMode = false,                         // Set to true to preserve completed messages for debugging
-      PartitionCount = 10_000,                   // Number of partitions for work distribution
-      MaxPartitionsPerInstance = 100,            // Max partitions this instance can claim
-      InstanceMetadata = null                    // Optional metadata (version, environment, etc.)
-    },
-    logger: sp.GetRequiredService<ILogger<WorkCoordinatorPublisherWorker>>()
-  )
-);
+// Options configured via appsettings.json "WorkCoordinatorPublisher" section
+builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
 
 // Add FastEndpoints for REST API (AOT-compatible)
 builder.Services.AddFastEndpoints();
