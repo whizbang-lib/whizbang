@@ -233,6 +233,183 @@ Guid.NewGuid()
 
 ---
 
+## Work Coordination & Event Store Architecture
+
+### IWorkCoordinator - Atomic Work Batch Processing
+
+The `IWorkCoordinator` interface provides atomic, transactional work coordination across outbox, inbox, and event store tracking:
+
+```csharp
+Task<WorkBatch> ProcessWorkBatchAsync(
+  Guid instanceId, string serviceName, string hostName, int processId,
+  Dictionary<string, JsonElement>? metadata,
+
+  // Outbox/Inbox completions and failures
+  MessageCompletion[] outboxCompletions,
+  MessageFailure[] outboxFailures,
+  MessageCompletion[] inboxCompletions,
+  MessageFailure[] inboxFailures,
+
+  // Event store tracking (receptors & perspectives)
+  ReceptorProcessingCompletion[] receptorCompletions,
+  ReceptorProcessingFailure[] receptorFailures,
+  PerspectiveCheckpointCompletion[] perspectiveCompletions,
+  PerspectiveCheckpointFailure[] perspectiveFailures,
+
+  // New work to store
+  OutboxMessage[] newOutboxMessages,
+  InboxMessage[] newInboxMessages,
+
+  // Lease renewals
+  Guid[] renewOutboxLeaseIds,
+  Guid[] renewInboxLeaseIds,
+
+  WorkBatchFlags flags = WorkBatchFlags.None,
+  int partitionCount = 10000,
+  int maxPartitionsPerInstance = 100,
+  int leaseSeconds = 300,
+  int staleThresholdSeconds = 600,
+  CancellationToken cancellationToken = default
+);
+```
+
+**Key Characteristics**:
+- **Atomic Operations**: All work in a batch succeeds or fails together (database transaction)
+- **Lease-Based Coordination**: Prevents duplicate processing across instances
+- **Partition-Based Distribution**: Work distributed via consistent hashing (UUIDv7 message IDs)
+- **PostgreSQL Implementation**: Uses `process_work_batch` stored procedure for performance
+
+### Event Store Tracking - Receptors & Perspectives
+
+**Two distinct tracking patterns for event processing:**
+
+#### 1. Receptors - Independent Event Handlers
+
+**Pattern**: Log-style tracking where multiple receptors process the same event independently.
+
+```csharp
+public record ReceptorProcessingCompletion {
+  public required Guid EventId { get; init; }
+  public required string ReceptorName { get; init; }
+  public required ReceptorProcessingStatus Status { get; init; }
+}
+
+public record ReceptorProcessingFailure {
+  public required Guid EventId { get; init; }
+  public required string ReceptorName { get; init; }
+  public required ReceptorProcessingStatus Status { get; init; }
+  public required string Error { get; init; }
+}
+```
+
+**Use Cases**:
+- Side effects (sending emails, notifications)
+- Read model updates that don't require ordering
+- Analytics/metrics collection
+- Audit logging
+
+**Characteristics**:
+- Many receptors can process the same event
+- No ordering guarantees required
+- Failures tracked per receptor
+- Retries handled independently
+
+**Database**: `wh_receptor_processing` table tracks (event_id, receptor_name) pairs
+
+#### 2. Perspectives - Checkpoint-Based Read Models
+
+**Pattern**: Checkpoint-based processing per stream for read model projections with time-travel capabilities.
+
+```csharp
+public record PerspectiveCheckpointCompletion {
+  public required Guid StreamId { get; init; }
+  public required string PerspectiveName { get; init; }
+  public required Guid LastEventId { get; init; }
+  public required PerspectiveProcessingStatus Status { get; init; }
+}
+
+public record PerspectiveCheckpointFailure {
+  public required Guid StreamId { get; init; }
+  public required string PerspectiveName { get; init; }
+  public required Guid LastEventId { get; init; }
+  public required PerspectiveProcessingStatus Status { get; init; }
+  public required string Error { get; init; }
+}
+```
+
+**Use Cases**:
+- Read model projections (e.g., order summary view)
+- Temporal queries (state as of specific event)
+- Rebuilding projections from event history
+- Stream-specific views
+
+**Characteristics**:
+- One checkpoint per (stream_id, perspective_name) pair
+- Ordered event processing within stream
+- Can rebuild from any point (time-travel)
+- Checkpoint = last successfully processed event
+
+**Database**: `wh_perspective_checkpoints` table tracks (stream_id, perspective_name, last_event_id)
+
+### Work Coordination Flow
+
+```
+1. Application processes message
+2. Calls ProcessWorkBatchAsync with:
+   - Completions for successfully processed messages
+   - Failures for failed messages
+   - New outbox messages to send
+   - Receptor/Perspective tracking updates
+
+3. PostgreSQL process_work_batch:
+   - Deletes completed messages
+   - Updates failed messages (retry counts)
+   - Inserts new outbox messages
+   - Updates receptor_processing records
+   - Updates perspective_checkpoints
+   - Claims new work (via leasing)
+   - Returns: WorkBatch with claimed work
+
+4. WorkCoordinatorPublisherWorker:
+   - Polls ProcessWorkBatchAsync every N milliseconds
+   - Publishes claimed outbox messages to transport
+   - Reports completions/failures back to coordinator
+```
+
+### Database Schema
+
+**Outbox/Inbox Tables**:
+- `wh_outbox` - Outbound messages awaiting publication
+- `wh_inbox` - Inbound messages awaiting processing
+
+**Event Store Tracking Tables**:
+- `wh_receptor_processing` - Tracks which receptors processed which events
+- `wh_perspective_checkpoints` - Tracks read model projection checkpoints
+
+**Key Columns**:
+- `instance_id`, `lease_expiry` - Lease-based coordination
+- `partition_number` - Consistent hashing for work distribution
+- `status` - MessageProcessingStatus flags (Stored, Published, Failed, etc.)
+- `attempts` - Retry tracking
+
+### AOT-Compatible Serialization
+
+All work coordination uses **JsonTypeInfo** for AOT-compatible JSON serialization:
+
+```csharp
+private string SerializeReceptorCompletions(ReceptorProcessingCompletion[] completions) {
+  if (completions.Length == 0) return "[]";
+  return JsonSerializer.Serialize(
+    completions,
+    _jsonOptions.GetTypeInfo(typeof(ReceptorProcessingCompletion[]))
+  );
+}
+```
+
+**Pattern**: Use `JsonContextRegistry.CreateCombinedOptions()` for all serialization.
+
+---
+
 ## Plan Documents
 
 Living documents in `plans/` directory:
