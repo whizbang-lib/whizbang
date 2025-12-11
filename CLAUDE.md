@@ -4,6 +4,69 @@
 
 ---
 
+## Table of Contents
+
+1. [Essential Standards](#essential-standards)
+2. [TDD Workflow](#tdd-workflow-strict)
+3. [Testing Standards](#testing-standards)
+4. [Project Structure](#project-structure)
+5. [Common Commands](#common-commands)
+6. [Code Coverage](#code-coverage)
+7. [Technology Stack](#technology-stack)
+8. [Key Principles](#key-principles)
+9. [ID Generation](#id-generation)
+10. [Observability Architecture](#observability-architecture)
+11. [Work Coordination & Event Store](#work-coordination--event-store-architecture)
+12. [Plan Documents](#plan-documents)
+
+---
+
+## Quick Navigation
+
+### 📁 Core Documentation (`ai-docs/`)
+
+For comprehensive guidance on specific topics, see focused documentation in `ai-docs/`:
+
+- **[README.md](ai-docs/README.md)** - Navigation hub with scenario-based guidance
+- **[testing-tunit.md](ai-docs/testing-tunit.md)** - TUnit CLI usage, Rocks mocking, Bogus (CRITICAL - read this to avoid common mistakes!)
+- **[efcore-10-usage.md](ai-docs/efcore-10-usage.md)** - EF Core 10, JsonB, UUIDv7, complex types
+- **[aot-requirements.md](ai-docs/aot-requirements.md)** - Zero reflection rules by project type
+- **[tdd-strict.md](ai-docs/tdd-strict.md)** - RED/GREEN/REFACTOR cycle (MANDATORY)
+- **[boy-scout-rule.md](ai-docs/boy-scout-rule.md)** - Leave code better than you found it
+- **[code-standards.md](ai-docs/code-standards.md)** - Formatting, naming, dotnet format
+- **[sample-projects.md](ai-docs/sample-projects.md)** - Dogfooding philosophy
+- **[script-standards.md](ai-docs/script-standards.md)** - PowerShell Core preferences
+
+### 📁 Source Generators (`src/Whizbang.Generators/ai-docs/`)
+
+For source generator development, see `src/Whizbang.Generators/ai-docs/`:
+
+- **[README.md](src/Whizbang.Generators/ai-docs/README.md)** - Generator-specific navigation
+- **[quick-reference.md](src/Whizbang.Generators/ai-docs/quick-reference.md)** - Complete working example
+- **[performance-principles.md](src/Whizbang.Generators/ai-docs/performance-principles.md)** - CRITICAL: Syntactic filtering, value-type records
+- **[value-type-records.md](src/Whizbang.Generators/ai-docs/value-type-records.md)** - Why sealed records matter (50-200ms difference!)
+- **[common-pitfalls.md](src/Whizbang.Generators/ai-docs/common-pitfalls.md)** - Seven major mistakes to avoid
+
+### ⚡ Slash Commands (`.claude/commands/`)
+
+Quick access to common workflows via `/command-name`:
+
+- `/test` - Run all tests
+- `/coverage` - Run tests with coverage
+- `/format` - Run dotnet format (MANDATORY before commit)
+- `/release-check` - Full release checklist
+- `/context-tdd` - Load TDD documentation
+- `/context-generators` - Load generator documentation
+- `/context-testing` - Load testing documentation
+- `/context-efcore` - Load EF Core documentation
+- `/context-aot` - Load AOT requirements
+- `/context-boy-scout` - Load boy scout rule
+- `/context-scripts` - Load script standards
+
+See `.claude/commands/` for all available commands.
+
+---
+
 ## Essential Standards
 
 ### Code Style
@@ -429,3 +492,15 @@ Living documents in `plans/` directory:
 - XML documentation required for all public APIs
 - See main `/Users/philcarbone/src/CLAUDE.md` for cross-repo guidance
 - See `TESTING.md` for detailed testing guidelines
+
+---
+
+## Cross-Repository Context
+
+This repository is part of the Whizbang project workspace:
+
+- **Workspace CLAUDE.md**: `/Users/philcarbone/src/CLAUDE.md` - Cross-repo guidance and workflows
+- **Documentation Repo**: `/Users/philcarbone/src/whizbang-lib.github.io/` - Living specifications and user docs
+- **VSCode Extension**: `/Users/philcarbone/src/whizbang-vscode/` - IDE integration
+
+For comprehensive workflow and architecture guidance, see the workspace CLAUDE.md.

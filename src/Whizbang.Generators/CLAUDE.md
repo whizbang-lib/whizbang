@@ -2,6 +2,24 @@
 
 **Purpose**: Comprehensive guide to Whizbang source generator architecture, patterns, and best practices for AI assistants.
 
+> **📁 New: Focused Documentation Available**
+>
+> This file provides a complete overview. For deep dives on specific topics, see the **`ai-docs/`** directory:
+>
+> - **[README.md](ai-docs/README.md)** - Navigation hub with scenario-based guidance
+> - **[quick-reference.md](ai-docs/quick-reference.md)** - Complete working generator example
+> - **[architecture.md](ai-docs/architecture.md)** - Multiple Independent Generators Pattern
+> - **[performance-principles.md](ai-docs/performance-principles.md)** - CRITICAL: Syntactic filtering, 100x performance difference
+> - **[value-type-records.md](ai-docs/value-type-records.md)** - Why sealed records matter (caching!)
+> - **[generator-patterns.md](ai-docs/generator-patterns.md)** - Three core patterns
+> - **[template-system.md](ai-docs/template-system.md)** - Real C# templates with IDE support
+> - **[diagnostic-system.md](ai-docs/diagnostic-system.md)** - DiagnosticDescriptors pattern
+> - **[project-structure.md](ai-docs/project-structure.md)** - .csproj configuration
+> - **[testing-strategy.md](ai-docs/testing-strategy.md)** - Unit, integration, snapshot tests
+> - **[common-pitfalls.md](ai-docs/common-pitfalls.md)** - Seven major mistakes to avoid
+>
+> Choose focused files for specific topics, or read this file for comprehensive overview.
+
 ---
 
 ## Table of Contents
