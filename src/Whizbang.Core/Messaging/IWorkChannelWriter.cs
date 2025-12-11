@@ -1,4 +1,5 @@
 using System.Threading;
+using System.Threading.Channels;
 using System.Threading.Tasks;
 
 namespace Whizbang.Core.Messaging;
@@ -9,6 +10,10 @@ namespace Whizbang.Core.Messaging;
 /// Implementations are typically singleton and shared between strategy and worker layers.
 /// </summary>
 public interface IWorkChannelWriter {
+  /// <summary>
+  /// Gets the channel reader for consumers (background workers).
+  /// </summary>
+  ChannelReader<OutboxWork> Reader { get; }
   /// <summary>
   /// Asynchronously writes outbox work to the channel for processing.
   /// Blocks if the channel is bounded and full.
@@ -25,4 +30,10 @@ public interface IWorkChannelWriter {
   /// <param name="work">The outbox work to queue for processing</param>
   /// <returns>True if the work was written; false if the channel is full or complete</returns>
   bool TryWrite(OutboxWork work);
+
+  /// <summary>
+  /// Signals that no more work will be written to the channel.
+  /// Consumers will complete after draining existing work.
+  /// </summary>
+  void Complete();
 }

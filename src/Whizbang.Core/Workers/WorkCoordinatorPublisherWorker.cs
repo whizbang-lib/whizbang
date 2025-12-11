@@ -29,7 +29,7 @@ public class WorkCoordinatorPublisherWorker(
   IServiceInstanceProvider instanceProvider,
   IServiceScopeFactory scopeFactory,
   IMessagePublishStrategy publishStrategy,
-  WorkChannelWriter workChannelWriter,
+  IWorkChannelWriter workChannelWriter,
   IOptions<WorkCoordinatorPublisherOptions> options,
   IDatabaseReadinessCheck? databaseReadinessCheck = null,
   ILogger<WorkCoordinatorPublisherWorker>? logger = null
@@ -37,7 +37,7 @@ public class WorkCoordinatorPublisherWorker(
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly IMessagePublishStrategy _publishStrategy = publishStrategy ?? throw new ArgumentNullException(nameof(publishStrategy));
-  private readonly WorkChannelWriter _workChannelWriter = workChannelWriter ?? throw new ArgumentNullException(nameof(workChannelWriter));
+  private readonly IWorkChannelWriter _workChannelWriter = workChannelWriter ?? throw new ArgumentNullException(nameof(workChannelWriter));
   private readonly IDatabaseReadinessCheck _databaseReadinessCheck = databaseReadinessCheck ?? new DefaultDatabaseReadinessCheck();
   private readonly ILogger<WorkCoordinatorPublisherWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<WorkCoordinatorPublisherWorker>.Instance;
   private readonly WorkCoordinatorPublisherOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
