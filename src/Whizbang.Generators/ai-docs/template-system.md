@@ -1,0 +1,567 @@
+# Template System
+
+**Real C# template files with IDE support for source generators**
+
+This document explains Whizbang's template system for source generators, which uses real C# files with full IDE support instead of string concatenation.
+
+---
+
+## Table of Contents
+
+1. [Overview](#overview)
+2. [Template File Structure](#template-file-structure)
+3. [Region-Based Replacement](#region-based-replacement)
+4. [Snippet System](#snippet-system)
+5. [Project Configuration](#project-configuration)
+6. [Best Practices](#best-practices)
+
+---
+
+## Overview
+
+### Why Templates?
+
+**Problems with string concatenation**:
+```csharp
+// ❌ WRONG: No IDE support, error-prone
+var code = "public class Generated" + className + " {\n";
+code += "  public void Method() {\n";
+code += "    // " + comment + "\n";
+code += "  }\n";
+code += "}\n";
+```
+
+**Problems**:
+- No IntelliSense
+- No syntax highlighting
+- No refactoring support
+- Easy to introduce syntax errors
+- Hard to maintain
+
+---
+
+### Template Solution
+
+**Whizbang templates are REAL C# files**:
+- Full IDE support (IntelliSense, refactoring, syntax highlighting)
+- Placeholder types for type checking
+- Excluded from compilation (no build errors)
+- Embedded as resources (available at runtime)
+- Region-based replacement for generated code
+
+**Result**: Templates are C# files you can edit like normal code with full IDE features.
+
+---
+
+## Template File Structure
+
+### Example Template
+
+```csharp
+// Templates/DispatcherTemplate.cs
+using Whizbang.Core;
+using Whizbang.Core.Generated.Placeholders;  // Placeholder types for IDE
+
+namespace Whizbang.Core.Generated;
+
+#region HEADER
+// This region gets replaced with generated header + timestamp
+#endregion
+
+public class GeneratedDispatcher : Dispatcher {
+  public GeneratedDispatcher(IServiceProvider services) : base(services) { }
+
+  protected override ReceptorInvoker<TResult>? _getReceptorInvoker<TResult>(
+      object message,
+      Type messageType) {
+
+    #region SEND_ROUTING
+    // This region gets replaced with generated routing code
+    #endregion
+
+    return null;
+  }
+}
+```
+
+---
+
+### Key Features
+
+**Placeholder Types**:
+```csharp
+// Templates/Placeholders/PlaceholderTypes.cs
+namespace Whizbang.Core.Generated.Placeholders;
+
+// Placeholder types for IDE support
+internal class PlaceholderMessage { }
+internal class PlaceholderResponse { }
+internal interface IPlaceholderReceptor { }
+```
+
+**Why placeholders?**
+- Template can reference types that don't exist yet
+- IDE provides IntelliSense and syntax checking
+- Compilation excluded, so no errors
+- Types are never emitted (placeholders only)
+
+---
+
+### Regions for Replacement
+
+**Regions mark injection points**:
+```csharp
+#region REGION_NAME
+// Default or placeholder content
+// Gets replaced with generated code
+#endregion
+```
+
+**Common regions**:
+- `HEADER` - File header with timestamp
+- `SEND_ROUTING` - Dispatcher routing logic
+- `REGISTRATIONS` - Service registrations
+- `PROPERTIES` - Generated properties
+- `METHODS` - Generated methods
+
+---
+
+## Region-Based Replacement
+
+### Loading Templates
+
+```csharp
+using Whizbang.Generators.Templates;
+
+// Load template from embedded resource
+var template = TemplateUtilities.GetEmbeddedTemplate(
+    typeof(MyGenerator).Assembly,
+    "DispatcherTemplate.cs"
+);
+```
+
+**Requirements**:
+- Template must be in `Templates/` directory
+- Template must be embedded resource (see `.csproj` configuration)
+- Filename must match exactly (case-sensitive)
+
+---
+
+### Replacing Regions
+
+```csharp
+// Generate code to inject
+var generatedCode = new StringBuilder();
+generatedCode.AppendLine("if (messageType == typeof(CreateOrder)) {");
+generatedCode.AppendLine("  return InvokeOrderReceptor;");
+generatedCode.AppendLine("}");
+
+// Replace region, preserving indentation
+var result = TemplateUtilities.ReplaceRegion(
+    template,
+    "SEND_ROUTING",  // Region name (without #region/#endregion)
+    generatedCode.ToString()
+);
+
+// Add to source output
+context.AddSource("Dispatcher.g.cs", result);
+```
+
+---
+
+### Indentation Preservation
+
+**ReplaceRegion automatically preserves indentation**:
+
+```csharp
+// Template has 4-space indentation:
+public class Dispatcher {
+    #region SEND_ROUTING
+    // Placeholder
+    #endregion
+}
+
+// Generated code (no indentation):
+var code = "if (x) {\n  DoSomething();\n}";
+
+// Result (indentation preserved):
+public class Dispatcher {
+    if (x) {
+      DoSomething();
+    }
+}
+```
+
+**How it works**:
+- Detects region indentation from template
+- Adds same indentation to every line of generated code
+- Result: Generated code matches template formatting
+
+---
+
+### Header Region
+
+**Standard header for all generated files**:
+
+```csharp
+var result = TemplateUtilities.ReplaceHeaderRegion(
+    typeof(MyGenerator).Assembly,
+    template
+);
+```
+
+**Generates**:
+```csharp
+// <auto-generated/>
+// Generated by Whizbang source generator at 2025-01-04 10:30:45
+// DO NOT EDIT - Changes will be overwritten
+#nullable enable
+```
+
+**Use on ALL generated files** for consistency.
+
+---
+
+## Snippet System
+
+### What Are Snippets?
+
+**Snippets are reusable code blocks** stored in real C# files:
+
+```csharp
+// Templates/Snippets/DispatcherSnippets.cs
+namespace Whizbang.Generators.Templates.Snippets;
+
+internal static class DispatcherSnippets {
+
+  #region SEND_ROUTING_SNIPPET
+  if (messageType == typeof(__MESSAGE_TYPE__)) {
+    var receptor = _serviceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
+    return async msg => await receptor.HandleAsync((__MESSAGE_TYPE__)msg);
+  }
+  #endregion
+
+  #region GENERATED_FILE_HEADER
+  // <auto-generated/>
+  // Generated by Whizbang source generator at __TIMESTAMP__
+  // DO NOT EDIT - Changes will be overwritten
+  #nullable enable
+  #endregion
+}
+```
+
+---
+
+### Extracting Snippets
+
+```csharp
+var snippet = TemplateUtilities.ExtractSnippet(
+    typeof(MyGenerator).Assembly,
+    "DispatcherSnippets.cs",
+    "SEND_ROUTING_SNIPPET"
+);
+
+// Result:
+// if (messageType == typeof(__MESSAGE_TYPE__)) {
+//   var receptor = _serviceProvider.GetRequiredService<...>();
+//   return async msg => await receptor.HandleAsync((__MESSAGE_TYPE__)msg);
+// }
+```
+
+---
+
+### Using Snippets
+
+```csharp
+// Extract snippet
+var snippet = TemplateUtilities.ExtractSnippet(
+    typeof(ReceptorDiscoveryGenerator).Assembly,
+    "DispatcherSnippets.cs",
+    "SEND_ROUTING_SNIPPET"
+);
+
+// Generate code for each receptor
+var sb = new StringBuilder();
+foreach (var receptor in receptors) {
+  var code = snippet
+      .Replace("__MESSAGE_TYPE__", receptor.MessageType)
+      .Replace("__RESPONSE_TYPE__", receptor.ResponseType)
+      .Replace("__RECEPTOR_INTERFACE__", "Whizbang.Core.IReceptor");
+
+  sb.AppendLine(code);
+}
+
+// Inject into template
+var template = TemplateUtilities.GetEmbeddedTemplate(
+    typeof(ReceptorDiscoveryGenerator).Assembly,
+    "DispatcherTemplate.cs"
+);
+
+var result = TemplateUtilities.ReplaceRegion(
+    template,
+    "SEND_ROUTING",
+    sb.ToString()
+);
+```
+
+---
+
+### Benefits of Snippets
+
+**Compared to string concatenation**:
+- ✅ Full IDE support (IntelliSense, refactoring)
+- ✅ Syntax highlighting
+- ✅ Compile-time validation (via placeholders)
+- ✅ Easy to update and maintain
+- ✅ Reusable across multiple generators
+
+**Compared to inline templates**:
+- ✅ Smaller, focused code blocks
+- ✅ Can be mixed and matched
+- ✅ Easy to test individually
+
+---
+
+## Project Configuration
+
+### .csproj Configuration
+
+**Templates must be configured in `.csproj`**:
+
+```xml
+<PropertyGroup>
+  <TargetFramework>netstandard2.0</TargetFramework>
+  <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+  <IsRoslynComponent>true</IsRoslynComponent>
+</PropertyGroup>
+
+<ItemGroup>
+  <!-- Templates: exclude from compilation, embed as resources -->
+  <Compile Remove="Templates\**\*.cs" />
+  <None Include="Templates\**\*.cs" />
+  <EmbeddedResource Include="Templates\**\*.cs" />
+</ItemGroup>
+```
+
+---
+
+### Why This Configuration?
+
+**`<Compile Remove="Templates\**\*.cs" />`**:
+- Templates excluded from compilation
+- No build errors from placeholder types
+- No need for conditional compilation
+
+**`<None Include="Templates\**\*.cs" />`**:
+- Templates visible in IDE
+- Full IntelliSense and syntax highlighting
+- Can edit like normal C# files
+
+**`<EmbeddedResource Include="Templates\**\*.cs" />`**:
+- Templates embedded in generator assembly
+- Available at runtime via `TemplateUtilities.GetEmbeddedTemplate`
+- No external file dependencies
+
+---
+
+## Best Practices
+
+### Template Organization
+
+```
+Templates/
+├── DispatcherTemplate.cs          # Main templates
+├── DispatcherRegistrationsTemplate.cs
+├── WhizbangDiagnosticsTemplate.cs
+├── Placeholders/
+│   └── PlaceholderTypes.cs        # Placeholder types for IDE
+└── Snippets/
+    └── DispatcherSnippets.cs      # Reusable code snippets
+```
+
+---
+
+### Naming Conventions
+
+**Templates**:
+- `*Template.cs` - Full file templates
+- Example: `DispatcherTemplate.cs`, `RegistrationsTemplate.cs`
+
+**Snippets**:
+- `*Snippets.cs` - Snippet collections
+- Example: `DispatcherSnippets.cs`, `EntitySnippets.cs`
+
+**Placeholders**:
+- `PlaceholderTypes.cs` - Placeholder type definitions
+- Example: `PlaceholderMessage`, `IPlaceholderReceptor`
+
+---
+
+### Region Naming
+
+**Use UPPERCASE for region names**:
+```csharp
+#region HEADER
+#region SEND_ROUTING
+#region REGISTRATIONS
+#region PROPERTIES
+#region METHODS
+```
+
+**Why?**
+- Consistent with .NET conventions
+- Easy to spot in code
+- Clear distinction from regular code
+
+---
+
+### Placeholder Naming
+
+**Use `Placeholder` or `__` prefix**:
+```csharp
+// Placeholder types
+internal class PlaceholderMessage { }
+internal interface IPlaceholderReceptor { }
+
+// Placeholder text in snippets
+if (messageType == typeof(__MESSAGE_TYPE__)) {
+  var receptor = __RECEPTOR__;
+}
+```
+
+**Why?**
+- Clear that types are placeholders
+- Won't conflict with real types
+- Easy to search and replace
+
+---
+
+### Template Headers
+
+**Always include header region**:
+```csharp
+#region HEADER
+// <auto-generated/>
+// Generated by Whizbang source generator
+// DO NOT EDIT - Changes will be overwritten
+#nullable enable
+#endregion
+```
+
+**Replace with**:
+```csharp
+var result = TemplateUtilities.ReplaceHeaderRegion(
+    typeof(MyGenerator).Assembly,
+    template
+);
+```
+
+**Why?**
+- Consistent header across all generated files
+- Includes timestamp for debugging
+- Warns users not to edit
+
+---
+
+## Complete Example
+
+### Template File
+
+```csharp
+// Templates/MyFeatureTemplate.cs
+using System;
+using Whizbang.Core;
+
+namespace Whizbang.Core.Generated;
+
+#region HEADER
+// Auto-generated header
+#endregion
+
+public class MyFeatureRegistry {
+  #region REGISTRATIONS
+  // Generated registrations
+  #endregion
+}
+```
+
+---
+
+### Snippet File
+
+```csharp
+// Templates/Snippets/MyFeatureSnippets.cs
+namespace Whizbang.Generators.Templates.Snippets;
+
+internal static class MyFeatureSnippets {
+  #region REGISTRATION_SNIPPET
+  services.AddSingleton<__INTERFACE__, __IMPLEMENTATION__>();
+  #endregion
+}
+```
+
+---
+
+### Generator Usage
+
+```csharp
+// Load template
+var template = TemplateUtilities.GetEmbeddedTemplate(
+    typeof(MyFeatureGenerator).Assembly,
+    "MyFeatureTemplate.cs"
+);
+
+// Load snippet
+var snippet = TemplateUtilities.ExtractSnippet(
+    typeof(MyFeatureGenerator).Assembly,
+    "MyFeatureSnippets.cs",
+    "REGISTRATION_SNIPPET"
+);
+
+// Generate code using snippet
+var sb = new StringBuilder();
+foreach (var feature in features) {
+  var code = snippet
+      .Replace("__INTERFACE__", feature.InterfaceType)
+      .Replace("__IMPLEMENTATION__", feature.ImplementationType);
+  sb.AppendLine(code);
+}
+
+// Replace regions
+var result = template;
+result = TemplateUtilities.ReplaceHeaderRegion(
+    typeof(MyFeatureGenerator).Assembly,
+    result
+);
+result = TemplateUtilities.ReplaceRegion(
+    result,
+    "REGISTRATIONS",
+    sb.ToString()
+);
+
+// Add to output
+context.AddSource("MyFeatureRegistry.g.cs", result);
+```
+
+---
+
+## Checklist
+
+Before using templates in a generator:
+
+- [ ] Templates in `Templates/` directory
+- [ ] Placeholder types in `Templates/Placeholders/`
+- [ ] `.csproj` configured (`Compile Remove`, `None Include`, `EmbeddedResource Include`)
+- [ ] Templates use `#region` markers for injection points
+- [ ] Template filenames match `GetEmbeddedTemplate` calls (case-sensitive)
+- [ ] Snippets organized in `Templates/Snippets/`
+- [ ] All generated files include HEADER region
+- [ ] Placeholder names clearly marked (`Placeholder*` or `__*__`)
+
+---
+
+## See Also
+
+- [generator-patterns.md](generator-patterns.md) - When to use templates in generators
+- [project-structure.md](project-structure.md) - `.csproj` configuration details
+- [quick-reference.md](quick-reference.md) - Template checklist
