@@ -14,10 +14,11 @@
 6. [Code Coverage](#code-coverage)
 7. [Technology Stack](#technology-stack)
 8. [Key Principles](#key-principles)
-9. [ID Generation](#id-generation)
-10. [Observability Architecture](#observability-architecture)
-11. [Work Coordination & Event Store](#work-coordination--event-store-architecture)
-12. [Plan Documents](#plan-documents)
+9. [Code-Docs Linking](#code-docs-linking)
+10. [ID Generation](#id-generation)
+11. [Observability Architecture](#observability-architecture)
+12. [Work Coordination & Event Store](#work-coordination--event-store-architecture)
+13. [Plan Documents](#plan-documents)
 
 ---
 
@@ -261,6 +262,56 @@ grep "line-rate" bin/Debug/net10.0/TestResults/coverage.xml | head -5
 
 ---
 
+## Code-Docs Linking
+
+This library participates in a bidirectional linking system with the documentation repository:
+
+**How to Add `<docs>` Tags**:
+```csharp
+/// <summary>
+/// Dispatches messages to appropriate handlers
+/// </summary>
+/// <docs>core-concepts/dispatcher</docs>
+public interface IDispatcher {
+  // ...
+}
+```
+
+**Tag Format**:
+- Add `/// <docs>path/to/doc</docs>` XML tag above public types
+- Path format: `category/doc-name` (e.g., `core-concepts/dispatcher`)
+- Must match actual documentation file path in docs repository
+
+**Mapping Generation**:
+```bash
+# From documentation repository
+cd /Users/philcarbone/src/whizbang-lib.github.io
+node src/scripts/generate-code-docs-map.mjs
+
+# This scans library code and generates:
+# src/assets/code-docs-map.json
+```
+
+**MCP Tools for Querying**:
+The documentation repository's MCP server provides tools for bidirectional navigation:
+- `mcp__whizbang-docs__get-code-location` - Find code implementing a doc concept
+- `mcp__whizbang-docs__get-related-docs` - Find docs for a symbol
+- `mcp__whizbang-docs__validate-doc-links` - Validate all `<docs>` tags
+
+**When to Add Tags**:
+- Public interfaces (IDispatcher, IReceptor, etc.)
+- Public classes that implement core concepts
+- Key value objects (MessageId, etc.)
+- Attributes and markers (not necessarily all of them)
+
+**Best Practices**:
+- Tag before committing new public APIs
+- Run validation after adding tags
+- Keep paths in sync with documentation structure
+- One `<docs>` tag per type (above type declaration)
+
+---
+
 ## ID Generation
 
 **UUIDv7** for all identity value objects:
@@ -490,6 +541,7 @@ Living documents in `plans/` directory:
 - This is a **library**, not an application
 - Follow .NET library conventions
 - XML documentation required for all public APIs
+- **Code-Docs Linking**: Add `<docs>` tags to public APIs for bidirectional navigation (see Code-Docs Linking section)
 - See main `/Users/philcarbone/src/CLAUDE.md` for cross-repo guidance
 - See `TESTING.md` for detailed testing guidelines
 
