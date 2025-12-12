@@ -15,10 +15,11 @@
 7. [Technology Stack](#technology-stack)
 8. [Key Principles](#key-principles)
 9. [Code-Docs Linking](#code-docs-linking)
-10. [ID Generation](#id-generation)
-11. [Observability Architecture](#observability-architecture)
-12. [Work Coordination & Event Store](#work-coordination--event-store-architecture)
-13. [Plan Documents](#plan-documents)
+10. [Documentation Maintenance](#documentation-maintenance)
+11. [ID Generation](#id-generation)
+12. [Observability Architecture](#observability-architecture)
+13. [Work Coordination & Event Store](#work-coordination--event-store-architecture)
+14. [Plan Documents](#plan-documents)
 
 ---
 
@@ -33,6 +34,7 @@ For comprehensive guidance on specific topics, see focused documentation in `ai-
 - **[efcore-10-usage.md](ai-docs/efcore-10-usage.md)** - EF Core 10, JsonB, UUIDv7, complex types
 - **[aot-requirements.md](ai-docs/aot-requirements.md)** - Zero reflection rules by project type
 - **[tdd-strict.md](ai-docs/tdd-strict.md)** - RED/GREEN/REFACTOR cycle (MANDATORY)
+- **[documentation-maintenance.md](ai-docs/documentation-maintenance.md)** - CRITICAL: Keeping docs synchronized with code changes across ALL projects
 - **[boy-scout-rule.md](ai-docs/boy-scout-rule.md)** - Leave code better than you found it
 - **[code-standards.md](ai-docs/code-standards.md)** - Formatting, naming, dotnet format
 - **[sample-projects.md](ai-docs/sample-projects.md)** - Dogfooding philosophy
@@ -264,7 +266,7 @@ grep "line-rate" bin/Debug/net10.0/TestResults/coverage.xml | head -5
 
 ## Code-Docs Linking
 
-This library participates in a bidirectional linking system with the documentation repository:
+**All library projects** (Core, Generators, Testing, etc.) participate in a bidirectional linking system with the documentation repository:
 
 **How to Add `<docs>` Tags**:
 ```csharp
@@ -309,6 +311,23 @@ The documentation repository's MCP server provides tools for bidirectional navig
 - Run validation after adding tags
 - Keep paths in sync with documentation structure
 - One `<docs>` tag per type (above type declaration)
+
+**For complete documentation maintenance workflow** (version awareness, when to update docs, commit strategies), see **[documentation-maintenance.md](ai-docs/documentation-maintenance.md)**.
+
+---
+
+## Documentation Maintenance
+
+**CRITICAL**: When modifying public APIs in ANY project (Core, Generators, Testing, etc.), documentation MUST be updated.
+
+See **[documentation-maintenance.md](ai-docs/documentation-maintenance.md)** for:
+- Version awareness workflow (ask version first!)
+- Same version vs. next version strategies
+- When and how to update documentation
+- Safety: commit before deletions
+- Claude's responsibility and checklist
+
+**Key Principle**: Always ask "What version are you working on?" before making documentation changes.
 
 ---
 
@@ -542,6 +561,7 @@ Living documents in `plans/` directory:
 - Follow .NET library conventions
 - XML documentation required for all public APIs
 - **Code-Docs Linking**: Add `<docs>` tags to public APIs for bidirectional navigation (see Code-Docs Linking section)
+- **Documentation Maintenance**: Update docs when changing public APIs in ANY project (see [documentation-maintenance.md](ai-docs/documentation-maintenance.md))
 - See main `/Users/philcarbone/src/CLAUDE.md` for cross-repo guidance
 - See `TESTING.md` for detailed testing guidelines
 

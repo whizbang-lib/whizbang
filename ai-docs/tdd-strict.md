@@ -200,7 +200,7 @@ public class OrderReceptor : IReceptor<CreateOrder, OrderCreated> {
 - Fix naming inconsistencies
 - Add XML doc comments
 - Run `dotnet format`
-- Update documentation
+- Update documentation (if public APIs changed - see [documentation-maintenance.md](documentation-maintenance.md))
 
 **Example:**
 
@@ -465,7 +465,7 @@ Before every commit:
 - [ ] Working toward 100% branch coverage
 - [ ] Boy Scout Rule applied
 - [ ] No TODO comments (create issues instead)
-- [ ] Documentation updated
+- [ ] Documentation updated (if public APIs changed in ANY project)
 
 ---
 
@@ -510,6 +510,7 @@ Repeat for next feature
 ## See Also
 
 - [Testing TUnit](testing-tunit.md) - TUnit patterns, Rocks, Bogus
+- [Documentation Maintenance](documentation-maintenance.md) - Keep docs synchronized with code
 - [Boy Scout Rule](boy-scout-rule.md) - Leave code better
 - [Code Standards](code-standards.md) - Formatting and naming
 - [AOT Requirements](aot-requirements.md) - Zero reflection

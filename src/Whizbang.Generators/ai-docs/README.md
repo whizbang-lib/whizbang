@@ -89,6 +89,15 @@ This directory contains topic-specific documentation for working with Whizbang's
 3. Integration tests: Verify generated code compiles
 4. Snapshot tests: Verify output matches expected
 
+### "I'm changing generator public APIs" (attributes, diagnostic IDs, etc.)
+1. Read: [../../ai-docs/documentation-maintenance.md](../../ai-docs/documentation-maintenance.md) - Complete workflow
+2. Ask: "What version are you working on?" (MANDATORY)
+3. Add/update `<docs>` tag in source code
+4. Update documentation in `whizbang-lib.github.io` repo
+5. Regenerate code-docs mapping
+6. Validate links with MCP tool
+7. Commit both repos
+
 ---
 
 ## 🔑 Key Principles
@@ -126,6 +135,7 @@ This directory contains topic-specific documentation for working with Whizbang's
 
 ## 📖 Complete Documentation List
 
+### Generator-Specific Documentation
 1. **[README.md](README.md)** - This file (navigation hub)
 2. **[architecture.md](architecture.md)** - Multiple Independent Generators
 3. **[performance-principles.md](performance-principles.md)** - Caching and optimization
@@ -137,6 +147,9 @@ This directory contains topic-specific documentation for working with Whizbang's
 9. **[testing-strategy.md](testing-strategy.md)** - Unit, integration, snapshot
 10. **[common-pitfalls.md](common-pitfalls.md)** - 7 major mistakes
 11. **[quick-reference.md](quick-reference.md)** - Checklists and examples
+
+### Library-Level Documentation
+- **[../../ai-docs/documentation-maintenance.md](../../ai-docs/documentation-maintenance.md)** - CRITICAL: Keep docs synchronized when changing generator public APIs
 
 ---
 
@@ -171,6 +184,10 @@ This directory contains topic-specific documentation for working with Whizbang's
 7. **Forget CancellationToken**
    - Can't cancel generator, delays IDE
    - Pass `ct` to all semantic operations
+
+8. **Change generator public APIs without updating documentation**
+   - ALWAYS ask version first, update docs
+   - See [../../ai-docs/documentation-maintenance.md](../../ai-docs/documentation-maintenance.md)
 
 ---
 
@@ -233,6 +250,9 @@ Before claiming generator work complete:
 - [ ] Unit tests written
 - [ ] Integration tests verify compilation
 - [ ] Snapshot tests check output
+- [ ] Documentation updated if public APIs changed (attributes, diagnostic IDs, etc.)
+- [ ] Code-docs mapping regenerated if `<docs>` tags added/changed
+- [ ] Links validated with MCP tool
 
 ---
 

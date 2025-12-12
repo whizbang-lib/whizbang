@@ -17,6 +17,7 @@
 > - **[project-structure.md](ai-docs/project-structure.md)** - .csproj configuration
 > - **[testing-strategy.md](ai-docs/testing-strategy.md)** - Unit, integration, snapshot tests
 > - **[common-pitfalls.md](ai-docs/common-pitfalls.md)** - Seven major mistakes to avoid
+> - **[../../ai-docs/documentation-maintenance.md](../../ai-docs/documentation-maintenance.md)** - CRITICAL: Keep docs synchronized when changing generator public APIs
 >
 > Choose focused files for specific topics, or read this file for comprehensive overview.
 
@@ -33,7 +34,8 @@
 7. [Value Type Records](#value-type-records)
 8. [Project Structure](#project-structure)
 9. [Testing Strategy](#testing-strategy)
-10. [Common Pitfalls](#common-pitfalls)
+10. [Documentation Maintenance](#documentation-maintenance)
+11. [Common Pitfalls](#common-pitfalls)
 
 ---
 
@@ -679,6 +681,54 @@ public async Task GeneratedDispatcher_WithMessage_RoutesToReceptorAsync() {
 
 ---
 
+## Documentation Maintenance
+
+**CRITICAL**: When modifying generator public APIs (attributes, diagnostic IDs, generated types), documentation MUST be updated.
+
+**Generator public APIs include**:
+- Attributes (e.g., `GenerateDispatcherAttribute`)
+- Diagnostic IDs (e.g., WHIZ001-WHIZ099)
+- Generated public types that users interact with
+- Configuration options on attributes
+
+See **[../../ai-docs/documentation-maintenance.md](../../ai-docs/documentation-maintenance.md)** for:
+- Version awareness workflow (ask version first!)
+- Same version vs. next version strategies
+- When and how to update documentation
+- Safety: commit before deletions
+- Claude's responsibility and checklist
+
+**Key Principle**: Always ask "What version are you working on?" before making documentation changes.
+
+**Example Scenarios**:
+
+**New Attribute Property (Same Version)**:
+```csharp
+// Adding new property to existing attribute
+[AttributeUsage(AttributeTargets.Class)]
+public class GenerateDispatcherAttribute : Attribute {
+  public string? Name { get; set; }
+  public bool IncludeMetrics { get; set; }  // NEW in v0.1.0
+}
+
+// Documentation: Update in place (v0.1.0/source-generators/dispatcher.md)
+// No deprecation - this is a new feature!
+```
+
+**Deprecated Diagnostic (Next Version)**:
+```csharp
+// In v0.2.0 - replacing old diagnostic with better one
+[Obsolete("Use WHIZ010 instead")]
+public static readonly DiagnosticDescriptor WHIZ001 = ...;
+
+public static readonly DiagnosticDescriptor WHIZ010 = ...;
+
+// Documentation: Create v0.2.0 docs or use drafts/
+// Mark WHIZ001 as deprecated, document WHIZ010
+```
+
+---
+
 ## Common Pitfalls
 
 ### ❌ Pitfall 1: Using Classes Instead of Records
@@ -793,6 +843,27 @@ private static Info? Extract(GeneratorSyntaxContext ctx, CancellationToken ct) {
 ```
 
 **Result**: Generator can't be cancelled, delays IDE responsiveness.
+
+### ❌ Pitfall 8: Changing Public APIs Without Updating Documentation
+
+```csharp
+// ❌ WRONG: Adding attribute property without documentation
+[AttributeUsage(AttributeTargets.Class)]
+public class GenerateDispatcherAttribute : Attribute {
+  public bool IncludeMetrics { get; set; }  // No docs update!
+}
+
+// ✅ CORRECT: Update documentation when adding public APIs
+// 1. Ask: "What version are you working on?"
+// 2. Update docs in whizbang-lib.github.io repo
+// 3. Add <docs> tag if needed
+// 4. Regenerate code-docs mapping
+// 5. Validate links
+```
+
+**Result**: Users don't know about new features, API usage unclear.
+
+**See**: [../../ai-docs/documentation-maintenance.md](../../ai-docs/documentation-maintenance.md)
 
 ---
 

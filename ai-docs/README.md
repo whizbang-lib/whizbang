@@ -22,6 +22,10 @@ This directory contains focused documentation topics to help Claude Code underst
   - **When to use:** Writing any C# code
   - **Critical:** `dotnet format` before every commit, async methods end with "Async"
 
+- **[documentation-maintenance.md](documentation-maintenance.md)** - Keeping docs synchronized with code
+  - **When to use:** Changing public APIs in ANY project (Core, Generators, Testing)
+  - **Critical:** ALWAYS ask version first, update docs when changing public APIs
+
 - **[boy-scout-rule.md](boy-scout-rule.md)** - Leave code better than you found it
   - **When to use:** REFACTOR phase, discovering issues
   - **Critical:** No "that was pre-existing" excuses
@@ -54,6 +58,15 @@ This directory contains focused documentation topics to help Claude Code underst
 3. Read: [code-standards.md](code-standards.md) - Formatting rules
 4. Read: [boy-scout-rule.md](boy-scout-rule.md) - REFACTOR phase
 5. Run: `dotnet format` before completion
+
+### "I'm changing a public API" (ANY project: Core, Generators, Testing)
+1. Read: [documentation-maintenance.md](documentation-maintenance.md) - Complete workflow
+2. Ask: "What version are you working on?" (MANDATORY)
+3. Add/update `<docs>` tag in source code
+4. Update documentation in `whizbang-lib.github.io` repo
+5. Regenerate code-docs mapping
+6. Validate links with MCP tool
+7. Commit both repos
 
 ### "I'm adding tests"
 1. Read: [testing-tunit.md](testing-tunit.md) - TUnit patterns
@@ -93,14 +106,15 @@ This directory contains focused documentation topics to help Claude Code underst
 ### Core Standards
 1. **[code-standards.md](code-standards.md)** - Formatting, naming, dotnet format (MANDATORY)
 2. **[tdd-strict.md](tdd-strict.md)** - Test-driven development (RED/GREEN/REFACTOR)
-3. **[boy-scout-rule.md](boy-scout-rule.md)** - Always improve code
-4. **[aot-requirements.md](aot-requirements.md)** - Zero reflection, native AOT
+3. **[documentation-maintenance.md](documentation-maintenance.md)** - Keeping docs synchronized with code (CRITICAL)
+4. **[boy-scout-rule.md](boy-scout-rule.md)** - Always improve code
+5. **[aot-requirements.md](aot-requirements.md)** - Zero reflection, native AOT
 
 ### Development Practices
-5. **[testing-tunit.md](testing-tunit.md)** - TUnit, Rocks, Bogus usage
-6. **[sample-projects.md](sample-projects.md)** - Dogfooding philosophy
-7. **[efcore-10-usage.md](efcore-10-usage.md)** - PostgreSQL JsonB, UUIDv7
-8. **[script-standards.md](script-standards.md)** - PowerShell, containers
+6. **[testing-tunit.md](testing-tunit.md)** - TUnit, Rocks, Bogus usage
+7. **[sample-projects.md](sample-projects.md)** - Dogfooding philosophy
+8. **[efcore-10-usage.md](efcore-10-usage.md)** - PostgreSQL JsonB, UUIDv7
+9. **[script-standards.md](script-standards.md)** - PowerShell, containers
 
 ---
 
@@ -116,22 +130,28 @@ This directory contains focused documentation topics to help Claude Code underst
 - ✅ ALL async methods end with "Async"
 - ✅ Boy Scout Rule in REFACTOR phase
 
-### 3. AOT Compatibility
+### 3. Documentation Maintenance
+- ✅ ALWAYS ask "What version are you working on?" first
+- ✅ Update docs when changing public APIs (Core, Generators, Testing, ALL projects)
+- ✅ Same version = update in place, Next version = create new/use drafts
+- ✅ Commit before deletions for safety
+
+### 4. AOT Compatibility
 - ✅ Library: ZERO reflection (absolute)
 - ✅ Samples: ZERO reflection (absolute)
 - ✅ Tests: Preferred but not required
 
-### 4. Sample Projects
+### 5. Sample Projects
 - ✅ Samples dogfood the library
 - ✅ When sample needs feature → library implements it
 - ✅ NO workarounds in samples
 
-### 5. Database
+### 6. Database
 - ✅ Use `Guid.CreateVersion7()` for all IDs
 - ✅ Complex types with `ToJson()` for JsonB
 - ✅ Partial updates with `ExecuteUpdateAsync`
 
-### 6. Scripts
+### 7. Scripts
 - ✅ Prefer PowerShell Core (`.ps1`)
 - ✅ Multi-platform required
 - ✅ Containers for tools
@@ -160,16 +180,19 @@ This directory contains focused documentation topics to help Claude Code underst
 6. **Create workarounds in samples**
    - Implement feature in library first
 
-7. **Say "that was pre-existing"**
+7. **Change public APIs without updating documentation**
+   - ALWAYS ask version first, update docs
+
+8. **Say "that was pre-existing"**
    - Boy Scout Rule: fix it anyway
 
-8. **Accept low test coverage**
+9. **Accept low test coverage**
    - Goal is 100%, keep working toward it
 
-9. **Use owned entities in EF Core 10**
-   - Use complex types instead
+10. **Use owned entities in EF Core 10**
+    - Use complex types instead
 
-10. **Use bash without reason**
+11. **Use bash without reason**
     - Prefer PowerShell Core
 
 ---
@@ -300,7 +323,10 @@ Before claiming work complete:
 - [ ] Async methods end with "Async"
 - [ ] UUIDs use `Guid.CreateVersion7()`
 - [ ] Boy Scout Rule applied
-- [ ] Documentation updated
+- [ ] Documentation updated (if public APIs changed in ANY project)
+- [ ] Version determined and correct strategy used (same vs. next)
+- [ ] Code-docs mapping regenerated (if `<docs>` tags changed)
+- [ ] Links validated (if documentation changed)
 - [ ] No workarounds in samples
 - [ ] AOT compatibility verified
 

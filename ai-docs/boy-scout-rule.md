@@ -267,13 +267,15 @@ This prevents future bugs in related code."
 
 **When you change code, documentation updates are NOT optional:**
 
+**Documentation is part of leaving the code better.** See **[documentation-maintenance.md](documentation-maintenance.md)** for the complete workflow including version awareness.
+
 ```markdown
 ## Checklist for Code Changes
 
 ✅ Code updated
 ✅ Tests updated
 ✅ Tests passing
-✅ Documentation updated  ← NOT OPTIONAL
+✅ Documentation updated  ← NOT OPTIONAL (see documentation-maintenance.md)
 ✅ Examples updated (if API changed)
 ✅ Migration guide (if breaking change)
 ✅ Changelog entry
