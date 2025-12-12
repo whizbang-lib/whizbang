@@ -11,6 +11,7 @@ namespace Whizbang.Core;
 /// - LocalInvokeAsync: In-process RPC with typed business result (zero allocation)
 /// - PublishAsync: Event broadcasting (fire-and-forget)
 /// </summary>
+/// <docs>core-concepts/dispatcher</docs>
 public interface IDispatcher {
   // ========================================
   // SEND PATTERN - Command Dispatch with Acknowledgment

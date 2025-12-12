@@ -6,6 +6,7 @@ namespace Whizbang.Core;
 /// A perspective can implement multiple IPerspectiveOf interfaces to handle different event types.
 /// </summary>
 /// <typeparam name="TEvent">The type of event this perspective listens to</typeparam>
+/// <docs>core-concepts/perspectives</docs>
 public interface IPerspectiveOf<in TEvent> where TEvent : IEvent {
   /// <summary>
   /// Updates the read model based on the event.

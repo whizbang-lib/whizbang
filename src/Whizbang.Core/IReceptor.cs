@@ -7,6 +7,7 @@ namespace Whizbang.Core;
 /// </summary>
 /// <typeparam name="TMessage">The type of message this receptor handles</typeparam>
 /// <typeparam name="TResponse">The type of response this receptor produces</typeparam>
+/// <docs>core-concepts/receptors</docs>
 public interface IReceptor<in TMessage, TResponse> {
   /// <summary>
   /// Handles a message, applies business logic, and returns a response.
@@ -23,6 +24,7 @@ public interface IReceptor<in TMessage, TResponse> {
 /// Use this interface when you don't need to return a business result, enabling optimal performance.
 /// </summary>
 /// <typeparam name="TMessage">The type of message this receptor handles</typeparam>
+/// <docs>core-concepts/receptors</docs>
 public interface IReceptor<in TMessage> {
   /// <summary>
   /// Handles a message and performs side effects without returning a result.
