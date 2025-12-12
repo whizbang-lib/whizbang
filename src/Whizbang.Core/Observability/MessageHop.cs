@@ -26,6 +26,7 @@ public enum HopType {
 /// Records where and when the message was processed, including caller information for debugging.
 /// Can represent either a hop for the current message or carry-forward hop from the causation message.
 /// </summary>
+/// <docs>core-concepts/observability</docs>
 public record MessageHop {
   /// <summary>
   /// The type of hop - Current (for this message) or Causation (from parent message).

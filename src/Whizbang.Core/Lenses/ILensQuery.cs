@@ -6,6 +6,7 @@ namespace Whizbang.Core.Lenses;
 /// Implementation translates LINQ to database-specific queries (JSONB for PostgreSQL, JSON for SQL Server, etc.).
 /// </summary>
 /// <typeparam name="TModel">The read model type to query</typeparam>
+/// <docs>core-concepts/lenses</docs>
 public interface ILensQuery<TModel> where TModel : class {
   /// <summary>
   /// Queryable access to full perspective rows.

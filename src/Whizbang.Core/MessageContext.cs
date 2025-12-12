@@ -5,6 +5,7 @@ namespace Whizbang.Core;
 /// <summary>
 /// Default implementation of <see cref="IMessageContext"/>.
 /// </summary>
+/// <docs>core-concepts/message-context</docs>
 public class MessageContext : IMessageContext {
   /// <inheritdoc />
   public MessageId MessageId { get; init; } = MessageId.New();

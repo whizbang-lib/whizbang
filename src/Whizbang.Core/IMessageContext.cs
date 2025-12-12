@@ -5,6 +5,7 @@ namespace Whizbang.Core;
 /// <summary>
 /// Provides context and metadata for a message flowing through the system.
 /// </summary>
+/// <docs>core-concepts/message-context</docs>
 public interface IMessageContext {
   /// <summary>
   /// Unique identifier for this specific message.

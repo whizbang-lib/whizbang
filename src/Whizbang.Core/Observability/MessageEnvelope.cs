@@ -10,6 +10,7 @@ namespace Whizbang.Core.Observability;
 /// Carries context across network boundaries and through the entire execution pipeline.
 /// </summary>
 /// <typeparam name="TMessage">The type of the message payload</typeparam>
+/// <docs>core-concepts/observability</docs>
 public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// <summary>
   /// Unique identifier for this specific message.
