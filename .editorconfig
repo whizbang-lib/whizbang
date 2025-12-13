@@ -108,6 +108,13 @@ dotnet_naming_symbols.type_parameters_symbols.resharper_applicable_kinds = type_
 dotnet_naming_symbols.type_parameters_symbols.resharper_required_modifiers = any
 dotnet_naming_symbols.async_methods.applicable_kinds = method
 dotnet_naming_symbols.async_methods.required_modifiers = async
+# Abstract methods should use PascalCase (higher priority than protected)
+dotnet_naming_rule.abstract_methods_pascal_case.severity = warning
+dotnet_naming_rule.abstract_methods_pascal_case.symbols = abstract_methods
+dotnet_naming_rule.abstract_methods_pascal_case.style = upper_camel_case_style
+dotnet_naming_symbols.abstract_methods.applicable_kinds = method
+dotnet_naming_symbols.abstract_methods.applicable_accessibilities = protected,public
+dotnet_naming_symbols.abstract_methods.required_modifiers = abstract
 # Private methods should use _camelCase
 dotnet_naming_rule.private_methods_must_have_underscore.severity = warning
 dotnet_naming_rule.private_methods_must_have_underscore.symbols = private_methods
