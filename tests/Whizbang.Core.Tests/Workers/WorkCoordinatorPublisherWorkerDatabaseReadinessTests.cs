@@ -366,7 +366,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     services.AddSingleton(publishStrategy);
     services.AddSingleton(instanceProvider);
     services.AddSingleton(databaseReadinessCheck);
-    services.AddSingleton<WorkChannelWriter>();  // Required by WorkCoordinatorPublisherWorker
+    services.AddSingleton<IWorkChannelWriter>(new TestWorkChannelWriter());  // Required by WorkCoordinatorPublisherWorker
     services.AddSingleton(new WorkCoordinatorPublisherOptions {
       PollingIntervalMilliseconds = 100  // Fast polling for tests
     });
@@ -379,5 +379,27 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
 
     services.AddHostedService<WorkCoordinatorPublisherWorker>();
     return services.BuildServiceProvider();
+  }
+
+  // Test helper - Mock work channel writer
+  private class TestWorkChannelWriter : IWorkChannelWriter {
+    public List<OutboxWork> WrittenWork { get; } = [];
+
+    public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
+      throw new NotImplementedException("Reader not needed for tests");
+
+    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct) {
+      WrittenWork.Add(work);
+      return ValueTask.CompletedTask;
+    }
+
+    public bool TryWrite(OutboxWork work) {
+      WrittenWork.Add(work);
+      return true;
+    }
+
+    public void Complete() {
+      // No-op for testing
+    }
   }
 }

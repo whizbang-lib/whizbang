@@ -131,7 +131,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       instanceProvider,
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       publishStrategy,
-      new WorkChannelWriter(),
+      new TestWorkChannelWriter(),
       Microsoft.Extensions.Options.Options.Create(new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 100 }),
       databaseReadiness
     );
@@ -177,7 +177,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       instanceProvider,
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       publishStrategy,
-      new WorkChannelWriter(),
+      new TestWorkChannelWriter(),
       Microsoft.Extensions.Options.Options.Create(new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 100 }),
       databaseReadiness
     );
@@ -224,7 +224,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       instanceProvider,
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       publishStrategy,
-      new WorkChannelWriter(),
+      new TestWorkChannelWriter(),
       Microsoft.Extensions.Options.Options.Create(new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 100 }),
       databaseReadiness
     );
@@ -260,7 +260,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       instanceProvider,
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       publishStrategy,
-      new WorkChannelWriter(),
+      new TestWorkChannelWriter(),
       Microsoft.Extensions.Options.Options.Create(new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 100 }),
       databaseReadiness
     );
@@ -301,7 +301,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       instanceProvider,
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
       publishStrategy,
-      new WorkChannelWriter(),
+      new TestWorkChannelWriter(),
       Microsoft.Extensions.Options.Options.Create(new WorkCoordinatorPublisherOptions { PollingIntervalMilliseconds = 100 }),
       databaseReadiness
     );
@@ -406,6 +406,28 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
         OutboxWork = [.. WorkToReturn],
         InboxWork = []
       });
+    }
+  }
+
+  // Test helper - Mock work channel writer
+  private class TestWorkChannelWriter : IWorkChannelWriter {
+    public List<OutboxWork> WrittenWork { get; } = [];
+
+    public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
+      throw new NotImplementedException("Reader not needed for tests");
+
+    public ValueTask WriteAsync(OutboxWork work, CancellationToken ct) {
+      WrittenWork.Add(work);
+      return ValueTask.CompletedTask;
+    }
+
+    public bool TryWrite(OutboxWork work) {
+      WrittenWork.Add(work);
+      return true;
+    }
+
+    public void Complete() {
+      // No-op for testing
     }
   }
 }
