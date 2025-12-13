@@ -46,16 +46,7 @@ public class DiagnosticProcessWorkBatchTest : EFCoreTestBase {
       perspectiveCompletions: [],
       perspectiveFailures: [],
       newOutboxMessages: [
-        new OutboxMessage {
-          MessageId = messageId1.Value,
-          Destination = "test-topic",
-          EventType = "TestEvent",
-          EventData = "{\"data\":\"first\"}",
-          Metadata = "{\"hops\":[]}",
-          Scope = null,
-          IsEvent = true,
-          StreamId = streamId
-        }
+        CreateTestOutboxMessage(messageId1.Value, "test-topic", streamId, true)
       ],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -103,16 +94,7 @@ public class DiagnosticProcessWorkBatchTest : EFCoreTestBase {
       perspectiveCompletions: [],
       perspectiveFailures: [],
       newOutboxMessages: [
-        new OutboxMessage {
-          MessageId = messageId2.Value,
-          Destination = "test-topic",
-          EventType = "TestEvent",
-          EventData = "{\"data\":\"second\"}",
-          Metadata = "{\"hops\":[]}",
-          Scope = null,
-          IsEvent = true,
-          StreamId = streamId
-        }
+        CreateTestOutboxMessage(messageId2.Value, "test-topic", streamId, true)
       ],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],

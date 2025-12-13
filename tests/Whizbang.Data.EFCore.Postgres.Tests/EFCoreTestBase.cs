@@ -1,6 +1,10 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Testcontainers.PostgreSql;
 using TUnit.Core;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -73,5 +77,49 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
   /// </summary>
   protected WorkCoordinationDbContext CreateDbContext() {
     return new WorkCoordinationDbContext(DbContextOptions);
+  }
+
+  /// <summary>
+  /// Creates a test message envelope for integration tests.
+  /// </summary>
+  protected static TestMessageEnvelope CreateTestEnvelope(Guid messageId) {
+    return new TestMessageEnvelope {
+      MessageId = MessageId.From(messageId),
+      Hops = []
+    };
+  }
+
+  /// <summary>
+  /// Creates an OutboxMessage for testing with proper envelope structure.
+  /// </summary>
+  protected static OutboxMessage CreateTestOutboxMessage(Guid messageId, string destination, Guid? streamId = null, bool isEvent = false) {
+    return new OutboxMessage {
+      MessageId = messageId,
+      Destination = destination,
+      Envelope = CreateTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      MessageType = "TestMessage, TestAssembly",
+      StreamId = streamId,
+      IsEvent = isEvent
+    };
+  }
+
+  /// <summary>
+  /// Simple test message envelope for integration tests.
+  /// Implements IMessageEnvelope&lt;object&gt; with minimal required properties.
+  /// </summary>
+  protected class TestMessageEnvelope : IMessageEnvelope<object> {
+    public required MessageId MessageId { get; init; }
+    public required List<MessageHop> Hops { get; init; }
+    public object Payload { get; init; } = new { };  // Test payload
+
+    public void AddHop(MessageHop hop) {
+      Hops.Add(hop);
+    }
+
+    public DateTimeOffset GetMessageTimestamp() => DateTimeOffset.UtcNow;
+    public CorrelationId? GetCorrelationId() => null;
+    public MessageId? GetCausationId() => null;
+    public JsonElement? GetMetadata(string key) => null;
   }
 }

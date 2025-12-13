@@ -46,16 +46,7 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
       perspectiveCompletions: [],
       perspectiveFailures: [],
       newOutboxMessages: [
-        new OutboxMessage {
-          MessageId = messageId.Value,
-          Destination = "test-topic",
-          EventType = "TestEvent",
-          EventData = "{\"data\":\"test\"}",
-          Metadata = "{\"hops\":[]}",
-          Scope = null,
-          IsEvent = true,
-          StreamId = streamId
-        }
+        CreateTestOutboxMessage(messageId.Value, "test-topic", streamId, true)
       ],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -94,16 +85,7 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
       perspectiveCompletions: [],
       perspectiveFailures: [],
       newOutboxMessages: [
-        new OutboxMessage {
-          MessageId = messageId.Value,
-          Destination = "test-topic",
-          EventType = "TestEvent",
-          EventData = "{\"data\":\"test\"}",
-          Metadata = "{\"hops\":[]}",
-          Scope = null,
-          IsEvent = true,
-          StreamId = streamId
-        }
+        CreateTestOutboxMessage(messageId.Value, "test-topic", streamId, true)
       ],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -162,16 +144,7 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
       perspectiveCompletions: [],
       perspectiveFailures: [],
       newOutboxMessages: [
-        new OutboxMessage {
-          MessageId = messageId.Value,
-          Destination = "test-topic",
-          EventType = "TestEvent",
-          EventData = "{\"data\":\"test\"}",
-          Metadata = "{\"hops\":[]}",
-          Scope = null,
-          IsEvent = true,
-          StreamId = streamId
-        }
+        CreateTestOutboxMessage(messageId.Value, "test-topic", streamId, true)
       ],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
