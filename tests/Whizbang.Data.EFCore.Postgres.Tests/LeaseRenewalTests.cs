@@ -2,6 +2,7 @@ using Npgsql;
 using TUnit.Assertions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Serialization;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -48,7 +49,7 @@ public class LeaseRenewalTests : EFCoreTestBase {
     }
 
     // Act - Call process_work_batch with lease renewal
-    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext);
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext, JsonContextRegistry.CreateCombinedOptions());
     await coordinator.ProcessWorkBatchAsync(
       instanceId: instanceId,
       serviceName: "TestService",
@@ -59,6 +60,10 @@ public class LeaseRenewalTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [messageId1, messageId2],  // NEW PARAMETER
@@ -116,7 +121,7 @@ public class LeaseRenewalTests : EFCoreTestBase {
     var originalExpiry = new DateTimeOffset((DateTime)(await selectCmd.ExecuteScalarAsync())!, TimeSpan.Zero);
 
     // Act
-    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext);
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext, JsonContextRegistry.CreateCombinedOptions());
     await coordinator.ProcessWorkBatchAsync(
       instanceId: instanceId,
       serviceName: "TestService",
@@ -127,6 +132,10 @@ public class LeaseRenewalTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -184,7 +193,7 @@ public class LeaseRenewalTests : EFCoreTestBase {
     await claimCmd.ExecuteNonQueryAsync();
 
     // Act - Renew lease without marking complete/failed
-    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext);
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext, JsonContextRegistry.CreateCombinedOptions());
     var workBatch = await coordinator.ProcessWorkBatchAsync(
       instanceId: instanceId,
       serviceName: "TestService",
@@ -195,6 +204,10 @@ public class LeaseRenewalTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [messageId],

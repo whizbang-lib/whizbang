@@ -44,10 +44,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: [],
       leaseSeconds: 300);
@@ -65,11 +67,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
   [Test]
   public async Task ProcessWorkBatchAsync_WithMetadata_StoresMetadataCorrectlyAsync() {
     // Arrange
-    var metadata = new Dictionary<string, object> {
-      { "version", "1.0.0" },
-      { "environment", "test" },
-      { "enabled", true }
-    };
+    var metadataJson = """{"version":"1.0.0","environment":"test","enabled":true}""";
+    var metadata = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(metadataJson);
 
     // Act
     await _sut.ProcessWorkBatchAsync(
@@ -82,10 +81,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: [],
       leaseSeconds: 300);
@@ -121,10 +122,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -164,10 +167,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       ],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -208,10 +213,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       ],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -246,10 +253,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
         new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.Stored | MessageProcessingStatus.EventStored | MessageProcessingStatus.Published }
       ],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -290,10 +299,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
           Error = "Handler exception"
         }
       ],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -354,10 +365,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -418,10 +431,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -504,10 +519,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
           Error = "Inbox error"
         }
       ],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -563,10 +580,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -611,10 +630,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -848,10 +869,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -867,10 +890,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -947,10 +972,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -965,10 +992,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -983,10 +1012,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -1104,10 +1135,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -1123,10 +1156,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -1192,10 +1227,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -1273,10 +1310,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       ],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -1334,10 +1373,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -1353,10 +1394,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
@@ -1409,10 +1452,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       ],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
