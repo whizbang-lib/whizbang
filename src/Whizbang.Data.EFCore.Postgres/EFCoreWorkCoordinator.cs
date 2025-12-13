@@ -1,5 +1,4 @@
 using System.ComponentModel.DataAnnotations.Schema;
-using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -351,11 +350,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// Deserializes envelope from database envelope_type and envelope_data columns.
   /// </summary>
   /// <remarks>
-  /// IL2057: Type names come from controlled database storage and are guaranteed to be available.
-  /// All envelope types are registered via JsonContextRegistry for AOT compatibility.
+  /// TODO (Phase 4): IL2057 - Type.GetType() is not AOT-compatible.
+  /// Use generated type registry from core library source generators instead.
   /// </remarks>
-  [UnconditionalSuppressMessage("Trimming", "IL2057:Unrecognized value passed to Type.GetType",
-    Justification = "Envelope type names are stored in database and guaranteed to be available through JsonContextRegistry registration.")]
   private IMessageEnvelope DeserializeEnvelope(string envelopeTypeName, string envelopeDataJson) {
     _logger?.LogDebug("Deserializing envelope: Type={EnvelopeType}, Data (first 500 chars)={EnvelopeData}",
       envelopeTypeName,

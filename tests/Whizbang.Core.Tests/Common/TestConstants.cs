@@ -20,5 +20,5 @@ public static class TestConstants {
   ///
   /// Total: 23 receptors
   /// </summary>
-  public const int ExpectedReceptorCount = 23;
+  public const int EXPECTED_RECEPTOR_COUNT = 23;
 }

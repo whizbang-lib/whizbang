@@ -21,7 +21,7 @@ public partial class GeneratedDiagnosticsTests : DiagnosticTestBase {
     await Assert.That(output).Contains("Whizbang Source Generators - Build Diagnostics");
     await Assert.That(output).Contains("ReceptorDiscoveryGenerator");
     await Assert.That(output).Contains("ReceptorDiscovery");
-    await Assert.That(output).Contains($"Discovered {TestConstants.ExpectedReceptorCount} receptor(s)");
+    await Assert.That(output).Contains($"Discovered {TestConstants.EXPECTED_RECEPTOR_COUNT} receptor(s)");
     await Assert.That(output).Contains("OrderReceptor");
     await Assert.That(output).Contains("PaymentReceptor");
     await Assert.That(output).Contains("(PaymentProcessed, AuditEvent)");
@@ -73,7 +73,7 @@ public partial class GeneratedDiagnosticsTests : DiagnosticTestBase {
     await Assert.That(receptorOnly).Contains("ReceptorDiscovery");
 
     // Both should contain receptor info
-    await Assert.That(receptorOnly).Contains($"Discovered {TestConstants.ExpectedReceptorCount} receptor(s)");
+    await Assert.That(receptorOnly).Contains($"Discovered {TestConstants.EXPECTED_RECEPTOR_COUNT} receptor(s)");
   }
 
   [System.Text.RegularExpressions.GeneratedRegex(@"\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC"
