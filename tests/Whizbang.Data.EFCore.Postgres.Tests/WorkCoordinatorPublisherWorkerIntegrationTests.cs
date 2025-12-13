@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Serialization;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
@@ -32,7 +33,7 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
     var instanceId = Guid.CreateVersion7();
     var messageId = MessageId.New();
     var streamId = Guid.CreateVersion7();
-    var workCoordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext());
+    var workCoordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
 
     // Store message and capture returned work
     var workBatch = await workCoordinator.ProcessWorkBatchAsync(
@@ -45,8 +46,12 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
           outboxFailures: [],
           inboxCompletions: [],
           inboxFailures: [],
+          receptorCompletions: [],
+          receptorFailures: [],
+          perspectiveCompletions: [],
+          perspectiveFailures: [],
           newOutboxMessages: [
-            new NewOutboxMessage {
+            new OutboxMessage {
               MessageId = messageId.Value,
               Destination = "test-topic",
               EventType = "TestEvent",
@@ -100,6 +105,10 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -124,7 +133,7 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
     // Verify UUIDv7 ordering works
     var testTransport = new TestTransport();
     var instanceId = Guid.CreateVersion7();
-    var workCoordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext());
+    var workCoordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
 
     // Store 3 messages
     var messageId1 = MessageId.New();
@@ -144,8 +153,12 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [
-        new NewOutboxMessage {
+        new OutboxMessage {
           MessageId = messageId1.Value,
           Destination = "test",
           EventType = "Test",
@@ -155,7 +168,7 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
           IsEvent = true,
           StreamId = streamId
         },
-        new NewOutboxMessage {
+        new OutboxMessage {
           MessageId = messageId2.Value,
           Destination = "test",
           EventType = "Test",
@@ -165,7 +178,7 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
           IsEvent = true,
           StreamId = streamId
         },
-        new NewOutboxMessage {
+        new OutboxMessage {
           MessageId = messageId3.Value,
           Destination = "test",
           EventType = "Test",
@@ -218,7 +231,7 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
     // This test proves that when we report completions, if new work is returned, it gets processed
     var testTransport = new TestTransport();
     var instanceId = Guid.CreateVersion7();
-    var workCoordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext());
+    var workCoordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
 
     // Store first message
     var messageId1 = MessageId.New();
@@ -234,8 +247,12 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [
-        new NewOutboxMessage {
+        new OutboxMessage {
           MessageId = messageId1.Value,
           Destination = "test-topic",
           EventType = "TestEvent",
@@ -274,8 +291,12 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [
-        new NewOutboxMessage {
+        new OutboxMessage {
           MessageId = messageId2.Value,
           Destination = "test-topic",
           EventType = "TestEvent",
@@ -301,7 +322,7 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
   public async Task ProcessWorkBatch_MultipleIterationsProcessAllWorkAsync() {
     // This test proves the processing loop works correctly across multiple iterations
     var instanceId = Guid.CreateVersion7();
-    var workCoordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext());
+    var workCoordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
 
     // Store 3 messages, but do it in stages to simulate the loop
     var messageId1 = MessageId.New();
@@ -320,8 +341,12 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [
-        new NewOutboxMessage {
+        new OutboxMessage {
           MessageId = messageId1.Value,
           Destination = "test",
           EventType = "Test",
@@ -355,8 +380,12 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [
-        new NewOutboxMessage {
+        new OutboxMessage {
           MessageId = messageId2.Value,
           Destination = "test",
           EventType = "Test",
@@ -390,8 +419,12 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [
-        new NewOutboxMessage {
+        new OutboxMessage {
           MessageId = messageId3.Value,
           Destination = "test",
           EventType = "Test",
@@ -425,6 +458,10 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
@@ -440,7 +477,7 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
   public async Task ProcessWorkBatch_LoopTerminatesWhenNoWorkAsync() {
     // This test proves the loop correctly terminates when there's no work
     var instanceId = Guid.CreateVersion7();
-    var workCoordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext());
+    var workCoordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
 
     // Call with no messages - should return empty work batch
     var workBatch = await workCoordinator.ProcessWorkBatchAsync(
@@ -453,6 +490,10 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],

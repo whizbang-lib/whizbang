@@ -3,6 +3,7 @@ using Microsoft.EntityFrameworkCore;
 using TUnit.Assertions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 
@@ -22,7 +23,7 @@ public class DiagnosticProcessWorkBatchTest : EFCoreTestBase {
     };
 
     var instanceId = Guid.CreateVersion7();
-    var workCoordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(noticeDbContext);
+    var workCoordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(noticeDbContext, JsonContextRegistry.CreateCombinedOptions());
 
     // Store first message
     var messageId1 = MessageId.New();
@@ -40,8 +41,12 @@ public class DiagnosticProcessWorkBatchTest : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [
-        new NewOutboxMessage {
+        new OutboxMessage {
           MessageId = messageId1.Value,
           Destination = "test-topic",
           EventType = "TestEvent",
@@ -93,8 +98,12 @@ public class DiagnosticProcessWorkBatchTest : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [
-        new NewOutboxMessage {
+        new OutboxMessage {
           MessageId = messageId2.Value,
           Destination = "test-topic",
           EventType = "TestEvent",

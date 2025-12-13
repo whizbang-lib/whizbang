@@ -1,6 +1,7 @@
 using TUnit.Assertions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -17,7 +18,7 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
   public async Task InitializeSystemUnderTestAsync() {
     await base.SetupAsync();
     _instanceId = Guid.CreateVersion7();
-    _sut = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext());
+    _sut = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
   }
 
   [Test]
@@ -40,8 +41,12 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [
-        new NewOutboxMessage {
+        new OutboxMessage {
           MessageId = messageId.Value,
           Destination = "test-topic",
           EventType = "TestEvent",
@@ -53,8 +58,6 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
         }
       ],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []
     );
@@ -86,8 +89,12 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [
-        new NewOutboxMessage {
+        new OutboxMessage {
           MessageId = messageId.Value,
           Destination = "test-topic",
           EventType = "TestEvent",
@@ -99,8 +106,6 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
         }
       ],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: [],
       leaseSeconds: -1  // Immediately expired lease!
@@ -117,10 +122,12 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []
     );
@@ -150,8 +157,12 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [
-        new NewOutboxMessage {
+        new OutboxMessage {
           MessageId = messageId.Value,
           Destination = "test-topic",
           EventType = "TestEvent",
@@ -163,8 +174,6 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
         }
       ],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: [],
       leaseSeconds: 300  // Long lease
@@ -181,10 +190,12 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
       outboxFailures: [],
       inboxCompletions: [],
       inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
       newOutboxMessages: [],
       newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []
     );
