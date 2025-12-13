@@ -401,12 +401,12 @@ public class DispatcherTransportBridgeTests {
   }
 
   // Test message types
-  public record TestCommand : IEvent {
+  public record TestCommand : ICommand {
     public int Value { get; init; }
     public string Name { get; init; } = string.Empty;
   }
 
-  public record TestQuery : IEvent {
+  public record TestQuery : ICommand {
     public int Value { get; init; }
   }
 

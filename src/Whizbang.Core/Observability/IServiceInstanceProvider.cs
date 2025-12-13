@@ -8,6 +8,7 @@ namespace Whizbang.Core.Observability;
 /// - Lease management (outbox/inbox processing)
 /// Each service instance (process) has a unique ID generated at startup.
 /// </summary>
+/// <docs>core-concepts/observability</docs>
 public interface IServiceInstanceProvider {
   /// <summary>
   /// Gets the unique instance ID for this service instance.

@@ -6,6 +6,7 @@ namespace Whizbang.Core.Perspectives;
 /// Perspectives use this to update read models without knowing storage details.
 /// </summary>
 /// <typeparam name="TModel">The read model type to store</typeparam>
+/// <docs>core-concepts/perspectives</docs>
 public interface IPerspectiveStore<TModel> where TModel : class {
   /// <summary>
   /// Insert or update a read model.

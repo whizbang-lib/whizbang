@@ -23,7 +23,10 @@ public static class WhizbangJsonContext {
   /// Runs automatically when the assembly is loaded - no explicit call needed.
   /// Registers in priority order: WhizbangId → Infrastructure → Message.
   /// </summary>
+  // CA2255: Intentional use of ModuleInitializer in library code for AOT-compatible JSON context registration
+#pragma warning disable CA2255
   [ModuleInitializer]
+#pragma warning restore CA2255
   public static void Initialize() {
     // Register Core contexts in priority order
     // WhizbangIdJsonContext FIRST to ensure custom converters for MessageId/CorrelationId take precedence

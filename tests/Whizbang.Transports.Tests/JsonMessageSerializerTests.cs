@@ -14,7 +14,7 @@ namespace Whizbang.Transports.Tests;
 /// <summary>
 /// Test message for JSON serializer tests.
 /// </summary>
-public record TestMessage : IEvent {
+public record TestMessage : ICommand {
   public required string Content { get; init; }
   public required int Value { get; init; }
 }

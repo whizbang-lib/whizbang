@@ -7,5 +7,6 @@ namespace Whizbang.Core.ValueObjects;
 /// Uses UUIDv7 (time-ordered, database-friendly) for optimal indexing performance.
 /// Uses Medo.Uuid7 for monotonic counter-based generation with guaranteed uniqueness.
 /// </summary>
+/// <docs>core-concepts/message-context</docs>
 [WhizbangId]
 public readonly partial struct MessageId;

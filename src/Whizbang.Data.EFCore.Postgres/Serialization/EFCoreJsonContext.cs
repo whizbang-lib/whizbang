@@ -20,7 +20,10 @@ public partial class EFCoreJsonContext : JsonSerializerContext {
   /// Module initializer that registers EFCoreJsonContext with the global registry.
   /// Runs automatically when the assembly is loaded.
   /// </summary>
+  // CA2255: Intentional use of ModuleInitializer in library code for AOT-compatible JSON context registration
+#pragma warning disable CA2255
   [ModuleInitializer]
+#pragma warning restore CA2255
   internal static void Initialize() {
     JsonContextRegistry.RegisterContext(EFCoreJsonContext.Default);
   }

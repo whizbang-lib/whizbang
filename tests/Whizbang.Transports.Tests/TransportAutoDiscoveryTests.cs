@@ -284,7 +284,10 @@ public class TransportAutoDiscoveryTests {
     TransportAutoDiscovery.DiscoverReceptors();
 
     // No exception should be thrown - this is a successful test
+    // TUnitAssertions0005: Intentional constant assertion to verify no exception was thrown
+#pragma warning disable TUnitAssertions0005
     await Assert.That(true).IsTrue();
+#pragma warning restore TUnitAssertions0005
   }
 
 }

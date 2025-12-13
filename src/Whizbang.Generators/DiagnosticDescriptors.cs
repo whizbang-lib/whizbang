@@ -22,7 +22,7 @@ internal static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ002: Warning - No receptors or perspectives found in the compilation.
+  /// WHIZ002: Info - No receptors or perspectives found in the compilation.
   /// Only shows if BOTH IReceptor AND IPerspectiveOf are absent.
   /// Example: BFF with 5 IPerspectiveOf implementations but no IReceptor should NOT warn.
   /// </summary>
@@ -31,7 +31,7 @@ internal static class DiagnosticDescriptors {
       title: "No Message Handlers Found",
       messageFormat: "No IReceptor or IPerspectiveOf implementations were found in the compilation",
       category: CATEGORY,
-      defaultSeverity: DiagnosticSeverity.Warning,
+      defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
       description: "The source generator did not find any classes implementing IReceptor<TMessage, TResponse> or IPerspectiveOf<TEvent>."
   );

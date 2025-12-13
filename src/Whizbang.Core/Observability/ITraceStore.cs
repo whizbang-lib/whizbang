@@ -6,6 +6,7 @@ namespace Whizbang.Core.Observability;
 /// Store for message traces enabling observability queries.
 /// Stores complete message envelopes with all hops, metadata, and policy decisions.
 /// </summary>
+/// <docs>core-concepts/observability</docs>
 public interface ITraceStore {
   /// <summary>
   /// Stores a message envelope trace.

@@ -42,7 +42,10 @@ public class WhizbangActivitySourceTests {
     WhizbangActivitySource.RecordDefensiveException(null, exception, "Test description");
 
     // Assert - No exception thrown means success
+    // TUnitAssertions0005: Intentional constant assertion to verify no exception was thrown
+#pragma warning disable TUnitAssertions0005
     await Assert.That(true).IsTrue();
+#pragma warning restore TUnitAssertions0005
   }
 
   [Test]
@@ -79,7 +82,10 @@ public class WhizbangActivitySourceTests {
     WhizbangActivitySource.RecordDefensiveCancellation(null, "Test context");
 
     // Assert - No exception thrown means success
+    // TUnitAssertions0005: Intentional constant assertion to verify no exception was thrown
+#pragma warning disable TUnitAssertions0005
     await Assert.That(true).IsTrue();
+#pragma warning restore TUnitAssertions0005
   }
 
   [Test]

@@ -42,7 +42,10 @@ public class JsonContextRegistryTests {
     // Assert - verify registration succeeded
     // Note: We can't directly inspect _converters (it's private), but we can verify
     // it doesn't throw and that the converter works when used in CreateCombinedOptions
+    // TUnitAssertions0005: Intentional constant assertion to verify registration doesn't throw
+#pragma warning disable TUnitAssertions0005
     await Assert.That(true).IsTrue(); // Registration doesn't throw
+#pragma warning restore TUnitAssertions0005
   }
 
   [Test]
