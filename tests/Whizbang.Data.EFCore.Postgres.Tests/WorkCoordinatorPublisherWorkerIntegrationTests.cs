@@ -66,12 +66,8 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
     await Assert.That(outboxWork.MessageId).IsEqualTo(messageId.Value);
 
     // Publish the message (simulating what the worker would do)
-    var envelope = new MessageEnvelope<System.Text.Json.JsonElement> {
-      MessageId = messageId,
-      Payload = System.Text.Json.JsonDocument.Parse(outboxWork.MessageData).RootElement,
-      Hops = []
-    };
-    await testTransport.PublishAsync(envelope, new TransportDestination(outboxWork.Destination, null, null), default);
+    // OutboxWork.Envelope is already deserialized and ready to publish
+    await testTransport.PublishAsync(outboxWork.Envelope, new TransportDestination(outboxWork.Destination, null, null), default);
 
     // Assert - Message was published
     await Assert.That(testTransport.PublishedMessages).HasCount().EqualTo(1)
@@ -163,12 +159,8 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
 
     // Publish them in order
     foreach (var work in workBatch.OutboxWork.OrderBy(w => w.MessageId)) {
-      var envelope = new MessageEnvelope<System.Text.Json.JsonElement> {
-        MessageId = MessageId.From(work.MessageId),
-        Payload = System.Text.Json.JsonDocument.Parse(work.MessageData).RootElement,
-        Hops = []
-      };
-      await testTransport.PublishAsync(envelope, new TransportDestination(work.Destination, null, null), default);
+      // OutboxWork.Envelope is already deserialized and ready to publish
+      await testTransport.PublishAsync(work.Envelope, new TransportDestination(work.Destination, null, null), default);
     }
 
     // Assert - All 3 messages published in order
