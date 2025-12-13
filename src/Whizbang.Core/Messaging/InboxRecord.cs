@@ -7,6 +7,7 @@ namespace Whizbang.Core.Messaging;
 /// Ensures exactly-once message processing by tracking processed messages.
 /// Database-agnostic schema - ORM-specific configuration (e.g., JSONB for PostgreSQL) applied separately.
 /// </summary>
+/// <docs>messaging/inbox-pattern</docs>
 public sealed class InboxRecord {
   /// <summary>
   /// Unique message ID (idempotency key).

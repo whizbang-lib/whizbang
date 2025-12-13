@@ -8,6 +8,7 @@ namespace Whizbang.Core.Messaging;
 /// Provides atomic operations for heartbeat updates, message completion tracking,
 /// event store integration, and orphaned work recovery.
 /// </summary>
+/// <docs>messaging/work-coordinator</docs>
 public interface IWorkCoordinator {
   /// <summary>
   /// Processes a batch of work in a single atomic operation:

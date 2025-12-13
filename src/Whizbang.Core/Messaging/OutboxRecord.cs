@@ -7,6 +7,7 @@ namespace Whizbang.Core.Messaging;
 /// Ensures at-least-once message delivery by persisting messages before publishing.
 /// Database-agnostic schema - ORM-specific configuration (e.g., JSONB for PostgreSQL) applied separately.
 /// </summary>
+/// <docs>messaging/outbox-pattern</docs>
 public sealed class OutboxRecord {
 
   /// <summary>
