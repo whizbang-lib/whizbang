@@ -32,4 +32,11 @@
     <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" Condition="'$(IsTestProject)' != 'true' and !$(MSBuildProjectName.Contains('.Tests')) and !$(MSBuildProjectName.Contains('Benchmarks'))" />
   </ItemGroup>
 
+  <!-- Roslynator Analyzers - Code quality and style enforcement -->
+  <ItemGroup>
+    <PackageReference Include="Roslynator.Analyzers" PrivateAssets="all" />
+    <PackageReference Include="Roslynator.CodeAnalysis.Analyzers" PrivateAssets="all" />
+    <PackageReference Include="Roslynator.Formatting.Analyzers" PrivateAssets="all" />
+  </ItemGroup>
+
 </Project>

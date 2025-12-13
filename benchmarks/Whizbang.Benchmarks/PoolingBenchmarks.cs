@@ -10,7 +10,7 @@ namespace Whizbang.Benchmarks;
 /// </summary>
 [MemoryDiagnoser]
 [MarkdownExporter]
-public class PoolingBenchmarks {
+public static class PoolingBenchmarks {
   // ============================================================================
   // SINGLE OPERATION BENCHMARKS
   // ============================================================================

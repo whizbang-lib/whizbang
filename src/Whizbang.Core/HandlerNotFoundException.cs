@@ -11,6 +11,15 @@ namespace Whizbang.Core;
 /// <param name="messageType">The message type that has no handler</param>
 [Serializable]
 public class HandlerNotFoundException(Type messageType) : Exception(_formatMessage(messageType)) {
+  public HandlerNotFoundException() : base() {
+  }
+
+  public HandlerNotFoundException(string? message) : base(message) {
+  }
+
+  public HandlerNotFoundException(string? message, Exception? innerException) : base(message, innerException) {
+  }
+
   /// <summary>
   /// The type of message that has no handler.
   /// </summary>
