@@ -4,6 +4,9 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>dotnet-ECommerce.InventoryWorker-2b249451-1ecc-435b-8476-3f5bb3936ce1</UserSecretsId>
+
+    <!-- Enable AOT-compatible configuration binding source generator -->
+    <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>
   </PropertyGroup>
 
   <ItemGroup>

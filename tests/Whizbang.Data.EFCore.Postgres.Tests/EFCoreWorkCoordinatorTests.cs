@@ -4,6 +4,7 @@ using TUnit.Assertions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Serialization;
 using Whizbang.Data.Schema;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -22,7 +23,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
   public async Task TestSetupAsync() {
     _instanceId = _idProvider.NewGuid();
     var dbContext = CreateDbContext();
-    _sut = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext);
+    var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
+    _sut = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(dbContext, jsonOptions);
     await Task.CompletedTask;
   }
 
@@ -240,8 +242,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       outboxCompletions: [],
       outboxFailures: [],
       inboxCompletions: [
-        new MessageCompletion { MessageId = messageId1, Status = MessageProcessingStatus.FullyCompleted },
-        new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.FullyCompleted }
+        new MessageCompletion { MessageId = messageId1, Status = MessageProcessingStatus.Stored | MessageProcessingStatus.EventStored | MessageProcessingStatus.Published },
+        new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.Stored | MessageProcessingStatus.EventStored | MessageProcessingStatus.Published }
       ],
       inboxFailures: [],
       newOutboxMessages: [],
@@ -493,7 +495,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
         }
       ],
       inboxCompletions: [
-        new MessageCompletion { MessageId = completedInboxId, Status = MessageProcessingStatus.FullyCompleted }
+        new MessageCompletion { MessageId = completedInboxId, Status = MessageProcessingStatus.Stored | MessageProcessingStatus.EventStored | MessageProcessingStatus.Published }
       ],
       inboxFailures: [
         new MessageFailure {
@@ -835,7 +837,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     }
 
     // Act - Instance 1 claims work (should be instance index 0 based on UUID sort order)
-    var coordinator1 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext());
+    var coordinator1 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
     var result1 = await coordinator1.ProcessWorkBatchAsync(
       instance1Id,
       "TestService",
@@ -854,7 +856,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       renewInboxLeaseIds: []);
 
     // Act - Instance 2 claims work (should be instance index 1 based on UUID sort order)
-    var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext());
+    var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
     var result2 = await coordinator2.ProcessWorkBatchAsync(
       instance2Id,
       "TestService",
@@ -934,7 +936,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     }
 
     // Act - Each instance claims work
-    var coordinator1 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext());
+    var coordinator1 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
     var result1 = await coordinator1.ProcessWorkBatchAsync(
       instance1Id,
       "TestService",
@@ -952,7 +954,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
-    var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext());
+    var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
     var result2 = await coordinator2.ProcessWorkBatchAsync(
       instance2Id,
       "TestService",
@@ -970,7 +972,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
-    var coordinator3 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext());
+    var coordinator3 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
     var result3 = await coordinator3.ProcessWorkBatchAsync(
       instance3Id,
       "TestService",
@@ -1091,7 +1093,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       statusFlags: (int)MessageProcessingStatus.Stored);
 
     // Act - Instance 1 claims work first (will claim messages based on modulo)
-    var coordinator1 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext());
+    var coordinator1 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
     var result1 = await coordinator1.ProcessWorkBatchAsync(
       instance1Id,
       "TestService",
@@ -1110,7 +1112,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       renewInboxLeaseIds: []);
 
     // Act - Instance 2 tries to claim work
-    var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext());
+    var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
     var result2 = await coordinator2.ProcessWorkBatchAsync(
       instance2Id,
       "TestService",
@@ -1319,7 +1321,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       streamId: streamId);
 
     // Act - Instance 1 releases the message (Status = 0)
-    var coordinator1 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext());
+    var coordinator1 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
     var result1 = await coordinator1.ProcessWorkBatchAsync(
       instance1Id,
       "TestService",
@@ -1340,7 +1342,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       renewInboxLeaseIds: []);
 
     // Act - Instance 2 tries to claim work
-    var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext());
+    var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
     var result2 = await coordinator2.ProcessWorkBatchAsync(
       instance2Id,
       "TestService",

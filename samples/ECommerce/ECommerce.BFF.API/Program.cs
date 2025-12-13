@@ -66,9 +66,9 @@ builder.Services.AddSingleton<IServiceInstanceProvider, ServiceInstanceProvider>
 builder.Services.AddSingleton<OrderedStreamProcessor>();
 
 // Configure WorkCoordinatorPublisherOptions from appsettings.json
-builder.Services.Configure<WorkCoordinatorPublisherOptions>(
-  builder.Configuration.GetSection("WorkCoordinatorPublisher")
-);
+// Use AddOptions().Bind() for AOT compatibility (instead of Configure<T>())
+builder.Services.AddOptions<WorkCoordinatorPublisherOptions>()
+  .Bind(builder.Configuration.GetSection("WorkCoordinatorPublisher"));
 
 // Register EF Core DbContext for perspectives with PostgreSQL
 builder.Services.AddDbContext<BffDbContext>(options =>

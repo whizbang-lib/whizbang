@@ -7,6 +7,9 @@
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
     <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
 
+    <!-- Enable AOT-compatible configuration binding source generator -->
+    <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>
+
     <!-- Native AOT Configuration (DISABLED - EF Core 10 AOT is experimental, not production-ready) -->
     <!-- See docs/EFCORE-AOT-STATUS.md for details. Re-enable when EF Core 12+ matures AOT support. -->
     <!-- <PublishAot>true</PublishAot> -->

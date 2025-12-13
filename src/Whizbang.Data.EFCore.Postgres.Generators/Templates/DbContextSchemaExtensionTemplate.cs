@@ -36,7 +36,18 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
 
     // Step 1: Create tables
     logger?.LogInformation("Creating Whizbang tables for {DbContext}...", "__DBCONTEXT_CLASS__");
+
+    // IL3050: GenerateCreateScript() is not AOT-compatible, but this is JUSTIFIED:
+    // - This code runs at DEPLOYMENT TIME (app startup), not in runtime hot paths
+    // - Schema initialization is a one-time operation during deployment
+    // - EF Core provides NO AOT-compatible alternative for schema generation
+    // - Microsoft's guidance: "Use a migration bundle or an alternate way of executing migration operations"
+    // - For development/deployment scenarios, GenerateCreateScript() is the simplest approach
+    // - See ai-docs/efcore-aot-support.md for full AOT strategy
+    #pragma warning disable IL3050
     var script = dbContext.Database.GenerateCreateScript();
+    #pragma warning restore IL3050
+
     script = MakeScriptIdempotent(script);
 
     // Only execute if script is not empty (DbContext may have no user-defined entities)

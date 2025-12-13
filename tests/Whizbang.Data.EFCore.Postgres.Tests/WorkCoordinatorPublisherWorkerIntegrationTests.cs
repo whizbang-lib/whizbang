@@ -487,6 +487,12 @@ internal sealed class TestTransport : ITransport {
   private readonly object _lock = new();
   public List<PublishedMessage> PublishedMessages { get; } = new();
 
+  public bool IsInitialized => true;
+
+  public Task InitializeAsync(CancellationToken cancellationToken = default) {
+    return Task.CompletedTask;
+  }
+
   public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
 
   public Task PublishAsync(

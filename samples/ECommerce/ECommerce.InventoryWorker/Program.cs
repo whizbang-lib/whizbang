@@ -108,9 +108,9 @@ builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
 
 // WorkCoordinator publisher - atomic coordination with lease-based work claiming
 // Options configured via appsettings.json "WorkCoordinatorPublisher" section
-builder.Services.Configure<WorkCoordinatorPublisherOptions>(
-  builder.Configuration.GetSection("WorkCoordinatorPublisher")
-);
+// Use AddOptions().Bind() for AOT compatibility (instead of Configure<T>())
+builder.Services.AddOptions<WorkCoordinatorPublisherOptions>()
+  .Bind(builder.Configuration.GetSection("WorkCoordinatorPublisher"));
 builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
 
 builder.Services.AddHostedService<Worker>();
