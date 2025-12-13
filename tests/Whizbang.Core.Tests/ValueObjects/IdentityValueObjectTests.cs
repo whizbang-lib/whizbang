@@ -15,10 +15,11 @@ public class IdentityValueObjectTests {
   /// <summary>
   /// Data source for identity value object types.
   /// Returns factory functions to create IDs and extract their Guid values.
+  /// TUnit0046: Wrapping in Func<> ensures proper test isolation for reference types.
   /// </summary>
-  public static IEnumerable<(Func<Guid> createId, string typeName)> GetIdTypes() {
-    yield return (() => MessageId.New().Value, "MessageId");
-    yield return (() => CorrelationId.New().Value, "CorrelationId");
+  public static IEnumerable<Func<(Func<Guid> createId, string typeName)>> GetIdTypes() {
+    yield return () => (() => MessageId.New().Value, "MessageId");
+    yield return () => (() => CorrelationId.New().Value, "CorrelationId");
   }
 
   [Test]
