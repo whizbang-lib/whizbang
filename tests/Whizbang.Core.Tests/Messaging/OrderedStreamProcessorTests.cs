@@ -29,11 +29,11 @@ public class OrderedStreamProcessorTests {
 
     // Create 5 messages with different SequenceOrder
     var messages = new List<InboxWork> {
-      CreateInboxWork(streamId, sequenceOrder: 100),
-      CreateInboxWork(streamId, sequenceOrder: 300),
-      CreateInboxWork(streamId, sequenceOrder: 200),
-      CreateInboxWork(streamId, sequenceOrder: 500),
-      CreateInboxWork(streamId, sequenceOrder: 400)
+      _createInboxWork(streamId, sequenceOrder: 100),
+      _createInboxWork(streamId, sequenceOrder: 300),
+      _createInboxWork(streamId, sequenceOrder: 200),
+      _createInboxWork(streamId, sequenceOrder: 500),
+      _createInboxWork(streamId, sequenceOrder: 400)
     };
 
     // Act
@@ -71,12 +71,12 @@ public class OrderedStreamProcessorTests {
 
     // Create messages from 3 different streams
     var messages = new List<InboxWork> {
-      CreateInboxWork(stream1, sequenceOrder: 100),
-      CreateInboxWork(stream1, sequenceOrder: 200),
-      CreateInboxWork(stream2, sequenceOrder: 100),
-      CreateInboxWork(stream2, sequenceOrder: 200),
-      CreateInboxWork(stream3, sequenceOrder: 100),
-      CreateInboxWork(stream3, sequenceOrder: 200)
+      _createInboxWork(stream1, sequenceOrder: 100),
+      _createInboxWork(stream1, sequenceOrder: 200),
+      _createInboxWork(stream2, sequenceOrder: 100),
+      _createInboxWork(stream2, sequenceOrder: 200),
+      _createInboxWork(stream3, sequenceOrder: 100),
+      _createInboxWork(stream3, sequenceOrder: 200)
     };
 
     // Act
@@ -142,10 +142,10 @@ public class OrderedStreamProcessorTests {
 
     // Create messages from 2 streams
     var messages = new List<InboxWork> {
-      CreateInboxWork(stream1, sequenceOrder: 100),
-      CreateInboxWork(stream1, sequenceOrder: 200),  // Won't be processed (stream stopped)
-      CreateInboxWork(stream2, sequenceOrder: 100),
-      CreateInboxWork(stream2, sequenceOrder: 200)
+      _createInboxWork(stream1, sequenceOrder: 100),
+      _createInboxWork(stream1, sequenceOrder: 200),  // Won't be processed (stream stopped)
+      _createInboxWork(stream2, sequenceOrder: 100),
+      _createInboxWork(stream2, sequenceOrder: 200)
     };
 
     // Act
@@ -191,7 +191,7 @@ public class OrderedStreamProcessorTests {
     string? reportedError = null;
 
     // Create work item with only Stored status (processing will fail before EventStored)
-    var message = CreateInboxWork(streamId, sequenceOrder: 100);
+    var message = _createInboxWork(streamId, sequenceOrder: 100);
     message = message with {
       Status = MessageProcessingStatus.Stored
     };
@@ -233,11 +233,11 @@ public class OrderedStreamProcessorTests {
 
     // Create 5 messages with different SequenceOrder
     var messages = new List<OutboxWork> {
-      CreateOutboxWork(streamId, sequenceOrder: 100),
-      CreateOutboxWork(streamId, sequenceOrder: 300),
-      CreateOutboxWork(streamId, sequenceOrder: 200),
-      CreateOutboxWork(streamId, sequenceOrder: 500),
-      CreateOutboxWork(streamId, sequenceOrder: 400)
+      _createOutboxWork(streamId, sequenceOrder: 100),
+      _createOutboxWork(streamId, sequenceOrder: 300),
+      _createOutboxWork(streamId, sequenceOrder: 200),
+      _createOutboxWork(streamId, sequenceOrder: 500),
+      _createOutboxWork(streamId, sequenceOrder: 400)
     };
 
     // Act
@@ -262,9 +262,9 @@ public class OrderedStreamProcessorTests {
 
   // Helper methods
 
-  private InboxWork CreateInboxWork(Guid streamId, long sequenceOrder) {
+  private InboxWork _createInboxWork(Guid streamId, long sequenceOrder) {
     var messageId = _idProvider.NewGuid();
-    var envelope = CreateTestEnvelope(messageId);
+    var envelope = _createTestEnvelope(messageId);
     return new InboxWork {
       MessageId = messageId,
       Envelope = envelope,
@@ -276,9 +276,9 @@ public class OrderedStreamProcessorTests {
     };
   }
 
-  private OutboxWork CreateOutboxWork(Guid streamId, long sequenceOrder) {
+  private OutboxWork _createOutboxWork(Guid streamId, long sequenceOrder) {
     var messageId = _idProvider.NewGuid();
-    var envelope = CreateTestEnvelope(messageId);
+    var envelope = _createTestEnvelope(messageId);
     return new OutboxWork {
       MessageId = messageId,
       Destination = "test-topic",
@@ -292,7 +292,7 @@ public class OrderedStreamProcessorTests {
     };
   }
 
-  private static TestMessageEnvelope CreateTestEnvelope(Guid messageId) {
+  private static TestMessageEnvelope _createTestEnvelope(Guid messageId) {
     return new TestMessageEnvelope {
       MessageId = MessageId.From(messageId),
       Hops = []

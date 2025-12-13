@@ -20,12 +20,12 @@ namespace Whizbang.Core.Tests.Workers;
 /// Phase 3B: Verifies that database readiness checks prevent work coordinator calls until database is available.
 /// </summary>
 public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
-  private record TestMessage { }
+  private record _testMessage { }
 
-  private static IMessageEnvelope<object> CreateTestEnvelope(Guid messageId) {
-    var envelope = new MessageEnvelope<TestMessage> {
+  private static IMessageEnvelope<object> _createTestEnvelope(Guid messageId) {
+    var envelope = new MessageEnvelope<_testMessage> {
       MessageId = MessageId.From(messageId),
-      Payload = new TestMessage(),
+      Payload = new _testMessage(),
       Hops = []
     };
     return envelope as IMessageEnvelope<object> ?? throw new InvalidOperationException("Envelope must implement IMessageEnvelope<object>");
@@ -40,8 +40,8 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
       IsReadyResult = false  // Database not ready
     };
     var publishStrategy = new TestPublishStrategy();
-    var instanceProvider = CreateTestInstanceProvider();
-    var services = CreateServiceCollection(
+    var instanceProvider = _createTestInstanceProvider();
+    var services = _createServiceCollection(
       testWorkCoordinator,
       publishStrategy,
       instanceProvider,
@@ -75,8 +75,8 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
       IsReadyResult = true  // Database ready
     };
     var publishStrategy = new TestPublishStrategy();
-    var instanceProvider = CreateTestInstanceProvider();
-    var services = CreateServiceCollection(
+    var instanceProvider = _createTestInstanceProvider();
+    var services = _createServiceCollection(
       testWorkCoordinator,
       publishStrategy,
       instanceProvider,
@@ -104,8 +104,8 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
       IsReadyResult = false  // Database stays not ready
     };
     var publishStrategy = new TestPublishStrategy();
-    var instanceProvider = CreateTestInstanceProvider();
-    var services = CreateServiceCollection(
+    var instanceProvider = _createTestInstanceProvider();
+    var services = _createServiceCollection(
       testWorkCoordinator,
       publishStrategy,
       instanceProvider,
@@ -134,8 +134,8 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
       IsReadyResult = false  // Database never ready
     };
     var publishStrategy = new TestPublishStrategy();
-    var instanceProvider = CreateTestInstanceProvider();
-    var services = CreateServiceCollection(
+    var instanceProvider = _createTestInstanceProvider();
+    var services = _createServiceCollection(
       testWorkCoordinator,
       publishStrategy,
       instanceProvider,
@@ -169,8 +169,8 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
       IsReadyResult = false  // Start not ready
     };
     var publishStrategy = new TestPublishStrategy();
-    var instanceProvider = CreateTestInstanceProvider();
-    var services = CreateServiceCollection(
+    var instanceProvider = _createTestInstanceProvider();
+    var services = _createServiceCollection(
       testWorkCoordinator,
       publishStrategy,
       instanceProvider,
@@ -201,14 +201,14 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     // Arrange
     var messageId = Guid.NewGuid();
     var testWorkCoordinator = new TestWorkCoordinator {
-      WorkToReturn = [CreateTestOutboxWork(messageId)]
+      WorkToReturn = [_createTestOutboxWork(messageId)]
     };
     var databaseReadinessCheck = new TestDatabaseReadinessCheck {
       IsReadyResult = false  // Start not ready
     };
     var publishStrategy = new TestPublishStrategy();
-    var instanceProvider = CreateTestInstanceProvider();
-    var services = CreateServiceCollection(
+    var instanceProvider = _createTestInstanceProvider();
+    var services = _createServiceCollection(
       testWorkCoordinator,
       publishStrategy,
       instanceProvider,
@@ -226,7 +226,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
 
     // Act - Database becomes ready
     databaseReadinessCheck.IsReadyResult = true;
-    testWorkCoordinator.WorkToReturn = [CreateTestOutboxWork(messageId)];
+    testWorkCoordinator.WorkToReturn = [_createTestOutboxWork(messageId)];
     await Task.Delay(300);
 
     cts.Cancel();
@@ -331,11 +331,11 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     }
   }
 
-  private static OutboxWork CreateTestOutboxWork(Guid messageId) {
+  private static OutboxWork _createTestOutboxWork(Guid messageId) {
     return new OutboxWork {
       MessageId = messageId,
       Destination = "test-topic",
-      Envelope = CreateTestEnvelope(messageId),
+      Envelope = _createTestEnvelope(messageId),
       StreamId = Guid.NewGuid(),
       PartitionNumber = 1,
       Attempts = 0,
@@ -345,7 +345,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     };
   }
 
-  private static IServiceInstanceProvider CreateTestInstanceProvider() {
+  private static IServiceInstanceProvider _createTestInstanceProvider() {
     return new ServiceInstanceProvider(
       Guid.NewGuid(),
       "TestService",
@@ -354,7 +354,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     );
   }
 
-  private static IServiceProvider CreateServiceCollection(
+  private static IServiceProvider _createServiceCollection(
     IWorkCoordinator workCoordinator,
     IMessagePublishStrategy publishStrategy,
     IServiceInstanceProvider instanceProvider,

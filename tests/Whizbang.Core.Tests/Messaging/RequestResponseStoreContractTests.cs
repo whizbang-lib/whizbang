@@ -58,7 +58,7 @@ public abstract class RequestResponseStoreContractTests {
     var store = await CreateStoreAsync();
     var correlationId = CorrelationId.New();
     var requestId = MessageId.New();
-    var responseEnvelope = CreateTestEnvelope();
+    var responseEnvelope = _createTestEnvelope();
     await store.SaveRequestAsync(correlationId, requestId, TimeSpan.FromSeconds(30));
 
     // Act - Save response in background
@@ -117,7 +117,7 @@ public abstract class RequestResponseStoreContractTests {
     // Arrange
     var store = await CreateStoreAsync();
     var correlationId = CorrelationId.New();
-    var responseEnvelope = CreateTestEnvelope();
+    var responseEnvelope = _createTestEnvelope();
 
     // Act - Save response before request (race condition scenario)
     await store.SaveResponseAsync(correlationId, responseEnvelope);
@@ -137,7 +137,7 @@ public abstract class RequestResponseStoreContractTests {
   /// <summary>
   /// Helper method to create a test message envelope.
   /// </summary>
-  private static MessageEnvelope<TestResponse> CreateTestEnvelope() {
+  private static MessageEnvelope<TestResponse> _createTestEnvelope() {
     return new MessageEnvelope<TestResponse> {
       MessageId = MessageId.New(),
       Payload = new TestResponse("test response"),

@@ -23,12 +23,12 @@ namespace Whizbang.Core.Tests.Workers;
 /// Tests race conditions that might not be caught by fast unit tests.
 /// </summary>
 public class WorkCoordinatorPublisherWorkerRaceConditionTests {
-  private record TestMessage { }
+  private record _testMessage { }
 
-  private static IMessageEnvelope<object> CreateTestEnvelope(Guid messageId) {
-    var envelope = new MessageEnvelope<TestMessage> {
+  private static IMessageEnvelope<object> _createTestEnvelope(Guid messageId) {
+    var envelope = new MessageEnvelope<_testMessage> {
       MessageId = MessageId.From(messageId),
-      Payload = new TestMessage(),
+      Payload = new _testMessage(),
       Hops = []
     };
     return envelope as IMessageEnvelope<object> ?? throw new InvalidOperationException("Envelope must implement IMessageEnvelope<object>");
@@ -47,7 +47,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     public int ProcessWorkBatchCallCount => _processWorkBatchCallCount;
     public TimeSpan MinLatency { get; set; } = TimeSpan.FromMilliseconds(50);
     public TimeSpan MaxLatency { get; set; } = TimeSpan.FromMilliseconds(200);
-    public List<ProcessWorkBatchCall> Calls { get; } = [];
+    public List<_processWorkBatchCall> Calls { get; } = [];
 
     public async Task<WorkBatch> ProcessWorkBatchAsync(
       Guid instanceId,
@@ -80,7 +80,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
 
       var callCount = Interlocked.Increment(ref _processWorkBatchCallCount);
       lock (_lock) {
-        Calls.Add(new ProcessWorkBatchCall {
+        Calls.Add(new _processWorkBatchCall {
           CallNumber = callCount,
           InstanceId = instanceId,
           Timestamp = DateTimeOffset.UtcNow,
@@ -168,7 +168,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     }
   }
 
-  private record ProcessWorkBatchCall {
+  private record _processWorkBatchCall {
     public required int CallNumber { get; init; }
     public required Guid InstanceId { get; init; }
     public required DateTimeOffset Timestamp { get; init; }
@@ -198,14 +198,14 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
 
     // 20 messages available for claiming (more messages = better load distribution)
     for (int i = 0; i < 20; i++) {
-      workCoordinator.AvailableWork.Add(CreateOutboxWork(Guid.NewGuid(), "products"));
+      workCoordinator.AvailableWork.Add(_createOutboxWork(Guid.NewGuid(), "products"));
     }
 
-    var instanceProvider1 = CreateTestInstanceProvider();
-    var instanceProvider2 = CreateTestInstanceProvider();
+    var instanceProvider1 = _createTestInstanceProvider();
+    var instanceProvider2 = _createTestInstanceProvider();
 
-    var services1 = CreateServiceCollection(workCoordinator, publishStrategy1, databaseReadiness, instanceProvider1);
-    var services2 = CreateServiceCollection(workCoordinator, publishStrategy2, databaseReadiness, instanceProvider2);
+    var services1 = _createServiceCollection(workCoordinator, publishStrategy1, databaseReadiness, instanceProvider1);
+    var services2 = _createServiceCollection(workCoordinator, publishStrategy2, databaseReadiness, instanceProvider2);
 
     var worker1 = new WorkCoordinatorPublisherWorker(
       instanceProvider1,
@@ -281,14 +281,14 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
       CheckLatency = TimeSpan.FromMilliseconds(50) // Realistic connection check
     };
 
-    var instanceProvider = CreateTestInstanceProvider();
+    var instanceProvider = _createTestInstanceProvider();
 
     // 12 messages (like user's seeding scenario)
     for (int i = 0; i < 12; i++) {
-      workCoordinator.AvailableWork.Add(CreateOutboxWork(Guid.NewGuid(), "products"));
+      workCoordinator.AvailableWork.Add(_createOutboxWork(Guid.NewGuid(), "products"));
     }
 
-    var services = CreateServiceCollection(workCoordinator, publishStrategy, databaseReadiness, instanceProvider);
+    var services = _createServiceCollection(workCoordinator, publishStrategy, databaseReadiness, instanceProvider);
     var worker = new WorkCoordinatorPublisherWorker(
       instanceProvider,
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
@@ -341,14 +341,14 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     };
 
     var databaseReadiness = new RealisticDatabaseReadinessCheck { IsReady = true };
-    var instanceProvider = CreateTestInstanceProvider();
+    var instanceProvider = _createTestInstanceProvider();
 
     // 5 messages
     for (int i = 0; i < 5; i++) {
-      workCoordinator.AvailableWork.Add(CreateOutboxWork(Guid.NewGuid(), "products"));
+      workCoordinator.AvailableWork.Add(_createOutboxWork(Guid.NewGuid(), "products"));
     }
 
-    var services = CreateServiceCollection(workCoordinator, publishStrategy, databaseReadiness, instanceProvider);
+    var services = _createServiceCollection(workCoordinator, publishStrategy, databaseReadiness, instanceProvider);
     var worker = new WorkCoordinatorPublisherWorker(
       instanceProvider,
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
@@ -397,14 +397,14 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     };
 
     var databaseReadiness = new RealisticDatabaseReadinessCheck { IsReady = true };
-    var instanceProvider = CreateTestInstanceProvider();
+    var instanceProvider = _createTestInstanceProvider();
 
     // 10 messages
     for (int i = 0; i < 10; i++) {
-      workCoordinator.AvailableWork.Add(CreateOutboxWork(Guid.NewGuid(), "products"));
+      workCoordinator.AvailableWork.Add(_createOutboxWork(Guid.NewGuid(), "products"));
     }
 
-    var services = CreateServiceCollection(workCoordinator, publishStrategy, databaseReadiness, instanceProvider);
+    var services = _createServiceCollection(workCoordinator, publishStrategy, databaseReadiness, instanceProvider);
     var worker = new WorkCoordinatorPublisherWorker(
       instanceProvider,
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
@@ -445,14 +445,14 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     var workCoordinator = new RealisticWorkCoordinator();
     var publishStrategy = new RealisticPublishStrategy();
     var databaseReadiness = new RealisticDatabaseReadinessCheck { IsReady = false };
-    var instanceProvider = CreateTestInstanceProvider();
+    var instanceProvider = _createTestInstanceProvider();
 
     // 5 messages
     for (int i = 0; i < 5; i++) {
-      workCoordinator.AvailableWork.Add(CreateOutboxWork(Guid.NewGuid(), "products"));
+      workCoordinator.AvailableWork.Add(_createOutboxWork(Guid.NewGuid(), "products"));
     }
 
-    var services = CreateServiceCollection(workCoordinator, publishStrategy, databaseReadiness, instanceProvider);
+    var services = _createServiceCollection(workCoordinator, publishStrategy, databaseReadiness, instanceProvider);
     var worker = new WorkCoordinatorPublisherWorker(
       instanceProvider,
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
@@ -493,11 +493,11 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     await Assert.That(workCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
   }
 
-  private static OutboxWork CreateOutboxWork(Guid messageId, string destination) {
+  private static OutboxWork _createOutboxWork(Guid messageId, string destination) {
     return new OutboxWork {
       MessageId = messageId,
       Destination = destination,
-      Envelope = CreateTestEnvelope(messageId),
+      Envelope = _createTestEnvelope(messageId),
       StreamId = Guid.NewGuid(),
       PartitionNumber = 1,
       Attempts = 0,
@@ -507,7 +507,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     };
   }
 
-  private static IServiceInstanceProvider CreateTestInstanceProvider() {
+  private static IServiceInstanceProvider _createTestInstanceProvider() {
     return new ServiceInstanceProvider(
       Guid.NewGuid(),
       "TestService",
@@ -516,7 +516,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     );
   }
 
-  private static IServiceCollection CreateServiceCollection(
+  private static IServiceCollection _createServiceCollection(
     IWorkCoordinator workCoordinator,
     IMessagePublishStrategy publishStrategy,
     IDatabaseReadinessCheck databaseReadiness,

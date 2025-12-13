@@ -20,7 +20,7 @@ public class TransportPublishStrategyTests {
   public record TestMessage : IEvent { }
 
   // Helper to create a MessageEnvelope for testing
-  private static MessageEnvelope<TestMessage> CreateTestEnvelope(Guid messageId) {
+  private static MessageEnvelope<TestMessage> _createTestEnvelope(Guid messageId) {
     return new MessageEnvelope<TestMessage>(
       messageId: MessageId.From(messageId),
       payload: new TestMessage(),
@@ -118,7 +118,7 @@ public class TransportPublishStrategyTests {
     var work = new OutboxWork {
       MessageId = messageId,
       Destination = "test-topic",
-      Envelope = CreateTestEnvelope(messageId),
+      Envelope = _createTestEnvelope(messageId),
       StreamId = Guid.NewGuid(),
       PartitionNumber = 1,
       Attempts = 0,
@@ -153,7 +153,7 @@ public class TransportPublishStrategyTests {
     var work = new OutboxWork {
       MessageId = messageId,
       Destination = "test-topic",
-      Envelope = CreateTestEnvelope(messageId),
+      Envelope = _createTestEnvelope(messageId),
       StreamId = Guid.NewGuid(),
       PartitionNumber = 1,
       Attempts = 1,
@@ -185,7 +185,7 @@ public class TransportPublishStrategyTests {
     var work = new OutboxWork {
       MessageId = messageId,
       Destination = "test-topic",
-      Envelope = CreateTestEnvelope(messageId),
+      Envelope = _createTestEnvelope(messageId),
       StreamId = Guid.NewGuid(),
       PartitionNumber = 1,
       Attempts = 0,
@@ -215,7 +215,7 @@ public class TransportPublishStrategyTests {
     var work = new OutboxWork {
       MessageId = messageId,
       Destination = "test-topic",
-      Envelope = CreateTestEnvelope(messageId),
+      Envelope = _createTestEnvelope(messageId),
       StreamId = streamId,
       PartitionNumber = 1,
       Attempts = 0,

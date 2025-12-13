@@ -22,7 +22,7 @@ public class DispatcherTests {
   [Test]
   public async Task Send_WithValidMessage_ShouldReturnDeliveryReceiptAsync() {
     // Arrange
-    var dispatcher = CreateDispatcher();
+    var dispatcher = _createDispatcher();
     var command = new CreateOrder(Guid.NewGuid(), ["item1", "item2"]);
 
     // Act
@@ -38,7 +38,7 @@ public class DispatcherTests {
   [Test]
   public async Task LocalInvoke_WithValidMessage_ShouldReturnBusinessResultAsync() {
     // Arrange
-    var dispatcher = CreateDispatcher();
+    var dispatcher = _createDispatcher();
     var command = new CreateOrder(Guid.NewGuid(), ["item1", "item2"]);
 
     // Act
@@ -53,7 +53,7 @@ public class DispatcherTests {
   [Test]
   public async Task Send_WithUnknownMessageType_ShouldThrowHandlerNotFoundExceptionAsync() {
     // Arrange
-    var dispatcher = CreateDispatcher();
+    var dispatcher = _createDispatcher();
     var unknownCommand = new UnknownCommand();
 
     // Act & Assert
@@ -67,7 +67,7 @@ public class DispatcherTests {
   [Test]
   public async Task LocalInvoke_WithUnknownMessageType_ShouldThrowHandlerNotFoundExceptionAsync() {
     // Arrange
-    var dispatcher = CreateDispatcher();
+    var dispatcher = _createDispatcher();
     var unknownCommand = new UnknownCommand();
 
     // Act & Assert
@@ -80,7 +80,7 @@ public class DispatcherTests {
   [Test]
   public async Task Send_WithContext_ShouldPreserveCorrelationIdInReceiptAsync() {
     // Arrange
-    var dispatcher = CreateDispatcher();
+    var dispatcher = _createDispatcher();
     var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
     var correlationId = CorrelationId.New();
     var causationId = MessageId.New();
@@ -98,7 +98,7 @@ public class DispatcherTests {
   [Test]
   public async Task LocalInvoke_WithContext_ShouldPreserveContextAsync() {
     // Arrange
-    var dispatcher = CreateDispatcher();
+    var dispatcher = _createDispatcher();
     var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
     var context = MessageContext.Create(
         CorrelationId.New(),
@@ -116,7 +116,7 @@ public class DispatcherTests {
   [Test]
   public async Task Publish_WithEvent_ShouldNotifyAllHandlersAsync() {
     // Arrange
-    var dispatcher = CreateDispatcher();
+    var dispatcher = _createDispatcher();
     var orderCreated = new OrderCreated(Guid.NewGuid(), Guid.NewGuid());
 
     // Subscribe multiple handlers (this will be via perspectives in implementation)
@@ -133,7 +133,7 @@ public class DispatcherTests {
   [Test]
   public async Task SendMany_WithMultipleCommands_ShouldReturnAllReceiptsAsync() {
     // Arrange
-    var dispatcher = CreateDispatcher();
+    var dispatcher = _createDispatcher();
     var commands = new object[] {
             new CreateOrder(Guid.NewGuid(), ["item1"]),
             new CreateOrder(Guid.NewGuid(), ["item2"]),
@@ -155,7 +155,7 @@ public class DispatcherTests {
   [Test]
   public async Task LocalInvokeMany_WithMultipleCommands_ShouldReturnAllResultsAsync() {
     // Arrange
-    var dispatcher = CreateDispatcher();
+    var dispatcher = _createDispatcher();
     var commands = new object[] {
             new CreateOrder(Guid.NewGuid(), ["item1"]),
             new CreateOrder(Guid.NewGuid(), ["item2"]),
@@ -176,7 +176,7 @@ public class DispatcherTests {
   [Test]
   public async Task Dispatcher_MessageContext_ShouldGenerateUniqueMessageIdsAsync() {
     // Arrange
-    var dispatcher = CreateDispatcher();
+    var dispatcher = _createDispatcher();
     var command1 = new CreateOrder(Guid.NewGuid(), ["item1"]);
     var command2 = new CreateOrder(Guid.NewGuid(), ["item2"]);
 
@@ -192,7 +192,7 @@ public class DispatcherTests {
   [Test]
   public async Task Dispatcher_ShouldRouteToCorrectHandlerAsync() {
     // Arrange
-    var dispatcher = CreateDispatcher();
+    var dispatcher = _createDispatcher();
     var createCommand = new CreateOrder(Guid.NewGuid(), ["item1"]);
 
     // Act
@@ -210,7 +210,7 @@ public class DispatcherTests {
     // dispatcher should route to all of them
 
     // Arrange
-    var dispatcher = CreateDispatcher();
+    var dispatcher = _createDispatcher();
     var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
 
     // Act - LocalInvoke should complete
@@ -225,7 +225,7 @@ public class DispatcherTests {
   [Test]
   public async Task Dispatcher_ShouldTrackCausationChainInReceiptAsync() {
     // Arrange
-    var dispatcher = CreateDispatcher();
+    var dispatcher = _createDispatcher();
     var causationId = MessageId.New();
     var correlationId = CorrelationId.New();
     var initialContext = MessageContext.Create(correlationId, causationId);
@@ -243,7 +243,7 @@ public class DispatcherTests {
 
   // Helper method to create dispatcher
   // Will be implemented to return InMemoryDispatcher
-  private static IDispatcher CreateDispatcher() {
+  private static IDispatcher _createDispatcher() {
     var services = new Microsoft.Extensions.DependencyInjection.ServiceCollection();
 
     // Register service instance provider (required dependency)
@@ -318,7 +318,7 @@ public class DispatcherTests {
   public async Task LocalInvokeAsync_VoidReceptor_ShouldInvokeWithoutReturningResultAsync() {
     // Arrange
     LogReceptor.Reset();
-    var dispatcher = CreateDispatcher();
+    var dispatcher = _createDispatcher();
     var command = new LogCommand("Test log message");
 
     // Act
@@ -334,7 +334,7 @@ public class DispatcherTests {
   public async Task LocalInvokeAsync_VoidReceptor_SynchronousCompletion_ShouldNotAllocateAsync() {
     // Arrange
     LogReceptor.Reset();
-    var dispatcher = CreateDispatcher();
+    var dispatcher = _createDispatcher();
     var command = new LogCommand("Test");
 
     // Act
@@ -350,7 +350,7 @@ public class DispatcherTests {
   public async Task LocalInvokeAsync_VoidReceptor_AsynchronousCompletion_ShouldCompleteAsync() {
     // Arrange
     ProcessReceptor.Reset();
-    var dispatcher = CreateDispatcher();
+    var dispatcher = _createDispatcher();
     var command = new ProcessCommand(Guid.NewGuid(), "Test data");
 
     // Act
@@ -367,7 +367,7 @@ public class DispatcherTests {
   public async Task LocalInvokeAsync_VoidReceptor_WithContext_ShouldAcceptContextAsync() {
     // Arrange
     LogReceptor.Reset();
-    var dispatcher = CreateDispatcher();
+    var dispatcher = _createDispatcher();
     var command = new LogCommand("Test with context");
     var context = MessageContext.New();
 
@@ -381,7 +381,7 @@ public class DispatcherTests {
   [Test]
   public async Task LocalInvokeAsync_VoidReceptor_NoHandler_ShouldThrowHandlerNotFoundExceptionAsync() {
     // Arrange
-    var dispatcher = CreateDispatcher();
+    var dispatcher = _createDispatcher();
     var command = new UnknownCommand();
 
     // Act & Assert
@@ -394,7 +394,7 @@ public class DispatcherTests {
   public async Task LocalInvokeAsync_VoidReceptor_MultipleInvocations_ShouldTrackAllAsync() {
     // Arrange
     LogReceptor.Reset();
-    var dispatcher = CreateDispatcher();
+    var dispatcher = _createDispatcher();
 
     // Act
     await dispatcher.LocalInvokeAsync(new LogCommand("Message 1"));
@@ -412,7 +412,7 @@ public class DispatcherTests {
   [Test]
   public async Task LocalInvokeAsync_WithNullContext_ThrowsArgumentNullExceptionAsync() {
     // Arrange
-    var dispatcher = CreateDispatcher();
+    var dispatcher = _createDispatcher();
     var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
 
     // Act & Assert
@@ -425,7 +425,7 @@ public class DispatcherTests {
   [Test]
   public async Task LocalInvokeAsync_VoidReceptor_WithNullContext_ThrowsArgumentNullExceptionAsync() {
     // Arrange
-    var dispatcher = CreateDispatcher();
+    var dispatcher = _createDispatcher();
     var command = new LogCommand("test");
 
     // Act & Assert
@@ -622,7 +622,7 @@ public class DispatcherTests {
     // Non-generic version: SendManyAsync(IEnumerable<object>) - type-erased
 
     // Arrange
-    var dispatcher = CreateDispatcher();
+    var dispatcher = _createDispatcher();
     var commands = new[] {
       new CreateOrder(Guid.NewGuid(), ["item1"]),
       new CreateOrder(Guid.NewGuid(), ["item2"])

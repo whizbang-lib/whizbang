@@ -26,7 +26,7 @@ public class DiagnosticTestBase {
   /// Override this property to specify which diagnostic categories to display.
   /// Default is ReceptorDiscovery.
   /// </summary>
-  protected virtual DiagnosticCategory DiagnosticCategories => DiagnosticCategory.ReceptorDiscovery;
+  protected virtual DiagnosticCategory _diagnosticCategories => DiagnosticCategory.ReceptorDiscovery;
 
   [Before(Class)]
   public static void ClassSetup() {
@@ -38,9 +38,9 @@ public class DiagnosticTestBase {
   public virtual async Task TestSetupAsync() {
     // Always write diagnostics to StandardOutput at the START of each test
     // This ensures it's captured before the test result is published
-    if (IsDiagnosticsEnabled()) {
+    if (_isDiagnosticsEnabled()) {
       var diagnostics = WhizbangDiagnostics.Diagnostics(
-          DiagnosticCategories,
+          _diagnosticCategories,
           printToConsole: false
       );
 
@@ -52,7 +52,7 @@ public class DiagnosticTestBase {
   }
 
 
-  private static bool IsDiagnosticsEnabled() {
+  private static bool _isDiagnosticsEnabled() {
     var showViaEnv = Environment.GetEnvironmentVariable("WHIZBANG_SHOW_DIAGNOSTICS") == "1";
     var showViaParam = TestContext.Parameters.TryGetValue("ShowDiagnostics", out var values)
         && values.Contains("true");

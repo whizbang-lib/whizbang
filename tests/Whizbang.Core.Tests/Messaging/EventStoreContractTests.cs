@@ -36,7 +36,7 @@ public abstract class EventStoreContractTests {
     // Arrange
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
-    var envelope = CreateTestEnvelope(streamId, "event-1");
+    var envelope = _createTestEnvelope(streamId, "event-1");
 
     // Act
     await eventStore.AppendAsync(streamId, envelope);
@@ -82,9 +82,9 @@ public abstract class EventStoreContractTests {
     // Arrange
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
-    var envelope1 = CreateTestEnvelope(streamId, "event-1");
-    var envelope2 = CreateTestEnvelope(streamId, "event-2");
-    var envelope3 = CreateTestEnvelope(streamId, "event-3");
+    var envelope1 = _createTestEnvelope(streamId, "event-1");
+    var envelope2 = _createTestEnvelope(streamId, "event-2");
+    var envelope3 = _createTestEnvelope(streamId, "event-3");
 
     await eventStore.AppendAsync(streamId, envelope1);
     await eventStore.AppendAsync(streamId, envelope2);
@@ -108,9 +108,9 @@ public abstract class EventStoreContractTests {
     // Arrange
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
-    await eventStore.AppendAsync(streamId, CreateTestEnvelope(streamId, "event-1"));
-    await eventStore.AppendAsync(streamId, CreateTestEnvelope(streamId, "event-2"));
-    var envelope3 = CreateTestEnvelope(streamId, "event-3");
+    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, "event-1"));
+    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, "event-2"));
+    var envelope3 = _createTestEnvelope(streamId, "event-3");
     await eventStore.AppendAsync(streamId, envelope3);
 
     // Act - Read from sequence 2 (third event, 0-indexed)
@@ -142,9 +142,9 @@ public abstract class EventStoreContractTests {
     // Arrange
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
-    await eventStore.AppendAsync(streamId, CreateTestEnvelope(streamId, "event-1"));
-    await eventStore.AppendAsync(streamId, CreateTestEnvelope(streamId, "event-2"));
-    await eventStore.AppendAsync(streamId, CreateTestEnvelope(streamId, "event-3"));
+    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, "event-1"));
+    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, "event-2"));
+    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, "event-3"));
 
     // Act
     var lastSequence = await eventStore.GetLastSequenceAsync(streamId);
@@ -159,8 +159,8 @@ public abstract class EventStoreContractTests {
     var eventStore = await CreateEventStoreAsync();
     var streamId1 = Guid.NewGuid();
     var streamId2 = Guid.NewGuid();
-    var envelope1 = CreateTestEnvelope(streamId1, "stream-1-event");
-    var envelope2 = CreateTestEnvelope(streamId2, "stream-2-event");
+    var envelope1 = _createTestEnvelope(streamId1, "stream-1-event");
+    var envelope2 = _createTestEnvelope(streamId2, "stream-2-event");
 
     await eventStore.AppendAsync(streamId1, envelope1);
     await eventStore.AppendAsync(streamId2, envelope2);
@@ -188,7 +188,7 @@ public abstract class EventStoreContractTests {
     // Arrange
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
-    var envelopes = Enumerable.Range(0, 10).Select(i => CreateTestEnvelope(streamId, $"event-{i}")).ToList();
+    var envelopes = Enumerable.Range(0, 10).Select(i => _createTestEnvelope(streamId, $"event-{i}")).ToList();
 
     // Act - Concurrent appends
     var tasks = envelopes.Select(env =>
@@ -206,7 +206,7 @@ public abstract class EventStoreContractTests {
   /// <summary>
   /// Helper method to create a test message envelope with TestEvent payload.
   /// </summary>
-  private static MessageEnvelope<TestEvent> CreateTestEnvelope(Guid aggregateId, string payload) {
+  private static MessageEnvelope<TestEvent> _createTestEnvelope(Guid aggregateId, string payload) {
     var envelope = new MessageEnvelope<TestEvent> {
       MessageId = MessageId.New(),
       Payload = new TestEvent {

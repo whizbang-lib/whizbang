@@ -15,7 +15,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
   private readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
 
   // Simple test message for envelope creation
-  private record TestEvent(string Data);
+  private record _testEvent(string Data);
 
   // ========================================
   // Priority 3 Tests: Immediate Strategy
@@ -42,9 +42,9 @@ public class ImmediateWorkCoordinatorStrategyTests {
     );
 
     var messageId = _idProvider.NewGuid();
-    var envelope = new MessageEnvelope<TestEvent> {
+    var envelope = new MessageEnvelope<_testEvent> {
       MessageId = MessageId.From(messageId),
-      Payload = new TestEvent("test-data"),
+      Payload = new _testEvent("test-data"),
       Hops = new List<MessageHop>()
     };
     sut.QueueOutboxMessage(new OutboxMessage {
@@ -88,9 +88,9 @@ public class ImmediateWorkCoordinatorStrategyTests {
     );
 
     var messageId = _idProvider.NewGuid();
-    var envelope = new MessageEnvelope<TestEvent> {
+    var envelope = new MessageEnvelope<_testEvent> {
       MessageId = MessageId.From(messageId),
-      Payload = new TestEvent("test-data"),
+      Payload = new _testEvent("test-data"),
       Hops = new List<MessageHop>()
     };
     var outboxMessage = new OutboxMessage {
@@ -134,9 +134,9 @@ public class ImmediateWorkCoordinatorStrategyTests {
     );
 
     var messageId = _idProvider.NewGuid();
-    var envelope = new MessageEnvelope<TestEvent> {
+    var envelope = new MessageEnvelope<_testEvent> {
       MessageId = MessageId.From(messageId),
-      Payload = new TestEvent("test-data"),
+      Payload = new _testEvent("test-data"),
       Hops = new List<MessageHop>()
     };
     var inboxMessage = new InboxMessage {

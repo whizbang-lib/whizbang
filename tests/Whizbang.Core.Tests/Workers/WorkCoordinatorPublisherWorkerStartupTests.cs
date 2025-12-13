@@ -21,12 +21,12 @@ namespace Whizbang.Core.Tests.Workers;
 /// Verifies immediate processing of pending outbox messages on startup.
 /// </summary>
 public class WorkCoordinatorPublisherWorkerStartupTests {
-  private record TestMessage { }
+  private record _testMessage { }
 
-  private static IMessageEnvelope<object> CreateTestEnvelope(Guid messageId) {
-    var envelope = new MessageEnvelope<TestMessage> {
+  private static IMessageEnvelope<object> _createTestEnvelope(Guid messageId) {
+    var envelope = new MessageEnvelope<_testMessage> {
       MessageId = MessageId.From(messageId),
-      Payload = new TestMessage(),
+      Payload = new _testMessage(),
       Hops = []
     };
     return envelope as IMessageEnvelope<object> ?? throw new InvalidOperationException("Envelope must implement IMessageEnvelope<object>");
@@ -35,7 +35,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
   private class TestWorkCoordinator : IWorkCoordinator {
     public List<OutboxWork> WorkToReturn { get; set; } = [];
     public int ProcessWorkBatchCallCount { get; private set; }
-    public List<ProcessWorkBatchCall> Calls { get; } = [];
+    public List<_processWorkBatchCall> Calls { get; } = [];
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       Guid instanceId,
@@ -63,7 +63,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       CancellationToken cancellationToken = default) {
 
       ProcessWorkBatchCallCount++;
-      Calls.Add(new ProcessWorkBatchCall {
+      Calls.Add(new _processWorkBatchCall {
         CallNumber = ProcessWorkBatchCallCount,
         Timestamp = DateTimeOffset.UtcNow
       });
@@ -102,7 +102,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     }
   }
 
-  private record ProcessWorkBatchCall {
+  private record _processWorkBatchCall {
     public required int CallNumber { get; init; }
     public required DateTimeOffset Timestamp { get; init; }
   }
@@ -113,7 +113,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     var workCoordinator = new TestWorkCoordinator();
     var publishStrategy = new TestPublishStrategy();
     var databaseReadiness = new TestDatabaseReadinessCheck { IsReady = true };
-    var instanceProvider = CreateTestInstanceProvider();
+    var instanceProvider = _createTestInstanceProvider();
 
     // 3 pending outbox messages to be claimed on startup
     var message1Id = Guid.NewGuid();
@@ -121,12 +121,12 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     var message3Id = Guid.NewGuid();
 
     workCoordinator.WorkToReturn = [
-      CreateOutboxWork(message1Id, "products"),
-      CreateOutboxWork(message2Id, "products"),
-      CreateOutboxWork(message3Id, "products")
+      _createOutboxWork(message1Id, "products"),
+      _createOutboxWork(message2Id, "products"),
+      _createOutboxWork(message3Id, "products")
     ];
 
-    var services = CreateServiceCollection(workCoordinator, publishStrategy, databaseReadiness, instanceProvider);
+    var services = _createServiceCollection(workCoordinator, publishStrategy, databaseReadiness, instanceProvider);
     var worker = new WorkCoordinatorPublisherWorker(
       instanceProvider,
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
@@ -168,11 +168,11 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     var workCoordinator = new TestWorkCoordinator();
     var publishStrategy = new TestPublishStrategy();
     var databaseReadiness = new TestDatabaseReadinessCheck { IsReady = false }; // Database NOT ready
-    var instanceProvider = CreateTestInstanceProvider();
+    var instanceProvider = _createTestInstanceProvider();
 
-    workCoordinator.WorkToReturn = [CreateOutboxWork(Guid.NewGuid(), "products")];
+    workCoordinator.WorkToReturn = [_createOutboxWork(Guid.NewGuid(), "products")];
 
-    var services = CreateServiceCollection(workCoordinator, publishStrategy, databaseReadiness, instanceProvider);
+    var services = _createServiceCollection(workCoordinator, publishStrategy, databaseReadiness, instanceProvider);
     var worker = new WorkCoordinatorPublisherWorker(
       instanceProvider,
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
@@ -206,7 +206,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     var workCoordinator = new TestWorkCoordinator();
     var publishStrategy = new TestPublishStrategy();
     var databaseReadiness = new TestDatabaseReadinessCheck { IsReady = true };
-    var instanceProvider = CreateTestInstanceProvider();
+    var instanceProvider = _createTestInstanceProvider();
 
     // Make ProcessWorkBatchAsync throw on first call
     var callCount = 0;
@@ -216,10 +216,10 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     // Create a coordinator that throws on first call, then succeeds
     var throwingCoordinator = new ThrowingWorkCoordinator {
       ThrowOnFirstCall = true,
-      WorkToReturn = [CreateOutboxWork(Guid.NewGuid(), "products")]
+      WorkToReturn = [_createOutboxWork(Guid.NewGuid(), "products")]
     };
 
-    var services = CreateServiceCollection(throwingCoordinator, publishStrategy, databaseReadiness, instanceProvider);
+    var services = _createServiceCollection(throwingCoordinator, publishStrategy, databaseReadiness, instanceProvider);
     var worker = new WorkCoordinatorPublisherWorker(
       instanceProvider,
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
@@ -253,9 +253,9 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     var workCoordinator = new TestWorkCoordinator(); // Empty WorkToReturn
     var publishStrategy = new TestPublishStrategy();
     var databaseReadiness = new TestDatabaseReadinessCheck { IsReady = true };
-    var instanceProvider = CreateTestInstanceProvider();
+    var instanceProvider = _createTestInstanceProvider();
 
-    var services = CreateServiceCollection(workCoordinator, publishStrategy, databaseReadiness, instanceProvider);
+    var services = _createServiceCollection(workCoordinator, publishStrategy, databaseReadiness, instanceProvider);
     var worker = new WorkCoordinatorPublisherWorker(
       instanceProvider,
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
@@ -289,14 +289,14 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     var workCoordinator = new TestWorkCoordinator();
     var publishStrategy = new TestPublishStrategy();
     var databaseReadiness = new TestDatabaseReadinessCheck { IsReady = true };
-    var instanceProvider = CreateTestInstanceProvider();
+    var instanceProvider = _createTestInstanceProvider();
 
     // 12 pending messages (like the user's seeding scenario)
     for (int i = 0; i < 12; i++) {
-      workCoordinator.WorkToReturn.Add(CreateOutboxWork(Guid.NewGuid(), "products"));
+      workCoordinator.WorkToReturn.Add(_createOutboxWork(Guid.NewGuid(), "products"));
     }
 
-    var services = CreateServiceCollection(workCoordinator, publishStrategy, databaseReadiness, instanceProvider);
+    var services = _createServiceCollection(workCoordinator, publishStrategy, databaseReadiness, instanceProvider);
     var worker = new WorkCoordinatorPublisherWorker(
       instanceProvider,
       services.BuildServiceProvider().GetRequiredService<IServiceScopeFactory>(),
@@ -326,11 +326,11 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     await Assert.That(workCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
   }
 
-  private static OutboxWork CreateOutboxWork(Guid messageId, string destination) {
+  private static OutboxWork _createOutboxWork(Guid messageId, string destination) {
     return new OutboxWork {
       MessageId = messageId,
       Destination = destination,
-      Envelope = CreateTestEnvelope(messageId),
+      Envelope = _createTestEnvelope(messageId),
       StreamId = Guid.NewGuid(),
       PartitionNumber = 1,
       Attempts = 0,
@@ -340,7 +340,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     };
   }
 
-  private static IServiceInstanceProvider CreateTestInstanceProvider() {
+  private static IServiceInstanceProvider _createTestInstanceProvider() {
     return new ServiceInstanceProvider(
       Guid.NewGuid(),
       "TestService",
@@ -349,7 +349,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     );
   }
 
-  private static IServiceCollection CreateServiceCollection(
+  private static IServiceCollection _createServiceCollection(
     IWorkCoordinator workCoordinator,
     IMessagePublishStrategy publishStrategy,
     IDatabaseReadinessCheck databaseReadiness,

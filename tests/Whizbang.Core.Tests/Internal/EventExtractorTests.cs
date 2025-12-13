@@ -14,10 +14,10 @@ namespace Whizbang.Core.Tests.Internal;
 [Category("Internal")]
 public class EventExtractorTests {
   // Test event types
-  private record TestEvent1(string Name) : IEvent;
-  private record TestEvent2(int Value) : IEvent;
-  private record TestEvent3(bool Flag) : IEvent;
-  private record NonEvent(string Data); // Does not implement IEvent
+  private record _testEvent1(string Name) : IEvent;
+  private record _testEvent2(int Value) : IEvent;
+  private record _testEvent3(bool Flag) : IEvent;
+  private record _nonEvent(string Data); // Does not implement IEvent
 
   [Test]
   public async Task ExtractEvents_WithNull_ReturnsEmptyAsync() {
@@ -34,7 +34,7 @@ public class EventExtractorTests {
   [Test]
   public async Task ExtractEvents_WithSingleEvent_ReturnsSingleEventAsync() {
     // Arrange
-    var evt = new TestEvent1("test");
+    var evt = new _testEvent1("test");
 
     // Act
     var events = EventExtractor.ExtractEvents(evt);
@@ -47,10 +47,10 @@ public class EventExtractorTests {
   [Test]
   public async Task ExtractEvents_WithNonEvent_ReturnsEmptyAsync() {
     // Arrange
-    var nonEvent = new NonEvent("data");
+    var _nonEvent = new _nonEvent("data");
 
     // Act
-    var events = EventExtractor.ExtractEvents(nonEvent);
+    var events = EventExtractor.ExtractEvents(_nonEvent);
 
     // Assert
     await Assert.That(events).HasCount().EqualTo(0);
@@ -59,9 +59,9 @@ public class EventExtractorTests {
   [Test]
   public async Task ExtractEvents_WithEventArray_ReturnsAllEventsAsync() {
     // Arrange
-    var evt1 = new TestEvent1("first");
-    var evt2 = new TestEvent2(42);
-    var evt3 = new TestEvent3(true);
+    var evt1 = new _testEvent1("first");
+    var evt2 = new _testEvent2(42);
+    var evt3 = new _testEvent3(true);
     IEvent[] eventArray = [evt1, evt2, evt3];
 
     // Act
@@ -77,8 +77,8 @@ public class EventExtractorTests {
   [Test]
   public async Task ExtractEvents_WithEventEnumerable_ReturnsAllEventsAsync() {
     // Arrange
-    var evt1 = new TestEvent1("first");
-    var evt2 = new TestEvent2(42);
+    var evt1 = new _testEvent1("first");
+    var evt2 = new _testEvent2(42);
     IEnumerable<IEvent> eventEnumerable = new List<IEvent> { evt1, evt2 };
 
     // Act
@@ -93,10 +93,10 @@ public class EventExtractorTests {
   [Test]
   public async Task ExtractEvents_WithTuple_ExtractsOnlyEventsAsync() {
     // Arrange
-    var evt1 = new TestEvent1("event");
-    var nonEvent = new NonEvent("data");
-    var evt2 = new TestEvent2(99);
-    var tuple = (evt1, nonEvent, evt2, 42);
+    var evt1 = new _testEvent1("event");
+    var _nonEvent = new _nonEvent("data");
+    var evt2 = new _testEvent2(99);
+    var tuple = (evt1, _nonEvent, evt2, 42);
 
     // Act
     var events = EventExtractor.ExtractEvents(tuple);
@@ -110,9 +110,9 @@ public class EventExtractorTests {
   [Test]
   public async Task ExtractEvents_WithValueTuple_ExtractsOnlyEventsAsync() {
     // Arrange
-    var evt1 = new TestEvent1("value-tuple-event");
-    var evt2 = new TestEvent2(123);
-    ValueTuple<TestEvent1, string, TestEvent2> valueTuple = (evt1, "string", evt2);
+    var evt1 = new _testEvent1("value-tuple-event");
+    var evt2 = new _testEvent2(123);
+    ValueTuple<_testEvent1, string, _testEvent2> valueTuple = (evt1, "string", evt2);
 
     // Act
     var events = EventExtractor.ExtractEvents(valueTuple);
@@ -126,9 +126,9 @@ public class EventExtractorTests {
   [Test]
   public async Task ExtractEvents_WithTupleContainingEventArray_FlattensProperlyAsync() {
     // Arrange
-    var evt1 = new TestEvent1("tuple-event");
-    var evt2 = new TestEvent2(1);
-    var evt3 = new TestEvent3(false);
+    var evt1 = new _testEvent1("tuple-event");
+    var evt2 = new _testEvent2(1);
+    var evt3 = new _testEvent3(false);
     IEvent[] eventArray = [evt2, evt3];
     var tuple = (evt1, eventArray, "string");
 
@@ -145,9 +145,9 @@ public class EventExtractorTests {
   [Test]
   public async Task ExtractEvents_WithNestedEnumerable_FlattensProperlyAsync() {
     // Arrange
-    var evt1 = new TestEvent1("outer");
-    var evt2 = new TestEvent2(10);
-    var evt3 = new TestEvent3(true);
+    var evt1 = new _testEvent1("outer");
+    var evt2 = new _testEvent2(10);
+    var evt3 = new _testEvent3(true);
     var innerList = new List<IEvent> { evt2, evt3 };
     IEnumerable<object> outerEnumerable = new List<object> { evt1, innerList };
 
@@ -188,7 +188,7 @@ public class EventExtractorTests {
   [Test]
   public async Task ExtractEvents_WithTupleOfNonEvents_ReturnsEmptyAsync() {
     // Arrange
-    var tuple = ("string", 42, new NonEvent("data"));
+    var tuple = ("string", 42, new _nonEvent("data"));
 
     // Act
     var events = EventExtractor.ExtractEvents(tuple);
@@ -200,12 +200,12 @@ public class EventExtractorTests {
   [Test]
   public async Task ExtractEvents_WithMixedComplexStructure_ExtractsAllEventsAsync() {
     // Arrange
-    var evt1 = new TestEvent1("complex-1");
-    var evt2 = new TestEvent2(100);
-    var evt3 = new TestEvent3(true);
-    var evt4 = new TestEvent1("complex-2");
+    var evt1 = new _testEvent1("complex-1");
+    var evt2 = new _testEvent2(100);
+    var evt3 = new _testEvent3(true);
+    var evt4 = new _testEvent1("complex-2");
     var innerArray = new IEvent[] { evt2, evt3 };
-    var tuple = (evt1, innerArray, new NonEvent("ignore"), evt4);
+    var tuple = (evt1, innerArray, new _nonEvent("ignore"), evt4);
 
     // Act
     var events = EventExtractor.ExtractEvents(tuple);

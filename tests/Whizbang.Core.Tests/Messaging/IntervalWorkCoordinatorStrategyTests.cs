@@ -15,7 +15,7 @@ public class IntervalWorkCoordinatorStrategyTests {
   private readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
 
   // Helper method to create test envelope
-  private static TestMessageEnvelope CreateTestEnvelope(Guid messageId) {
+  private static TestMessageEnvelope _createTestEnvelope(Guid messageId) {
     return new TestMessageEnvelope {
       MessageId = MessageId.From(messageId),
       Hops = []
@@ -47,7 +47,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     );
 
     var messageId = _idProvider.NewGuid();
-    var envelope = CreateTestEnvelope(messageId);
+    var envelope = _createTestEnvelope(messageId);
     sut.QueueOutboxMessage(new OutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
@@ -93,7 +93,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     var messageId2 = _idProvider.NewGuid();
 
     // Act - Queue two messages quickly (before timer fires)
-    var envelope1 = CreateTestEnvelope(messageId1);
+    var envelope1 = _createTestEnvelope(messageId1);
     sut.QueueOutboxMessage(new OutboxMessage {
       MessageId = messageId1,
       Destination = "topic1",
@@ -106,7 +106,7 @@ public class IntervalWorkCoordinatorStrategyTests {
 
     await Task.Delay(50);  // Small delay, but less than timer interval
 
-    var envelope2 = CreateTestEnvelope(messageId2);
+    var envelope2 = _createTestEnvelope(messageId2);
     sut.QueueOutboxMessage(new OutboxMessage {
       MessageId = messageId2,
       Destination = "topic2",
@@ -151,7 +151,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     );
 
     var messageId = _idProvider.NewGuid();
-    var envelope = CreateTestEnvelope(messageId);
+    var envelope = _createTestEnvelope(messageId);
     sut.QueueOutboxMessage(new OutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
@@ -202,7 +202,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     );
 
     var messageId = _idProvider.NewGuid();
-    var envelope = CreateTestEnvelope(messageId);
+    var envelope = _createTestEnvelope(messageId);
     sut.QueueOutboxMessage(new OutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",

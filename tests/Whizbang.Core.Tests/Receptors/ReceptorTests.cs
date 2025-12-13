@@ -14,7 +14,7 @@ namespace Whizbang.Core.Tests.Receptors;
 /// </summary>
 [Category("Receptors")]
 public class ReceptorTests : DiagnosticTestBase {
-  protected override DiagnosticCategory DiagnosticCategories => DiagnosticCategory.ReceptorDiscovery;
+  protected override DiagnosticCategory _diagnosticCategories => DiagnosticCategory.ReceptorDiscovery;
 
   // Test Messages
   public record CreateOrder(Guid CustomerId, OrderItem[] Items);

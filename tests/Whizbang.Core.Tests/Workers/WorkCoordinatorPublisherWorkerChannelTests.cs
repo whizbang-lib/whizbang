@@ -19,12 +19,12 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Tests.Workers;
 
 public class WorkCoordinatorPublisherWorkerChannelTests {
-  private record TestMessage { }
+  private record _testMessage { }
 
-  private static IMessageEnvelope<object> CreateTestEnvelope(Guid messageId) {
-    var envelope = new MessageEnvelope<TestMessage> {
+  private static IMessageEnvelope<object> _createTestEnvelope(Guid messageId) {
+    var envelope = new MessageEnvelope<_testMessage> {
       MessageId = MessageId.From(messageId),
-      Payload = new TestMessage(),
+      Payload = new _testMessage(),
       Hops = []
     };
     return envelope as IMessageEnvelope<object> ?? throw new InvalidOperationException("Envelope must implement IMessageEnvelope<object>");
@@ -106,14 +106,14 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
     // Arrange
     var workCoordinator = new TestWorkCoordinator();
     var publishStrategy = new TestPublishStrategy();
-    var instanceProvider = CreateTestInstanceProvider();
+    var instanceProvider = _createTestInstanceProvider();
 
     var messageId = Guid.NewGuid();
     workCoordinator.WorkToReturn = [
       new OutboxWork {
         MessageId = messageId,
         Destination = "test-topic",
-        Envelope = CreateTestEnvelope(messageId),
+        Envelope = _createTestEnvelope(messageId),
         StreamId = Guid.NewGuid(),
         PartitionNumber = 1,
         Attempts = 0,
@@ -123,7 +123,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
       }
     ];
 
-    var services = CreateServiceCollection(workCoordinator, publishStrategy, instanceProvider);
+    var services = _createServiceCollection(workCoordinator, publishStrategy, instanceProvider);
 
     // Act & Assert - verify work was published
     // Note: Full worker integration will be tested separately
@@ -147,14 +147,14 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
         Error = "Transport failed"
       }
     };
-    var instanceProvider = CreateTestInstanceProvider();
+    var instanceProvider = _createTestInstanceProvider();
 
     var messageId = Guid.NewGuid();
     workCoordinator.WorkToReturn = [
       new OutboxWork {
         MessageId = messageId,
         Destination = "test-topic",
-        Envelope = CreateTestEnvelope(messageId),
+        Envelope = _createTestEnvelope(messageId),
         StreamId = Guid.NewGuid(),
         PartitionNumber = 1,
         Attempts = 0,
@@ -164,7 +164,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
       }
     ];
 
-    var services = CreateServiceCollection(workCoordinator, publishStrategy, instanceProvider);
+    var services = _createServiceCollection(workCoordinator, publishStrategy, instanceProvider);
 
     // Act
     var result = await publishStrategy.PublishAsync(workCoordinator.WorkToReturn[0], CancellationToken.None);
@@ -188,7 +188,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
       messages.Add(new OutboxWork {
         MessageId = msgId,
         Destination = "test-topic",
-        Envelope = CreateTestEnvelope(msgId),
+        Envelope = _createTestEnvelope(msgId),
         StreamId = Guid.NewGuid(),
         PartitionNumber = 1,
         Attempts = 0,
@@ -208,7 +208,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
     await Assert.That(publishStrategy.PublishedWork).HasCount().EqualTo(5);
   }
 
-  private static IServiceInstanceProvider CreateTestInstanceProvider() {
+  private static IServiceInstanceProvider _createTestInstanceProvider() {
     return new ServiceInstanceProvider(
       Guid.NewGuid(),
       "TestService",
@@ -217,7 +217,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
     );
   }
 
-  private static IServiceCollection CreateServiceCollection(
+  private static IServiceCollection _createServiceCollection(
     IWorkCoordinator workCoordinator,
     IMessagePublishStrategy publishStrategy,
     IServiceInstanceProvider instanceProvider) {

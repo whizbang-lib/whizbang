@@ -15,9 +15,9 @@ public class ScopedWorkCoordinatorStrategyTests {
   private readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
 
   // Test message types
-  private record TestEvent1 { }
-  private record TestEvent2 { }
-  private record TestEvent3 { }
+  private record _testEvent1 { }
+  private record _testEvent2 { }
+  private record _testEvent3 { }
 
   // ========================================
   // Priority 3 Tests: Scoped Strategy
@@ -47,9 +47,9 @@ public class ScopedWorkCoordinatorStrategyTests {
     var messageId1 = _idProvider.NewGuid();
     var messageId2 = _idProvider.NewGuid();
 
-    var envelope1 = new MessageEnvelope<TestEvent1> {
+    var envelope1 = new MessageEnvelope<_testEvent1> {
       MessageId = MessageId.From(messageId1),
-      Payload = new TestEvent1(),
+      Payload = new _testEvent1(),
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -72,9 +72,9 @@ public class ScopedWorkCoordinatorStrategyTests {
       MessageType = "TestMessage, TestAssembly"
     });
 
-    var envelope2 = new MessageEnvelope<TestEvent2> {
+    var envelope2 = new MessageEnvelope<_testEvent2> {
       MessageId = MessageId.From(messageId2),
-      Payload = new TestEvent2(),
+      Payload = new _testEvent2(),
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -132,9 +132,9 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     var messageId = _idProvider.NewGuid();
 
-    var envelope = new MessageEnvelope<TestEvent1> {
+    var envelope = new MessageEnvelope<_testEvent1> {
       MessageId = MessageId.From(messageId),
-      Payload = new TestEvent1(),
+      Payload = new _testEvent1(),
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -202,9 +202,9 @@ public class ScopedWorkCoordinatorStrategyTests {
     var failureId = _idProvider.NewGuid();
 
     // Queue multiple types of operations
-    var envelope1 = new MessageEnvelope<TestEvent1> {
+    var envelope1 = new MessageEnvelope<_testEvent1> {
       MessageId = MessageId.From(outboxId1),
-      Payload = new TestEvent1(),
+      Payload = new _testEvent1(),
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -227,9 +227,9 @@ public class ScopedWorkCoordinatorStrategyTests {
       MessageType = "TestMessage, TestAssembly"
     });
 
-    var envelope2 = new MessageEnvelope<TestEvent2> {
+    var envelope2 = new MessageEnvelope<_testEvent2> {
       MessageId = MessageId.From(outboxId2),
-      Payload = new TestEvent2(),
+      Payload = new _testEvent2(),
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {
@@ -252,9 +252,9 @@ public class ScopedWorkCoordinatorStrategyTests {
       MessageType = "TestMessage, TestAssembly"
     });
 
-    var envelope3 = new MessageEnvelope<TestEvent3> {
+    var envelope3 = new MessageEnvelope<_testEvent3> {
       MessageId = MessageId.From(inboxId1),
-      Payload = new TestEvent3(),
+      Payload = new _testEvent3(),
       Hops = [
         new MessageHop {
           ServiceInstance = new ServiceInstanceInfo {

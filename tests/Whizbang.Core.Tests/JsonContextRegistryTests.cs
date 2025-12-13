@@ -13,12 +13,12 @@ public class JsonContextRegistryTests {
   /// <summary>
   /// Test converter for MessageId-like type (simulates generated WhizbangId converter).
   /// </summary>
-  private class TestIdJsonConverter : JsonConverter<TestId> {
-    public override TestId Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {
-      return new TestId { Value = reader.GetString() ?? string.Empty };
+  private class TestIdJsonConverter : JsonConverter<_testId> {
+    public override _testId Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {
+      return new _testId { Value = reader.GetString() ?? string.Empty };
     }
 
-    public override void Write(Utf8JsonWriter writer, TestId value, JsonSerializerOptions options) {
+    public override void Write(Utf8JsonWriter writer, _testId value, JsonSerializerOptions options) {
       writer.WriteStringValue(value.Value);
     }
   }
@@ -26,7 +26,7 @@ public class JsonContextRegistryTests {
   /// <summary>
   /// Test ID type (simulates generated WhizbangId value object).
   /// </summary>
-  private struct TestId {
+  private struct _testId {
     public string Value { get; set; }
   }
 

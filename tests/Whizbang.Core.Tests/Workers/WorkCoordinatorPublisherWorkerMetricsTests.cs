@@ -18,12 +18,12 @@ namespace Whizbang.Core.Tests.Workers;
 /// Phase 2: Verifies that transport readiness buffering is properly tracked and logged.
 /// </summary>
 public class WorkCoordinatorPublisherWorkerMetricsTests {
-  private record TestMessage { }
+  private record _testMessage { }
 
-  private static IMessageEnvelope<object> CreateTestEnvelope(Guid messageId) {
-    var envelope = new MessageEnvelope<TestMessage> {
+  private static IMessageEnvelope<object> _createTestEnvelope(Guid messageId) {
+    var envelope = new MessageEnvelope<_testMessage> {
       MessageId = MessageId.From(messageId),
-      Payload = new TestMessage(),
+      Payload = new _testMessage(),
       Hops = []
     };
     return envelope as IMessageEnvelope<object> ?? throw new InvalidOperationException("Envelope must implement IMessageEnvelope<object>");
@@ -35,14 +35,14 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     var testLogger = new TestLogger<WorkCoordinatorPublisherWorker>();
     var workCoordinator = new TestWorkCoordinator {
       WorkToReturn = [
-        CreateTestOutboxWork(Guid.NewGuid())
+        _createTestOutboxWork(Guid.NewGuid())
       ]
     };
     var publishStrategy = new TestPublishStrategy {
       IsReadyResult = false  // Transport not ready
     };
-    var instanceProvider = CreateTestInstanceProvider();
-    var services = CreateServiceCollection(workCoordinator, publishStrategy, instanceProvider, testLogger);
+    var instanceProvider = _createTestInstanceProvider();
+    var services = _createServiceCollection(workCoordinator, publishStrategy, instanceProvider, testLogger);
 
     // Act - Start worker briefly to process one batch
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
@@ -65,16 +65,16 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     // Arrange
     var workCoordinator = new TestWorkCoordinator {
       WorkToReturn = [
-        CreateTestOutboxWork(Guid.NewGuid()),
-        CreateTestOutboxWork(Guid.NewGuid()),
-        CreateTestOutboxWork(Guid.NewGuid())
+        _createTestOutboxWork(Guid.NewGuid()),
+        _createTestOutboxWork(Guid.NewGuid()),
+        _createTestOutboxWork(Guid.NewGuid())
       ]
     };
     var publishStrategy = new TestPublishStrategy {
       IsReadyResult = false  // Transport stays not ready
     };
-    var instanceProvider = CreateTestInstanceProvider();
-    var services = CreateServiceCollection(workCoordinator, publishStrategy, instanceProvider);
+    var instanceProvider = _createTestInstanceProvider();
+    var services = _createServiceCollection(workCoordinator, publishStrategy, instanceProvider);
 
     // Act
     var worker = (WorkCoordinatorPublisherWorker)services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
@@ -98,13 +98,13 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
       messageIds.Add(Guid.NewGuid());
     }
     var workCoordinator = new TestWorkCoordinator {
-      WorkToReturn = messageIds.ConvertAll(CreateTestOutboxWork)
+      WorkToReturn = messageIds.ConvertAll(_createTestOutboxWork)
     };
     var publishStrategy = new TestPublishStrategy {
       IsReadyResult = false  // Transport never ready
     };
-    var instanceProvider = CreateTestInstanceProvider();
-    var services = CreateServiceCollection(workCoordinator, publishStrategy, instanceProvider, testLogger);
+    var instanceProvider = _createTestInstanceProvider();
+    var services = _createServiceCollection(workCoordinator, publishStrategy, instanceProvider, testLogger);
 
     // Act
     var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
@@ -129,18 +129,18 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     // Arrange
     var workCoordinator = new TestWorkCoordinator();
     var publishStrategy = new TestPublishStrategy();
-    var instanceProvider = CreateTestInstanceProvider();
-    var services = CreateServiceCollection(workCoordinator, publishStrategy, instanceProvider);
+    var instanceProvider = _createTestInstanceProvider();
+    var services = _createServiceCollection(workCoordinator, publishStrategy, instanceProvider);
     var worker = (WorkCoordinatorPublisherWorker)services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
 
     // Simulate 5 not-ready messages
     publishStrategy.IsReadyResult = false;
     workCoordinator.WorkToReturn = [
-      CreateTestOutboxWork(Guid.NewGuid()),
-      CreateTestOutboxWork(Guid.NewGuid()),
-      CreateTestOutboxWork(Guid.NewGuid()),
-      CreateTestOutboxWork(Guid.NewGuid()),
-      CreateTestOutboxWork(Guid.NewGuid())
+      _createTestOutboxWork(Guid.NewGuid()),
+      _createTestOutboxWork(Guid.NewGuid()),
+      _createTestOutboxWork(Guid.NewGuid()),
+      _createTestOutboxWork(Guid.NewGuid()),
+      _createTestOutboxWork(Guid.NewGuid())
     ];
 
     using var cts = new CancellationTokenSource();
@@ -149,7 +149,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
 
     // Act - Transport becomes ready
     publishStrategy.IsReadyResult = true;
-    workCoordinator.WorkToReturn = [CreateTestOutboxWork(Guid.NewGuid())];
+    workCoordinator.WorkToReturn = [_createTestOutboxWork(Guid.NewGuid())];
     await Task.Delay(300);
 
     cts.Cancel();
@@ -169,13 +169,13 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
       Guid.NewGuid()
     };
     var workCoordinator = new TestWorkCoordinator {
-      WorkToReturn = messageIds.ConvertAll(CreateTestOutboxWork)
+      WorkToReturn = messageIds.ConvertAll(_createTestOutboxWork)
     };
     var publishStrategy = new TestPublishStrategy {
       IsReadyResult = false  // Transport not ready
     };
-    var instanceProvider = CreateTestInstanceProvider();
-    var services = CreateServiceCollection(workCoordinator, publishStrategy, instanceProvider);
+    var instanceProvider = _createTestInstanceProvider();
+    var services = _createServiceCollection(workCoordinator, publishStrategy, instanceProvider);
 
     // Act
     var worker = (WorkCoordinatorPublisherWorker)services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
@@ -195,15 +195,15 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     // Arrange
     var workCoordinator = new TestWorkCoordinator {
       WorkToReturn = [
-        CreateTestOutboxWork(Guid.NewGuid()),
-        CreateTestOutboxWork(Guid.NewGuid())
+        _createTestOutboxWork(Guid.NewGuid()),
+        _createTestOutboxWork(Guid.NewGuid())
       ]
     };
     var publishStrategy = new TestPublishStrategy {
       IsReadyResult = false
     };
-    var instanceProvider = CreateTestInstanceProvider();
-    var services = CreateServiceCollection(workCoordinator, publishStrategy, instanceProvider);
+    var instanceProvider = _createTestInstanceProvider();
+    var services = _createServiceCollection(workCoordinator, publishStrategy, instanceProvider);
 
     // Act
     var worker = (WorkCoordinatorPublisherWorker)services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
@@ -305,11 +305,11 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     }
   }
 
-  private static OutboxWork CreateTestOutboxWork(Guid messageId) {
+  private static OutboxWork _createTestOutboxWork(Guid messageId) {
     return new OutboxWork {
       MessageId = messageId,
       Destination = "test-topic",
-      Envelope = CreateTestEnvelope(messageId),
+      Envelope = _createTestEnvelope(messageId),
       StreamId = Guid.NewGuid(),
       PartitionNumber = 1,
       Attempts = 0,
@@ -319,7 +319,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     };
   }
 
-  private static IServiceInstanceProvider CreateTestInstanceProvider() {
+  private static IServiceInstanceProvider _createTestInstanceProvider() {
     return new ServiceInstanceProvider(
       Guid.NewGuid(),
       "TestService",
@@ -328,7 +328,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     );
   }
 
-  private static IServiceProvider CreateServiceCollection(
+  private static IServiceProvider _createServiceCollection(
     IWorkCoordinator workCoordinator,
     IMessagePublishStrategy publishStrategy,
     IServiceInstanceProvider instanceProvider,

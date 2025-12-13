@@ -44,7 +44,7 @@ public class ServiceBusConsumerWorkerTests {
 
     // Create test event
     var testEvent = new ServiceBusWorkerTestEvent { Data = "test data" };
-    var envelope = CreateTestEnvelope(testEvent);
+    var envelope = _createTestEnvelope(testEvent);
 
     // Create service collection with test invoker
     var services = new ServiceCollection();
@@ -131,7 +131,7 @@ public class ServiceBusConsumerWorkerTests {
     var perspectiveInvokerCalled = false;
 
     var testEvent = new ServiceBusWorkerTestEvent { Data = "test data" };
-    var envelope = CreateTestEnvelope(testEvent);
+    var envelope = _createTestEnvelope(testEvent);
 
     // Register test work coordinator strategy that returns EMPTY work (duplicate message)
     var services = new ServiceCollection();
@@ -178,7 +178,7 @@ public class ServiceBusConsumerWorkerTests {
       .Because("Messages already in inbox should be skipped to prevent duplicate processing");
   }
 
-  private static MessageEnvelope<ServiceBusWorkerTestEvent> CreateTestEnvelope(ServiceBusWorkerTestEvent payload) {
+  private static MessageEnvelope<ServiceBusWorkerTestEvent> _createTestEnvelope(ServiceBusWorkerTestEvent payload) {
     // Create hop without PayloadType metadata - not needed for scope disposal test
     // In production, PayloadType would be a JsonElement from Service Bus deserialization
     var hop = new MessageHop {
