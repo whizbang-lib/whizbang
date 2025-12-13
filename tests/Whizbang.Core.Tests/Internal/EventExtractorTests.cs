@@ -124,7 +124,7 @@ public class EventExtractorTests {
   }
 
   [Test]
-  public async Task ExtractEvents_WithTupleContainingEventArray_FlattensProperly() {
+  public async Task ExtractEvents_WithTupleContainingEventArray_FlattensProperlyAsync() {
     // Arrange
     var evt1 = new TestEvent1("tuple-event");
     var evt2 = new TestEvent2(1);
@@ -143,7 +143,7 @@ public class EventExtractorTests {
   }
 
   [Test]
-  public async Task ExtractEvents_WithNestedEnumerable_FlattensProperly() {
+  public async Task ExtractEvents_WithNestedEnumerable_FlattensProperlyAsync() {
     // Arrange
     var evt1 = new TestEvent1("outer");
     var evt2 = new TestEvent2(10);

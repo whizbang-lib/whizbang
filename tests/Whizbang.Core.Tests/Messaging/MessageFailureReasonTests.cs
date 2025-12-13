@@ -6,7 +6,7 @@ namespace Whizbang.Core.Tests.Messaging;
 
 public class MessageFailureReasonTests {
   [Test]
-  public async Task MessageFailureReason_HasExpectedValues() {
+  public async Task MessageFailureReason_HasExpectedValuesAsync() {
     // TUnitAssertions0005: Intentional enum value regression tests to ensure values don't accidentally change
 #pragma warning disable TUnitAssertions0005
     await Assert.That((int)MessageFailureReason.None).IsEqualTo(0);
@@ -21,7 +21,7 @@ public class MessageFailureReasonTests {
   }
 
   [Test]
-  public async Task MessageFailureReason_CanConvertToInt() {
+  public async Task MessageFailureReason_CanConvertToIntAsync() {
     var reason = MessageFailureReason.TransportNotReady;
     int value = (int)reason;
 
@@ -29,7 +29,7 @@ public class MessageFailureReasonTests {
   }
 
   [Test]
-  public async Task MessageFailureReason_CanConvertFromInt() {
+  public async Task MessageFailureReason_CanConvertFromIntAsync() {
     int value = 2;
     var reason = (MessageFailureReason)value;
 

@@ -35,7 +35,7 @@ public class DiagnosticTestBase {
   }
 
   [Before(Test)]
-  public virtual async Task TestSetup() {
+  public virtual async Task TestSetupAsync() {
     // Always write diagnostics to StandardOutput at the START of each test
     // This ensures it's captured before the test result is published
     if (IsDiagnosticsEnabled()) {
