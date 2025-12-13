@@ -10,6 +10,7 @@ namespace Whizbang.Core;
 /// Represents a delivery receipt for a dispatched message.
 /// Contains correlation information and delivery metadata, but NOT the business result.
 /// </summary>
+/// <docs>core-concepts/dispatcher</docs>
 public interface IDeliveryReceipt {
   /// <summary>
   /// Unique identifier for this message
