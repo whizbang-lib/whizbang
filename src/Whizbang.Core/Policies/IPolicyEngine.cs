@@ -4,6 +4,7 @@ namespace Whizbang.Core.Policies;
 /// Policy engine that matches messages to policies and returns configuration.
 /// Evaluates policies in order until a match is found.
 /// </summary>
+/// <docs>infrastructure/policies</docs>
 public interface IPolicyEngine {
   /// <summary>
   /// Adds a policy to the engine.

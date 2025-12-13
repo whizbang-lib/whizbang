@@ -7,6 +7,7 @@ namespace Whizbang.Core.Transports;
 /// Represents an active subscription to a transport.
 /// Allows controlling the subscription (pause, resume, dispose).
 /// </summary>
+/// <docs>components/transports</docs>
 public interface ISubscription : IDisposable {
   /// <summary>
   /// Gets whether the subscription is currently active.

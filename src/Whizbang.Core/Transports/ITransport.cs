@@ -10,6 +10,7 @@ namespace Whizbang.Core.Transports;
 /// Defines a transport abstraction for sending and receiving messages.
 /// Transports can be in-process, over HTTP, message queues, or any other medium.
 /// </summary>
+/// <docs>components/transports</docs>
 public interface ITransport {
   /// <summary>
   /// Gets whether the transport has been successfully initialized.

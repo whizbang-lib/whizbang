@@ -10,6 +10,7 @@ namespace Whizbang.Core.Transports;
 /// Enables policy-based routing where messages can be published to multiple transports
 /// and subscriptions can be created from multiple sources.
 /// </summary>
+/// <docs>components/transports</docs>
 public interface ITransportManager {
   /// <summary>
   /// Registers a transport for a specific transport type.

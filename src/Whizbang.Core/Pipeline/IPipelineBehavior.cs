@@ -14,6 +14,7 @@ namespace Whizbang.Core.Pipeline;
 /// </summary>
 /// <typeparam name="TRequest">The request/message type</typeparam>
 /// <typeparam name="TResponse">The response type</typeparam>
+/// <docs>extensibility/hooks-and-middleware</docs>
 public interface IPipelineBehavior<in TRequest, TResponse> {
   /// <summary>
   /// Handle the request by executing behavior logic and optionally invoking the next behavior or handler.

@@ -7,6 +7,7 @@ namespace Whizbang.Core.Execution;
 /// Defines a strategy for executing message handlers.
 /// Implementations control ordering, concurrency, and lifecycle.
 /// </summary>
+/// <docs>components/dispatcher</docs>
 public interface IExecutionStrategy {
   /// <summary>
   /// Name of the execution strategy (e.g., "Serial", "Parallel")
