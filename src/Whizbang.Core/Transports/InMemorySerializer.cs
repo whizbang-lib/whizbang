@@ -16,6 +16,9 @@ namespace Whizbang.Core.Transports;
 /// </summary>
 public class InMemorySerializer : IMessageSerializer {
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Transports.Tests/InMemorySerializerTests.cs:SerializeAsync_ShouldReturnByteArrayAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/InMemorySerializerTests.cs:SerializeDeserialize_RoundTrip_PreservesAllDataAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/InMemorySerializerTests.cs:MultipleSerialization_ShouldProduceDifferentByteArraysAsync</tests>
   public Task<byte[]> SerializeAsync(IMessageEnvelope envelope) {
     // Store the envelope reference as a "byte array" (not real serialization)
     // This is only safe for in-process testing
@@ -25,6 +28,8 @@ public class InMemorySerializer : IMessageSerializer {
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Transports.Tests/InMemorySerializerTests.cs:DeserializeAsync_ShouldRetrieveOriginalEnvelopeAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/InMemorySerializerTests.cs:SerializeDeserialize_RoundTrip_PreservesAllDataAsync</tests>
   public Task<IMessageEnvelope> DeserializeAsync<TMessage>(byte[] bytes) where TMessage : notnull {
     // Retrieve the envelope reference from the "byte array"
     var ptr = new IntPtr(BitConverter.ToInt64(bytes, 0));
