@@ -10,6 +10,8 @@ namespace Whizbang.Core.Data;
 /// Implementations handle serialization and size calculation in C#.
 /// </summary>
 /// <typeparam name="T">The type to be persisted (event envelope or perspective model)</typeparam>
+/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStoreTests.cs:CreateEventStoreAsync</tests>
+/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:SetupAsync</tests>
 public interface IJsonbPersistenceAdapter<T> {
   /// <summary>
   /// Splits an object into JSONB-compatible components for persistence.
@@ -18,6 +20,9 @@ public interface IJsonbPersistenceAdapter<T> {
   /// <param name="source">The object to split into JSONB columns</param>
   /// <param name="policyConfig">Optional policy configuration for size validation</param>
   /// <returns>JSONB persistence model with data/metadata/scope JSON strings</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:AppendAsync_DifferentStreams_ShouldBeIndependentAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:AppendAsync_ConcurrentAppends_ShouldBeThreadSafeAsync</tests>
   JsonbPersistenceModel ToJsonb(T source, PolicyConfiguration? policyConfig = null);
 
   /// <summary>
@@ -25,6 +30,8 @@ public interface IJsonbPersistenceAdapter<T> {
   /// </summary>
   /// <param name="jsonb">The JSONB persistence model to reconstruct from</param>
   /// <returns>The reconstructed domain object</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:ReadAsync_FromMiddle_ShouldReturnSubsetAsync</tests>
   T FromJsonb(JsonbPersistenceModel jsonb);
 
   /// <summary>
@@ -34,6 +41,10 @@ public interface IJsonbPersistenceAdapter<T> {
   /// <typeparam name="TMessage">The message type to deserialize</typeparam>
   /// <param name="jsonb">The JSONB persistence model to reconstruct from</param>
   /// <returns>The reconstructed envelope with strongly-typed payload</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:ReadAsync_FromMiddle_ShouldReturnSubsetAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:ReadAsync_FromEmptyStream_ShouldReturnEmptyAsync</tests>
   MessageEnvelope<TMessage> FromJsonb<TMessage>(JsonbPersistenceModel jsonb);
 }
 
@@ -41,6 +52,8 @@ public interface IJsonbPersistenceAdapter<T> {
 /// Container for the 3-column JSONB pattern.
 /// Includes C#-calculated size properties (not stored unless threshold crossed).
 /// </summary>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
 public record JsonbPersistenceModel {
   /// <summary>
   /// Event data or model data (3-6 KiB typical).
