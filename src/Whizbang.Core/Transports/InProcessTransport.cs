@@ -169,12 +169,18 @@ public class InProcessTransport : ITransport {
     private readonly Action _onDispose = onDispose;
     private bool _isDisposed;
 
+    /// <summary>
+    /// 
+    /// </summary>
     /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_InVariousStates_BehavesCorrectlyAsync</tests>
     /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_PauseAsync_SetsIsActiveToFalseAsync</tests>
     /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_ResumeAsync_SetsIsActiveToTrueAsync</tests>
     /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_Dispose_RemovesHandlerFromTransportAsync</tests>
     public bool IsActive { get; private set; } = true;
 
+    /// <summary>
+    /// 
+    /// </summary>
     /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_InVariousStates_BehavesCorrectlyAsync</tests>
     /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_PauseAsync_SetsIsActiveToFalseAsync</tests>
     public Task PauseAsync() {
@@ -182,6 +188,9 @@ public class InProcessTransport : ITransport {
       return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// 
+    /// </summary>
     /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_InVariousStates_BehavesCorrectlyAsync</tests>
     /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_ResumeAsync_SetsIsActiveToTrueAsync</tests>
     public Task ResumeAsync() {
@@ -189,6 +198,9 @@ public class InProcessTransport : ITransport {
       return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// 
+    /// </summary>
     /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_InVariousStates_BehavesCorrectlyAsync</tests>
     /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_Dispose_RemovesHandlerFromTransportAsync</tests>
     /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_DisposeMultipleTimes_IsIdempotentAsync</tests>

@@ -32,6 +32,7 @@ public interface ITransport {
   /// Gets the capabilities of this transport.
   /// Describes what patterns and semantics this transport supports.
   /// </summary>
+  /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_Capabilities_ReturnsTransportCapabilitiesAsync</tests>
   TransportCapabilities Capabilities { get; }
 
   /// <summary>
@@ -42,6 +43,8 @@ public interface ITransport {
   /// <param name="destination">The destination to publish to</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Task that completes when the message is published</returns>
+  /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_PublishAsync_WithValidMessage_CompletesSuccessfullyAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_PublishAsync_WithCancellation_ThrowsOperationCanceledAsync</tests>
   Task PublishAsync(
     IMessageEnvelope envelope,
     TransportDestination destination,
@@ -56,6 +59,7 @@ public interface ITransport {
   /// <param name="destination">The destination to subscribe to</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>A subscription that can be used to control or cancel the subscription</returns>
+  /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_SubscribeAsync_RegistersHandler_ReturnsSubscriptionAsync</tests>
   Task<ISubscription> SubscribeAsync(
     Func<IMessageEnvelope, CancellationToken, Task> handler,
     TransportDestination destination,
@@ -71,6 +75,8 @@ public interface ITransport {
   /// <param name="destination">The destination to send the request to</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>The response message envelope</returns>
+  /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_SendAsync_WithRequestResponse_ReturnsResponseEnvelopeAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_SendAsync_WithTimeout_ThrowsTimeoutExceptionAsync</tests>
   Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
     IMessageEnvelope requestEnvelope,
     TransportDestination destination,

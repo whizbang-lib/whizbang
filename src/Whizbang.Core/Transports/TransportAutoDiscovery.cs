@@ -44,6 +44,7 @@ public class TransportAutoDiscovery {
   /// Subscribe to all message types matching a namespace pattern.
   /// </summary>
   /// <param name="pattern">Namespace pattern with wildcards (e.g., "MyApp.Orders.*")</param>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_SubscribeToNamespace_ShouldStorePatternAsync</tests>
   public void SubscribeToNamespace(string pattern) {
     ArgumentNullException.ThrowIfNull(pattern);
     _patterns.Add(new NamespacePattern(pattern));
@@ -52,6 +53,7 @@ public class TransportAutoDiscovery {
   /// <summary>
   /// Explicitly subscribe to a specific message type.
   /// </summary>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_Subscribe_ShouldStoreExplicitTypeAsync</tests>
   public void Subscribe<TMessage>() {
     _explicitTypes.Add(typeof(TMessage));
   }
@@ -59,6 +61,12 @@ public class TransportAutoDiscovery {
   /// <summary>
   /// Checks if a message type should be subscribed based on patterns and explicit types.
   /// </summary>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_ShouldSubscribe_WhenExplicitTypeAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_ShouldNotSubscribe_WhenTypeNotAddedAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_ShouldSubscribe_WhenMatchesPatternAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_ShouldNotSubscribe_WhenDoesNotMatchPatternAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_ShouldSubscribe_WhenMatchesAnyPatternAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_ShouldSubscribe_WhenBothExplicitAndPatternMatchAsync</tests>
   public bool ShouldSubscribe(Type messageType) {
     ArgumentNullException.ThrowIfNull(messageType);
 
@@ -75,6 +83,7 @@ public class TransportAutoDiscovery {
   /// Gets all message types that should be subscribed.
   /// Currently returns only explicit types. Receptor discovery will be added in future.
   /// </summary>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_GetMessageTypesToSubscribe_ShouldReturnExplicitTypesAsync</tests>
   public List<Type> GetMessageTypesToSubscribe() {
     // For now, return explicit types
     // Future: Add receptor discovery using source generator
@@ -84,6 +93,7 @@ public class TransportAutoDiscovery {
   /// <summary>
   /// Gets all namespace patterns.
   /// </summary>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_SubscribeToNamespace_ShouldStorePatternAsync</tests>
   public List<NamespacePattern> GetNamespacePatterns() {
     return [.. _patterns];
   }
@@ -91,6 +101,7 @@ public class TransportAutoDiscovery {
   /// <summary>
   /// Gets all explicitly subscribed types.
   /// </summary>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_Subscribe_ShouldStoreExplicitTypeAsync</tests>
   public List<Type> GetExplicitTypes() {
     return [.. _explicitTypes];
   }
@@ -100,6 +111,7 @@ public class TransportAutoDiscovery {
   /// NOTE: This requires source generator integration (future implementation).
   /// For now, this is a placeholder that does nothing.
   /// </summary>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_DiscoverReceptors_ShouldNotThrowAsync</tests>
   public static void DiscoverReceptors() {
     // TODO: Integrate with source generator to get all IReceptor<TMessage> types
     // For each receptor found:
