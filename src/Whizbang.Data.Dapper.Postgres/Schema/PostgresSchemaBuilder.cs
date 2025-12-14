@@ -29,6 +29,11 @@ public static class PostgresSchemaBuilder {
   /// <param name="table">Table definition to convert to SQL</param>
   /// <param name="prefix">Table name prefix (e.g., "wb_" or "wb_per_")</param>
   /// <returns>Complete CREATE TABLE statement with all columns and constraints</returns>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_SimpleTable_GeneratesCreateStatementAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_WithMultipleColumns_GeneratesAllColumnsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_WithDefaultValue_GeneratesDefaultClauseAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_WithUniqueColumn_GeneratesUniqueConstraintAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_PerspectivePrefix_UsesPerspectivePrefixAsync</tests>
   public static string BuildCreateTable(TableDefinition table, string prefix) {
     var sb = new StringBuilder();
     var tableName = $"{prefix}{table.Name}";
@@ -85,6 +90,9 @@ public static class PostgresSchemaBuilder {
   /// <param name="tableName">Table name (without prefix)</param>
   /// <param name="prefix">Table name prefix (e.g., "wb_")</param>
   /// <returns>Complete CREATE INDEX statement</returns>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateIndex_SimpleIndex_GeneratesCreateIndexAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateIndex_CompositeIndex_GeneratesMultiColumnIndexAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateIndex_UniqueIndex_GeneratesUniqueIndexAsync</tests>
   public static string BuildCreateIndex(IndexDefinition index, string tableName, string prefix) {
     var fullTableName = $"{prefix}{tableName}";
     var unique = index.Unique ? "UNIQUE " : "";
@@ -99,6 +107,12 @@ public static class PostgresSchemaBuilder {
   /// </summary>
   /// <param name="config">Schema configuration with prefix settings</param>
   /// <returns>Complete DDL script for all infrastructure tables</returns>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildInfrastructureSchema_GeneratesAllTablesAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildInfrastructureSchema_GeneratesAllIndexesAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildInfrastructureSchema_InboxTable_HasCorrectStructureAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildInfrastructureSchema_OutboxTable_HasCorrectDefaultsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildInfrastructureSchema_EventStoreTable_HasUniqueConstraintAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildInfrastructureSchema_CustomPrefix_UsesCustomPrefixAsync</tests>
   public static string BuildInfrastructureSchema(SchemaConfiguration config) {
     var sb = new StringBuilder();
 
