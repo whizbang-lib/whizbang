@@ -4,6 +4,10 @@ namespace Whizbang.Core.Sequencing;
 /// Provides monotonically increasing sequence numbers for streams.
 /// Implementations must be thread-safe and guarantee no gaps or duplicates.
 /// </summary>
+/// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs</tests>
+/// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs</tests>
+/// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs</tests>
+/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs</tests>
 public interface ISequenceProvider {
   /// <summary>
   /// Gets the next sequence number for a stream.
@@ -13,6 +17,12 @@ public interface ISequenceProvider {
   /// <param name="streamKey">The stream identifier</param>
   /// <param name="ct">Cancellation token</param>
   /// <returns>The next sequence number (0-based)</returns>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetNextAsync_FirstCall_ShouldReturnZeroAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetNextAsync_MultipleCalls_ShouldIncrementMonotonicallyAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetNextAsync_DifferentStreamKeys_ShouldMaintainSeparateSequencesAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetNextAsync_ConcurrentCalls_ShouldMaintainMonotonicityAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetNextAsync_ManyCalls_ShouldNeverSkipOrDuplicateAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:CancellationToken_WhenCancelled_ShouldThrowAsync</tests>
   Task<long> GetNextAsync(string streamKey, CancellationToken ct = default);
 
   /// <summary>
@@ -22,6 +32,10 @@ public interface ISequenceProvider {
   /// <param name="streamKey">The stream identifier</param>
   /// <param name="ct">Cancellation token</param>
   /// <returns>The last issued sequence number, or -1 if stream not initialized</returns>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetCurrentAsync_WithoutGetNext_ShouldReturnNegativeOneAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetCurrentAsync_AfterGetNext_ShouldReturnLastIssuedSequenceAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetCurrentAsync_DoesNotIncrement_ShouldReturnSameValueAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:CancellationToken_WhenCancelled_ShouldThrowAsync</tests>
   Task<long> GetCurrentAsync(string streamKey, CancellationToken ct = default);
 
   /// <summary>
@@ -33,5 +47,9 @@ public interface ISequenceProvider {
   /// <param name="streamKey">The stream identifier</param>
   /// <param name="newValue">The value to reset to (default 0)</param>
   /// <param name="ct">Cancellation token</param>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:ResetAsync_WithDefaultValue_ShouldResetToZeroAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:ResetAsync_WithCustomValue_ShouldResetToSpecifiedValueAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:ResetAsync_MultipleTimes_ShouldAlwaysResetAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:CancellationToken_WhenCancelled_ShouldThrowAsync</tests>
   Task ResetAsync(string streamKey, long newValue = 0, CancellationToken ct = default);
 }
