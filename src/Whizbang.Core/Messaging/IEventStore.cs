@@ -14,6 +14,9 @@ namespace Whizbang.Core.Messaging;
 /// Separate from ITraceStore (which is for observability, not event sourcing).
 /// Enables streaming capability on RabbitMQ and Service Bus.
 /// </summary>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryEventStoreTests.cs</tests>
+/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStoreTests.cs</tests>
 public interface IEventStore {
   /// <summary>
   /// Appends an event to the specified stream (AOT-compatible).
@@ -26,6 +29,16 @@ public interface IEventStore {
   /// <param name="envelope">The message envelope to append</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Task that completes when the event is appended</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:AppendAsync_WithNullEnvelope_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:AppendAsync_DifferentStreams_ShouldBeIndependentAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:AppendAsync_ConcurrentAppends_ShouldBeThreadSafeAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithHighConcurrency_ShouldRetryAndSucceedAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ExtremelyHighConcurrency_ShouldHandleRetriesAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ConcurrentAppendsToSameSequence_ShouldResolveConflictsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithRetryBackoff_ShouldEventuallySucceedAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ExtremeContention_ShouldEventuallyThrowMaxRetriesAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithNonUniqueViolationException_ShouldPropagateExceptionAsync</tests>
   Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default);
 
   /// <summary>
@@ -39,6 +52,9 @@ public interface IEventStore {
   /// <param name="fromSequence">The sequence number to start reading from (inclusive)</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Async enumerable of strongly-typed message envelopes in sequence order</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:ReadAsync_FromEmptyStream_ShouldReturnEmptyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:ReadAsync_FromMiddle_ShouldReturnSubsetAsync</tests>
   IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default);
 
   /// <summary>
@@ -48,5 +64,7 @@ public interface IEventStore {
   /// <param name="streamId">The stream identifier (aggregate ID as UUID)</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>The last sequence number, or -1 if empty</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:GetLastSequenceAsync_EmptyStream_ShouldReturnMinusOneAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:GetLastSequenceAsync_AfterAppends_ShouldReturnCorrectSequenceAsync</tests>
   Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default);
 }
