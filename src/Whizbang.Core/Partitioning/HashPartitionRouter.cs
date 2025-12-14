@@ -26,6 +26,21 @@ namespace Whizbang.Core.Partitioning;
 /// </summary>
 public class HashPartitionRouter : IPartitionRouter {
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:HashAlgorithm_SameKey_AlwaysProducesSamePartitionAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:HashAlgorithm_DifferentKeys_ProduceDifferentPartitionsAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:HashAlgorithm_UnicodeKeys_HandledCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:HashAlgorithm_SimilarKeys_ProduceDifferentHashesAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:Distribution_10kStreams_DistributesEvenlyAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:Distribution_VaryingPartitionCounts_MaintainsConsistencyAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:Distribution_AllPartitionsReachable_With1000StreamsAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:EdgeCase_SpecialKeys_HandlesGracefullyAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:EdgeCase_SinglePartition_AlwaysReturnsZeroAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:EdgeCase_InvalidPartitionCount_ThrowsArgumentOutOfRangeAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:EdgeCase_VaryingKeyLengths_HandlesCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:EdgeCase_UnicodeKeys_HandlesCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:Performance_1MillionRoutes_CompletesQuicklyAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:Performance_VariousKeySizes_HandlesEfficientlyAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:Performance_ConcurrentRouting_ThreadSafeAsync</tests>
   public int SelectPartition(string streamKey, int partitionCount, PolicyContext context) {
     // Handle edge cases
     if (partitionCount <= 0) {
@@ -56,6 +71,12 @@ public class HashPartitionRouter : IPartitionRouter {
   /// FNV-1a (Fowler-Noll-Vo) is a fast, non-cryptographic hash function with good distribution.
   /// Uses stackalloc for small strings and ArrayPool for large strings to avoid allocations.
   /// </summary>
+  /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:HashAlgorithm_SameKey_AlwaysProducesSamePartitionAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:HashAlgorithm_DifferentKeys_ProduceDifferentPartitionsAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:HashAlgorithm_UnicodeKeys_HandledCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:HashAlgorithm_SimilarKeys_ProduceDifferentHashesAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:EdgeCase_VaryingKeyLengths_HandlesCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:Performance_VariousKeySizes_HandlesEfficientlyAsync</tests>
   private static int ComputeFnv1aHash(string value) {
     // FNV-1a parameters for 32-bit hash
     const int FNV_PRIME = 16777619;
