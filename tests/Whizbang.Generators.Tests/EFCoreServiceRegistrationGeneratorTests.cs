@@ -555,6 +555,203 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
   #endregion
 
+  #region AOT Schema Generation Tests
+
+  /// <summary>
+  /// Test that schema extensions include core infrastructure schema SQL.
+  /// The SQL should be embedded from Resources/CoreInfrastructureSchema.sql.
+  /// </summary>
+  [Test]
+  public async Task Generator_SchemaExtensions_IncludesCoreInfrastructureSchemaAsync() {
+    // Arrange
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PerspectiveBoilerplate}}
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    // Should contain core infrastructure schema constant
+    await Assert.That(sourceText).Contains("const string CoreInfrastructureSchema");
+
+    // Should contain all 9 core tables
+    await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_service_instances");
+    await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_message_deduplication");
+    await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_inbox");
+    await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_outbox");
+    await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_event_store");
+    await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_receptor_processing");
+    await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_perspective_checkpoints");
+    await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_request_response");
+    await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_sequences");
+  }
+
+  /// <summary>
+  /// Test that event_store table includes stream_id and scope columns.
+  /// These columns are required for migration compatibility.
+  /// </summary>
+  [Test]
+  public async Task Generator_EventStoreTable_IncludesStreamIdAndScopeColumnsAsync() {
+    // Arrange
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PerspectiveBoilerplate}}
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    // Should have stream_id column
+    await Assert.That(sourceText).Contains("stream_id UUID NOT NULL");
+
+    // Should have scope column
+    await Assert.That(sourceText).Contains("scope JSONB NULL");
+
+    // Should have unique index on stream_id + version
+    await Assert.That(sourceText).Contains("idx_event_store_stream");
+  }
+
+  /// <summary>
+  /// Test that schema SQL uses proper escaping for ExecuteSqlRawAsync.
+  /// Quotes should be doubled and braces should be escaped.
+  /// </summary>
+  [Test]
+  public async Task Generator_SchemaSQL_UsesPropperEscapingForExecuteSqlRawAsync() {
+    // Arrange
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PerspectiveBoilerplate}}
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    // Should use verbatim string (@"...")
+    await Assert.That(sourceText).Contains("const string CoreInfrastructureSchema = @\"");
+
+    // Should call ExecuteSqlRawAsync with the schema SQL
+    await Assert.That(sourceText).Contains("await dbContext.Database.ExecuteSqlRawAsync(CoreInfrastructureSchema");
+  }
+
+  /// <summary>
+  /// Test that perspective_checkpoints table has composite primary key.
+  /// The PK should be (stream_id, perspective_name).
+  /// </summary>
+  [Test]
+  public async Task Generator_PerspectiveCheckpoints_HasCompositePrimaryKeyAsync() {
+    // Arrange
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PerspectiveBoilerplate}}
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    // Should have composite primary key
+    await Assert.That(sourceText).Contains("PRIMARY KEY (stream_id, perspective_name)");
+  }
+
+  /// <summary>
+  /// Test that schema extensions call ExecuteMigrationsAsync.
+  /// Migrations enhance the core schema with additional features.
+  /// </summary>
+  [Test]
+  public async Task Generator_SchemaExtensions_CallsExecuteMigrationsAsync() {
+    // Arrange
+    var source = $$"""
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      {{PerspectiveBoilerplate}}
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    // Should have ExecuteMigrationsAsync method
+    await Assert.That(sourceText).Contains("ExecuteMigrationsAsync");
+
+    // Should call it from EnsureWhizbangDatabaseInitializedAsync
+    await Assert.That(sourceText).Contains("await ExecuteMigrationsAsync(dbContext");
+  }
+
+  #endregion
+
   #region No Generators Diagnostic Tests
 
   /// <summary>
