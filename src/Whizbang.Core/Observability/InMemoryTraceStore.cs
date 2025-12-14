@@ -22,6 +22,10 @@ namespace Whizbang.Core.Observability;
 public class InMemoryTraceStore : ITraceStore {
   private readonly ConcurrentDictionary<MessageId, IMessageEnvelope> _traces = new();
 
+  /// <summary>
+  /// Stores a message envelope in the trace store.
+  /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:StoreAsync_WithNullEnvelope_ThrowsArgumentNullExceptionAsync</tests>
   public Task StoreAsync(IMessageEnvelope envelope, CancellationToken ct = default) {
     ArgumentNullException.ThrowIfNull(envelope);
 
@@ -29,11 +33,18 @@ public class InMemoryTraceStore : ITraceStore {
     return Task.CompletedTask;
   }
 
+  /// <summary>
+  /// Retrieves a message envelope by its message ID.
+  /// </summary>
   public Task<IMessageEnvelope?> GetByMessageIdAsync(MessageId messageId, CancellationToken ct = default) {
     _traces.TryGetValue(messageId, out var envelope);
     return Task.FromResult(envelope);
   }
 
+  /// <summary>
+  /// Retrieves all message envelopes with the specified correlation ID.
+  /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetByCorrelationAsync_WithNullCorrelationIdsInStore_FiltersThemOutAsync</tests>
   public Task<List<IMessageEnvelope>> GetByCorrelationAsync(CorrelationId correlationId, CancellationToken ct = default) {
     var results = _traces.Values
       .Where(e => {
@@ -46,6 +57,16 @@ public class InMemoryTraceStore : ITraceStore {
     return Task.FromResult(results);
   }
 
+  /// <summary>
+  /// Retrieves the complete causal chain for a message, including ancestors and descendants.
+  /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetCausalChainAsync_WithCircularReference_ProtectsAgainstInfiniteLoopAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetCausalChainAsync_WithMissingParent_StopsWalkingUpChainAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetCausalChainAsync_WithChildren_IncludesChildMessagesAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetCausalChainAsync_WithMultiGenerationChildren_IncludesAllDescendantsAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetCausalChainAsync_WithEmptyCausationId_StopsWalkingAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetCausalChainAsync_SortsResultsByTimestampAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetCausalChainAsync_WithCircularReferenceInChildrenTree_ProtectsAgainstInfiniteLoopAsync</tests>
   public Task<List<IMessageEnvelope>> GetCausalChainAsync(MessageId messageId, CancellationToken ct = default) {
     if (!_traces.TryGetValue(messageId, out var envelope)) {
       return Task.FromResult(new List<IMessageEnvelope>());
@@ -100,6 +121,9 @@ public class InMemoryTraceStore : ITraceStore {
     return Task.FromResult(results);
   }
 
+  /// <summary>
+  /// Recursively adds child messages to the causal chain.
+  /// </summary>
   private void AddChildrenRecursive(IMessageEnvelope message, HashSet<MessageId> chain, List<IMessageEnvelope> results) {
     if (chain.Contains(message.MessageId)) {
       return; // Circular reference protection
@@ -124,6 +148,11 @@ public class InMemoryTraceStore : ITraceStore {
     }
   }
 
+  /// <summary>
+  /// Retrieves all message envelopes within the specified time range.
+  /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetByTimeRangeAsync_WithEnvelopesWithoutCurrentHop_UsesMinValueTimestampAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetByTimeRangeAsync_WithNoHops_UsesMinValueTimestampAsync</tests>
   public Task<List<IMessageEnvelope>> GetByTimeRangeAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct = default) {
     var results = _traces.Values
       .Where(e => {
