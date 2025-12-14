@@ -12,6 +12,10 @@ internal static class MessageRegistrySnippets {
       "isEvent": __IS_EVENT__,
       "filePath": "__FILE_PATH__",
       "lineNumber": __LINE_NUMBER__,
+      "docsUrl": "__DOCS_URL__",
+      "tests": [
+__TESTS__
+      ],
   #endregion
 
   #region DISPATCHER_ENTRY
@@ -19,7 +23,11 @@ internal static class MessageRegistrySnippets {
           "class": "__CLASS_NAME__",
           "method": "__METHOD_NAME__",
           "filePath": "__FILE_PATH__",
-          "lineNumber": __LINE_NUMBER__
+          "lineNumber": __LINE_NUMBER__,
+          "docsUrl": "__DOCS_URL__",
+          "tests": [
+__TESTS__
+          ]
         }
   #endregion
 
@@ -28,7 +36,11 @@ internal static class MessageRegistrySnippets {
           "class": "__CLASS_NAME__",
           "method": "__METHOD_NAME__",
           "filePath": "__FILE_PATH__",
-          "lineNumber": __LINE_NUMBER__
+          "lineNumber": __LINE_NUMBER__,
+          "docsUrl": "__DOCS_URL__",
+          "tests": [
+__TESTS__
+          ]
         }
   #endregion
 
@@ -37,8 +49,21 @@ internal static class MessageRegistrySnippets {
           "class": "__CLASS_NAME__",
           "method": "Update",
           "filePath": "__FILE_PATH__",
-          "lineNumber": __LINE_NUMBER__
+          "lineNumber": __LINE_NUMBER__,
+          "docsUrl": "__DOCS_URL__",
+          "tests": [
+__TESTS__
+          ]
         }
+  #endregion
+
+  #region TEST_ENTRY
+            {
+              "testFile": "__TEST_FILE__",
+              "testMethod": "__TEST_METHOD__",
+              "testLine": __TEST_LINE__,
+              "testClass": "__TEST_CLASS__"
+            }
   #endregion
 
   #region MESSAGE_ENTRY_FOOTER

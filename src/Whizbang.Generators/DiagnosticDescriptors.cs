@@ -256,4 +256,73 @@ internal static class DiagnosticDescriptors {
       isEnabledByDefault: true,
       description: "The source generator did not find any commands with [TopicFilter] attributes."
   );
+
+  // ========================================
+  // Test Linking Diagnostics (WHIZ050-069)
+  // ========================================
+
+  /// <summary>
+  /// WHIZ050: Warning - Public API has no associated tests.
+  /// </summary>
+  public static readonly DiagnosticDescriptor PublicApiMissingTests = new(
+      id: "WHIZ050",
+      title: "Public API Missing Tests",
+      messageFormat: "Public {0} '{1}' has no associated tests. Consider adding test coverage or marking with [ExcludeFromCodeCoverage].",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "A public API member has no associated tests in the code-tests mapping."
+  );
+
+  /// <summary>
+  /// WHIZ051: Warning - &lt;tests&gt; XML tag references non-existent test.
+  /// </summary>
+  public static readonly DiagnosticDescriptor InvalidTestReference = new(
+      id: "WHIZ051",
+      title: "Invalid Test Reference",
+      messageFormat: "&lt;tests&gt; tag on '{0}' references test '{1}' which was not found. Verify test file path and method name.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "The &lt;tests&gt; XML documentation tag references a test that does not exist."
+  );
+
+  /// <summary>
+  /// WHIZ052: Info - Test link discovered between code and test.
+  /// </summary>
+  public static readonly DiagnosticDescriptor TestLinkDiscovered = new(
+      id: "WHIZ052",
+      title: "Test Link Discovered",
+      messageFormat: "Found test link: {0}.{1} ← {2} (via {3})",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "A code-to-test link was discovered through convention, semantic analysis, or XML tag."
+  );
+
+  /// <summary>
+  /// WHIZ053: Info - Failed to load code-docs-map.json for VSCode tooling.
+  /// </summary>
+  public static readonly DiagnosticDescriptor FailedToLoadDocsMap = new(
+      id: "WHIZ053",
+      title: "Failed to Load Documentation Map",
+      messageFormat: "Could not load code-docs-map.json from documentation repository: {0}. Documentation URLs will not be included in message-registry.json.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "The MessageRegistryGenerator could not load the documentation mapping file for VSCode tooling enhancement."
+  );
+
+  /// <summary>
+  /// WHIZ054: Info - Failed to load code-tests-map.json for VSCode tooling.
+  /// </summary>
+  public static readonly DiagnosticDescriptor FailedToLoadTestsMap = new(
+      id: "WHIZ054",
+      title: "Failed to Load Tests Map",
+      messageFormat: "Could not load code-tests-map.json from documentation repository: {0}. Test counts will not be included in message-registry.json.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "The MessageRegistryGenerator could not load the test mapping file for VSCode tooling enhancement."
+  );
 }

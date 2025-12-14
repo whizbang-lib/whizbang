@@ -15,11 +15,12 @@
 7. [Technology Stack](#technology-stack)
 8. [Key Principles](#key-principles)
 9. [Code-Docs Linking](#code-docs-linking)
-10. [Documentation Maintenance](#documentation-maintenance)
-11. [ID Generation](#id-generation)
-12. [Observability Architecture](#observability-architecture)
-13. [Work Coordination & Event Store](#work-coordination--event-store-architecture)
-14. [Plan Documents](#plan-documents)
+10. [Code-Tests Linking](#code-tests-linking)
+11. [Documentation Maintenance](#documentation-maintenance)
+12. [ID Generation](#id-generation)
+13. [Observability Architecture](#observability-architecture)
+14. [Work Coordination & Event Store](#work-coordination--event-store-architecture)
+15. [Plan Documents](#plan-documents)
 
 ---
 
@@ -313,6 +314,74 @@ The documentation repository's MCP server provides tools for bidirectional navig
 - One `<docs>` tag per type (above type declaration)
 
 **For complete documentation maintenance workflow** (version awareness, when to update docs, commit strategies), see **[documentation-maintenance.md](ai-docs/documentation-maintenance.md)**.
+
+---
+
+## Code-Tests Linking
+
+**NEW**: Bidirectional linking between source code and tests for improved test coverage awareness and maintainability:
+
+**Architecture**:
+1. **Convention-based discovery** - Automatically links tests via naming patterns (e.g., `DispatcherTests` → `Dispatcher`)
+2. **`<tests>` XML tags** (optional) - Manual override for complex cases
+3. **Script-based generation** - Scans tests and source code to build bidirectional mapping
+4. **MCP Server Tools** - Programmatic access to test mappings via documentation repository
+
+**How to Add `<tests>` Tags** (Optional):
+```csharp
+/// <summary>
+/// Dispatches messages to appropriate handlers
+/// </summary>
+/// <docs>core-concepts/dispatcher</docs>
+/// <tests>Whizbang.Core.Tests/DispatcherTests.cs:Dispatch_SendsMessageToCorrectReceptorAsync</tests>
+public void Dispatch<TMessage>(TMessage message) where TMessage : IMessage {
+  // ...
+}
+```
+
+**Tag Format**:
+- Add `/// <tests>TestFile.cs:TestMethodName</tests>` XML tag above types/methods
+- Path format: `ProjectName/TestFile.cs:TestMethodName`
+- Used only when convention-based discovery isn't sufficient
+
+**Mapping Generation**:
+```bash
+# From documentation repository
+cd /Users/philcarbone/src/whizbang-lib.github.io
+node src/scripts/generate-code-tests-map.mjs
+
+# This scans library tests and source code, generates:
+# src/assets/code-tests-map.json
+```
+
+**MCP Tools for Querying**:
+The documentation repository's MCP server provides tools for bidirectional navigation:
+- `mcp__whizbang-docs__get-tests-for-code` - Find all tests for a code symbol
+- `mcp__whizbang-docs__get-code-for-test` - Find code tested by a test method
+- `mcp__whizbang-docs__validate-test-links` - Validate all code-test links
+- `mcp__whizbang-docs__get-coverage-stats` - Get test coverage statistics
+
+**When Claude Updates Code**:
+When modifying implementation code, Claude should:
+1. Query MCP to find related tests: `mcp__whizbang-docs__get-tests-for-code({ symbol: "ClassName" })`
+2. Review and update those tests if behavior changes
+3. Add new tests for new functionality
+4. Follow naming convention for new tests
+
+**When Claude Updates Tests**:
+When modifying tests, Claude should:
+1. Query MCP to find what code is being tested: `mcp__whizbang-docs__get-code-for-test({ testKey: "TestClass.TestMethod" })`
+2. Understand what the test is validating
+3. Ensure test name accurately reflects behavior being tested
+
+**Best Practices**:
+- Follow naming convention: `ClassNameTests` for `ClassName`
+- Use descriptive test method names: `ClassName_MethodName_ExpectedBehaviorAsync`
+- Add `<tests>` tags only when convention-based linking fails
+- Regenerate mapping after adding/removing tests: `node src/scripts/generate-code-tests-map.mjs`
+- Use MCP tools to ensure test coverage when making changes
+
+**Status**: Phase 1 complete - Script-based generation and MCP tools operational. Source generator and analyzer planned for v2.
 
 ---
 
