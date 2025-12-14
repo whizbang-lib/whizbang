@@ -3,6 +3,8 @@ using System.Text;
 namespace Whizbang.Core.Transports.AzureServiceBus;
 
 /// <summary>
+/// Generates Aspire AppHost configuration code for Service Bus topics and subscriptions.
+/// </summary>
 /// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_WithNoRequirements_ReturnsEmptyMessageAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_WithSingleRequirement_GeneratesCorrectCodeAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_WithMultipleRequirements_GeneratesCorrectCodeAsync</tests>
@@ -12,8 +14,6 @@ namespace Whizbang.Core.Transports.AzureServiceBus;
 /// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_GeneratesValidCSharpSyntaxAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_SortsTopicsAlphabeticallyAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_WithSpecialCharacters_EscapesCorrectlyAsync</tests>
-/// Generates Aspire AppHost configuration code for Service Bus topics and subscriptions.
-/// </summary>
 public static class AspireConfigurationGenerator {
   /// <summary>
   /// Generates C# code for configuring Service Bus topics in Aspire AppHost.
