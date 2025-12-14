@@ -18,6 +18,7 @@ public class PolicyDecisionTrail {
   /// List of all policy decisions made during processing.
   /// Init setter required for JSON deserialization.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/PolicyDecisionTrailTests.cs:Decisions_IsInitializedEmptyByDefaultAsync</tests>
   public List<PolicyDecision> Decisions { get; init; } = [];
 
   /// <summary>
@@ -28,6 +29,7 @@ public class PolicyDecisionTrail {
   /// <param name="matched">Whether the rule matched</param>
   /// <param name="configuration">Configuration applied when rule matched</param>
   /// <param name="reason">Human-readable reason for the decision</param>
+  /// <tests>tests/Whizbang.Observability.Tests/PolicyDecisionTrailTests.cs:RecordDecision_AddsDecisionWithAllPropertiesAsync</tests>
   public void RecordDecision(
       string policyName,
       string rule,
@@ -48,6 +50,9 @@ public class PolicyDecisionTrail {
   /// <summary>
   /// Gets only the decisions where rules matched.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/PolicyDecisionTrailTests.cs:GetMatchedRules_ReturnsOnlyMatchedDecisionsAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/PolicyDecisionTrailTests.cs:GetMatchedRules_ReturnsEmptyWhenNoMatchesAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/PolicyDecisionTrailTests.cs:GetMatchedRules_PreservesOrderAsync</tests>
   public IEnumerable<PolicyDecision> GetMatchedRules() {
     return Decisions.Where(d => d.Matched);
   }
@@ -55,6 +60,9 @@ public class PolicyDecisionTrail {
   /// <summary>
   /// Gets only the decisions where rules did not match.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/PolicyDecisionTrailTests.cs:GetUnmatchedRules_ReturnsOnlyUnmatchedDecisionsAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/PolicyDecisionTrailTests.cs:GetUnmatchedRules_ReturnsEmptyWhenAllMatchedAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/PolicyDecisionTrailTests.cs:GetUnmatchedRules_PreservesOrderAsync</tests>
   public IEnumerable<PolicyDecision> GetUnmatchedRules() {
     return Decisions.Where(d => !d.Matched);
   }
