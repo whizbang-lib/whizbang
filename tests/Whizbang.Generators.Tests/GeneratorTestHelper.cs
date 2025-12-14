@@ -33,6 +33,7 @@ public static class GeneratorTestHelper {
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Collections.dll")));
     references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Linq.dll")));
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.ComponentModel.Primitives.dll")));
 
     // Add reference to Whizbang.Core (for ICommand, IEvent, etc.)
     // Load by name since it's referenced by this test project

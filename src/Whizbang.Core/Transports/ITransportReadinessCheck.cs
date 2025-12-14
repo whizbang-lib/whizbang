@@ -15,6 +15,7 @@ namespace Whizbang.Core.Transports;
 /// - Kafka: Check if brokers are reachable
 /// - HTTP: Check if endpoint is responding
 /// </remarks>
+/// <docs>components/transports</docs>
 public interface ITransportReadinessCheck {
   /// <summary>
   /// Checks if the transport is ready to accept messages.

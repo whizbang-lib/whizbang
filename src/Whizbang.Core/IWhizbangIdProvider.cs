@@ -4,6 +4,7 @@ namespace Whizbang.Core;
 /// Provides globally unique identifiers for WhizbangId types.
 /// Implement this interface to customize ID generation strategy (e.g., UUIDv7, sequential, testing).
 /// </summary>
+/// <docs>core-concepts/message-context</docs>
 public interface IWhizbangIdProvider {
   /// <summary>
   /// Generates a new globally unique identifier.

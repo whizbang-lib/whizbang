@@ -193,6 +193,32 @@ internal static class DiagnosticDescriptors {
   );
 
   /// <summary>
+  /// WHIZ022: Info - Topic filter discovered for command.
+  /// </summary>
+  public static readonly DiagnosticDescriptor TopicFilterDiscovered = new(
+      id: "WHIZ022",
+      title: "Topic Filter Discovered",
+      messageFormat: "Found topic filter '{1}' on command '{0}'",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "A topic filter was discovered on a command and will be included in the generated registry."
+  );
+
+  /// <summary>
+  /// WHIZ023: Warning - Enum filter has no Description attribute, using symbol name.
+  /// </summary>
+  public static readonly DiagnosticDescriptor EnumFilterNoDescription = new(
+      id: "WHIZ023",
+      title: "Enum Filter No Description",
+      messageFormat: "Enum value '{0}.{1}' has no [Description] attribute. Using enum symbol name '{1}' as filter.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "An enum-based topic filter has no Description attribute, so the enum symbol name will be used as the filter string."
+  );
+
+  /// <summary>
   /// WHIZ024: Warning - Duplicate WhizbangId type name in different namespace.
   /// </summary>
   public static readonly DiagnosticDescriptor WhizbangIdDuplicateName = new(
@@ -203,5 +229,31 @@ internal static class DiagnosticDescriptors {
       defaultSeverity: DiagnosticSeverity.Warning,
       isEnabledByDefault: true,
       description: "Multiple WhizbangId types with the same name exist in different namespaces."
+  );
+
+  /// <summary>
+  /// WHIZ025: Warning - TopicFilter attribute on non-ICommand type.
+  /// </summary>
+  public static readonly DiagnosticDescriptor TopicFilterOnNonCommand = new(
+      id: "WHIZ025",
+      title: "TopicFilter On Non-Command",
+      messageFormat: "[TopicFilter] on type '{0}' which does not implement ICommand. Filter will be ignored.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "The [TopicFilter] attribute can only be used on types implementing ICommand."
+  );
+
+  /// <summary>
+  /// WHIZ026: Info - No topic filters found in assembly.
+  /// </summary>
+  public static readonly DiagnosticDescriptor NoTopicFiltersFound = new(
+      id: "WHIZ026",
+      title: "No Topic Filters Found",
+      messageFormat: "No [TopicFilter] attributes were found in the compilation. TopicFilterRegistry will not be generated.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "The source generator did not find any commands with [TopicFilter] attributes."
   );
 }

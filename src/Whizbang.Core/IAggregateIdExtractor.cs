@@ -10,6 +10,7 @@ namespace Whizbang.Core;
 /// The source generator creates an implementation of this interface in the consumer
 /// assembly that knows about all message types with [AggregateId] attributes.
 /// </remarks>
+/// <docs>infrastructure/policies</docs>
 public interface IAggregateIdExtractor {
   /// <summary>
   /// Extracts the aggregate ID from a message using compile-time type information.
