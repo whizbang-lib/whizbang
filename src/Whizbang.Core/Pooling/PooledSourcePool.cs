@@ -3,6 +3,19 @@ using System.Collections.Concurrent;
 namespace Whizbang.Core.Pooling;
 
 /// <summary>
+/// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:Rent_ReturnsValidInstance_AlwaysAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:Rent_ReturnsPooledInstance_AfterReturnAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:Return_MakesInstanceAvailableForReuseAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:RentReturn_ReusesSameInstance_VerifyReferenceEqualityAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:RentAfterReset_HasIncrementedTokenAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:GenericTypes_HaveSeparatePools_IntVsStringAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:GenericTypes_HaveSeparatePools_CustomTypesAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:MultipleRentReturn_WorksCorrectly_ParameterizedAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:SequentialRentReturn_ReusesSingleInstanceAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:ConcurrentRentReturn_ThreadSafe_ParallelOperationsAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:ConcurrentRent_CreatesMultipleInstances_WhenPoolEmptyAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:RealisticPattern_RentSetResultReturnAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:RealisticPattern_HighThroughput_MinimalAllocationsAsync</tests>
 /// Static generic pool for PooledValueTaskSource{T} instances.
 /// Each generic type T gets its own pool to avoid type casting issues.
 /// Uses ConcurrentBag for thread-safe, lock-free pooling.

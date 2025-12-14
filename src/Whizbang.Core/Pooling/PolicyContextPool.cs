@@ -5,6 +5,11 @@ using Whizbang.Core.Policies;
 namespace Whizbang.Core.Pooling;
 
 /// <summary>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyContextPoolTests.cs:Rent_ShouldReturnInitializedContextAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyContextPoolTests.cs:Return_WithNullContext_ShouldNotThrowAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyContextPoolTests.cs:RentReturn_ShouldReinitializeContextAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyContextPoolTests.cs:Pool_ShouldCreateNewContext_WhenEmptyAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyContextPoolTests.cs:Pool_ShouldNotExceedMaxSize_WhenReturningManyContextsAsync</tests>
 /// Object pool for PolicyContext instances.
 /// Reduces heap allocations by reusing PolicyContext objects.
 /// Thread-safe and lock-free using ConcurrentBag.

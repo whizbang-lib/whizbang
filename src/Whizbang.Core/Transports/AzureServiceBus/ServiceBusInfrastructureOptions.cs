@@ -1,6 +1,14 @@
 namespace Whizbang.Core.Transports.AzureServiceBus;
 
 /// <summary>
+/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/ServiceBusInfrastructureOptionsTests.cs:ServiceBusInfrastructureOptions_DefaultValues_AreSetAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/ServiceBusInfrastructureOptionsTests.cs:ServiceBusInfrastructureOptions_ServiceName_CanBeSetAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/ServiceBusInfrastructureOptionsTests.cs:ServiceBusInfrastructureOptions_RequiredTopics_CanBeModifiedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/ServiceBusInfrastructureOptionsTests.cs:ServiceBusInfrastructureOptions_AutoCreateInProduction_CanBeDisabledAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/ServiceBusInfrastructureOptionsTests.cs:ServiceBusInfrastructureOptions_GenerateAspireConfigInDev_CanBeDisabledAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/ServiceBusInfrastructureOptionsTests.cs:ServiceBusInfrastructureOptions_FailOnProvisioningError_CanBeEnabledAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/ServiceBusInfrastructureOptionsTests.cs:ServiceBusInfrastructureOptions_RequiredTopics_InitializedAsEmptyListAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/ServiceBusInfrastructureOptionsTests.cs:ServiceBusInfrastructureOptions_MultipleRequiredTopics_CanBeAddedAsync</tests>
 /// Configuration options for Service Bus infrastructure auto-discovery and provisioning.
 /// </summary>
 public class ServiceBusInfrastructureOptions {

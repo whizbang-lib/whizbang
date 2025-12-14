@@ -5,6 +5,20 @@ using Whizbang.Data.Schema.Schemas;
 namespace Whizbang.Data.Dapper.Postgres.Schema;
 
 /// <summary>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_SimpleTable_GeneratesCreateStatementAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_WithMultipleColumns_GeneratesAllColumnsAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_WithDefaultValue_GeneratesDefaultClauseAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_WithUniqueColumn_GeneratesUniqueConstraintAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_PerspectivePrefix_UsesPerspectivePrefixAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateIndex_SimpleIndex_GeneratesCreateIndexAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateIndex_CompositeIndex_GeneratesMultiColumnIndexAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateIndex_UniqueIndex_GeneratesUniqueIndexAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildInfrastructureSchema_GeneratesAllTablesAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildInfrastructureSchema_GeneratesAllIndexesAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildInfrastructureSchema_InboxTable_HasCorrectStructureAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildInfrastructureSchema_OutboxTable_HasCorrectDefaultsAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildInfrastructureSchema_EventStoreTable_HasUniqueConstraintAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildInfrastructureSchema_CustomPrefix_UsesCustomPrefixAsync</tests>
 /// Builds Postgres DDL (Data Definition Language) from database-agnostic schema definitions.
 /// Generates CREATE TABLE and CREATE INDEX statements with proper Postgres syntax.
 /// </summary>

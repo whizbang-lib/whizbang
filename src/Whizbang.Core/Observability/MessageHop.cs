@@ -22,6 +22,16 @@ public enum HopType {
 }
 
 /// <summary>
+/// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithRequiredProperties_InitializesWithDefaultsAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithCausationType_StoresCausationTypeAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithAllProperties_StoresAllValuesAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_TypeDefaultsToCurrent_WhenNotSpecifiedAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_MachineName_UsesEnvironmentMachineName_ByDefaultAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithCausationAndCorrelationIds_SetsIdsAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithSecurityContext_SetsSecurityContextAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithMetadata_SetsMetadataAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithTrail_SetsPolicyDecisionTrailAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithExpression_CreatesModifiedCopyAsync</tests>
 /// Represents a single hop in a message's journey through the system.
 /// Records where and when the message was processed, including caller information for debugging.
 /// Can represent either a hop for the current message or carry-forward hop from the causation message.

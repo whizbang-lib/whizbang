@@ -1,6 +1,25 @@
 namespace Whizbang.Data.Dapper.Postgres.Schema;
 
 /// <summary>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresTypeMapperTests.cs:MapDataType_Uuid_ReturnsUuidAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresTypeMapperTests.cs:MapDataType_String_ReturnsTextAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresTypeMapperTests.cs:MapDataType_StringWithMaxLength_ReturnsVarcharAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresTypeMapperTests.cs:MapDataType_TimestampTz_ReturnsTimestamptzAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresTypeMapperTests.cs:MapDataType_Json_ReturnsJsonbAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresTypeMapperTests.cs:MapDataType_BigInt_ReturnsBigintAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresTypeMapperTests.cs:MapDataType_Integer_ReturnsIntegerAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresTypeMapperTests.cs:MapDataType_Boolean_ReturnsBooleanAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresTypeMapperTests.cs:MapDefaultValue_FunctionDateTimeNow_ReturnsCurrentTimestampAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresTypeMapperTests.cs:MapDefaultValue_FunctionDateTimeUtcNow_ReturnsUtcExpressionAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresTypeMapperTests.cs:MapDefaultValue_FunctionUuidGenerate_ReturnsGenRandomUuidAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresTypeMapperTests.cs:MapDefaultValue_FunctionBooleanTrue_ReturnsTrueAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresTypeMapperTests.cs:MapDefaultValue_FunctionBooleanFalse_ReturnsFalseAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresTypeMapperTests.cs:MapDefaultValue_Integer_ReturnsIntegerStringAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresTypeMapperTests.cs:MapDefaultValue_String_ReturnsQuotedStringAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresTypeMapperTests.cs:MapDefaultValue_StringWithSingleQuote_EscapesSingleQuoteAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresTypeMapperTests.cs:MapDefaultValue_BooleanTrue_ReturnsTrueAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresTypeMapperTests.cs:MapDefaultValue_BooleanFalse_ReturnsFalseAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/PostgresTypeMapperTests.cs:MapDefaultValue_Null_ReturnsNullAsync</tests>
 /// Maps database-agnostic Whizbang types to Postgres-specific SQL types and expressions.
 /// Uses pure enum-based pattern matching with zero string comparisons.
 /// </summary>

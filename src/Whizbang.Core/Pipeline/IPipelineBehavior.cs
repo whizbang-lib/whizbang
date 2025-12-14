@@ -51,6 +51,10 @@ public interface IPipelineBehavior<in TRequest, TResponse> {
 }
 
 /// <summary>
+/// <tests>tests/Whizbang.Core.Tests/Pipeline/PipelineBehaviorTests.cs:ExecuteNextAsync_ShouldInvokeNextDelegateAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Pipeline/PipelineBehaviorTests.cs:Handle_CanPreProcessRequestAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Pipeline/PipelineBehaviorTests.cs:Handle_CanPostProcessResponseAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Pipeline/PipelineBehaviorTests.cs:Handle_CanShortCircuitPipelineAsync</tests>
 /// Base class for pipeline behaviors that provides common functionality.
 /// </summary>
 /// <typeparam name="TRequest">The request/message type</typeparam>

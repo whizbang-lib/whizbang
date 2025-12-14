@@ -4,6 +4,17 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.Observability;
 
 /// <summary>
+/// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:StoreAsync_WithNullEnvelope_ThrowsArgumentNullExceptionAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetByCorrelationAsync_WithNullCorrelationIdsInStore_FiltersThemOutAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetCausalChainAsync_WithCircularReference_ProtectsAgainstInfiniteLoopAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetCausalChainAsync_WithMissingParent_StopsWalkingUpChainAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetCausalChainAsync_WithChildren_IncludesChildMessagesAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetCausalChainAsync_WithMultiGenerationChildren_IncludesAllDescendantsAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetCausalChainAsync_WithEmptyCausationId_StopsWalkingAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetCausalChainAsync_SortsResultsByTimestampAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetByTimeRangeAsync_WithEnvelopesWithoutCurrentHop_UsesMinValueTimestampAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetByTimeRangeAsync_WithNoHops_UsesMinValueTimestampAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetCausalChainAsync_WithCircularReferenceInChildrenTree_ProtectsAgainstInfiniteLoopAsync</tests>
 /// In-memory implementation of ITraceStore for testing and development.
 /// Thread-safe using ConcurrentDictionary.
 /// NOT suitable for production use (no persistence, limited by memory).

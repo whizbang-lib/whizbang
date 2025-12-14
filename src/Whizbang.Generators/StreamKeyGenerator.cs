@@ -9,6 +9,20 @@ using Whizbang.Generators.Shared.Utilities;
 namespace Whizbang.Generators;
 
 /// <summary>
+/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:Generator_WithPropertyAttribute_GeneratesExtractorAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:Generator_WithMultipleEvents_GeneratesAllExtractorsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:Generator_WithNoEvents_GeneratesEmptyExtractorAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:Generator_WithClassProperty_GeneratesExtractorAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:Generator_ReportsDiagnostic_ForEventWithNoStreamKeyAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:Generator_WithNonPublicEvent_SkipsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:Generator_WithAbstractEvent_ProcessesAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:Generator_WithRecordAndClassProperties_GeneratesForBothAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:Generator_WithNonEventType_SkipsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:Generator_WithStructEvent_SkipsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:StreamKeyGenerator_NullableValueTypeKey_GeneratesNullableExtractorAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:StreamKeyGenerator_NullableGuidKey_GeneratesNullableExtractorAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:StreamKeyGenerator_TypeNotImplementingIEvent_SkipsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:StreamKeyGenerator_ClassWithStreamKeyProperty_GeneratesExtractorAsync</tests>
 /// Source generator that creates zero-reflection stream key extractors.
 /// Replaces runtime reflection in StreamKeyResolver with compile-time code generation.
 /// </summary>

@@ -6,6 +6,11 @@ using System.Text.Json.Serialization.Metadata;
 namespace Whizbang.Core.Serialization;
 
 /// <summary>
+/// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:RegisterConverter_WithConverterInstance_AddsToConverterCollectionAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:RegisterConverter_WithNull_ThrowsArgumentNullExceptionAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:CreateCombinedOptions_WithRegisteredConverters_IncludesConvertersInOptionsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:CreateCombinedOptions_IsAOTCompatible_NoReflectionAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:RegisteredConverters_AreInstantiatedAtCompileTime_NotRuntimeAsync</tests>
 /// Registry for automatically collecting JsonSerializerContext instances from all loaded assemblies.
 /// Uses ModuleInitializer pattern to allow libraries to self-register their contexts.
 /// AOT-compatible - no reflection, all contexts are source-generated and registered at module load time.

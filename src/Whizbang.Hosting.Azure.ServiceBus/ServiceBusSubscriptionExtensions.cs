@@ -5,6 +5,7 @@ using Aspire.Hosting.Azure;
 namespace Whizbang.Hosting.Azure.ServiceBus;
 
 /// <summary>
+/// <tests>tests/Whizbang.Hosting.Azure.ServiceBus.Tests/ServiceBusSubscriptionExtensionsTests.cs:WithDestinationFilter_AddsCorrelationFilterRule_WithDestinationPropertyAsync</tests>
 /// Extension methods for configuring Azure Service Bus subscriptions in Aspire.
 /// </summary>
 public static class ServiceBusSubscriptionExtensions {

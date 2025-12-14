@@ -1,6 +1,15 @@
 namespace Whizbang.Data.Schema;
 
 /// <summary>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SchemaConfigurationTests.cs:SchemaConfiguration_WithoutParameters_UsesDefaultsAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SchemaConfigurationTests.cs:SchemaConfiguration_WithCustomInfrastructurePrefix_SetsValueAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SchemaConfigurationTests.cs:SchemaConfiguration_WithCustomPerspectivePrefix_SetsValueAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SchemaConfigurationTests.cs:SchemaConfiguration_WithCustomSchemaName_SetsValueAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SchemaConfigurationTests.cs:SchemaConfiguration_WithCustomVersion_SetsValueAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SchemaConfigurationTests.cs:SchemaConfiguration_WithAllCustom_SetsAllAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SchemaConfigurationTests.cs:SchemaConfiguration_SameValues_AreEqualAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SchemaConfigurationTests.cs:SchemaConfiguration_DifferentPrefix_AreNotEqualAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SchemaConfigurationTests.cs:SchemaConfiguration_IsRecordAsync</tests>
 /// Schema configuration with dual-prefix system.
 /// Infrastructure tables: wb_inbox, wb_outbox, etc.
 /// Perspective tables: wb_per_product_dto, wb_per_order_summary, etc.

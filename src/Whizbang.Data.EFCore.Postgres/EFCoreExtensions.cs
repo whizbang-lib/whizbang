@@ -5,6 +5,11 @@ using Whizbang.Core.Perspectives;
 namespace Whizbang.Data.EFCore.Postgres;
 
 /// <summary>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreExtensionsTests.cs:WithEFCore_WithValidBuilder_ReturnsEFCoreDriverSelectorAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreExtensionsTests.cs:WithEFCore_ReturnedSelector_HasCorrectServicesAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreExtensionsTests.cs:WithEFCore_CanChainToWithDriverAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreExtensionsTests.cs:WithEFCore_MultipleContextTypes_CreatesDistinctSelectorsAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreExtensionsTests.cs:WithEFCore_ReturnedSelector_ImplementsIDriverOptionsAsync</tests>
 /// Extension methods for configuring EF Core as the storage provider for Whizbang perspectives.
 /// Uses C# 14 extension blocks for clean syntax without 'this' keyword.
 /// Provides extensions for both WhizbangBuilder (unified API) and WhizbangPerspectiveBuilder (legacy).

@@ -1,6 +1,16 @@
 namespace Whizbang.Data.Schema;
 
 /// <summary>
+/// <tests>tests/Whizbang.Data.Schema.Tests/WhizbangDataTypeTests.cs:WhizbangDataType_HasUuidTypeAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/WhizbangDataTypeTests.cs:WhizbangDataType_HasStringTypeAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/WhizbangDataTypeTests.cs:WhizbangDataType_HasTimestampTzTypeAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/WhizbangDataTypeTests.cs:WhizbangDataType_HasJsonTypeAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/WhizbangDataTypeTests.cs:WhizbangDataType_HasBigIntTypeAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/WhizbangDataTypeTests.cs:WhizbangDataType_HasIntegerTypeAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/WhizbangDataTypeTests.cs:WhizbangDataType_HasBooleanTypeAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/WhizbangDataTypeTests.cs:WhizbangDataType_HasExactlySevenTypesAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/WhizbangDataTypeTests.cs:WhizbangDataType_AllValuesAreUniqueAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/WhizbangDataTypeTests.cs:WhizbangDataType_ToStringReturnsCorrectNamesAsync</tests>
 /// Database-agnostic type system for Whizbang infrastructure tables.
 /// These types are mapped to database-specific types by implementations (Postgres, SQLite, SQL Server).
 /// </summary>

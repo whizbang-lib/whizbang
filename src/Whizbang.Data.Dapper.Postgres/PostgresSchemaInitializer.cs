@@ -5,6 +5,14 @@ using Npgsql;
 namespace Whizbang.Data.Dapper.Postgres;
 
 /// <summary>
+/// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresSchemaInitializerTests.cs:Constructor_WithConnectionStringOnly_InitializesSuccessfullyAsync</tests>
+/// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresSchemaInitializerTests.cs:Constructor_WithPerspectiveSql_InitializesSuccessfullyAsync</tests>
+/// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresSchemaInitializerTests.cs:InitializeSchemaAsync_NoPerspectiveSql_ExecutesInfrastructureOnlyAsync</tests>
+/// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresSchemaInitializerTests.cs:InitializeSchemaAsync_WithPerspectiveSql_ExecutesBothSchemasAsync</tests>
+/// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresSchemaInitializerTests.cs:InitializeSchemaAsync_PerspectiveSqlNull_SkipsPerspectiveSqlAsync</tests>
+/// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresSchemaInitializerTests.cs:InitializeSchemaAsync_PerspectiveSqlEmpty_SkipsPerspectiveSqlAsync</tests>
+/// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresSchemaInitializerTests.cs:InitializeSchema_NoPerspectiveSql_ExecutesInfrastructureOnlyAsync</tests>
+/// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresSchemaInitializerTests.cs:InitializeSchema_WithPerspectiveSql_ExecutesBothSchemasAsync</tests>
 /// Handles automatic initialization of the Whizbang PostgreSQL schema.
 /// </summary>
 public sealed class PostgresSchemaInitializer {

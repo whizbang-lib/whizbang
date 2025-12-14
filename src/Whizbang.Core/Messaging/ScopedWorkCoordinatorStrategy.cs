@@ -9,6 +9,9 @@ using Whizbang.Core.Observability;
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesQueuedMessagesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:FlushAsync_BeforeDisposal_FlushesImmediatelyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:MultipleQueues_FlushedTogetherOnDisposalAsync</tests>
 /// Scoped strategy - batches operations within a scope (e.g., HTTP request, message handler).
 /// Flushes on scope disposal (IAsyncDisposable pattern).
 /// Provides a good balance of latency and efficiency.

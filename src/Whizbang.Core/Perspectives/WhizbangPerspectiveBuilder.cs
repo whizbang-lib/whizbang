@@ -3,6 +3,9 @@ using Microsoft.Extensions.DependencyInjection;
 namespace Whizbang.Core.Perspectives;
 
 /// <summary>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangPerspectiveBuilderTests.cs:Constructor_WithValidServices_InitializesSuccessfullyAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangPerspectiveBuilderTests.cs:Constructor_WithNullServices_ThrowsArgumentNullExceptionAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangPerspectiveBuilderTests.cs:Services_ReturnsInjectedServiceCollectionAsync</tests>
 /// Fluent builder for configuring Whizbang perspectives with storage providers.
 /// Returned by AddWhizbangPerspectives() and enables chaining storage configuration methods.
 /// </summary>

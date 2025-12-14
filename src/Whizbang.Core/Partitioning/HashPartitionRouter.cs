@@ -5,6 +5,21 @@ using Whizbang.Core.Policies;
 namespace Whizbang.Core.Partitioning;
 
 /// <summary>
+/// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:HashAlgorithm_SameKey_AlwaysProducesSamePartitionAsync</tests>
+/// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:HashAlgorithm_DifferentKeys_ProduceDifferentPartitionsAsync</tests>
+/// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:HashAlgorithm_UnicodeKeys_HandledCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:HashAlgorithm_SimilarKeys_ProduceDifferentHashesAsync</tests>
+/// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:Distribution_10kStreams_DistributesEvenlyAsync</tests>
+/// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:Distribution_VaryingPartitionCounts_MaintainsConsistencyAsync</tests>
+/// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:Distribution_AllPartitionsReachable_With1000StreamsAsync</tests>
+/// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:EdgeCase_SpecialKeys_HandlesGracefullyAsync</tests>
+/// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:EdgeCase_SinglePartition_AlwaysReturnsZeroAsync</tests>
+/// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:EdgeCase_InvalidPartitionCount_ThrowsArgumentOutOfRangeAsync</tests>
+/// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:EdgeCase_VaryingKeyLengths_HandlesCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:EdgeCase_UnicodeKeys_HandlesCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:Performance_1MillionRoutes_CompletesQuicklyAsync</tests>
+/// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:Performance_VariousKeySizes_HandlesEfficientlyAsync</tests>
+/// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:Performance_ConcurrentRouting_ThreadSafeAsync</tests>
 /// Routes messages to partitions using consistent hashing based on stream key.
 /// Provides stable, deterministic routing - same stream key always goes to same partition.
 /// Uses FNV-1a hash algorithm for fast, well-distributed hashing.

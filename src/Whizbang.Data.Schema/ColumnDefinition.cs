@@ -1,6 +1,18 @@
 namespace Whizbang.Data.Schema;
 
 /// <summary>
+/// <tests>tests/Whizbang.Data.Schema.Tests/ColumnDefinitionTests.cs:ColumnDefinition_WithRequiredProperties_CreatesInstanceAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/ColumnDefinitionTests.cs:ColumnDefinition_WithoutOptionalProperties_UsesDefaultsAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/ColumnDefinitionTests.cs:ColumnDefinition_WithPrimaryKey_SetsPropertyAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/ColumnDefinitionTests.cs:ColumnDefinition_WithNullable_SetsPropertyAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/ColumnDefinitionTests.cs:ColumnDefinition_WithUnique_SetsPropertyAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/ColumnDefinitionTests.cs:ColumnDefinition_WithMaxLength_SetsPropertyAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/ColumnDefinitionTests.cs:ColumnDefinition_WithDefaultValue_SetsPropertyAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/ColumnDefinitionTests.cs:ColumnDefinition_WithAllProperties_SetsAllAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/ColumnDefinitionTests.cs:ColumnDefinition_SameValues_AreEqualAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/ColumnDefinitionTests.cs:ColumnDefinition_DifferentName_AreNotEqualAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/ColumnDefinitionTests.cs:ColumnDefinition_DifferentDataType_AreNotEqualAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/ColumnDefinitionTests.cs:ColumnDefinition_IsRecordAsync</tests>
 /// Defines a table column with database-agnostic types.
 /// Uses record with structural equality (critical for incremental generators).
 /// </summary>

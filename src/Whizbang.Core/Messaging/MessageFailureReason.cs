@@ -1,6 +1,9 @@
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureReasonTests.cs:MessageFailureReason_HasExpectedValuesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureReasonTests.cs:MessageFailureReason_CanConvertToIntAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/MessageFailureReasonTests.cs:MessageFailureReason_CanConvertFromIntAsync</tests>
 /// Classifies the reason a message failed processing.
 /// Enables typed filtering and handling of different failure scenarios.
 /// </summary>

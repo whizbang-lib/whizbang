@@ -6,6 +6,10 @@ using Whizbang.Core.Observability;
 namespace Whizbang.Core.Transports;
 
 /// <summary>
+/// <tests>tests/Whizbang.Transports.Tests/InMemorySerializerTests.cs:SerializeAsync_ShouldReturnByteArrayAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/InMemorySerializerTests.cs:DeserializeAsync_ShouldRetrieveOriginalEnvelopeAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/InMemorySerializerTests.cs:SerializeDeserialize_RoundTrip_PreservesAllDataAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/InMemorySerializerTests.cs:MultipleSerialization_ShouldProduceDifferentByteArraysAsync</tests>
 /// In-memory serializer for testing purposes.
 /// Does NOT perform actual serialization - stores envelope references directly.
 /// Should only be used for in-process testing, NOT for network transport.

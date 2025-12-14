@@ -3,6 +3,15 @@ using System.Text;
 namespace Whizbang.Core.Transports.AzureServiceBus;
 
 /// <summary>
+/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_WithNoRequirements_ReturnsEmptyMessageAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_WithSingleRequirement_GeneratesCorrectCodeAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_WithMultipleRequirements_GeneratesCorrectCodeAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_GroupsByTopic_WhenMultipleSubscriptionsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_WithServiceName_IncludesServiceNameInCommentsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_IncludesHeaderAndFooterAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_GeneratesValidCSharpSyntaxAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_SortsTopicsAlphabeticallyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Transports/AzureServiceBus/AspireConfigurationGeneratorTests.cs:GenerateAppHostCode_WithSpecialCharacters_EscapesCorrectlyAsync</tests>
 /// Generates Aspire AppHost configuration code for Service Bus topics and subscriptions.
 /// </summary>
 public static class AspireConfigurationGenerator {

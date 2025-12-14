@@ -8,6 +8,21 @@ using Whizbang.Generators.Shared.Utilities;
 namespace Whizbang.Generators;
 
 /// <summary>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:Generator_WithPerspective_GeneratesSchemaAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:Generator_WithAbstractPerspective_SkipsSchemaAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:Generator_WithMultiplePerspectives_GeneratesAllSchemasAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:Generator_WithLargePerspective_GeneratesSizeWarningAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:Generator_WithNoPerspectives_GeneratesNoOutputAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:Generator_WithPerspective_GeneratesJSONBColumnsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:Generator_WithPerspective_GeneratesUniversalColumnsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:Generator_WithPerspective_GeneratesCorrectTableNameAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:Generator_WithClassNoBaseList_SkipsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:Generator_WithStaticProperties_ExcludesFromCountAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:Generator_WithOnlyStaticProperties_GeneratesSchemaAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:Generator_WithMultipleIPerspectiveInterfaces_GeneratesSchemaAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:PerspectiveSchemaGenerator_LowercaseClassName_GeneratesTableNameWithoutLeadingUnderscoreAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:PerspectiveSchemaGenerator_PerspectiveAtExactThreshold_GeneratesWarningAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:PerspectiveSchemaGenerator_ClassWithBaseListButNotPerspective_SkipsAsync</tests>
 /// Incremental source generator that discovers IPerspectiveOf implementations
 /// and generates PostgreSQL table schemas with 3-column JSONB pattern.
 /// Schemas use universal columns (id, created_at, updated_at, version) + JSONB (model_data, metadata, scope).

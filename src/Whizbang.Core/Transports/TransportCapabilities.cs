@@ -3,6 +3,15 @@ using System;
 namespace Whizbang.Core.Transports;
 
 /// <summary>
+/// <tests>tests/Whizbang.Transports.Tests/TransportCapabilitiesTests.cs:TransportCapabilities_HasNoneValueAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportCapabilitiesTests.cs:TransportCapabilities_HasRequestResponseAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportCapabilitiesTests.cs:TransportCapabilities_HasPublishSubscribeAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportCapabilitiesTests.cs:TransportCapabilities_HasStreamingAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportCapabilitiesTests.cs:TransportCapabilities_HasReliableAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportCapabilitiesTests.cs:TransportCapabilities_HasOrderedAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportCapabilitiesTests.cs:TransportCapabilities_HasExactlyOnceAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportCapabilitiesTests.cs:TransportCapabilities_CanCombineFlagsAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportCapabilitiesTests.cs:TransportCapabilities_AllFlag_ContainsAllCapabilitiesAsync</tests>
 /// Defines the capabilities that a transport can support.
 /// These are flags that can be combined to describe what a transport is capable of.
 /// </summary>

@@ -9,6 +9,14 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.Transports;
 
 /// <summary>
+/// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:PublishToTransportAsync_WithMessage_DeliversToRemoteDestinationAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:PublishToTransportAsync_AutomaticallySerializesMessageAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:SendToTransportAsync_WithRequestResponse_ReturnsTypedResponseAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:SubscribeFromTransportAsync_RoutesIncomingMessagesToDispatcherAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:SubscribeFromTransportAsync_DeserializesAndInvokesLocalReceptorAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:PublishToTransportAsync_PreservesCorrelationIdAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:PublishToTransportAsync_CreatesEnvelopeWithHopAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:SendToTransportAsync_WithExplicitContext_PreservesCorrelationIdAsync</tests>
 /// Bridges IDispatcher with ITransport, handling serialization and routing between local and remote messaging.
 /// This keeps IDispatcher pure (no transport concerns) while enabling distributed messaging scenarios.
 ///

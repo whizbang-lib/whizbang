@@ -9,6 +9,9 @@ using Whizbang.Core.Observability;
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:FlushAsync_ImmediatelyCallsWorkCoordinatorAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesOnCallAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueInboxMessage_FlushesOnCallAsync</tests>
 /// Immediate strategy - calls process_work_batch immediately for each operation.
 /// Provides lowest latency but highest database load.
 /// Best for: Real-time scenarios, low-throughput services, critical operations.

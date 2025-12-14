@@ -10,6 +10,20 @@ using Whizbang.Core.Observability;
 namespace Whizbang.Core.Transports;
 
 /// <summary>
+/// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:AddTransport_ShouldStoreTransportAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:AddTransport_WithNullTransport_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:AddTransport_ShouldReplaceExistingTransportAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:AddTransport_ShouldStoreDifferentTypesAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:GetTransport_WhenExists_ShouldReturnTransportAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:GetTransport_WhenNotExists_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:HasTransport_WhenExists_ShouldReturnTrueAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:HasTransport_WhenNotExists_ShouldReturnFalseAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:PublishToTargetsAsync_WithEmptyTargets_ShouldNotThrowAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:PublishToTargetsAsync_WithNullMessage_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:PublishToTargetsAsync_WithNullTargets_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:SubscribeFromTargetsAsync_WithEmptyTargets_ShouldReturnEmptyListAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:SubscribeFromTargetsAsync_WithNullTargets_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:SubscribeFromTargetsAsync_WithNullHandler_ShouldThrowAsync</tests>
 /// Default implementation of ITransportManager.
 /// Manages multiple transport instances and handles publishing/subscribing across them.
 /// </summary>

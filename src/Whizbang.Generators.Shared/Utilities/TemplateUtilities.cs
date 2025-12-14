@@ -7,6 +7,24 @@ using System.Text.RegularExpressions;
 namespace Whizbang.Generators.Shared.Utilities;
 
 /// <summary>
+/// <tests>tests/Whizbang.Generators.Tests/TemplateUtilitiesTests.cs:ReplaceRegion_WithValidRegion_ReplacesContentAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TemplateUtilitiesTests.cs:ReplaceRegion_WithNonExistentRegion_ReturnsOriginalAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TemplateUtilitiesTests.cs:ReplaceRegion_PreservesIndentationAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TemplateUtilitiesTests.cs:IndentCode_WithNullCode_ReturnsNullAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TemplateUtilitiesTests.cs:IndentCode_WithEmptyCode_ReturnsEmptyAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TemplateUtilitiesTests.cs:IndentCode_WithWhitespaceLine_PreservesItAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TemplateUtilitiesTests.cs:IndentCode_WithNonEmptyLines_IndentsThemAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TemplateUtilitiesTests.cs:IndentCode_WithMixedLineEndings_HandlesAllTypesAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TemplateUtilitiesTests.cs:ExtractSnippet_WithNonExistentRegion_ReturnsErrorMessageAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TemplateUtilitiesTests.cs:ExtractSnippet_WithValidRegion_ExtractsContentAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TemplateUtilitiesTests.cs:GetEmbeddedTemplate_WithNonExistentResource_ReturnsErrorAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TemplateUtilitiesTests.cs:GetEmbeddedTemplate_WithValidResource_ReturnsContentAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TemplateUtilitiesTests.cs:ReplaceHeaderRegion_ReplacesTimestampAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TemplateUtilitiesTests.cs:RemoveIndentation_WithNullCode_ReturnsNullAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TemplateUtilitiesTests.cs:RemoveIndentation_WithEmptyIndentation_ReturnsOriginalAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TemplateUtilitiesTests.cs:RemoveIndentation_WithWhitespaceLine_PreservesItAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TemplateUtilitiesTests.cs:RemoveIndentation_WithMatchingIndentation_RemovesItAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TemplateUtilitiesTests.cs:RemoveIndentation_WithNonMatchingIndentation_KeepsLineAsync</tests>
 /// Shared utilities for working with source generator templates.
 /// Provides robust template marker replacement with indentation preservation.
 /// Used by all Whizbang generators to ensure consistent template handling.

@@ -9,6 +9,19 @@ using Whizbang.Generators.Shared.Utilities;
 namespace Whizbang.Generators;
 
 /// <summary>
+/// <tests>tests/Whizbang.Generators.Tests/WhizbangIdGeneratorTests.cs:Generator_WithExplicitTypeDeclaration_GeneratesValueObjectAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/WhizbangIdGeneratorTests.cs:Generator_WithMultipleIdTypes_GeneratesAllAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/WhizbangIdGeneratorTests.cs:Generator_WithCustomNamespace_UsesSpecifiedNamespaceAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/WhizbangIdGeneratorTests.cs:Generator_WithNamespaceProperty_UsesSpecifiedNamespaceAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/WhizbangIdGeneratorTests.cs:Generator_WithNonPartialStruct_ProducesDiagnosticAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/WhizbangIdGeneratorTests.cs:Generator_WithIdType_GeneratesJsonConverterAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/WhizbangIdGeneratorTests.cs:Generator_WithPropertyBasedDiscovery_GeneratesValueObjectAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/WhizbangIdGeneratorTests.cs:Generator_WithParameterBasedDiscovery_GeneratesValueObjectAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/WhizbangIdGeneratorTests.cs:Generator_WithHybridDiscovery_GeneratesAllIdsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/WhizbangIdGeneratorTests.cs:Generator_WithPropertyBasedAndCustomNamespace_UsesCustomNamespaceAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/WhizbangIdGeneratorTests.cs:Generator_WithDuplicateDiscovery_GeneratesOnlyOnceAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/WhizbangIdGeneratorTests.cs:Generator_WithCollision_EmitsDiagnosticAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/WhizbangIdGeneratorTests.cs:Generator_WithCollisionSuppressed_NoWarningAsync</tests>
 /// Source generator that discovers [WhizbangId] attributes and generates strongly-typed ID value objects.
 /// Supports three discovery patterns: explicit type, property-based, and parameter-based.
 /// Generated IDs include UUIDv7 support, equality, JSON converters, and auto-registration.

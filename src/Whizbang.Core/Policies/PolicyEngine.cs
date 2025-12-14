@@ -1,6 +1,26 @@
 namespace Whizbang.Core.Policies;
 
 /// <summary>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:PolicyEngine_ShouldMatchSinglePolicyAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:PolicyEngine_ShouldMatchFirstMatchingPolicyAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:PolicyEngine_ShouldReturnNullWhenNoPolicyMatchesAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:PolicyEngine_ShouldRecordDecisionInTrailAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:PolicyEngine_ShouldRecordUnmatchedPoliciesInTrailAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:PolicyConfiguration_ShouldSupportTopicAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:PolicyConfiguration_ShouldSupportStreamKeyAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:PolicyConfiguration_ShouldSupportExecutionStrategyAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:PolicyConfiguration_ShouldSupportPartitionRouterAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:PolicyConfiguration_ShouldSupportSequenceProviderAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:PolicyConfiguration_ShouldSupportPartitionCountAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:PolicyConfiguration_ShouldSupportConcurrencyAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:AddPolicy_WithNullName_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:AddPolicy_WithEmptyName_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:AddPolicy_WithWhitespaceName_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:AddPolicy_WithNullPredicate_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:AddPolicy_WithNullConfigure_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:MatchAsync_WithNullContext_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:MatchAsync_WithPredicateThrowingException_ShouldRecordFailureAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyEngineTests.cs:MatchAsync_WithPredicateThrowingException_ShouldContinueToNextPolicyAsync</tests>
 /// Default policy engine implementation.
 /// Evaluates policies in order and returns configuration for the first match.
 /// </summary>

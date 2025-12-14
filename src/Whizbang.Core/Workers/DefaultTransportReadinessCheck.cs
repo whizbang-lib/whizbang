@@ -6,6 +6,9 @@ using Whizbang.Core.Transports;
 namespace Whizbang.Core.Workers;
 
 /// <summary>
+/// <tests>tests/Whizbang.Core.Tests/Workers/DefaultTransportReadinessCheckTests.cs:IsReadyAsync_Always_ReturnsTrueAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/DefaultTransportReadinessCheckTests.cs:IsReadyAsync_MultipleCalls_AlwaysReturnsTrueAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/DefaultTransportReadinessCheckTests.cs:IsReadyAsync_Cancellation_ThrowsOperationCanceledExceptionAsync</tests>
 /// Default readiness check - always returns true (transport always ready).
 /// Use for in-process transports or transports without connectivity concerns.
 /// </summary>

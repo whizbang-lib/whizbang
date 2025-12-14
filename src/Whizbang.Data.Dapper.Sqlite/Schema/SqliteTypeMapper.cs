@@ -1,6 +1,25 @@
 namespace Whizbang.Data.Dapper.Sqlite.Schema;
 
 /// <summary>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDataType_Uuid_ReturnsTextAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDataType_String_ReturnsTextAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDataType_StringWithMaxLength_ReturnsTextAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDataType_TimestampTz_ReturnsTextAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDataType_Json_ReturnsTextAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDataType_BigInt_ReturnsIntegerAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDataType_Integer_ReturnsIntegerAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDataType_Boolean_ReturnsIntegerAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_FunctionDateTimeNow_ReturnsCurrentTimestampAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_FunctionDateTimeUtcNow_ReturnsDatetimeUtcAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_FunctionUuidGenerate_ReturnsLowerHexAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_FunctionBooleanTrue_Returns1Async</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_FunctionBooleanFalse_Returns0Async</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_Integer_ReturnsIntegerStringAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_String_ReturnsQuotedStringAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_StringWithSingleQuote_EscapesSingleQuoteAsync</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_BooleanTrue_Returns1Async</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_BooleanFalse_Returns0Async</tests>
+/// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_Null_ReturnsNullAsync</tests>
 /// Maps database-agnostic Whizbang types to SQLite-specific SQL types and expressions.
 /// Uses pure enum-based pattern matching with zero string comparisons.
 ///

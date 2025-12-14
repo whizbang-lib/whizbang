@@ -10,6 +10,8 @@ using Whizbang.Core.Transports;
 namespace Whizbang.Core.Workers;
 
 /// <summary>
+/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
 /// Background service that subscribes to messages from Azure Service Bus and invokes local perspectives.
 /// Uses work coordinator pattern for atomic deduplication and stream-based ordering.
 /// Events from remote services are stored in inbox via process_work_batch and perspectives are invoked with ordering guarantees.

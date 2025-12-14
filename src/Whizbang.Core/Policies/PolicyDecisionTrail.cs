@@ -1,6 +1,14 @@
 namespace Whizbang.Core.Policies;
 
 /// <summary>
+/// <tests>tests/Whizbang.Observability.Tests/PolicyDecisionTrailTests.cs:GetMatchedRules_ReturnsOnlyMatchedDecisionsAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/PolicyDecisionTrailTests.cs:GetMatchedRules_ReturnsEmptyWhenNoMatchesAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/PolicyDecisionTrailTests.cs:GetUnmatchedRules_ReturnsOnlyUnmatchedDecisionsAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/PolicyDecisionTrailTests.cs:GetUnmatchedRules_ReturnsEmptyWhenAllMatchedAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/PolicyDecisionTrailTests.cs:RecordDecision_AddsDecisionWithAllPropertiesAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/PolicyDecisionTrailTests.cs:Decisions_IsInitializedEmptyByDefaultAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/PolicyDecisionTrailTests.cs:GetMatchedRules_PreservesOrderAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/PolicyDecisionTrailTests.cs:GetUnmatchedRules_PreservesOrderAsync</tests>
 /// Records policy decisions made during message processing for debugging and time-travel capabilities.
 /// This trail flows with the message and can be inspected to understand why certain policies were applied.
 /// </summary>
@@ -53,6 +61,12 @@ public class PolicyDecisionTrail {
 }
 
 /// <summary>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyDecisionTests.cs:PolicyDecision_ShouldStoreAllPropertiesAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyDecisionTests.cs:PolicyDecision_Equality_WithSameValues_ShouldBeEqualAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyDecisionTests.cs:PolicyDecision_Equality_WithDifferentValues_ShouldNotBeEqualAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyDecisionTests.cs:PolicyDecision_WithExpression_ShouldCreateNewInstanceAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyDecisionTests.cs:PolicyDecision_ToString_ShouldContainPropertyValuesAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyDecisionTests.cs:PolicyDecision_WithNullConfiguration_ShouldWorkAsync</tests>
 /// Represents a single policy decision made during message processing.
 /// </summary>
 public record PolicyDecision {

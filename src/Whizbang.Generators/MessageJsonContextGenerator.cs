@@ -10,6 +10,28 @@ using Whizbang.Generators.Shared.Utilities;
 namespace Whizbang.Generators;
 
 /// <summary>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithSingleCommand_GeneratesWhizbangJsonContextAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithCommand_GeneratesMessageEnvelopeFactoryAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithMultipleMessages_GeneratesAllFactoriesAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_GeneratesGetTypeInfoSwitchAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_GeneratesMessageEnvelopeFactoryMethodAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_GeneratesPropertyHelperMethodAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_GeneratesCoreValueObjectFactoriesAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_GeneratesGetTypeInfoInternalMethodAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_ImplementsIJsonTypeInfoResolverAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_ReportsDiagnostic_ForDiscoveredMessageTypeAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithNoMessages_GeneratesOnlyCoreTypesAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithNestedNamespaces_GeneratesFullyQualifiedNamesAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithNonMessageType_SkipsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithEmptyProject_GeneratesEmptyContextAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:MessageJsonContextGenerator_TypeImplementingBothInterfaces_GeneratesAsCommandAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:MessageJsonContextGenerator_ClassImplementingICommand_GeneratesJsonTypeInfoAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_NoMessageTypes_ReportsDiagnosticWithZeroCountAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithMultipleProperties_GeneratesValidJsonObjectCreatorAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_InternalCommand_SkipsNonPublicTypeAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithNestedCustomType_DiscoversAndGeneratesForBothAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithPrimitiveListProperty_SkipsNestedTypeDiscoveryAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithInternalNestedType_IncludesReferenceButSkipsFactoryAsync</tests>
 /// Source generator that discovers message types (ICommand, IEvent) and generates
 /// WhizbangJsonContext with JsonTypeInfo for AOT-compatible serialization.
 /// This context handles message types discovered in the current assembly.

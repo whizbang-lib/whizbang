@@ -7,6 +7,17 @@ using Microsoft.CodeAnalysis.CSharp.Syntax;
 namespace Whizbang.Generators;
 
 /// <summary>
+/// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithStringFilter_GeneratesRegistryAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithMultipleStringFilters_GeneratesAllMappingsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithEnumFilter_ExtractsDescriptionAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithEnumFilterNoDescription_UsesSymbolNameAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithMultipleCommands_GeneratesAllMappingsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithNoFilters_GeneratesEmptyRegistryAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithCustomDerivedAttribute_RecognizesFilterAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithMixedEnumAndStringFilters_GeneratesBothAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_GeneratesGetAllFiltersMethod_ForDiagnosticsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_UsesAssemblySpecificNamespace_AvoidingConflictsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs:Generator_WithFilterOnNonCommand_ReportsErrorAsync</tests>
 /// Discovers ICommand implementations with TopicFilter attributes
 /// and generates AOT-compatible topic filter lookup registry.
 /// Uses compile-time extraction of enum Description attributes for type-safe routing.

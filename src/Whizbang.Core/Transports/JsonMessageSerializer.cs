@@ -11,6 +11,24 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.Transports;
 
 /// <summary>
+/// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:SerializeAsync_WithValidEnvelope_ShouldSerializeAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:SerializeAsync_WithMetadataContainingAllTypes_ShouldSerializeAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:SerializeAsync_WithNullMetadata_ShouldHandleNullAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:DeserializeAsync_WithInvalidJson_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:DeserializeAsync_WithInvalidMessageId_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:DeserializeAsync_WithNullMessageId_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:DeserializeAsync_WithInvalidCorrelationId_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:DeserializeAsync_WithNullCorrelationId_ShouldHandleGracefullyAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:SerializeAsync_WithValidMessageId_ShouldSerializeAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:SerializeAsync_WithValidCorrelationId_ShouldSerializeAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:Metadata_WithInvalidStartToken_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:Metadata_WithInvalidPropertyToken_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:Metadata_WithUnsupportedValueType_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:Metadata_WithUnsupportedWriteType_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:Metadata_WithNullPropertyName_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:Metadata_WithDoubleValue_ShouldRoundTripAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:Metadata_WithLargeInt64Value_ShouldRoundTripAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/JsonMessageSerializerTests.cs:RoundTrip_WithComplexEnvelope_ShouldPreserveAllDataAsync</tests>
 /// JSON-based message serializer using System.Text.Json.
 /// Preserves all MessageEnvelope metadata including hops, IDs, and routing information.
 /// </summary>

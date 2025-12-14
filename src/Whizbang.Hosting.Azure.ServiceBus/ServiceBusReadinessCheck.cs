@@ -5,6 +5,11 @@ using Whizbang.Core.Transports;
 namespace Whizbang.Hosting.Azure.ServiceBus;
 
 /// <summary>
+/// <tests>tests/Whizbang.Hosting.Azure.ServiceBus.Tests/ServiceBusReadinessCheckTests.cs:IsReadyAsync_WithValidClient_ReturnsTrueAsync</tests>
+/// <tests>tests/Whizbang.Hosting.Azure.ServiceBus.Tests/ServiceBusReadinessCheckTests.cs:IsReadyAsync_WithClosedClient_ReturnsFalseAsync</tests>
+/// <tests>tests/Whizbang.Hosting.Azure.ServiceBus.Tests/ServiceBusReadinessCheckTests.cs:IsReadyAsync_RespectsCancellationTokenAsync</tests>
+/// <tests>tests/Whizbang.Hosting.Azure.ServiceBus.Tests/ServiceBusReadinessCheckTests.cs:IsReadyAsync_CachesResult_ForSuccessfulChecksAsync</tests>
+/// <tests>tests/Whizbang.Hosting.Azure.ServiceBus.Tests/ServiceBusReadinessCheckTests.cs:IsReadyAsync_CacheExpires_AfterDurationAsync</tests>
 /// Checks if Azure Service Bus is ready to accept messages.
 /// Leverages transport initialization state for accurate readiness tracking.
 /// Implements caching to avoid excessive health checks.

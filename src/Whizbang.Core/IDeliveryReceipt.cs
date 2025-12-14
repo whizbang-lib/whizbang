@@ -75,6 +75,15 @@ public enum DeliveryStatus {
 }
 
 /// <summary>
+/// <tests>tests/Whizbang.Core.Tests/DeliveryReceiptTests.cs:Accepted_CreatesReceiptWithAcceptedStatusAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/DeliveryReceiptTests.cs:Queued_CreatesReceiptWithQueuedStatusAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/DeliveryReceiptTests.cs:Delivered_CreatesReceiptWithDeliveredStatusAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/DeliveryReceiptTests.cs:Failed_CreatesReceiptWithFailedStatusAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/DeliveryReceiptTests.cs:Metadata_IsEmptyByDefault_WhenNoMetadataProvidedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/DeliveryReceiptTests.cs:Timestamp_IsSetToCurrentTime_WhenReceiptCreatedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/DeliveryReceiptTests.cs:Constructor_ThrowsArgumentNullException_WhenDestinationIsNullAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/DeliveryReceiptTests.cs:Constructor_WithMetadata_CopiesMetadataDictionaryAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/DeliveryReceiptTests.cs:AllProperties_AreAccessible_ThroughInterfaceAsync</tests>
 /// Concrete implementation of IDeliveryReceipt
 /// </summary>
 /// <remarks>

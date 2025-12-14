@@ -3,6 +3,14 @@ using System.Diagnostics;
 namespace Whizbang.Core.Observability;
 
 /// <summary>
+/// <tests>tests/Whizbang.Observability.Tests/WhizbangActivitySourceTests.cs:Execution_ActivitySource_IsInitializedAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/WhizbangActivitySourceTests.cs:Transport_ActivitySource_IsInitializedAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/WhizbangActivitySourceTests.cs:RecordDefensiveException_WithNullActivity_DoesNothingAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/WhizbangActivitySourceTests.cs:RecordDefensiveException_WithActivity_SetsStatusAndTagsAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/WhizbangActivitySourceTests.cs:RecordDefensiveCancellation_WithNullActivity_DoesNothingAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/WhizbangActivitySourceTests.cs:RecordDefensiveCancellation_WithActivity_SetsStatusAndTagsAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/WhizbangActivitySourceTests.cs:ExecutionActivitySource_CanCreateActivitiesAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/WhizbangActivitySourceTests.cs:TransportActivitySource_CanCreateActivitiesAsync</tests>
 /// Central ActivitySource for Whizbang observability.
 /// Provides distributed tracing and diagnostic instrumentation.
 /// AOT-friendly, zero-allocation, cross-platform.

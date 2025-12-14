@@ -4,6 +4,19 @@ using System.Runtime.CompilerServices;
 namespace Whizbang.Core.Internal;
 
 /// <summary>
+/// <tests>tests/Whizbang.Core.Tests/Internal/EventExtractorTests.cs:ExtractEvents_WithNull_ReturnsEmptyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Internal/EventExtractorTests.cs:ExtractEvents_WithSingleEvent_ReturnsSingleEventAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Internal/EventExtractorTests.cs:ExtractEvents_WithNonEvent_ReturnsEmptyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Internal/EventExtractorTests.cs:ExtractEvents_WithEventArray_ReturnsAllEventsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Internal/EventExtractorTests.cs:ExtractEvents_WithEventEnumerable_ReturnsAllEventsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Internal/EventExtractorTests.cs:ExtractEvents_WithTuple_ExtractsOnlyEventsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Internal/EventExtractorTests.cs:ExtractEvents_WithValueTuple_ExtractsOnlyEventsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Internal/EventExtractorTests.cs:ExtractEvents_WithTupleContainingEventArray_FlattensProperlyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Internal/EventExtractorTests.cs:ExtractEvents_WithNestedEnumerable_FlattensProperlyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Internal/EventExtractorTests.cs:ExtractEvents_WithEmptyArray_ReturnsEmptyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Internal/EventExtractorTests.cs:ExtractEvents_WithEmptyEnumerable_ReturnsEmptyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Internal/EventExtractorTests.cs:ExtractEvents_WithTupleOfNonEvents_ReturnsEmptyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Internal/EventExtractorTests.cs:ExtractEvents_WithMixedComplexStructure_ExtractsAllEventsAsync</tests>
 /// Utility for extracting events from complex return types.
 /// Handles single events, arrays, enumerables, tuples, and nested structures.
 /// Used by Dispatcher to automatically capture events from receptor return values.

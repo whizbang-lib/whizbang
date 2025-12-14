@@ -5,6 +5,27 @@ using System.Linq;
 namespace Whizbang.Core.Transports;
 
 /// <summary>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_ExactMatch_ShouldMatchAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_WildcardSuffix_ShouldMatchAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_WildcardSuffix_ShouldNotMatchDifferentNamespaceAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_WildcardPrefix_ShouldMatchAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_DoubleWildcard_ShouldMatchAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_DoubleWildcard_ShouldMatchNestedAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_ShouldNotMatchWhenInsufficientSegmentsAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_ShouldHandleNullNamespaceAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_Constructor_WithNullPattern_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_Matches_WithNullMessageType_ShouldThrowAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_ToString_ShouldReturnPatternAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_SubscribeToNamespace_ShouldStorePatternAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_Subscribe_ShouldStoreExplicitTypeAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_ShouldSubscribe_WhenExplicitTypeAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_ShouldNotSubscribe_WhenTypeNotAddedAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_ShouldSubscribe_WhenMatchesPatternAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_ShouldNotSubscribe_WhenDoesNotMatchPatternAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_ShouldSubscribe_WhenMatchesAnyPatternAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_ShouldSubscribe_WhenBothExplicitAndPatternMatchAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_GetMessageTypesToSubscribe_ShouldReturnExplicitTypesAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_DiscoverReceptors_ShouldNotThrowAsync</tests>
 /// Auto-discovery for transport subscriptions based on local receptors.
 /// Supports explicit type subscription, namespace patterns, and full receptor discovery.
 ///

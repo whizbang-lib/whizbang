@@ -1,6 +1,10 @@
 namespace Whizbang.Core;
 
 /// <summary>
+/// <tests>tests/Whizbang.Core.Tests/PublishContextTests.cs:PublishContext_HasImmediate_ValueAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/PublishContextTests.cs:PublishContext_HasPostCommit_ValueAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/PublishContextTests.cs:PublishContext_Immediate_IsNotEqualTo_PostCommitAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/PublishContextTests.cs:PublishContext_ToString_ReturnsCorrectNamesAsync</tests>
 /// Defines the timing context for event publishing in relation to transaction boundaries.
 /// Used for dual publishing patterns where events need to be published at different lifecycle stages.
 /// </summary>

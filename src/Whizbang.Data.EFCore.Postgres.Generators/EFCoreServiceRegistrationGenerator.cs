@@ -11,6 +11,25 @@ using Whizbang.Generators.Shared.Utilities;
 namespace Whizbang.Data.EFCore.Postgres.Generators;
 
 /// <summary>
+/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithWhizbangDbContextAttribute_DiscoversDbContextAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithoutWhizbangDbContextAttribute_DoesNotDiscoverDbContextAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDefaultKey_UsesEmptyStringKeyAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithSingleKey_DiscoversDbContextWithKeyAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultipleKeys_DiscoversDbContextWithAllKeysAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesPartialClassAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesRegistrationMetadataAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesSchemaExtensionsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesOnModelCreatingOverrideAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesOnModelCreatingExtendedHookAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_IncludesRequiredUsingDirectivesAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_OnModelCreating_IncludesXmlDocumentationAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultipleDbContexts_GeneratesOnModelCreatingForEachAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaExtensions_IncludesCoreInfrastructureSchemaAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_EventStoreTable_IncludesStreamIdAndScopeColumnsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaSQL_UsesPropperEscapingForExecuteSqlRawAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_PerspectiveCheckpoints_HasCompositePrimaryKeyAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaExtensions_CallsExecuteMigrationsAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithValidDbContext_ProducesNoDiagnosticsAsync</tests>
 /// Source generator that discovers IPerspectiveOf&lt;TEvent&gt; implementations,
 /// extracts their TModel types, and generates:
 /// 1. DbContext partial class with DbSet&lt;PerspectiveRow&lt;TModel&gt;&gt; properties

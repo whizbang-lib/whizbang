@@ -7,6 +7,22 @@ using Whizbang.Core.Pooling;
 namespace Whizbang.Core.Execution;
 
 /// <summary>
+/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:Constructor_Default_CreatesUnboundedExecutorAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:Constructor_WithValidBoundedCapacity_CreatesExecutorAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:Constructor_WithInvalidCapacity_ThrowsArgumentOutOfRangeExceptionAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_WhenNotRunning_ThrowsInvalidOperationExceptionAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:StateTransitions_IdempotentOperations_SucceedAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:StartAsync_AfterStop_ThrowsInvalidOperationExceptionAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_CompletesSuccessfullyAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_WithAsyncHandler_AwaitsCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_ExceptionInHandler_RethrowsAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:DrainAsync_WaitsForAllInFlightWork_CompletesAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:DrainAsync_WhenNotRunning_ReturnsImmediatelyAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_SerialExecution_MaintainsStrictOrderAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_CancellationToken_SkipsCancelledWorkAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:DrainAsync_WithWorkerCancellation_HandlesOperationCanceledExceptionAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ProcessWorkItemsAsync_ExceptionInHandler_CaughtAndRecordedAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_BoundedChannel_HandlesBackpressureAsync</tests>
 /// Executes handlers serially in strict FIFO order.
 /// All messages are processed one at a time, preserving exact ordering.
 /// </summary>
