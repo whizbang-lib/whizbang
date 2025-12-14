@@ -42,16 +42,27 @@ public class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
     _logger = logger;
   }
 
+  /// <summary>
+  /// Queues an outbox message for immediate flush.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesOnCallAsync</tests>
   public void QueueOutboxMessage(OutboxMessage message) {
     _queuedOutboxMessages.Add(message);
     _logger?.LogTrace("Immediate strategy: Outbox message queued (will be sent on next Flush)");
   }
 
+  /// <summary>
+  /// Queues an inbox message for immediate flush.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueInboxMessage_FlushesOnCallAsync</tests>
   public void QueueInboxMessage(InboxMessage message) {
     _queuedInboxMessages.Add(message);
     _logger?.LogTrace("Immediate strategy: Inbox message queued (will be stored on next Flush)");
   }
 
+  /// <summary>
+  /// Queues an outbox message completion for immediate flush.
+  /// </summary>
   public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) {
     _queuedOutboxCompletions.Add(new MessageCompletion {
       MessageId = messageId,
@@ -60,6 +71,9 @@ public class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
     _logger?.LogTrace("Immediate strategy: Outbox completion queued (will be reported on next Flush)");
   }
 
+  /// <summary>
+  /// Queues an inbox message completion for immediate flush.
+  /// </summary>
   public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) {
     _queuedInboxCompletions.Add(new MessageCompletion {
       MessageId = messageId,
@@ -68,6 +82,9 @@ public class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
     _logger?.LogTrace("Immediate strategy: Inbox completion queued (will be reported on next Flush)");
   }
 
+  /// <summary>
+  /// Queues an outbox message failure for immediate flush.
+  /// </summary>
   public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string error) {
     _queuedOutboxFailures.Add(new MessageFailure {
       MessageId = messageId,
@@ -77,6 +94,9 @@ public class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
     _logger?.LogTrace("Immediate strategy: Outbox failure queued (will be reported on next Flush)");
   }
 
+  /// <summary>
+  /// Queues an inbox message failure for immediate flush.
+  /// </summary>
   public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string error) {
     _queuedInboxFailures.Add(new MessageFailure {
       MessageId = messageId,
@@ -86,6 +106,10 @@ public class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
     _logger?.LogTrace("Immediate strategy: Inbox failure queued (will be reported on next Flush)");
   }
 
+  /// <summary>
+  /// Immediately flushes all queued operations to the work coordinator.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:FlushAsync_ImmediatelyCallsWorkCoordinatorAsync</tests>
   public async Task<WorkBatch> FlushAsync(WorkBatchFlags flags, CancellationToken ct = default) {
     // Immediate strategy calls process_work_batch with all queued operations
     _logger?.LogTrace(

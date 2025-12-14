@@ -35,6 +35,13 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
   private bool _disposed = false;
   private bool _flushing = false;
 
+  /// <summary>
+  /// 
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:BackgroundTimer_FlushesEveryIntervalAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:QueuedMessages_BatchedUntilTimerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
   public IntervalWorkCoordinatorStrategy(
     IWorkCoordinator coordinator,
     IServiceInstanceProvider instanceProvider,
@@ -60,6 +67,13 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
     );
   }
 
+  /// <summary>
+  /// 
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:BackgroundTimer_FlushesEveryIntervalAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:QueuedMessages_BatchedUntilTimerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
   public void QueueOutboxMessage(OutboxMessage message) {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -70,6 +84,9 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
     _logger?.LogTrace("Queued outbox message {MessageId} for {Destination}", message.MessageId, message.Destination);
   }
 
+  /// <summary>
+  /// Queues an inbox message for batch processing.
+  /// </summary>
   public void QueueInboxMessage(InboxMessage message) {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -80,6 +97,9 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
     _logger?.LogTrace("Queued inbox message {MessageId} for handler {HandlerName}", message.MessageId, message.HandlerName);
   }
 
+  /// <summary>
+  /// Queues an outbox message completion for batch processing.
+  /// </summary>
   public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -93,6 +113,9 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
     _logger?.LogTrace("Queued outbox completion for {MessageId} with status {Status}", messageId, completedStatus);
   }
 
+  /// <summary>
+  /// Queues an inbox message completion for batch processing.
+  /// </summary>
   public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -106,6 +129,9 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
     _logger?.LogTrace("Queued inbox completion for {MessageId} with status {Status}", messageId, completedStatus);
   }
 
+  /// <summary>
+  /// Queues an outbox message failure for batch processing.
+  /// </summary>
   public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string error) {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -120,6 +146,9 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
     _logger?.LogTrace("Queued outbox failure for {MessageId}: {Error}", messageId, error);
   }
 
+  /// <summary>
+  /// Queues an inbox message failure for batch processing.
+  /// </summary>
   public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string error) {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
@@ -134,6 +163,11 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
     _logger?.LogTrace("Queued inbox failure for {MessageId}: {Error}", messageId, error);
   }
 
+  /// <summary>
+  /// 
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
   public async Task<WorkBatch> FlushAsync(WorkBatchFlags flags, CancellationToken ct = default) {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
