@@ -12,6 +12,8 @@ namespace Whizbang.Core.Messaging;
 /// Uses CorrelationId (existing value object) to match requests with responses.
 /// Enables request/response pattern on Kafka and Event Hubs.
 /// </summary>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/RequestResponseStoreContractTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs</tests>
 public interface IRequestResponseStore {
   /// <summary>
   /// Saves a request and sets up tracking for the expected response.
@@ -21,6 +23,7 @@ public interface IRequestResponseStore {
   /// <param name="timeout">How long to wait for a response before timing out</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Task that completes when the request is saved</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/RequestResponseStoreContractTests.cs:SaveRequestAsync_ShouldStoreRequestAsync</tests>
   Task SaveRequestAsync(CorrelationId correlationId, MessageId requestId, TimeSpan timeout, CancellationToken cancellationToken = default);
 
   /// <summary>
@@ -30,6 +33,7 @@ public interface IRequestResponseStore {
   /// <param name="correlationId">The correlation ID to wait for</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>The response envelope, or null if timed out</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:WaitForResponseAsync_WhenRequestNotFound_ShouldReturnNullAsync</tests>
   Task<IMessageEnvelope?> WaitForResponseAsync(CorrelationId correlationId, CancellationToken cancellationToken = default);
 
   /// <summary>
@@ -41,6 +45,8 @@ public interface IRequestResponseStore {
   /// <param name="correlationId">The correlation ID to wait for</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>The strongly-typed response envelope, or null if timed out</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/RequestResponseStoreContractTests.cs:WaitForResponseAsync_WithoutResponse_ShouldTimeoutAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/RequestResponseStoreContractTests.cs:WaitForResponseAsync_WithCancellation_ShouldRespectCancellationAsync</tests>
   Task<MessageEnvelope<TMessage>?> WaitForResponseAsync<TMessage>(CorrelationId correlationId, CancellationToken cancellationToken = default);
 
   /// <summary>
@@ -50,6 +56,10 @@ public interface IRequestResponseStore {
   /// <param name="response">The response message envelope</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Task that completes when the response is saved</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/RequestResponseStoreContractTests.cs:SaveResponseAsync_ShouldCompleteWaitingRequestAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/RequestResponseStoreContractTests.cs:SaveResponseAsync_WithNullResponse_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/RequestResponseStoreContractTests.cs:SaveResponseAsync_BeforeSaveRequest_ShouldNotCauseProblemAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:SaveResponseAsync_BeforeSaveRequest_ThenSaveRequest_ShouldGetResponseAsync</tests>
   Task SaveResponseAsync(CorrelationId correlationId, IMessageEnvelope response, CancellationToken cancellationToken = default);
 
   /// <summary>
@@ -57,5 +67,8 @@ public interface IRequestResponseStore {
   /// </summary>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Task that completes when cleanup is finished</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/RequestResponseStoreContractTests.cs:CleanupExpiredAsync_ShouldNotThrowAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:CleanupExpiredAsync_WithExpiredRecords_ShouldRemoveThemAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/InMemoryRequestResponseStoreTests.cs:CleanupExpiredAsync_WithNonExpiredRecords_ShouldKeepThemAsync</tests>
   Task CleanupExpiredAsync(CancellationToken cancellationToken = default);
 }
