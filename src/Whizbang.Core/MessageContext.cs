@@ -38,6 +38,8 @@ public class MessageContext : IMessageContext {
   /// <summary>
   /// Creates a new context with a new MessageId and the specified CorrelationId.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:Create_WithCorrelationId_GeneratesNewMessageIdAndCausationIdAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:Create_WithCorrelationIdAndCausationId_UsesProvidedCausationIdAsync</tests>
   public static MessageContext Create(CorrelationId correlationId, MessageId? causationId = null) {
     return new MessageContext {
       CorrelationId = correlationId,
@@ -48,6 +50,8 @@ public class MessageContext : IMessageContext {
   /// <summary>
   /// Creates a new context with new identifiers.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:New_GeneratesAllNewIdentifiersAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/MessageContextTests.cs:New_GeneratesUniqueMessageIds_AcrossMultipleCallsAsync</tests>
   public static MessageContext New() {
     return new MessageContext {
       CorrelationId = CorrelationId.New(),
