@@ -42,18 +42,22 @@ public record MessageHop {
   /// The type of hop - Current (for this message) or Causation (from parent message).
   /// Defaults to Current. Causation hops are carried forward for distributed tracing.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithCausationType_StoresCausationTypeAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_TypeDefaultsToCurrent_WhenNotSpecifiedAsync</tests>
   public HopType Type { get; init; } = HopType.Current;
 
   /// <summary>
   /// The MessageId of the causation/parent message (only for Causation hops).
   /// Null for Current hops (the current message's ID is on the envelope).
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithCausationAndCorrelationIds_SetsIdsAsync</tests>
   public MessageId? CausationId { get; init; }
 
   /// <summary>
   /// The MessageId of the causation/parent message (only for Causation hops).
   /// Null for Current hops (the current message's ID is on the envelope).
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithCausationAndCorrelationIds_SetsIdsAsync</tests>
   public CorrelationId? CorrelationId { get; init; }
 
   /// <summary>
@@ -61,42 +65,56 @@ public record MessageHop {
   /// Useful for debugging to understand what type of message led to this one.
   /// Null for Current hops.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithCausationType_StoresCausationTypeAsync</tests>
   public string? CausationType { get; init; }
 
   /// <summary>
   /// Information about the service instance that processed this message.
   /// Includes service name, instance ID, host name, and process ID for complete traceability.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithRequiredProperties_InitializesWithDefaultsAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithAllProperties_StoresAllValuesAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_MachineName_UsesEnvironmentMachineName_ByDefaultAsync</tests>
   public required ServiceInstanceInfo ServiceInstance { get; init; }
 
   /// <summary>
   /// When this hop occurred.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithRequiredProperties_InitializesWithDefaultsAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithAllProperties_StoresAllValuesAsync</tests>
   public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
 
   /// <summary>
   /// The topic at this hop.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithRequiredProperties_InitializesWithDefaultsAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithAllProperties_StoresAllValuesAsync</tests>
   public string Topic { get; init; } = string.Empty;
 
   /// <summary>
   /// The stream key at this hop.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithRequiredProperties_InitializesWithDefaultsAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithAllProperties_StoresAllValuesAsync</tests>
   public string StreamKey { get; init; } = string.Empty;
 
   /// <summary>
   /// The partition index at this hop (if applicable).
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithAllProperties_StoresAllValuesAsync</tests>
   public int? PartitionIndex { get; init; }
 
   /// <summary>
   /// The sequence number at this hop (if applicable).
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithAllProperties_StoresAllValuesAsync</tests>
   public long? SequenceNumber { get; init; }
 
   /// <summary>
   /// The execution strategy used at this hop (e.g., "SerialExecutor", "ParallelExecutor").
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithRequiredProperties_InitializesWithDefaultsAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithAllProperties_StoresAllValuesAsync</tests>
   public string ExecutionStrategy { get; init; } = string.Empty;
 
   /// <summary>
@@ -104,6 +122,7 @@ public record MessageHop {
   /// Can change from hop to hop as messages cross service boundaries.
   /// If null, inherits from previous hop.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithSecurityContext_SetsSecurityContextAsync</tests>
   public SecurityContext? SecurityContext { get; init; }
 
   /// <summary>
@@ -112,6 +131,7 @@ public record MessageHop {
   /// If null, inherits from previous hop.
   /// Supports any JSON value type (string, number, boolean, object, array) via JsonElement.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithMetadata_SetsMetadataAsync</tests>
   public IReadOnlyDictionary<string, JsonElement>? Metadata { get; init; }
 
   /// <summary>
@@ -119,6 +139,7 @@ public record MessageHop {
   /// Records all policy evaluations that occurred during processing at this point.
   /// If null, no policies were evaluated at this hop.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithTrail_SetsPolicyDecisionTrailAsync</tests>
   public PolicyDecisionTrail? Trail { get; init; }
 
   /// <summary>
@@ -126,6 +147,7 @@ public record MessageHop {
   /// Automatically captured via [CallerMemberName] attribute.
   /// Enables "jump to line" functionality in VSCode extension.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithAllProperties_StoresAllValuesAsync</tests>
   public string? CallerMemberName { get; init; }
 
   /// <summary>
@@ -133,6 +155,7 @@ public record MessageHop {
   /// Automatically captured via [CallerFilePath] attribute.
   /// Enables "jump to line" functionality in VSCode extension.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithAllProperties_StoresAllValuesAsync</tests>
   public string? CallerFilePath { get; init; }
 
   /// <summary>
@@ -140,10 +163,12 @@ public record MessageHop {
   /// Automatically captured via [CallerLineNumber] attribute.
   /// Enables "jump to line" functionality in VSCode extension.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithAllProperties_StoresAllValuesAsync</tests>
   public int? CallerLineNumber { get; init; }
 
   /// <summary>
   /// How long this hop took to process.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageHopTests.cs:MessageHop_WithAllProperties_StoresAllValuesAsync</tests>
   public TimeSpan Duration { get; init; }
 }
