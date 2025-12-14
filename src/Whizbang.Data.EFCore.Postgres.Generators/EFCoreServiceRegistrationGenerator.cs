@@ -162,6 +162,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// Extracts DbContext information from a class inheriting from DbContext.
   /// Returns null if the class doesn't inherit from DbContext OR doesn't have [WhizbangDbContext] attribute (opt-in required).
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithWhizbangDbContextAttribute_DiscoversDbContextAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithoutWhizbangDbContextAttribute_DoesNotDiscoverDbContextAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDefaultKey_UsesEmptyStringKeyAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithSingleKey_DiscoversDbContextWithKeyAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultipleKeys_DiscoversDbContextWithAllKeysAsync</tests>
   private static DbContextInfo? ExtractDbContextInfo(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
@@ -216,6 +221,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// Returns null if the class doesn't implement IPerspectiveOf or doesn't have IPerspectiveStore dependency.
   /// COPIED FROM EFCorePerspectiveConfigurationGenerator to ensure compatibility.
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesPartialClassAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesRegistrationMetadataAsync</tests>
   private static PerspectiveModelInfo? ExtractPerspectiveInfo(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
@@ -285,6 +292,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// <summary>
   /// Converts PascalCase to snake_case.
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesPartialClassAsync</tests>
   private static string ToSnakeCase(string input) {
     if (string.IsNullOrEmpty(input)) {
       return input;
@@ -312,6 +320,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// </summary>
   /// <param name="attribute">The attribute data to extract keys from</param>
   /// <returns>Array of keys, or empty array if no keys found</returns>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDefaultKey_UsesEmptyStringKeyAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithSingleKey_DiscoversDbContextWithKeyAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultipleKeys_DiscoversDbContextWithAllKeysAsync</tests>
   private static string[] ExtractKeysFromAttribute(AttributeData attribute) {
     if (attribute.ConstructorArguments.Length == 0) {
       return Array.Empty<string>();
@@ -341,6 +352,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// - Perspective with no keys (empty array) matches default DbContext only (Key = "")
   /// - Otherwise, any perspective key must match any DbContext key
   /// </remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithSingleKey_DiscoversDbContextWithKeyAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultipleKeys_DiscoversDbContextWithAllKeysAsync</tests>
   private static bool MatchesDbContext(PerspectiveModelInfo perspective, DbContextInfo dbContext) {
     // Perspective with no keys = matches default DbContext only
     if (perspective.Keys.Length == 0) {
@@ -355,6 +368,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// Generates DbContext partial class with DbSet&lt;PerspectiveRow&lt;TModel&gt;&gt; properties.
   /// Loops through each DbContext and generates a separate partial class with matching perspectives.
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesPartialClassAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesOnModelCreatingOverrideAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesOnModelCreatingExtendedHookAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_IncludesRequiredUsingDirectivesAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_OnModelCreating_IncludesXmlDocumentationAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultipleDbContexts_GeneratesOnModelCreatingForEachAsync</tests>
   private static void GenerateDbContextPartial(
       SourceProductionContext context,
       ImmutableArray<PerspectiveModelInfo> perspectives,
@@ -482,6 +501,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// Uses template snippets for AOT-compatible registration (no reflection).
   /// Always generates infrastructure registration (Inbox/Outbox/EventStore) even when there are no perspectives.
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesRegistrationMetadataAsync</tests>
   private static void GenerateRegistrationMetadata(
       SourceProductionContext context,
       ImmutableArray<PerspectiveModelInfo> perspectives,
@@ -635,6 +655,12 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// IMPORTANT: Generates for ALL DbContexts, even those without perspectives.
   /// Inbox/Outbox/EventStore tables still need to be created.
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesSchemaExtensionsAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaExtensions_IncludesCoreInfrastructureSchemaAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_EventStoreTable_IncludesStreamIdAndScopeColumnsAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaSQL_UsesPropperEscapingForExecuteSqlRawAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_PerspectiveCheckpoints_HasCompositePrimaryKeyAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaExtensions_CallsExecuteMigrationsAsync</tests>
   private static void GenerateSchemaExtensions(
       SourceProductionContext context,
       ImmutableArray<PerspectiveModelInfo> perspectives,
@@ -725,6 +751,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// Reads migration SQL files from Whizbang.Data.Postgres assembly (shared migrations).
   /// Falls back to generator's own Templates/Migrations if Whizbang.Data.Postgres not found.
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaExtensions_CallsExecuteMigrationsAsync</tests>
   private static string GenerateMigrationsCode(SourceProductionContext context) {
     var sb = new StringBuilder();
 
@@ -801,6 +828,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// <summary>
   /// Extracts simple type name from fully qualified name.
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesPartialClassAsync</tests>
   private static string ExtractSimpleName(string fullyQualifiedName) {
     var withoutGlobal = fullyQualifiedName.Replace("global::", "");
     var lastDot = withoutGlobal.LastIndexOf('.');
@@ -813,6 +841,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// and embedded as a resource for AOT compatibility.
   /// Returns escaped SQL string ready to embed in C# verbatim string literal.
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaExtensions_IncludesCoreInfrastructureSchemaAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_EventStoreTable_IncludesStreamIdAndScopeColumnsAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaSQL_UsesPropperEscapingForExecuteSqlRawAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_PerspectiveCheckpoints_HasCompositePrimaryKeyAsync</tests>
   private static string GenerateCoreInfrastructureSchema(SourceProductionContext context) {
     try {
       // Read pre-generated schema SQL from embedded resource
@@ -878,6 +910,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// PerspectiveRow has fixed schema: stream_id (UUID PK), data (JSONB), version (BIGINT), updated_at (TIMESTAMPTZ).
   /// Returns escaped SQL string ready to embed in C# verbatim string literal.
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesSchemaExtensionsAsync</tests>
   private static string GeneratePerspectiveTablesSchema(
     SourceProductionContext context,
     List<PerspectiveModelInfo> perspectives
