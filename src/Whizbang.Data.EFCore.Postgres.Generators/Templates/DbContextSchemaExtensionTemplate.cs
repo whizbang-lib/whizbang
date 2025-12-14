@@ -4,7 +4,7 @@
 #endregion
 #nullable enable
 
-using System.Text.RegularExpressions;
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -14,17 +14,20 @@ namespace __DBCONTEXT_NAMESPACE__.Generated;
 
 /// <summary>
 /// Extension methods for __DBCONTEXT_CLASS__ schema initialization.
+/// AOT-compatible - uses pre-generated SQL instead of EF Core's GenerateCreateScript().
 /// </summary>
 public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// <summary>
   /// Ensures Whizbang database schema is fully initialized for __DBCONTEXT_CLASS__.
-  /// Creates tables from entity configurations (ConfigureWhizbang() in OnModelCreating)
-  /// and executes PostgreSQL functions/migrations.
+  /// Creates core infrastructure tables, perspective tables, and PostgreSQL functions.
   /// Idempotent - safe to call multiple times.
+  /// AOT-compatible - all SQL is pre-generated at build time.
   ///
   /// Steps:
-  /// 1. Creates tables with IF NOT EXISTS (post-processed EF Core script)
-  /// 2. Executes PostgreSQL functions (process_work_batch, etc.)
+  /// 1. Creates core infrastructure tables (9 tables: inbox, outbox, event_store, etc.)
+  /// 2. Creates perspective tables (PerspectiveRow&lt;TModel&gt; tables)
+  /// 3. Adds composite PK and FK constraints
+  /// 4. Executes PostgreSQL functions (process_work_batch, etc.)
   /// </summary>
   /// <param name="dbContext">The __DBCONTEXT_CLASS__ instance</param>
   /// <param name="logger">Optional logger for diagnostic messages</param>
@@ -34,43 +37,163 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     ILogger? logger = null,
     CancellationToken cancellationToken = default) {
 
-    // Step 1: Create tables
-    logger?.LogInformation("Creating Whizbang tables for {DbContext}...", "__DBCONTEXT_CLASS__");
+    // Step 1: Create core infrastructure tables (pre-generated SQL from PostgresSchemaBuilder)
+    logger?.LogInformation("Creating Whizbang core infrastructure tables for {DbContext}...", "__DBCONTEXT_CLASS__");
+    await ExecuteCoreInfrastructureSchemaAsync(dbContext, logger, cancellationToken);
 
-    // IL3050: GenerateCreateScript() is not AOT-compatible, but this is JUSTIFIED:
-    // - This code runs at DEPLOYMENT TIME (app startup), not in runtime hot paths
-    // - Schema initialization is a one-time operation during deployment
-    // - EF Core provides NO AOT-compatible alternative for schema generation
-    // - Microsoft's guidance: "Use a migration bundle or an alternate way of executing migration operations"
-    // - For development/deployment scenarios, GenerateCreateScript() is the simplest approach
-    // - See ai-docs/efcore-aot-support.md for full AOT strategy
-    #pragma warning disable IL3050
-    var script = dbContext.Database.GenerateCreateScript();
-    #pragma warning restore IL3050
+    // Step 2: Create perspective tables (generated at build time from discovered PerspectiveRow<TModel> types)
+    logger?.LogInformation("Creating perspective tables for {DbContext}...", "__DBCONTEXT_CLASS__");
+    await ExecutePerspectiveTablesAsync(dbContext, logger, cancellationToken);
 
-    script = MakeScriptIdempotent(script);
+    // Step 3: Add constraints (composite PKs, FKs) that TableDefinition doesn't support yet
+    logger?.LogInformation("Adding database constraints for {DbContext}...", "__DBCONTEXT_CLASS__");
+    await ExecuteConstraintsAsync(dbContext, logger, cancellationToken);
 
-    // Only execute if script is not empty (DbContext may have no user-defined entities)
-    if (!string.IsNullOrWhiteSpace(script)) {
-      try {
-        await dbContext.Database.ExecuteSqlRawAsync(script, cancellationToken);
-        logger?.LogInformation("Whizbang tables created successfully");
-      } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P07") {
-        // 42P07 = duplicate_table - Unexpected! Script should be idempotent.
-        logger?.LogWarning(
-          "Caught duplicate_table exception despite IF NOT EXISTS. " +
-          "Table: {Table}, SqlState: {SqlState}",
-          ex.TableName ?? "unknown",
-          ex.SqlState);
-      }
-    } else {
-      logger?.LogInformation("No user-defined tables to create (DbContext has no perspectives)");
+    // Step 4: Create PostgreSQL functions (process_work_batch, etc.)
+    logger?.LogInformation("Creating PostgreSQL functions for {DbContext}...", "__DBCONTEXT_CLASS__");
+    await ExecuteMigrationsAsync(dbContext, logger, cancellationToken);
+
+    logger?.LogInformation("Whizbang database initialization complete for {DbContext}", "__DBCONTEXT_CLASS__");
+  }
+
+  /// <summary>
+  /// Executes pre-generated core infrastructure schema.
+  /// SQL is embedded at build time from PostgresSchemaBuilder.BuildInfrastructureSchema().
+  /// Creates 9 core tables: service_instances, message_deduplication, inbox, outbox,
+  /// event_store, receptor_processing, perspective_checkpoints, request_response, sequences.
+  /// AOT-compatible - no reflection or dynamic code generation.
+  /// </summary>
+  private static async Task ExecuteCoreInfrastructureSchemaAsync(
+    __DBCONTEXT_FQN__ dbContext,
+    ILogger? logger,
+    CancellationToken cancellationToken) {
+
+    // SQL embedded by source generator from PostgresSchemaBuilder
+    const string CoreInfrastructureSchema = #region CORE_INFRASTRUCTURE_SCHEMA
+    // Schema SQL will be embedded here by the source generator
+    #endregion;
+
+    if (string.IsNullOrWhiteSpace(CoreInfrastructureSchema)) {
+      logger?.LogWarning("Core infrastructure schema is empty - schema builder may not be available");
+      return;
     }
 
-    // Step 2: Create PostgreSQL functions
-    logger?.LogInformation("Creating Whizbang PostgreSQL functions...");
-    await ExecuteMigrationsAsync(dbContext, logger, cancellationToken);
-    logger?.LogInformation("Whizbang database initialization complete");
+    try {
+      await dbContext.Database.ExecuteSqlRawAsync(CoreInfrastructureSchema, cancellationToken);
+      logger?.LogInformation("Core infrastructure tables created successfully");
+    } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P07") {
+      // 42P07 = duplicate_table (expected if tables already exist)
+      logger?.LogInformation("Core infrastructure tables already exist (expected): {Table}", ex.TableName ?? "unknown");
+    } catch (Exception ex) {
+      logger?.LogError(ex, "Failed to create core infrastructure tables");
+      throw;
+    }
+  }
+
+  /// <summary>
+  /// Executes perspective table DDL generated at build time.
+  /// SQL is generated by discovering PerspectiveRow&lt;TModel&gt; types in user code.
+  /// Creates tables with schema: stream_id (UUID PK), data (JSONB), version (BIGINT), updated_at (TIMESTAMPTZ).
+  /// AOT-compatible - no reflection or dynamic code generation.
+  /// </summary>
+  private static async Task ExecutePerspectiveTablesAsync(
+    __DBCONTEXT_FQN__ dbContext,
+    ILogger? logger,
+    CancellationToken cancellationToken) {
+
+    // SQL embedded by source generator from discovered PerspectiveRow<TModel> types
+    const string PerspectiveTablesSchema = #region PERSPECTIVE_TABLES_SCHEMA
+    // Perspective table DDL will be embedded here by the source generator
+    #endregion;
+
+    if (string.IsNullOrWhiteSpace(PerspectiveTablesSchema)) {
+      logger?.LogInformation("No perspective tables to create (DbContext has no perspectives)");
+      return;
+    }
+
+    try {
+      await dbContext.Database.ExecuteSqlRawAsync(PerspectiveTablesSchema, cancellationToken);
+      logger?.LogInformation("Perspective tables created successfully");
+    } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P07") {
+      // 42P07 = duplicate_table (expected if tables already exist)
+      logger?.LogInformation("Perspective tables already exist (expected): {Table}", ex.TableName ?? "unknown");
+    } catch (Exception ex) {
+      logger?.LogError(ex, "Failed to create perspective tables");
+      throw;
+    }
+  }
+
+  /// <summary>
+  /// Executes constraint DDL for composite primary keys and foreign keys.
+  /// These constraints are not yet supported in TableDefinition, so they're added manually.
+  /// Includes: composite PK for perspective_checkpoints, FKs to event_store, unique constraints.
+  /// </summary>
+  private static async Task ExecuteConstraintsAsync(
+    __DBCONTEXT_FQN__ dbContext,
+    ILogger? logger,
+    CancellationToken cancellationToken) {
+
+    const string Constraints = @"
+-- Composite PK for perspective_checkpoints (stream_id, perspective_name)
+-- First drop the individual PKs created by the schema builder
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'wh_perspective_checkpoints_pkey') THEN
+    ALTER TABLE wh_perspective_checkpoints DROP CONSTRAINT wh_perspective_checkpoints_pkey CASCADE;
+  END IF;
+END $$;
+
+-- Add composite primary key
+ALTER TABLE wh_perspective_checkpoints
+  ADD CONSTRAINT pk_perspective_checkpoints PRIMARY KEY (stream_id, perspective_name);
+
+-- Foreign keys (note: PostgreSQL doesn't support IF NOT EXISTS for FK constraints)
+DO $$
+BEGIN
+  -- FK: receptor_processing.event_id -> event_store.event_id
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'fk_receptor_processing_event'
+  ) THEN
+    ALTER TABLE wh_receptor_processing
+      ADD CONSTRAINT fk_receptor_processing_event
+      FOREIGN KEY (event_id) REFERENCES wh_event_store(event_id) ON DELETE CASCADE;
+  END IF;
+
+  -- FK: perspective_checkpoints.last_event_id -> event_store.event_id
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'fk_perspective_checkpoints_event'
+  ) THEN
+    ALTER TABLE wh_perspective_checkpoints
+      ADD CONSTRAINT fk_perspective_checkpoints_event
+      FOREIGN KEY (last_event_id) REFERENCES wh_event_store(event_id) ON DELETE RESTRICT;
+  END IF;
+END $$;
+
+-- Unique constraint for receptor_processing (event_id, receptor_name)
+CREATE UNIQUE INDEX IF NOT EXISTS uq_receptor_processing_event_receptor
+  ON wh_receptor_processing(event_id, receptor_name);
+
+-- Partial indexes for status-based queries
+CREATE INDEX IF NOT EXISTS idx_receptor_processing_status_failed
+  ON wh_receptor_processing(status) WHERE (status & 4) = 4; -- Failed flag
+
+CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_catching_up
+  ON wh_perspective_checkpoints(status) WHERE (status & 8) = 8; -- CatchingUp flag
+
+CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
+  ON wh_perspective_checkpoints(status) WHERE (status & 4) = 4; -- Failed flag
+";
+
+    try {
+      await dbContext.Database.ExecuteSqlRawAsync(Constraints, cancellationToken);
+      logger?.LogInformation("Database constraints added successfully");
+    } catch (Npgsql.PostgresException ex) {
+      // Constraints might already exist - log as information, not error
+      logger?.LogInformation("Constraint operation completed (some constraints may already exist): {Message}", ex.MessageText);
+    } catch (Exception ex) {
+      logger?.LogWarning(ex, "Failed to add some database constraints (constraints may already exist)");
+      // Don't throw - constraints might already exist from previous runs
+    }
   }
 
   /// <summary>
@@ -112,30 +235,4 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     };
   }
 
-  /// <summary>
-  /// Post-processes EF Core's generated SQL to add IF NOT EXISTS clauses.
-  /// Makes CREATE TABLE and CREATE INDEX statements idempotent.
-  /// </summary>
-  private static string MakeScriptIdempotent(string script) {
-    // Add IF NOT EXISTS to CREATE TABLE statements
-    // Pattern: CREATE TABLE table_name (
-    // Replace: CREATE TABLE IF NOT EXISTS table_name (
-    script = Regex.Replace(
-      script,
-      @"CREATE TABLE (\w+) \(",
-      "CREATE TABLE IF NOT EXISTS $1 (",
-      RegexOptions.Multiline);
-
-    // Add IF NOT EXISTS to CREATE INDEX statements
-    // Pattern: CREATE INDEX index_name ON
-    // Replace: CREATE INDEX IF NOT EXISTS index_name ON
-    // Also handles: CREATE UNIQUE INDEX
-    script = Regex.Replace(
-      script,
-      @"CREATE (UNIQUE )?INDEX ([""'\w]+) ON",
-      "CREATE $1INDEX IF NOT EXISTS $2 ON",
-      RegexOptions.Multiline);
-
-    return script;
-  }
 }
