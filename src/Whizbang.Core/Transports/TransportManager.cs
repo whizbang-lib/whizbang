@@ -38,12 +38,18 @@ public class TransportManager(IMessageSerializer serializer, IServiceInstancePro
   private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:AddTransport_ShouldStoreTransportAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:AddTransport_WithNullTransport_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:AddTransport_ShouldReplaceExistingTransportAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:AddTransport_ShouldStoreDifferentTypesAsync</tests>
   public void AddTransport(TransportType type, ITransport transport) {
     ArgumentNullException.ThrowIfNull(transport);
     _transports[type] = transport;
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:GetTransport_WhenExists_ShouldReturnTransportAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:GetTransport_WhenNotExists_ShouldThrowAsync</tests>
   public ITransport GetTransport(TransportType type) {
     if (!_transports.TryGetValue(type, out var transport)) {
       throw new InvalidOperationException(
@@ -55,11 +61,16 @@ public class TransportManager(IMessageSerializer serializer, IServiceInstancePro
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:HasTransport_WhenExists_ShouldReturnTrueAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:HasTransport_WhenNotExists_ShouldReturnFalseAsync</tests>
   public bool HasTransport(TransportType type) {
     return _transports.ContainsKey(type);
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:PublishToTargetsAsync_WithEmptyTargets_ShouldNotThrowAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:PublishToTargetsAsync_WithNullMessage_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:PublishToTargetsAsync_WithNullTargets_ShouldThrowAsync</tests>
   public async Task PublishToTargetsAsync<TMessage>(
     TMessage message,
     IReadOnlyList<PublishTarget> targets,
@@ -85,6 +96,9 @@ public class TransportManager(IMessageSerializer serializer, IServiceInstancePro
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:SubscribeFromTargetsAsync_WithEmptyTargets_ShouldReturnEmptyListAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:SubscribeFromTargetsAsync_WithNullTargets_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportManagerTests.cs:SubscribeFromTargetsAsync_WithNullHandler_ShouldThrowAsync</tests>
   public async Task<List<ISubscription>> SubscribeFromTargetsAsync(
     IReadOnlyList<SubscriptionTarget> targets,
     Func<IMessageEnvelope, Task> handler
