@@ -250,6 +250,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     };
   }
 
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletesOutboxMessages_MarksAsPublishedAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletesInboxMessages_MarksAsCompletedAsync</tests>
   private string SerializeCompletions(MessageCompletion[] completions) {
     if (completions.Length == 0) {
       return "[]";
@@ -261,6 +263,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return JsonSerializer.Serialize(completions, typeInfo);
   }
 
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_FailsOutboxMessages_MarksAsFailedWithErrorAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_FailedMessageWithSpecialCharacters_EscapesJsonCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_FailsInboxMessages_MarksAsFailedAsync</tests>
   private string SerializeFailures(MessageFailure[] failures) {
     if (failures.Length == 0) {
       return "[]";
@@ -272,6 +277,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return JsonSerializer.Serialize(failures, typeInfo);
   }
 
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_MixedOperations_HandlesAllCorrectlyAsync</tests>
   private string SerializeNewOutboxMessages(OutboxMessage[] messages) {
     if (messages.Length == 0) {
       return "[]";
@@ -296,6 +302,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return json;
   }
 
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_MixedOperations_HandlesAllCorrectlyAsync</tests>
   private string SerializeNewInboxMessages(InboxMessage[] messages) {
     if (messages.Length == 0) {
       return "[]";
@@ -307,6 +314,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return JsonSerializer.Serialize(messages, typeInfo);
   }
 
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_WithMetadata_StoresMetadataCorrectlyAsync</tests>
   private string SerializeMetadata(Dictionary<string, JsonElement>? metadata) {
     if (metadata == null || metadata.Count == 0) {
       return "{}";  // Return empty JSON object instead of null (matches NOT NULL constraint)
@@ -318,6 +326,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return JsonSerializer.Serialize(metadata, typeInfo);
   }
 
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync</tests>
   private string SerializeLeaseRenewals(Guid[] messageIds) {
     if (messageIds.Length == 0) {
       return "[]";
@@ -329,6 +338,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return JsonSerializer.Serialize(messageIds, typeInfo);
   }
 
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync</tests>
   private string SerializeReceptorCompletions(ReceptorProcessingCompletion[] completions) {
     if (completions.Length == 0) {
       return "[]";
@@ -338,6 +348,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return JsonSerializer.Serialize(completions, typeInfo);
   }
 
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync</tests>
   private string SerializeReceptorFailures(ReceptorProcessingFailure[] failures) {
     if (failures.Length == 0) {
       return "[]";
@@ -347,6 +358,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return JsonSerializer.Serialize(failures, typeInfo);
   }
 
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync</tests>
   private string SerializePerspectiveCompletions(PerspectiveCheckpointCompletion[] completions) {
     if (completions.Length == 0) {
       return "[]";
@@ -356,6 +368,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     return JsonSerializer.Serialize(completions, typeInfo);
   }
 
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync</tests>
   private string SerializePerspectiveFailures(PerspectiveCheckpointFailure[] failures) {
     if (failures.Length == 0) {
       return "[]";
@@ -372,6 +385,10 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// TODO (Phase 4): IL2057 - Type.GetType() is not AOT-compatible.
   /// Use generated type registry from core library source generators instead.
   /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_ReturnedWork_HasCorrectPascalCaseColumnMappingAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_JsonbColumns_ReturnAsTextCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_RecoversOrphanedOutboxMessages_ReturnsExpiredLeasesAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_RecoversOrphanedInboxMessages_ReturnsExpiredLeasesAsync</tests>
   private IMessageEnvelope DeserializeEnvelope(string envelopeTypeName, string envelopeDataJson) {
     _logger?.LogDebug("Deserializing envelope: Type={EnvelopeType}, Data (first 500 chars)={EnvelopeData}",
       envelopeTypeName,

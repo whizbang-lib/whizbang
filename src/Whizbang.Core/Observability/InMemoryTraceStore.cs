@@ -26,6 +26,13 @@ public class InMemoryTraceStore : ITraceStore {
   /// Stores a message envelope in the trace store.
   /// </summary>
   /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:StoreAsync_WithNullEnvelope_ThrowsArgumentNullExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_StoreAndRetrieve_ShouldStoreAndRetrieveEnvelopeAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_GetByCorrelation_ShouldReturnAllMessagesWithSameCorrelationIdAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_GetCausalChain_ShouldReturnMessageAndParentsAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_GetCausalChain_ShouldReturnJustMessageWhenNoParentsAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_GetByTimeRange_ShouldReturnMessagesInRangeAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_GetByTimeRange_ShouldReturnMessagesInChronologicalOrderAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_ConcurrentStores_ShouldHandleConcurrencyAsync</tests>
   public Task StoreAsync(IMessageEnvelope envelope, CancellationToken ct = default) {
     ArgumentNullException.ThrowIfNull(envelope);
 
@@ -36,6 +43,8 @@ public class InMemoryTraceStore : ITraceStore {
   /// <summary>
   /// Retrieves a message envelope by its message ID.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_StoreAndRetrieve_ShouldStoreAndRetrieveEnvelopeAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_GetByMessageId_ShouldReturnNullForNonExistentTraceAsync</tests>
   public Task<IMessageEnvelope?> GetByMessageIdAsync(MessageId messageId, CancellationToken ct = default) {
     _traces.TryGetValue(messageId, out var envelope);
     return Task.FromResult(envelope);
@@ -45,6 +54,8 @@ public class InMemoryTraceStore : ITraceStore {
   /// Retrieves all message envelopes with the specified correlation ID.
   /// </summary>
   /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetByCorrelationAsync_WithNullCorrelationIdsInStore_FiltersThemOutAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_GetByCorrelation_ShouldReturnAllMessagesWithSameCorrelationIdAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_GetByCorrelation_ShouldReturnEmptyListWhenNoMatchesAsync</tests>
   public Task<List<IMessageEnvelope>> GetByCorrelationAsync(CorrelationId correlationId, CancellationToken ct = default) {
     var results = _traces.Values
       .Where(e => {
@@ -67,6 +78,9 @@ public class InMemoryTraceStore : ITraceStore {
   /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetCausalChainAsync_WithEmptyCausationId_StopsWalkingAsync</tests>
   /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetCausalChainAsync_SortsResultsByTimestampAsync</tests>
   /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetCausalChainAsync_WithCircularReferenceInChildrenTree_ProtectsAgainstInfiniteLoopAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_GetCausalChain_ShouldReturnMessageAndParentsAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_GetCausalChain_ShouldReturnJustMessageWhenNoParentsAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_GetCausalChain_ShouldReturnEmptyWhenMessageNotFoundAsync</tests>
   public Task<List<IMessageEnvelope>> GetCausalChainAsync(MessageId messageId, CancellationToken ct = default) {
     if (!_traces.TryGetValue(messageId, out var envelope)) {
       return Task.FromResult(new List<IMessageEnvelope>());
@@ -153,6 +167,9 @@ public class InMemoryTraceStore : ITraceStore {
   /// </summary>
   /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetByTimeRangeAsync_WithEnvelopesWithoutCurrentHop_UsesMinValueTimestampAsync</tests>
   /// <tests>tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs:GetByTimeRangeAsync_WithNoHops_UsesMinValueTimestampAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_GetByTimeRange_ShouldReturnMessagesInRangeAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_GetByTimeRange_ShouldReturnEmptyWhenNoMatchesAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_GetByTimeRange_ShouldReturnMessagesInChronologicalOrderAsync</tests>
   public Task<List<IMessageEnvelope>> GetByTimeRangeAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct = default) {
     var results = _traces.Values
       .Where(e => {
