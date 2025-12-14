@@ -39,6 +39,12 @@ public class PostgresDatabaseReadinessCheck : IDatabaseReadinessCheck {
   /// </summary>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>True if database is ready, false otherwise</returns>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresDatabaseReadinessCheckTests.cs:IsReadyAsync_WithRunningDatabaseAndSchema_ReturnsTrueAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresDatabaseReadinessCheckTests.cs:IsReadyAsync_WithInvalidConnectionString_ReturnsFalseAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresDatabaseReadinessCheckTests.cs:IsReadyAsync_WithMissingTables_ReturnsFalseAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresDatabaseReadinessCheckTests.cs:IsReadyAsync_MultipleCalls_ReturnsConsistentResultAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresDatabaseReadinessCheckTests.cs:IsReadyAsync_WithCancellation_ThrowsOperationCanceledExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresDatabaseReadinessCheckTests.cs:IsReadyAsync_ChecksAllRequiredTables_VerifiesInboxOutboxEventStoreAsync</tests>
   public async Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
     try {
       // Test database connectivity and table presence
