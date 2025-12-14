@@ -7,6 +7,9 @@ using Whizbang.Core.Pooling;
 namespace Whizbang.Core.Execution;
 
 /// <summary>
+/// Executes handlers serially in strict FIFO order.
+/// All messages are processed one at a time, preserving exact ordering.
+/// </summary>
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:Constructor_Default_CreatesUnboundedExecutorAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:Constructor_WithValidBoundedCapacity_CreatesExecutorAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:Constructor_WithInvalidCapacity_ThrowsArgumentOutOfRangeExceptionAsync</tests>
@@ -23,9 +26,6 @@ namespace Whizbang.Core.Execution;
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:DrainAsync_WithWorkerCancellation_HandlesOperationCanceledExceptionAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ProcessWorkItemsAsync_ExceptionInHandler_CaughtAndRecordedAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_BoundedChannel_HandlesBackpressureAsync</tests>
-/// Executes handlers serially in strict FIFO order.
-/// All messages are processed one at a time, preserving exact ordering.
-/// </summary>
 public class SerialExecutor : IExecutionStrategy {
   private enum State { NotStarted, Running, Stopped }
 
