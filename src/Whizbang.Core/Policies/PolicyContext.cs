@@ -16,38 +16,45 @@ public class PolicyContext {
   /// <summary>
   /// The message being processed.
   /// </summary>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:Constructor_InitializesWithMessage_SetsMessageAndMessageTypeAsync</tests>
   public object Message { get; private set; }
 
   /// <summary>
   /// The runtime type of the message.
   /// </summary>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:Constructor_InitializesWithMessage_SetsMessageAndMessageTypeAsync</tests>
   public Type MessageType { get; private set; }
 
   /// <summary>
   /// The message envelope containing metadata and routing information.
   /// May be null if message hasn't been wrapped yet.
   /// </summary>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:Constructor_WithEnvelope_SetsEnvelopeAsync</tests>
   public IMessageEnvelope? Envelope { get; private set; }
 
   /// <summary>
   /// The service provider for dependency injection.
   /// May be null if not configured.
   /// </summary>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:Constructor_WithServiceProvider_SetsServicesAsync</tests>
   public IServiceProvider? Services { get; private set; }
 
   /// <summary>
   /// The environment name (e.g., "development", "staging", "production").
   /// </summary>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:Constructor_WithEnvironment_SetsEnvironmentAsync</tests>
   public string Environment { get; private set; }
 
   /// <summary>
   /// When this context was created (approximately when message processing started).
   /// </summary>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:Constructor_SetsExecutionTime_ToApproximatelyNowAsync</tests>
   public DateTimeOffset ExecutionTime { get; private set; }
 
   /// <summary>
   /// Policy decision trail for recording all policy decisions made during processing.
   /// </summary>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:Constructor_InitializesTrail_CreatesEmptyDecisionTrailAsync</tests>
   public PolicyDecisionTrail Trail { get; private set; }
 
   /// <summary>
@@ -114,6 +121,9 @@ public class PolicyContext {
   /// <typeparam name="T">The service type</typeparam>
   /// <returns>The service instance</returns>
   /// <exception cref="InvalidOperationException">If service provider is not configured</exception>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:GetService_ReturnsService_WhenServiceProviderSetAsync</tests>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:GetService_ThrowsException_WhenServiceProviderNotSetAsync</tests>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:GetService_ThrowsException_WhenServiceNotRegisteredAsync</tests>
   public T GetService<T>() where T : class {
     if (Services is null) {
       throw new InvalidOperationException(
@@ -134,6 +144,9 @@ public class PolicyContext {
   /// </summary>
   /// <param name="key">The metadata key</param>
   /// <returns>The metadata value, or null if not found</returns>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:GetMetadata_ReturnsValue_WhenKeyExistsAsync</tests>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:GetMetadata_ReturnsNull_WhenKeyDoesNotExistAsync</tests>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:GetMetadata_ReturnsNull_WhenEnvelopeNotSetAsync</tests>
   public object? GetMetadata(string key) {
     return Envelope?.GetMetadata(key);
   }
@@ -144,6 +157,10 @@ public class PolicyContext {
   /// </summary>
   /// <param name="tag">The tag to check for</param>
   /// <returns>True if the tag is present, false otherwise</returns>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:HasTag_ReturnsTrue_WhenTagExistsInMetadataAsync</tests>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:HasTag_ReturnsFalse_WhenTagDoesNotExistAsync</tests>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:HasTag_ReturnsFalse_WhenNoTagsInMetadataAsync</tests>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:HasTag_ReturnsTrue_WhenTagsAreIEnumerableAsync</tests>
   public bool HasTag(string tag) {
     var tags = GetMetadata("tags");
     if (tags is string[] tagArray) {
@@ -161,6 +178,9 @@ public class PolicyContext {
   /// </summary>
   /// <param name="flag">The flag to check for</param>
   /// <returns>True if the flag is set, false otherwise</returns>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:HasFlag_ReturnsTrue_WhenFlagIsSetAsync</tests>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:HasFlag_ReturnsFalse_WhenFlagIsNotSetAsync</tests>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:HasFlag_ReturnsFalse_WhenNoFlagsInMetadataAsync</tests>
   public bool HasFlag(Enum flag) {
     var flags = GetMetadata("flags");
     if (flags is null) {
@@ -181,6 +201,8 @@ public class PolicyContext {
   /// </summary>
   /// <typeparam name="TAggregate">The aggregate type to check for</typeparam>
   /// <returns>True if message is for this aggregate type</returns>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:MatchesAggregate_ReturnsTrue_WhenMessageIsForSpecifiedAggregateTypeAsync</tests>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:MatchesAggregate_ReturnsFalse_WhenMessageIsForDifferentAggregateTypeAsync</tests>
   public bool MatchesAggregate<TAggregate>() {
     var aggregateName = typeof(TAggregate).Name;
     var messageName = MessageType.Name;
@@ -197,6 +219,10 @@ public class PolicyContext {
   /// </summary>
   /// <returns>The aggregate ID</returns>
   /// <exception cref="InvalidOperationException">If aggregate ID extractor is not registered or aggregate ID is not found</exception>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:GetAggregateId_WithAggregateIdAttribute_UsesGeneratedExtractorAsync</tests>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:GetAggregateId_WithoutAggregateIdAttribute_ThrowsHelpfulExceptionAsync</tests>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:GetAggregateId_ReturnsId_WhenMessageContainsAggregateIdAsync</tests>
+  /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:GetAggregateId_ThrowsException_WhenMessageDoesNotContainAggregateIdAsync</tests>
   public Guid GetAggregateId() {
     // Get the DI-injected extractor (zero reflection)
     if (Services is null) {
