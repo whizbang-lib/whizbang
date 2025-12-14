@@ -35,6 +35,11 @@ public static class EFCoreExtensions {
     ///     .WithDriver.Postgres;
     /// </code>
     /// </example>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreExtensionsTests.cs:WithEFCore_WithValidBuilder_ReturnsEFCoreDriverSelectorAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreExtensionsTests.cs:WithEFCore_ReturnedSelector_HasCorrectServicesAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreExtensionsTests.cs:WithEFCore_CanChainToWithDriverAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreExtensionsTests.cs:WithEFCore_MultipleContextTypes_CreatesDistinctSelectorsAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreExtensionsTests.cs:WithEFCore_ReturnedSelector_ImplementsIDriverOptionsAsync</tests>
     public EFCoreDriverSelector WithEFCore<TDbContext>()
         where TDbContext : DbContext {
       return new EFCoreDriverSelector(builder.Services, typeof(TDbContext));
@@ -60,6 +65,11 @@ public static class EFCoreExtensions {
     ///     .WithDriver.Postgres;
     /// </code>
     /// </example>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreExtensionsTests.cs:WithEFCore_WithValidBuilder_ReturnsEFCoreDriverSelectorAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreExtensionsTests.cs:WithEFCore_ReturnedSelector_HasCorrectServicesAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreExtensionsTests.cs:WithEFCore_CanChainToWithDriverAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreExtensionsTests.cs:WithEFCore_MultipleContextTypes_CreatesDistinctSelectorsAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreExtensionsTests.cs:WithEFCore_ReturnedSelector_ImplementsIDriverOptionsAsync</tests>
     public EFCoreDriverSelector WithEFCore<TDbContext>()
         where TDbContext : DbContext {
       return new EFCoreDriverSelector(builder.Services, typeof(TDbContext));
