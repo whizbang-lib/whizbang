@@ -38,6 +38,8 @@ public class ServiceBusConsumerWorker(
   /// Starts the worker and creates all subscriptions BEFORE background processing begins.
   /// This ensures subscriptions are ready before ExecuteAsync runs (blocking initialization).
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   public override async Task StartAsync(CancellationToken cancellationToken) {
     using var activity = WhizbangActivitySource.Hosting.StartActivity("ServiceBusConsumerWorker.Start");
     activity?.SetTag("worker.subscriptions_count", _options.Subscriptions.Count);
@@ -88,6 +90,8 @@ public class ServiceBusConsumerWorker(
   /// Background processing loop - keeps worker alive while subscriptions process messages.
   /// Subscriptions are already created in StartAsync (blocking), so this just waits.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     _logger.LogInformation("ServiceBusConsumerWorker background processing started");
 
@@ -209,6 +213,8 @@ public class ServiceBusConsumerWorker(
   /// Uses InboxMessage&lt;object&gt; since the compile-time type is unknown (envelope comes from transport).
   /// The actual type is preserved in EnvelopeType for deserialization.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   private InboxMessage _serializeToNewInboxMessage(IMessageEnvelope envelope) {
     // Get payload and its type for metadata
     var payload = envelope.Payload;
@@ -249,6 +255,8 @@ public class ServiceBusConsumerWorker(
   /// Extracts event payload from InboxWork for processing.
   /// Envelope is already deserialized - just get the payload.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   private object? _deserializeEvent(InboxWork work) {
     try {
       // InboxWork is non-generic - Envelope is IMessageEnvelope<object>
@@ -263,6 +271,8 @@ public class ServiceBusConsumerWorker(
   /// <summary>
   /// Serializes envelope metadata (MessageId + Hops) to JSON string.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   private string _serializeEnvelopeMetadata(IMessageEnvelope envelope) {
     var metadata = new EnvelopeMetadata {
       MessageId = envelope.MessageId,
@@ -277,6 +287,8 @@ public class ServiceBusConsumerWorker(
   /// Serializes security scope (tenant, user) from first hop's security context.
   /// Returns null if no security context is present.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   private static string? _serializeSecurityScope(IMessageEnvelope envelope) {
     // Extract security context from first hop if available
     var firstHop = envelope.Hops.FirstOrDefault();
@@ -295,6 +307,8 @@ public class ServiceBusConsumerWorker(
   /// Extracts stream_id from envelope for stream-based ordering.
   /// Tries to get aggregate ID from first hop metadata, falls back to message ID.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   private static Guid _extractStreamId(IMessageEnvelope envelope) {
     // Check first hop for aggregate ID or stream key
     var firstHop = envelope.Hops.FirstOrDefault();
@@ -312,6 +326,11 @@ public class ServiceBusConsumerWorker(
     return envelope.MessageId.Value;
   }
 
+  /// <summary>
+  /// Stops the worker and disposes all subscriptions.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   public override async Task StopAsync(CancellationToken cancellationToken) {
     _logger.LogInformation("ServiceBusConsumerWorker stopping...");
 
@@ -327,10 +346,14 @@ public class ServiceBusConsumerWorker(
 /// <summary>
 /// Configuration options for ServiceBusConsumerWorker.
 /// </summary>
+/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
 public class ServiceBusConsumerOptions {
   /// <summary>
   /// List of topic subscriptions to consume messages from.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   public List<TopicSubscription> Subscriptions { get; set; } = [];
 }
 
@@ -340,4 +363,6 @@ public class ServiceBusConsumerOptions {
 /// <param name="TopicName">The Service Bus topic name</param>
 /// <param name="SubscriptionName">The subscription name for this consumer</param>
 /// <param name="DestinationFilter">Optional destination filter value (e.g., "inventory-service")</param>
+/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
 public record TopicSubscription(string TopicName, string SubscriptionName, string? DestinationFilter = null);
