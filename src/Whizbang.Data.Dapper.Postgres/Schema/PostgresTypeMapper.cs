@@ -19,6 +19,7 @@ public static class PostgresTypeMapper {
       Whizbang.Data.Schema.WhizbangDataType.Json => "JSONB",
       Whizbang.Data.Schema.WhizbangDataType.BigInt => "BIGINT",
       Whizbang.Data.Schema.WhizbangDataType.Integer => "INTEGER",
+      Whizbang.Data.Schema.WhizbangDataType.SmallInt => "SMALLINT",
       Whizbang.Data.Schema.WhizbangDataType.Boolean => "BOOLEAN",
       _ => throw new ArgumentOutOfRangeException(nameof(dataType), dataType, "Unknown data type")
     };

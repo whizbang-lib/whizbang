@@ -42,6 +42,12 @@ public enum WhizbangDataType {
   Integer,
 
   /// <summary>
+  /// 16-bit signed integer (commonly used for flags and small enums).
+  /// Maps to: SMALLINT (Postgres), INTEGER (SQLite), SMALLINT (SQL Server)
+  /// </summary>
+  SmallInt,
+
+  /// <summary>
   /// Boolean type.
   /// Maps to: BOOLEAN (Postgres), INTEGER 0/1 (SQLite), BIT (SQL Server)
   /// </summary>

@@ -96,9 +96,13 @@ public static class PostgresSchemaBuilder {
 
     // Build all infrastructure tables
     var tables = new[] {
+      (ServiceInstancesSchema.Table, "Service Instances - Distributed work coordination"),
+      (MessageDeduplicationSchema.Table, "Message Deduplication - Permanent idempotency tracking"),
       (InboxSchema.Table, "Inbox - Message deduplication and idempotency"),
       (OutboxSchema.Table, "Outbox - Transactional messaging pattern"),
       (EventStoreSchema.Table, "Event Store - Event sourcing and audit trail"),
+      (ReceptorProcessingSchema.Table, "Receptor Processing - Event handler tracking (log-style)"),
+      (PerspectiveCheckpointsSchema.Table, "Perspective Checkpoints - Read model projection tracking (checkpoint-style)"),
       (RequestResponseSchema.Table, "Request/Response - Async request/response tracking"),
       (SequencesSchema.Table, "Sequences - Distributed sequence generation")
     };
