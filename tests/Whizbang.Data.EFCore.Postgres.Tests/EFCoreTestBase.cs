@@ -105,13 +105,20 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
   }
 
   /// <summary>
+  /// Simple test message type for EFCore integration tests.
+  /// </summary>
+  protected record TestMessage {
+    public string Data { get; init; } = "test";
+  }
+
+  /// <summary>
   /// Simple test message envelope for integration tests.
   /// Implements IMessageEnvelope&lt;object&gt; with minimal required properties.
   /// </summary>
   protected class TestMessageEnvelope : IMessageEnvelope<object> {
     public required MessageId MessageId { get; init; }
     public required List<MessageHop> Hops { get; init; }
-    public object Payload { get; init; } = new { };  // Test payload
+    public object Payload { get; init; } = new TestMessage();  // Use concrete type instead of anonymous
 
     public void AddHop(MessageHop hop) {
       Hops.Add(hop);
