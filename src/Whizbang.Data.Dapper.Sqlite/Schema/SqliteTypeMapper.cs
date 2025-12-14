@@ -37,6 +37,14 @@ public static class SqliteTypeMapper {
   /// <param name="dataType">Database-agnostic data type</param>
   /// <param name="maxLength">Optional maximum length (ignored in SQLite, no length enforcement)</param>
   /// <returns>SQLite SQL type string (e.g., "TEXT", "INTEGER")</returns>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDataType_Uuid_ReturnsTextAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDataType_String_ReturnsTextAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDataType_StringWithMaxLength_ReturnsTextAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDataType_TimestampTz_ReturnsTextAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDataType_Json_ReturnsTextAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDataType_BigInt_ReturnsIntegerAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDataType_Integer_ReturnsIntegerAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDataType_Boolean_ReturnsIntegerAsync</tests>
   public static string MapDataType(Whizbang.Data.Schema.WhizbangDataType dataType, int? maxLength = null) {
     return dataType switch {
       Whizbang.Data.Schema.WhizbangDataType.Uuid => "TEXT",        // Stored as hex string
@@ -56,6 +64,17 @@ public static class SqliteTypeMapper {
   /// </summary>
   /// <param name="defaultValue">Database-agnostic default value</param>
   /// <returns>SQLite default expression (e.g., "CURRENT_TIMESTAMP", "'Pending'", "42", "0", "1")</returns>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_FunctionDateTimeNow_ReturnsCurrentTimestampAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_FunctionDateTimeUtcNow_ReturnsDatetimeUtcAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_FunctionUuidGenerate_ReturnsLowerHexAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_FunctionBooleanTrue_Returns1Async</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_FunctionBooleanFalse_Returns0Async</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_Integer_ReturnsIntegerStringAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_String_ReturnsQuotedStringAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_StringWithSingleQuote_EscapesSingleQuoteAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_BooleanTrue_Returns1Async</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_BooleanFalse_Returns0Async</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_Null_ReturnsNullAsync</tests>
   public static string MapDefaultValue(Whizbang.Data.Schema.DefaultValue defaultValue) {
     return defaultValue switch {
       Whizbang.Data.Schema.FunctionDefault func => MapFunctionDefault(func.FunctionType),
@@ -70,6 +89,11 @@ public static class SqliteTypeMapper {
   /// <summary>
   /// Maps DefaultValueFunction to SQLite function expression.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_FunctionDateTimeNow_ReturnsCurrentTimestampAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_FunctionDateTimeUtcNow_ReturnsDatetimeUtcAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_FunctionUuidGenerate_ReturnsLowerHexAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_FunctionBooleanTrue_Returns1Async</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_FunctionBooleanFalse_Returns0Async</tests>
   private static string MapFunctionDefault(Whizbang.Data.Schema.DefaultValueFunction function) {
     return function switch {
       // CURRENT_TIMESTAMP returns UTC time in 'YYYY-MM-DD HH:MM:SS' format
@@ -94,6 +118,7 @@ public static class SqliteTypeMapper {
   /// Escapes single quotes in string values for SQLite string literals.
   /// In SQLite, single quotes are escaped by doubling them: ' becomes ''
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteTypeMapperTests.cs:MapDefaultValue_StringWithSingleQuote_EscapesSingleQuoteAsync</tests>
   private static string EscapeSingleQuote(string value) {
     return value.Replace("'", "''");
   }
