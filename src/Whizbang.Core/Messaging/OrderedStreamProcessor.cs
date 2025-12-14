@@ -29,6 +29,11 @@ public class OrderedStreamProcessor {
   /// When false, all streams processed sequentially (safer, simpler debugging).
   /// </param>
   /// <param name="logger">Optional logger</param>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_SingleStream_ProcessesInOrderAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_MultipleStreams_ProcessesConcurrentlyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_StreamWithError_ContinuesOtherStreamsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_PartialFailure_ReportsCorrectStatusAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessOutboxWorkAsync_SameStreamSameOrder_ProcessesSequentiallyAsync</tests>
   public OrderedStreamProcessor(bool parallelizeStreams = false, ILogger<OrderedStreamProcessor>? logger = null) {
     _parallelizeStreams = parallelizeStreams;
     _logger = logger;
@@ -44,6 +49,10 @@ public class OrderedStreamProcessor {
   /// <param name="completionHandler">Handler for successful completion (e.g., queue to strategy)</param>
   /// <param name="failureHandler">Handler for failures (e.g., queue failure to strategy)</param>
   /// <param name="ct">Cancellation token</param>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_SingleStream_ProcessesInOrderAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_MultipleStreams_ProcessesConcurrentlyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_StreamWithError_ContinuesOtherStreamsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_PartialFailure_ReportsCorrectStatusAsync</tests>
   public async Task ProcessInboxWorkAsync(
     List<InboxWork> inboxWork,
     Func<InboxWork, Task<MessageProcessingStatus>> processor,
@@ -95,6 +104,7 @@ public class OrderedStreamProcessor {
   /// <param name="completionHandler">Handler for successful completion</param>
   /// <param name="failureHandler">Handler for failures</param>
   /// <param name="ct">Cancellation token</param>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessOutboxWorkAsync_SameStreamSameOrder_ProcessesSequentiallyAsync</tests>
   public async Task ProcessOutboxWorkAsync(
     List<OutboxWork> outboxWork,
     Func<OutboxWork, Task<MessageProcessingStatus>> processor,
@@ -138,6 +148,10 @@ public class OrderedStreamProcessor {
   /// Processes messages for a single stream SEQUENTIALLY.
   /// Stops processing this stream on first failure (preserves ordering guarantee).
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_SingleStream_ProcessesInOrderAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_MultipleStreams_ProcessesConcurrentlyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_StreamWithError_ContinuesOtherStreamsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_PartialFailure_ReportsCorrectStatusAsync</tests>
   private async Task ProcessInboxStreamBatchAsync(
     StreamBatch<InboxWork> streamBatch,
     Func<InboxWork, Task<MessageProcessingStatus>> processor,
@@ -194,6 +208,7 @@ public class OrderedStreamProcessor {
   /// <summary>
   /// Processes outbox messages for a single stream SEQUENTIALLY.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessOutboxWorkAsync_SameStreamSameOrder_ProcessesSequentiallyAsync</tests>
   private async Task ProcessOutboxStreamBatchAsync(
     StreamBatch<OutboxWork> streamBatch,
     Func<OutboxWork, Task<MessageProcessingStatus>> processor,
@@ -259,5 +274,6 @@ public class OrderedStreamProcessorOptions {
   /// When true: Stream A and Stream B can be processed concurrently.
   /// When false: Streams processed sequentially (safer, simpler debugging).
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/OrderedStreamProcessorTests.cs:ProcessInboxWorkAsync_MultipleStreams_ProcessesConcurrentlyAsync</tests>
   public bool ParallelizeStreams { get; set; } = false;
 }
