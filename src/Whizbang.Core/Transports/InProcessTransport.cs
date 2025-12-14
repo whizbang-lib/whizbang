@@ -39,9 +39,11 @@ public class InProcessTransport : ITransport {
   private bool _isInitialized;
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_WithSingleSubscriber_InvokesHandlerAsync</tests>
   public bool IsInitialized => _isInitialized;
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_WithSingleSubscriber_InvokesHandlerAsync</tests>
   public Task InitializeAsync(CancellationToken cancellationToken = default) {
     cancellationToken.ThrowIfCancellationRequested();
 
@@ -52,6 +54,7 @@ public class InProcessTransport : ITransport {
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Capabilities_ReturnsExpectedFlagsAsync</tests>
   public TransportCapabilities Capabilities =>
     TransportCapabilities.RequestResponse |
     TransportCapabilities.PublishSubscribe |
@@ -59,6 +62,14 @@ public class InProcessTransport : ITransport {
     TransportCapabilities.Reliable;
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_WithNoSubscribers_CompletesSuccessfullyAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_WithSingleSubscriber_InvokesHandlerAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_WithMultipleSubscribers_InvokesAllHandlersAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_ToDifferentTopics_OnlyInvokesMatchingSubscribersAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_ConcurrentPublishes_AllHandlersInvokedAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_HandlerThrowsException_ContinuesWithOtherHandlersAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:PublishAsync_WithRoutingKey_DeliversToCorrectDestinationAsync</tests>
   public async Task PublishAsync(
     IMessageEnvelope envelope,
     TransportDestination destination,
@@ -77,6 +88,9 @@ public class InProcessTransport : ITransport {
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SubscribeAsync_ReturnsActiveSubscriptionAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SubscribeAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SubscribeAsync_ConcurrentSubscriptions_AllRegisteredAsync</tests>
   public Task<ISubscription> SubscribeAsync(
     Func<IMessageEnvelope, CancellationToken, Task> handler,
     TransportDestination destination,
@@ -103,6 +117,10 @@ public class InProcessTransport : ITransport {
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SendAsync_WithResponder_ReturnsResponseEnvelopeAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SendAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SendAsync_WithTimeout_ThrowsTimeoutExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SendAsync_WithCancellationDuringPublish_ExecutesFinallyBlockAsync</tests>
   public async Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
     IMessageEnvelope requestEnvelope,
     TransportDestination destination,
@@ -141,22 +159,40 @@ public class InProcessTransport : ITransport {
   /// <summary>
   /// In-process subscription implementation.
   /// </summary>
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_InVariousStates_BehavesCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_PauseAsync_SetsIsActiveToFalseAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_ResumeAsync_SetsIsActiveToTrueAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_Dispose_RemovesHandlerFromTransportAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_DisposeMultipleTimes_IsIdempotentAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SubscribeAndDispose_Concurrent_ThreadSafeAsync</tests>
   private class InProcessSubscription(Action onDispose) : ISubscription {
     private readonly Action _onDispose = onDispose;
     private bool _isDisposed;
 
+    /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_InVariousStates_BehavesCorrectlyAsync</tests>
+    /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_PauseAsync_SetsIsActiveToFalseAsync</tests>
+    /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_ResumeAsync_SetsIsActiveToTrueAsync</tests>
+    /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_Dispose_RemovesHandlerFromTransportAsync</tests>
     public bool IsActive { get; private set; } = true;
 
+    /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_InVariousStates_BehavesCorrectlyAsync</tests>
+    /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_PauseAsync_SetsIsActiveToFalseAsync</tests>
     public Task PauseAsync() {
       IsActive = false;
       return Task.CompletedTask;
     }
 
+    /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_InVariousStates_BehavesCorrectlyAsync</tests>
+    /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_ResumeAsync_SetsIsActiveToTrueAsync</tests>
     public Task ResumeAsync() {
       IsActive = true;
       return Task.CompletedTask;
     }
 
+    /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_InVariousStates_BehavesCorrectlyAsync</tests>
+    /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_Dispose_RemovesHandlerFromTransportAsync</tests>
+    /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_DisposeMultipleTimes_IsIdempotentAsync</tests>
+    /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SubscribeAndDispose_Concurrent_ThreadSafeAsync</tests>
     public void Dispose() {
       if (!_isDisposed) {
         IsActive = false;
