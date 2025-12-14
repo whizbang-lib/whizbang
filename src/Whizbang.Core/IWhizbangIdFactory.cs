@@ -35,10 +35,15 @@ namespace Whizbang.Core;
 /// </code>
 /// </para>
 /// </remarks>
+/// <tests>tests/Whizbang.Generators.Tests/WhizbangIdGeneratorTests.cs:Generator_WithExplicitTypeDeclaration_GeneratesValueObjectAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/WhizbangIdGeneratorTests.cs:Generator_WithMultipleIdTypes_GeneratesAllAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/WhizbangIdGeneratorTests.cs:Generator_WithPropertyBasedDiscovery_GeneratesValueObjectAsync</tests>
+/// <tests>tests/Whizbang.Generators.Tests/WhizbangIdGeneratorTests.cs:Generator_WithParameterBasedDiscovery_GeneratesValueObjectAsync</tests>
 public interface IWhizbangIdFactory<out TId> {
   /// <summary>
   /// Creates a new WhizbangId instance using the configured provider.
   /// </summary>
   /// <returns>A new WhizbangId instance.</returns>
+  /// <tests>tests/Whizbang.Generators.Tests/WhizbangIdGeneratorTests.cs:Generator_WithExplicitTypeDeclaration_GeneratesValueObjectAsync</tests>
   TId Create();
 }
