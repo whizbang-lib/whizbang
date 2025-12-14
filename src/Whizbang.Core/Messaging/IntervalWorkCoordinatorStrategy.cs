@@ -36,7 +36,7 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
   private bool _flushing = false;
 
   /// <summary>
-  /// 
+  /// Constructs an interval-based work coordinator strategy with periodic flushing.
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:BackgroundTimer_FlushesEveryIntervalAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:QueuedMessages_BatchedUntilTimerAsync</tests>
@@ -68,7 +68,7 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
   }
 
   /// <summary>
-  /// 
+  /// Queues an outbox message for batch processing.
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:BackgroundTimer_FlushesEveryIntervalAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:QueuedMessages_BatchedUntilTimerAsync</tests>
@@ -164,7 +164,7 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
   }
 
   /// <summary>
-  /// 
+  /// Flushes all queued operations to the work coordinator immediately.
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
@@ -273,6 +273,11 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
     }
   }
 
+  /// <summary>
+  /// Timer callback that triggers periodic flushing of queued operations.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:BackgroundTimer_FlushesEveryIntervalAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:QueuedMessages_BatchedUntilTimerAsync</tests>
   private void FlushTimerCallback(object? state) {
     if (_disposed) {
       return;
@@ -288,6 +293,10 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
     });
   }
 
+  /// <summary>
+  /// Disposes the strategy, stops the timer, and flushes any remaining queued operations.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesAndStopsTimerAsync</tests>
   public async ValueTask DisposeAsync() {
     if (_disposed) {
       return;
