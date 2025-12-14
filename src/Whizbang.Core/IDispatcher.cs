@@ -38,6 +38,7 @@ public interface IDispatcher {
   /// </summary>
   /// <param name="message">The message to send</param>
   /// <returns>Delivery receipt with correlation information</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Dispatcher_MessageContext_ShouldGenerateUniqueMessageIdsAsync</tests>
   Task<IDeliveryReceipt> SendAsync(object message);
 
   /// <summary>
@@ -89,6 +90,10 @@ public interface IDispatcher {
   /// <typeparam name="TResult">The expected business result type</typeparam>
   /// <param name="message">The message to process</param>
   /// <returns>The typed business result from the receptor</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvoke_WithValidMessage_ShouldReturnBusinessResultAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Dispatcher_ShouldRouteToCorrectHandlerAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Dispatcher_MultipleReceptorsSameMessage_ShouldRouteToAllAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_DoesNotRequireTypePreservation_ForInProcessRPCAsync</tests>
   ValueTask<TResult> LocalInvokeAsync<TResult>(object message);
 
   /// <summary>
@@ -124,6 +129,7 @@ public interface IDispatcher {
   /// <param name="callerFilePath">Caller file path (auto-captured)</param>
   /// <param name="callerLineNumber">Caller line number (auto-captured)</param>
   /// <returns>The typed business result from the receptor</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvoke_WithContext_ShouldPreserveContextAsync</tests>
   ValueTask<TResult> LocalInvokeAsync<TResult>(
     object message,
     IMessageContext context,
@@ -141,6 +147,7 @@ public interface IDispatcher {
   /// <typeparam name="TMessage">The message type</typeparam>
   /// <param name="message">The message to process</param>
   /// <returns>ValueTask representing the completion (CompletedTask for sync operations)</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_MultipleInvocations_ShouldTrackAllAsync</tests>
   ValueTask LocalInvokeAsync<TMessage>(TMessage message) where TMessage : notnull;
 
   /// <summary>
@@ -152,6 +159,11 @@ public interface IDispatcher {
   /// </summary>
   /// <param name="message">The message to process</param>
   /// <returns>ValueTask representing the completion (CompletedTask for sync operations)</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_ShouldInvokeWithoutReturningResultAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_SynchronousCompletion_ShouldNotAllocateAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_AsynchronousCompletion_ShouldCompleteAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_NoHandler_ShouldThrowHandlerNotFoundExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_WithTracing_StoresEnvelopeAsync</tests>
   ValueTask LocalInvokeAsync(object message);
 
   /// <summary>
@@ -166,6 +178,8 @@ public interface IDispatcher {
   /// <param name="callerFilePath">Caller file path (auto-captured)</param>
   /// <param name="callerLineNumber">Caller line number (auto-captured)</param>
   /// <returns>ValueTask representing the completion (CompletedTask for sync operations)</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_WithContext_ShouldAcceptContextAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_WithNullContext_ThrowsArgumentNullExceptionAsync</tests>
   ValueTask LocalInvokeAsync<TMessage>(
     TMessage message,
     IMessageContext context,
@@ -185,6 +199,7 @@ public interface IDispatcher {
   /// <param name="callerFilePath">Caller file path (auto-captured)</param>
   /// <param name="callerLineNumber">Caller line number (auto-captured)</param>
   /// <returns>ValueTask representing the completion (CompletedTask for sync operations)</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_WithNullContext_ThrowsArgumentNullExceptionAsync</tests>
   ValueTask LocalInvokeAsync(
     object message,
     IMessageContext context,
@@ -203,6 +218,7 @@ public interface IDispatcher {
   /// </summary>
   /// <typeparam name="TEvent">The event type</typeparam>
   /// <param name="event">The event to publish</param>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Publish_WithEvent_ShouldNotifyAllHandlersAsync</tests>
   Task PublishAsync<TEvent>(TEvent @event);
 
   // ========================================
@@ -216,6 +232,8 @@ public interface IDispatcher {
   /// <typeparam name="TMessage">The message type</typeparam>
   /// <param name="messages">The messages to send</param>
   /// <returns>All delivery receipts</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:SendManyAsync_Generic_CreatesTypedEnvelopesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:SendManyAsync_Generic_DifferentFromNonGenericVersionAsync</tests>
   Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull;
 
   /// <summary>
@@ -224,6 +242,8 @@ public interface IDispatcher {
   /// </summary>
   /// <param name="messages">The messages to send</param>
   /// <returns>All delivery receipts</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:SendMany_WithMultipleCommands_ShouldReturnAllReceiptsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:SendManyAsync_Generic_DifferentFromNonGenericVersionAsync</tests>
   Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages);
 
   /// <summary>
@@ -233,5 +253,6 @@ public interface IDispatcher {
   /// <typeparam name="TResult">The expected business result type</typeparam>
   /// <param name="messages">The messages to process</param>
   /// <returns>All typed business results from receptors</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeMany_WithMultipleCommands_ShouldReturnAllResultsAsync</tests>
   ValueTask<IEnumerable<TResult>> LocalInvokeManyAsync<TResult>(IEnumerable<object> messages);
 }
