@@ -29,6 +29,8 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
   /// <param name="context">The EF Core DbContext</param>
   /// <param name="tableName">The table name for this perspective (for SQL generation)</param>
   /// <param name="upsertStrategy">The database-specific upsert strategy (optional, defaults to PostgresUpsertStrategy)</param>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:Constructor_WithNullContext_ThrowsArgumentNullExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:Constructor_WithNullTableName_ThrowsArgumentNullExceptionAsync</tests>
   public EFCorePostgresPerspectiveStore(
       DbContext context,
       string tableName,
@@ -42,6 +44,10 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
   }
 
   /// <inheritdoc/>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_WhenRecordDoesNotExist_CreatesNewRecordAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_WhenRecordExists_UpdatesExistingRecordAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_IncrementsVersionNumber_OnEachUpdateAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_UpdatesUpdatedAtTimestamp_OnUpdateAsync</tests>
   public async Task UpsertAsync(string id, TModel model, CancellationToken cancellationToken = default) {
     // Use default metadata for generic upserts
     var metadata = new PerspectiveMetadata {
