@@ -29,11 +29,18 @@ public record TransportDestination(
   /// <summary>
   /// Gets the destination address.
   /// </summary>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportDestinationTests.cs:TransportDestination_WithAddress_SetsAddressAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportDestinationTests.cs:TransportDestination_WithAddressAndRoutingKey_SetsPropertiesAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportDestinationTests.cs:TransportDestination_WithMetadata_SetsMetadataAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportDestinationTests.cs:TransportDestination_WithNullMetadata_AllowedAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportDestinationTests.cs:TransportDestination_RecordEquality_BehavesCorrectlyAsync</tests>
   public string Address { get; init; } = ValidateAddress(Address);
 
   /// <summary>
   /// Validates the address is not null or empty.
   /// </summary>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportDestinationTests.cs:TransportDestination_EmptyOrWhitespaceAddress_ThrowsArgumentExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportDestinationTests.cs:TransportDestination_NullAddress_ThrowsArgumentExceptionAsync</tests>
   private static string ValidateAddress(string address) {
     if (string.IsNullOrWhiteSpace(address)) {
       throw new ArgumentException("Address cannot be null or empty", nameof(address));
