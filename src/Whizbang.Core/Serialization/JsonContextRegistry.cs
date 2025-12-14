@@ -54,6 +54,8 @@ public static class JsonContextRegistry {
   /// This is needed because STJ source generation has trouble finding custom converters
   /// for value types in nested properties without them being in options.Converters.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:RegisterConverter_WithConverterInstance_AddsToConverterCollectionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:RegisterConverter_WithNull_ThrowsArgumentNullExceptionAsync</tests>
   /// <param name="converter">The JsonConverter instance to register (instantiated at compile-time by source generators for AOT compatibility)</param>
   public static void RegisterConverter(JsonConverter converter) {
     if (converter == null) {
@@ -68,6 +70,9 @@ public static class JsonContextRegistry {
   /// Contexts are combined in registration order - Core contexts should register first
   /// to ensure infrastructure types (MessageHop, MessageId) take precedence.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:CreateCombinedOptions_WithRegisteredConverters_IncludesConvertersInOptionsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:CreateCombinedOptions_IsAOTCompatible_NoReflectionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:RegisteredConverters_AreInstantiatedAtCompileTime_NotRuntimeAsync</tests>
   /// <returns>JsonSerializerOptions with all registered contexts</returns>
   public static JsonSerializerOptions CreateCombinedOptions() {
     if (_resolvers.IsEmpty) {
@@ -99,5 +104,6 @@ public static class JsonContextRegistry {
   /// <summary>
   /// Gets the count of registered resolvers (for diagnostics/testing).
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:RegisterConverter_WithConverterInstance_AddsToConverterCollectionAsync</tests>
   public static int RegisteredCount => _resolvers.Count;
 }
