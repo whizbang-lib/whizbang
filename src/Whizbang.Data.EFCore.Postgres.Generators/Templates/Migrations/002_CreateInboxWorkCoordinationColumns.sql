@@ -15,31 +15,19 @@ ADD COLUMN IF NOT EXISTS lease_expiry TIMESTAMPTZ NULL;
 ALTER TABLE wh_inbox
 ADD COLUMN IF NOT EXISTS failure_reason INTEGER NOT NULL DEFAULT 99;
 
--- Add status column to track processing state (similar to outbox)
--- NOTE: EF Core creates this as INTEGER (StatusFlags), so this ALTER is just for documentation
--- ALTER TABLE wh_inbox
--- ADD COLUMN IF NOT EXISTS status INTEGER NOT NULL DEFAULT 1;  -- Stored flag
-
 -- Create index for efficient lease expiry queries
 -- Used by WorkCoordinator to find orphaned messages
 CREATE INDEX IF NOT EXISTS idx_inbox_lease_expiry
 ON wh_inbox (lease_expiry)
 WHERE lease_expiry IS NOT NULL;
 
--- Create composite index for status-based queries
--- Used by WorkCoordinator to find pending and orphaned work
-CREATE INDEX IF NOT EXISTS idx_inbox_status_lease
-ON wh_inbox (status, lease_expiry)
-WHERE (status & 32768) = 0 AND (status & 2) != 2;  -- Not failed and not event stored
-
 -- Create index for efficient failure reason filtering
 -- Used by WorkCoordinator to filter and retry messages by failure type
 CREATE INDEX IF NOT EXISTS idx_inbox_failure_reason
-ON wh_inbox (failure_reason)
-WHERE (status & 32768) = 32768;  -- Only index failed messages
+ON wh_inbox (failure_reason);
+-- Note: Partial index WHERE clause removed - inbox doesn't have status column
 
 -- Add comments for documentation
 COMMENT ON COLUMN wh_inbox.instance_id IS 'Service instance ID currently processing this message';
 COMMENT ON COLUMN wh_inbox.lease_expiry IS 'Timestamp when the processing lease expires (for orphaned work recovery)';
-COMMENT ON COLUMN wh_inbox.status IS 'Processing status flags (bitwise): Stored=1, EventStored=2, Published=4, Failed=32768';
 COMMENT ON COLUMN wh_inbox.failure_reason IS 'Classified failure reason (MessageFailureReason enum): None=0, TransportNotReady=1, TransportException=2, SerializationError=3, ValidationError=4, MaxAttemptsExceeded=5, LeaseExpired=6, Unknown=99';

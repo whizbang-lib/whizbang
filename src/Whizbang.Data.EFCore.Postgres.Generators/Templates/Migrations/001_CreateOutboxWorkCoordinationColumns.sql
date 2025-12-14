@@ -24,14 +24,14 @@ WHERE lease_expiry IS NOT NULL;
 -- Create composite index for status-based queries
 -- Used by WorkCoordinator to find pending and orphaned work recovery
 CREATE INDEX IF NOT EXISTS idx_outbox_status_lease
-ON wh_outbox (status, lease_expiry)
-WHERE (status & 32768) = 0 AND (status & 4) != 4;  -- Not failed and not published
+ON wh_outbox (status, lease_expiry);
+-- Note: Partial index WHERE clause removed - status is VARCHAR, not INTEGER with bit flags
 
 -- Create index for efficient failure reason filtering
 -- Used by WorkCoordinator to filter and retry messages by failure type
 CREATE INDEX IF NOT EXISTS idx_outbox_failure_reason
-ON wh_outbox (failure_reason)
-WHERE (status & 32768) = 32768;  -- Only index failed messages
+ON wh_outbox (failure_reason);
+-- Note: Partial index WHERE clause removed - status is VARCHAR, not INTEGER with bit flags
 
 -- Add comments for documentation
 COMMENT ON COLUMN wh_outbox.instance_id IS 'Service instance ID currently processing this message';

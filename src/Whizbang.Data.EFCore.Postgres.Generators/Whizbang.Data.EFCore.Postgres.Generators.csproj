@@ -49,6 +49,8 @@
     <EmbeddedResource Include="Templates\**\*.cs" />
     <!-- Embed SQL migration files as resources -->
     <EmbeddedResource Include="Templates\Migrations\*.sql" />
+    <!-- Embed pre-generated schema SQL -->
+    <EmbeddedResource Include="Resources\*.sql" />
   </ItemGroup>
 
   <!-- Note: Cannot reference Whizbang.Core directly due to TFM incompatibility -->

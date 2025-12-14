@@ -789,72 +789,34 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Generates core infrastructure schema SQL by calling PostgresSchemaBuilder.
-  /// This requires loading Whizbang.Data.Dapper.Postgres assembly at generator runtime.
+  /// Loads pre-generated core infrastructure schema SQL from embedded resource.
+  /// The SQL file is generated once using PostgresSchemaBuilder.BuildInfrastructureSchema()
+  /// and embedded as a resource for AOT compatibility.
   /// Returns escaped SQL string ready to embed in C# verbatim string literal.
   /// </summary>
   private static string GenerateCoreInfrastructureSchema(SourceProductionContext context) {
     try {
-      // Load schema builder assembly from AppDomain
-      var loadedAssemblies = AppDomain.CurrentDomain.GetAssemblies();
-      var dapperAssembly = loadedAssemblies.FirstOrDefault(
-        a => a.GetName().Name == "Whizbang.Data.Dapper.Postgres"
-      );
+      // Read pre-generated schema SQL from embedded resource
+      var assembly = typeof(EFCoreServiceRegistrationGenerator).Assembly;
+      var resourceName = "Whizbang.Data.EFCore.Postgres.Generators.Resources.CoreInfrastructureSchema.sql";
 
-      if (dapperAssembly is null) {
+      using var stream = assembly.GetManifestResourceStream(resourceName);
+      if (stream is null) {
         // Report warning and return empty string
         var descriptor = new DiagnosticDescriptor(
           id: "EFCORE201",
-          title: "Schema Builder Not Available",
-          messageFormat: "Could not load Whizbang.Data.Dapper.Postgres assembly. Core schema will not be pre-generated. Ensure the assembly is referenced by the consuming project.",
+          title: "Core Schema Resource Not Found",
+          messageFormat: "Could not find embedded resource '{0}'. Run the schema generation script to create Resources/CoreInfrastructureSchema.sql.",
           category: "Whizbang.Generator",
           defaultSeverity: DiagnosticSeverity.Warning,
           isEnabledByDefault: true
         );
-        context.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None));
-        return "\"\""; // Empty string - schema builder not available
+        context.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, resourceName));
+        return "\"\""; // Empty string - schema resource not available
       }
 
-      // Get SchemaConfiguration type
-      var configType = dapperAssembly.GetType("Whizbang.Data.Schema.SchemaConfiguration");
-      var builderType = dapperAssembly.GetType("Whizbang.Data.Dapper.Postgres.Schema.PostgresSchemaBuilder");
-
-      if (configType is null || builderType is null) {
-        var descriptor = new DiagnosticDescriptor(
-          id: "EFCORE202",
-          title: "Schema Types Not Found",
-          messageFormat: "Could not find SchemaConfiguration or PostgresSchemaBuilder types in Whizbang.Data.Dapper.Postgres assembly.",
-          category: "Whizbang.Generator",
-          defaultSeverity: DiagnosticSeverity.Warning,
-          isEnabledByDefault: true
-        );
-        context.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None));
-        return "\"\"";
-      }
-
-      // Create SchemaConfiguration instance (prefix: "wh_", perspective prefix: "wb_per_")
-      var config = Activator.CreateInstance(configType, "wh_", "wb_per_", "public", 1);
-
-      // Call PostgresSchemaBuilder.BuildInfrastructureSchema(config)
-      var buildMethod = builderType.GetMethod(
-        "BuildInfrastructureSchema",
-        BindingFlags.Public | BindingFlags.Static
-      );
-
-      if (buildMethod is null) {
-        var descriptor = new DiagnosticDescriptor(
-          id: "EFCORE203",
-          title: "BuildInfrastructureSchema Method Not Found",
-          messageFormat: "Could not find BuildInfrastructureSchema method in PostgresSchemaBuilder.",
-          category: "Whizbang.Generator",
-          defaultSeverity: DiagnosticSeverity.Warning,
-          isEnabledByDefault: true
-        );
-        context.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None));
-        return "\"\"";
-      }
-
-      var sql = (string)buildMethod.Invoke(null, new[] { config })!;
+      using var reader = new System.IO.StreamReader(stream);
+      var sql = reader.ReadToEnd();
 
       // Escape for C# verbatim string literal
       // In verbatim strings, only quotes need escaping (by doubling them)
@@ -867,8 +829,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       // Report success
       var successDescriptor = new DiagnosticDescriptor(
         id: "EFCORE204",
-        title: "Core Infrastructure Schema Generated",
-        messageFormat: "Successfully generated core infrastructure schema ({0} characters) from PostgresSchemaBuilder",
+        title: "Core Infrastructure Schema Loaded",
+        messageFormat: "Successfully loaded pre-generated core infrastructure schema ({0} characters) from embedded resource",
         category: "Whizbang.Generator",
         defaultSeverity: DiagnosticSeverity.Info,
         isEnabledByDefault: true
@@ -880,8 +842,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     } catch (Exception ex) {
       var descriptor = new DiagnosticDescriptor(
         id: "EFCORE205",
-        title: "Schema Generation Failed",
-        messageFormat: "Failed to generate core infrastructure schema: {0}",
+        title: "Schema Loading Failed",
+        messageFormat: "Failed to load core infrastructure schema: {0}",
         category: "Whizbang.Generator",
         defaultSeverity: DiagnosticSeverity.Error,
         isEnabledByDefault: true
