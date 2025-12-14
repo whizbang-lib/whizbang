@@ -49,6 +49,9 @@ public enum PublishContext {
   /// Use for immediate consistency requirements.
   /// Downstream systems are notified before data is durably persisted.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/PublishContextTests.cs:PublishContext_HasImmediate_ValueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/PublishContextTests.cs:PublishContext_Immediate_IsNotEqualTo_PostCommitAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/PublishContextTests.cs:PublishContext_ToString_ReturnsCorrectNamesAsync</tests>
   Immediate = 0,
 
   /// <summary>
@@ -57,5 +60,8 @@ public enum PublishContext {
   /// Downstream systems are notified only after data is durably persisted.
   /// This is the safer pattern for most scenarios.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/PublishContextTests.cs:PublishContext_HasPostCommit_ValueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/PublishContextTests.cs:PublishContext_Immediate_IsNotEqualTo_PostCommitAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/PublishContextTests.cs:PublishContext_ToString_ReturnsCorrectNamesAsync</tests>
   PostCommit = 1
 }
