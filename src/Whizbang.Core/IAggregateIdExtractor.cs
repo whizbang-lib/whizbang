@@ -11,6 +11,8 @@ namespace Whizbang.Core;
 /// assembly that knows about all message types with [AggregateId] attributes.
 /// </remarks>
 /// <docs>infrastructure/policies</docs>
+/// <tests>tests/Whizbang.Generators.Tests/AggregateIdGeneratorTests.cs:Generator_WithAggregateIdAttribute_GeneratesExtractorAsync</tests>
+/// <tests>tests/Whizbang.Policies.Tests/PolicyContextTests.cs:GetAggregateId_WithAggregateIdAttribute_UsesGeneratedExtractorAsync</tests>
 public interface IAggregateIdExtractor {
   /// <summary>
   /// Extracts the aggregate ID from a message using compile-time type information.
@@ -19,5 +21,9 @@ public interface IAggregateIdExtractor {
   /// <param name="message">The message instance</param>
   /// <param name="messageType">The runtime type of the message</param>
   /// <returns>The aggregate ID if found and marked with [AggregateId], otherwise null</returns>
+  /// <tests>tests/Whizbang.Generators.Tests/AggregateIdGeneratorTests.cs:GeneratedExtractor_WithValidMessage_ExtractsCorrectIdAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/AggregateIdGeneratorTests.cs:GeneratedExtractor_WithUnknownType_ReturnsNullAsync</tests>
+  /// <tests>tests/Whizbang.Policies.Tests/PolicyContextTests.cs:GetAggregateId_ReturnsId_WhenMessageContainsAggregateIdAsync</tests>
+  /// <tests>tests/Whizbang.Policies.Tests/PolicyContextTests.cs:GetAggregateId_ThrowsException_WhenMessageDoesNotContainAggregateIdAsync</tests>
   Guid? ExtractAggregateId(object message, Type messageType);
 }
