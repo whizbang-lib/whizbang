@@ -25,6 +25,9 @@ public interface IDispatcher {
   /// <typeparam name="TMessage">The message type</typeparam>
   /// <param name="message">The message to send</param>
   /// <returns>Delivery receipt with correlation information</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Send_WithValidMessage_ShouldReturnDeliveryReceiptAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Send_WithUnknownMessageType_ShouldThrowHandlerNotFoundExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:SendAsync_Generic_CreatesTypedEnvelopeForTracingAsync</tests>
   Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message) where TMessage : notnull;
 
   /// <summary>
@@ -47,6 +50,8 @@ public interface IDispatcher {
   /// <param name="callerFilePath">Caller file path (auto-captured)</param>
   /// <param name="callerLineNumber">Caller line number (auto-captured)</param>
   /// <returns>Delivery receipt with correlation information</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Send_WithContext_ShouldPreserveCorrelationIdInReceiptAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Dispatcher_ShouldTrackCausationChainInReceiptAsync</tests>
   Task<IDeliveryReceipt> SendAsync(
     object message,
     IMessageContext context,
@@ -69,6 +74,9 @@ public interface IDispatcher {
   /// <typeparam name="TResult">The expected business result type</typeparam>
   /// <param name="message">The message to process</param>
   /// <returns>The typed business result from the receptor</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvoke_WithValidMessage_ShouldReturnBusinessResultAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvoke_WithUnknownMessageType_ShouldThrowHandlerNotFoundExceptionAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_DoesNotRequireTypePreservation_ForInProcessRPCAsync</tests>
   ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(TMessage message) where TMessage : notnull;
 
   /// <summary>

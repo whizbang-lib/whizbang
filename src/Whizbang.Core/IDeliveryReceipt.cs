@@ -75,6 +75,8 @@ public enum DeliveryStatus {
 }
 
 /// <summary>
+/// Concrete implementation of IDeliveryReceipt
+/// </summary>
 /// <tests>tests/Whizbang.Core.Tests/DeliveryReceiptTests.cs:Accepted_CreatesReceiptWithAcceptedStatusAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/DeliveryReceiptTests.cs:Queued_CreatesReceiptWithQueuedStatusAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/DeliveryReceiptTests.cs:Delivered_CreatesReceiptWithDeliveredStatusAsync</tests>
@@ -84,8 +86,6 @@ public enum DeliveryStatus {
 /// <tests>tests/Whizbang.Core.Tests/DeliveryReceiptTests.cs:Constructor_ThrowsArgumentNullException_WhenDestinationIsNullAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/DeliveryReceiptTests.cs:Constructor_WithMetadata_CopiesMetadataDictionaryAsync</tests>
 /// <tests>tests/Whizbang.Core.Tests/DeliveryReceiptTests.cs:AllProperties_AreAccessible_ThroughInterfaceAsync</tests>
-/// Concrete implementation of IDeliveryReceipt
-/// </summary>
 /// <remarks>
 /// Creates a new delivery receipt
 /// </remarks>
