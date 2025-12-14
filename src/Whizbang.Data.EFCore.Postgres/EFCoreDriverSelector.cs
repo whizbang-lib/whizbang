@@ -20,6 +20,8 @@ public sealed class EFCoreDriverSelector : IDriverOptions {
   /// <summary>
   /// Gets the service collection for driver registration.
   /// </summary>
+  /// <tests>Whizbang.Data.EFCore.Postgres.Tests/EFCoreDriverSelectorTests.cs:Services_ReturnsCorrectServiceCollectionAsync</tests>
+  /// <tests>Whizbang.Data.EFCore.Postgres.Tests/EFCoreDriverSelectorTests.cs:IDriverOptions_Services_ReturnsSameAsDirectPropertyAsync</tests>
   public IServiceCollection Services { get; }
 
   /// <summary>
@@ -32,6 +34,8 @@ public sealed class EFCoreDriverSelector : IDriverOptions {
   /// </summary>
   /// <param name="services">The service collection to configure.</param>
   /// <param name="dbContextType">The DbContext type to use for storage.</param>
+  /// <tests>Whizbang.Data.EFCore.Postgres.Tests/EFCoreDriverSelectorTests.cs:Constructor_WithNullServices_ThrowsArgumentNullExceptionAsync</tests>
+  /// <tests>Whizbang.Data.EFCore.Postgres.Tests/EFCoreDriverSelectorTests.cs:Constructor_WithNullDbContextType_ThrowsArgumentNullExceptionAsync</tests>
   internal EFCoreDriverSelector(IServiceCollection services, Type dbContextType) {
     Services = services ?? throw new ArgumentNullException(nameof(services));
     DbContextType = dbContextType ?? throw new ArgumentNullException(nameof(dbContextType));
@@ -41,5 +45,7 @@ public sealed class EFCoreDriverSelector : IDriverOptions {
   /// Property that acts as the extension point for driver selection.
   /// Driver packages extend IDriverOptions with properties like .Postgres, .InMemory, etc.
   /// </summary>
+  /// <tests>Whizbang.Data.EFCore.Postgres.Tests/EFCoreDriverSelectorTests.cs:WithDriver_ReturnsIDriverOptionsAsync</tests>
+  /// <tests>Whizbang.Data.EFCore.Postgres.Tests/EFCoreDriverSelectorTests.cs:WithDriver_ReturnsSelfAsync</tests>
   public IDriverOptions WithDriver => this;
 }
