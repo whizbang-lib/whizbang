@@ -16,6 +16,9 @@ public interface IWorkCoordinatorStrategy {
   /// When it's actually stored depends on the strategy (immediate, on flush, on interval, etc.).
   /// </summary>
   /// <param name="message">Pre-serialized outbox message to store</param>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesOnCallAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesQueuedMessagesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:BackgroundTimer_FlushesEveryIntervalAsync</tests>
   void QueueOutboxMessage(OutboxMessage message);
 
   /// <summary>
@@ -23,6 +26,8 @@ public interface IWorkCoordinatorStrategy {
   /// Includes atomic deduplication and optional event store integration.
   /// </summary>
   /// <param name="message">Pre-serialized inbox message to store</param>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueInboxMessage_FlushesOnCallAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:DisposeAsync_FlushesQueuedMessagesAsync</tests>
   void QueueInboxMessage(InboxMessage message);
 
   /// <summary>
@@ -30,6 +35,7 @@ public interface IWorkCoordinatorStrategy {
   /// </summary>
   /// <param name="messageId">Message ID that completed</param>
   /// <param name="completedStatus">Which stages completed successfully</param>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:MultipleQueues_FlushedTogetherOnDisposalAsync</tests>
   void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus);
 
   /// <summary>
@@ -53,6 +59,7 @@ public interface IWorkCoordinatorStrategy {
   /// <param name="messageId">Message ID that failed</param>
   /// <param name="completedStatus">Which stages succeeded before failure</param>
   /// <param name="error">Error message or exception details</param>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:MultipleQueues_FlushedTogetherOnDisposalAsync</tests>
   void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string error);
 
   /// <summary>
@@ -63,6 +70,9 @@ public interface IWorkCoordinatorStrategy {
   /// <param name="flags">Work batch flags (e.g., DebugMode)</param>
   /// <param name="ct">Cancellation token</param>
   /// <returns>Work batch containing messages to process</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:FlushAsync_ImmediatelyCallsWorkCoordinatorAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:FlushAsync_BeforeDisposal_FlushesImmediatelyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:ManualFlushAsync_DoesNotWaitForTimerAsync</tests>
   Task<WorkBatch> FlushAsync(WorkBatchFlags flags, CancellationToken ct = default);
 }
 
