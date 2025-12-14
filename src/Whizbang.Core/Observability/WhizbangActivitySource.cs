@@ -33,11 +33,15 @@ public static class WhizbangActivitySource {
   /// <summary>
   /// ActivitySource for execution strategies (SerialExecutor, ParallelExecutor).
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/WhizbangActivitySourceTests.cs:Execution_ActivitySource_IsInitializedAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/WhizbangActivitySourceTests.cs:ExecutionActivitySource_CanCreateActivitiesAsync</tests>
   public static readonly ActivitySource Execution = new("Whizbang.Execution", "1.0.0");
 
   /// <summary>
   /// ActivitySource for transport operations (InProcessTransport, etc.).
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/WhizbangActivitySourceTests.cs:Transport_ActivitySource_IsInitializedAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/WhizbangActivitySourceTests.cs:TransportActivitySource_CanCreateActivitiesAsync</tests>
   public static readonly ActivitySource Transport = new("Whizbang.Transport", "1.0.0");
 
   /// <summary>
@@ -53,6 +57,8 @@ public static class WhizbangActivitySource {
   /// <param name="activity">The current activity (may be null if no listener).</param>
   /// <param name="exception">The unexpected exception.</param>
   /// <param name="description">Description of where the exception occurred.</param>
+  /// <tests>tests/Whizbang.Observability.Tests/WhizbangActivitySourceTests.cs:RecordDefensiveException_WithNullActivity_DoesNothingAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/WhizbangActivitySourceTests.cs:RecordDefensiveException_WithActivity_SetsStatusAndTagsAsync</tests>
   public static void RecordDefensiveException(Activity? activity, Exception exception, string description) {
     if (activity == null) {
       return;
@@ -71,6 +77,8 @@ public static class WhizbangActivitySource {
   /// </summary>
   /// <param name="activity">The current activity (may be null if no listener).</param>
   /// <param name="context">Description of where the cancellation occurred.</param>
+  /// <tests>tests/Whizbang.Observability.Tests/WhizbangActivitySourceTests.cs:RecordDefensiveCancellation_WithNullActivity_DoesNothingAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/WhizbangActivitySourceTests.cs:RecordDefensiveCancellation_WithActivity_SetsStatusAndTagsAsync</tests>
   public static void RecordDefensiveCancellation(Activity? activity, string context) {
     if (activity == null) {
       return;
