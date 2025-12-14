@@ -339,9 +339,9 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     services.AddSingleton(publishStrategy);
     services.AddSingleton(instanceProvider);
     services.AddSingleton<IWorkChannelWriter>(new TestWorkChannelWriter());  // Required by WorkCoordinatorPublisherWorker
-    services.AddSingleton(new WorkCoordinatorPublisherOptions {
+    services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new WorkCoordinatorPublisherOptions {
       PollingIntervalMilliseconds = 100  // Fast polling for tests
-    });
+    }));
 
     if (logger != null) {
       services.AddSingleton(logger);
