@@ -23,6 +23,10 @@ public static class PolicyContextPool {
   /// Rents a PolicyContext from the pool and initializes it with the specified values.
   /// If the pool is empty, creates a new instance.
   /// </summary>
+  /// <tests>tests/Whizbang.Policies.Tests/PolicyContextPoolTests.cs:Rent_ShouldReturnInitializedContextAsync</tests>
+  /// <tests>tests/Whizbang.Policies.Tests/PolicyContextPoolTests.cs:RentReturn_ShouldReinitializeContextAsync</tests>
+  /// <tests>tests/Whizbang.Policies.Tests/PolicyContextPoolTests.cs:Pool_ShouldCreateNewContext_WhenEmptyAsync</tests>
+  /// <tests>tests/Whizbang.Policies.Tests/PolicyContextPoolTests.cs:Pool_ShouldNotExceedMaxSize_WhenReturningManyContextsAsync</tests>
   public static PolicyContext Rent(
       object message,
       IMessageEnvelope? envelope,
@@ -43,6 +47,9 @@ public static class PolicyContextPool {
   /// Returns a PolicyContext to the pool after resetting it.
   /// If the pool is full, the context is discarded and will be garbage collected.
   /// </summary>
+  /// <tests>tests/Whizbang.Policies.Tests/PolicyContextPoolTests.cs:Return_WithNullContext_ShouldNotThrowAsync</tests>
+  /// <tests>tests/Whizbang.Policies.Tests/PolicyContextPoolTests.cs:RentReturn_ShouldReinitializeContextAsync</tests>
+  /// <tests>tests/Whizbang.Policies.Tests/PolicyContextPoolTests.cs:Pool_ShouldNotExceedMaxSize_WhenReturningManyContextsAsync</tests>
   public static void Return(PolicyContext? context) {
     if (context is null) {
       return;
