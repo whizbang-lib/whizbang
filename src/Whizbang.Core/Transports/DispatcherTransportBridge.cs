@@ -53,6 +53,10 @@ public class DispatcherTransportBridge(
   /// <param name="message">The message to publish</param>
   /// <param name="destination">The remote destination</param>
   /// <param name="context">Optional message context (creates new if null)</param>
+  /// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:PublishToTransportAsync_WithMessage_DeliversToRemoteDestinationAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:PublishToTransportAsync_AutomaticallySerializesMessageAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:PublishToTransportAsync_PreservesCorrelationIdAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:PublishToTransportAsync_CreatesEnvelopeWithHopAsync</tests>
   public async Task PublishToTransportAsync<TMessage>(
     TMessage message,
     TransportDestination destination,
@@ -81,6 +85,8 @@ public class DispatcherTransportBridge(
   /// <param name="destination">The remote destination</param>
   /// <param name="context">Optional message context (creates new if null)</param>
   /// <returns>The typed response from the remote service</returns>
+  /// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:SendToTransportAsync_WithRequestResponse_ReturnsTypedResponseAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:SendToTransportAsync_WithExplicitContext_PreservesCorrelationIdAsync</tests>
   public async Task<TResponse> SendToTransportAsync<TRequest, TResponse>(
     TRequest request,
     TransportDestination destination,
@@ -114,6 +120,8 @@ public class DispatcherTransportBridge(
   /// <typeparam name="TMessage">The message type to subscribe to</typeparam>
   /// <param name="destination">The transport destination to subscribe to</param>
   /// <returns>Subscription that can be disposed to stop routing</returns>
+  /// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:SubscribeFromTransportAsync_RoutesIncomingMessagesToDispatcherAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs:SubscribeFromTransportAsync_DeserializesAndInvokesLocalReceptorAsync</tests>
   public async Task<ISubscription> SubscribeFromTransportAsync<TMessage>(
     TransportDestination destination
   ) where TMessage : notnull {
