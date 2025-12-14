@@ -714,11 +714,23 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       actualLeaseExpiry = DateTimeOffset.UtcNow.AddMinutes(5);
     }
 
+    // Create minimal envelope JSON for testing (MessageType → envelope type, MessageData → envelope JSON)
+    // The envelope structure is: { "MessageId": "guid", "Hops": [], "Payload": {} }
+    var envelopeTypeFullName = typeof(TestMessageEnvelope).AssemblyQualifiedName
+      ?? throw new InvalidOperationException("Could not get envelope type name");
+    var envelopeJson = $$"""
+      {
+        "MessageId": "{{messageId}}",
+        "Hops": [],
+        "Payload": { "Data": "test" }
+      }
+      """;
+
     dbContext.Set<OutboxRecord>().Add(new OutboxRecord {
       MessageId = messageId,
       Destination = destination,
-      MessageType = messageType,
-      MessageData = JsonDocument.Parse(messageData),
+      MessageType = envelopeTypeFullName,  // Store envelope type (maps to event_type column)
+      MessageData = JsonDocument.Parse(envelopeJson),  // Store complete envelope (maps to event_data column)
       Metadata = JsonDocument.Parse(metadata ?? "{}"),
       Scope = null,
       StatusFlags = (MessageProcessingStatus)statusFlags,
@@ -788,11 +800,23 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       actualLeaseExpiry = DateTimeOffset.UtcNow.AddMinutes(5);
     }
 
+    // Create minimal envelope JSON for testing (MessageType → envelope type, MessageData → envelope JSON)
+    // The envelope structure is: { "MessageId": "guid", "Hops": [], "Payload": {} }
+    var envelopeTypeFullName = typeof(TestMessageEnvelope).AssemblyQualifiedName
+      ?? throw new InvalidOperationException("Could not get envelope type name");
+    var envelopeJson = $$"""
+      {
+        "MessageId": "{{messageId}}",
+        "Hops": [],
+        "Payload": { "Data": "test" }
+      }
+      """;
+
     dbContext.Set<InboxRecord>().Add(new InboxRecord {
       MessageId = messageId,
       HandlerName = handlerName,
-      MessageType = messageType,
-      MessageData = JsonDocument.Parse(messageData),
+      MessageType = envelopeTypeFullName,  // Store envelope type (maps to event_type column)
+      MessageData = JsonDocument.Parse(envelopeJson),  // Store complete envelope (maps to event_data column)
       Metadata = JsonDocument.Parse("{}"),
       Scope = null,
       StatusFlags = (MessageProcessingStatus)statusFlags,
@@ -1508,11 +1532,23 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       actualLeaseExpiry = DateTimeOffset.UtcNow.AddMinutes(5);
     }
 
+    // Create minimal envelope JSON for testing (MessageType → envelope type, MessageData → envelope JSON)
+    // The envelope structure is: { "MessageId": "guid", "Hops": [], "Payload": {} }
+    var envelopeTypeFullName = typeof(TestMessageEnvelope).AssemblyQualifiedName
+      ?? throw new InvalidOperationException("Could not get envelope type name");
+    var envelopeJson = $$"""
+      {
+        "MessageId": "{{messageId}}",
+        "Hops": [],
+        "Payload": { "Data": "test" }
+      }
+      """;
+
     dbContext.Set<OutboxRecord>().Add(new OutboxRecord {
       MessageId = messageId,
       Destination = destination,
-      MessageType = messageType,
-      MessageData = JsonDocument.Parse(messageData),
+      MessageType = envelopeTypeFullName,  // Store envelope type (maps to event_type column)
+      MessageData = JsonDocument.Parse(envelopeJson),  // Store complete envelope (maps to event_data column)
       Metadata = JsonDocument.Parse("{}"),
       Scope = null,
       StatusFlags = (MessageProcessingStatus)statusFlags,
