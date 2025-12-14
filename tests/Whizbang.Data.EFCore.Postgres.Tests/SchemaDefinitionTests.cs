@@ -38,7 +38,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await Assert.That(tables).Contains("wh_message_deduplication");
     await Assert.That(tables).Contains("wh_inbox");
     await Assert.That(tables).Contains("wh_outbox");
-    await Assert.That(tables).Contains("wh_events");
+    await Assert.That(tables).Contains("wh_event_store");
     await Assert.That(tables).Contains("wh_receptor_processing");
     await Assert.That(tables).Contains("wh_perspective_checkpoints");
     await Assert.That(tables).Contains("wh_request_response");
@@ -153,7 +153,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await Assert.That(foreignKeys).HasCount().GreaterThanOrEqualTo(1);
     var eventFk = foreignKeys.FirstOrDefault(fk => fk.Column == "event_id");
     await Assert.That(eventFk).IsNotEqualTo(default((string, string, string)));
-    await Assert.That(eventFk.RefTable).IsEqualTo("wh_events");
+    await Assert.That(eventFk.RefTable).IsEqualTo("wh_event_store");
     await Assert.That(eventFk.RefColumn).IsEqualTo("event_id");
   }
 
@@ -192,7 +192,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await Assert.That(foreignKeys).HasCount().GreaterThanOrEqualTo(1);
     var eventFk = foreignKeys.FirstOrDefault(fk => fk.Column == "last_event_id");
     await Assert.That(eventFk).IsNotEqualTo(default((string, string, string)));
-    await Assert.That(eventFk.RefTable).IsEqualTo("wh_events");
+    await Assert.That(eventFk.RefTable).IsEqualTo("wh_event_store");
     await Assert.That(eventFk.RefColumn).IsEqualTo("event_id");
   }
 
@@ -307,7 +307,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_message_deduplication");
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_inbox");
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_outbox");
-    await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_events");
+    await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_event_store");
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_receptor_processing");
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_perspective_checkpoints");
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_request_response");

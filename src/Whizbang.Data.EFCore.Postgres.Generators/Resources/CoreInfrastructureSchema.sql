@@ -59,16 +59,19 @@ CREATE INDEX IF NOT EXISTS idx_outbox_published_at ON wh_outbox (published_at);
 -- Event Store - Event sourcing and audit trail
 CREATE TABLE IF NOT EXISTS wh_event_store (
   event_id UUID NOT NULL PRIMARY KEY,
+  stream_id UUID NOT NULL,
   aggregate_id UUID NOT NULL,
   aggregate_type VARCHAR(500) NOT NULL,
   event_type VARCHAR(500) NOT NULL,
   event_data JSONB NOT NULL,
   metadata JSONB NOT NULL,
+  scope JSONB NULL,
   sequence_number BIGINT NOT NULL,
   version INTEGER NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS idx_event_store_stream ON wh_event_store (stream_id, version);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_event_store_aggregate ON wh_event_store (aggregate_id, version);
 CREATE INDEX IF NOT EXISTS idx_event_store_aggregate_type ON wh_event_store (aggregate_type, created_at);
 CREATE INDEX IF NOT EXISTS idx_event_store_sequence ON wh_event_store (sequence_number);
