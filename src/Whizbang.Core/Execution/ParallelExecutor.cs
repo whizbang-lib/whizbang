@@ -5,6 +5,9 @@ using Whizbang.Core.Policies;
 namespace Whizbang.Core.Execution;
 
 /// <summary>
+/// Executes handlers concurrently with no ordering guarantees.
+/// Supports configurable concurrency limits via SemaphoreSlim.
+/// </summary>
 /// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:Constructor_WithValidMaxConcurrency_CreatesExecutorWithCorrectNameAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:Constructor_WithInvalidMaxConcurrency_ThrowsArgumentOutOfRangeExceptionAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:ExecuteAsync_WhenNotRunning_ThrowsInvalidOperationExceptionAsync</tests>
@@ -18,9 +21,6 @@ namespace Whizbang.Core.Execution;
 /// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:DrainAsync_WhenNotRunning_ReturnsImmediatelyAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:ExecuteAsync_ParallelExecution_RunsConcurrentlyAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:ExecuteAsync_CancellationToken_CancelsSemaphoreWaitAsync</tests>
-/// Executes handlers concurrently with no ordering guarantees.
-/// Supports configurable concurrency limits via SemaphoreSlim.
-/// </summary>
 public class ParallelExecutor : IExecutionStrategy {
   private enum State { NotStarted, Running, Stopped }
 
