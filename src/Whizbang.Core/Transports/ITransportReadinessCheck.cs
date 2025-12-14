@@ -26,5 +26,9 @@ public interface ITransportReadinessCheck {
   /// This method should be fast and lightweight. If the check requires network I/O,
   /// consider implementing caching or circuit breaker patterns to avoid excessive overhead.
   /// </remarks>
+  /// <tests>Whizbang.Core.Tests/Transports/TransportReadinessCheckTests.cs:AlwaysReadyCheck_ReturnsTrue_WhenCalledAsync</tests>
+  /// <tests>Whizbang.Core.Tests/Transports/TransportReadinessCheckTests.cs:NeverReadyCheck_ReturnsFalse_WhenCalledAsync</tests>
+  /// <tests>Whizbang.Core.Tests/Transports/TransportReadinessCheckTests.cs:ConfigurableCheck_ReturnsConfiguredValue_WhenCalledAsync</tests>
+  /// <tests>Whizbang.Core.Tests/Transports/TransportReadinessCheckTests.cs:ConfigurableCheck_RespectsCancellationToken_WhenCancelledAsync</tests>
   Task<bool> IsReadyAsync(CancellationToken cancellationToken = default);
 }
