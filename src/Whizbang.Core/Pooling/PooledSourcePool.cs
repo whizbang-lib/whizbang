@@ -28,6 +28,15 @@ public static class PooledSourcePool<T> {
   /// Gets a pooled PooledValueTaskSource{T} or creates a new one if pool is empty.
   /// Caller is responsible for calling Reset() before use.
   /// </summary>
+  /// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:Rent_ReturnsValidInstance_AlwaysAsync</tests>
+  /// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:Rent_ReturnsPooledInstance_AfterReturnAsync</tests>
+  /// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:RentAfterReset_HasIncrementedTokenAsync</tests>
+  /// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:MultipleRentReturn_WorksCorrectly_ParameterizedAsync</tests>
+  /// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:SequentialRentReturn_ReusesSingleInstanceAsync</tests>
+  /// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:ConcurrentRentReturn_ThreadSafe_ParallelOperationsAsync</tests>
+  /// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:ConcurrentRent_CreatesMultipleInstances_WhenPoolEmptyAsync</tests>
+  /// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:RealisticPattern_RentSetResultReturnAsync</tests>
+  /// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:RealisticPattern_HighThroughput_MinimalAllocationsAsync</tests>
   public static PooledValueTaskSource<T> Rent() {
     if (_pool.TryTake(out var source)) {
       return source;
@@ -39,6 +48,13 @@ public static class PooledSourcePool<T> {
   /// Returns a PooledValueTaskSource{T} to the pool for reuse.
   /// Caller should call Reset() before returning.
   /// </summary>
+  /// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:Return_MakesInstanceAvailableForReuseAsync</tests>
+  /// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:RentReturn_ReusesSameInstance_VerifyReferenceEqualityAsync</tests>
+  /// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:MultipleRentReturn_WorksCorrectly_ParameterizedAsync</tests>
+  /// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:SequentialRentReturn_ReusesSingleInstanceAsync</tests>
+  /// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:ConcurrentRentReturn_ThreadSafe_ParallelOperationsAsync</tests>
+  /// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:RealisticPattern_RentSetResultReturnAsync</tests>
+  /// <tests>tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs:RealisticPattern_HighThroughput_MinimalAllocationsAsync</tests>
   public static void Return(PooledValueTaskSource<T> source) {
     _pool.Add(source);
   }
