@@ -30,6 +30,9 @@ public static class PostgresDriverExtensions {
     ///     .WithDriver.Postgres;
     /// </code>
     /// </example>
+    /// <tests>Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_WithValidEFCoreSelector_ReturnsWhizbangPerspectiveBuilderAsync</tests>
+    /// <tests>Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_ReturnedBuilder_HasSameServicesAsync</tests>
+    /// <tests>Whizbang.Data.EFCore.Postgres.Tests/PostgresDriverExtensionsTests.cs:Postgres_WithNonEFCoreDriverOptions_ThrowsInvalidOperationExceptionAsync</tests>
     public WhizbangPerspectiveBuilder Postgres {
       get {
         if (options is not EFCoreDriverSelector selector) {
