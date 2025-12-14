@@ -41,6 +41,12 @@ public class InMemorySequenceProvider : ISequenceProvider {
   /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:SequentialAccess_VariousCallCounts_ShouldCompleteQuicklyAsync</tests>
   /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:ConcurrentAccess_ManyStreams_ShouldDistributeEvenlyAsync</tests>
   /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:CancellationToken_Cancelled_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetNextAsync_FirstCall_ShouldReturnZeroAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetNextAsync_MultipleCalls_ShouldIncrementMonotonicallyAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetNextAsync_DifferentStreamKeys_ShouldMaintainSeparateSequencesAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetNextAsync_ConcurrentCalls_ShouldMaintainMonotonicityAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetNextAsync_ManyCalls_ShouldNeverSkipOrDuplicateAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:CancellationToken_WhenCancelled_ShouldThrowAsync</tests>
   public Task<long> GetNextAsync(string streamKey, CancellationToken ct = default) {
     ct.ThrowIfCancellationRequested();
 
@@ -63,6 +69,10 @@ public class InMemorySequenceProvider : ISequenceProvider {
   /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:GetCurrent_AfterMultipleCalls_ShouldReturnLatestAsync</tests>
   /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:ResetDuringConcurrentAccess_ShouldNotCorruptAsync</tests>
   /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:CancellationToken_Cancelled_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetCurrentAsync_WithoutGetNext_ShouldReturnNegativeOneAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetCurrentAsync_AfterGetNext_ShouldReturnLastIssuedSequenceAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:GetCurrentAsync_DoesNotIncrement_ShouldReturnSameValueAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:CancellationToken_WhenCancelled_ShouldThrowAsync</tests>
   public Task<long> GetCurrentAsync(string streamKey, CancellationToken ct = default) {
     ct.ThrowIfCancellationRequested();
 
@@ -82,6 +92,10 @@ public class InMemorySequenceProvider : ISequenceProvider {
   /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:ResetDuringConcurrentAccess_ShouldNotCorruptAsync</tests>
   /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:NegativeResetValue_ShouldWorkCorrectlyAsync</tests>
   /// <tests>tests/Whizbang.Sequencing.Tests/InMemorySequenceProviderTests.cs:CancellationToken_Cancelled_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:ResetAsync_WithDefaultValue_ShouldResetToZeroAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:ResetAsync_WithCustomValue_ShouldResetToSpecifiedValueAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:ResetAsync_MultipleTimes_ShouldAlwaysResetAsync</tests>
+  /// <tests>tests/Whizbang.Sequencing.Tests/SequenceProviderContractTests.cs:CancellationToken_WhenCancelled_ShouldThrowAsync</tests>
   public Task ResetAsync(string streamKey, long newValue = 0, CancellationToken ct = default) {
     ct.ThrowIfCancellationRequested();
 

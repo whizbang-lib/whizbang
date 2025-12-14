@@ -30,6 +30,9 @@ public static class InMemoryDriverExtensions {
     ///     .WithDriver.InMemory;
     /// </code>
     /// </example>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InMemoryDriverExtensionsTests.cs:InMemory_WithValidEFCoreSelector_ReturnsWhizbangPerspectiveBuilderAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InMemoryDriverExtensionsTests.cs:InMemory_ReturnedBuilder_HasSameServicesAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InMemoryDriverExtensionsTests.cs:InMemory_WithNonEFCoreDriverOptions_ThrowsInvalidOperationExceptionAsync</tests>
     public WhizbangPerspectiveBuilder InMemory {
       get {
         if (options is not EFCoreDriverSelector selector) {
