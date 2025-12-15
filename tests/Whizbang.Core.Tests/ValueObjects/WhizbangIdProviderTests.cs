@@ -17,90 +17,120 @@ public class WhizbangIdProviderTests {
   [Test]
   public async Task SetProvider_WithValidProvider_ShouldUseCustomProviderAsync() {
     // Arrange
-    // TODO: Implement test for WhizbangIdProvider.SetProvider
-    // Verify custom provider is used for ID generation
+    var expectedGuid = Guid.Parse("12345678-1234-5678-1234-567812345678");
+    var testProvider = new TestIdProvider(expectedGuid);
 
-    // Act
-    // This stub documents the test gap
+    try {
+      // Act
+      WhizbangIdProvider.SetProvider(testProvider);
+      var result = WhizbangIdProvider.NewGuid();
 
-    // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+      // Assert
+      await Assert.That(result).IsEqualTo(expectedGuid);
+    } finally {
+      // Restore default provider to avoid test pollution
+      WhizbangIdProvider.SetProvider(new Uuid7IdProvider());
+    }
   }
 
   [Test]
   public async Task SetProvider_WithNullProvider_ShouldThrowArgumentNullExceptionAsync() {
-    // Arrange
-    // TODO: Implement test for WhizbangIdProvider.SetProvider null validation
-
-    // Act
-    // This stub documents the test gap
-
-    // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    // Arrange & Act & Assert
+    await Assert.That(() => WhizbangIdProvider.SetProvider(null!))
+      .ThrowsExactly<ArgumentNullException>()
+      .WithParameterName("provider");
   }
 
   [Test]
   public async Task NewGuid_WithDefaultProvider_ShouldReturnUuidV7Async() {
     // Arrange
-    // TODO: Implement test for WhizbangIdProvider.NewGuid default behavior
-    // Default provider should be Uuid7IdProvider
+    // Ensure default provider is in place
+    WhizbangIdProvider.SetProvider(new Uuid7IdProvider());
 
     // Act
-    // This stub documents the test gap
+    var result = WhizbangIdProvider.NewGuid();
 
-    // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    // Assert - UUIDv7 has version bits set to 0x7 in the most significant 4 bits of byte 7
+    var bytes = result.ToByteArray();
+    var version = (bytes[7] & 0xF0) >> 4;
 
-    await Task.CompletedTask;
+    await Assert.That(version).IsEqualTo(0x7);
+    await Assert.That(result).IsNotEqualTo(Guid.Empty);
   }
 
   [Test]
   public async Task NewGuid_WithCustomProvider_ShouldReturnCustomGuidAsync() {
     // Arrange
-    // TODO: Implement test for WhizbangIdProvider.NewGuid with custom provider
-    // Create a custom provider and verify it's used
+    var expectedGuid = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+    var customProvider = new TestIdProvider(expectedGuid);
 
-    // Act
-    // This stub documents the test gap
+    try {
+      // Act
+      WhizbangIdProvider.SetProvider(customProvider);
+      var result = WhizbangIdProvider.NewGuid();
 
-    // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+      // Assert
+      await Assert.That(result).IsEqualTo(expectedGuid);
+    } finally {
+      // Restore default provider
+      WhizbangIdProvider.SetProvider(new Uuid7IdProvider());
+    }
   }
 
   [Test]
   public async Task SetProvider_CalledMultipleTimes_ShouldUseLatestProviderAsync() {
     // Arrange
-    // TODO: Implement test for WhizbangIdProvider.SetProvider replacement
-    // Verify that calling SetProvider again replaces the previous provider
+    var firstGuid = Guid.Parse("11111111-1111-1111-1111-111111111111");
+    var secondGuid = Guid.Parse("22222222-2222-2222-2222-222222222222");
+    var providerA = new TestIdProvider(firstGuid);
+    var providerB = new TestIdProvider(secondGuid);
 
-    // Act
-    // This stub documents the test gap
+    try {
+      // Act
+      WhizbangIdProvider.SetProvider(providerA);
+      var firstResult = WhizbangIdProvider.NewGuid();
 
-    // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+      WhizbangIdProvider.SetProvider(providerB);
+      var secondResult = WhizbangIdProvider.NewGuid();
 
-    await Task.CompletedTask;
+      // Assert
+      await Assert.That(firstResult).IsEqualTo(firstGuid);
+      await Assert.That(secondResult).IsEqualTo(secondGuid);
+    } finally {
+      // Restore default provider
+      WhizbangIdProvider.SetProvider(new Uuid7IdProvider());
+    }
   }
 
   [Test]
   public async Task NewGuid_ThreadSafety_ShouldHandleConcurrentCallsAsync() {
     // Arrange
-    // TODO: Implement test for WhizbangIdProvider.NewGuid thread safety
-    // Verify safe concurrent access to the global provider
+    WhizbangIdProvider.SetProvider(new Uuid7IdProvider());
+    const int taskCount = 10;
+    const int iterationsPerTask = 100;
 
-    // Act
-    // This stub documents the test gap
+    // Act - Call NewGuid from multiple parallel tasks
+    var tasks = Enumerable.Range(0, taskCount).Select(async _ => {
+      var guids = new List<Guid>();
+      for (int i = 0; i < iterationsPerTask; i++) {
+        guids.Add(WhizbangIdProvider.NewGuid());
+      }
+      return guids;
+    });
+
+    var results = await Task.WhenAll(tasks);
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    // All tasks completed without exception
+    await Assert.That(results).HasCount().EqualTo(taskCount);
 
-    await Task.CompletedTask;
+    // All GUIDs are unique
+    var allGuids = results.SelectMany(g => g).ToList();
+    await Assert.That(allGuids).HasCount().EqualTo(taskCount * iterationsPerTask);
+    await Assert.That(allGuids.Distinct()).HasCount().EqualTo(taskCount * iterationsPerTask);
+
+    // All GUIDs are non-empty
+    await Assert.That(allGuids).DoesNotContain(Guid.Empty);
   }
 
   // Custom test provider for testing

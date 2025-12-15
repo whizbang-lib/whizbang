@@ -17,88 +17,93 @@ public class Uuid7IdProviderTests {
   [Test]
   public async Task NewGuid_ShouldReturnNonEmptyGuidAsync() {
     // Arrange
-    // TODO: Implement test for Uuid7IdProvider.NewGuid
+    var provider = new Uuid7IdProvider();
 
     // Act
-    // This stub documents the test gap
+    var result = provider.NewGuid();
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(result).IsNotEqualTo(Guid.Empty);
   }
 
   [Test]
   public async Task NewGuid_CalledMultipleTimes_ShouldReturnUniqueGuidsAsync() {
     // Arrange
-    // TODO: Implement test for Uuid7IdProvider.NewGuid uniqueness
+    var provider = new Uuid7IdProvider();
+    var guids = new HashSet<Guid>();
+    const int count = 100;
 
     // Act
-    // This stub documents the test gap
+    for (int i = 0; i < count; i++) {
+      guids.Add(provider.NewGuid());
+    }
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(guids).HasCount().EqualTo(count);
   }
 
   [Test]
   public async Task NewGuid_CalledSequentially_ShouldReturnTimeOrderedGuidsAsync() {
     // Arrange
-    // TODO: Implement test for Uuid7IdProvider.NewGuid time-ordering
-    // UUIDv7 should be sortable by creation time
+    var provider = new Uuid7IdProvider();
+    var previousGuid = provider.NewGuid();
 
-    // Act
-    // This stub documents the test gap
-
-    // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    // Act & Assert
+    for (int i = 0; i < 10; i++) {
+      var currentGuid = provider.NewGuid();
+      await Assert.That(currentGuid.CompareTo(previousGuid)).IsGreaterThanOrEqualTo(0);
+      previousGuid = currentGuid;
+    }
   }
 
   [Test]
   public async Task NewGuid_ShouldReturnValidUuidV7FormatAsync() {
     // Arrange
-    // TODO: Implement test for Uuid7IdProvider.NewGuid UUIDv7 format validation
-    // Verify the version bits are correct for UUIDv7
+    var provider = new Uuid7IdProvider();
 
     // Act
-    // This stub documents the test gap
+    var result = provider.NewGuid();
+    var bytes = result.ToByteArray();
 
-    // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    // Assert - UUIDv7 has version bits 0111 in high nibble of byte 7
+    var versionByte = bytes[7];
+    var highNibble = versionByte >> 4;
+    await Assert.That(highNibble).IsEqualTo(0x7);
   }
 
   [Test]
   public async Task NewGuid_ShouldBeCompatibleWithStandardGuidAsync() {
     // Arrange
-    // TODO: Implement test for Uuid7IdProvider.NewGuid Guid compatibility
-    // Should be usable anywhere a standard Guid is expected
+    var provider = new Uuid7IdProvider();
 
     // Act
-    // This stub documents the test gap
+    var result = provider.NewGuid();
 
-    // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    // Assert - Can use standard Guid methods
+    var stringRepresentation = result.ToString();
+    var byteArray = result.ToByteArray();
+    var parsedGuid = Guid.Parse(stringRepresentation);
 
-    await Task.CompletedTask;
+    await Assert.That(stringRepresentation).IsNotNull();
+    await Assert.That(byteArray).HasCount().EqualTo(16);
+    await Assert.That(parsedGuid).IsEqualTo(result);
   }
 
   [Test]
   public async Task NewGuid_HighVolume_ShouldMaintainOrderingAsync() {
     // Arrange
-    // TODO: Implement test for Uuid7IdProvider.NewGuid ordering under load
-    // Generate many GUIDs rapidly and verify they remain ordered
+    var provider = new Uuid7IdProvider();
+    const int count = 1000;
+    var guids = new List<Guid>(count);
 
     // Act
-    // This stub documents the test gap
+    for (int i = 0; i < count; i++) {
+      guids.Add(provider.NewGuid());
+    }
 
-    // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    // Assert - Verify all GUIDs are in ascending order
+    for (int i = 1; i < guids.Count; i++) {
+      await Assert.That(guids[i].CompareTo(guids[i - 1])).IsGreaterThanOrEqualTo(0);
+    }
   }
 }

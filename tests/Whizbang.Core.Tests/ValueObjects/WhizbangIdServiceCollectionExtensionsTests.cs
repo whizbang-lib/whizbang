@@ -18,127 +18,170 @@ public class WhizbangIdServiceCollectionExtensionsTests {
   [Test]
   public async Task AddWhizbangIdFactory_WithValidFactory_ShouldRegisterFactoryAsync() {
     // Arrange
-    // TODO: Implement test for AddWhizbangIdFactory
-    // Verify factory is registered as singleton in DI container
+    var services = new ServiceCollection();
 
     // Act
-    // This stub documents the test gap
+    services.AddWhizbangIdFactory<ITestId, TestIdFactory>();
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    var descriptor = services.FirstOrDefault(s => s.ServiceType == typeof(IWhizbangIdFactory<ITestId>));
+    await Assert.That(descriptor).IsNotNull();
+    await Assert.That(descriptor!.ImplementationType).IsEqualTo(typeof(TestIdFactory));
+    await Assert.That(descriptor.Lifetime).IsEqualTo(ServiceLifetime.Singleton);
   }
 
   [Test]
   public async Task AddWhizbangIdFactory_ShouldReturnServiceCollectionAsync() {
     // Arrange
-    // TODO: Implement test for AddWhizbangIdFactory fluent API
-    // Verify method returns IServiceCollection for chaining
+    var services = new ServiceCollection();
 
     // Act
-    // This stub documents the test gap
+    var result = services.AddWhizbangIdFactory<ITestId, TestIdFactory>();
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(result).IsEqualTo(services);
   }
 
   [Test]
   public async Task AddWhizbangIdFactory_RegisteredFactory_CanBeResolvedAsync() {
     // Arrange
-    // TODO: Implement test for AddWhizbangIdFactory resolution
-    // Create service provider and resolve registered factory
+    var services = new ServiceCollection();
+    services.AddWhizbangIdFactory<ITestId, TestIdFactory>();
 
     // Act
-    // This stub documents the test gap
+    var serviceProvider = services.BuildServiceProvider();
+    var factory = serviceProvider.GetService<IWhizbangIdFactory<ITestId>>();
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    await Assert.That(factory).IsNotNull();
+    await Assert.That(factory).IsTypeOf<TestIdFactory>();
 
-    await Task.CompletedTask;
+    // Verify factory works
+    var id = factory!.Create();
+    await Assert.That(id).IsNotNull();
+    await Assert.That(id).IsTypeOf<TestId>();
   }
 
   [Test]
   public async Task AddWhizbangIdFactory_MultipleFactories_ShouldRegisterAllAsync() {
     // Arrange
-    // TODO: Implement test for multiple factory registration
-    // Register multiple WhizbangId factories and verify all are available
+    var services = new ServiceCollection();
+    services.AddWhizbangIdFactory<ITestId, TestIdFactory>();
+    services.AddWhizbangIdFactory<ISecondTestId, SecondTestIdFactory>();
 
     // Act
-    // This stub documents the test gap
+    var serviceProvider = services.BuildServiceProvider();
+    var factory1 = serviceProvider.GetService<IWhizbangIdFactory<ITestId>>();
+    var factory2 = serviceProvider.GetService<IWhizbangIdFactory<ISecondTestId>>();
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(factory1).IsNotNull();
+    await Assert.That(factory1).IsTypeOf<TestIdFactory>();
+    await Assert.That(factory2).IsNotNull();
+    await Assert.That(factory2).IsTypeOf<SecondTestIdFactory>();
   }
 
   [Test]
   public async Task ConfigureWhizbangIdProvider_WithValidProvider_ShouldSetGlobalProviderAsync() {
     // Arrange
-    // TODO: Implement test for ConfigureWhizbangIdProvider
-    // Verify global provider is configured
+    var services = new ServiceCollection();
+    var expectedGuid = Guid.Parse("12345678-9abc-def0-1234-567890abcdef");
+    var testProvider = new TestIdProvider(expectedGuid);
 
-    // Act
-    // This stub documents the test gap
+    try {
+      // Act
+      services.ConfigureWhizbangIdProvider(testProvider);
+      var result = WhizbangIdProvider.NewGuid();
 
-    // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+      // Assert
+      await Assert.That(result).IsEqualTo(expectedGuid);
+    } finally {
+      // Restore default provider
+      WhizbangIdProvider.SetProvider(new Uuid7IdProvider());
+    }
   }
 
   [Test]
   public async Task ConfigureWhizbangIdProvider_ShouldReturnServiceCollectionAsync() {
     // Arrange
-    // TODO: Implement test for ConfigureWhizbangIdProvider fluent API
-    // Verify method returns IServiceCollection for chaining
+    var services = new ServiceCollection();
+    var testProvider = new TestIdProvider(Guid.NewGuid());
 
-    // Act
-    // This stub documents the test gap
+    try {
+      // Act
+      var result = services.ConfigureWhizbangIdProvider(testProvider);
 
-    // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+      // Assert
+      await Assert.That(result).IsEqualTo(services);
+    } finally {
+      // Restore default provider
+      WhizbangIdProvider.SetProvider(new Uuid7IdProvider());
+    }
   }
 
   [Test]
   public async Task ConfigureWhizbangIdProvider_WithCustomProvider_ShouldAffectGlobalGenerationAsync() {
     // Arrange
-    // TODO: Implement test for ConfigureWhizbangIdProvider global effect
-    // Configure custom provider and verify WhizbangIdProvider.NewGuid uses it
+    var services = new ServiceCollection();
+    var expectedGuid = Guid.Parse("fedcba98-7654-3210-fedc-ba9876543210");
+    var customProvider = new TestIdProvider(expectedGuid);
 
-    // Act
-    // This stub documents the test gap
+    try {
+      // Act
+      services.ConfigureWhizbangIdProvider(customProvider);
 
-    // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+      // Generate IDs and verify they use custom provider
+      var id1 = WhizbangIdProvider.NewGuid();
+      var id2 = WhizbangIdProvider.NewGuid();
 
-    await Task.CompletedTask;
+      // Assert
+      await Assert.That(id1).IsEqualTo(expectedGuid);
+      await Assert.That(id2).IsEqualTo(expectedGuid);
+    } finally {
+      // Restore default provider
+      WhizbangIdProvider.SetProvider(new Uuid7IdProvider());
+    }
   }
 
   [Test]
   public async Task AddWhizbangIdFactory_FactoryLifetime_ShouldBeSingletonAsync() {
     // Arrange
-    // TODO: Implement test for factory lifetime
-    // Verify factories are registered as singleton (stateless, thread-safe)
+    var services = new ServiceCollection();
+    services.AddWhizbangIdFactory<ITestId, TestIdFactory>();
 
     // Act
-    // This stub documents the test gap
+    var serviceProvider = services.BuildServiceProvider();
+    var factory1 = serviceProvider.GetService<IWhizbangIdFactory<ITestId>>();
+    var factory2 = serviceProvider.GetService<IWhizbangIdFactory<ITestId>>();
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(factory1).IsNotNull();
+    await Assert.That(factory2).IsNotNull();
+    await Assert.That(ReferenceEquals(factory1, factory2)).IsTrue();
   }
 
   // Test factory for testing
   private interface ITestId { }
   private class TestId : ITestId { }
   private class TestIdFactory : IWhizbangIdFactory<ITestId> {
-    public ITestId New() => new TestId();
+    public ITestId Create() => new TestId();
+  }
+
+  // Second test factory for multiple factory registration test
+  private interface ISecondTestId { }
+  private class SecondTestId : ISecondTestId { }
+  private class SecondTestIdFactory : IWhizbangIdFactory<ISecondTestId> {
+    public ISecondTestId Create() => new SecondTestId();
+  }
+
+  // Custom test provider for testing
+  private class TestIdProvider : IWhizbangIdProvider {
+    private readonly Guid _fixedGuid;
+
+    public TestIdProvider(Guid fixedGuid) {
+      _fixedGuid = fixedGuid;
+    }
+
+    public Guid NewGuid() => _fixedGuid;
   }
 }
