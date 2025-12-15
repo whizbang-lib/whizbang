@@ -6,30 +6,42 @@ namespace Whizbang.Core.Observability;
 /// processed a message at each hop in its journey.
 /// IMPORTANT: Can only be created by IServiceInstanceProvider - constructor is internal.
 /// </summary>
+/// <tests>tests/Whizbang.Observability.Tests/SerializationTests.cs</tests>
+/// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs</tests>
 public record ServiceInstanceInfo {
   /// <summary>
   /// The name of the service (e.g., "OrderService", "InventoryWorker")
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/SerializationTests.cs</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs</tests>
   public required string ServiceName { get; init; }
 
   /// <summary>
   /// Unique UUIDv7 identifier for this specific service instance
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/SerializationTests.cs</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs</tests>
   public required Guid InstanceId { get; init; }
 
   /// <summary>
   /// The machine/host name where the service is running
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/SerializationTests.cs</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs</tests>
   public required string HostName { get; init; }
 
   /// <summary>
   /// The operating system process ID
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/SerializationTests.cs</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs</tests>
   public required int ProcessId { get; init; }
 
   /// <summary>
   /// Public parameterless constructor required for JSON deserialization.
   /// The 'required' modifier on properties ensures all fields are set during initialization.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/SerializationTests.cs</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs</tests>
   public ServiceInstanceInfo() { }
 };
