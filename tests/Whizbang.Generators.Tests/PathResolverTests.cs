@@ -22,8 +22,7 @@ public class PathResolverTests {
     // Result can be null (no sibling repo) or a valid path (sibling repo exists)
     if (result is not null) {
       await Assert.That(Directory.Exists(result)).IsTrue();
-    }
-    else {
+    } else {
       // Null is acceptable if no documentation repository is found
       await Assert.That(result).IsNull();
     }
@@ -43,8 +42,7 @@ public class PathResolverTests {
 
       // Assert
       await Assert.That(result).IsEqualTo(tempPath);
-    }
-    finally {
+    } finally {
       // Cleanup
       Environment.SetEnvironmentVariable("WHIZBANG_DOCS_PATH", null);
       Directory.Delete(tempPath);
@@ -66,8 +64,7 @@ public class PathResolverTests {
       // Assert
       // Should fall back to sibling discovery since env var path doesn't exist
       await Assert.That(result).IsNotEqualTo(invalidPath);
-    }
-    finally {
+    } finally {
       // Cleanup
       Environment.SetEnvironmentVariable("WHIZBANG_DOCS_PATH", null);
     }
