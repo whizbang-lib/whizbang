@@ -5,6 +5,9 @@ namespace Whizbang.Core.Messaging;
 /// Stored in wh_receptor_processing table.
 /// Each event can be processed by multiple receptors independently.
 /// </summary>
+/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaExtensions_IncludesCoreInfrastructureSchemaAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaDefinitionTests.cs:ReceptorProcessing_ShouldHaveForeignKeyToEventStoreAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaDefinitionTests.cs:ReceptorProcessing_ShouldHaveUniqueConstraintAsync</tests>
 public sealed class ReceptorProcessingRecord {
   /// <summary>
   /// Unique identifier for this processing record.

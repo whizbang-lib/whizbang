@@ -7,35 +7,48 @@ namespace Whizbang.Core.Messaging;
 /// Tracks active service instances with heartbeat timestamps for distributed work coordination
 /// and failure detection. Used by WorkCoordinator to identify orphaned work.
 /// </summary>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_WithMetadata_StoresMetadataCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_TwoInstances_DistributesPartitionsViaModuloAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_ThreeInstances_DistributesPartitionsViaModuloAsync</tests>
 public sealed class ServiceInstanceRecord {
   /// <summary>
   /// Unique identifier for this service instance (generated at startup).
   /// Primary key used to track which instance owns which messages.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_TwoInstances_DistributesPartitionsViaModuloAsync</tests>
   public required Guid InstanceId { get; set; }
 
   /// <summary>
   /// Name of the service (e.g., "InventoryWorker", "OrderService").
   /// Used for monitoring and debugging.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_TwoInstances_DistributesPartitionsViaModuloAsync</tests>
   public required string ServiceName { get; set; }
 
   /// <summary>
   /// Hostname where the service is running.
   /// Used for debugging and infrastructure monitoring.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_TwoInstances_DistributesPartitionsViaModuloAsync</tests>
   public required string HostName { get; set; }
 
   /// <summary>
   /// Operating system process ID.
   /// Used for debugging and process tracking.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_TwoInstances_DistributesPartitionsViaModuloAsync</tests>
   public required int ProcessId { get; set; }
 
   /// <summary>
   /// UTC timestamp when this instance started.
   /// Automatically set by database on insert.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync</tests>
   public DateTimeOffset StartedAt { get; set; }
 
   /// <summary>
@@ -43,6 +56,7 @@ public sealed class ServiceInstanceRecord {
   /// Updated periodically by WorkCoordinator.
   /// Used to detect crashed instances (stale heartbeats indicate failure).
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync</tests>
   public DateTimeOffset LastHeartbeatAt { get; set; }
 
   /// <summary>
@@ -50,5 +64,6 @@ public sealed class ServiceInstanceRecord {
   /// Contains version, environment, configuration, etc.
   /// Schema: { "Version": "1.0.0", "Environment": "Production", "Region": "us-east-1", ... }
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_WithMetadata_StoresMetadataCorrectlyAsync</tests>
   public JsonDocument? Metadata { get; set; }
 }

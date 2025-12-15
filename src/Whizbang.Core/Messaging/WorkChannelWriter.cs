@@ -9,6 +9,12 @@ namespace Whizbang.Core.Messaging;
 /// Wraps an unbounded channel for async message processing.
 /// Registered as singleton - shared between dispatcher/strategy and background worker.
 /// </summary>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerDatabaseReadinessTests.cs:TestWorkChannelWriter</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerChannelTests.cs:TestWorkChannelWriter</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerStartupTests.cs:TestWorkChannelWriter</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerRaceConditionTests.cs:TestWorkChannelWriter</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TestWorkChannelWriter</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs:TestWorkChannelWriter</tests>
 public class WorkChannelWriter : IWorkChannelWriter {
   private readonly Channel<OutboxWork> _channel;
 
@@ -23,12 +29,30 @@ public class WorkChannelWriter : IWorkChannelWriter {
   /// <summary>
   /// Gets the channel reader for consumers (background workers).
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerDatabaseReadinessTests.cs:TestWorkChannelWriter.Reader</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerChannelTests.cs:TestWorkChannelWriter.Reader</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerStartupTests.cs:TestWorkChannelWriter.Reader</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerRaceConditionTests.cs:TestWorkChannelWriter.Reader</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TestWorkChannelWriter.Reader</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs:TestWorkChannelWriter.Reader</tests>
   public ChannelReader<OutboxWork> Reader => _channel.Reader;
 
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerDatabaseReadinessTests.cs:TestWorkChannelWriter.WriteAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerChannelTests.cs:TestWorkChannelWriter.WriteAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerStartupTests.cs:TestWorkChannelWriter.WriteAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerRaceConditionTests.cs:TestWorkChannelWriter.WriteAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TestWorkChannelWriter.WriteAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs:TestWorkChannelWriter.WriteAsync</tests>
   public ValueTask WriteAsync(OutboxWork work, CancellationToken ct = default) {
     return _channel.Writer.WriteAsync(work, ct);
   }
 
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerDatabaseReadinessTests.cs:TestWorkChannelWriter.TryWrite</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerChannelTests.cs:TestWorkChannelWriter.TryWrite</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerStartupTests.cs:TestWorkChannelWriter.TryWrite</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerRaceConditionTests.cs:TestWorkChannelWriter.TryWrite</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TestWorkChannelWriter.TryWrite</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs:TestWorkChannelWriter.TryWrite</tests>
   public bool TryWrite(OutboxWork work) {
     return _channel.Writer.TryWrite(work);
   }
@@ -37,6 +61,12 @@ public class WorkChannelWriter : IWorkChannelWriter {
   /// Signals that no more work will be written to the channel.
   /// Consumers will complete after draining existing work.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerDatabaseReadinessTests.cs:TestWorkChannelWriter.Complete</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerChannelTests.cs:TestWorkChannelWriter.Complete</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerStartupTests.cs:TestWorkChannelWriter.Complete</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerRaceConditionTests.cs:TestWorkChannelWriter.Complete</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TestWorkChannelWriter.Complete</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs:TestWorkChannelWriter.Complete</tests>
   public void Complete() {
     _channel.Writer.Complete();
   }
