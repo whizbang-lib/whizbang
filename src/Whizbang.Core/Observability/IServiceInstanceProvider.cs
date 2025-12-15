@@ -9,6 +9,15 @@ namespace Whizbang.Core.Observability;
 /// Each service instance (process) has a unique ID generated at startup.
 /// </summary>
 /// <docs>core-concepts/observability</docs>
+/// <tests>tests/Whizbang.Core.Tests/Integration/DispatcherReceptorIntegrationTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs</tests>
+/// <tests>tests/Whizbang.Transports.Tests/DispatcherTransportBridgeTests.cs</tests>
 public interface IServiceInstanceProvider {
   /// <summary>
   /// Gets the unique instance ID for this service instance.
