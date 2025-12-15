@@ -33,6 +33,15 @@ namespace Whizbang.Core.Pooling;
 /// </summary>
 /// <typeparam name="T">The result type</typeparam>
 public sealed class PooledValueTaskSource<T> : IValueTaskSource<T> {
+  private short _token;
+  private T? _result;
+  private Exception? _exception;
+  private ValueTaskSourceStatus _status;
+  private Action<object?>? _continuation;
+  private object? _continuationState;
+  private ExecutionContext? _executionContext;
+  private object? _scheduler;
+
   /// <summary>
   /// Gets the current version token for this source.
   /// Token increments on Reset() to invalidate old ValueTask instances.
@@ -40,9 +49,7 @@ public sealed class PooledValueTaskSource<T> : IValueTaskSource<T> {
   /// <tests>tests/Whizbang.Execution.Tests/PooledValueTaskSourceTests.cs:PooledValueTaskSource_NewInstance_StartsWithVersionZeroAsync</tests>
   /// <tests>tests/Whizbang.Execution.Tests/PooledValueTaskSourceTests.cs:PooledValueTaskSource_Reset_IncrementsVersionTokenAsync</tests>
   /// <tests>tests/Whizbang.Execution.Tests/PooledValueTaskSourceTests.cs:PooledValueTaskSource_MultipleResets_TokenIncreasesMonotonicallyAsync</tests>
-  public short Token {
-    get => throw new NotImplementedException("PooledValueTaskSource implementation pending");
-  }
+  public short Token => _token;
 
   /// <summary>
   /// Resets the source for reuse and increments the version token.
@@ -51,7 +58,14 @@ public sealed class PooledValueTaskSource<T> : IValueTaskSource<T> {
   /// <tests>tests/Whizbang.Execution.Tests/PooledValueTaskSourceTests.cs:PooledValueTaskSource_MultipleResets_TokenIncreasesMonotonicallyAsync</tests>
   /// <tests>tests/Whizbang.Execution.Tests/PooledValueTaskSourceTests.cs:PooledValueTaskSource_ReuseAfterReset_WorksCorrectlyAsync</tests>
   public void Reset() {
-    throw new NotImplementedException("PooledValueTaskSource implementation pending");
+    _token++;
+    _result = default;
+    _exception = null;
+    _status = ValueTaskSourceStatus.Pending;
+    _continuation = null;
+    _continuationState = null;
+    _executionContext = null;
+    _scheduler = null;
   }
 
   /// <summary>
@@ -62,7 +76,13 @@ public sealed class PooledValueTaskSource<T> : IValueTaskSource<T> {
   /// <tests>tests/Whizbang.Execution.Tests/PooledValueTaskSourceTests.cs:PooledValueTaskSource_SetResult_VariousStrings_ReturnsCorrectValueAsync</tests>
   /// <tests>tests/Whizbang.Execution.Tests/PooledValueTaskSourceTests.cs:PooledValueTaskSource_SetResultNull_ReturnsNullAsync</tests>
   public void SetResult(T result) {
-    throw new NotImplementedException("PooledValueTaskSource implementation pending");
+    if (_status != ValueTaskSourceStatus.Pending) {
+      throw new InvalidOperationException("Cannot set result on a completed source");
+    }
+
+    _result = result;
+    _status = ValueTaskSourceStatus.Succeeded;
+    SignalCompletion();
   }
 
   /// <summary>
@@ -71,7 +91,13 @@ public sealed class PooledValueTaskSource<T> : IValueTaskSource<T> {
   /// <tests>tests/Whizbang.Execution.Tests/PooledValueTaskSourceTests.cs:PooledValueTaskSource_SetException_ThrowsOnAwaitAsync</tests>
   /// <tests>tests/Whizbang.Execution.Tests/PooledValueTaskSourceTests.cs:PooledValueTaskSource_SetException_VariousExceptionTypes_PreservesExceptionTypeAsync</tests>
   public void SetException(Exception exception) {
-    throw new NotImplementedException("PooledValueTaskSource implementation pending");
+    if (_status != ValueTaskSourceStatus.Pending) {
+      throw new InvalidOperationException("Cannot set exception on a completed source");
+    }
+
+    _exception = exception ?? throw new ArgumentNullException(nameof(exception));
+    _status = ValueTaskSourceStatus.Faulted;
+    SignalCompletion();
   }
 
   /// <summary>
@@ -81,7 +107,8 @@ public sealed class PooledValueTaskSource<T> : IValueTaskSource<T> {
   /// <tests>tests/Whizbang.Execution.Tests/PooledValueTaskSourceTests.cs:PooledValueTaskSource_GetStatus_AfterSetResult_ReturnsSucceededAsync</tests>
   /// <tests>tests/Whizbang.Execution.Tests/PooledValueTaskSourceTests.cs:PooledValueTaskSource_GetStatus_AfterSetException_ReturnsFaultedAsync</tests>
   public ValueTaskSourceStatus GetStatus(short token) {
-    throw new NotImplementedException("PooledValueTaskSource implementation pending");
+    ValidateToken(token);
+    return _status;
   }
 
   /// <summary>
@@ -90,13 +117,64 @@ public sealed class PooledValueTaskSource<T> : IValueTaskSource<T> {
   /// <tests>tests/Whizbang.Execution.Tests/PooledValueTaskSourceTests.cs:PooledValueTaskSource_SetResult_CompletesValueTaskAsync</tests>
   /// <tests>tests/Whizbang.Execution.Tests/PooledValueTaskSourceTests.cs:PooledValueTaskSource_GetResult_WithStaleToken_ThrowsAsync</tests>
   public T GetResult(short token) {
-    throw new NotImplementedException("PooledValueTaskSource implementation pending");
+    ValidateToken(token);
+
+    if (_status == ValueTaskSourceStatus.Succeeded) {
+      return _result!;
+    }
+
+    if (_status == ValueTaskSourceStatus.Faulted) {
+      throw _exception!;
+    }
+
+    throw new InvalidOperationException("Cannot get result from incomplete operation");
   }
 
   /// <summary>
   /// Registers a continuation callback (required by IValueTaskSource).
   /// </summary>
   public void OnCompleted(Action<object?> continuation, object? state, short token, ValueTaskSourceOnCompletedFlags flags) {
-    throw new NotImplementedException("PooledValueTaskSource implementation pending");
+    ValidateToken(token);
+
+    if (_continuation != null) {
+      throw new InvalidOperationException("OnCompleted already called");
+    }
+
+    _continuation = continuation ?? throw new ArgumentNullException(nameof(continuation));
+    _continuationState = state;
+
+    // If already completed, invoke immediately
+    if (_status != ValueTaskSourceStatus.Pending) {
+      InvokeContinuation();
+    }
+  }
+
+  private void ValidateToken(short token) {
+    if (token != _token) {
+      throw new InvalidOperationException($"Invalid token: expected {_token}, got {token}");
+    }
+  }
+
+  private void SignalCompletion() {
+    if (_continuation != null) {
+      InvokeContinuation();
+    }
+  }
+
+  private void InvokeContinuation() {
+    var continuation = _continuation;
+    var state = _continuationState;
+
+    if (continuation != null) {
+      // Clear continuation to prevent double invocation
+      _continuation = null;
+      _continuationState = null;
+
+      // Invoke continuation on thread pool to avoid stack overflow
+      ThreadPool.QueueUserWorkItem(static s => {
+        var tuple = ((Action<object?>, object?))s!;
+        tuple.Item1(tuple.Item2);
+      }, (continuation, state));
+    }
   }
 }
