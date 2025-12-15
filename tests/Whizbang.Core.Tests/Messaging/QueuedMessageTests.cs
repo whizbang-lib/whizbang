@@ -1,3 +1,4 @@
+using System.Text.Json;
 using TUnit.Assertions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
@@ -29,24 +30,32 @@ public class QueuedMessageTests {
     };
 
     // Assert
-    // TODO: Verify all properties are set correctly
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    await Assert.That(message.MessageId).IsEqualTo(messageId);
+    await Assert.That(message.EventType).IsEqualTo(eventType);
+    await Assert.That(message.EventData).IsEqualTo(eventData);
+    await Assert.That(message.Metadata).IsEqualTo(metadata);
   }
 
   [Test]
   public async Task QueuedMessage_WithoutMetadata_AllowsNullAsync() {
-    // Arrange & Act
+    // Arrange
+    var messageId = Guid.NewGuid();
+    var eventType = "TestEvent";
+    var eventData = "{\"test\":\"data\"}";
+
+    // Act
     var message = new QueuedMessage {
-      MessageId = Guid.NewGuid(),
-      EventType = "TestEvent",
-      EventData = "{\"test\":\"data\"}",
+      MessageId = messageId,
+      EventType = eventType,
+      EventData = eventData,
       Metadata = null
     };
 
     // Assert
-    // TODO: Verify Metadata is null
-    // TODO: Verify other properties are set
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    await Assert.That(message.Metadata).IsNull();
+    await Assert.That(message.MessageId).IsEqualTo(messageId);
+    await Assert.That(message.EventType).IsEqualTo(eventType);
+    await Assert.That(message.EventData).IsEqualTo(eventData);
   }
 
   [Test]
@@ -68,9 +77,8 @@ public class QueuedMessageTests {
     };
 
     // Act & Assert
-    // TODO: Verify message1 == message2 (value equality)
-    // TODO: Verify GetHashCode() is same
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    await Assert.That(message1).IsEqualTo(message2);
+    await Assert.That(message1.GetHashCode()).IsEqualTo(message2.GetHashCode());
   }
 
   [Test]
@@ -84,11 +92,10 @@ public class QueuedMessageTests {
     };
 
     // Act
-    // TODO: Serialize to JSON
-    // TODO: Deserialize from JSON
+    var json = JsonSerializer.Serialize(message);
+    var deserialized = JsonSerializer.Deserialize<QueuedMessage>(json);
 
     // Assert
-    // TODO: Verify deserialized message equals original
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    await Assert.That(deserialized).IsEqualTo(message);
   }
 }

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using TUnit.Assertions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
@@ -18,7 +19,7 @@ public class PerspectiveCheckpointRecordTests {
     var streamId = Guid.NewGuid();
     var perspectiveName = "OrderSummaryPerspective";
     var lastEventId = Guid.NewGuid();
-    var status = PerspectiveProcessingStatus.Processed;
+    var status = PerspectiveProcessingStatus.Completed;
     var processedAt = DateTime.UtcNow;
 
     // Act
@@ -31,8 +32,11 @@ public class PerspectiveCheckpointRecordTests {
     };
 
     // Assert
-    // TODO: Verify all properties are set correctly
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    await Assert.That(checkpoint.StreamId).IsEqualTo(streamId);
+    await Assert.That(checkpoint.PerspectiveName).IsEqualTo(perspectiveName);
+    await Assert.That(checkpoint.LastEventId).IsEqualTo(lastEventId);
+    await Assert.That(checkpoint.Status).IsEqualTo(status);
+    await Assert.That(checkpoint.ProcessedAt).IsEqualTo(processedAt);
   }
 
   [Test]
@@ -48,9 +52,8 @@ public class PerspectiveCheckpointRecordTests {
     };
 
     // Assert
-    // TODO: Verify Error property is set
-    // TODO: Verify Status is Failed
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    await Assert.That(checkpoint.Status).IsEqualTo(PerspectiveProcessingStatus.Failed);
+    await Assert.That(checkpoint.Error).IsEqualTo("Database connection failed");
   }
 
   [Test]
@@ -60,7 +63,7 @@ public class PerspectiveCheckpointRecordTests {
       StreamId = Guid.NewGuid(),
       PerspectiveName = "OrderSummaryPerspective",
       LastEventId = Guid.NewGuid(),
-      Status = PerspectiveProcessingStatus.Processed,
+      Status = PerspectiveProcessingStatus.Completed,
       ProcessedAt = DateTime.UtcNow.AddMinutes(-5)
     };
 
@@ -72,10 +75,8 @@ public class PerspectiveCheckpointRecordTests {
     checkpoint.ProcessedAt = DateTime.UtcNow;
 
     // Assert
-    // TODO: Verify ProcessedAt is updated
-    // TODO: Verify ProcessedAt > originalProcessedAt
-    // TODO: Verify LastEventId is updated
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    await Assert.That(checkpoint.LastEventId).IsEqualTo(newEventId);
+    await Assert.That(checkpoint.ProcessedAt).IsGreaterThan(originalProcessedAt);
   }
 
   [Test]
@@ -85,18 +86,23 @@ public class PerspectiveCheckpointRecordTests {
       StreamId = Guid.NewGuid(),
       PerspectiveName = "OrderSummaryPerspective",
       LastEventId = Guid.NewGuid(),
-      Status = PerspectiveProcessingStatus.Processed,
+      Status = PerspectiveProcessingStatus.Completed,
       ProcessedAt = DateTime.UtcNow,
       Error = null
     };
 
     // Act
-    // TODO: Serialize to JSON or database format
-    // TODO: Deserialize back
+    var json = JsonSerializer.Serialize(checkpoint);
+    var deserialized = JsonSerializer.Deserialize<PerspectiveCheckpointRecord>(json);
 
     // Assert
-    // TODO: Verify all properties match after round-trip
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    await Assert.That(deserialized).IsNotNull();
+    await Assert.That(deserialized!.StreamId).IsEqualTo(checkpoint.StreamId);
+    await Assert.That(deserialized.PerspectiveName).IsEqualTo(checkpoint.PerspectiveName);
+    await Assert.That(deserialized.LastEventId).IsEqualTo(checkpoint.LastEventId);
+    await Assert.That(deserialized.Status).IsEqualTo(checkpoint.Status);
+    await Assert.That(deserialized.ProcessedAt).IsEqualTo(checkpoint.ProcessedAt);
+    await Assert.That(deserialized.Error).IsEqualTo(checkpoint.Error);
   }
 
   [Test]
@@ -110,7 +116,7 @@ public class PerspectiveCheckpointRecordTests {
       StreamId = Guid.NewGuid(),
       PerspectiveName = "OrderSummaryPerspective",
       LastEventId = earlierEventId,
-      Status = PerspectiveProcessingStatus.Processed,
+      Status = PerspectiveProcessingStatus.Completed,
       ProcessedAt = DateTime.UtcNow.AddMinutes(-10)
     };
 
@@ -118,13 +124,12 @@ public class PerspectiveCheckpointRecordTests {
       StreamId = checkpoint1.StreamId,
       PerspectiveName = "OrderSummaryPerspective",
       LastEventId = laterEventId,
-      Status = PerspectiveProcessingStatus.Processed,
+      Status = PerspectiveProcessingStatus.Completed,
       ProcessedAt = DateTime.UtcNow
     };
 
     // Act & Assert
-    // TODO: Verify laterEventId > earlierEventId (temporal ordering)
-    // TODO: Verify checkpoint2.LastEventId > checkpoint1.LastEventId
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    await Assert.That(laterEventId).IsGreaterThan(earlierEventId);
+    await Assert.That(checkpoint2.LastEventId).IsGreaterThan(checkpoint1.LastEventId);
   }
 }
