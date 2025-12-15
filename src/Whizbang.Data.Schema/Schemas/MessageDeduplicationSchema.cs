@@ -7,10 +7,20 @@ namespace Whizbang.Data.Schema.Schemas;
 /// Table name: {prefix}message_deduplication (e.g., wh_message_deduplication)
 /// Tracks all message IDs ever received for idempotent delivery guarantees (never deleted).
 /// </summary>
+/// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/MessageDeduplicationSchemaTests.cs</tests>
 public static class MessageDeduplicationSchema {
   /// <summary>
   /// Complete message_deduplication table definition.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/MessageDeduplicationSchemaTests.cs:Table_ShouldHaveCorrectNameAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/MessageDeduplicationSchemaTests.cs:Table_ShouldDefineCorrectColumnsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/MessageDeduplicationSchemaTests.cs:Table_ShouldDefinePrimaryKeyAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/MessageDeduplicationSchemaTests.cs:Table_ShouldDefineIndexesAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/MessageDeduplicationSchemaTests.cs:Table_FirstSeenAtIndex_ShouldBeDefinedAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/MessageDeduplicationSchemaTests.cs:Table_FirstSeenAtColumn_ShouldHaveDefaultValueAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/MessageDeduplicationSchemaTests.cs:Table_ShouldBeMinimalAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/MessageDeduplicationSchemaTests.cs:Table_MessageIdColumn_ShouldNotBeNullableAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/MessageDeduplicationSchemaTests.cs:Table_FirstSeenAtColumn_ShouldNotBeNullableAsync</tests>
   public static readonly TableDefinition Table = new(
     Name: "message_deduplication",
     Columns: ImmutableArray.Create(
@@ -38,6 +48,7 @@ public static class MessageDeduplicationSchema {
   /// <summary>
   /// Column name constants for type-safe access.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/MessageDeduplicationSchemaTests.cs:Columns_ShouldProvideTypeConstantsAsync</tests>
   public static class Columns {
     public const string MessageId = "message_id";
     public const string FirstSeenAt = "first_seen_at";

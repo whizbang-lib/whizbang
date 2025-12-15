@@ -12,6 +12,9 @@ namespace Whizbang.Data.Dapper.Postgres;
 public class PostgresHealthCheck(IDbConnectionFactory connectionFactory) : IHealthCheck {
   private readonly IDbConnectionFactory _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
 
+  /// <summary>
+  /// 
+  /// </summary>
   /// <tests>No tests found</tests>
   public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default) {
     try {

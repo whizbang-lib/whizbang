@@ -17,12 +17,18 @@ namespace Whizbang.Core.Generated;
 /// types (MessageHop, MessageId, CorrelationId) take precedence over application types.
 /// No manual chaining required - JsonContextRegistry.CreateCombinedOptions() handles merging.
 /// </remarks>
+/// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangJsonContextTests.cs:Initialize_RegistersContextsWithRegistry_Async</tests>
+/// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangJsonContextTests.cs:Initialize_RegistersConverters_Async</tests>
+/// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangJsonContextTests.cs:Initialize_RunsBeforeMain_ViaModuleInitializerAsync</tests>
 public static class WhizbangJsonContext {
   /// <summary>
   /// Module initializer that registers Whizbang.Core's JsonSerializerContext instances.
   /// Runs automatically when the assembly is loaded - no explicit call needed.
   /// Registers in priority order: WhizbangId → Infrastructure → Message.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangJsonContextTests.cs:Initialize_RegistersContextsWithRegistry_Async</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangJsonContextTests.cs:Initialize_RegistersConverters_Async</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangJsonContextTests.cs:Initialize_RunsBeforeMain_ViaModuleInitializerAsync</tests>
   // CA2255: Intentional use of ModuleInitializer in library code for AOT-compatible JSON context registration
 #pragma warning disable CA2255
   [ModuleInitializer]

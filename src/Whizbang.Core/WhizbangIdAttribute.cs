@@ -7,6 +7,7 @@ namespace Whizbang.Core;
 /// The source generator will create a complete value object implementation with
 /// UUIDv7 support, equality comparisons, JSON serialization, and auto-registration.
 /// </summary>
+/// <tests>tests/Whizbang.Core.Tests/WhizbangIdAttributeTests.cs</tests>
 /// <remarks>
 /// <para>
 /// This attribute supports three discovery patterns:
@@ -100,6 +101,7 @@ public sealed class WhizbangIdAttribute : Attribute {
   /// Gets or sets the namespace where the ID type should be generated.
   /// If not specified, the ID is generated in the same namespace as the declaring type.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/WhizbangIdAttributeTests.cs:WhizbangIdAttribute_NamespaceProperty_CanBeSetAsync</tests>
   /// <remarks>
   /// This is useful when you want to consolidate all domain IDs in a single namespace,
   /// or when using property/parameter-based discovery and need to control placement.
@@ -116,6 +118,7 @@ public sealed class WhizbangIdAttribute : Attribute {
   /// Gets or sets whether to suppress the WHIZ024 warning when multiple ID types
   /// with the same name exist in different namespaces.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/WhizbangIdAttributeTests.cs:WhizbangIdAttribute_SuppressDuplicateWarningProperty_CanBeSetAsync</tests>
   /// <remarks>
   /// By default, the generator warns when it detects ID types with identical names
   /// in different namespaces to help identify potential confusion. Set this to true
@@ -137,6 +140,8 @@ public sealed class WhizbangIdAttribute : Attribute {
   /// <summary>
   /// Initializes a new instance of the <see cref="WhizbangIdAttribute"/> class.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/WhizbangIdAttributeTests.cs:WhizbangIdAttribute_DefaultConstructor_HasNullNamespaceAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/WhizbangIdAttributeTests.cs:WhizbangIdAttribute_DefaultConstructor_HasFalseSuppressDuplicateWarningAsync</tests>
   public WhizbangIdAttribute() { }
 
   /// <summary>
@@ -152,6 +157,7 @@ public sealed class WhizbangIdAttribute : Attribute {
   /// public readonly partial struct ProductId;
   /// </code>
   /// </example>
+  /// <tests>tests/Whizbang.Core.Tests/WhizbangIdAttributeTests.cs:WhizbangIdAttribute_ConstructorWithNamespace_SetsNamespacePropertyAsync</tests>
   public WhizbangIdAttribute(string? targetNamespace) {
     Namespace = targetNamespace;
   }

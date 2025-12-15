@@ -13,6 +13,7 @@ namespace Whizbang.Data.Dapper.Custom;
 /// Base class for Dapper-based IEventStore implementations.
 /// Provides common implementation logic while allowing derived classes to provide database-specific SQL.
 /// </summary>
+/// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs</tests>
 public abstract class DapperEventStoreBase : IEventStore {
   protected readonly IDbConnectionFactory _connectionFactory;
   protected readonly IDbExecutor _executor;
@@ -50,6 +51,10 @@ public abstract class DapperEventStoreBase : IEventStore {
   ///             @EventType (string), @EventData (string), @Metadata (string),
   ///             @Scope (string), @CreatedAt (DateTimeOffset)
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_WithNullEnvelope_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_DifferentStreams_ShouldBeIndependentAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ConcurrentAppends_ShouldBeThreadSafeAsync</tests>
   protected abstract string GetAppendSql();
 
   /// <summary>
@@ -57,6 +62,9 @@ public abstract class DapperEventStoreBase : IEventStore {
   /// Should return: EventData, Metadata, Scope (all as JSONB/string)
   /// Parameters: @StreamId (Guid), @FromSequence (long)
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_FromEmptyStream_ShouldReturnEmptyAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_FromMiddle_ShouldReturnSubsetAsync</tests>
   protected abstract string GetReadSql();
 
   /// <summary>
@@ -64,18 +72,35 @@ public abstract class DapperEventStoreBase : IEventStore {
   /// Should return MAX(sequence_number) or -1 if stream doesn't exist.
   /// Parameters: @StreamId (Guid)
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:GetLastSequenceAsync_EmptyStream_ShouldReturnMinusOneAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:GetLastSequenceAsync_AfterAppends_ShouldReturnCorrectSequenceAsync</tests>
   protected abstract string GetLastSequenceSql();
 
   /// <summary>
   /// AOT-compatible append with explicit stream ID.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_WithNullEnvelope_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_DifferentStreams_ShouldBeIndependentAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ConcurrentAppends_ShouldBeThreadSafeAsync</tests>
   public abstract Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default);
 
+  /// <summary>
+  /// Reads events from a stream starting from a specific sequence number.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_FromEmptyStream_ShouldReturnEmptyAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_FromMiddle_ShouldReturnSubsetAsync</tests>
   public abstract IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
     Guid streamId,
     long fromSequence,
     CancellationToken cancellationToken = default);
 
+  /// <summary>
+  /// Gets the last sequence number for a stream. Returns -1 if stream doesn't exist.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:GetLastSequenceAsync_EmptyStream_ShouldReturnMinusOneAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:GetLastSequenceAsync_AfterAppends_ShouldReturnCorrectSequenceAsync</tests>
   public async Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) {
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);

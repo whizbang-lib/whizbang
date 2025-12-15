@@ -7,6 +7,9 @@ namespace Whizbang.Core.Generated;
 /// <param name="Timestamp">ISO 8601 timestamp when the diagnostic was captured</param>
 /// <param name="Category">Category of the diagnostic</param>
 /// <param name="Message">Diagnostic message</param>
+/// <tests>tests/Whizbang.Core.Tests/Generated/DiagnosticEntryTests.cs:DiagnosticEntry_Constructor_CreatesInstanceWithAllPropertiesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Generated/DiagnosticEntryTests.cs:DiagnosticEntry_RecordEquality_ComparesAllPropertiesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Generated/DiagnosticEntryTests.cs:DiagnosticEntry_ToString_ReturnsReadableStringAsync</tests>
 public record DiagnosticEntry(
     string GeneratorName,
     string Timestamp,

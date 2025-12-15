@@ -14,6 +14,10 @@ namespace Whizbang.Core.Generated;
 /// NOTE: MessageId and CorrelationId (including nullable versions) are provided by WhizbangIdJsonContext
 /// with custom converters. WhizbangIdJsonContext is registered FIRST in the resolver chain.
 /// </summary>
+/// <tests>tests/Whizbang.Core.Tests/Generated/InfrastructureJsonContextTests.cs:InfrastructureJsonContext_SerializesMessageHop_Async</tests>
+/// <tests>tests/Whizbang.Core.Tests/Generated/InfrastructureJsonContextTests.cs:InfrastructureJsonContext_SerializesEnvelopeMetadata_Async</tests>
+/// <tests>tests/Whizbang.Core.Tests/Generated/InfrastructureJsonContextTests.cs:InfrastructureJsonContext_SerializesServiceInstanceInfo_Async</tests>
+/// <tests>tests/Whizbang.Core.Tests/Generated/InfrastructureJsonContextTests.cs:InfrastructureJsonContext_IgnoresNullPropertiesWhenSerializing_Async</tests>
 [JsonSerializable(typeof(MessageHop))]
 [JsonSerializable(typeof(List<MessageHop>))]
 [JsonSerializable(typeof(EnvelopeMetadata))]

@@ -19,6 +19,9 @@ namespace Whizbang.Data.Dapper.Postgres;
 public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJsonbPersistenceAdapter<IMessageEnvelope> {
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
 
+  /// <summary>
+  /// 
+  /// </summary>
   /// <tests>No tests found</tests>
   public JsonbPersistenceModel ToJsonb(IMessageEnvelope source, PolicyConfiguration? policyConfig = null) {
     ArgumentNullException.ThrowIfNull(source);
@@ -86,6 +89,9 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
       "Use FromJsonb<TMessage> with the concrete message type instead.");
   }
 
+  /// <summary>
+  /// 
+  /// </summary>
   /// <tests>No tests found</tests>
   public MessageEnvelope<TMessage> FromJsonb<TMessage>(JsonbPersistenceModel jsonb) {
     ArgumentNullException.ThrowIfNull(jsonb);

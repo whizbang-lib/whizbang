@@ -8,6 +8,8 @@ namespace Whizbang.Generators;
 /// </summary>
 /// <param name="ClassName">Fully qualified class name implementing IPerspectiveOf</param>
 /// <param name="EventTypes">Array of fully qualified event type names this perspective listens to</param>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveDiscoveryGeneratorTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs</tests>
 internal sealed record PerspectiveInfo(
     string ClassName,
     string[] EventTypes

@@ -7,10 +7,18 @@ namespace Whizbang.Data.Schema.Schemas;
 /// Table name: {prefix}sequences (e.g., wb_sequences)
 /// Provides named sequence generators for distributed systems.
 /// </summary>
+/// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/SequencesSchemaTests.cs</tests>
 public static class SequencesSchema {
   /// <summary>
   /// Complete sequences table definition.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/SequencesSchemaTests.cs:Table_HasCorrectNameAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/SequencesSchemaTests.cs:Table_HasCorrectColumnsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/SequencesSchemaTests.cs:Table_SequenceName_IsPrimaryKeyAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/SequencesSchemaTests.cs:Table_HasNoAdditionalIndexesAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/SequencesSchemaTests.cs:Table_CurrentValue_HasDefaultZeroAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/SequencesSchemaTests.cs:Table_IncrementBy_HasDefaultOneAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/SequencesSchemaTests.cs:Table_LastUpdatedAt_HasDefaultNowAsync</tests>
   public static readonly TableDefinition Table = new(
     Name: "sequences",
     Columns: ImmutableArray.Create(
@@ -46,6 +54,7 @@ public static class SequencesSchema {
   /// <summary>
   /// Column name constants for type-safe access.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/SequencesSchemaTests.cs:Columns_HasAllConstantsAsync</tests>
   public static class Columns {
     public const string SequenceName = "sequence_name";
     public const string CurrentValue = "current_value";

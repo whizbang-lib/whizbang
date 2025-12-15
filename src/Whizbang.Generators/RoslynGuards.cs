@@ -27,6 +27,7 @@ namespace Whizbang.Generators;
 /// execute in practice.
 /// </para>
 /// </remarks>
+/// <tests>tests/Whizbang.Generators.Tests/RoslynGuardsTests.cs</tests>
 [ExcludeFromCodeCoverage]
 internal static class RoslynGuards {
 

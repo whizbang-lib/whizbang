@@ -7,6 +7,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// Consumer assemblies register their discovered models via module initializer.
 /// This approach is AOT-compatible (no reflection required).
 /// </summary>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ModelRegistrationRegistryTests.cs</tests>
 public static class ModelRegistrationRegistry {
   private static Action<IServiceCollection, Type, IDbUpsertStrategy>? _registrar;
 
@@ -15,6 +16,8 @@ public static class ModelRegistrationRegistry {
   /// Called by source-generated module initializer in the consumer assembly.
   /// </summary>
   /// <param name="registrar">Callback that registers models with the service collection.</param>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ModelRegistrationRegistryTests.cs:RegisterModels_WithValidRegistrar_StoresCallbackAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ModelRegistrationRegistryTests.cs:RegisterModels_MultipleRegistrations_UsesLatestRegistrarAsync</tests>
   public static void RegisterModels(Action<IServiceCollection, Type, IDbUpsertStrategy> registrar) {
     _registrar = registrar;
   }
@@ -27,6 +30,8 @@ public static class ModelRegistrationRegistry {
   /// <param name="services">The service collection to register services in.</param>
   /// <param name="dbContextType">The DbContext type.</param>
   /// <param name="upsertStrategy">The database-specific upsert strategy.</param>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ModelRegistrationRegistryTests.cs:InvokeRegistration_WithNoRegistrar_DoesNotThrowAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ModelRegistrationRegistryTests.cs:InvokeRegistration_PassesCorrectParametersToRegistrarAsync</tests>
   internal static void InvokeRegistration(
       IServiceCollection services,
       Type dbContextType,

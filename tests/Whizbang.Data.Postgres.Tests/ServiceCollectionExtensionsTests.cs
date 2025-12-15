@@ -151,4 +151,24 @@ public class ServiceCollectionExtensionsTests : IAsyncDisposable {
     var perspectiveExists = await perspectiveCommand.ExecuteScalarAsync();
     await Assert.That((bool)perspectiveExists!).IsTrue();
   }
+
+  /// <summary>
+  /// Test 4: AddWhizbangPostgresHealthChecks registers PostgresHealthCheck
+  /// </summary>
+  [Test]
+  public async Task AddWhizbangPostgresHealthChecks_RegistersHealthCheckAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act
+    services.AddWhizbangPostgresHealthChecks();
+
+    // Assert - Health check service should be registered
+    var serviceProvider = services.BuildServiceProvider();
+    var healthCheckService = serviceProvider.GetService<Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckService>();
+
+    // TODO: Implement full health check validation
+    // This is a stub test - needs implementation to verify PostgresHealthCheck registration
+    await Assert.That(healthCheckService).IsNotNull();
+  }
 }

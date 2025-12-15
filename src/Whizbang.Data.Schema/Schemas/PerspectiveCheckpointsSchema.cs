@@ -8,6 +8,7 @@ namespace Whizbang.Data.Schema.Schemas;
 /// Tracks last processed event per stream per perspective for checkpoint-based processing.
 /// Enables time-travel scenarios where perspectives catch up independently from event history.
 /// </summary>
+/// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveCheckpointsSchemaTests.cs</tests>
 public static class PerspectiveCheckpointsSchema {
   /// <summary>
   /// Complete perspective_checkpoints table definition.
@@ -16,6 +17,15 @@ public static class PerspectiveCheckpointsSchema {
   /// as PrimaryKey: true. Phase 2 generator template will add proper CONSTRAINT syntax.
   /// Foreign key constraint (last_event_id → wh_event_store.event_id) also deferred to Phase 2.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveCheckpointsSchemaTests.cs:Table_HasCorrectNameAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveCheckpointsSchemaTests.cs:Table_HasCorrectColumnsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveCheckpointsSchemaTests.cs:Table_StreamId_IsCompositePrimaryKeyAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveCheckpointsSchemaTests.cs:Table_PerspectiveName_IsCompositePrimaryKeyAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveCheckpointsSchemaTests.cs:Table_LastEventId_HasCorrectDefinitionAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveCheckpointsSchemaTests.cs:Table_Status_HasCorrectDefaultAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveCheckpointsSchemaTests.cs:Table_ProcessedAt_HasDateTimeDefaultAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveCheckpointsSchemaTests.cs:Table_Error_IsNullableAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveCheckpointsSchemaTests.cs:Table_HasCorrectIndexesAsync</tests>
   public static readonly TableDefinition Table = new(
     Name: "perspective_checkpoints",
     Columns: ImmutableArray.Create(
@@ -69,6 +79,7 @@ public static class PerspectiveCheckpointsSchema {
   /// <summary>
   /// Column name constants for type-safe access.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveCheckpointsSchemaTests.cs:Columns_Constants_MatchColumnNamesAsync</tests>
   public static class Columns {
     public const string StreamId = "stream_id";
     public const string PerspectiveName = "perspective_name";

@@ -5,6 +5,10 @@ namespace Whizbang.Core.Generated;
 /// <summary>
 /// Categories for diagnostic information from source generators.
 /// </summary>
+/// <tests>tests/Whizbang.Core.Tests/Generated/DiagnosticCategoryTests.cs:DiagnosticCategory_None_HasValueZeroAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Generated/DiagnosticCategoryTests.cs:DiagnosticCategory_All_CombinesAllCategoriesAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Generated/DiagnosticCategoryTests.cs:DiagnosticCategory_SupportsFlags_BitwiseOperationsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Generated/DiagnosticCategoryTests.cs:DiagnosticCategory_IndividualFlags_HaveUniqueValuesAsync</tests>
 [Flags]
 public enum DiagnosticCategory {
   /// <summary>No category</summary>

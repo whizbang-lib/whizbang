@@ -13,6 +13,7 @@ namespace Whizbang.Data.Dapper.Custom;
 /// Base class for Dapper-based IRequestResponseStore implementations.
 /// Provides common implementation logic while allowing derived classes to provide database-specific SQL.
 /// </summary>
+/// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs</tests>
 public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
   protected readonly IDbConnectionFactory _connectionFactory;
   protected readonly IDbExecutor _executor;
@@ -45,6 +46,7 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
   /// Gets the SQL command to save a new request.
   /// Parameters: @CorrelationId (Guid), @RequestId (Guid), @ExpiresAt (DateTimeOffset), @CreatedAt (DateTimeOffset)
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveRequestAsync_ShouldStoreRequestAsync</tests>
   protected abstract string GetSaveRequestSql();
 
   /// <summary>
@@ -52,20 +54,31 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
   /// Should return: ResponseEnvelope (string, nullable), ExpiresAt (DateTimeOffset)
   /// Parameters: @CorrelationId (Guid)
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:WaitForResponseAsync_WithoutResponse_ShouldTimeoutAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveResponseAsync_ShouldCompleteWaitingRequestAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:WaitForResponseAsync_WithCancellation_ShouldRespectCancellationAsync</tests>
   protected abstract string GetWaitForResponseSql();
 
   /// <summary>
   /// Gets the SQL command to save a response.
   /// Parameters: @CorrelationId (Guid), @ResponseEnvelope (string)
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveResponseAsync_ShouldCompleteWaitingRequestAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveResponseAsync_WithNullResponse_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveResponseAsync_BeforeSaveRequest_ShouldNotCauseProblemAsync</tests>
   protected abstract string GetSaveResponseSql();
 
   /// <summary>
   /// Gets the SQL command to cleanup expired requests.
   /// Parameters: @Now (DateTimeOffset)
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:CleanupExpiredAsync_ShouldNotThrowAsync</tests>
   protected abstract string GetCleanupExpiredSql();
 
+  /// <summary>
+  /// Saves a new request with expiration timeout.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveRequestAsync_ShouldStoreRequestAsync</tests>
   public async Task SaveRequestAsync(CorrelationId correlationId, MessageId requestId, TimeSpan timeout, CancellationToken cancellationToken = default) {
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
@@ -95,6 +108,12 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
       "Use WaitForResponseAsync<TMessage> with the concrete message type instead.");
   }
 
+  /// <summary>
+  /// Waits for a response to arrive for a given correlation ID.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:WaitForResponseAsync_WithoutResponse_ShouldTimeoutAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveResponseAsync_ShouldCompleteWaitingRequestAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:WaitForResponseAsync_WithCancellation_ShouldRespectCancellationAsync</tests>
   public async Task<MessageEnvelope<TMessage>?> WaitForResponseAsync<TMessage>(CorrelationId correlationId, CancellationToken cancellationToken = default) {
     try {
       var startTime = DateTimeOffset.UtcNow;
@@ -142,6 +161,12 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
     }
   }
 
+  /// <summary>
+  /// Saves a response for a waiting request.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveResponseAsync_ShouldCompleteWaitingRequestAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveResponseAsync_WithNullResponse_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveResponseAsync_BeforeSaveRequest_ShouldNotCauseProblemAsync</tests>
   public async Task SaveResponseAsync(CorrelationId correlationId, IMessageEnvelope response, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(response);
 
@@ -164,6 +189,10 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
       cancellationToken: cancellationToken);
   }
 
+  /// <summary>
+  /// Cleans up expired request/response pairs.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:CleanupExpiredAsync_ShouldNotThrowAsync</tests>
   public async Task CleanupExpiredAsync(CancellationToken cancellationToken = default) {
     using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);

@@ -7,10 +7,20 @@ namespace Whizbang.Data.Schema.Schemas;
 /// Table name: {prefix}service_instances (e.g., wh_service_instances)
 /// Tracks active service instances for distributed work coordination and partition assignment.
 /// </summary>
+/// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ServiceInstancesSchemaTests.cs</tests>
 public static class ServiceInstancesSchema {
   /// <summary>
   /// Complete service_instances table definition.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ServiceInstancesSchemaTests.cs:Table_HasCorrectNameAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ServiceInstancesSchemaTests.cs:Table_HasCorrectColumnsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ServiceInstancesSchemaTests.cs:Table_InstanceId_IsPrimaryKeyAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ServiceInstancesSchemaTests.cs:Table_HasCorrectIndexesAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ServiceInstancesSchemaTests.cs:Table_ServiceNameIndex_HasCorrectColumnsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ServiceInstancesSchemaTests.cs:Table_HeartbeatIndex_HasCorrectColumnsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ServiceInstancesSchemaTests.cs:Table_StartedAt_HasDefaultNowAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ServiceInstancesSchemaTests.cs:Table_LastHeartbeatAt_HasDefaultNowAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ServiceInstancesSchemaTests.cs:Table_Metadata_IsNullableAsync</tests>
   public static readonly TableDefinition Table = new(
     Name: "service_instances",
     Columns: ImmutableArray.Create(
@@ -70,6 +80,7 @@ public static class ServiceInstancesSchema {
   /// <summary>
   /// Column name constants for type-safe access.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ServiceInstancesSchemaTests.cs:Columns_HasAllConstantsAsync</tests>
   public static class Columns {
     public const string InstanceId = "instance_id";
     public const string ServiceName = "service_name";

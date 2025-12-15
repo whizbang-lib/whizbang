@@ -13,6 +13,7 @@ namespace Whizbang.Generators.Shared.Discovery;
 /// (for DbContext configuration). This shared implementation ensures consistent
 /// discovery across all generators while avoiding code duplication.
 /// </summary>
+/// <tests>N/A - Utility class not currently used by generators</tests>
 public static class PerspectiveDiscovery {
 
   private const string HANDLE_PERSPECTIVE_INTERFACE = "Whizbang.Core.IHandlePerspective<TEvent, TState>";
@@ -26,6 +27,8 @@ public static class PerspectiveDiscovery {
   /// <param name="node">Syntax node to check</param>
   /// <param name="ct">Cancellation token</param>
   /// <returns>True if node might be a perspective handler (requires semantic analysis)</returns>
+  /// <tests>tests/Whizbang.Generators.Tests/Discovery/PerspectiveDiscoveryTests.cs:IsPotentialPerspectiveHandler_ClassWithBaseList_ReturnsTrueAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/Discovery/PerspectiveDiscoveryTests.cs:IsPotentialPerspectiveHandler_ClassWithoutBaseList_ReturnsFalseAsync</tests>
   public static bool IsPotentialPerspectiveHandler(SyntaxNode node, CancellationToken ct) {
     // Fast syntactic check: class with base list (implements interface)
     return node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
@@ -40,6 +43,8 @@ public static class PerspectiveDiscovery {
   /// <returns>
   /// PerspectiveInfo if the class implements IHandlePerspective, null otherwise.
   /// </returns>
+  /// <tests>tests/Whizbang.Generators.Tests/Discovery/PerspectiveDiscoveryTests.cs:ExtractFromHandler_PerspectiveHandler_ReturnsPerspectiveInfoAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/Discovery/PerspectiveDiscoveryTests.cs:ExtractFromHandler_NonPerspectiveClass_ReturnsNullAsync</tests>
   public static PerspectiveInfo? ExtractFromHandler(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
@@ -83,6 +88,8 @@ public static class PerspectiveDiscovery {
   /// <param name="node">Syntax node to check</param>
   /// <param name="ct">Cancellation token</param>
   /// <returns>True if node might be a DbSet property (requires semantic analysis)</returns>
+  /// <tests>tests/Whizbang.Generators.Tests/Discovery/PerspectiveDiscoveryTests.cs:IsPotentialDbSetProperty_PropertyDeclaration_ReturnsTrueAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/Discovery/PerspectiveDiscoveryTests.cs:IsPotentialDbSetProperty_NonPropertyDeclaration_ReturnsFalseAsync</tests>
   public static bool IsPotentialDbSetProperty(SyntaxNode node, CancellationToken ct) {
     // Fast syntactic check: property declaration
     return node is PropertyDeclarationSyntax;
@@ -98,6 +105,8 @@ public static class PerspectiveDiscovery {
   /// PerspectiveInfo if the property is DbSet&lt;PerspectiveRow&lt;T&gt;&gt;, null otherwise.
   /// Note: HandlerType and EventType will be null (not discoverable from DbSet).
   /// </returns>
+  /// <tests>tests/Whizbang.Generators.Tests/Discovery/PerspectiveDiscoveryTests.cs:ExtractFromDbSet_PerspectiveRowDbSet_ReturnsPerspectiveInfoAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/Discovery/PerspectiveDiscoveryTests.cs:ExtractFromDbSet_NonPerspectiveDbSet_ReturnsNullAsync</tests>
   public static PerspectiveInfo? ExtractFromDbSet(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
@@ -142,6 +151,8 @@ public static class PerspectiveDiscovery {
   /// Converts PascalCase to snake_case for database table names.
   /// Examples: ProductDto → product_dto, OrderReadModel → order_read_model
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/Discovery/PerspectiveDiscoveryTests.cs:ToSnakeCase_PascalCase_ReturnsSnakeCaseAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/Discovery/PerspectiveDiscoveryTests.cs:ToSnakeCase_EmptyString_ReturnsEmptyAsync</tests>
   private static string ToSnakeCase(string input) {
     if (string.IsNullOrEmpty(input)) {
       return input;

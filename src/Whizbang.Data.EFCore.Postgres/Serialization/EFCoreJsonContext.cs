@@ -11,6 +11,7 @@ namespace Whizbang.Data.EFCore.Postgres.Serialization;
 /// Provides AOT-compatible JSON serialization for EnvelopeMetadata.
 /// Note: MessageId, MessageHop, and related types are already handled by WhizbangJsonContext.
 /// </summary>
+/// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs</tests>
 [JsonSourceGenerationOptions(
   DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
   WriteIndented = false)]
@@ -20,6 +21,7 @@ public partial class EFCoreJsonContext : JsonSerializerContext {
   /// Module initializer that registers EFCoreJsonContext with the global registry.
   /// Runs automatically when the assembly is loaded.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:CreateCombinedOptions_WithRegisteredConverters_IncludesConvertersInOptionsAsync</tests>
   // CA2255: Intentional use of ModuleInitializer in library code for AOT-compatible JSON context registration
 #pragma warning disable CA2255
   [ModuleInitializer]
@@ -32,6 +34,8 @@ public partial class EFCoreJsonContext : JsonSerializerContext {
   /// Creates JsonSerializerOptions from the global JsonContextRegistry.
   /// Includes all registered contexts: Core (MessageHop, MessageId), EFCore, and application types.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:CreateCombinedOptions_WithRegisteredConverters_IncludesConvertersInOptionsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:CreateCombinedOptions_IsAOTCompatible_NoReflectionAsync</tests>
   public static JsonSerializerOptions CreateCombinedOptions() {
     return JsonContextRegistry.CreateCombinedOptions();
   }

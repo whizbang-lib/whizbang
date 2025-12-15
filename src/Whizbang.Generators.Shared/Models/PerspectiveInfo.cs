@@ -25,6 +25,7 @@ namespace Whizbang.Generators.Shared.Models;
 /// Fully-qualified stream key type for aggregate perspectives (e.g., "global::MyApp.ProductId").
 /// Nullable for non-aggregate perspectives.
 /// </param>
+/// <tests>tests/Whizbang.Generators.Tests/Models/PerspectiveInfoTests.cs</tests>
 public sealed record PerspectiveInfo(
   string? HandlerType,
   string? EventType,

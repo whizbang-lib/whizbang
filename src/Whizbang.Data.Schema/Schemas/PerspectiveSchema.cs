@@ -7,6 +7,7 @@ namespace Whizbang.Data.Schema.Schemas;
 /// Perspective tables use the perspective prefix (e.g., wb_per_product_dto).
 /// Each perspective can define its own columns and indexes for read-optimized data.
 /// </summary>
+/// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveSchemaTests.cs</tests>
 public static class PerspectiveSchema {
   /// <summary>
   /// Creates a perspective table definition with custom columns and indexes.
@@ -15,6 +16,8 @@ public static class PerspectiveSchema {
   /// <param name="columns">Column definitions for the perspective</param>
   /// <param name="indexes">Optional index definitions (default: empty)</param>
   /// <returns>Complete table definition for the perspective</returns>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveSchemaTests.cs:CreateTable_WithNameAndColumns_CreatesTableDefinitionAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveSchemaTests.cs:CreateTable_WithIndexes_IncludesIndexesAsync</tests>
   public static TableDefinition CreateTable(
     string name,
     ImmutableArray<ColumnDefinition> columns,
@@ -35,6 +38,7 @@ public static class PerspectiveSchema {
   /// <param name="additionalColumns">Additional columns beyond the ID</param>
   /// <param name="indexes">Optional index definitions</param>
   /// <returns>Complete table definition with ID column + additional columns</returns>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveSchemaTests.cs:CreateTableWithId_AddsIdColumnAsync</tests>
   public static TableDefinition CreateTableWithId(
     string name,
     ImmutableArray<ColumnDefinition> additionalColumns,
@@ -59,10 +63,12 @@ public static class PerspectiveSchema {
   /// <summary>
   /// Common column definitions that can be reused across perspectives.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveSchemaTests.cs</tests>
   public static class CommonColumns {
     /// <summary>
     /// UUID primary key column named "id".
     /// </summary>
+    /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveSchemaTests.cs:CommonColumns_Id_HasCorrectDefinitionAsync</tests>
     public static readonly ColumnDefinition Id = new(
       Name: "id",
       DataType: WhizbangDataType.Uuid,
@@ -73,6 +79,7 @@ public static class PerspectiveSchema {
     /// <summary>
     /// Timestamp column for when the record was created.
     /// </summary>
+    /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveSchemaTests.cs:CommonColumns_CreatedAt_HasCorrectDefinitionAsync</tests>
     public static readonly ColumnDefinition CreatedAt = new(
       Name: "created_at",
       DataType: WhizbangDataType.TimestampTz,
@@ -83,6 +90,7 @@ public static class PerspectiveSchema {
     /// <summary>
     /// Timestamp column for when the record was last updated.
     /// </summary>
+    /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveSchemaTests.cs:CommonColumns_UpdatedAt_HasCorrectDefinitionAsync</tests>
     public static readonly ColumnDefinition UpdatedAt = new(
       Name: "updated_at",
       DataType: WhizbangDataType.TimestampTz,
@@ -92,6 +100,7 @@ public static class PerspectiveSchema {
     /// <summary>
     /// Version column for optimistic concurrency control.
     /// </summary>
+    /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveSchemaTests.cs:CommonColumns_Version_HasCorrectDefinitionAsync</tests>
     public static readonly ColumnDefinition Version = new(
       Name: "version",
       DataType: WhizbangDataType.Integer,
@@ -102,6 +111,7 @@ public static class PerspectiveSchema {
     /// <summary>
     /// Soft delete timestamp column.
     /// </summary>
+    /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveSchemaTests.cs:CommonColumns_DeletedAt_HasCorrectDefinitionAsync</tests>
     public static readonly ColumnDefinition DeletedAt = new(
       Name: "deleted_at",
       DataType: WhizbangDataType.TimestampTz,

@@ -4,6 +4,8 @@ using Whizbang.Core.Policies;
 namespace Whizbang.Core.Pooling;
 
 /// <summary>
+/// <tests>tests/Whizbang.Execution.Tests/ExecutionStatePoolTests.cs:Initialize_ShouldSetPropertiesAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/ExecutionStatePoolTests.cs:Reset_ShouldClearPropertiesAsync</tests>
 /// Poolable state object that holds execution context for SerialExecutor.
 /// Eliminates lambda closure allocations by providing explicit state passing.
 /// </summary>
@@ -33,6 +35,7 @@ public sealed class ExecutionState<TResult> {
   /// Initializes the state for a new execution.
   /// Call this before using a pooled instance.
   /// </summary>
+  /// <tests>tests/Whizbang.Execution.Tests/ExecutionStatePoolTests.cs:Initialize_ShouldSetPropertiesAsync</tests>
   public void Initialize(
     IMessageEnvelope envelope,
     PolicyContext context,
@@ -49,6 +52,7 @@ public sealed class ExecutionState<TResult> {
   /// Clears the state before returning to the pool.
   /// Call this before returning to ExecutionStatePool.
   /// </summary>
+  /// <tests>tests/Whizbang.Execution.Tests/ExecutionStatePoolTests.cs:Reset_ShouldClearPropertiesAsync</tests>
   public void Reset() {
     Envelope = null!;
     Context = null!;

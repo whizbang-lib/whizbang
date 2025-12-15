@@ -8,12 +8,24 @@ namespace Whizbang.Data.Schema.Schemas;
 /// Tracks which receptors have processed which events (log-style, many receptors per event).
 /// Used for independent event handlers that don't require ordering.
 /// </summary>
+/// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ReceptorProcessingSchemaTests.cs</tests>
 public static class ReceptorProcessingSchema {
   /// <summary>
   /// Complete receptor_processing table definition.
   /// NOTE: Unique constraint (event_id, receptor_name) and foreign key constraints
   /// are not yet supported by TableDefinition and must be added in Phase 2.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ReceptorProcessingSchemaTests.cs:Table_HasCorrectNameAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ReceptorProcessingSchemaTests.cs:Table_HasCorrectColumnsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ReceptorProcessingSchemaTests.cs:Table_Id_IsPrimaryKeyAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ReceptorProcessingSchemaTests.cs:Table_EventId_HasCorrectDefinitionAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ReceptorProcessingSchemaTests.cs:Table_ReceptorName_HasCorrectDefinitionAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ReceptorProcessingSchemaTests.cs:Table_Status_HasCorrectDefaultAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ReceptorProcessingSchemaTests.cs:Table_Attempts_HasCorrectDefaultAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ReceptorProcessingSchemaTests.cs:Table_Error_IsNullableAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ReceptorProcessingSchemaTests.cs:Table_StartedAt_HasDateTimeDefaultAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ReceptorProcessingSchemaTests.cs:Table_ProcessedAt_IsNullableAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ReceptorProcessingSchemaTests.cs:Table_HasCorrectIndexesAsync</tests>
   public static readonly TableDefinition Table = new(
     Name: "receptor_processing",
     Columns: ImmutableArray.Create(
@@ -81,6 +93,7 @@ public static class ReceptorProcessingSchema {
   /// <summary>
   /// Column name constants for type-safe access.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ReceptorProcessingSchemaTests.cs:Columns_Constants_MatchColumnNamesAsync</tests>
   public static class Columns {
     public const string Id = "id";
     public const string EventId = "event_id";

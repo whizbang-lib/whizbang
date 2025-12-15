@@ -12,6 +12,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// Called by source-generated registration code in consumer assemblies.
 /// Note: Infrastructure (Inbox, Outbox, EventStore) registration happens via source-generated code with concrete types.
 /// </summary>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreInfrastructureRegistrationTests.cs</tests>
 public static class EFCoreInfrastructureRegistration {
   /// <summary>
   /// Registers IPerspectiveStore&lt;TModel&gt; and ILensQuery&lt;TModel&gt; for a specific model type.
@@ -22,6 +23,11 @@ public static class EFCoreInfrastructureRegistration {
   /// <param name="modelType">The perspective model type (e.g., typeof(OrderReadModel)).</param>
   /// <param name="tableName">The database table name for this perspective (e.g., "order_read_model").</param>
   /// <param name="upsertStrategy">The database-specific upsert strategy to use.</param>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreInfrastructureRegistrationTests.cs:RegisterPerspectiveModel_RegistersIPerspectiveStoreAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreInfrastructureRegistrationTests.cs:RegisterPerspectiveModel_RegistersILensQueryAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreInfrastructureRegistrationTests.cs:RegisterPerspectiveModel_WithMultipleModels_RegistersBothAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreInfrastructureRegistrationTests.cs:RegisterPerspectiveModel_CreatesCorrectStoreTypeAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreInfrastructureRegistrationTests.cs:RegisterPerspectiveModel_CreatesCorrectQueryTypeAsync</tests>
   public static void RegisterPerspectiveModel(
       IServiceCollection services,
       Type dbContextType,

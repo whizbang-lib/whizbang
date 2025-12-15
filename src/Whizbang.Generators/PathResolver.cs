@@ -6,6 +6,7 @@ namespace Whizbang.Generators;
 /// <summary>
 /// Resolves paths to documentation repository with sibling discovery and environment variable overrides.
 /// </summary>
+/// <tests>tests/Whizbang.Generators.Tests/PathResolverTests.cs</tests>
 internal static class PathResolver {
   /// <summary>
   /// Finds the documentation repository path.

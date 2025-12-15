@@ -10,6 +10,10 @@ namespace Whizbang.Core.Generated;
 /// Central diagnostics aggregator for all Whizbang generators.
 /// Collects diagnostic information captured at build time.
 /// </summary>
+/// <tests>tests/Whizbang.Core.Tests/Generated/GeneratedDiagnosticsTests.cs:Diagnostics_ShouldCollectReceptorDiscoveryInfoAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Generated/GeneratedDiagnosticsTests.cs:Diagnostics_ShouldCaptureTimestampAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Generated/GeneratedDiagnosticsTests.cs:Diagnostics_ShouldDisplayFormattedOutputAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Generated/GeneratedDiagnosticsTests.cs:Diagnostics_ShouldFilterByCategoryAsync</tests>
 [ExcludeFromCodeCoverage]
 [DebuggerNonUserCode]
 public static class WhizbangDiagnostics {
@@ -20,6 +24,7 @@ public static class WhizbangDiagnostics {
   /// Adds a diagnostic entry to the collection.
   /// This is called during static initialization by each generator.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/GeneratedDiagnosticsTests.cs:Diagnostics_ShouldCollectReceptorDiscoveryInfoAsync</tests>
   [ExcludeFromCodeCoverage]
   [DebuggerNonUserCode]
   public static void AddEntry(DiagnosticEntry entry) {
@@ -35,6 +40,10 @@ public static class WhizbangDiagnostics {
   /// <param name="categories">Filter diagnostics by category. Defaults to All.</param>
   /// <param name="printToConsole">If true, prints the diagnostics to console. Defaults to true.</param>
   /// <returns>Formatted diagnostic information as a string.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/GeneratedDiagnosticsTests.cs:Diagnostics_ShouldCollectReceptorDiscoveryInfoAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/GeneratedDiagnosticsTests.cs:Diagnostics_ShouldCaptureTimestampAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/GeneratedDiagnosticsTests.cs:Diagnostics_ShouldDisplayFormattedOutputAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Generated/GeneratedDiagnosticsTests.cs:Diagnostics_ShouldFilterByCategoryAsync</tests>
   [ExcludeFromCodeCoverage]
   public static string Diagnostics(DiagnosticCategory categories = DiagnosticCategory.All, bool printToConsole = true) {
     var filteredEntries = _entries.Where(e => (e.Category & categories) != 0).ToList();

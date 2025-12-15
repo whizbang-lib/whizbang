@@ -10,6 +10,7 @@ namespace Whizbang.Generators;
 /// <param name="IsEvent">True if type implements IEvent</param>
 /// <param name="Properties">Array of property information (name and fully qualified type)</param>
 /// <param name="HasParameterizedConstructor">True if type has a public parameterized constructor matching properties</param>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs</tests>
 internal sealed record JsonMessageTypeInfo(
     string FullyQualifiedName,
     string SimpleName,
@@ -25,6 +26,7 @@ internal sealed record JsonMessageTypeInfo(
 /// <param name="Name">Property name</param>
 /// <param name="Type">Fully qualified type name</param>
 /// <param name="IsInitOnly">True if property has init-only setter</param>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs</tests>
 internal sealed record PropertyInfo(
     string Name,
     string Type,
@@ -39,6 +41,7 @@ internal sealed record PropertyInfo(
 /// <param name="TypeName">Fully qualified type name with global:: prefix (e.g., "global::ECommerce.Contracts.Commands.ProductId")</param>
 /// <param name="SimpleName">Simple type name without namespace (e.g., "ProductId")</param>
 /// <param name="ConverterName">Fully qualified converter name with global:: prefix (e.g., "global::ECommerce.Contracts.Commands.ProductIdJsonConverter")</param>
+/// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs</tests>
 internal sealed record JsonWhizbangIdInfo(
     string TypeName,
     string SimpleName,

@@ -4,6 +4,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// Value type containing metadata about a perspective model type discovered during source generation.
 /// Used by EFCoreServiceRegistrationGenerator to generate registration metadata at compile time.
 /// </summary>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ModelTypeInfoTests.cs</tests>
 /// <param name="Type">The CLR type of the perspective model (e.g., typeof(OrderReadModel)).</param>
 /// <param name="TableName">The database table name for this perspective (e.g., "order_read_model").</param>
 /// <example>

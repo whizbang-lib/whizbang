@@ -5,6 +5,7 @@ namespace Whizbang.Generators;
 /// <summary>
 /// Diagnostic descriptors for the Whizbang source generator.
 /// </summary>
+/// <tests>tests/Whizbang.Generators.Tests/DiagnosticDescriptorsTests.cs</tests>
 internal static class DiagnosticDescriptors {
   private const string CATEGORY = "Whizbang.SourceGeneration";
 

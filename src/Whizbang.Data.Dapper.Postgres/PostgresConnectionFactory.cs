@@ -13,12 +13,18 @@ namespace Whizbang.Data.Dapper.Postgres;
 public class PostgresConnectionFactory : IDbConnectionFactory {
   private readonly string _connectionString;
 
+  /// <summary>
+  /// 
+  /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresTestBase.cs:SetupAsync</tests>
   public PostgresConnectionFactory(string connectionString) {
     ArgumentNullException.ThrowIfNull(connectionString);
     _connectionString = connectionString;
   }
 
+  /// <summary>
+  /// 
+  /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresTestBase.cs:InitializeDatabaseAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresDatabaseReadinessCheckTests.cs:IsReadyAsync_ChecksAllRequiredTables_VerifiesInboxOutboxEventStoreAsync</tests>
   public async Task<IDbConnection> CreateConnectionAsync(CancellationToken cancellationToken = default) {

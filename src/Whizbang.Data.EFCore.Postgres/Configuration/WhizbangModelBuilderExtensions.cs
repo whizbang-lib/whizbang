@@ -7,6 +7,7 @@ namespace Whizbang.Data.EFCore.Postgres.Configuration;
 /// EF Core configuration extensions for Whizbang infrastructure entities.
 /// Uses C# 14 extension members syntax.
 /// </summary>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs</tests>
 public static class WhizbangModelBuilderExtensions {
 
   extension(ModelBuilder modelBuilder) {
@@ -15,6 +16,11 @@ public static class WhizbangModelBuilderExtensions {
     /// Configures Whizbang infrastructure entities (Inbox, Outbox, EventStore, ServiceInstance).
     /// Call this from your DbContext.OnModelCreating() before adding perspective configurations.
     /// </summary>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs:ConfigureWhizbangInfrastructure_ConfiguresInboxEntityAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs:ConfigureWhizbangInfrastructure_ConfiguresOutboxEntityAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs:ConfigureWhizbangInfrastructure_ConfiguresEventStoreEntityAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs:ConfigureWhizbangInfrastructure_ConfiguresServiceInstanceEntityAsync</tests>
+    /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs:ConfigureWhizbangInfrastructure_ConfiguresMessageDeduplicationEntityAsync</tests>
     public ModelBuilder ConfigureWhizbangInfrastructure() {
       ConfigureInbox(modelBuilder);
       ConfigureOutbox(modelBuilder);

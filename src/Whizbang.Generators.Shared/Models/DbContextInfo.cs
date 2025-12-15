@@ -23,6 +23,7 @@ namespace Whizbang.Generators.Shared.Models;
 /// <param name="Location">
 /// Source location for diagnostic reporting.
 /// </param>
+/// <tests>tests/Whizbang.Generators.Tests/Models/DbContextInfoTests.cs</tests>
 public sealed record DbContextInfo(
   string ClassName,
   string FullyQualifiedName,

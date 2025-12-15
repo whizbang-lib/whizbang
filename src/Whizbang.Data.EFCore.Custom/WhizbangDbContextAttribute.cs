@@ -9,6 +9,7 @@ namespace Whizbang.Data.EFCore.Custom;
 /// - EnsureWhizbangTablesCreatedAsync() extension method
 /// - Service registration metadata
 /// </summary>
+/// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs</tests>
 /// <remarks>
 /// <para>
 /// <strong>Key-Based Grouping:</strong>
@@ -82,6 +83,9 @@ public sealed class WhizbangDbContextAttribute : Attribute {
   /// Gets the keys that identify which perspectives should be included in this DbContext.
   /// Multiple keys enable shared configuration across contexts.
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDefaultKey_UsesEmptyStringKeyAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithSingleKey_DiscoversDbContextWithKeyAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultipleKeys_DiscoversDbContextWithAllKeysAsync</tests>
   /// <value>
   /// Array of key strings. Default: [""] (unnamed/default key) if no keys provided.
   /// </value>
@@ -101,6 +105,7 @@ public sealed class WhizbangDbContextAttribute : Attribute {
   /// Initializes a new instance of the <see cref="WhizbangDbContextAttribute"/> class
   /// with the default unnamed key.
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDefaultKey_UsesEmptyStringKeyAsync</tests>
   /// <remarks>
   /// Equivalent to <c>[WhizbangDbContext("")]</c>. Matches perspectives with no [WhizbangPerspective] attribute.
   /// </remarks>
@@ -122,6 +127,8 @@ public sealed class WhizbangDbContextAttribute : Attribute {
   /// One or more keys that identify which perspectives should be included in this DbContext.
   /// Pass empty or null to use the default unnamed key ("").
   /// </param>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithSingleKey_DiscoversDbContextWithKeyAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultipleKeys_DiscoversDbContextWithAllKeysAsync</tests>
   /// <remarks>
   /// <para>
   /// <strong>Key Naming Conventions:</strong>

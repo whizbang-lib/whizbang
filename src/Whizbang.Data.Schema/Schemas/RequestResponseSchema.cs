@@ -7,10 +7,20 @@ namespace Whizbang.Data.Schema.Schemas;
 /// Table name: {prefix}request_response (e.g., wb_request_response)
 /// Stores request/response pairs for async communication patterns.
 /// </summary>
+/// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/RequestResponseSchemaTests.cs</tests>
 public static class RequestResponseSchema {
   /// <summary>
   /// Complete request_response table definition.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/RequestResponseSchemaTests.cs:Table_ShouldHaveCorrectNameAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/RequestResponseSchemaTests.cs:Table_ShouldDefineCorrectColumnsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/RequestResponseSchemaTests.cs:Table_ShouldDefinePrimaryKeyAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/RequestResponseSchemaTests.cs:Table_ShouldDefineIndexesAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/RequestResponseSchemaTests.cs:Table_CorrelationIdIndex_ShouldBeDefinedAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/RequestResponseSchemaTests.cs:Table_StatusCreatedIndex_ShouldBeDefinedAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/RequestResponseSchemaTests.cs:Table_ExpiresAtIndex_ShouldBeDefinedAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/RequestResponseSchemaTests.cs:Table_StatusColumn_ShouldHaveDefaultValueAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/RequestResponseSchemaTests.cs:Table_CreatedAtColumn_ShouldHaveDefaultValueAsync</tests>
   public static readonly TableDefinition Table = new(
     Name: "request_response",
     Columns: ImmutableArray.Create(
@@ -90,6 +100,7 @@ public static class RequestResponseSchema {
   /// <summary>
   /// Column name constants for type-safe access.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/RequestResponseSchemaTests.cs:Columns_ShouldProvideTypeConstantsAsync</tests>
   public static class Columns {
     public const string RequestId = "request_id";
     public const string CorrelationId = "correlation_id";

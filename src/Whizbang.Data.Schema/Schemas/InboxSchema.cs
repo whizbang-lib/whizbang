@@ -7,10 +7,16 @@ namespace Whizbang.Data.Schema.Schemas;
 /// Table name: {prefix}inbox (e.g., wb_inbox)
 /// Stores incoming messages to prevent duplicate processing.
 /// </summary>
+/// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/InboxSchemaTests.cs</tests>
 public static class InboxSchema {
   /// <summary>
   /// Complete inbox table definition.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/InboxSchemaTests.cs:Table_ShouldHaveCorrectNameAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/InboxSchemaTests.cs:Table_ShouldDefineCorrectColumnsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/InboxSchemaTests.cs:Table_ShouldDefineCorrectIndexesAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/InboxSchemaTests.cs:Table_ShouldHavePrimaryKeyAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/InboxSchemaTests.cs:Table_ColumnDefaults_ShouldBeCorrectAsync</tests>
   public static readonly TableDefinition Table = new(
     Name: "inbox",
     Columns: ImmutableArray.Create(
@@ -68,6 +74,7 @@ public static class InboxSchema {
   /// <summary>
   /// Column name constants for type-safe access.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/InboxSchemaTests.cs:Columns_ShouldProvideAllConstantsAsync</tests>
   public static class Columns {
     public const string MessageId = "message_id";
     public const string EventType = "event_type";

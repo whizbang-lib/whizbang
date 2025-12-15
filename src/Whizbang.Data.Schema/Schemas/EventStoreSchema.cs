@@ -7,10 +7,17 @@ namespace Whizbang.Data.Schema.Schemas;
 /// Table name: {prefix}event_store (e.g., wb_event_store)
 /// Stores domain events for event sourcing and audit trail.
 /// </summary>
+/// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/EventStoreSchemaTests.cs</tests>
 public static class EventStoreSchema {
   /// <summary>
   /// Complete event_store table definition.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/EventStoreSchemaTests.cs:Table_ShouldHaveCorrectNameAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/EventStoreSchemaTests.cs:Table_ShouldDefineCorrectColumnsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/EventStoreSchemaTests.cs:Table_ShouldDefineCorrectIndexesAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/EventStoreSchemaTests.cs:Table_ShouldHavePrimaryKeyAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/EventStoreSchemaTests.cs:Table_ShouldHaveUniqueAggregateVersionIndexAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/EventStoreSchemaTests.cs:Table_ColumnDefaults_ShouldBeCorrectAsync</tests>
   public static readonly TableDefinition Table = new(
     Name: "event_store",
     Columns: ImmutableArray.Create(
@@ -84,6 +91,7 @@ public static class EventStoreSchema {
   /// <summary>
   /// Column name constants for type-safe access.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/EventStoreSchemaTests.cs:Columns_ShouldProvideAllConstantsAsync</tests>
   public static class Columns {
     public const string EventId = "event_id";
     public const string AggregateId = "aggregate_id";

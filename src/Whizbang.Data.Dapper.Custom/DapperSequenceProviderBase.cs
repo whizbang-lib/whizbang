@@ -8,6 +8,7 @@ namespace Whizbang.Data.Dapper.Custom;
 /// Base class for Dapper-based ISequenceProvider implementations.
 /// Provides common implementation logic while allowing derived classes to provide database-specific SQL.
 /// </summary>
+/// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs</tests>
 public abstract class DapperSequenceProviderBase : ISequenceProvider {
   protected readonly IDbConnectionFactory _connectionFactory;
   protected readonly IDbExecutor _executor;
@@ -34,6 +35,9 @@ public abstract class DapperSequenceProviderBase : ISequenceProvider {
   /// Should return the new current_value after increment.
   /// Parameters: @SequenceKey (string), @Now (DateTimeOffset)
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetNextAsync_FirstCall_ShouldReturnZeroAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetNextAsync_MultipleCalls_ShouldIncrementMonotonicallyAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetNextAsync_ConcurrentCalls_ShouldMaintainMonotonicityAsync</tests>
   protected abstract string GetUpdateSequenceSql();
 
   /// <summary>
@@ -42,6 +46,7 @@ public abstract class DapperSequenceProviderBase : ISequenceProvider {
   /// This is used when the update returns no rows (sequence doesn't exist yet).
   /// Parameters: @SequenceKey (string), @Now (DateTimeOffset)
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetNextAsync_FirstCall_ShouldReturnZeroAsync</tests>
   protected abstract string GetInsertOrUpdateSequenceSql();
 
   /// <summary>
@@ -49,6 +54,9 @@ public abstract class DapperSequenceProviderBase : ISequenceProvider {
   /// Should return the current_value or null if sequence doesn't exist.
   /// Parameters: @SequenceKey (string)
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetCurrentAsync_WithoutGetNext_ShouldReturnNegativeOneAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetCurrentAsync_AfterGetNext_ShouldReturnLastIssuedSequenceAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetCurrentAsync_DoesNotIncrement_ShouldReturnSameValueAsync</tests>
   protected abstract string GetCurrentSequenceSql();
 
   /// <summary>
@@ -56,8 +64,20 @@ public abstract class DapperSequenceProviderBase : ISequenceProvider {
   /// Should handle both insert (if doesn't exist) and update (if exists).
   /// Parameters: @SequenceKey (string), @NewValue (long), @Now (DateTimeOffset)
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:ResetAsync_WithDefaultValue_ShouldResetToZeroAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:ResetAsync_WithCustomValue_ShouldResetToSpecifiedValueAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:ResetAsync_MultipleTimes_ShouldAlwaysResetAsync</tests>
   protected abstract string GetResetSequenceSql();
 
+  /// <summary>
+  /// Gets the next sequence number for a stream, incrementing atomically.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetNextAsync_FirstCall_ShouldReturnZeroAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetNextAsync_MultipleCalls_ShouldIncrementMonotonicallyAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetNextAsync_DifferentStreamKeys_ShouldMaintainSeparateSequencesAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetNextAsync_ConcurrentCalls_ShouldMaintainMonotonicityAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetNextAsync_ManyCalls_ShouldNeverSkipOrDuplicateAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:CancellationToken_WhenCancelled_ShouldThrowAsync</tests>
   public async Task<long> GetNextAsync(string streamKey, CancellationToken ct = default) {
     ArgumentNullException.ThrowIfNull(streamKey);
 
@@ -111,6 +131,13 @@ public abstract class DapperSequenceProviderBase : ISequenceProvider {
     }
   }
 
+  /// <summary>
+  /// Gets the current sequence number for a stream without incrementing. Returns -1 if stream doesn't exist.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetCurrentAsync_WithoutGetNext_ShouldReturnNegativeOneAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetCurrentAsync_AfterGetNext_ShouldReturnLastIssuedSequenceAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetCurrentAsync_DoesNotIncrement_ShouldReturnSameValueAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:CancellationToken_WhenCancelled_ShouldThrowAsync</tests>
   public async Task<long> GetCurrentAsync(string streamKey, CancellationToken ct = default) {
     ArgumentNullException.ThrowIfNull(streamKey);
 
@@ -133,6 +160,13 @@ public abstract class DapperSequenceProviderBase : ISequenceProvider {
     }
   }
 
+  /// <summary>
+  /// Resets a sequence to a specific value.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:ResetAsync_WithDefaultValue_ShouldResetToZeroAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:ResetAsync_WithCustomValue_ShouldResetToSpecifiedValueAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:ResetAsync_MultipleTimes_ShouldAlwaysResetAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:CancellationToken_WhenCancelled_ShouldThrowAsync</tests>
   public async Task ResetAsync(string streamKey, long newValue = 0, CancellationToken ct = default) {
     ArgumentNullException.ThrowIfNull(streamKey);
 

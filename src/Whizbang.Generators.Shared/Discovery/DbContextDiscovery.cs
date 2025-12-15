@@ -11,6 +11,7 @@ namespace Whizbang.Generators.Shared.Discovery;
 /// Reusable DbContext discovery logic for database-specific generators.
 /// Discovers DbContext classes and their existing perspective DbSet properties.
 /// </summary>
+/// <tests>N/A - Utility class not currently used by generators</tests>
 public static class DbContextDiscovery {
 
   private const string DBCONTEXT_BASE_TYPE = "Microsoft.EntityFrameworkCore.DbContext";
@@ -23,6 +24,8 @@ public static class DbContextDiscovery {
   /// <param name="node">Syntax node to check</param>
   /// <param name="ct">Cancellation token</param>
   /// <returns>True if node might be a DbContext (requires semantic analysis)</returns>
+  /// <tests>tests/Whizbang.Generators.Tests/Discovery/DbContextDiscoveryTests.cs:IsPotentialDbContext_ClassWithBaseList_ReturnsTrueAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/Discovery/DbContextDiscoveryTests.cs:IsPotentialDbContext_ClassWithoutBaseList_ReturnsFalseAsync</tests>
   public static bool IsPotentialDbContext(SyntaxNode node, CancellationToken ct) {
     // Fast syntactic check: class with base list (inherits from something)
     return node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 };
@@ -37,6 +40,9 @@ public static class DbContextDiscovery {
   /// <returns>
   /// DbContextInfo if the class inherits from DbContext, null otherwise.
   /// </returns>
+  /// <tests>tests/Whizbang.Generators.Tests/Discovery/DbContextDiscoveryTests.cs:Extract_DbContextClass_ReturnsDbContextInfoAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/Discovery/DbContextDiscoveryTests.cs:Extract_NonDbContextClass_ReturnsNullAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/Discovery/DbContextDiscoveryTests.cs:Extract_DbContextWithPerspectives_ExtractsExistingPerspectivesAsync</tests>
   public static DbContextInfo? Extract(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
@@ -85,6 +91,8 @@ public static class DbContextDiscovery {
   /// Extracts state types from existing DbSet&lt;PerspectiveRow&lt;TModel&gt;&gt; properties.
   /// Generator should not emit DbSet properties for these state types.
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/Discovery/DbContextDiscoveryTests.cs:ExtractExistingPerspectives_WithPerspectiveDbSets_ExtractsModelTypesAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/Discovery/DbContextDiscoveryTests.cs:ExtractExistingPerspectives_WithoutPerspectives_ReturnsEmptyAsync</tests>
   private static ImmutableArray<string> ExtractExistingPerspectives(INamedTypeSymbol dbContextSymbol) {
     var builder = ImmutableArray.CreateBuilder<string>();
 

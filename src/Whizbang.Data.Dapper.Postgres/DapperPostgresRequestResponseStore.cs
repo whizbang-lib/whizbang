@@ -19,6 +19,9 @@ public class DapperPostgresRequestResponseStore(
   IDbConnectionFactory connectionFactory,
   IDbExecutor executor,
   JsonSerializerOptions jsonOptions) : DapperRequestResponseStoreBase(connectionFactory, executor, jsonOptions) {
+  /// <summary>
+  /// 
+  /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresRequestResponseStoreTests.cs:SaveRequestAsync_ShouldStoreRequestAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresRequestResponseStoreTests.cs:SaveResponseAsync_BeforeSaveRequest_ShouldNotCauseProblemAsync</tests>
   protected override string GetSaveRequestSql() => @"
@@ -27,6 +30,9 @@ public class DapperPostgresRequestResponseStore(
     ON CONFLICT(correlation_id)
     DO UPDATE SET request_id = @RequestId, expires_at = @ExpiresAt, status = 'Pending'";
 
+  /// <summary>
+  /// 
+  /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresRequestResponseStoreTests.cs:WaitForResponseAsync_WithoutResponse_ShouldTimeoutAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresRequestResponseStoreTests.cs:SaveResponseAsync_ShouldCompleteWaitingRequestAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresRequestResponseStoreTests.cs:WaitForResponseAsync_WithCancellation_ShouldRespectCancellationAsync</tests>
@@ -36,6 +42,9 @@ public class DapperPostgresRequestResponseStore(
     FROM whizbang_request_response
     WHERE correlation_id = @CorrelationId";
 
+  /// <summary>
+  /// 
+  /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresRequestResponseStoreTests.cs:SaveResponseAsync_ShouldCompleteWaitingRequestAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresRequestResponseStoreTests.cs:SaveResponseAsync_WithNullResponse_ShouldThrowAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresRequestResponseStoreTests.cs:SaveResponseAsync_BeforeSaveRequest_ShouldNotCauseProblemAsync</tests>
@@ -49,6 +58,9 @@ public class DapperPostgresRequestResponseStore(
       status = 'Completed',
       completed_at = NOW()";
 
+  /// <summary>
+  /// 
+  /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresRequestResponseStoreTests.cs:CleanupExpiredAsync_ShouldNotThrowAsync</tests>
   protected override string GetCleanupExpiredSql() => @"
     DELETE FROM whizbang_request_response

@@ -3,6 +3,9 @@ using System.Collections.Concurrent;
 namespace Whizbang.Core.Pooling;
 
 /// <summary>
+/// <tests>tests/Whizbang.Execution.Tests/ExecutionStatePoolTests.cs:Rent_ShouldReturnExecutionStateAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/ExecutionStatePoolTests.cs:Return_ShouldAddToPoolAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/ExecutionStatePoolTests.cs:RentReturn_ShouldReuseInstanceAsync</tests>
 /// Static generic pool for ExecutionState{T} instances.
 /// Each generic type T gets its own pool to avoid type casting issues.
 /// Uses ConcurrentBag for thread-safe, lock-free pooling.
@@ -15,6 +18,8 @@ public static class ExecutionStatePool<T> {
   /// Gets a pooled ExecutionState{T} or creates a new one if pool is empty.
   /// Caller must call Initialize() before use and Reset() before returning.
   /// </summary>
+  /// <tests>tests/Whizbang.Execution.Tests/ExecutionStatePoolTests.cs:Rent_ShouldReturnExecutionStateAsync</tests>
+  /// <tests>tests/Whizbang.Execution.Tests/ExecutionStatePoolTests.cs:RentReturn_ShouldReuseInstanceAsync</tests>
   public static ExecutionState<T> Rent() {
     if (_pool.TryTake(out var state)) {
       return state;
@@ -26,6 +31,8 @@ public static class ExecutionStatePool<T> {
   /// Returns an ExecutionState{T} to the pool for reuse.
   /// Caller should call Reset() before returning.
   /// </summary>
+  /// <tests>tests/Whizbang.Execution.Tests/ExecutionStatePoolTests.cs:Return_ShouldAddToPoolAsync</tests>
+  /// <tests>tests/Whizbang.Execution.Tests/ExecutionStatePoolTests.cs:RentReturn_ShouldReuseInstanceAsync</tests>
   public static void Return(ExecutionState<T> state) {
     _pool.Add(state);
   }

@@ -7,10 +7,16 @@ namespace Whizbang.Data.Schema.Schemas;
 /// Table name: {prefix}outbox (e.g., wb_outbox)
 /// Stores outgoing messages for reliable delivery with the transactional outbox pattern.
 /// </summary>
+/// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/OutboxSchemaTests.cs</tests>
 public static class OutboxSchema {
   /// <summary>
   /// Complete outbox table definition.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/OutboxSchemaTests.cs:Table_ShouldHaveCorrectNameAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/OutboxSchemaTests.cs:Table_ShouldDefineCorrectColumnsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/OutboxSchemaTests.cs:Table_ShouldDefineCorrectIndexesAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/OutboxSchemaTests.cs:Table_ShouldHavePrimaryKeyAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/OutboxSchemaTests.cs:Table_ColumnDefaults_ShouldBeCorrectAsync</tests>
   public static readonly TableDefinition Table = new(
     Name: "outbox",
     Columns: ImmutableArray.Create(
@@ -87,6 +93,7 @@ public static class OutboxSchema {
   /// <summary>
   /// Column name constants for type-safe access.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/OutboxSchemaTests.cs:Columns_ShouldProvideAllConstantsAsync</tests>
   public static class Columns {
     public const string MessageId = "message_id";
     public const string Destination = "destination";

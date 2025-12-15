@@ -19,6 +19,9 @@ public class DapperPostgresMessageQueue(
   private readonly IDbConnectionFactory _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
   private readonly ILogger<DapperPostgresMessageQueue> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
+  /// <summary>
+  /// 
+  /// </summary>
   /// <tests>No tests found</tests>
   public async Task<bool> EnqueueAndLeaseAsync(
       QueuedMessage message,
@@ -97,6 +100,9 @@ public class DapperPostgresMessageQueue(
     }
   }
 
+  /// <summary>
+  /// 
+  /// </summary>
   /// <tests>No tests found</tests>
   public async Task CompleteAsync(
       Guid messageId,
@@ -150,6 +156,9 @@ public class DapperPostgresMessageQueue(
     }
   }
 
+  /// <summary>
+  /// 
+  /// </summary>
   /// <tests>No tests found</tests>
   public async Task<System.Collections.Generic.IReadOnlyList<QueuedMessage>> LeaseOrphanedMessagesAsync(
       string instanceId,

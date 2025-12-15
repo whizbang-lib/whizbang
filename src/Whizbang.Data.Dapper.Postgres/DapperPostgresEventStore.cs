@@ -147,6 +147,9 @@ public class DapperPostgresEventStore(
     }
   }
 
+  /// <summary>
+  /// 
+  /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.UnitTests.cs:IsUniqueConstraintViolation_WithNonPostgresException_UniqueConstraintMessage_ShouldReturnTrueAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.UnitTests.cs:IsUniqueConstraintViolation_WithNonPostgresException_DuplicateKeyMessage_ShouldReturnTrueAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.UnitTests.cs:IsUniqueConstraintViolation_WithNonPostgresException_CaseInsensitive_ShouldReturnTrueAsync</tests>
@@ -160,6 +163,9 @@ public class DapperPostgresEventStore(
            ex.Message.Contains("duplicate key", StringComparison.OrdinalIgnoreCase);
   }
 
+  /// <summary>
+  /// 
+  /// </summary>
   /// <tests>No tests found</tests>
   protected override string GetAppendSql() => @"
     INSERT INTO whizbang_event_store
@@ -168,6 +174,9 @@ public class DapperPostgresEventStore(
       (@EventId, @StreamId, @AggregateId, @AggregateType, @SequenceNumber, @Version, @EventType,
        @EventData::jsonb, @Metadata::jsonb, @Scope::jsonb, @CreatedAt)";
 
+  /// <summary>
+  /// 
+  /// </summary>
   /// <tests>No tests found</tests>
   protected override string GetReadSql() => @"
     SELECT
@@ -179,6 +188,9 @@ public class DapperPostgresEventStore(
     WHERE stream_id = @StreamId AND sequence_number >= @FromSequence
     ORDER BY sequence_number";
 
+  /// <summary>
+  /// 
+  /// </summary>
   /// <tests>No tests found</tests>
   protected override string GetLastSequenceSql() => @"
     SELECT COALESCE(MAX(sequence_number), -1)

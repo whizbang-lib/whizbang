@@ -7,6 +7,7 @@ namespace Whizbang.Generators;
 /// </summary>
 /// <param name="CommandType">Fully qualified command type name (e.g., "global::MyApp.Commands.CreateOrder")</param>
 /// <param name="Filter">The topic filter string extracted from the attribute</param>
+/// <tests>tests/Whizbang.Generators.Tests/TopicFilterGeneratorTests.cs</tests>
 internal sealed record TopicFilterInfo(
     string CommandType,
     string Filter

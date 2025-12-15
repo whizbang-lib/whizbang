@@ -27,6 +27,7 @@ public sealed class EnvelopeMetadata {
 /// Provides append-only event storage for event sourcing and streaming scenarios.
 /// Stores events with stream-based organization using sequence numbers.
 /// </summary>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs</tests>
 public sealed class EFCoreEventStore<TDbContext> : IEventStore
   where TDbContext : DbContext {
 
@@ -48,6 +49,8 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
   /// Assigns the next sequence number automatically.
   /// Ensures optimistic concurrency through unique constraint on (StreamId, Sequence).
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:AppendAsync_WithValidEnvelope_AppendsEventToStreamAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:AppendAsync_WithMultipleEvents_AssignsSequentialSequenceNumbersAsync</tests>
   public async Task AppendAsync<TMessage>(
       Guid streamId,
       MessageEnvelope<TMessage> envelope,
@@ -108,6 +111,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
   /// Returns events in sequence order starting from the specified sequence number.
   /// Uses IAsyncEnumerable for efficient streaming of large event sequences.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:ReadAsync_WithExistingEvents_ReturnsEventsInSequenceOrderAsync</tests>
   public async IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
       Guid streamId,
       long fromSequence,
@@ -151,6 +155,8 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
   /// Gets the last (highest) sequence number for a stream.
   /// Returns -1 if the stream doesn't exist or is empty.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetLastSequenceAsync_WithEmptyStream_ReturnsMinusOneAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetLastSequenceAsync_WithExistingEvents_ReturnsHighestSequenceAsync</tests>
   public async Task<long> GetLastSequenceAsync(
       Guid streamId,
       CancellationToken cancellationToken = default) {
