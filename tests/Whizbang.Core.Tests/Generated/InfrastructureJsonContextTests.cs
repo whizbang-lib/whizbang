@@ -2,6 +2,7 @@ using System.Text.Json;
 using TUnit.Assertions;
 using Whizbang.Core.Generated;
 using Whizbang.Core.Observability;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests.Generated;
 
@@ -13,31 +14,114 @@ public class InfrastructureJsonContextTests {
 
   [Test]
   public async Task InfrastructureJsonContext_SerializesMessageHop_Async() {
-    // NOTE: This test needs implementation - track test gaps with grep 'NotImplementedException'
-    // Should verify InfrastructureJsonContext can serialize MessageHop
-    // Use InfrastructureJsonContext.Default.GetTypeInfo(typeof(MessageHop))
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    // Arrange
+    var hop = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = new ServiceInstanceInfo {
+        InstanceId = Guid.NewGuid(),
+        ServiceName = "TestService",
+        HostName = "test-host",
+        ProcessId = 12345
+      },
+      Timestamp = DateTimeOffset.UtcNow,
+      Topic = "test-topic",
+      StreamKey = "test-stream",
+      ExecutionStrategy = "SerialExecutor"
+    };
+
+    // Act
+    var json = JsonSerializer.Serialize(hop, InfrastructureJsonContext.Default.MessageHop);
+
+    // Assert
+    await Assert.That(json).IsNotNull();
+    await Assert.That(json).IsNotEmpty();
+    await Assert.That(json).Contains("\"Type\":");
+    await Assert.That(json).Contains("\"ServiceInstance\":");
+    await Assert.That(json).Contains("\"Timestamp\":");
   }
 
   [Test]
   public async Task InfrastructureJsonContext_SerializesEnvelopeMetadata_Async() {
-    // NOTE: This test needs implementation - track test gaps with grep 'NotImplementedException'
-    // Should verify InfrastructureJsonContext can serialize EnvelopeMetadata
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    // Arrange
+    var metadata = new EnvelopeMetadata {
+      MessageId = MessageId.New(),
+      Hops = new List<MessageHop> {
+        new MessageHop {
+          Type = HopType.Current,
+          ServiceInstance = new ServiceInstanceInfo {
+            InstanceId = Guid.NewGuid(),
+            ServiceName = "TestService",
+            HostName = "test-host",
+            ProcessId = 12345
+          },
+          Timestamp = DateTimeOffset.UtcNow,
+          Topic = "test-topic",
+          StreamKey = "test-stream",
+          ExecutionStrategy = "SerialExecutor"
+        }
+      }
+    };
+
+    // Act
+    var json = JsonSerializer.Serialize(metadata, InfrastructureJsonContext.Default.EnvelopeMetadata);
+
+    // Assert
+    await Assert.That(json).IsNotNull();
+    await Assert.That(json).IsNotEmpty();
+    await Assert.That(json).Contains("\"MessageId\":");
+    await Assert.That(json).Contains("\"Hops\":");
   }
 
   [Test]
   public async Task InfrastructureJsonContext_SerializesServiceInstanceInfo_Async() {
-    // NOTE: This test needs implementation - track test gaps with grep 'NotImplementedException'
-    // Should verify InfrastructureJsonContext can serialize ServiceInstanceInfo
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    // Arrange
+    var instanceInfo = new ServiceInstanceInfo {
+      InstanceId = Guid.NewGuid(),
+      ServiceName = "TestService",
+      HostName = "test-host",
+      ProcessId = 12345
+    };
+
+    // Act
+    var json = JsonSerializer.Serialize(instanceInfo, InfrastructureJsonContext.Default.ServiceInstanceInfo);
+
+    // Assert
+    await Assert.That(json).IsNotNull();
+    await Assert.That(json).IsNotEmpty();
+    await Assert.That(json).Contains("\"InstanceId\":");
+    await Assert.That(json).Contains("\"ServiceName\":");
+    await Assert.That(json).Contains("\"HostName\":");
+    await Assert.That(json).Contains("\"ProcessId\":");
   }
 
   [Test]
   public async Task InfrastructureJsonContext_IgnoresNullPropertiesWhenSerializing_Async() {
-    // NOTE: This test needs implementation - track test gaps with grep 'NotImplementedException'
-    // Should verify DefaultIgnoreCondition = WhenWritingNull
-    // Serialize MessageHop with some null properties, verify they're omitted from JSON
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    // Arrange - MessageHop with null Metadata, SecurityContext, and Trail
+    var hop = new MessageHop {
+      Type = HopType.Current,
+      ServiceInstance = new ServiceInstanceInfo {
+        InstanceId = Guid.NewGuid(),
+        ServiceName = "TestService",
+        HostName = "test-host",
+        ProcessId = 12345
+      },
+      Timestamp = DateTimeOffset.UtcNow,
+      Topic = "test-topic",
+      StreamKey = "test-stream",
+      ExecutionStrategy = "SerialExecutor",
+      Metadata = null, // Explicitly null
+      SecurityContext = null, // Explicitly null
+      Trail = null // Explicitly null
+    };
+
+    // Act
+    var json = JsonSerializer.Serialize(hop, InfrastructureJsonContext.Default.MessageHop);
+
+    // Assert - null properties should be omitted from JSON
+    await Assert.That(json).IsNotNull();
+    await Assert.That(json).IsNotEmpty();
+    await Assert.That(json).DoesNotContain("\"Metadata\":");
+    await Assert.That(json).DoesNotContain("\"SecurityContext\":");
+    await Assert.That(json).DoesNotContain("\"Trail\":");
   }
 }

@@ -11,32 +11,52 @@ public class DiagnosticCategoryTests {
 
   [Test]
   public async Task DiagnosticCategory_None_HasValueZeroAsync() {
-    // NOTE: This test needs implementation - track test gaps with grep 'NotImplementedException'
-    // Should verify DiagnosticCategory.None == 0
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    // Arrange & Act
+    var none = DiagnosticCategory.None;
+
+    // Assert
+    await Assert.That((int)none).IsEqualTo(0);
   }
 
   [Test]
   public async Task DiagnosticCategory_All_CombinesAllCategoriesAsync() {
-    // NOTE: This test needs implementation - track test gaps with grep 'NotImplementedException'
-    // Should verify DiagnosticCategory.All includes all defined categories
-    // Verify: All = ReceptorDiscovery | Dispatcher | EventHandling
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    // Arrange
+    var expected = DiagnosticCategory.ReceptorDiscovery | DiagnosticCategory.Dispatcher | DiagnosticCategory.EventHandling;
+
+    // Act
+    var all = DiagnosticCategory.All;
+
+    // Assert
+    await Assert.That(all).IsEqualTo(expected);
+    await Assert.That((int)all).IsEqualTo(7);
   }
 
   [Test]
   public async Task DiagnosticCategory_SupportsFlags_BitwiseOperationsAsync() {
-    // NOTE: This test needs implementation - track test gaps with grep 'NotImplementedException'
-    // Should verify bitwise OR, AND operations work correctly
-    // Example: (ReceptorDiscovery | Dispatcher) & ReceptorDiscovery == ReceptorDiscovery
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    // Arrange
+    var combined = DiagnosticCategory.ReceptorDiscovery | DiagnosticCategory.Dispatcher;
+
+    // Act
+    var hasReceptorDiscovery = (combined & DiagnosticCategory.ReceptorDiscovery) == DiagnosticCategory.ReceptorDiscovery;
+    var hasDispatcher = (combined & DiagnosticCategory.Dispatcher) == DiagnosticCategory.Dispatcher;
+    var hasEventHandling = (combined & DiagnosticCategory.EventHandling) == DiagnosticCategory.EventHandling;
+
+    // Assert
+    await Assert.That(hasReceptorDiscovery).IsTrue();
+    await Assert.That(hasDispatcher).IsTrue();
+    await Assert.That(hasEventHandling).IsFalse();
   }
 
   [Test]
   public async Task DiagnosticCategory_IndividualFlags_HaveUniqueValuesAsync() {
-    // NOTE: This test needs implementation - track test gaps with grep 'NotImplementedException'
-    // Should verify ReceptorDiscovery, Dispatcher, EventHandling have unique bit positions
-    // Verify ReceptorDiscovery = 1 << 0, Dispatcher = 1 << 1, EventHandling = 1 << 2
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    // Arrange & Act
+    var receptorDiscovery = DiagnosticCategory.ReceptorDiscovery;
+    var dispatcher = DiagnosticCategory.Dispatcher;
+    var eventHandling = DiagnosticCategory.EventHandling;
+
+    // Assert
+    await Assert.That((int)receptorDiscovery).IsEqualTo(1);
+    await Assert.That((int)dispatcher).IsEqualTo(2);
+    await Assert.That((int)eventHandling).IsEqualTo(4);
   }
 }
