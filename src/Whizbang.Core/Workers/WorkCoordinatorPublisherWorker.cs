@@ -25,6 +25,33 @@ namespace Whizbang.Core.Workers;
 /// - Marks completed/failed messages
 /// - Claims and processes orphaned work (outbox and inbox)
 /// </summary>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TransportNotReady_SingleBuffer_LogsInformationAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TransportNotReady_ConsecutiveBuffers_TracksCountAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TransportNotReady_ExceedsThreshold_LogsWarningAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TransportBecomesReady_ResetsConsecutiveCounterAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:BufferedMessages_TracksCountAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:LeaseRenewals_TrackedInMetricsAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerRaceConditionTests.cs:RaceCondition_MultipleInstances_NoDuplicatePublishingAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerRaceConditionTests.cs:RaceCondition_ImmediateProcessing_WithRealisticDelaysAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerRaceConditionTests.cs:RaceCondition_DatabaseSlowness_DoesNotBlockPublishingAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerRaceConditionTests.cs:RaceCondition_TransportFailures_RetriesSuccessfullyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerRaceConditionTests.cs:RaceCondition_DatabaseNotReady_DelaysProcessingAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerDatabaseReadinessTests.cs:DatabaseNotReady_ProcessWorkBatchAsync_SkippedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerDatabaseReadinessTests.cs:DatabaseReady_ProcessWorkBatchAsync_CalledAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerDatabaseReadinessTests.cs:DatabaseNotReady_ConsecutiveChecks_TracksCountAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerDatabaseReadinessTests.cs:DatabaseNotReady_ExceedsThreshold_LogsWarningAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerDatabaseReadinessTests.cs:DatabaseBecomesReady_ResetsConsecutiveCounterAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerDatabaseReadinessTests.cs:DatabaseNotReady_MessagesBuffered_UntilReadyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerStartupTests.cs:ImmediateProcessing_OnStartup_ProcessesWorkBeforeFirstPollAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerStartupTests.cs:ImmediateProcessing_DatabaseNotReady_SkipsInitialProcessingAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerStartupTests.cs:ImmediateProcessing_ExceptionDuringInitial_ContinuesStartupAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerStartupTests.cs:ImmediateProcessing_NoWork_DoesNotLogAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerStartupTests.cs:ImmediateProcessing_WithWork_LogsMessageBatchAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:WorkerProcessesOutboxMessages_EndToEndAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:Worker_ProcessesMultipleMessages_InOrderAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:ProcessWorkBatch_ProcessesReturnedWorkFromCompletionsAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:ProcessWorkBatch_MultipleIterationsProcessAllWorkAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:ProcessWorkBatch_LoopTerminatesWhenNoWorkAsync</tests>
 public class WorkCoordinatorPublisherWorker(
   IServiceInstanceProvider instanceProvider,
   IServiceScopeFactory scopeFactory,
@@ -57,24 +84,30 @@ public class WorkCoordinatorPublisherWorker(
   /// Gets the number of consecutive times the transport was not ready.
   /// Resets to 0 when transport becomes ready.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TransportNotReady_ConsecutiveBuffers_TracksCountAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TransportBecomesReady_ResetsConsecutiveCounterAsync</tests>
   public int ConsecutiveNotReadyChecks => _consecutiveNotReadyChecks;
 
   /// <summary>
   /// Gets the number of consecutive times the database was not ready.
   /// Resets to 0 when database becomes ready.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerDatabaseReadinessTests.cs:DatabaseNotReady_ConsecutiveChecks_TracksCountAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerDatabaseReadinessTests.cs:DatabaseBecomesReady_ResetsConsecutiveCounterAsync</tests>
   public int ConsecutiveDatabaseNotReadyChecks => _consecutiveDatabaseNotReadyChecks;
 
   /// <summary>
   /// Gets the total count of messages buffered due to transport not being ready.
   /// Accumulates across all batches.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:BufferedMessages_TracksCountAsync</tests>
   public long BufferedMessageCount => _totalBufferedMessages;
 
   /// <summary>
   /// Gets the total number of lease renewals performed since worker started.
   /// Accumulates across all batches.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:LeaseRenewals_TrackedInMetricsAsync</tests>
   public long TotalLeaseRenewals => _totalLeaseRenewals;
 
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
@@ -331,11 +364,21 @@ public class WorkCoordinatorPublisherWorker(
 /// <summary>
 /// Configuration options for the WorkCoordinator publisher worker.
 /// </summary>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TransportNotReady_SingleBuffer_LogsInformationAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerRaceConditionTests.cs:RaceCondition_MultipleInstances_NoDuplicatePublishingAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerRaceConditionTests.cs:RaceCondition_ImmediateProcessing_WithRealisticDelaysAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerRaceConditionTests.cs:RaceCondition_DatabaseSlowness_DoesNotBlockPublishingAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerRaceConditionTests.cs:RaceCondition_TransportFailures_RetriesSuccessfullyAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerRaceConditionTests.cs:RaceCondition_DatabaseNotReady_DelaysProcessingAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerDatabaseReadinessTests.cs:DatabaseNotReady_ProcessWorkBatchAsync_SkippedAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerStartupTests.cs:ImmediateProcessing_OnStartup_ProcessesWorkBeforeFirstPollAsync</tests>
 public class WorkCoordinatorPublisherOptions {
   /// <summary>
   /// Milliseconds to wait between polling for work.
   /// Default: 1000 (1 second)
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:TransportNotReady_SingleBuffer_LogsInformationAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerRaceConditionTests.cs:RaceCondition_MultipleInstances_NoDuplicatePublishingAsync</tests>
   public int PollingIntervalMilliseconds { get; set; } = 1000;
 
   /// <summary>
@@ -343,6 +386,7 @@ public class WorkCoordinatorPublisherOptions {
   /// Messages claimed will be locked for this duration.
   /// Default: 300 (5 minutes)
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:WorkerProcessesOutboxMessages_EndToEndAsync</tests>
   public int LeaseSeconds { get; set; } = 300;
 
   /// <summary>
@@ -350,6 +394,7 @@ public class WorkCoordinatorPublisherOptions {
   /// Instances that haven't sent a heartbeat for this duration will be removed.
   /// Default: 600 (10 minutes)
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:WorkerProcessesOutboxMessages_EndToEndAsync</tests>
   public int StaleThresholdSeconds { get; set; } = 600;
 
   /// <summary>
@@ -357,23 +402,27 @@ public class WorkCoordinatorPublisherOptions {
   /// Can include version, environment, etc.
   /// Supports any JSON value type via JsonElement.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:WorkerProcessesOutboxMessages_EndToEndAsync</tests>
   public Dictionary<string, JsonElement>? InstanceMetadata { get; set; }
 
   /// <summary>
   /// Keep completed messages for debugging (default: false).
   /// When enabled, completed messages are preserved instead of deleted.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:WorkerProcessesOutboxMessages_EndToEndAsync</tests>
   public bool DebugMode { get; set; } = false;
 
   /// <summary>
   /// Number of partitions for work distribution.
   /// Default: 10000
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:WorkerProcessesOutboxMessages_EndToEndAsync</tests>
   public int PartitionCount { get; set; } = 10_000;
 
   /// <summary>
   /// Maximum number of partitions a single instance can claim.
   /// Default: 100
   /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:WorkerProcessesOutboxMessages_EndToEndAsync</tests>
   public int MaxPartitionsPerInstance { get; set; } = 100;
 }
