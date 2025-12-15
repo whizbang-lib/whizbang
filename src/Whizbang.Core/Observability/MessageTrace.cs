@@ -7,6 +7,8 @@ namespace Whizbang.Core.Observability;
 /// Tracks the complete journey of a message through the system.
 /// Used for time-travel debugging, performance analysis, and policy visualization.
 /// </summary>
+/// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageTrace_Constructor_InitializesWithMessageIdAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageTrace_WithCorrelationAndCausation_SetsPropertiesAsync</tests>
 /// <remarks>
 /// Creates a new message trace.
 /// </remarks>
@@ -15,54 +17,67 @@ public class MessageTrace(MessageId messageId) {
   /// <summary>
   /// The unique identifier of the message being traced.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageTrace_Constructor_InitializesWithMessageIdAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageTrace_WithCorrelationAndCausation_SetsPropertiesAsync</tests>
   public MessageId MessageId { get; } = messageId;
 
   /// <summary>
   /// The correlation ID for workflow grouping.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageTrace_WithCorrelationAndCausation_SetsPropertiesAsync</tests>
   public CorrelationId? CorrelationId { get; init; }
 
   /// <summary>
   /// The causation ID for parent-child relationships.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageTrace_WithCorrelationAndCausation_SetsPropertiesAsync</tests>
   public MessageId? CausationId { get; init; }
 
   /// <summary>
   /// All hops this message took through the system.
   /// Each hop records where the message was processed with caller information.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageTrace_Hops_IsInitializedEmptyAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageTrace_AddHop_AddsToHopsListAsync</tests>
   public List<MessageHop> Hops { get; } = [];
 
   /// <summary>
   /// All policy decision trails from each stage of processing.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageTrace_PolicyTrails_IsInitializedEmptyAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageTrace_AddPolicyTrail_AddsToTrailsListAsync</tests>
   public List<PolicyDecisionTrail> PolicyTrails { get; } = [];
 
   /// <summary>
   /// Whether the message processing succeeded.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageTrace_SetOutcome_SetsSuccessAndErrorAsync</tests>
   public bool Success { get; private set; }
 
   /// <summary>
   /// The error that occurred during processing (if any).
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageTrace_SetOutcome_SetsSuccessAndErrorAsync</tests>
   public Exception? Error { get; private set; }
 
   /// <summary>
   /// Total duration of message processing.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageTrace_TotalDuration_CanBeSetAsync</tests>
   public TimeSpan TotalDuration { get; set; }
 
   /// <summary>
   /// Timings for different stages of processing.
   /// Keys are stage names (e.g., "policy-evaluation", "handler-execution").
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageTrace_RecordTiming_AddsToDictionaryAsync</tests>
   public Dictionary<string, TimeSpan> Timings { get; } = [];
 
   /// <summary>
   /// Adds a hop to the trace.
   /// </summary>
   /// <param name="hop">The hop to add</param>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageTrace_AddHop_AddsToHopsListAsync</tests>
   public void AddHop(MessageHop hop) {
     Hops.Add(hop);
   }
@@ -71,6 +86,7 @@ public class MessageTrace(MessageId messageId) {
   /// Adds a policy decision trail to the trace.
   /// </summary>
   /// <param name="trail">The policy trail to add</param>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageTrace_AddPolicyTrail_AddsToTrailsListAsync</tests>
   public void AddPolicyTrail(PolicyDecisionTrail trail) {
     PolicyTrails.Add(trail);
   }
@@ -80,6 +96,7 @@ public class MessageTrace(MessageId messageId) {
   /// </summary>
   /// <param name="success">Whether processing succeeded</param>
   /// <param name="error">The error that occurred (if any)</param>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageTrace_SetOutcome_SetsSuccessAndErrorAsync</tests>
   public void SetOutcome(bool success, Exception? error = null) {
     Success = success;
     Error = error;
@@ -90,6 +107,7 @@ public class MessageTrace(MessageId messageId) {
   /// </summary>
   /// <param name="stageName">Name of the stage</param>
   /// <param name="duration">Duration of the stage</param>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageTrace_RecordTiming_AddsToDictionaryAsync</tests>
   public void RecordTiming(string stageName, TimeSpan duration) {
     Timings[stageName] = duration;
   }
