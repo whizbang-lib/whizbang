@@ -13,6 +13,7 @@ namespace Whizbang.Generators;
 /// <param name="TestMethod">Test method name (e.g., "Dispatcher_Send_RoutesToCorrectReceptorAsync")</param>
 /// <param name="TestClass">Test class name (e.g., "DispatcherTests")</param>
 /// <param name="LinkSource">How this link was discovered (Convention, SemanticAnalysis, or XmlTag)</param>
+/// <tests>No tests found</tests>
 internal sealed record TestLinkInfo(
   string SourceFile,
   int SourceLine,
@@ -28,19 +29,23 @@ internal sealed record TestLinkInfo(
 /// <summary>
 /// Indicates how a test link was discovered.
 /// </summary>
+/// <tests>No tests found</tests>
 internal enum TestLinkSource {
   /// <summary>
   /// Link discovered via naming convention (e.g., DispatcherTests tests Dispatcher).
   /// </summary>
+  /// <tests>No tests found</tests>
   Convention,
 
   /// <summary>
   /// Link discovered via semantic analysis of test method body.
   /// </summary>
+  /// <tests>No tests found</tests>
   SemanticAnalysis,
 
   /// <summary>
   /// Link explicitly specified via &lt;tests&gt; XML tag in source code.
   /// </summary>
+  /// <tests>No tests found</tests>
   XmlTag
 }

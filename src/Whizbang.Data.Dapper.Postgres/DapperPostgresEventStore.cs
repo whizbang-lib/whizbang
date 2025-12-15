@@ -19,6 +19,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// Stream ID is inferred from event's [AggregateId] property.
 /// Uses JsonbSizeValidator for C#-based size validation.
 /// </summary>
+/// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStoreTests.cs</tests>
 public class DapperPostgresEventStore(
   IDbConnectionFactory connectionFactory,
   IDbExecutor executor,
@@ -40,6 +41,12 @@ public class DapperPostgresEventStore(
   /// Stream ID is provided explicitly, avoiding reflection.
   /// Splits envelope into 3 JSONB columns, validates size, handles concurrent writes with retry.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithHighConcurrency_ShouldRetryAndSucceedAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ExtremelyHighConcurrency_ShouldHandleRetriesAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ConcurrentAppendsToSameSequence_ShouldResolveConflictsAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithRetryBackoff_ShouldEventuallySucceedAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ExtremeContention_ShouldEventuallyThrowMaxRetriesAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithNonUniqueViolationException_ShouldPropagateExceptionAsync</tests>
   public override async Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(envelope);
 
@@ -109,6 +116,8 @@ public class DapperPostgresEventStore(
   /// Reads events from a stream by stream ID (UUID) with strong typing.
   /// Reconstructs envelope from 3 JSONB columns.
   /// </summary>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_WithHighConcurrency_ShouldRetryAndSucceedAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:AppendAsync_ConcurrentAppendsToSameSequence_ShouldResolveConflictsAsync</tests>
   public override async IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
     Guid streamId,
     long fromSequence,
@@ -138,6 +147,11 @@ public class DapperPostgresEventStore(
     }
   }
 
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.UnitTests.cs:IsUniqueConstraintViolation_WithNonPostgresException_UniqueConstraintMessage_ShouldReturnTrueAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.UnitTests.cs:IsUniqueConstraintViolation_WithNonPostgresException_DuplicateKeyMessage_ShouldReturnTrueAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.UnitTests.cs:IsUniqueConstraintViolation_WithNonPostgresException_CaseInsensitive_ShouldReturnTrueAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.UnitTests.cs:IsUniqueConstraintViolation_WithNonPostgresException_DifferentMessage_ShouldReturnFalseAsync</tests>
+  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.UnitTests.cs:IsUniqueConstraintViolation_WithArgumentException_DifferentMessage_ShouldReturnFalseAsync</tests>
   internal static bool IsUniqueConstraintViolation(Exception ex) {
     if (ex is Npgsql.PostgresException pgEx) {
       return pgEx.SqlState == "23505"; // unique_violation
@@ -146,6 +160,7 @@ public class DapperPostgresEventStore(
            ex.Message.Contains("duplicate key", StringComparison.OrdinalIgnoreCase);
   }
 
+  /// <tests>No tests found</tests>
   protected override string GetAppendSql() => @"
     INSERT INTO whizbang_event_store
       (event_id, stream_id, aggregate_id, aggregate_type, sequence_number, version, event_type, event_data, metadata, scope, created_at)
@@ -153,6 +168,7 @@ public class DapperPostgresEventStore(
       (@EventId, @StreamId, @AggregateId, @AggregateType, @SequenceNumber, @Version, @EventType,
        @EventData::jsonb, @Metadata::jsonb, @Scope::jsonb, @CreatedAt)";
 
+  /// <tests>No tests found</tests>
   protected override string GetReadSql() => @"
     SELECT
       event_type AS EventType,
@@ -163,6 +179,7 @@ public class DapperPostgresEventStore(
     WHERE stream_id = @StreamId AND sequence_number >= @FromSequence
     ORDER BY sequence_number";
 
+  /// <tests>No tests found</tests>
   protected override string GetLastSequenceSql() => @"
     SELECT COALESCE(MAX(sequence_number), -1)
     FROM whizbang_event_store

@@ -15,9 +15,11 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// Constructor that accepts JsonSerializerOptions with a source-generated context.
 /// This is the AOT-compatible way to use this adapter.
 /// </remarks>
+/// <tests>No tests found</tests>
 public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJsonbPersistenceAdapter<IMessageEnvelope> {
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
 
+  /// <tests>No tests found</tests>
   public JsonbPersistenceModel ToJsonb(IMessageEnvelope source, PolicyConfiguration? policyConfig = null) {
     ArgumentNullException.ThrowIfNull(source);
 
@@ -77,12 +79,14 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
   /// Non-generic FromJsonb is not supported for AOT compatibility.
   /// Use the generic FromJsonb&lt;TMessage&gt; method instead.
   /// </summary>
+  /// <tests>No tests found</tests>
   public IMessageEnvelope FromJsonb(JsonbPersistenceModel jsonb) {
     throw new NotSupportedException(
       "Non-generic FromJsonb is not supported for event envelopes in AOT scenarios. " +
       "Use FromJsonb<TMessage> with the concrete message type instead.");
   }
 
+  /// <tests>No tests found</tests>
   public MessageEnvelope<TMessage> FromJsonb<TMessage>(JsonbPersistenceModel jsonb) {
     ArgumentNullException.ThrowIfNull(jsonb);
 

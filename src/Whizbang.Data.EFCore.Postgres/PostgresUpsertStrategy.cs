@@ -10,9 +10,11 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// NOTE: This is identical to InMemoryUpsertStrategy. When we add Dapper/Npgsql implementations,
 /// those can use native ON CONFLICT for true single-roundtrip performance.
 /// </summary>
+/// <tests>No tests found</tests>
 public class PostgresUpsertStrategy : IDbUpsertStrategy {
 
   /// <inheritdoc/>
+  /// <tests>No tests found</tests>
   public async Task UpsertPerspectiveRowAsync<TModel>(
       DbContext context,
       string tableName,
@@ -64,6 +66,7 @@ public class PostgresUpsertStrategy : IDbUpsertStrategy {
   /// <summary>
   /// Creates a clone of PerspectiveMetadata to avoid EF Core tracking issues.
   /// </summary>
+  /// <tests>No tests found</tests>
   private static PerspectiveMetadata CloneMetadata(PerspectiveMetadata metadata) {
     return new PerspectiveMetadata {
       EventType = metadata.EventType,
@@ -77,6 +80,7 @@ public class PostgresUpsertStrategy : IDbUpsertStrategy {
   /// <summary>
   /// Creates a clone of PerspectiveScope to avoid EF Core tracking issues.
   /// </summary>
+  /// <tests>No tests found</tests>
   private static PerspectiveScope CloneScope(PerspectiveScope scope) {
     return new PerspectiveScope {
       TenantId = scope.TenantId,

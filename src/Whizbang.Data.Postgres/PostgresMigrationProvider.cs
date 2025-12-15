@@ -12,6 +12,7 @@ namespace Whizbang.Data.Postgres;
 /// Provides access to embedded SQL migration scripts.
 /// Loads SQL files from the Migrations folder as embedded resources.
 /// </summary>
+/// <tests>No tests found</tests>
 public class PostgresMigrationProvider {
   private readonly Assembly _assembly;
   private readonly string _resourcePrefix;
@@ -20,6 +21,7 @@ public class PostgresMigrationProvider {
   /// Initializes a new instance of the PostgresMigrationProvider.
   /// Defaults to loading from Whizbang.Data.Postgres assembly.
   /// </summary>
+  /// <tests>No tests found</tests>
   public PostgresMigrationProvider()
     : this(typeof(PostgresMigrationProvider).Assembly) {
   }
@@ -29,6 +31,7 @@ public class PostgresMigrationProvider {
   /// Useful for loading migrations from different assemblies.
   /// </summary>
   /// <param name="assembly">Assembly containing embedded SQL resources</param>
+  /// <tests>No tests found</tests>
   public PostgresMigrationProvider(Assembly assembly) {
     _assembly = assembly ?? throw new ArgumentNullException(nameof(assembly));
     _resourcePrefix = $"{_assembly.GetName().Name}.Migrations.";
@@ -39,6 +42,7 @@ public class PostgresMigrationProvider {
   /// Migration scripts are named 001_*.sql, 002_*.sql, etc.
   /// </summary>
   /// <returns>List of migration scripts with names and SQL content</returns>
+  /// <tests>No tests found</tests>
   public List<MigrationScript> GetAllMigrations() {
     var resourceNames = _assembly
       .GetManifestResourceNames()
@@ -69,6 +73,7 @@ public class PostgresMigrationProvider {
   /// </summary>
   /// <param name="scriptName">Name of the script (without .sql extension)</param>
   /// <returns>Migration script, or null if not found</returns>
+  /// <tests>No tests found</tests>
   public MigrationScript? GetMigration(string scriptName) {
     var resourceName = $"{_resourcePrefix}{scriptName}.sql";
 
@@ -91,6 +96,7 @@ public class PostgresMigrationProvider {
   /// <param name="connectionString">PostgreSQL connection string</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Task representing the async operation</returns>
+  /// <tests>No tests found</tests>
   public async Task ExecuteAllMigrationsAsync(
     string connectionString,
     CancellationToken cancellationToken = default
@@ -128,14 +134,17 @@ public class PostgresMigrationProvider {
 /// <summary>
 /// Represents a single SQL migration script.
 /// </summary>
+/// <tests>No tests found</tests>
 public class MigrationScript {
   /// <summary>
   /// Name of the migration (e.g., "001_AlterOutboxTableForLeasing")
   /// </summary>
+  /// <tests>No tests found</tests>
   public required string Name { get; init; }
 
   /// <summary>
   /// SQL content of the migration script
   /// </summary>
+  /// <tests>No tests found</tests>
   public required string Sql { get; init; }
 }

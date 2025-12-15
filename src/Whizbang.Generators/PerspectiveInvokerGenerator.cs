@@ -12,10 +12,12 @@ namespace Whizbang.Generators;
 /// and generates runtime routing logic for the GeneratedPerspectiveInvoker.
 /// Creates type-safe routing from events to perspective implementations.
 /// </summary>
+/// <tests>No tests found</tests>
 [Generator]
 public class PerspectiveInvokerGenerator : IIncrementalGenerator {
   private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.IPerspectiveOf";
 
+  /// <tests>No tests found</tests>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover IPerspectiveOf implementations
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
@@ -42,6 +44,7 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
   /// Returns null if the class doesn't implement IPerspectiveOf.
   /// A class can implement multiple IPerspectiveOf&lt;TEvent&gt; interfaces.
   /// </summary>
+  /// <tests>No tests found</tests>
   private static PerspectiveInfo? ExtractPerspectiveInfo(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
@@ -84,6 +87,7 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
   /// Groups perspectives by event type for efficient lookup.
   /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
+  /// <tests>No tests found</tests>
   private static void GeneratePerspectiveInvoker(
       SourceProductionContext context,
       Compilation compilation,
@@ -159,6 +163,7 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
   /// This ensures the build doesn't fail when IPerspectiveInvoker is injected but no perspectives exist.
   /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
+  /// <tests>No tests found</tests>
   private static void GenerateEmptyInvoker(SourceProductionContext context, Compilation compilation) {
     // Determine namespace from assembly name
     var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
@@ -181,6 +186,7 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
   /// Gets the simple name from a fully qualified type name.
   /// E.g., "global::MyApp.Events.OrderCreatedEvent" -> "OrderCreatedEvent"
   /// </summary>
+  /// <tests>No tests found</tests>
   private static string GetSimpleName(string fullyQualifiedName) {
     var lastDot = fullyQualifiedName.LastIndexOf('.');
     return lastDot >= 0 ? fullyQualifiedName[(lastDot + 1)..] : fullyQualifiedName;
