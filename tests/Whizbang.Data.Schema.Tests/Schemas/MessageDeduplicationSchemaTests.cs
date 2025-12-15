@@ -15,182 +15,141 @@ public class MessageDeduplicationSchemaTests {
   [Test]
   [Category("Schema")]
   public async Task Table_ShouldHaveCorrectNameAsync() {
-    // Arrange
-    // Test validates table name matches expected value
-
-    // Act
+    // Arrange & Act
     var tableName = MessageDeduplicationSchema.Table.Name;
 
     // Assert
-    // TODO: Implement test for MessageDeduplicationSchema.Table.Name
-    // Should validate: table name is "message_deduplication"
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(tableName).IsEqualTo("message_deduplication");
   }
 
   [Test]
   [Category("Schema")]
   public async Task Table_ShouldDefineCorrectColumnsAsync() {
-    // Arrange
-    // Test validates all required columns exist with correct data types
-
-    // Act
+    // Arrange & Act
     var columns = MessageDeduplicationSchema.Table.Columns;
 
-    // Assert
-    // TODO: Implement test for MessageDeduplicationSchema.Table.Columns
-    // Should validate:
-    // - message_id (UUID, primary key, not null)
-    // - first_seen_at (TimestampTz, not null, default NOW)
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    // Assert - Verify column count
+    await Assert.That(columns).HasCount().EqualTo(2);
 
-    await Task.CompletedTask;
+    // Verify message_id column
+    var messageId = columns[0];
+    await Assert.That(messageId.Name).IsEqualTo("message_id");
+    await Assert.That(messageId.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(messageId.PrimaryKey).IsTrue();
+    await Assert.That(messageId.Nullable).IsFalse();
+
+    // Verify first_seen_at column
+    var firstSeenAt = columns[1];
+    await Assert.That(firstSeenAt.Name).IsEqualTo("first_seen_at");
+    await Assert.That(firstSeenAt.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
+    await Assert.That(firstSeenAt.Nullable).IsFalse();
   }
 
   [Test]
   [Category("Schema")]
   public async Task Table_ShouldDefinePrimaryKeyAsync() {
-    // Arrange
-    // Test validates message_id is defined as primary key
-
-    // Act
+    // Arrange & Act
     var primaryKeyColumns = MessageDeduplicationSchema.Table.Columns
       .Where(c => c.PrimaryKey)
       .ToList();
 
     // Assert
-    // TODO: Implement test for MessageDeduplicationSchema primary key
-    // Should validate: exactly one primary key column (message_id)
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(primaryKeyColumns).HasCount().EqualTo(1);
+    await Assert.That(primaryKeyColumns[0].Name).IsEqualTo("message_id");
   }
 
   [Test]
   [Category("Schema")]
   public async Task Table_ShouldDefineIndexesAsync() {
-    // Arrange
-    // Test validates all required indexes are defined
-
-    // Act
+    // Arrange & Act
     var indexes = MessageDeduplicationSchema.Table.Indexes;
 
-    // Assert
-    // TODO: Implement test for MessageDeduplicationSchema.Table.Indexes
-    // Should validate:
-    // - idx_message_dedup_first_seen (first_seen_at)
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    // Assert - Verify index count
+    await Assert.That(indexes).HasCount().EqualTo(1);
 
-    await Task.CompletedTask;
+    // Verify first_seen_at index
+    var firstSeenIndex = indexes[0];
+    await Assert.That(firstSeenIndex.Name).IsEqualTo("idx_message_dedup_first_seen");
+    await Assert.That(firstSeenIndex.Columns).HasCount().EqualTo(1);
+    await Assert.That(firstSeenIndex.Columns[0]).IsEqualTo("first_seen_at");
   }
 
   [Test]
   [Category("Schema")]
   public async Task Table_FirstSeenAtIndex_ShouldBeDefinedAsync() {
-    // Arrange
-    // Test validates first_seen_at index exists for temporal queries
-
-    // Act
+    // Arrange & Act
     var firstSeenIndex = MessageDeduplicationSchema.Table.Indexes
       .FirstOrDefault(i => i.Name == "idx_message_dedup_first_seen");
 
     // Assert
-    // TODO: Implement test for first_seen_at index
-    // Should validate: index exists and targets first_seen_at column
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(firstSeenIndex).IsNotNull();
+    await Assert.That(firstSeenIndex!.Columns).HasCount().EqualTo(1);
+    await Assert.That(firstSeenIndex.Columns[0]).IsEqualTo("first_seen_at");
   }
 
   [Test]
   [Category("Schema")]
   public async Task Table_FirstSeenAtColumn_ShouldHaveDefaultValueAsync() {
-    // Arrange
-    // Test validates first_seen_at column has NOW default
-
-    // Act
+    // Arrange & Act
     var firstSeenAtColumn = MessageDeduplicationSchema.Table.Columns
       .FirstOrDefault(c => c.Name == "first_seen_at");
 
     // Assert
-    // TODO: Implement test for first_seen_at default value
-    // Should validate: default value is NOW function
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(firstSeenAtColumn).IsNotNull();
+    await Assert.That(firstSeenAtColumn!.DefaultValue).IsNotNull();
+    await Assert.That(firstSeenAtColumn.DefaultValue).IsTypeOf<FunctionDefault>();
+    await Assert.That(((FunctionDefault)firstSeenAtColumn.DefaultValue!).FunctionType).IsEqualTo(DefaultValueFunction.DateTime_Now);
   }
 
   [Test]
   [Category("Schema")]
   public async Task Table_ShouldBeMinimalAsync() {
-    // Arrange
-    // Test validates table has only essential columns (message_id, first_seen_at)
-    // This is a permanent tracking table, so minimal schema is critical
-
-    // Act
+    // Arrange & Act
     var columnCount = MessageDeduplicationSchema.Table.Columns.Length;
 
-    // Assert
-    // TODO: Implement test for minimal column count
-    // Should validate: exactly 2 columns (message_id, first_seen_at)
+    // Assert - Exactly 2 columns (message_id, first_seen_at)
     // Rationale: This table grows forever, so extra columns waste space
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(columnCount).IsEqualTo(2);
   }
 
   [Test]
   [Category("Schema")]
   public async Task Columns_ShouldProvideTypeConstantsAsync() {
-    // Arrange
-    // Test validates column name constants match table definition
-
-    // Act
+    // Arrange & Act
     var messageId = MessageDeduplicationSchema.Columns.MessageId;
     var firstSeenAt = MessageDeduplicationSchema.Columns.FirstSeenAt;
 
-    // Assert
-    // TODO: Implement test for column constants
-    // Should validate: all constants match actual column names in table definition
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    // Assert - Verify constants match column names
+    await Assert.That(messageId).IsEqualTo("message_id");
+    await Assert.That(firstSeenAt).IsEqualTo("first_seen_at");
 
-    await Task.CompletedTask;
+    // Verify constants match table definition
+    var columns = MessageDeduplicationSchema.Table.Columns;
+    await Assert.That(columns.Any(c => c.Name == messageId)).IsTrue();
+    await Assert.That(columns.Any(c => c.Name == firstSeenAt)).IsTrue();
   }
 
   [Test]
   [Category("Schema")]
   public async Task Table_MessageIdColumn_ShouldNotBeNullableAsync() {
-    // Arrange
-    // Test validates message_id is not nullable (critical for deduplication)
-
-    // Act
+    // Arrange & Act
     var messageIdColumn = MessageDeduplicationSchema.Table.Columns
       .FirstOrDefault(c => c.Name == "message_id");
 
     // Assert
-    // TODO: Implement test for message_id nullability
-    // Should validate: Nullable is false
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(messageIdColumn).IsNotNull();
+    await Assert.That(messageIdColumn!.Nullable).IsFalse();
   }
 
   [Test]
   [Category("Schema")]
   public async Task Table_FirstSeenAtColumn_ShouldNotBeNullableAsync() {
-    // Arrange
-    // Test validates first_seen_at is not nullable (audit trail requirement)
-
-    // Act
+    // Arrange & Act
     var firstSeenAtColumn = MessageDeduplicationSchema.Table.Columns
       .FirstOrDefault(c => c.Name == "first_seen_at");
 
     // Assert
-    // TODO: Implement test for first_seen_at nullability
-    // Should validate: Nullable is false
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(firstSeenAtColumn).IsNotNull();
+    await Assert.That(firstSeenAtColumn!.Nullable).IsFalse();
   }
 }

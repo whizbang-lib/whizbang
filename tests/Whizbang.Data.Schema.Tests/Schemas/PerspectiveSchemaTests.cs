@@ -11,133 +11,176 @@ namespace Whizbang.Data.Schema.Tests.Schemas;
 /// Tests for PerspectiveSchema - dynamic perspective table factory.
 /// Tests verify CreateTable, CreateTableWithId methods and CommonColumns definitions.
 /// </summary>
-[TestClass("PerspectiveSchema Tests")]
+
 public class PerspectiveSchemaTests {
   [Test]
   [Category("Schema")]
   public async Task CreateTable_WithNameAndColumns_CreatesTableDefinitionAsync() {
     // Arrange
-    // TODO: Implement test for PerspectiveSchema.CreateTable
-    // Should validate: table name, columns preserved, indexes optional
+    var columns = ImmutableArray.Create(
+      new ColumnDefinition(
+        Name: "name",
+        DataType: WhizbangDataType.String,
+        MaxLength: 100,
+        Nullable: false
+      ),
+      new ColumnDefinition(
+        Name: "description",
+        DataType: WhizbangDataType.String,
+        MaxLength: 500,
+        Nullable: true
+      )
+    );
 
     // Act
-    // This stub documents the test gap and enables complete test tagging
+    var table = PerspectiveSchema.CreateTable("product_dto", columns);
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(table.Name).IsEqualTo("product_dto");
+    await Assert.That(table.Columns).HasCount().EqualTo(2);
+    await Assert.That(table.Columns[0].Name).IsEqualTo("name");
+    await Assert.That(table.Columns[1].Name).IsEqualTo("description");
+    await Assert.That(table.Indexes).HasCount().EqualTo(0);
   }
 
   [Test]
   [Category("Schema")]
   public async Task CreateTable_WithIndexes_IncludesIndexesAsync() {
     // Arrange
-    // TODO: Implement test for PerspectiveSchema.CreateTable with indexes
-    // Should validate: indexes are stored in TableDefinition
+    var columns = ImmutableArray.Create(
+      new ColumnDefinition(
+        Name: "product_id",
+        DataType: WhizbangDataType.Uuid,
+        Nullable: false
+      ),
+      new ColumnDefinition(
+        Name: "status",
+        DataType: WhizbangDataType.String,
+        MaxLength: 50,
+        Nullable: false
+      )
+    );
+
+    var indexes = ImmutableArray.Create(
+      new IndexDefinition(
+        Name: "idx_product_status",
+        Columns: ImmutableArray.Create("status")
+      )
+    );
 
     // Act
-    // This stub documents the test gap and enables complete test tagging
+    var table = PerspectiveSchema.CreateTable("product_dto", columns, indexes);
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(table.Name).IsEqualTo("product_dto");
+    await Assert.That(table.Indexes).HasCount().EqualTo(1);
+    await Assert.That(table.Indexes[0].Name).IsEqualTo("idx_product_status");
+    await Assert.That(table.Indexes[0].Columns[0]).IsEqualTo("status");
   }
 
   [Test]
   [Category("Schema")]
   public async Task CreateTableWithId_AddsIdColumnAsync() {
     // Arrange
-    // TODO: Implement test for PerspectiveSchema.CreateTableWithId
-    // Should validate: ID column is first, additional columns follow
+    var additionalColumns = ImmutableArray.Create(
+      new ColumnDefinition(
+        Name: "name",
+        DataType: WhizbangDataType.String,
+        MaxLength: 100,
+        Nullable: false
+      ),
+      new ColumnDefinition(
+        Name: "price",
+        DataType: WhizbangDataType.Integer,
+        Nullable: false
+      )
+    );
 
     // Act
-    // This stub documents the test gap and enables complete test tagging
+    var table = PerspectiveSchema.CreateTableWithId("product_dto", additionalColumns);
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    await Assert.That(table.Name).IsEqualTo("product_dto");
+    await Assert.That(table.Columns).HasCount().EqualTo(3);
 
-    await Task.CompletedTask;
+    // Verify ID column is first
+    var idColumn = table.Columns[0];
+    await Assert.That(idColumn.Name).IsEqualTo("id");
+    await Assert.That(idColumn.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(idColumn.PrimaryKey).IsTrue();
+    await Assert.That(idColumn.Nullable).IsFalse();
+
+    // Verify additional columns follow
+    await Assert.That(table.Columns[1].Name).IsEqualTo("name");
+    await Assert.That(table.Columns[2].Name).IsEqualTo("price");
   }
 
   [Test]
   [Category("Schema")]
   public async Task CommonColumns_Id_HasCorrectDefinitionAsync() {
-    // Arrange
-    // TODO: Implement test for PerspectiveSchema.CommonColumns.Id
-    // Should validate: name="id", DataType=Uuid, PrimaryKey=true, Nullable=false
-
-    // Act
-    // This stub documents the test gap and enables complete test tagging
+    // Arrange & Act
+    var idColumn = PerspectiveSchema.CommonColumns.Id;
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(idColumn.Name).IsEqualTo("id");
+    await Assert.That(idColumn.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(idColumn.PrimaryKey).IsTrue();
+    await Assert.That(idColumn.Nullable).IsFalse();
   }
 
   [Test]
   [Category("Schema")]
   public async Task CommonColumns_CreatedAt_HasCorrectDefinitionAsync() {
-    // Arrange
-    // TODO: Implement test for PerspectiveSchema.CommonColumns.CreatedAt
-    // Should validate: name, type, nullable, default value function
-
-    // Act
-    // This stub documents the test gap and enables complete test tagging
+    // Arrange & Act
+    var createdAtColumn = PerspectiveSchema.CommonColumns.CreatedAt;
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(createdAtColumn.Name).IsEqualTo("created_at");
+    await Assert.That(createdAtColumn.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
+    await Assert.That(createdAtColumn.Nullable).IsFalse();
+    await Assert.That(createdAtColumn.DefaultValue).IsNotNull();
+    await Assert.That(createdAtColumn.DefaultValue).IsTypeOf<FunctionDefault>();
+    await Assert.That(((FunctionDefault)createdAtColumn.DefaultValue!).FunctionType).IsEqualTo(DefaultValueFunction.DateTime_Now);
   }
 
   [Test]
   [Category("Schema")]
   public async Task CommonColumns_UpdatedAt_HasCorrectDefinitionAsync() {
-    // Arrange
-    // TODO: Implement test for PerspectiveSchema.CommonColumns.UpdatedAt
-    // Should validate: name, type, nullable=true, no default
-
-    // Act
-    // This stub documents the test gap and enables complete test tagging
+    // Arrange & Act
+    var updatedAtColumn = PerspectiveSchema.CommonColumns.UpdatedAt;
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(updatedAtColumn.Name).IsEqualTo("updated_at");
+    await Assert.That(updatedAtColumn.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
+    await Assert.That(updatedAtColumn.Nullable).IsTrue();
+    await Assert.That(updatedAtColumn.DefaultValue).IsNull();
   }
 
   [Test]
   [Category("Schema")]
   public async Task CommonColumns_Version_HasCorrectDefinitionAsync() {
-    // Arrange
-    // TODO: Implement test for PerspectiveSchema.CommonColumns.Version
-    // Should validate: optimistic concurrency column with default=1
-
-    // Act
-    // This stub documents the test gap and enables complete test tagging
+    // Arrange & Act
+    var versionColumn = PerspectiveSchema.CommonColumns.Version;
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(versionColumn.Name).IsEqualTo("version");
+    await Assert.That(versionColumn.DataType).IsEqualTo(WhizbangDataType.Integer);
+    await Assert.That(versionColumn.Nullable).IsFalse();
+    await Assert.That(versionColumn.DefaultValue).IsNotNull();
+    await Assert.That(versionColumn.DefaultValue).IsTypeOf<IntegerDefault>();
+    await Assert.That(((IntegerDefault)versionColumn.DefaultValue!).Value).IsEqualTo(1);
   }
 
   [Test]
   [Category("Schema")]
   public async Task CommonColumns_DeletedAt_HasCorrectDefinitionAsync() {
-    // Arrange
-    // TODO: Implement test for PerspectiveSchema.CommonColumns.DeletedAt
-    // Should validate: soft delete timestamp, nullable=true
-
-    // Act
-    // This stub documents the test gap and enables complete test tagging
+    // Arrange & Act
+    var deletedAtColumn = PerspectiveSchema.CommonColumns.DeletedAt;
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(deletedAtColumn.Name).IsEqualTo("deleted_at");
+    await Assert.That(deletedAtColumn.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
+    await Assert.That(deletedAtColumn.Nullable).IsTrue();
+    await Assert.That(deletedAtColumn.DefaultValue).IsNull();
   }
 }
