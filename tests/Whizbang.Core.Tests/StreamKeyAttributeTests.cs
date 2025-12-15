@@ -1,4 +1,6 @@
 using System;
+using System.Linq;
+using System.Reflection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -17,26 +19,63 @@ public class StreamKeyAttributeTests {
 
   [Test]
   public async Task StreamKeyAttribute_DefaultConstructor_CreatesInstanceAsync() {
-    throw new NotImplementedException("Test stub - needs implementation");
+    // Arrange & Act
+    var attribute = new StreamKeyAttribute();
+
+    // Assert
+    await Assert.That(attribute).IsNotNull();
+    await Assert.That(attribute).IsTypeOf<StreamKeyAttribute>();
   }
 
   [Test]
   public async Task StreamKeyAttribute_AttributeUsage_AllowsPropertyTargetAsync() {
-    throw new NotImplementedException("Test stub - needs implementation");
+    // Arrange & Act
+    var attributeUsage = typeof(StreamKeyAttribute)
+      .GetCustomAttributes(typeof(AttributeUsageAttribute), false)
+      .Cast<AttributeUsageAttribute>()
+      .FirstOrDefault();
+
+    // Assert
+    await Assert.That(attributeUsage).IsNotNull();
+    await Assert.That(attributeUsage!.ValidOn.HasFlag(AttributeTargets.Property)).IsTrue();
   }
 
   [Test]
   public async Task StreamKeyAttribute_AttributeUsage_AllowsParameterTargetAsync() {
-    throw new NotImplementedException("Test stub - needs implementation");
+    // Arrange & Act
+    var attributeUsage = typeof(StreamKeyAttribute)
+      .GetCustomAttributes(typeof(AttributeUsageAttribute), false)
+      .Cast<AttributeUsageAttribute>()
+      .FirstOrDefault();
+
+    // Assert
+    await Assert.That(attributeUsage).IsNotNull();
+    await Assert.That(attributeUsage!.ValidOn.HasFlag(AttributeTargets.Parameter)).IsTrue();
   }
 
   [Test]
   public async Task StreamKeyAttribute_AttributeUsage_DoesNotAllowMultipleAsync() {
-    throw new NotImplementedException("Test stub - needs implementation");
+    // Arrange & Act
+    var attributeUsage = typeof(StreamKeyAttribute)
+      .GetCustomAttributes(typeof(AttributeUsageAttribute), false)
+      .Cast<AttributeUsageAttribute>()
+      .FirstOrDefault();
+
+    // Assert
+    await Assert.That(attributeUsage).IsNotNull();
+    await Assert.That(attributeUsage!.AllowMultiple).IsFalse();
   }
 
   [Test]
   public async Task StreamKeyAttribute_AttributeUsage_IsInheritedAsync() {
-    throw new NotImplementedException("Test stub - needs implementation");
+    // Arrange & Act
+    var attributeUsage = typeof(StreamKeyAttribute)
+      .GetCustomAttributes(typeof(AttributeUsageAttribute), false)
+      .Cast<AttributeUsageAttribute>()
+      .FirstOrDefault();
+
+    // Assert
+    await Assert.That(attributeUsage).IsNotNull();
+    await Assert.That(attributeUsage!.Inherited).IsTrue();
   }
 }

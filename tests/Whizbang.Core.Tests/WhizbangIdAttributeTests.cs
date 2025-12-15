@@ -1,4 +1,5 @@
 using System;
+using System.Reflection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -16,51 +17,121 @@ public class WhizbangIdAttributeTests {
 
   [Test]
   public async Task WhizbangIdAttribute_DefaultConstructor_HasNullNamespaceAsync() {
-    throw new NotImplementedException("Test stub - needs implementation");
+    // Arrange & Act
+    var attribute = new WhizbangIdAttribute();
+
+    // Assert
+    await Assert.That(attribute.Namespace).IsNull();
   }
 
   [Test]
   public async Task WhizbangIdAttribute_DefaultConstructor_HasFalseSuppressDuplicateWarningAsync() {
-    throw new NotImplementedException("Test stub - needs implementation");
+    // Arrange & Act
+    var attribute = new WhizbangIdAttribute();
+
+    // Assert
+    await Assert.That(attribute.SuppressDuplicateWarning).IsFalse();
   }
 
   [Test]
   public async Task WhizbangIdAttribute_ConstructorWithNamespace_SetsNamespacePropertyAsync() {
-    throw new NotImplementedException("Test stub - needs implementation");
+    // Arrange
+    var expectedNamespace = "MyApp.Messages";
+
+    // Act
+    var attribute = new WhizbangIdAttribute(expectedNamespace);
+
+    // Assert
+    await Assert.That(attribute.Namespace).IsEqualTo(expectedNamespace);
   }
 
   [Test]
   public async Task WhizbangIdAttribute_NamespaceProperty_CanBeSetAsync() {
-    throw new NotImplementedException("Test stub - needs implementation");
+    // Arrange
+    var attribute = new WhizbangIdAttribute();
+    var expectedNamespace = "MyApp.Domain";
+
+    // Act
+    attribute.Namespace = expectedNamespace;
+
+    // Assert
+    await Assert.That(attribute.Namespace).IsEqualTo(expectedNamespace);
   }
 
   [Test]
   public async Task WhizbangIdAttribute_SuppressDuplicateWarningProperty_CanBeSetAsync() {
-    throw new NotImplementedException("Test stub - needs implementation");
+    // Arrange
+    var attribute = new WhizbangIdAttribute();
+
+    // Act
+    attribute.SuppressDuplicateWarning = true;
+
+    // Assert
+    await Assert.That(attribute.SuppressDuplicateWarning).IsTrue();
   }
 
   [Test]
   public async Task WhizbangIdAttribute_AttributeUsage_AllowsStructTargetAsync() {
-    throw new NotImplementedException("Test stub - needs implementation");
+    // Arrange & Act
+    var attributeUsage = typeof(WhizbangIdAttribute)
+      .GetCustomAttributes(typeof(AttributeUsageAttribute), false)
+      .Cast<AttributeUsageAttribute>()
+      .FirstOrDefault();
+
+    // Assert
+    await Assert.That(attributeUsage).IsNotNull();
+    await Assert.That(attributeUsage!.ValidOn.HasFlag(AttributeTargets.Struct)).IsTrue();
   }
 
   [Test]
   public async Task WhizbangIdAttribute_AttributeUsage_AllowsPropertyTargetAsync() {
-    throw new NotImplementedException("Test stub - needs implementation");
+    // Arrange & Act
+    var attributeUsage = typeof(WhizbangIdAttribute)
+      .GetCustomAttributes(typeof(AttributeUsageAttribute), false)
+      .Cast<AttributeUsageAttribute>()
+      .FirstOrDefault();
+
+    // Assert
+    await Assert.That(attributeUsage).IsNotNull();
+    await Assert.That(attributeUsage!.ValidOn.HasFlag(AttributeTargets.Property)).IsTrue();
   }
 
   [Test]
   public async Task WhizbangIdAttribute_AttributeUsage_AllowsParameterTargetAsync() {
-    throw new NotImplementedException("Test stub - needs implementation");
+    // Arrange & Act
+    var attributeUsage = typeof(WhizbangIdAttribute)
+      .GetCustomAttributes(typeof(AttributeUsageAttribute), false)
+      .Cast<AttributeUsageAttribute>()
+      .FirstOrDefault();
+
+    // Assert
+    await Assert.That(attributeUsage).IsNotNull();
+    await Assert.That(attributeUsage!.ValidOn.HasFlag(AttributeTargets.Parameter)).IsTrue();
   }
 
   [Test]
   public async Task WhizbangIdAttribute_AttributeUsage_DoesNotAllowMultipleAsync() {
-    throw new NotImplementedException("Test stub - needs implementation");
+    // Arrange & Act
+    var attributeUsage = typeof(WhizbangIdAttribute)
+      .GetCustomAttributes(typeof(AttributeUsageAttribute), false)
+      .Cast<AttributeUsageAttribute>()
+      .FirstOrDefault();
+
+    // Assert
+    await Assert.That(attributeUsage).IsNotNull();
+    await Assert.That(attributeUsage!.AllowMultiple).IsFalse();
   }
 
   [Test]
   public async Task WhizbangIdAttribute_AttributeUsage_IsNotInheritedAsync() {
-    throw new NotImplementedException("Test stub - needs implementation");
+    // Arrange & Act
+    var attributeUsage = typeof(WhizbangIdAttribute)
+      .GetCustomAttributes(typeof(AttributeUsageAttribute), false)
+      .Cast<AttributeUsageAttribute>()
+      .FirstOrDefault();
+
+    // Assert
+    await Assert.That(attributeUsage).IsNotNull();
+    await Assert.That(attributeUsage!.Inherited).IsFalse();
   }
 }
