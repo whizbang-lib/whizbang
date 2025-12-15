@@ -5,6 +5,9 @@ namespace Whizbang.Core.Messaging;
 /// Stored in wh_receptor_processing table to track which receptors have processed which events.
 /// Multiple flags can be combined using bitwise OR.
 /// </summary>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaDefinitionTests.cs:ReceptorProcessing_ShouldHaveForeignKeyToEventStoreAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaDefinitionTests.cs:ReceptorProcessing_ShouldHaveUniqueConstraintAsync</tests>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaDefinitionTests.cs:PartialIndexes_ShouldExistForStatusQueriesAsync</tests>
 [Flags]
 public enum ReceptorProcessingStatus {
   /// <summary>
