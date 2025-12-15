@@ -9,6 +9,10 @@ namespace Whizbang.Core;
 /// Initializes a new instance of the <see cref="HandlerNotFoundException"/> class.
 /// </remarks>
 /// <param name="messageType">The message type that has no handler</param>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Send_WithUnknownMessageType_ShouldThrowHandlerNotFoundExceptionAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvoke_WithUnknownMessageType_ShouldThrowHandlerNotFoundExceptionAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_VoidReceptor_NoHandler_ShouldThrowHandlerNotFoundExceptionAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Integration/DispatcherReceptorIntegrationTests.cs:Integration_UnregisteredMessage_ShouldThrowHandlerNotFoundAsync</tests>
 [Serializable]
 public class HandlerNotFoundException(Type messageType) : Exception(_formatMessage(messageType)) {
   public HandlerNotFoundException() : this(typeof(object)) {
