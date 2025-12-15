@@ -9,142 +9,130 @@ namespace Whizbang.Data.Schema.Tests.Schemas;
 /// Tests for SequencesSchema - distributed sequence generation table schema.
 /// Tests verify table definition structure, columns, types, constraints, and indexes.
 /// </summary>
-[TestClass("SequencesSchema Tests")]
+
 public class SequencesSchemaTests {
   [Test]
   [Category("Schema")]
   public async Task Table_HasCorrectNameAsync() {
-    // Arrange
-    // TODO: Implement test for SequencesSchema.Table.Name
-    // Should validate: table name equals "sequences"
-
-    // Act
-    // This stub documents the test gap and enables complete test tagging
+    // Arrange & Act
+    var tableName = SequencesSchema.Table.Name;
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(tableName).IsEqualTo("sequences");
   }
 
   [Test]
   [Category("Schema")]
   public async Task Table_HasCorrectColumnsAsync() {
-    // Arrange
-    // TODO: Implement test for SequencesSchema.Table.Columns
-    // Should validate:
-    // - Column count (4 columns)
-    // - sequence_name: String(200), PK, NOT NULL
-    // - current_value: BigInt, NOT NULL, DEFAULT 0
-    // - increment_by: Integer, NOT NULL, DEFAULT 1
-    // - last_updated_at: TimestampTz, NOT NULL, DEFAULT NOW()
+    // Arrange & Act
+    var columns = SequencesSchema.Table.Columns;
 
-    // Act
-    // This stub documents the test gap and enables complete test tagging
+    // Assert - Verify column count
+    await Assert.That(columns).HasCount().EqualTo(4);
 
-    // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    // Verify sequence_name column
+    var sequenceName = columns[0];
+    await Assert.That(sequenceName.Name).IsEqualTo("sequence_name");
+    await Assert.That(sequenceName.DataType).IsEqualTo(WhizbangDataType.String);
+    await Assert.That(sequenceName.MaxLength).IsEqualTo(200);
+    await Assert.That(sequenceName.PrimaryKey).IsTrue();
+    await Assert.That(sequenceName.Nullable).IsFalse();
 
-    await Task.CompletedTask;
+    // Verify current_value column
+    var currentValue = columns[1];
+    await Assert.That(currentValue.Name).IsEqualTo("current_value");
+    await Assert.That(currentValue.DataType).IsEqualTo(WhizbangDataType.BigInt);
+    await Assert.That(currentValue.Nullable).IsFalse();
+
+    // Verify increment_by column
+    var incrementBy = columns[2];
+    await Assert.That(incrementBy.Name).IsEqualTo("increment_by");
+    await Assert.That(incrementBy.DataType).IsEqualTo(WhizbangDataType.Integer);
+    await Assert.That(incrementBy.Nullable).IsFalse();
+
+    // Verify last_updated_at column
+    var lastUpdatedAt = columns[3];
+    await Assert.That(lastUpdatedAt.Name).IsEqualTo("last_updated_at");
+    await Assert.That(lastUpdatedAt.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
+    await Assert.That(lastUpdatedAt.Nullable).IsFalse();
   }
 
   [Test]
   [Category("Schema")]
   public async Task Table_SequenceName_IsPrimaryKeyAsync() {
-    // Arrange
-    // TODO: Implement test for SequencesSchema.Table primary key
-    // Should validate: sequence_name column is marked as PrimaryKey
-
-    // Act
-    // This stub documents the test gap and enables complete test tagging
+    // Arrange & Act
+    var columns = SequencesSchema.Table.Columns;
+    var primaryKeyColumn = columns.FirstOrDefault(c => c.PrimaryKey);
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(primaryKeyColumn).IsNotNull();
+    await Assert.That(primaryKeyColumn!.Name).IsEqualTo("sequence_name");
+    await Assert.That(primaryKeyColumn.DataType).IsEqualTo(WhizbangDataType.String);
+    await Assert.That(primaryKeyColumn.MaxLength).IsEqualTo(200);
   }
 
   [Test]
   [Category("Schema")]
   public async Task Table_HasNoAdditionalIndexesAsync() {
-    // Arrange
-    // TODO: Implement test for SequencesSchema.Table.Indexes
-    // Should validate: Indexes collection is empty (primary key only)
+    // Arrange & Act
+    var indexes = SequencesSchema.Table.Indexes;
 
-    // Act
-    // This stub documents the test gap and enables complete test tagging
-
-    // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    // Assert - Verify no additional indexes (primary key only)
+    await Assert.That(indexes).HasCount().EqualTo(0);
   }
 
   [Test]
   [Category("Schema")]
   public async Task Table_CurrentValue_HasDefaultZeroAsync() {
-    // Arrange
-    // TODO: Implement test for current_value column default value
-    // Should validate: DefaultValue.Integer(0)
-
-    // Act
-    // This stub documents the test gap and enables complete test tagging
+    // Arrange & Act
+    var columns = SequencesSchema.Table.Columns;
+    var currentValueColumn = columns.First(c => c.Name == "current_value");
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(currentValueColumn.DefaultValue).IsNotNull();
+    await Assert.That(currentValueColumn.DefaultValue).IsTypeOf<IntegerDefault>();
+    await Assert.That(((IntegerDefault)currentValueColumn.DefaultValue!).Value).IsEqualTo(0);
   }
 
   [Test]
   [Category("Schema")]
   public async Task Table_IncrementBy_HasDefaultOneAsync() {
-    // Arrange
-    // TODO: Implement test for increment_by column default value
-    // Should validate: DefaultValue.Integer(1)
-
-    // Act
-    // This stub documents the test gap and enables complete test tagging
+    // Arrange & Act
+    var columns = SequencesSchema.Table.Columns;
+    var incrementByColumn = columns.First(c => c.Name == "increment_by");
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(incrementByColumn.DefaultValue).IsNotNull();
+    await Assert.That(incrementByColumn.DefaultValue).IsTypeOf<IntegerDefault>();
+    await Assert.That(((IntegerDefault)incrementByColumn.DefaultValue!).Value).IsEqualTo(1);
   }
 
   [Test]
   [Category("Schema")]
   public async Task Table_LastUpdatedAt_HasDefaultNowAsync() {
-    // Arrange
-    // TODO: Implement test for last_updated_at column default value
-    // Should validate: DefaultValue.Function(DefaultValueFunction.DateTime_Now)
-
-    // Act
-    // This stub documents the test gap and enables complete test tagging
+    // Arrange & Act
+    var columns = SequencesSchema.Table.Columns;
+    var lastUpdatedAtColumn = columns.First(c => c.Name == "last_updated_at");
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(lastUpdatedAtColumn.DefaultValue).IsNotNull();
+    await Assert.That(lastUpdatedAtColumn.DefaultValue).IsTypeOf<FunctionDefault>();
+    await Assert.That(((FunctionDefault)lastUpdatedAtColumn.DefaultValue!).FunctionType).IsEqualTo(DefaultValueFunction.DateTime_Now);
   }
 
   [Test]
   [Category("Schema")]
   public async Task Columns_HasAllConstantsAsync() {
-    // Arrange
-    // TODO: Implement test for SequencesSchema.Columns constants
-    // Should validate:
-    // - Columns.SequenceName == "sequence_name"
-    // - Columns.CurrentValue == "current_value"
-    // - Columns.IncrementBy == "increment_by"
-    // - Columns.LastUpdatedAt == "last_updated_at"
+    // Arrange & Act - Get all column constants
+    var sequenceName = SequencesSchema.Columns.SequenceName;
+    var currentValue = SequencesSchema.Columns.CurrentValue;
+    var incrementBy = SequencesSchema.Columns.IncrementBy;
+    var lastUpdatedAt = SequencesSchema.Columns.LastUpdatedAt;
 
-    // Act
-    // This stub documents the test gap and enables complete test tagging
-
-    // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    // Assert - Verify constants match column names
+    await Assert.That(sequenceName).IsEqualTo("sequence_name");
+    await Assert.That(currentValue).IsEqualTo("current_value");
+    await Assert.That(incrementBy).IsEqualTo("increment_by");
+    await Assert.That(lastUpdatedAt).IsEqualTo("last_updated_at");
   }
 }

@@ -11,166 +11,181 @@ namespace Whizbang.Data.Schema.Tests.Schemas;
 /// Tests for PerspectiveCheckpointsSchema - read model checkpoint tracking table.
 /// Tests verify table structure, column definitions, indexes, and column name constants.
 /// </summary>
-[TestClass("PerspectiveCheckpointsSchema Tests")]
+
 public class PerspectiveCheckpointsSchemaTests {
   [Test]
   [Category("Schema")]
   public async Task Table_HasCorrectNameAsync() {
-    // Arrange
-    // TODO: Implement test for PerspectiveCheckpointsSchema.Table.Name
-    // Should validate: Name = "perspective_checkpoints"
-
-    // Act
-    // This stub documents the test gap and enables complete test tagging
+    // Arrange & Act
+    var tableName = PerspectiveCheckpointsSchema.Table.Name;
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(tableName).IsEqualTo("perspective_checkpoints");
   }
 
   [Test]
   [Category("Schema")]
   public async Task Table_HasCorrectColumnsAsync() {
-    // Arrange
-    // TODO: Implement test for PerspectiveCheckpointsSchema.Table.Columns
-    // Should validate: 6 columns (stream_id, perspective_name, last_event_id, status, processed_at, error)
-    // Verify types, nullability, primary keys, defaults
+    // Arrange & Act
+    var columns = PerspectiveCheckpointsSchema.Table.Columns;
 
-    // Act
-    // This stub documents the test gap and enables complete test tagging
+    // Assert - Verify column count
+    await Assert.That(columns).HasCount().EqualTo(6);
 
-    // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    // Verify each column definition
+    var streamId = columns[0];
+    await Assert.That(streamId.Name).IsEqualTo("stream_id");
+    await Assert.That(streamId.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(streamId.PrimaryKey).IsTrue();
+    await Assert.That(streamId.Nullable).IsFalse();
 
-    await Task.CompletedTask;
+    var perspectiveName = columns[1];
+    await Assert.That(perspectiveName.Name).IsEqualTo("perspective_name");
+    await Assert.That(perspectiveName.DataType).IsEqualTo(WhizbangDataType.String);
+    await Assert.That(perspectiveName.PrimaryKey).IsTrue();
+    await Assert.That(perspectiveName.Nullable).IsFalse();
+
+    var lastEventId = columns[2];
+    await Assert.That(lastEventId.Name).IsEqualTo("last_event_id");
+    await Assert.That(lastEventId.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(lastEventId.Nullable).IsFalse();
+
+    var status = columns[3];
+    await Assert.That(status.Name).IsEqualTo("status");
+    await Assert.That(status.DataType).IsEqualTo(WhizbangDataType.SmallInt);
+    await Assert.That(status.Nullable).IsFalse();
+
+    var processedAt = columns[4];
+    await Assert.That(processedAt.Name).IsEqualTo("processed_at");
+    await Assert.That(processedAt.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
+    await Assert.That(processedAt.Nullable).IsFalse();
+
+    var error = columns[5];
+    await Assert.That(error.Name).IsEqualTo("error");
+    await Assert.That(error.DataType).IsEqualTo(WhizbangDataType.String);
+    await Assert.That(error.Nullable).IsTrue();
   }
 
   [Test]
   [Category("Schema")]
   public async Task Table_StreamId_IsCompositePrimaryKeyAsync() {
-    // Arrange
-    // TODO: Implement test for stream_id column
-    // Should validate: DataType=Uuid, PrimaryKey=true, Nullable=false
-
-    // Act
-    // This stub documents the test gap and enables complete test tagging
+    // Arrange & Act
+    var columns = PerspectiveCheckpointsSchema.Table.Columns;
+    var streamId = columns.First(c => c.Name == "stream_id");
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(streamId.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(streamId.PrimaryKey).IsTrue();
+    await Assert.That(streamId.Nullable).IsFalse();
   }
 
   [Test]
   [Category("Schema")]
   public async Task Table_PerspectiveName_IsCompositePrimaryKeyAsync() {
-    // Arrange
-    // TODO: Implement test for perspective_name column
-    // Should validate: DataType=String, PrimaryKey=true, Nullable=false
-
-    // Act
-    // This stub documents the test gap and enables complete test tagging
+    // Arrange & Act
+    var columns = PerspectiveCheckpointsSchema.Table.Columns;
+    var perspectiveName = columns.First(c => c.Name == "perspective_name");
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(perspectiveName.DataType).IsEqualTo(WhizbangDataType.String);
+    await Assert.That(perspectiveName.PrimaryKey).IsTrue();
+    await Assert.That(perspectiveName.Nullable).IsFalse();
   }
 
   [Test]
   [Category("Schema")]
   public async Task Table_LastEventId_HasCorrectDefinitionAsync() {
-    // Arrange
-    // TODO: Implement test for last_event_id column
-    // Should validate: DataType=Uuid, Nullable=false, references event_store
-
-    // Act
-    // This stub documents the test gap and enables complete test tagging
+    // Arrange & Act
+    var columns = PerspectiveCheckpointsSchema.Table.Columns;
+    var lastEventId = columns.First(c => c.Name == "last_event_id");
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(lastEventId.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(lastEventId.Nullable).IsFalse();
+    await Assert.That(lastEventId.PrimaryKey).IsFalse();
   }
 
   [Test]
   [Category("Schema")]
   public async Task Table_Status_HasCorrectDefaultAsync() {
-    // Arrange
-    // TODO: Implement test for status column
-    // Should validate: DataType=SmallInt, Nullable=false, DefaultValue=0
-
-    // Act
-    // This stub documents the test gap and enables complete test tagging
+    // Arrange & Act
+    var columns = PerspectiveCheckpointsSchema.Table.Columns;
+    var status = columns.First(c => c.Name == "status");
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(status.DataType).IsEqualTo(WhizbangDataType.SmallInt);
+    await Assert.That(status.Nullable).IsFalse();
+    await Assert.That(status.DefaultValue).IsNotNull();
+    await Assert.That(status.DefaultValue).IsTypeOf<IntegerDefault>();
+    await Assert.That(((IntegerDefault)status.DefaultValue!).Value).IsEqualTo(0);
   }
 
   [Test]
   [Category("Schema")]
   public async Task Table_ProcessedAt_HasDateTimeDefaultAsync() {
-    // Arrange
-    // TODO: Implement test for processed_at column
-    // Should validate: DataType=TimestampTz, Nullable=false, DefaultValue=DateTime_Now
-
-    // Act
-    // This stub documents the test gap and enables complete test tagging
+    // Arrange & Act
+    var columns = PerspectiveCheckpointsSchema.Table.Columns;
+    var processedAt = columns.First(c => c.Name == "processed_at");
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(processedAt.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
+    await Assert.That(processedAt.Nullable).IsFalse();
+    await Assert.That(processedAt.DefaultValue).IsNotNull();
+    await Assert.That(processedAt.DefaultValue).IsTypeOf<FunctionDefault>();
+    await Assert.That(((FunctionDefault)processedAt.DefaultValue!).FunctionType).IsEqualTo(DefaultValueFunction.DateTime_Now);
   }
 
   [Test]
   [Category("Schema")]
   public async Task Table_Error_IsNullableAsync() {
-    // Arrange
-    // TODO: Implement test for error column
-    // Should validate: DataType=String, Nullable=true
-
-    // Act
-    // This stub documents the test gap and enables complete test tagging
+    // Arrange & Act
+    var columns = PerspectiveCheckpointsSchema.Table.Columns;
+    var error = columns.First(c => c.Name == "error");
 
     // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    await Assert.That(error.DataType).IsEqualTo(WhizbangDataType.String);
+    await Assert.That(error.Nullable).IsTrue();
   }
 
   [Test]
   [Category("Schema")]
   public async Task Table_HasCorrectIndexesAsync() {
-    // Arrange
-    // TODO: Implement test for PerspectiveCheckpointsSchema.Table.Indexes
-    // Should validate: 2 indexes (idx_perspective_checkpoints_perspective_name, idx_perspective_checkpoints_last_event_id)
+    // Arrange & Act
+    var indexes = PerspectiveCheckpointsSchema.Table.Indexes;
 
-    // Act
-    // This stub documents the test gap and enables complete test tagging
+    // Assert - Verify index count
+    await Assert.That(indexes).HasCount().EqualTo(2);
 
-    // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    // Verify index on perspective_name
+    var perspectiveNameIndex = indexes[0];
+    await Assert.That(perspectiveNameIndex.Name).IsEqualTo("idx_perspective_checkpoints_perspective_name");
+    await Assert.That(perspectiveNameIndex.Columns).HasCount().EqualTo(1);
+    await Assert.That(perspectiveNameIndex.Columns[0]).IsEqualTo("perspective_name");
 
-    await Task.CompletedTask;
+    // Verify index on last_event_id
+    var lastEventIdIndex = indexes[1];
+    await Assert.That(lastEventIdIndex.Name).IsEqualTo("idx_perspective_checkpoints_last_event_id");
+    await Assert.That(lastEventIdIndex.Columns).HasCount().EqualTo(1);
+    await Assert.That(lastEventIdIndex.Columns[0]).IsEqualTo("last_event_id");
   }
 
   [Test]
   [Category("Schema")]
   public async Task Columns_Constants_MatchColumnNamesAsync() {
-    // Arrange
-    // TODO: Implement test for PerspectiveCheckpointsSchema.Columns constants
-    // Should validate: all 6 column name constants match actual column names
+    // Arrange & Act - Get all column constants
+    var streamId = PerspectiveCheckpointsSchema.Columns.StreamId;
+    var perspectiveName = PerspectiveCheckpointsSchema.Columns.PerspectiveName;
+    var lastEventId = PerspectiveCheckpointsSchema.Columns.LastEventId;
+    var status = PerspectiveCheckpointsSchema.Columns.Status;
+    var processedAt = PerspectiveCheckpointsSchema.Columns.ProcessedAt;
+    var error = PerspectiveCheckpointsSchema.Columns.Error;
 
-    // Act
-    // This stub documents the test gap and enables complete test tagging
-
-    // Assert
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
-
-    await Task.CompletedTask;
+    // Assert - Verify constants match column names
+    await Assert.That(streamId).IsEqualTo("stream_id");
+    await Assert.That(perspectiveName).IsEqualTo("perspective_name");
+    await Assert.That(lastEventId).IsEqualTo("last_event_id");
+    await Assert.That(status).IsEqualTo("status");
+    await Assert.That(processedAt).IsEqualTo("processed_at");
+    await Assert.That(error).IsEqualTo("error");
   }
 }
