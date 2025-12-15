@@ -10,10 +10,20 @@ namespace Whizbang.Core.Messaging;
 /// For production scenarios with real databases (PostgreSQL, SQL Server, etc.),
 /// provide a concrete implementation that verifies database connectivity and schema availability.
 /// </remarks>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/DefaultDatabaseReadinessCheckTests.cs:IsReadyAsync_AlwaysReturnsTrue_WithDefaultCancellationTokenAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/DefaultDatabaseReadinessCheckTests.cs:IsReadyAsync_AlwaysReturnsTrue_WithCustomCancellationTokenAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/DefaultDatabaseReadinessCheckTests.cs:IsReadyAsync_MultipleCalls_AlwaysReturnsTrueAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/DefaultDatabaseReadinessCheckTests.cs:IsReadyAsync_WithCancelledToken_StillReturnsTrueAsync</tests>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/DefaultDatabaseReadinessCheckTests.cs:IsReadyAsync_ImplementsInterface_IDatabaseReadinessCheckAsync</tests>
 public class DefaultDatabaseReadinessCheck : IDatabaseReadinessCheck {
   /// <summary>
   /// Always returns true, indicating the database is ready.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/DefaultDatabaseReadinessCheckTests.cs:IsReadyAsync_AlwaysReturnsTrue_WithDefaultCancellationTokenAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/DefaultDatabaseReadinessCheckTests.cs:IsReadyAsync_AlwaysReturnsTrue_WithCustomCancellationTokenAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/DefaultDatabaseReadinessCheckTests.cs:IsReadyAsync_MultipleCalls_AlwaysReturnsTrueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/DefaultDatabaseReadinessCheckTests.cs:IsReadyAsync_WithCancelledToken_StillReturnsTrueAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/DefaultDatabaseReadinessCheckTests.cs:IsReadyAsync_ImplementsInterface_IDatabaseReadinessCheckAsync</tests>
   public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
     return Task.FromResult(true);
   }
