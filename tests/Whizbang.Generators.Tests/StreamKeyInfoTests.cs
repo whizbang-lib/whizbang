@@ -7,15 +7,35 @@ public class StreamKeyInfoTests {
 
   [Test]
   public async Task StreamKeyInfo_ValueEquality_ComparesFieldsAsync() {
-    // TODO: Test that StreamKeyInfo uses value equality for incremental generator caching
-    await Task.CompletedTask;
-    throw new NotImplementedException("StreamKeyInfo value equality tests not yet implemented");
+    // Arrange - Create two instances with same values
+    var info1 = new StreamKeyInfo(
+      "global::MyApp.Events.OrderCreated",
+      "OrderId",
+      "global::System.Guid"
+    );
+    var info2 = new StreamKeyInfo(
+      "global::MyApp.Events.OrderCreated",
+      "OrderId",
+      "global::System.Guid"
+    );
+
+    // Act & Assert - Records use value equality
+    await Assert.That(info1).IsEqualTo(info2);
+    await Assert.That(info1.GetHashCode()).IsEqualTo(info2.GetHashCode());
   }
 
   [Test]
   public async Task StreamKeyInfo_Constructor_SetsPropertiesAsync() {
-    // TODO: Test that primary constructor sets all properties correctly
-    await Task.CompletedTask;
-    throw new NotImplementedException("StreamKeyInfo constructor tests not yet implemented");
+    // Arrange & Act
+    var info = new StreamKeyInfo(
+      "global::MyApp.Events.ProductUpdated",
+      "ProductId",
+      "global::MyApp.Domain.ProductId"
+    );
+
+    // Assert
+    await Assert.That(info.EventType).IsEqualTo("global::MyApp.Events.ProductUpdated");
+    await Assert.That(info.PropertyName).IsEqualTo("ProductId");
+    await Assert.That(info.PropertyType).IsEqualTo("global::MyApp.Domain.ProductId");
   }
 }

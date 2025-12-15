@@ -11,7 +11,7 @@ namespace Whizbang.Generators;
 /// <param name="ElementSimpleName">Simple element type name for method generation (e.g., "OrderLineItem")</param>
 /// <tests>tests/Whizbang.Generators.Tests/ListTypeInfoTests.cs:ListTypeInfo_ValueEquality_ComparesFieldsAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/ListTypeInfoTests.cs:ListTypeInfo_Constructor_SetsPropertiesAsync</tests>
-internal sealed record ListTypeInfo(
+public sealed record ListTypeInfo(
     string ListTypeName,
     string ElementTypeName,
     string ElementSimpleName

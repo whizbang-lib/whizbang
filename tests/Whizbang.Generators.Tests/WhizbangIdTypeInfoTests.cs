@@ -7,15 +7,25 @@ public class WhizbangIdTypeInfoTests {
 
   [Test]
   public async Task WhizbangIdTypeInfo_ValueEquality_ComparesFieldsAsync() {
-    // TODO: Test that WhizbangIdTypeInfo uses value equality for incremental generator caching
-    await Task.CompletedTask;
-    throw new NotImplementedException("WhizbangIdTypeInfo value equality tests not yet implemented");
+    // Arrange - Create two instances with same values
+    var info1 = new WhizbangIdInfo("ProductId", "MyApp.Domain", DiscoverySource.ExplicitType, false);
+    var info2 = new WhizbangIdInfo("ProductId", "MyApp.Domain", DiscoverySource.ExplicitType, false);
+
+    // Act & Assert - Records use value equality
+    await Assert.That(info1).IsEqualTo(info2);
+    await Assert.That(info1.GetHashCode()).IsEqualTo(info2.GetHashCode());
   }
 
   [Test]
   public async Task WhizbangIdTypeInfo_Constructor_SetsPropertiesAsync() {
-    // TODO: Test that primary constructor sets all properties correctly
-    await Task.CompletedTask;
-    throw new NotImplementedException("WhizbangIdTypeInfo constructor tests not yet implemented");
+    // Arrange & Act
+    var info = new WhizbangIdInfo("ProductId", "MyApp.Domain", DiscoverySource.Property, true);
+
+    // Assert
+    await Assert.That(info.TypeName).IsEqualTo("ProductId");
+    await Assert.That(info.Namespace).IsEqualTo("MyApp.Domain");
+    await Assert.That(info.Source).IsEqualTo(DiscoverySource.Property);
+    await Assert.That(info.SuppressDuplicateWarning).IsTrue();
+    await Assert.That(info.FullyQualifiedName).IsEqualTo("MyApp.Domain.ProductId");
   }
 }

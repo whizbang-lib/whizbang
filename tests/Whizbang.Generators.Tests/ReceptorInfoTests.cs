@@ -9,45 +9,90 @@ public class ReceptorInfoTests {
 
   [Test]
   public async Task ReceptorInfo_ValueEquality_ComparesFieldsAsync() {
-    // TODO: Test that ReceptorInfo uses value equality for incremental generator caching
-    // Two instances with same values should be equal
-    await Task.CompletedTask;
-    throw new NotImplementedException("ReceptorInfo value equality tests not yet implemented");
+    // Arrange - Create two instances with same values
+    var info1 = new ReceptorInfo(
+      "MyApp.Receptors.OrderReceptor",
+      "MyApp.Commands.CreateOrder",
+      "MyApp.Events.OrderCreated"
+    );
+    var info2 = new ReceptorInfo(
+      "MyApp.Receptors.OrderReceptor",
+      "MyApp.Commands.CreateOrder",
+      "MyApp.Events.OrderCreated"
+    );
+
+    // Act & Assert - Records use value equality
+    await Assert.That(info1).IsEqualTo(info2);
   }
 
   [Test]
   public async Task ReceptorInfo_Constructor_SetsPropertiesAsync() {
-    // TODO: Test that primary constructor sets all properties correctly
-    // Verify ClassName, MessageType, ResponseType are set
-    await Task.CompletedTask;
-    throw new NotImplementedException("ReceptorInfo constructor tests not yet implemented");
+    // Arrange & Act
+    var info = new ReceptorInfo(
+      "MyApp.Receptors.ProductReceptor",
+      "MyApp.Commands.UpdateProduct",
+      "MyApp.Events.ProductUpdated"
+    );
+
+    // Assert - Verify all properties are set correctly
+    await Assert.That(info.ClassName).IsEqualTo("MyApp.Receptors.ProductReceptor");
+    await Assert.That(info.MessageType).IsEqualTo("MyApp.Commands.UpdateProduct");
+    await Assert.That(info.ResponseType).IsEqualTo("MyApp.Events.ProductUpdated");
   }
 
   [Test]
   public async Task ReceptorInfo_IsVoid_ReturnsTrueWhenResponseTypeIsNullAsync() {
-    // TODO: Test IsVoid property returns true when ResponseType is null
-    await Task.CompletedTask;
-    throw new NotImplementedException("ReceptorInfo IsVoid property tests not yet implemented");
+    // Arrange & Act - Void receptor (IReceptor<TMessage>)
+    var voidReceptor = new ReceptorInfo(
+      "MyApp.Receptors.NotificationReceptor",
+      "MyApp.Commands.SendEmail",
+      null  // No response type
+    );
+
+    // Assert
+    await Assert.That(voidReceptor.IsVoid).IsTrue();
   }
 
   [Test]
   public async Task ReceptorInfo_IsVoid_ReturnsFalseWhenResponseTypeIsNotNullAsync() {
-    // TODO: Test IsVoid property returns false when ResponseType has a value
-    await Task.CompletedTask;
-    throw new NotImplementedException("ReceptorInfo IsVoid property tests not yet implemented");
+    // Arrange & Act - Non-void receptor (IReceptor<TMessage, TResponse>)
+    var nonVoidReceptor = new ReceptorInfo(
+      "MyApp.Receptors.OrderReceptor",
+      "MyApp.Commands.CreateOrder",
+      "MyApp.Events.OrderCreated"
+    );
+
+    // Assert
+    await Assert.That(nonVoidReceptor.IsVoid).IsFalse();
   }
 
   [Test]
   public async Task ReceptorInfo_Equality_WithDifferentValues_NotEqualAsync() {
-    // TODO: Test that instances with different values are not equal
-    await Task.CompletedTask;
-    throw new NotImplementedException("ReceptorInfo inequality tests not yet implemented");
+    // Arrange - Create instances with different values
+    var info1 = new ReceptorInfo("Class1", "Message1", "Response1");
+    var info2 = new ReceptorInfo("Class2", "Message1", "Response1");  // Different ClassName
+    var info3 = new ReceptorInfo("Class1", "Message2", "Response1");  // Different MessageType
+    var info4 = new ReceptorInfo("Class1", "Message1", "Response2");  // Different ResponseType
+    var info5 = new ReceptorInfo("Class1", "Message1", null);         // Different ResponseType (null)
+
+    // Act & Assert - Instances with different values are not equal
+    await Assert.That(info1).IsNotEqualTo(info2);
+    await Assert.That(info1).IsNotEqualTo(info3);
+    await Assert.That(info1).IsNotEqualTo(info4);
+    await Assert.That(info1).IsNotEqualTo(info5);
   }
 
   [Test]
   public async Task ReceptorInfo_GetHashCode_SameForEqualInstancesAsync() {
-    // TODO: Test that GetHashCode returns same value for equal instances
-    await Task.CompletedTask;
-    throw new NotImplementedException("ReceptorInfo GetHashCode tests not yet implemented");
+    // Arrange - Create two equal instances
+    var info1 = new ReceptorInfo("MyClass", "MyMessage", "MyResponse");
+    var info2 = new ReceptorInfo("MyClass", "MyMessage", "MyResponse");
+
+    // Act
+    var hash1 = info1.GetHashCode();
+    var hash2 = info2.GetHashCode();
+
+    // Assert - Hash codes match for equal instances
+    await Assert.That(hash1).IsEqualTo(hash2);
   }
 }

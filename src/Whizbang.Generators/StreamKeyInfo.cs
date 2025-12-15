@@ -9,7 +9,7 @@ namespace Whizbang.Generators;
 /// <param name="PropertyType">Fully qualified type of the stream key property</param>
 /// <tests>tests/Whizbang.Generators.Tests/StreamKeyInfoTests.cs:StreamKeyInfo_ValueEquality_ComparesFieldsAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/StreamKeyInfoTests.cs:StreamKeyInfo_Constructor_SetsPropertiesAsync</tests>
-internal sealed record StreamKeyInfo(
+public sealed record StreamKeyInfo(
     string EventType,
     string PropertyName,
     string PropertyType

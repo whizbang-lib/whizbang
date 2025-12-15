@@ -5,7 +5,7 @@ namespace Whizbang.Generators;
 /// Indicates how the ID type was discovered during source generation.
 /// </summary>
 /// <tests>No tests found</tests>
-internal enum DiscoverySource {
+public enum DiscoverySource {
   /// <summary>
   /// Discovered via explicit type declaration with [WhizbangId] attribute.
   /// Example: [WhizbangId] public readonly partial struct ProductId;
@@ -36,8 +36,8 @@ internal enum DiscoverySource {
 /// <param name="Namespace">Namespace where the ID type should be generated (e.g., "MyApp.Domain")</param>
 /// <param name="Source">How the ID was discovered (ExplicitType, Property, or Parameter)</param>
 /// <param name="SuppressDuplicateWarning">True if WHIZ024 warning should be suppressed for this ID</param>
-/// <tests>No tests found</tests>
-internal sealed record WhizbangIdInfo(
+/// <tests>tests/Whizbang.Generators.Tests/WhizbangIdTypeInfoTests.cs</tests>
+public sealed record WhizbangIdInfo(
   string TypeName,
   string Namespace,
   DiscoverySource Source,

@@ -9,7 +9,7 @@ namespace Whizbang.Generators;
 /// <param name="MessageType">Fully qualified message type (e.g., "MyApp.Commands.CreateOrder")</param>
 /// <param name="ResponseType">Fully qualified response type (e.g., "MyApp.Events.OrderCreated"), or null for void receptors</param>
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorInfoTests.cs</tests>
-internal sealed record ReceptorInfo(
+public sealed record ReceptorInfo(
     string ClassName,
     string MessageType,
     string? ResponseType

@@ -12,7 +12,7 @@ namespace Whizbang.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/AggregateIdInfoTests.cs:AggregateIdInfo_ValueEquality_ComparesFieldsAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/AggregateIdInfoTests.cs:AggregateIdInfo_Constructor_SetsPropertiesAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/AggregateIdInfoTests.cs:AggregateIdInfo_ErrorFlags_TrackValidationStatesAsync</tests>
-internal sealed record AggregateIdInfo(
+public sealed record AggregateIdInfo(
     string MessageType,
     string PropertyName,
     bool IsNullable,
