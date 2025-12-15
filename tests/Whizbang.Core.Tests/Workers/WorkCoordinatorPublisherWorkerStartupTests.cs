@@ -203,15 +203,9 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
   [Test]
   public async Task ImmediateProcessing_ExceptionDuringInitial_ContinuesStartupAsync() {
     // Arrange
-    var workCoordinator = new TestWorkCoordinator();
     var publishStrategy = new TestPublishStrategy();
     var databaseReadiness = new TestDatabaseReadinessCheck { IsReady = true };
     var instanceProvider = _createTestInstanceProvider();
-
-    // Make ProcessWorkBatchAsync throw on first call
-    var callCount = 0;
-    var faultyCoordinator = new TestWorkCoordinator();
-    var originalMethod = faultyCoordinator.ProcessWorkBatchAsync;
 
     // Create a coordinator that throws on first call, then succeeds
     var throwingCoordinator = new ThrowingWorkCoordinator {

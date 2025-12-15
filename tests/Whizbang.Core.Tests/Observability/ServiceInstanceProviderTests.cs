@@ -26,11 +26,10 @@ public class ServiceInstanceProviderTests {
     var provider = new ServiceInstanceProvider(configuration);
 
     // Assert
-    // TODO: Verify ServiceName == "MyTestService"
-    // TODO: Verify InstanceId is UUIDv7 (not empty)
-    // TODO: Verify HostName is set
-    // TODO: Verify ProcessId > 0
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    await Assert.That(provider.ServiceName).IsEqualTo("MyTestService");
+    await Assert.That(provider.InstanceId).IsNotEqualTo(Guid.Empty);
+    await Assert.That(provider.HostName).IsNotNull();
+    await Assert.That(provider.ProcessId).IsGreaterThan(0);
   }
 
   [Test]
@@ -46,9 +45,7 @@ public class ServiceInstanceProviderTests {
     var provider = new ServiceInstanceProvider(configuration);
 
     // Assert
-    // TODO: Verify ServiceName == "MyOtherService"
-    // TODO: Verify Whizbang:ServiceName takes precedence if both exist
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    await Assert.That(provider.ServiceName).IsEqualTo("MyOtherService");
   }
 
   [Test]
@@ -57,9 +54,11 @@ public class ServiceInstanceProviderTests {
     var provider = new ServiceInstanceProvider(configuration: null);
 
     // Assert
-    // TODO: Verify ServiceName is assembly name (e.g., "Whizbang.Core.Tests")
-    // TODO: OR verify ServiceName == "Unknown" if no assembly
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    // Service name should be entry assembly name (Whizbang.Core.Tests when running tests)
+    await Assert.That(provider.ServiceName).IsNotNull();
+    await Assert.That(provider.ServiceName).IsNotEqualTo(string.Empty);
+    // Entry assembly name varies by test runner, so just verify it's set
+    await Assert.That(provider.ServiceName.Length).IsGreaterThan(0);
   }
 
   [Test]
@@ -74,11 +73,10 @@ public class ServiceInstanceProviderTests {
     var provider = new ServiceInstanceProvider(instanceId, serviceName, hostName, processId);
 
     // Assert
-    // TODO: Verify InstanceId == instanceId
-    // TODO: Verify ServiceName == serviceName
-    // TODO: Verify HostName == hostName
-    // TODO: Verify ProcessId == processId
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    await Assert.That(provider.InstanceId).IsEqualTo(instanceId);
+    await Assert.That(provider.ServiceName).IsEqualTo(serviceName);
+    await Assert.That(provider.HostName).IsEqualTo(hostName);
+    await Assert.That(provider.ProcessId).IsEqualTo(processId);
   }
 
   [Test]
@@ -94,11 +92,10 @@ public class ServiceInstanceProviderTests {
     var info = provider.ToInfo();
 
     // Assert
-    // TODO: Verify info.InstanceId == instanceId
-    // TODO: Verify info.ServiceName == serviceName
-    // TODO: Verify info.HostName == hostName
-    // TODO: Verify info.ProcessId == processId
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    await Assert.That(info.InstanceId).IsEqualTo(instanceId);
+    await Assert.That(info.ServiceName).IsEqualTo(serviceName);
+    await Assert.That(info.HostName).IsEqualTo(hostName);
+    await Assert.That(info.ProcessId).IsEqualTo(processId);
   }
 
   [Test]
@@ -116,9 +113,8 @@ public class ServiceInstanceProviderTests {
     var info2 = provider.ToInfo();
 
     // Assert
-    // TODO: Verify info1 and info2 are the same instance (ReferenceEquals)
-    // TODO: Verify caching avoids object allocation on subsequent calls
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    await Assert.That(ReferenceEquals(info1, info2)).IsTrue()
+      .Because("ToInfo() should return the same cached instance to avoid allocations");
   }
 
   [Test]
@@ -128,10 +124,13 @@ public class ServiceInstanceProviderTests {
     var instanceId = provider.InstanceId;
 
     // Assert
-    // TODO: Verify instanceId is not empty
-    // TODO: Verify instanceId is UUIDv7 (version 7)
-    // TODO: Extract timestamp from UUIDv7 and verify it's recent
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    await Assert.That(instanceId).IsNotEqualTo(Guid.Empty);
+
+    // Verify UUIDv7 version bits (version 7 in bits 48-51)
+    var bytes = instanceId.ToByteArray();
+    var versionBits = (bytes[7] & 0xF0) >> 4;
+    await Assert.That(versionBits).IsEqualTo(0x7)
+      .Because("InstanceId should be UUIDv7 (version 7)");
   }
 
   [Test]
@@ -148,7 +147,7 @@ public class ServiceInstanceProviderTests {
     var provider = new ServiceInstanceProvider(configuration);
 
     // Assert
-    // TODO: Verify ServiceName == "WhizbangService" (Whizbang:ServiceName takes precedence)
-    throw new NotImplementedException("Test needs implementation - track test gaps with grep 'NotImplementedException'");
+    await Assert.That(provider.ServiceName).IsEqualTo("WhizbangService")
+      .Because("Whizbang:ServiceName should take precedence over ServiceName");
   }
 }
