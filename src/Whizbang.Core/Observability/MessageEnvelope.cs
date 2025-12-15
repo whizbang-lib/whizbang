@@ -11,16 +11,20 @@ namespace Whizbang.Core.Observability;
 /// </summary>
 /// <typeparam name="TMessage">The type of the message payload</typeparam>
 /// <docs>core-concepts/observability</docs>
+/// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_Constructor_SetsAllPropertiesAsync</tests>
+/// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_RequiresAtLeastOneHopAsync</tests>
 public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// <summary>
   /// Unique identifier for this specific message.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_Constructor_SetsAllPropertiesAsync</tests>
   public required MessageId MessageId { get; init; }
 
   /// <summary>
   /// The actual message payload (strongly-typed).
   /// Also implements IMessageEnvelope.Payload as object for heterogeneous collections.
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_Constructor_SetsAllPropertiesAsync</tests>
   public required TMessage Payload { get; init; }
 
   /// <summary>
@@ -35,6 +39,7 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// Hops are additive-only (immutable once added).
   /// At least one hop is required (the originating hop).
   /// </summary>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_RequiresAtLeastOneHopAsync</tests>
   public required List<MessageHop> Hops { get; init; }
 
   /// <summary>
@@ -59,6 +64,8 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// Called automatically during message processing to track where the message has been.
   /// </summary>
   /// <param name="hop">The hop to add</param>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_AddHop_AddsHopToListAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_AddHop_MaintainsOrderedListAsync</tests>
   public void AddHop(MessageHop hop) {
     Hops.Add(hop);
   }
@@ -68,6 +75,9 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// Filters to only HopType.Current hops (ignores causation hops).
   /// </summary>
   /// <returns>The topic from the most recent current hop, or null if no hops have a topic</returns>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentTopic_ReturnsNull_WhenNoHopsHaveTopicAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentTopic_ReturnsMostRecentNonNullTopicAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentTopic_IgnoresCausationHopsAsync</tests>
   public string? GetCurrentTopic() {
     for (int i = Hops.Count - 1; i >= 0; i--) {
       if (Hops[i].Type == HopType.Current && !string.IsNullOrEmpty(Hops[i].Topic)) {
@@ -82,6 +92,9 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// Filters to only HopType.Current hops (ignores causation hops).
   /// </summary>
   /// <returns>The stream key from the most recent current hop, or null if no hops have a stream key</returns>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentStreamKey_ReturnsNull_WhenNoHopsAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentStreamKey_ReturnsMostRecentNonNullStreamKeyAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentStreamKey_IgnoresCausationHopsAsync</tests>
   public string? GetCurrentStreamKey() {
     for (int i = Hops.Count - 1; i >= 0; i--) {
       if (Hops[i].Type == HopType.Current && !string.IsNullOrEmpty(Hops[i].StreamKey)) {
@@ -96,6 +109,9 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// Filters to only HopType.Current hops (ignores causation hops).
   /// </summary>
   /// <returns>The partition index from the most recent current hop, or null if no hops have a partition index</returns>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentPartitionIndex_ReturnsNull_WhenNoHopsAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentPartitionIndex_ReturnsMostRecentNonNullValueAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentPartitionIndex_IgnoresCausationHopsAsync</tests>
   public int? GetCurrentPartitionIndex() {
     for (int i = Hops.Count - 1; i >= 0; i--) {
       if (Hops[i].Type == HopType.Current && Hops[i].PartitionIndex.HasValue) {
@@ -110,6 +126,9 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// Filters to only HopType.Current hops (ignores causation hops).
   /// </summary>
   /// <returns>The sequence number from the most recent current hop, or null if no hops have a sequence number</returns>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentSequenceNumber_ReturnsNull_WhenNoHopsAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentSequenceNumber_ReturnsMostRecentNonNullValueAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentSequenceNumber_IgnoresCausationHopsAsync</tests>
   public long? GetCurrentSequenceNumber() {
     for (int i = Hops.Count - 1; i >= 0; i--) {
       if (Hops[i].Type == HopType.Current && Hops[i].SequenceNumber.HasValue) {
@@ -124,6 +143,9 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// Filters to only HopType.Current hops (ignores causation hops).
   /// </summary>
   /// <returns>The security context from the most recent current hop, or null if no hops have a security context</returns>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentSecurityContext_ReturnsNull_WhenNoHopsAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentSecurityContext_ReturnsMostRecentNonNullValueAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentSecurityContext_IgnoresCausationHopsAsync</tests>
   public SecurityContext? GetCurrentSecurityContext() {
     for (int i = Hops.Count - 1; i >= 0; i--) {
       if (Hops[i].Type == HopType.Current && Hops[i].SecurityContext != null) {
@@ -138,6 +160,7 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// Every message originates somewhere, so the first hop's timestamp is the message timestamp.
   /// </summary>
   /// <returns>The timestamp of the first hop</returns>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetMessageTimestamp_ReturnsFirstHopTimestampAsync</tests>
   public DateTimeOffset GetMessageTimestamp() {
     return Hops != null && Hops.Count > 0 ? Hops[0].Timestamp : DateTimeOffset.UtcNow;
   }
@@ -147,6 +170,7 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// The first hop establishes the correlation context for the entire message flow.
   /// </summary>
   /// <returns>The correlation ID from the first hop, or null if not set</returns>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_Constructor_SetsAllPropertiesAsync</tests>
   public CorrelationId? GetCorrelationId() {
     return Hops != null && Hops.Count > 0 ? Hops[0].CorrelationId : null;
   }
@@ -156,6 +180,7 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// The first hop establishes what message caused this message to be created.
   /// </summary>
   /// <returns>The causation ID from the first hop, or null if not set</returns>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_Constructor_SetsAllPropertiesAsync</tests>
   public MessageId? GetCausationId() {
     return Hops != null && Hops.Count > 0 ? Hops[0].CausationId : null;
   }
@@ -167,6 +192,9 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// </summary>
   /// <param name="key">The metadata key to retrieve</param>
   /// <returns>The JsonElement value from the most recent current hop that has this key, or null if not found</returns>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetMetadata_ReturnsNull_WhenKeyNotFoundAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetMetadata_ReturnsLatestValue_WhenKeyExistsInMultipleHopsAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetMetadata_IgnoresCausationHopsAsync</tests>
   public JsonElement? GetMetadata(string key) {
     for (int i = Hops.Count - 1; i >= 0; i--) {
       if (Hops[i].Type == HopType.Current && Hops[i].Metadata != null && Hops[i].Metadata!.TryGetValue(key, out var value)) {
@@ -182,6 +210,9 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// Filters to only HopType.Current hops (ignores causation hops).
   /// </summary>
   /// <returns>A dictionary containing all metadata with later hops taking precedence</returns>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetAllMetadata_StitchesAllMetadataAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetAllMetadata_ReturnsEmpty_WhenNoHopsHaveMetadataAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetAllMetadata_IgnoresCausationHopsAsync</tests>
   public IReadOnlyDictionary<string, JsonElement> GetAllMetadata() {
     var result = new Dictionary<string, JsonElement>();
 
@@ -203,6 +234,12 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// Filters to only HopType.Current hops (ignores causation hops).
   /// </summary>
   /// <returns>A list containing all policy decisions across all current hops</returns>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetAllPolicyDecisions_ReturnsEmpty_WhenNoHopsHaveTrailsAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetAllPolicyDecisions_ReturnsSingleHopDecisionsAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetAllPolicyDecisions_StitchesDecisionsAcrossMultipleHopsAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetAllPolicyDecisions_MaintainsChronologicalOrderAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetAllPolicyDecisions_SkipsHopsWithoutTrailsAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetAllPolicyDecisions_IgnoresCausationHopsAsync</tests>
   public IReadOnlyList<PolicyDecision> GetAllPolicyDecisions() {
     var result = new List<PolicyDecision>();
 
@@ -222,6 +259,8 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// Returns hops in the order they appear in the list.
   /// </summary>
   /// <returns>A list containing all causation hops</returns>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCausationHops_ReturnsEmpty_WhenNoCausationHopsAsync</tests>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCausationHops_ReturnsOnlyCausationHopsAsync</tests>
   public IReadOnlyList<MessageHop> GetCausationHops() {
     return [.. Hops.Where(h => h.Type == HopType.Causation)];
   }
@@ -231,6 +270,7 @@ public class MessageEnvelope<TMessage> : IMessageEnvelope<TMessage> {
   /// Returns hops in the order they appear in the list.
   /// </summary>
   /// <returns>A list containing all current message hops</returns>
+  /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs:MessageEnvelope_GetCurrentHops_ReturnsOnlyCurrentHopsAsync</tests>
   public IReadOnlyList<MessageHop> GetCurrentHops() {
     return [.. Hops.Where(h => h.Type == HopType.Current)];
   }
