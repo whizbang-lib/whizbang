@@ -16,6 +16,15 @@ namespace Whizbang.Core.Transports;
 /// Creates a new namespace pattern.
 /// </remarks>
 /// <param name="pattern">Pattern with wildcards (e.g., "MyApp.Orders.*")</param>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_ExactMatch_ShouldMatchAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_WildcardSuffix_ShouldMatchAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_WildcardSuffix_ShouldNotMatchDifferentNamespaceAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_WildcardPrefix_ShouldMatchAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_DoubleWildcard_ShouldMatchAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_DoubleWildcard_ShouldMatchNestedAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_ShouldNotMatchWhenInsufficientSegmentsAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_ShouldHandleNullNamespaceAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_Constructor_WithNullPattern_ShouldThrowAsync</tests>
 public class NamespacePattern(string pattern) {
   private readonly string _pattern = pattern ?? throw new ArgumentNullException(nameof(pattern));
   private readonly Regex _regex = PatternToRegex(pattern);
@@ -23,6 +32,15 @@ public class NamespacePattern(string pattern) {
   /// <summary>
   /// Checks if a message type matches this pattern.
   /// </summary>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_ExactMatch_ShouldMatchAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_WildcardSuffix_ShouldMatchAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_WildcardSuffix_ShouldNotMatchDifferentNamespaceAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_WildcardPrefix_ShouldMatchAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_DoubleWildcard_ShouldMatchAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_DoubleWildcard_ShouldMatchNestedAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_ShouldNotMatchWhenInsufficientSegmentsAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_ShouldHandleNullNamespaceAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_Matches_WithNullMessageType_ShouldThrowAsync</tests>
   public bool Matches(Type messageType) {
     ArgumentNullException.ThrowIfNull(messageType);
 
@@ -54,5 +72,6 @@ public class NamespacePattern(string pattern) {
   /// <summary>
   /// Returns the pattern string.
   /// </summary>
+  /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_ToString_ShouldReturnPatternAsync</tests>
   public override string ToString() => _pattern;
 }
