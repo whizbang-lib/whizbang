@@ -25,6 +25,7 @@ namespace Whizbang.Core;
 /// inconsistent ID generation.
 /// </para>
 /// </remarks>
+/// <tests>tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdProviderTests.cs</tests>
 public static class WhizbangIdProvider {
   private static IWhizbangIdProvider _provider = new Uuid7IdProvider();
 
@@ -51,6 +52,8 @@ public static class WhizbangIdProvider {
   /// </code>
   /// </para>
   /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdProviderTests.cs:SetProvider_WithValidProvider_ShouldUseCustomProviderAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdProviderTests.cs:SetProvider_WithNullProvider_ShouldThrowArgumentNullExceptionAsync</tests>
   public static void SetProvider(IWhizbangIdProvider provider) {
     _provider = provider ?? throw new ArgumentNullException(nameof(provider));
   }
@@ -60,5 +63,7 @@ public static class WhizbangIdProvider {
   /// This method is called by generated WhizbangId types.
   /// </summary>
   /// <returns>A new Guid value from the configured provider.</returns>
+  /// <tests>tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdProviderTests.cs:NewGuid_WithDefaultProvider_ShouldReturnUuidV7Async</tests>
+  /// <tests>tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdProviderTests.cs:NewGuid_WithCustomProvider_ShouldReturnCustomGuidAsync</tests>
   public static Guid NewGuid() => _provider.NewGuid();
 }

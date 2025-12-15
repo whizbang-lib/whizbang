@@ -8,5 +8,6 @@ namespace Whizbang.Core.ValueObjects;
 /// Uses Medo.Uuid7 for monotonic counter-based generation with guaranteed uniqueness.
 /// </summary>
 /// <docs>core-concepts/message-context</docs>
+/// <tests>tests/Whizbang.Core.Tests/ValueObjects/IdentityValueObjectTests.cs</tests>
 [WhizbangId]
 public readonly partial struct MessageId;

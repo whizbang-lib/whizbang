@@ -10,12 +10,15 @@ namespace Whizbang.Core.Messaging;
 /// ServiceBus consumers enqueue-and-lease messages, process them, then delete.
 /// If processing fails, lease expires and another instance can retry.
 /// </summary>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/IMessageQueueTests.cs</tests>
 public interface IMessageQueue {
   /// <summary>
   /// Atomically enqueues and leases a message for this instance.
   /// Returns true if message was newly enqueued and leased (not already processed).
   /// Returns false if message was already processed (idempotency check passed).
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IMessageQueueTests.cs:EnqueueAndLeaseAsync_NewMessage_ReturnsTrue_AndLeasesMessageAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IMessageQueueTests.cs:EnqueueAndLeaseAsync_DuplicateMessage_ReturnsFalse_IdempotencyCheckAsync</tests>
   Task<bool> EnqueueAndLeaseAsync(
     QueuedMessage message,
     string instanceId,
@@ -26,6 +29,7 @@ public interface IMessageQueue {
   /// Atomically marks message as processed and removes from queue.
   /// Called after successful processing.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IMessageQueueTests.cs:CompleteAsync_WithLeasedMessage_RemovesFromQueueAsync</tests>
   Task CompleteAsync(
     Guid messageId,
     string instanceId,
@@ -36,6 +40,7 @@ public interface IMessageQueue {
   /// Fallback: Leases orphaned messages (no lease or expired lease) for crash recovery.
   /// Used by InboxProcessorWorker to handle messages from crashed instances.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/IMessageQueueTests.cs:LeaseOrphanedMessagesAsync_WithExpiredLeases_ClaimsMessagesAsync</tests>
   Task<System.Collections.Generic.IReadOnlyList<QueuedMessage>> LeaseOrphanedMessagesAsync(
     string instanceId,
     int maxCount,
@@ -46,6 +51,7 @@ public interface IMessageQueue {
 /// <summary>
 /// A message queued for processing.
 /// </summary>
+/// <tests>tests/Whizbang.Core.Tests/Messaging/QueuedMessageTests.cs</tests>
 public record QueuedMessage {
   public required Guid MessageId { get; init; }
   public required string EventType { get; init; }

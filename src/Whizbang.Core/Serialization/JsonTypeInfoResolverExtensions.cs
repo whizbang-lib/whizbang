@@ -10,6 +10,7 @@ namespace Whizbang.Core.Serialization;
 /// NOTE: With the JsonContextRegistry pattern, these methods are typically not needed.
 /// Instead, register your contexts via ModuleInitializer and use JsonContextRegistry.CreateCombinedOptions().
 /// </summary>
+/// <tests>tests/Whizbang.Core.Tests/Serialization/JsonTypeInfoResolverExtensionsTests.cs</tests>
 [Obsolete("Use JsonContextRegistry.RegisterContext() with ModuleInitializer pattern instead. " +
           "See Whizbang documentation for the recommended pattern.")]
 public static class JsonTypeInfoResolverExtensions {
@@ -19,6 +20,8 @@ public static class JsonTypeInfoResolverExtensions {
   /// </summary>
   /// <param name="userResolver">User's JsonSerializerContext or custom IJsonTypeInfoResolver</param>
   /// <returns>Combined resolver with all registered contexts plus user resolver</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Serialization/JsonTypeInfoResolverExtensionsTests.cs:CombineWithWhizbangContext_WithUserResolver_CombinesCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Serialization/JsonTypeInfoResolverExtensionsTests.cs:CombineWithWhizbangContext_WithNullResolver_ThrowsArgumentNullExceptionAsync</tests>
   [Obsolete("Use JsonContextRegistry.RegisterContext() with ModuleInitializer pattern instead.")]
   public static IJsonTypeInfoResolver CombineWithWhizbangContext(
     this IJsonTypeInfoResolver userResolver) {
@@ -42,6 +45,8 @@ public static class JsonTypeInfoResolverExtensions {
   /// </summary>
   /// <param name="userResolvers">One or more user contexts/resolvers</param>
   /// <returns>Combined resolver with all registered contexts plus user resolvers</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Serialization/JsonTypeInfoResolverExtensionsTests.cs:CombineWithWhizbangContext_WithMultipleResolvers_CombinesCorrectlyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Serialization/JsonTypeInfoResolverExtensionsTests.cs:CombineWithWhizbangContext_WithNullResolversArray_ThrowsArgumentNullExceptionAsync</tests>
   [Obsolete("Use JsonContextRegistry.RegisterContext() with ModuleInitializer pattern instead.")]
   public static IJsonTypeInfoResolver CombineWithWhizbangContext(
     params IJsonTypeInfoResolver[] userResolvers) {

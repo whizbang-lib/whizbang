@@ -11,6 +11,7 @@ namespace Whizbang.Core.Observability;
 /// falling back to the entry assembly name.
 /// Register as a singleton to ensure consistent instance identity throughout the application lifetime.
 /// </summary>
+/// <tests>tests/Whizbang.Core.Tests/Observability/ServiceInstanceProviderTests.cs</tests>
 public sealed class ServiceInstanceProvider : IServiceInstanceProvider {
   private ServiceInstanceInfo? _cachedInfo;
 
@@ -36,6 +37,9 @@ public sealed class ServiceInstanceProvider : IServiceInstanceProvider {
   /// 4. "Unknown" (fallback)
   /// </summary>
   /// <param name="configuration">Optional configuration for resolving service name</param>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/ServiceInstanceProviderTests.cs:ServiceInstanceProvider_WithConfiguration_ResolvesServiceName_FromWhizbangKeyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/ServiceInstanceProviderTests.cs:ServiceInstanceProvider_WithConfiguration_ResolvesServiceName_FromServiceNameKeyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/ServiceInstanceProviderTests.cs:ServiceInstanceProvider_WithoutConfiguration_UsesAssemblyNameAsync</tests>
   public ServiceInstanceProvider(IConfiguration? configuration = null) {
     InstanceId = WhizbangIdProvider.NewGuid();
 
@@ -57,6 +61,7 @@ public sealed class ServiceInstanceProvider : IServiceInstanceProvider {
   /// <param name="serviceName">The service name</param>
   /// <param name="hostName">The host machine name</param>
   /// <param name="processId">The process ID</param>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/ServiceInstanceProviderTests.cs:ServiceInstanceProvider_WithExplicitValues_UsesProvidedValuesAsync</tests>
   public ServiceInstanceProvider(Guid instanceId, string serviceName, string hostName, int processId) {
     InstanceId = instanceId;
     ServiceName = serviceName;
@@ -65,6 +70,8 @@ public sealed class ServiceInstanceProvider : IServiceInstanceProvider {
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Core.Tests/Observability/ServiceInstanceProviderTests.cs:ServiceInstanceProvider_ToInfo_ReturnsServiceInstanceInfoAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Observability/ServiceInstanceProviderTests.cs:ServiceInstanceProvider_ToInfo_CachesResultAsync</tests>
   public ServiceInstanceInfo ToInfo() {
     // Lazily initialize and cache the ServiceInstanceInfo object
     // This avoids recreating the same immutable object on every call

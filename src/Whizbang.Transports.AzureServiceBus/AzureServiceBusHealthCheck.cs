@@ -7,6 +7,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// Health check for Azure Service Bus connectivity.
 /// Verifies that the transport is available and can communicate with Azure Service Bus.
 /// </summary>
+/// <tests>tests/Whizbang.Transports.Tests/AzureServiceBusHealthCheckTests.cs</tests>
 public class AzureServiceBusHealthCheck(ITransport transport) : IHealthCheck {
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
 

@@ -36,6 +36,8 @@ namespace Whizbang.Core;
 /// - Attribute is inherited by derived message types
 /// </para>
 /// </remarks>
+/// <tests>tests/Whizbang.Generators.Tests/AggregateIdGeneratorTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/DiagnosticDescriptorsTests.cs</tests>
 [AttributeUsage(AttributeTargets.Property, AllowMultiple = false, Inherited = true)]
 public sealed class AggregateIdAttribute : Attribute {
 }

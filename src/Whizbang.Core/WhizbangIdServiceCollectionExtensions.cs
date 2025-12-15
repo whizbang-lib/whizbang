@@ -6,6 +6,7 @@ namespace Whizbang.Core;
 /// <summary>
 /// Extension methods for registering WhizbangId services with dependency injection.
 /// </summary>
+/// <tests>tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdServiceCollectionExtensionsTests.cs</tests>
 public static class WhizbangIdServiceCollectionExtensions {
   /// <summary>
   /// Registers a WhizbangId factory for dependency injection.
@@ -28,6 +29,8 @@ public static class WhizbangIdServiceCollectionExtensions {
   /// </code>
   /// </para>
   /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdServiceCollectionExtensionsTests.cs:AddWhizbangIdFactory_WithValidFactory_ShouldRegisterFactoryAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdServiceCollectionExtensionsTests.cs:AddWhizbangIdFactory_RegisteredFactory_CanBeResolvedAsync</tests>
   public static IServiceCollection AddWhizbangIdFactory<TId, [DynamicallyAccessedMembers(DynamicallyAccessedMemberTypes.PublicConstructors)] TFactory>(this IServiceCollection services)
       where TFactory : class, IWhizbangIdFactory<TId> {
     return services.AddSingleton<IWhizbangIdFactory<TId>, TFactory>();
@@ -61,6 +64,8 @@ public static class WhizbangIdServiceCollectionExtensions {
   /// </code>
   /// </para>
   /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdServiceCollectionExtensionsTests.cs:ConfigureWhizbangIdProvider_WithValidProvider_ShouldSetGlobalProviderAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/ValueObjects/WhizbangIdServiceCollectionExtensionsTests.cs:ConfigureWhizbangIdProvider_WithCustomProvider_ShouldAffectGlobalGenerationAsync</tests>
   public static IServiceCollection ConfigureWhizbangIdProvider(
       this IServiceCollection services,
       IWhizbangIdProvider provider) {

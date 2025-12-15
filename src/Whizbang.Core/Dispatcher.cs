@@ -39,6 +39,8 @@ public delegate Task ReceptorPublisher<in TEvent>(TEvent @event);
 /// that implements the abstract lookup methods, returning strongly-typed delegates.
 /// This achieves zero-reflection while keeping functional logic in the base class.
 /// </summary>
+/// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs</tests>
+/// <tests>tests/Whizbang.Core.Tests/Integration/DispatcherReceptorIntegrationTests.cs</tests>
 public abstract class Dispatcher(
   IServiceProvider serviceProvider,
   IServiceInstanceProvider instanceProvider,
@@ -68,6 +70,9 @@ public abstract class Dispatcher(
   /// Use this for async workflows, remote execution, or inbox pattern.
   /// Type information is preserved at compile time, avoiding reflection.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Send_WithValidMessage_ShouldReturnDeliveryReceiptAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Send_WithContext_ShouldPreserveCorrelationIdInReceiptAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:SendAsync_Generic_CreatesTypedEnvelopeForTracingAsync</tests>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
   [StackTraceHidden]
@@ -205,6 +210,9 @@ public abstract class Dispatcher(
   /// RESTRICTION: In-process only - throws InvalidOperationException if used with remote transport.
   /// Type information is preserved at compile time, avoiding reflection.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvoke_WithValidMessage_ShouldReturnBusinessResultAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvoke_WithContext_ShouldPreserveContextAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_DoesNotRequireTypePreservation_ForInProcessRPCAsync</tests>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
   [StackTraceHidden]
@@ -599,6 +607,7 @@ public abstract class Dispatcher(
   /// Uses generated delegate to invoke receptors with zero reflection.
   /// After local handlers complete, publishes to outbox for cross-service delivery (if configured).
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Publish_WithEvent_ShouldNotifyAllHandlersAsync</tests>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
   [StackTraceHidden]
@@ -965,6 +974,8 @@ public abstract class Dispatcher(
   /// Type information is preserved at compile time, avoiding reflection.
   /// Optimized for batch operations - processes messages individually to preserve type safety.
   /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:SendMany_WithMultipleCommands_ShouldReturnAllReceiptsAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:SendManyAsync_Generic_CreatesTypedEnvelopesAsync</tests>
 #if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
   [DebuggerStepThrough]
   [StackTraceHidden]

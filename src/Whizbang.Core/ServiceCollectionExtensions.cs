@@ -6,6 +6,7 @@ namespace Whizbang.Core;
 /// Extension methods for registering Whizbang services with dependency injection.
 /// Provides the unified AddWhizbang() API.
 /// </summary>
+/// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs</tests>
 public static class ServiceCollectionExtensions {
   /// <summary>
   /// Registers Whizbang core infrastructure services and returns a builder for storage configuration.
@@ -37,6 +38,8 @@ public static class ServiceCollectionExtensions {
   /// </code>
   /// </para>
   /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_WithValidServices_ReturnsWhizbangBuilderAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_RegistersCoreServices_SuccessfullyAsync</tests>
   public static WhizbangBuilder AddWhizbang(this IServiceCollection services) {
     // Register core infrastructure services
     services.AddSingleton<Observability.ITraceStore, Observability.InMemoryTraceStore>();

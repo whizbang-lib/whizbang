@@ -35,6 +35,8 @@ namespace Whizbang.Core.Perspectives;
 /// <item>Shared models across contexts: Use same key on multiple DbContexts</item>
 /// </list>
 /// </remarks>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveDiscoveryGeneratorTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/Discovery/PerspectiveDiscoveryTests.cs</tests>
 /// <example>
 /// <para><strong>Single DbContext (no attribute needed):</strong></para>
 /// <code>
@@ -98,6 +100,7 @@ public sealed class WhizbangPerspectiveAttribute : Attribute {
   /// <item>Keys are case-sensitive - use consistent casing</item>
   /// </list>
   /// </remarks>
+  /// <tests>tests/Whizbang.Generators.Tests/Models/PerspectiveInfoTests.cs</tests>
   public string[] Keys { get; }
 
   /// <summary>
@@ -114,6 +117,7 @@ public sealed class WhizbangPerspectiveAttribute : Attribute {
   /// public class SomePerspective : IPerspectiveOf&lt;SomeEvent&gt; { }
   /// </code>
   /// </example>
+  /// <tests>tests/Whizbang.Generators.Tests/Models/PerspectiveInfoTests.cs</tests>
   public WhizbangPerspectiveAttribute() {
     Keys = Array.Empty<string>();
   }
@@ -149,6 +153,7 @@ public sealed class WhizbangPerspectiveAttribute : Attribute {
   /// public class InventoryPerspective : IPerspectiveOf&lt;InventoryEvent&gt; { }
   /// </code>
   /// </example>
+  /// <tests>tests/Whizbang.Generators.Tests/Models/PerspectiveInfoTests.cs</tests>
   public WhizbangPerspectiveAttribute(params string[] keys) {
     Keys = keys ?? Array.Empty<string>();
   }
