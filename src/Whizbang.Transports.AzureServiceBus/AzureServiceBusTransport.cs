@@ -12,6 +12,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// Azure Service Bus implementation of ITransport.
 /// Provides reliable, ordered message delivery using Azure Service Bus topics and subscriptions.
 /// </summary>
+/// <tests>No tests found</tests>
 public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
   private readonly ServiceBusClient _client;
   private readonly ServiceBusAdministrationClient? _adminClient;
@@ -66,9 +67,11 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
   }
 
   /// <inheritdoc />
+  /// <tests>No tests found</tests>
   public bool IsInitialized => _isInitialized;
 
   /// <inheritdoc />
+  /// <tests>No tests found</tests>
   public async Task InitializeAsync(CancellationToken cancellationToken = default) {
     using var activity = WhizbangActivitySource.Transport.StartActivity("AzureServiceBusTransport.Initialize");
 
@@ -121,12 +124,14 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
   }
 
   /// <inheritdoc />
+  /// <tests>No tests found</tests>
   public TransportCapabilities Capabilities =>
     TransportCapabilities.PublishSubscribe |
     TransportCapabilities.Reliable |
     TransportCapabilities.Ordered;
 
   /// <inheritdoc />
+  /// <tests>No tests found</tests>
   public async Task PublishAsync(
     IMessageEnvelope envelope,
     TransportDestination destination,
@@ -210,6 +215,7 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
   }
 
   /// <inheritdoc />
+  /// <tests>No tests found</tests>
   public async Task<ISubscription> SubscribeAsync(
     Func<IMessageEnvelope, CancellationToken, Task> handler,
     TransportDestination destination,
@@ -421,6 +427,7 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
   }
 
   /// <inheritdoc />
+  /// <tests>No tests found</tests>
   public async Task<IMessageEnvelope> SendAsync<TRequest, TResponse>(
     IMessageEnvelope requestEnvelope,
     TransportDestination destination,

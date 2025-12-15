@@ -5,6 +5,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// <summary>
 /// Configuration options for Azure Service Bus transport.
 /// </summary>
+/// <tests>No tests found</tests>
 public class AzureServiceBusOptions {
   /// <summary>
   /// Maximum number of concurrent message processing calls.

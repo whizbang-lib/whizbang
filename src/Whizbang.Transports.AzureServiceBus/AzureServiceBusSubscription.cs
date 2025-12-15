@@ -8,15 +8,26 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// Azure Service Bus subscription implementation.
 /// Controls a ServiceBusProcessor lifecycle and supports pause/resume operations.
 /// </summary>
+/// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_InitialState_IsActiveAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_Pause_SetsIsActiveFalseAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_Resume_SetsIsActiveTrueAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_Dispose_UnsubscribesAsync</tests>
+/// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_DisposeMultipleTimes_DoesNotThrowAsync</tests>
 public class AzureServiceBusSubscription(ServiceBusProcessor processor, ILogger logger) : ISubscription {
   private readonly ServiceBusProcessor _processor = processor ?? throw new ArgumentNullException(nameof(processor));
   private readonly ILogger _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private bool _isDisposed;
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_InitialState_IsActiveAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_Pause_SetsIsActiveFalseAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_Resume_SetsIsActiveTrueAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_Dispose_UnsubscribesAsync</tests>
   public bool IsActive { get; private set; } = true;
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_Pause_SetsIsActiveFalseAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_PauseWhenPaused_DoesNotThrowAsync</tests>
   public async Task PauseAsync() {
     if (!IsActive) {
       return;
@@ -32,6 +43,8 @@ public class AzureServiceBusSubscription(ServiceBusProcessor processor, ILogger 
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_Resume_SetsIsActiveTrueAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_ResumeWhenActive_DoesNotThrowAsync</tests>
   public async Task ResumeAsync() {
     if (IsActive) {
       return;
@@ -47,6 +60,8 @@ public class AzureServiceBusSubscription(ServiceBusProcessor processor, ILogger 
   }
 
   /// <inheritdoc />
+  /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_Dispose_UnsubscribesAsync</tests>
+  /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_DisposeMultipleTimes_DoesNotThrowAsync</tests>
   public void Dispose() {
     if (_isDisposed) {
       return;
