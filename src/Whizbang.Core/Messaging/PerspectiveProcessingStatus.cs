@@ -5,6 +5,7 @@ namespace Whizbang.Core.Messaging;
 /// Stored in wh_perspective_checkpoints table as checkpoints (per stream, per perspective).
 /// Multiple flags can be combined using bitwise OR.
 /// </summary>
+/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/SchemaDefinitionTests.cs:PartialIndexes_ShouldExistForStatusQueriesAsync</tests>
 [Flags]
 public enum PerspectiveProcessingStatus {
   /// <summary>
