@@ -43,14 +43,14 @@ public class OrderPerspective : IPerspectiveOf<SampleOrderCreatedEvent> {
 /// <summary>
 /// Sample event for testing.
 /// </summary>
-public record SampleOrderCreatedEvent(Guid OrderId, decimal Amount) : IEvent;
+public record SampleOrderCreatedEvent(TestOrderId OrderId, decimal Amount) : IEvent;
 
 /// <summary>
 /// Read model maintained by OrderPerspective.
 /// Generator infers this from "OrderPerspective" -> "Order".
 /// </summary>
 public class Order {
-  public required Guid OrderId { get; init; }
+  public required TestOrderId OrderId { get; init; }
   public required decimal Amount { get; init; }
   public required string Status { get; init; }
 }

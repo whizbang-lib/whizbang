@@ -7,6 +7,8 @@
     <ProjectReference Include="..\..\src\Whizbang.Data.Dapper.Postgres\Whizbang.Data.Dapper.Postgres.csproj" />
     <!-- Reference the generator to discover perspectives in this project -->
     <ProjectReference Include="..\..\src\Whizbang.Data.EFCore.Postgres.Generators\Whizbang.Data.EFCore.Postgres.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <!-- Reference the WhizbangId generator to generate strongly-typed test IDs -->
+    <ProjectReference Include="..\..\src\Whizbang.Generators\Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
 
   <ItemGroup>
