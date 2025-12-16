@@ -2,6 +2,7 @@ using Microsoft.EntityFrameworkCore;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Data.EFCore.Postgres;
 
@@ -12,9 +13,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// These tests show how perspectives use the store abstraction to maintain read models.
 /// </summary>
 public class OrderPerspectiveTests {
-  private static DbContextOptions<TestDbContext> CreateInMemoryOptions() {
+  private readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
+
+  private DbContextOptions<TestDbContext> CreateInMemoryOptions() {
     return new DbContextOptionsBuilder<TestDbContext>()
-      .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+      .UseInMemoryDatabase(databaseName: _idProvider.NewGuid().ToString())
       .Options;
   }
 
@@ -25,9 +28,10 @@ public class OrderPerspectiveTests {
     await using var context = new TestDbContext(options);
     var store = new EFCorePostgresPerspectiveStore<Order>(context, "order");
     var perspective = new OrderPerspective(store);
+    var orderId = _idProvider.NewGuid();
 
     var @event = new SampleOrderCreatedEvent(
-      OrderId: "order-123",
+      OrderId: orderId,
       Amount: 99.99m
     );
 
@@ -36,12 +40,12 @@ public class OrderPerspectiveTests {
 
     // Assert - Verify the perspective row was saved
     var saved = await context.Set<PerspectiveRow<Order>>()
-      .FirstOrDefaultAsync(r => r.Id == "order-123");
+      .FirstOrDefaultAsync(r => r.Id == orderId);
 
     await Assert.That(saved).IsNotNull();
-    await Assert.That(saved!.Id).IsEqualTo("order-123");
+    await Assert.That(saved!.Id).IsEqualTo(orderId);
     await Assert.That(saved.Data).IsNotNull();
-    await Assert.That(saved.Data.OrderId).IsEqualTo("order-123");
+    await Assert.That(saved.Data.OrderId).IsEqualTo(orderId);
     await Assert.That(saved.Data.Amount).IsEqualTo(99.99m);
     await Assert.That(saved.Data.Status).IsEqualTo("Created");
     await Assert.That(saved.Version).IsEqualTo(1);
@@ -54,15 +58,16 @@ public class OrderPerspectiveTests {
     await using var context = new TestDbContext(options);
     var store = new EFCorePostgresPerspectiveStore<Order>(context, "order");
     var perspective = new OrderPerspective(store);
+    var orderId = _idProvider.NewGuid();
 
-    var @event = new SampleOrderCreatedEvent("order-456", 50.00m);
+    var @event = new SampleOrderCreatedEvent(orderId, 50.00m);
 
     // Act
     await perspective.Update(@event, CancellationToken.None);
 
     // Assert - Verify default metadata was created by the store
     var saved = await context.Set<PerspectiveRow<Order>>()
-      .FirstOrDefaultAsync(r => r.Id == "order-456");
+      .FirstOrDefaultAsync(r => r.Id == orderId);
 
     await Assert.That(saved).IsNotNull();
     await Assert.That(saved!.Metadata).IsNotNull();
@@ -78,15 +83,16 @@ public class OrderPerspectiveTests {
     await using var context = new TestDbContext(options);
     var store = new EFCorePostgresPerspectiveStore<Order>(context, "order");
     var perspective = new OrderPerspective(store);
+    var orderId = _idProvider.NewGuid();
 
-    var @event = new SampleOrderCreatedEvent("order-789", 75.50m);
+    var @event = new SampleOrderCreatedEvent(orderId, 75.50m);
 
     // Act
     await perspective.Update(@event, CancellationToken.None);
 
     // Assert - Verify default scope was created by the store
     var saved = await context.Set<PerspectiveRow<Order>>()
-      .FirstOrDefaultAsync(r => r.Id == "order-789");
+      .FirstOrDefaultAsync(r => r.Id == orderId);
 
     await Assert.That(saved).IsNotNull();
     await Assert.That(saved!.Scope).IsNotNull();
@@ -102,9 +108,10 @@ public class OrderPerspectiveTests {
     await using var context = new TestDbContext(options);
     var store = new EFCorePostgresPerspectiveStore<Order>(context, "order");
     var perspective = new OrderPerspective(store);
+    var orderId = _idProvider.NewGuid();
 
     var before = DateTime.UtcNow;
-    var @event = new SampleOrderCreatedEvent("order-abc", 100.00m);
+    var @event = new SampleOrderCreatedEvent(orderId, 100.00m);
 
     // Act
     await perspective.Update(@event, CancellationToken.None);
@@ -112,7 +119,7 @@ public class OrderPerspectiveTests {
 
     // Assert - Verify timestamps are set correctly
     var saved = await context.Set<PerspectiveRow<Order>>()
-      .FirstOrDefaultAsync(r => r.Id == "order-abc");
+      .FirstOrDefaultAsync(r => r.Id == orderId);
 
     await Assert.That(saved).IsNotNull();
     await Assert.That(saved!.CreatedAt).IsGreaterThanOrEqualTo(before);
@@ -128,8 +135,7 @@ public class OrderPerspectiveTests {
     await using var context = new TestDbContext(options);
     var store = new EFCorePostgresPerspectiveStore<Order>(context, "order");
     var perspective = new OrderPerspective(store);
-
-    var orderId = "order-multi";
+    var orderId = _idProvider.NewGuid();
 
     // Act - Update same order twice
     await perspective.Update(new SampleOrderCreatedEvent(orderId, 10.00m), CancellationToken.None);

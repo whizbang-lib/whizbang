@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using TUnit.Assertions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Data.EFCore.Postgres;
 
@@ -11,10 +12,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// These tests use EF Core InMemory provider for fast, isolated testing.
 /// </summary>
 public class EFCorePostgresPerspectiveStoreTests {
+  private readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
 
   private TestDbContext CreateInMemoryDbContext() {
     var options = new DbContextOptionsBuilder<TestDbContext>()
-        .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+        .UseInMemoryDatabase(databaseName: _idProvider.NewGuid().ToString())
         .Options;
 
     return new TestDbContext(options);
@@ -27,13 +29,14 @@ public class EFCorePostgresPerspectiveStoreTests {
     var strategy = new InMemoryUpsertStrategy();
     var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
     var model = new StoreTestModel { Name = "Alice", Value = 100 };
+    var testId = _idProvider.NewGuid();
 
     // Act
-    await store.UpsertAsync("test-id", model);
+    await store.UpsertAsync(testId, model);
 
     // Assert - verify record was created
     var row = await context.Set<PerspectiveRow<StoreTestModel>>()
-        .FirstOrDefaultAsync(r => r.Id == "test-id");
+        .FirstOrDefaultAsync(r => r.Id == testId);
 
     await Assert.That(row).IsNotNull();
     await Assert.That(row!.Data.Name).IsEqualTo("Alice");
@@ -47,16 +50,17 @@ public class EFCorePostgresPerspectiveStoreTests {
     var context = CreateInMemoryDbContext();
     var strategy = new InMemoryUpsertStrategy();
     var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    var testId = _idProvider.NewGuid();
 
     // Create initial record
-    await store.UpsertAsync("test-id", new StoreTestModel { Name = "Alice", Value = 100 });
+    await store.UpsertAsync(testId, new StoreTestModel { Name = "Alice", Value = 100 });
 
     // Act - update the record
-    await store.UpsertAsync("test-id", new StoreTestModel { Name = "Bob", Value = 200 });
+    await store.UpsertAsync(testId, new StoreTestModel { Name = "Bob", Value = 200 });
 
     // Assert - verify record was updated
     var row = await context.Set<PerspectiveRow<StoreTestModel>>()
-        .FirstOrDefaultAsync(r => r.Id == "test-id");
+        .FirstOrDefaultAsync(r => r.Id == testId);
 
     await Assert.That(row).IsNotNull();
     await Assert.That(row!.Data.Name).IsEqualTo("Bob");
@@ -70,15 +74,16 @@ public class EFCorePostgresPerspectiveStoreTests {
     var context = CreateInMemoryDbContext();
     var strategy = new InMemoryUpsertStrategy();
     var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    var testId = _idProvider.NewGuid();
 
     // Act - multiple updates
-    await store.UpsertAsync("test-id", new StoreTestModel { Name = "V1", Value = 1 });
-    await store.UpsertAsync("test-id", new StoreTestModel { Name = "V2", Value = 2 });
-    await store.UpsertAsync("test-id", new StoreTestModel { Name = "V3", Value = 3 });
+    await store.UpsertAsync(testId, new StoreTestModel { Name = "V1", Value = 1 });
+    await store.UpsertAsync(testId, new StoreTestModel { Name = "V2", Value = 2 });
+    await store.UpsertAsync(testId, new StoreTestModel { Name = "V3", Value = 3 });
 
     // Assert - version should be 3
     var row = await context.Set<PerspectiveRow<StoreTestModel>>()
-        .FirstOrDefaultAsync(r => r.Id == "test-id");
+        .FirstOrDefaultAsync(r => r.Id == testId);
 
     await Assert.That(row).IsNotNull();
     await Assert.That(row!.Version).IsEqualTo(3);
@@ -91,13 +96,14 @@ public class EFCorePostgresPerspectiveStoreTests {
     var context = CreateInMemoryDbContext();
     var strategy = new InMemoryUpsertStrategy();
     var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    var testId = _idProvider.NewGuid();
 
     // Create initial record
-    await store.UpsertAsync("test-id", new StoreTestModel { Name = "Alice", Value = 100 });
+    await store.UpsertAsync(testId, new StoreTestModel { Name = "Alice", Value = 100 });
 
     var firstRow = await context.Set<PerspectiveRow<StoreTestModel>>()
         .AsNoTracking()
-        .FirstOrDefaultAsync(r => r.Id == "test-id");
+        .FirstOrDefaultAsync(r => r.Id == testId);
 
     var originalUpdatedAt = firstRow!.UpdatedAt;
 
@@ -105,11 +111,11 @@ public class EFCorePostgresPerspectiveStoreTests {
     await Task.Delay(10);
 
     // Act - update the record
-    await store.UpsertAsync("test-id", new StoreTestModel { Name = "Bob", Value = 200 });
+    await store.UpsertAsync(testId, new StoreTestModel { Name = "Bob", Value = 200 });
 
     // Assert - UpdatedAt should be newer
     var updatedRow = await context.Set<PerspectiveRow<StoreTestModel>>()
-        .FirstOrDefaultAsync(r => r.Id == "test-id");
+        .FirstOrDefaultAsync(r => r.Id == testId);
 
     await Assert.That(updatedRow!.UpdatedAt).IsGreaterThan(originalUpdatedAt);
     await Assert.That(updatedRow.CreatedAt).IsEqualTo(firstRow.CreatedAt); // CreatedAt unchanged

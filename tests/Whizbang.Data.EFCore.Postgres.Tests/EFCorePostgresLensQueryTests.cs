@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using TUnit.Assertions;
 using TUnit.Core;
+using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Data.EFCore.Postgres;
 
@@ -11,10 +12,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// These tests use EF Core InMemory provider for fast, isolated testing.
 /// </summary>
 public class EFCorePostgresLensQueryTests {
+  private readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
 
   private TestDbContext CreateInMemoryDbContext() {
     var options = new DbContextOptionsBuilder<TestDbContext>()
-        .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
+        .UseInMemoryDatabase(databaseName: _idProvider.NewGuid().ToString())
         .Options;
 
     return new TestDbContext(options);
@@ -22,7 +24,7 @@ public class EFCorePostgresLensQueryTests {
 
   private async Task SeedPerspectiveAsync(
       TestDbContext context,
-      string id,
+      Guid id,
       TestModel data,
       PerspectiveMetadata? metadata = null,
       PerspectiveScope? scope = null) {
@@ -70,12 +72,13 @@ public class EFCorePostgresLensQueryTests {
     // Arrange
     var context = CreateInMemoryDbContext();
     var lensQuery = new EFCorePostgresLensQuery<TestModel>(context, "test_perspective");
+    var testId = _idProvider.NewGuid();
 
     var testModel = new TestModel { Name = "Test", Value = 123 };
-    await SeedPerspectiveAsync(context, "test-id", testModel);
+    await SeedPerspectiveAsync(context, testId, testModel);
 
     // Act
-    var result = await lensQuery.GetByIdAsync("test-id");
+    var result = await lensQuery.GetByIdAsync(testId);
 
     // Assert
     await Assert.That(result).IsNotNull();
@@ -90,7 +93,7 @@ public class EFCorePostgresLensQueryTests {
     var lensQuery = new EFCorePostgresLensQuery<TestModel>(context, "test_perspective");
 
     // Act
-    var result = await lensQuery.GetByIdAsync("nonexistent-id");
+    var result = await lensQuery.GetByIdAsync(_idProvider.NewGuid());
 
     // Assert
     await Assert.That(result).IsNull();
@@ -116,9 +119,9 @@ public class EFCorePostgresLensQueryTests {
     var context = CreateInMemoryDbContext();
     var lensQuery = new EFCorePostgresLensQuery<TestModel>(context, "test_perspective");
 
-    await SeedPerspectiveAsync(context, "id-1", new TestModel { Name = "Alice", Value = 100 });
-    await SeedPerspectiveAsync(context, "id-2", new TestModel { Name = "Bob", Value = 200 });
-    await SeedPerspectiveAsync(context, "id-3", new TestModel { Name = "Charlie", Value = 100 });
+    await SeedPerspectiveAsync(context, _idProvider.NewGuid(), new TestModel { Name = "Alice", Value = 100 });
+    await SeedPerspectiveAsync(context, _idProvider.NewGuid(), new TestModel { Name = "Bob", Value = 200 });
+    await SeedPerspectiveAsync(context, _idProvider.NewGuid(), new TestModel { Name = "Charlie", Value = 100 });
 
     // Act - Filter by data field
     var results = await lensQuery.Query
@@ -149,9 +152,13 @@ public class EFCorePostgresLensQueryTests {
       Timestamp = DateTime.UtcNow
     };
 
-    await SeedPerspectiveAsync(context, "id-1", new TestModel { Name = "Test1", Value = 1 }, metadata1);
-    await SeedPerspectiveAsync(context, "id-2", new TestModel { Name = "Test2", Value = 2 }, metadata2);
-    await SeedPerspectiveAsync(context, "id-3", new TestModel { Name = "Test3", Value = 3 }, metadata1);
+    var id1 = _idProvider.NewGuid();
+    var id2 = _idProvider.NewGuid();
+    var id3 = _idProvider.NewGuid();
+
+    await SeedPerspectiveAsync(context, id1, new TestModel { Name = "Test1", Value = 1 }, metadata1);
+    await SeedPerspectiveAsync(context, id2, new TestModel { Name = "Test2", Value = 2 }, metadata2);
+    await SeedPerspectiveAsync(context, id3, new TestModel { Name = "Test3", Value = 3 }, metadata1);
 
     // Act - Filter by metadata field
     var results = await lensQuery.Query
@@ -160,8 +167,8 @@ public class EFCorePostgresLensQueryTests {
 
     // Assert
     await Assert.That(results).HasCount().EqualTo(2);
-    await Assert.That(results.Select(r => r.Id)).Contains("id-1");
-    await Assert.That(results.Select(r => r.Id)).Contains("id-3");
+    await Assert.That(results.Select(r => r.Id)).Contains(id1);
+    await Assert.That(results.Select(r => r.Id)).Contains(id3);
   }
 
   [Test]
@@ -173,9 +180,13 @@ public class EFCorePostgresLensQueryTests {
     var scope1 = new PerspectiveScope { TenantId = "tenant-1", UserId = "user-1" };
     var scope2 = new PerspectiveScope { TenantId = "tenant-2", UserId = "user-2" };
 
-    await SeedPerspectiveAsync(context, "id-1", new TestModel { Name = "Test1", Value = 1 }, scope: scope1);
-    await SeedPerspectiveAsync(context, "id-2", new TestModel { Name = "Test2", Value = 2 }, scope: scope2);
-    await SeedPerspectiveAsync(context, "id-3", new TestModel { Name = "Test3", Value = 3 }, scope: scope1);
+    var id1 = _idProvider.NewGuid();
+    var id2 = _idProvider.NewGuid();
+    var id3 = _idProvider.NewGuid();
+
+    await SeedPerspectiveAsync(context, id1, new TestModel { Name = "Test1", Value = 1 }, scope: scope1);
+    await SeedPerspectiveAsync(context, id2, new TestModel { Name = "Test2", Value = 2 }, scope: scope2);
+    await SeedPerspectiveAsync(context, id3, new TestModel { Name = "Test3", Value = 3 }, scope: scope1);
 
     // Act - Filter by scope field
     var results = await lensQuery.Query
@@ -184,8 +195,8 @@ public class EFCorePostgresLensQueryTests {
 
     // Assert
     await Assert.That(results).HasCount().EqualTo(2);
-    await Assert.That(results.Select(r => r.Id)).Contains("id-1");
-    await Assert.That(results.Select(r => r.Id)).Contains("id-3");
+    await Assert.That(results.Select(r => r.Id)).Contains(id1);
+    await Assert.That(results.Select(r => r.Id)).Contains(id3);
   }
 
   [Test]
@@ -202,7 +213,7 @@ public class EFCorePostgresLensQueryTests {
 
     var scope = new PerspectiveScope { TenantId = "tenant-1" };
 
-    await SeedPerspectiveAsync(context, "id-1", new TestModel { Name = "Alice", Value = 100 }, metadata, scope);
+    await SeedPerspectiveAsync(context, _idProvider.NewGuid(), new TestModel { Name = "Alice", Value = 100 }, metadata, scope);
 
     // Act - Project fields from data, metadata, and scope
     var results = await lensQuery.Query
@@ -231,9 +242,9 @@ public class EFCorePostgresLensQueryTests {
     var scope1 = new PerspectiveScope { TenantId = "tenant-1" };
     var scope2 = new PerspectiveScope { TenantId = "tenant-2" };
 
-    await SeedPerspectiveAsync(context, "id-1", new TestModel { Name = "Alice", Value = 100 }, metadata1, scope1);
-    await SeedPerspectiveAsync(context, "id-2", new TestModel { Name = "Bob", Value = 200 }, metadata2, scope1);
-    await SeedPerspectiveAsync(context, "id-3", new TestModel { Name = "Charlie", Value = 100 }, metadata1, scope2);
+    await SeedPerspectiveAsync(context, _idProvider.NewGuid(), new TestModel { Name = "Alice", Value = 100 }, metadata1, scope1);
+    await SeedPerspectiveAsync(context, _idProvider.NewGuid(), new TestModel { Name = "Bob", Value = 200 }, metadata2, scope1);
+    await SeedPerspectiveAsync(context, _idProvider.NewGuid(), new TestModel { Name = "Charlie", Value = 100 }, metadata1, scope2);
 
     // Act - Filter by data + metadata + scope in single query
     var results = await lensQuery.Query
@@ -254,9 +265,9 @@ public class EFCorePostgresLensQueryTests {
     var context = CreateInMemoryDbContext();
     var lensQuery = new EFCorePostgresLensQuery<TestModel>(context, "test_perspective");
 
-    await SeedPerspectiveAsync(context, "id-1", new TestModel { Name = "Alice", Value = 300 });
-    await SeedPerspectiveAsync(context, "id-2", new TestModel { Name = "Bob", Value = 100 });
-    await SeedPerspectiveAsync(context, "id-3", new TestModel { Name = "Charlie", Value = 200 });
+    await SeedPerspectiveAsync(context, _idProvider.NewGuid(), new TestModel { Name = "Alice", Value = 300 });
+    await SeedPerspectiveAsync(context, _idProvider.NewGuid(), new TestModel { Name = "Bob", Value = 100 });
+    await SeedPerspectiveAsync(context, _idProvider.NewGuid(), new TestModel { Name = "Charlie", Value = 200 });
 
     // Act - Complex LINQ with OrderBy, Skip, Take
     var results = await lensQuery.Query
