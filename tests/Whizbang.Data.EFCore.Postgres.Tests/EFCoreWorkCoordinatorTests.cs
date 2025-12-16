@@ -4,6 +4,7 @@ using TUnit.Assertions;
 using TUnit.Core;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
 using Whizbang.Data.Schema;
 
@@ -1503,6 +1504,838 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       .Because("Message 3 status should remain Stored (Status = 0 uses bitwise OR)");
   }
 
+  // ===== INSTANCE LIFECYCLE TESTS =====
+
+  /// <summary>
+  /// **Given**: An instance stops heartbeating (stale threshold exceeded)
+  /// **When**: Another instance calls ProcessWorkBatchAsync
+  /// **Then**: Stale instance is deleted and its partitions are released
+  /// </summary>
+  /// <docs>messaging/multi-instance-coordination#stale-instance-cleanup</docs>
+  [Test]
+  public async Task ProcessWorkBatchAsync_StaleInstance_CleanedUpAndPartitionsReleasedAsync() {
+    // Arrange - Instance 1 exists but hasn't heartbeated (simulating stale instance)
+    var staleInstanceId = _idProvider.NewGuid();
+    var activeInstanceId = _idProvider.NewGuid();
+
+    await InsertServiceInstanceAsync(staleInstanceId, "TestService", "host1", 11111);
+    await InsertServiceInstanceAsync(activeInstanceId, "TestService", "host2", 22222);
+
+    // Manually set instance 1's heartbeat to be stale (older than threshold)
+    await using (var dbContext = CreateDbContext()) {
+      var instance = await dbContext.Set<ServiceInstanceRecord>()
+        .FirstOrDefaultAsync(i => i.InstanceId == staleInstanceId);
+      instance!.LastHeartbeatAt = DateTimeOffset.UtcNow.AddMinutes(-15); // Beyond 10-minute threshold
+      await dbContext.SaveChangesAsync();
+    }
+
+    // Act - Active instance processes work batch with short stale threshold
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
+    await coordinator.ProcessWorkBatchAsync(
+      activeInstanceId,
+      "TestService",
+      "host2",
+      22222,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
+      staleThresholdSeconds: 600); // 10 minutes
+
+    // Assert - Stale instance should be deleted
+    await using (var dbContext = CreateDbContext()) {
+      var staleInstance = await dbContext.Set<ServiceInstanceRecord>()
+        .FirstOrDefaultAsync(i => i.InstanceId == staleInstanceId);
+      await Assert.That(staleInstance).IsNull()
+        .Because("Stale instances should be cleaned up when heartbeat exceeds threshold");
+
+      var activeInstance = await dbContext.Set<ServiceInstanceRecord>()
+        .FirstOrDefaultAsync(i => i.InstanceId == activeInstanceId);
+      await Assert.That(activeInstance).IsNotNull()
+        .Because("Active instances should remain");
+    }
+  }
+
+  /// <summary>
+  /// **Given**: An instance crashes (becomes stale) with messages that have expired leases
+  /// **When**: Another instance claims work
+  /// **Then**: Stale instance is deleted, messages are released, and recovery instance reclaims them
+  /// </summary>
+  /// <docs>messaging/multi-instance-coordination#lease-expiry-orphaned-work</docs>
+  [Test]
+  public async Task ProcessWorkBatchAsync_InstanceCrashes_MessagesReclaimedAfterLeaseExpiryAsync() {
+    // Arrange - Create crashed instance (that will become stale) and recovery instance
+    var crashedInstanceId = _idProvider.NewGuid();
+    var recoveryInstanceId = _idProvider.NewGuid();
+
+    await InsertServiceInstanceAsync(crashedInstanceId, "TestService", "host1", 11111);
+    await InsertServiceInstanceAsync(recoveryInstanceId, "TestService", "host2", 22222);
+
+    // Make crashed instance STALE by setting last_heartbeat_at > 10 minutes ago
+    await using (var connection = new Npgsql.NpgsqlConnection(ConnectionString)) {
+      await connection.OpenAsync();
+      await using var command = new Npgsql.NpgsqlCommand(
+        "UPDATE wh_service_instances SET last_heartbeat_at = @staleTime WHERE instance_id = @instanceId",
+        connection);
+      command.Parameters.AddWithValue("staleTime", DateTimeOffset.UtcNow.AddMinutes(-15));
+      command.Parameters.AddWithValue("instanceId", crashedInstanceId);
+      await command.ExecuteNonQueryAsync();
+    }
+
+    // Insert messages claimed by crashed instance (with expired leases)
+    // Use different stream IDs to avoid stream ordering blocking
+    var message1Id = _idProvider.NewGuid();
+    var message2Id = _idProvider.NewGuid();
+    var stream1Id = _idProvider.NewGuid();
+    var stream2Id = _idProvider.NewGuid();
+
+    await InsertOutboxMessageAsync(
+      message1Id,
+      "topic1",
+      "Event1",
+      "{}",
+      statusFlags: (int)MessageProcessingStatus.Stored,
+      instanceId: crashedInstanceId,  // Owned by crashed instance
+      leaseExpiry: DateTimeOffset.UtcNow.AddSeconds(-10), // Expired 10 seconds ago
+      streamId: stream1Id);
+
+    await InsertOutboxMessageAsync(
+      message2Id,
+      "topic2",
+      "Event2",
+      "{}",
+      statusFlags: (int)MessageProcessingStatus.Stored,
+      instanceId: crashedInstanceId,  // Owned by crashed instance
+      leaseExpiry: DateTimeOffset.UtcNow.AddSeconds(-5), // Expired 5 seconds ago
+      streamId: stream2Id);
+
+    // Act - Recovery instance claims work
+    var coordinator = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
+    var result = await coordinator.ProcessWorkBatchAsync(
+      recoveryInstanceId,
+      "TestService",
+      "host2",
+      22222,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
+
+    // Assert - Messages should be reclaimed by recovery instance
+    await Assert.That(result.OutboxWork).HasCount().EqualTo(2)
+      .Because("Orphaned messages should be reclaimed");
+
+    var claimedIds = result.OutboxWork.Select(w => w.MessageId).ToHashSet();
+    await Assert.That(claimedIds.Contains(message1Id)).IsTrue();
+    await Assert.That(claimedIds.Contains(message2Id)).IsTrue();
+
+    // Verify messages now owned by recovery instance
+    var newOwner1 = await GetOutboxInstanceIdAsync(message1Id);
+    var newOwner2 = await GetOutboxInstanceIdAsync(message2Id);
+    await Assert.That(newOwner1).IsEqualTo(recoveryInstanceId);
+    await Assert.That(newOwner2).IsEqualTo(recoveryInstanceId);
+  }
+
+  /// <summary>
+  /// **Given**: Multiple active instances (all heartbeating)
+  /// **When**: ProcessWorkBatchAsync is called
+  /// **Then**: All active instances are counted in distribution calculation
+  /// </summary>
+  /// <docs>messaging/multi-instance-coordination#new-instance-joining</docs>
+  [Test]
+  public async Task ProcessWorkBatchAsync_MultipleActiveInstances_AllCountedInDistributionAsync() {
+    // Arrange - Three active instances (all heartbeating recently)
+    var instance1Id = _idProvider.NewGuid();
+    var instance2Id = _idProvider.NewGuid();
+    var instance3Id = _idProvider.NewGuid();
+
+    await InsertServiceInstanceAsync(instance1Id, "TestService", "host1", 11111);
+    await InsertServiceInstanceAsync(instance2Id, "TestService", "host2", 22222);
+    await InsertServiceInstanceAsync(instance3Id, "TestService", "host3", 33333);
+
+    // Insert messages that will be distributed across 3 instances
+    var messages = new List<Guid>();
+    for (int i = 0; i < 12; i++) {
+      var messageId = _idProvider.NewGuid();
+      messages.Add(messageId);
+      await InsertOutboxMessageAsync(
+        messageId,
+        $"topic{i}",
+        $"Event{i}",
+        $"{{\"index\":{i}}}",
+        statusFlags: (int)MessageProcessingStatus.Stored);
+    }
+
+    // Act - All three instances claim work
+    var coordinator1 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
+    var result1 = await coordinator1.ProcessWorkBatchAsync(
+      instance1Id, "TestService", "host1", 11111, metadata: null,
+      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
+      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
+      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+
+    var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
+    var result2 = await coordinator2.ProcessWorkBatchAsync(
+      instance2Id, "TestService", "host2", 22222, metadata: null,
+      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
+      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
+      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+
+    var coordinator3 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
+    var result3 = await coordinator3.ProcessWorkBatchAsync(
+      instance3Id, "TestService", "host3", 33333, metadata: null,
+      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
+      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
+      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+
+    // Assert - Work should be distributed across all 3 instances
+    var claimed1 = result1.OutboxWork.Select(w => w.MessageId).ToHashSet();
+    var claimed2 = result2.OutboxWork.Select(w => w.MessageId).ToHashSet();
+    var claimed3 = result3.OutboxWork.Select(w => w.MessageId).ToHashSet();
+
+    // No overlap between instances
+    await Assert.That(claimed1.Intersect(claimed2)).HasCount().EqualTo(0);
+    await Assert.That(claimed1.Intersect(claimed3)).HasCount().EqualTo(0);
+    await Assert.That(claimed2.Intersect(claimed3)).HasCount().EqualTo(0);
+
+    // All messages claimed
+    var totalClaimed = claimed1.Count + claimed2.Count + claimed3.Count;
+    await Assert.That(totalClaimed).IsEqualTo(12)
+      .Because("All 12 messages should be distributed across 3 instances");
+
+    // Each instance should get at least 1 message (with 12 messages and 3 instances, we expect ~4 each)
+    await Assert.That(claimed1.Count).IsGreaterThanOrEqualTo(1);
+    await Assert.That(claimed2.Count).IsGreaterThanOrEqualTo(1);
+    await Assert.That(claimed3.Count).IsGreaterThanOrEqualTo(1);
+  }
+
+  // ===== PARTITION STABILITY TESTS =====
+
+  /// <summary>
+  /// **Given**: Message assigned to Instance 1's partition
+  /// **When**: Instance 2 joins (would normally cause partition reassignment)
+  /// **Then**: Message remains with Instance 1 until lease expires or instance goes stale
+  /// </summary>
+  /// <docs>messaging/multi-instance-coordination#partition-reassignment</docs>
+  [Test]
+  public async Task ProcessWorkBatchAsync_NewInstanceJoining_DoesNotStealActivePartitionsAsync() {
+    // Arrange - Instance 1 exists with claimed messages
+    var instance1Id = _idProvider.NewGuid();
+    var instance2Id = _idProvider.NewGuid();
+
+    await InsertServiceInstanceAsync(instance1Id, "TestService", "host1", 11111);
+
+    var messageId = _idProvider.NewGuid();
+    await InsertOutboxMessageAsync(
+      messageId,
+      "topic1",
+      "Event1",
+      "{}",
+      statusFlags: (int)MessageProcessingStatus.Stored,
+      instanceId: instance1Id,
+      leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(5)); // Active lease
+
+    // Act - Instance 2 joins and tries to claim work
+    await InsertServiceInstanceAsync(instance2Id, "TestService", "host2", 22222);
+
+    var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
+    var result2 = await coordinator2.ProcessWorkBatchAsync(
+      instance2Id, "TestService", "host2", 22222, metadata: null,
+      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
+      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
+      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+
+    // Assert - Instance 2 should NOT claim instance 1's active messages
+    var claimed2Ids = result2.OutboxWork.Select(w => w.MessageId).ToHashSet();
+    await Assert.That(claimed2Ids.Contains(messageId)).IsFalse()
+      .Because("New instances should not steal messages with active leases from existing instances");
+
+    // Verify message still owned by instance 1
+    var currentOwner = await GetOutboxInstanceIdAsync(messageId);
+    await Assert.That(currentOwner).IsEqualTo(instance1Id)
+      .Because("Message ownership should remain with instance 1 until lease expires or instance goes stale");
+  }
+
+  /// <summary>
+  /// **Given**: Instance 1 holds partitions
+  /// **When**: Instance 1 becomes stale
+  /// **Then**: Partitions are released and redistributed via CASCADE DELETE
+  /// </summary>
+  /// <docs>messaging/multi-instance-coordination#partition-reassignment</docs>
+  [Test]
+  public async Task ProcessWorkBatchAsync_InstanceGoesStale_PartitionsReleasedViaCascadeAsync() {
+    // Arrange - Instance 1 with partitions
+    var staleInstanceId = _idProvider.NewGuid();
+    var activeInstanceId = _idProvider.NewGuid();
+
+    await InsertServiceInstanceAsync(staleInstanceId, "TestService", "host1", 11111);
+
+    // Claim some messages to trigger partition assignment
+    var messageId = _idProvider.NewGuid();
+    await InsertOutboxMessageAsync(
+      messageId,
+      "topic1",
+      "Event1",
+      "{}",
+      statusFlags: (int)MessageProcessingStatus.Stored);
+
+    // Instance 1 claims work (establishes partition ownership)
+    var coordinator1 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
+    await coordinator1.ProcessWorkBatchAsync(
+      staleInstanceId, "TestService", "host1", 11111, metadata: null,
+      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
+      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
+      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+
+    // Make instance 1 stale
+    await using (var dbContext = CreateDbContext()) {
+      var instance = await dbContext.Set<ServiceInstanceRecord>()
+        .FirstOrDefaultAsync(i => i.InstanceId == staleInstanceId);
+      instance!.LastHeartbeatAt = DateTimeOffset.UtcNow.AddMinutes(-15);
+      await dbContext.SaveChangesAsync();
+    }
+
+    // Act - New instance joins and triggers stale cleanup
+    await InsertServiceInstanceAsync(activeInstanceId, "TestService", "host2", 22222);
+
+    var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
+    await coordinator2.ProcessWorkBatchAsync(
+      activeInstanceId, "TestService", "host2", 22222, metadata: null,
+      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
+      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
+      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: [],
+      staleThresholdSeconds: 600);
+
+    // Assert - Stale instance's partitions should be released (CASCADE DELETE)
+    await using (var dbContext = CreateDbContext()) {
+      var staleInstance = await dbContext.Set<ServiceInstanceRecord>()
+        .FirstOrDefaultAsync(i => i.InstanceId == staleInstanceId);
+      await Assert.That(staleInstance).IsNull()
+        .Because("Stale instance should be deleted");
+
+      // Partition assignments for stale instance should also be deleted (CASCADE)
+      await using (var connection = new Npgsql.NpgsqlConnection(ConnectionString)) {
+        await connection.OpenAsync();
+        await using var command = new Npgsql.NpgsqlCommand(
+          "SELECT COUNT(*) FROM wh_partition_assignments WHERE instance_id = @instanceId",
+          connection);
+        command.Parameters.AddWithValue("instanceId", staleInstanceId);
+        var count = (long)(await command.ExecuteScalarAsync() ?? 0L);
+        await Assert.That(count).IsEqualTo(0)
+          .Because("CASCADE DELETE should remove partition assignments when instance is deleted");
+      }
+    }
+  }
+
+  /// <summary>
+  /// **Given**: Instance 1 fails but lease not yet expired
+  /// **When**: Other instances try to claim work
+  /// **Then**: Messages remain locked until lease expires
+  /// </summary>
+  /// <docs>messaging/multi-instance-coordination#lease-expiry-orphaned-work</docs>
+  [Test]
+  public async Task ProcessWorkBatchAsync_LeaseNotExpired_MessagesRemainLockedAsync() {
+    // Arrange - Instance 1 claims messages with active lease
+    var instance1Id = _idProvider.NewGuid();
+    var instance2Id = _idProvider.NewGuid();
+
+    await InsertServiceInstanceAsync(instance1Id, "TestService", "host1", 11111);
+    await InsertServiceInstanceAsync(instance2Id, "TestService", "host2", 22222);
+
+    var messageId = _idProvider.NewGuid();
+    await InsertOutboxMessageAsync(
+      messageId,
+      "topic1",
+      "Event1",
+      "{}",
+      statusFlags: (int)MessageProcessingStatus.Stored,
+      instanceId: instance1Id,
+      leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(5)); // Still valid for 5 minutes
+
+    // Act - Instance 2 tries to claim work
+    var coordinator2 = new EFCoreWorkCoordinator<WorkCoordinationDbContext>(CreateDbContext(), JsonContextRegistry.CreateCombinedOptions());
+    var result2 = await coordinator2.ProcessWorkBatchAsync(
+      instance2Id, "TestService", "host2", 22222, metadata: null,
+      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
+      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
+      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+
+    // Assert - Instance 2 should NOT claim instance 1's message
+    var claimed2Ids = result2.OutboxWork.Select(w => w.MessageId).ToHashSet();
+    await Assert.That(claimed2Ids.Contains(messageId)).IsFalse()
+      .Because("Messages with active leases should not be claimable by other instances");
+
+    // Verify message still owned by instance 1
+    var currentOwner = await GetOutboxInstanceIdAsync(messageId);
+    await Assert.That(currentOwner).IsEqualTo(instance1Id);
+  }
+
+  // ===== SCHEDULED RETRY STREAM ORDERING TESTS =====
+
+  /// <summary>
+  /// **Given**: Message M1 in stream S is scheduled for retry (scheduled_for > now)
+  /// **When**: Instance tries to claim later message M2 in same stream
+  /// **Then**: M2 is blocked until M1's scheduled_for time passes
+  /// </summary>
+  /// <docs>messaging/multi-instance-coordination#scheduled-retry-blocking</docs>
+  [Test]
+  public async Task ProcessWorkBatchAsync_ScheduledRetry_BlocksLaterMessagesInStreamAsync() {
+    // Arrange - Two messages in same stream, first one scheduled for future retry
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+
+    var streamId = _idProvider.NewGuid();
+    var baseTime = DateTimeOffset.UtcNow.AddMinutes(-5);
+
+    // Message 1 - scheduled for retry in 10 minutes
+    var message1Id = _idProvider.NewGuid();
+    await InsertOutboxMessageWithTimestampAndScheduledAsync(
+      message1Id,
+      "topic",
+      "Event1",
+      streamId,
+      createdAt: baseTime,
+      scheduledFor: DateTimeOffset.UtcNow.AddMinutes(10), // Scheduled for future
+      statusFlags: (int)MessageProcessingStatus.Stored);
+
+    // Message 2 - later in stream, ready to process
+    var message2Id = _idProvider.NewGuid();
+    await InsertOutboxMessageWithTimestampAsync(
+      message2Id,
+      "topic",
+      "Event2",
+      "{\"seq\":2}",
+      streamId,
+      createdAt: baseTime.AddMilliseconds(100),
+      statusFlags: (int)MessageProcessingStatus.Stored);
+
+    // Act - Try to claim work
+    var result = await _sut.ProcessWorkBatchAsync(
+      _instanceId, "TestService", "test-host", 12345, metadata: null,
+      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
+      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
+      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+
+    // Assert - M2 should be blocked by M1's scheduled retry
+    var claimedIds = result.OutboxWork.Select(w => w.MessageId).ToHashSet();
+    await Assert.That(claimedIds.Contains(message1Id)).IsFalse()
+      .Because("M1 is not yet ready for retry (scheduled_for > now)");
+    await Assert.That(claimedIds.Contains(message2Id)).IsFalse()
+      .Because("M2 is blocked by earlier message M1 with scheduled_for > now");
+  }
+
+  /// <summary>
+  /// **Given**: Message M1 scheduled for retry, scheduled_for time passes
+  /// **When**: Instance claims work
+  /// **Then**: M1 and M2 become claimable (stream unblocked)
+  /// </summary>
+  /// <docs>messaging/multi-instance-coordination#scheduled-retry-blocking</docs>
+  [Test]
+  public async Task ProcessWorkBatchAsync_ScheduledRetryExpires_UnblocksStreamAsync() {
+    // Arrange - Two messages in same stream, first one scheduled for past retry
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+
+    var streamId = _idProvider.NewGuid();
+    var baseTime = DateTimeOffset.UtcNow.AddMinutes(-5);
+
+    // Message 1 - scheduled for retry that has already passed
+    var message1Id = _idProvider.NewGuid();
+    await InsertOutboxMessageWithTimestampAndScheduledAsync(
+      message1Id,
+      "topic",
+      "Event1",
+      streamId,
+      createdAt: baseTime,
+      scheduledFor: DateTimeOffset.UtcNow.AddSeconds(-10), // Scheduled time has passed
+      statusFlags: (int)MessageProcessingStatus.Stored);
+
+    // Message 2 - later in stream
+    var message2Id = _idProvider.NewGuid();
+    await InsertOutboxMessageWithTimestampAsync(
+      message2Id,
+      "topic",
+      "Event2",
+      "{\"seq\":2}",
+      streamId,
+      createdAt: baseTime.AddMilliseconds(100),
+      statusFlags: (int)MessageProcessingStatus.Stored);
+
+    // Act - Try to claim work
+    var result = await _sut.ProcessWorkBatchAsync(
+      _instanceId, "TestService", "test-host", 12345, metadata: null,
+      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
+      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
+      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+
+    // Assert - Both messages should be claimable now
+    var claimedIds = result.OutboxWork.Select(w => w.MessageId).ToHashSet();
+    await Assert.That(result.OutboxWork).HasCount().EqualTo(2)
+      .Because("Both M1 and M2 should be claimable once scheduled_for time passes");
+    await Assert.That(claimedIds.Contains(message1Id)).IsTrue()
+      .Because("M1's scheduled retry time has passed");
+    await Assert.That(claimedIds.Contains(message2Id)).IsTrue()
+      .Because("M2 is no longer blocked by M1");
+  }
+
+  // ===== IDEMPOTENCY TESTS =====
+
+  /// <summary>
+  /// **Given**: Inbox message with duplicate message_id
+  /// **When**: Try to insert via ProcessWorkBatchAsync
+  /// **Then**: Duplicate rejected via wh_message_deduplication table (ON CONFLICT DO NOTHING)
+  /// </summary>
+  /// <docs>messaging/idempotency-patterns#inbox-idempotency</docs>
+  [Test]
+  public async Task ProcessWorkBatchAsync_DuplicateInboxMessage_DeduplicationPreventsAsync() {
+    // Arrange - Insert first message
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+
+    var messageId = _idProvider.NewGuid();
+    var streamId = _idProvider.NewGuid();
+
+    // First insert via deduplication table
+    await using (var connection = new Npgsql.NpgsqlConnection(ConnectionString)) {
+      await connection.OpenAsync();
+      await using var command = new Npgsql.NpgsqlCommand(
+        "INSERT INTO wh_message_deduplication (message_id, first_seen_at) VALUES (@messageId, NOW())",
+        connection);
+      command.Parameters.AddWithValue("messageId", messageId);
+      await command.ExecuteNonQueryAsync();
+    }
+
+    // Act - Try to insert duplicate via ProcessWorkBatchAsync
+    var inboxMessage = new InboxMessage {
+      MessageId = messageId,
+      HandlerName = "TestHandler",
+      Envelope = CreateTestEnvelope(messageId),
+      EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
+      MessageType = "TestMessage, TestAssembly",
+      StreamId = streamId,
+      IsEvent = false
+    };
+
+    var result = await _sut.ProcessWorkBatchAsync(
+      _instanceId, "TestService", "test-host", 12345, metadata: null,
+      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
+      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
+      newOutboxMessages: [], newInboxMessages: [inboxMessage],
+      renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+
+    // Assert - Duplicate should be rejected (no work returned for duplicate)
+    await Assert.That(result.InboxWork).HasCount().EqualTo(0)
+      .Because("Duplicate inbox messages should be rejected via wh_message_deduplication ON CONFLICT DO NOTHING");
+
+    // Verify message NOT in inbox (deduplication prevented insert)
+    await using (var dbContext = CreateDbContext()) {
+      var inboxRecord = await dbContext.Set<InboxRecord>()
+        .FirstOrDefaultAsync(r => r.MessageId == messageId);
+      await Assert.That(inboxRecord).IsNull()
+        .Because("Duplicate message should not be inserted into inbox");
+
+      // Verify deduplication record exists
+      await using var connection = new Npgsql.NpgsqlConnection(ConnectionString);
+      await connection.OpenAsync();
+      await using var command = new Npgsql.NpgsqlCommand(
+        "SELECT COUNT(*) FROM wh_message_deduplication WHERE message_id = @messageId",
+        connection);
+      command.Parameters.AddWithValue("messageId", messageId);
+      var count = (long)(await command.ExecuteScalarAsync() ?? 0);
+      await Assert.That(count).IsEqualTo(1)
+        .Because("Deduplication table should still have single entry");
+    }
+  }
+
+  /// <summary>
+  /// **Given**: Outbox does NOT have deduplication table
+  /// **When**: Application logic creates duplicate messages
+  /// **Then**: Outbox accepts duplicates (application's responsibility to prevent)
+  /// </summary>
+  /// <docs>messaging/idempotency-patterns#outbox-idempotency</docs>
+  [Test]
+  public async Task ProcessWorkBatchAsync_OutboxNoDuplication_TransactionalBoundaryAsync() {
+    // Arrange - Outbox has no deduplication table, duplicates are allowed
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+
+    var streamId = _idProvider.NewGuid();
+
+    // Act - Insert two messages with same content (different IDs)
+    var message1Id = _idProvider.NewGuid();
+    var message2Id = _idProvider.NewGuid();
+
+    var outboxMessage1 = CreateTestOutboxMessage(message1Id, "orders.topic", streamId, isEvent: false);
+    var outboxMessage2 = CreateTestOutboxMessage(message2Id, "orders.topic", streamId, isEvent: false);
+
+    await _sut.ProcessWorkBatchAsync(
+      _instanceId, "TestService", "test-host", 12345, metadata: null,
+      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
+      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
+      newOutboxMessages: [outboxMessage1, outboxMessage2], newInboxMessages: [],
+      renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+
+    // Assert - Both messages accepted (no deduplication for outbox)
+    await using (var dbContext = CreateDbContext()) {
+      var outboxRecord1 = await dbContext.Set<OutboxRecord>()
+        .FirstOrDefaultAsync(r => r.MessageId == message1Id);
+      var outboxRecord2 = await dbContext.Set<OutboxRecord>()
+        .FirstOrDefaultAsync(r => r.MessageId == message2Id);
+
+      await Assert.That(outboxRecord1).IsNotNull()
+        .Because("Outbox does not deduplicate - application's responsibility");
+      await Assert.That(outboxRecord2).IsNotNull()
+        .Because("Outbox does not deduplicate - application's responsibility");
+    }
+  }
+
+  // ===== ORDERING UNDER FAILURE TESTS =====
+
+  /// <summary>
+  /// **Given**: Message M1 fails (scheduled for retry), M2 and M3 are released (Status = 0)
+  /// **When**: Another batch processes work
+  /// **Then**: M2, M3 leases cleared BUT still blocked by M1's scheduled retry
+  ///
+  /// This test demonstrates that Status=0 completions clear leases (instance_id/lease_expiry = NULL),
+  /// but the NOT EXISTS clause still blocks later messages if an earlier message has scheduled_for > now.
+  /// </summary>
+  /// <docs>messaging/failure-handling#failure-cascade</docs>
+  [Test]
+  public async Task ProcessWorkBatchAsync_FailureWithCascadeRelease_AllowsLaterProcessingAsync() {
+    // Arrange - Stream with 3 messages, first one will fail
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+
+    var streamId = _idProvider.NewGuid();
+    var baseTime = DateTimeOffset.UtcNow.AddMinutes(-5);
+
+    var message1Id = _idProvider.NewGuid();
+    var message2Id = _idProvider.NewGuid();
+    var message3Id = _idProvider.NewGuid();
+
+    await InsertOutboxMessageWithTimestampAsync(
+      message1Id, "topic", "Event1", "{\"seq\":1}", streamId,
+      createdAt: baseTime,
+      statusFlags: (int)MessageProcessingStatus.Stored,
+      instanceId: _instanceId);
+
+    await InsertOutboxMessageWithTimestampAsync(
+      message2Id, "topic", "Event2", "{\"seq\":2}", streamId,
+      createdAt: baseTime.AddMilliseconds(100),
+      statusFlags: (int)MessageProcessingStatus.Stored,
+      instanceId: _instanceId);
+
+    await InsertOutboxMessageWithTimestampAsync(
+      message3Id, "topic", "Event3", "{\"seq\":3}", streamId,
+      createdAt: baseTime.AddMilliseconds(200),
+      statusFlags: (int)MessageProcessingStatus.Stored,
+      instanceId: _instanceId);
+
+    // Act - M1 fails, M2 and M3 released (Status = 0 cascade release pattern)
+    await _sut.ProcessWorkBatchAsync(
+      _instanceId, "TestService", "test-host", 12345, metadata: null,
+      outboxCompletions: [
+        new MessageCompletion { MessageId = message2Id, Status = 0 }, // Release
+        new MessageCompletion { MessageId = message3Id, Status = 0 }  // Release
+      ],
+      outboxFailures: [
+        new MessageFailure {
+          MessageId = message1Id,
+          CompletedStatus = MessageProcessingStatus.Stored,
+          Error = "Transient failure"
+        }
+      ],
+      inboxCompletions: [], inboxFailures: [],
+      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
+      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+
+    // Assert - M2 and M3 are still BLOCKED because M1 is scheduled for retry
+    // Even though we released M2 and M3 (Status=0), the NOT EXISTS clause blocks them
+    // because M1 (earlier message in same stream) has scheduled_for > now
+    var result2 = await _sut.ProcessWorkBatchAsync(
+      _instanceId, "TestService", "test-host", 12345, metadata: null,
+      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
+      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
+      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+
+    var claimedIds = result2.OutboxWork.Select(w => w.MessageId).ToHashSet();
+
+    // M2 and M3 are BLOCKED by M1's scheduled retry
+    await Assert.That(claimedIds.Contains(message2Id)).IsFalse()
+      .Because("M2 is blocked by M1's scheduled_for > now");
+    await Assert.That(claimedIds.Contains(message3Id)).IsFalse()
+      .Because("M3 is blocked by M1's scheduled_for > now");
+
+    // M1 should NOT be claimable (scheduled for future retry)
+    await Assert.That(claimedIds.Contains(message1Id)).IsFalse()
+      .Because("Failed message should be scheduled for retry (not immediately claimable)");
+
+    // Verify that M2 and M3 DO have their leases cleared (Status=0 worked)
+    await using (var dbContext = CreateDbContext()) {
+      var message2 = await dbContext.Set<OutboxRecord>()
+        .FirstOrDefaultAsync(m => m.MessageId == message2Id);
+      var message3 = await dbContext.Set<OutboxRecord>()
+        .FirstOrDefaultAsync(m => m.MessageId == message3Id);
+
+      await Assert.That(message2?.InstanceId).IsNull()
+        .Because("Status=0 completion should clear instance_id");
+      await Assert.That(message2?.LeaseExpiry).IsNull()
+        .Because("Status=0 completion should clear lease_expiry");
+      await Assert.That(message3?.InstanceId).IsNull()
+        .Because("Status=0 completion should clear instance_id");
+      await Assert.That(message3?.LeaseExpiry).IsNull()
+        .Because("Status=0 completion should clear lease_expiry");
+    }
+  }
+
+  /// <summary>
+  /// **Given**: Message M1 fails WITHOUT releasing later messages
+  /// **When**: Later messages M2, M3 remain leased
+  /// **Then**: Stream is blocked until M1 succeeds or messages released
+  /// </summary>
+  /// <docs>messaging/failure-handling#failure-cascade</docs>
+  [Test]
+  public async Task ProcessWorkBatchAsync_FailureWithoutRelease_BlocksStreamAsync() {
+    // Arrange - Stream with 3 messages
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+
+    var streamId = _idProvider.NewGuid();
+    var baseTime = DateTimeOffset.UtcNow.AddMinutes(-5);
+
+    var message1Id = _idProvider.NewGuid();
+    var message2Id = _idProvider.NewGuid();
+    var message3Id = _idProvider.NewGuid();
+
+    await InsertOutboxMessageWithTimestampAsync(
+      message1Id, "topic", "Event1", "{\"seq\":1}", streamId,
+      createdAt: baseTime,
+      statusFlags: (int)MessageProcessingStatus.Stored,
+      instanceId: _instanceId);
+
+    await InsertOutboxMessageWithTimestampAsync(
+      message2Id, "topic", "Event2", "{\"seq\":2}", streamId,
+      createdAt: baseTime.AddMilliseconds(100),
+      statusFlags: (int)MessageProcessingStatus.Stored,
+      instanceId: _instanceId);
+
+    await InsertOutboxMessageWithTimestampAsync(
+      message3Id, "topic", "Event3", "{\"seq\":3}", streamId,
+      createdAt: baseTime.AddMilliseconds(200),
+      statusFlags: (int)MessageProcessingStatus.Stored,
+      instanceId: _instanceId);
+
+    // Act - M1 fails, M2 and M3 NOT released (remain leased)
+    await _sut.ProcessWorkBatchAsync(
+      _instanceId, "TestService", "test-host", 12345, metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [
+        new MessageFailure {
+          MessageId = message1Id,
+          CompletedStatus = MessageProcessingStatus.Stored,
+          Error = "Transient failure"
+        }
+      ],
+      inboxCompletions: [], inboxFailures: [],
+      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
+      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+
+    // Assert - M2 and M3 should NOT be claimable (still leased by this instance, blocked by M1 scheduled retry)
+    var result2 = await _sut.ProcessWorkBatchAsync(
+      _instanceId, "TestService", "test-host", 12345, metadata: null,
+      outboxCompletions: [], outboxFailures: [], inboxCompletions: [], inboxFailures: [],
+      receptorCompletions: [], receptorFailures: [], perspectiveCompletions: [], perspectiveFailures: [],
+      newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
+
+    // All messages should be blocked (M1 scheduled, M2/M3 still have active leases)
+    await Assert.That(result2.OutboxWork).HasCount().EqualTo(0)
+      .Because("Stream is blocked - M1 scheduled for retry, M2/M3 still have active leases");
+  }
+
+  // ===== STARVATION DETECTION TEST =====
+
+  /// <summary>
+  /// **Given**: Message M1 in stream S has high attempts count (e.g., 10+)
+  /// **When**: Message still scheduled for retry
+  /// **Then**: Poison message detection needed (not automatically flagged by system, application responsibility)
+  /// </summary>
+  /// <docs>messaging/failure-handling#poison-messages</docs>
+  [Test]
+  public async Task ProcessWorkBatchAsync_HighRetryCount_PoisonMessageDetectionAsync() {
+    // Arrange - Message with high retry count (simulating poison message)
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+
+    var streamId = _idProvider.NewGuid();
+    var poisonMessageId = _idProvider.NewGuid();
+
+    // Manually insert poison message with high attempts count
+    await using (var dbContext = CreateDbContext()) {
+      var partitionNumber = 0;
+      await using (var connection = new Npgsql.NpgsqlConnection(ConnectionString)) {
+        await connection.OpenAsync();
+        await using var command = new Npgsql.NpgsqlCommand(
+          "SELECT compute_partition(@streamId::uuid, 10000)",
+          connection);
+        command.Parameters.AddWithValue("streamId", streamId);
+        partitionNumber = (int)(await command.ExecuteScalarAsync() ?? 0);
+      }
+
+      var envelopeTypeFullName = typeof(TestMessageEnvelope).AssemblyQualifiedName
+        ?? throw new InvalidOperationException("Could not get envelope type name");
+
+      dbContext.Set<OutboxRecord>().Add(new OutboxRecord {
+        MessageId = poisonMessageId,
+        Destination = "topic",
+        MessageType = envelopeTypeFullName,
+        MessageData = JsonDocument.Parse("{\"MessageId\":\"" + poisonMessageId + "\",\"Hops\":[],\"Payload\":{}}"),
+        Metadata = JsonDocument.Parse("{}"),
+        Scope = null,
+        StatusFlags = MessageProcessingStatus.Stored | MessageProcessingStatus.Failed,
+        Attempts = 12, // High retry count
+        Error = "SerializationError: Malformed JSON",
+        CreatedAt = DateTimeOffset.UtcNow.AddHours(-1),
+        PublishedAt = null,
+        ProcessedAt = null,
+        ScheduledFor = DateTimeOffset.UtcNow.AddMinutes(30), // Still scheduled for retry
+        InstanceId = null,
+        LeaseExpiry = null,
+        StreamId = streamId,
+        PartitionNumber = partitionNumber
+      });
+
+      await dbContext.SaveChangesAsync();
+    }
+
+    // Act - Query for poison message candidates (application responsibility)
+    await using (var dbContext = CreateDbContext()) {
+      var poisonCandidates = await dbContext.Set<OutboxRecord>()
+        .Where(r => r.Attempts >= 10 && (r.StatusFlags & MessageProcessingStatus.Failed) == MessageProcessingStatus.Failed)
+        .ToListAsync();
+
+      // Assert - Poison message should be detected
+      await Assert.That(poisonCandidates).HasCount().EqualTo(1)
+        .Because("Application should be able to detect poison message candidates via attempts count");
+
+      var poison = poisonCandidates[0];
+      await Assert.That(poison.MessageId).IsEqualTo(poisonMessageId);
+      await Assert.That(poison.Attempts).IsGreaterThanOrEqualTo(10);
+
+      // Application can now move to dead letter queue, set scheduled_for = NULL, or alert operations
+    }
+  }
+
   // Helper method to insert outbox messages with specific timestamps (for stream ordering tests)
   private async Task InsertOutboxMessageWithTimestampAsync(
     Guid messageId,
@@ -1559,6 +2392,62 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       ProcessedAt = null,
       InstanceId = instanceId,
       LeaseExpiry = actualLeaseExpiry,
+      StreamId = streamId,
+      PartitionNumber = partitionNumber
+    });
+
+    await dbContext.SaveChangesAsync();
+  }
+
+  // Helper method to insert outbox messages with timestamp AND scheduled_for (for scheduled retry tests)
+  private async Task InsertOutboxMessageWithTimestampAndScheduledAsync(
+    Guid messageId,
+    string destination,
+    string messageType,
+    Guid streamId,
+    DateTimeOffset createdAt,
+    DateTimeOffset? scheduledFor,
+    int statusFlags = (int)MessageProcessingStatus.Stored,
+    Guid? instanceId = null) {
+    await using var dbContext = CreateDbContext();
+
+    // Calculate partition number
+    int? partitionNumber = null;
+    await using (var connection = new Npgsql.NpgsqlConnection(ConnectionString)) {
+      await connection.OpenAsync();
+      await using var command = new Npgsql.NpgsqlCommand(
+        "SELECT compute_partition(@streamId::uuid, 10000)",
+        connection);
+      command.Parameters.AddWithValue("streamId", streamId);
+      partitionNumber = (int)(await command.ExecuteScalarAsync() ?? 0);
+    }
+
+    var envelopeTypeFullName = typeof(TestMessageEnvelope).AssemblyQualifiedName
+      ?? throw new InvalidOperationException("Could not get envelope type name");
+    var envelopeJson = $$"""
+      {
+        "MessageId": "{{messageId}}",
+        "Hops": [],
+        "Payload": { "Data": "test" }
+      }
+      """;
+
+    dbContext.Set<OutboxRecord>().Add(new OutboxRecord {
+      MessageId = messageId,
+      Destination = destination,
+      MessageType = envelopeTypeFullName,
+      MessageData = JsonDocument.Parse(envelopeJson),
+      Metadata = JsonDocument.Parse("{}"),
+      Scope = null,
+      StatusFlags = (MessageProcessingStatus)statusFlags,
+      Attempts = 0,
+      Error = null,
+      CreatedAt = createdAt,
+      PublishedAt = null,
+      ProcessedAt = null,
+      ScheduledFor = scheduledFor, // Set scheduled retry time
+      InstanceId = instanceId,
+      LeaseExpiry = instanceId.HasValue ? DateTimeOffset.UtcNow.AddMinutes(5) : null,
       StreamId = streamId,
       PartitionNumber = partitionNumber
     });

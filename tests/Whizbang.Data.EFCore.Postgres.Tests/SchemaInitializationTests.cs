@@ -183,6 +183,7 @@ public class SchemaInitializationTests : EFCoreTestBase {
         instance_id UUID NULL,
         lease_expiry TIMESTAMPTZ NULL,
         failure_reason INTEGER NOT NULL DEFAULT 99,
+        scheduled_for TIMESTAMPTZ NULL,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         published_at TIMESTAMPTZ NULL,
         processed_at TIMESTAMPTZ NULL

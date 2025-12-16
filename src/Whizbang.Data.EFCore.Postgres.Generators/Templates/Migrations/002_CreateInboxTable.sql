@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS wh_inbox (
   instance_id UUID NULL,
   lease_expiry TIMESTAMPTZ NULL,
   failure_reason INTEGER NOT NULL DEFAULT 99,
+  scheduled_for TIMESTAMPTZ NULL,
   processed_at TIMESTAMPTZ NULL,
   received_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -45,6 +46,11 @@ CREATE INDEX IF NOT EXISTS idx_inbox_failure_reason
 ON wh_inbox (failure_reason)
 WHERE (status & 32768) = 32768;  -- Only index failed messages
 
+-- Index for scheduled messages (retries and scheduled processing)
+CREATE INDEX IF NOT EXISTS idx_inbox_scheduled_for
+ON wh_inbox (stream_id, scheduled_for, received_at)
+WHERE scheduled_for IS NOT NULL;
+
 -- Add comments for documentation
 COMMENT ON COLUMN wh_inbox.message_id IS 'Unique message identifier (UUIDv7)';
 COMMENT ON COLUMN wh_inbox.handler_name IS 'Fully-qualified handler type name';
@@ -60,5 +66,6 @@ COMMENT ON COLUMN wh_inbox.error IS 'Last error message (if failed)';
 COMMENT ON COLUMN wh_inbox.instance_id IS 'Service instance ID currently processing this message';
 COMMENT ON COLUMN wh_inbox.lease_expiry IS 'Timestamp when the processing lease expires (for orphaned work recovery)';
 COMMENT ON COLUMN wh_inbox.failure_reason IS 'Classified failure reason (MessageFailureReason enum): None=0, TransportNotReady=1, TransportException=2, SerializationError=3, ValidationError=4, MaxAttemptsExceeded=5, LeaseExpired=6, Unknown=99';
+COMMENT ON COLUMN wh_inbox.scheduled_for IS 'Timestamp when message should be processed (for retries with exponential backoff and scheduled messages)';
 COMMENT ON COLUMN wh_inbox.processed_at IS 'Timestamp when message processing completed';
 COMMENT ON COLUMN wh_inbox.received_at IS 'Timestamp when message was received';

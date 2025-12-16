@@ -51,6 +51,8 @@ public static class WhizbangModelBuilderExtensions {
       entity.Property(e => e.LeaseExpiry).HasColumnName("lease_expiry");
       entity.Property(e => e.StreamId).HasColumnName("stream_id");
       entity.Property(e => e.PartitionNumber).HasColumnName("partition_number");
+      entity.Property(e => e.FailureReason).HasColumnName("failure_reason").IsRequired();
+      entity.Property(e => e.ScheduledFor).HasColumnName("scheduled_for");
 
       entity.HasIndex(e => e.StatusFlags);
       entity.HasIndex(e => e.ReceivedAt);
@@ -78,6 +80,8 @@ public static class WhizbangModelBuilderExtensions {
       entity.Property(e => e.LeaseExpiry).HasColumnName("lease_expiry");
       entity.Property(e => e.StreamId).HasColumnName("stream_id");
       entity.Property(e => e.PartitionNumber).HasColumnName("partition_number");
+      entity.Property(e => e.FailureReason).HasColumnName("failure_reason").IsRequired();
+      entity.Property(e => e.ScheduledFor).HasColumnName("scheduled_for");
 
       entity.HasIndex(e => e.MessageId);
       entity.HasIndex(e => e.StatusFlags);

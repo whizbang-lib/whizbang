@@ -99,7 +99,8 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []
+      renewInboxLeaseIds: [],
+      flags: WorkBatchFlags.DebugMode  // Keep published messages for assertion
     );
 
     // Assert - Database was updated

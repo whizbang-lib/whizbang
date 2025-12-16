@@ -153,4 +153,20 @@ public sealed class OutboxRecord {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_CompletionWithStatusZero_DoesNotChangeStatusFlagsAsync</tests>
   public MessageProcessingStatus StatusFlags { get; set; }
 
+  /// <summary>
+  /// Classified failure reason (enum value).
+  /// Enables typed filtering and handling of different failure scenarios.
+  /// Default value is Unknown (99).
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FailureReasonSchemaTests.cs:OutboxTable_ShouldHaveFailureReasonColumnAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/FailureReasonSchemaTests.cs:FailureReasonColumn_CanStoreAllEnumValuesAsync</tests>
+  public MessageFailureReason FailureReason { get; set; } = MessageFailureReason.Unknown;
+
+  /// <summary>
+  /// UTC timestamp when message should be processed.
+  /// Used for retry scheduling with exponential backoff and scheduled message delivery.
+  /// Null means process immediately.
+  /// </summary>
+  public DateTimeOffset? ScheduledFor { get; set; }
+
 }
