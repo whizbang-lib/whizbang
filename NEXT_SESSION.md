@@ -40,24 +40,33 @@ cat /Users/philcarbone/src/whizbang/plans/strongly-typed-id-providers-implementa
 - **Test Status**: 110 passing, 21 failing (pre-existing failures unrelated to changes)
 - **Demonstrates**: Both strongly-typed IDs (OrderPerspectiveTests) AND Guid-based IDs (other tests) working side-by-side!
 
+### Phase 5: Documentation (In Progress)
+
+**Completed**:
+- ✅ `core-concepts/whizbang-ids.md` (640+ lines)
+  - Complete guide to strongly-typed ID providers
+  - 10+ provider registration patterns
+  - Advanced scenarios (multi-tenant, database sequences, composite providers)
+  - API reference for `IWhizbangIdProvider<TId>` and `WhizbangIdProviderRegistry`
+  - Testing patterns (sequential IDs, known IDs, direct provider creation)
+  - Migration guide from Guid and base IWhizbangIdProvider
+  - Best practices and examples
+
+**Remaining**:
+- Update code-docs mapping to link library code to new documentation
+- Validate documentation links with MCP tools
+
 ## What's Next 🔧
 
-**Start here**: Phase 5 - Documentation
+**Start here**: Phase 5 - Finalize Documentation
 
-Create documentation in `/Users/philcarbone/src/whizbang-lib.github.io/src/assets/docs/v0.1.0/`:
+1. **Update code-docs mapping** (5 minutes)
+   - Run `node src/scripts/generate-code-docs-map.mjs`
+   - Validates `<docs>` tags in library source code
 
-1. **Update `core-concepts/whizbang-ids.md`**
-   - Add comprehensive section on strongly-typed providers
-   - Include 10+ registration patterns
-   - Show auto-registration, custom providers, DI integration
-
-2. **Create API documentation**
-   - `api/iwhizbangidprovider-generic.md`
-   - `api/whizbangidproviderregistry.md`
-
-3. **Create guides**
-   - `guides/migrating-to-typed-providers.md`
-   - `guides/testing-with-whizbang-ids.md`
+2. **Validate documentation links** (5 minutes)
+   - Use MCP tool: `mcp__whizbang-docs__validate-doc-links()`
+   - Ensures all code links point to valid documentation
 
 ## Command to Continue
 
