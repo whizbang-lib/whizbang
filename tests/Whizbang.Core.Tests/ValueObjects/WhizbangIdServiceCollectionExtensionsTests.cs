@@ -177,6 +177,96 @@ public class WhizbangIdServiceCollectionExtensionsTests {
     public ISecondTestId Create() => new SecondTestId();
   }
 
+  [Test]
+  public async Task AddWhizbangIdProviders_RegistersAllProvidersAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act
+    services.AddWhizbangIdProviders();
+    var provider = services.BuildServiceProvider();
+
+    // Assert - Check that typed providers are registered
+    var registryTestId1Provider = provider.GetService<IWhizbangIdProvider<RegistryTestId1>>();
+    var registryTestId2Provider = provider.GetService<IWhizbangIdProvider<RegistryTestId2>>();
+
+    await Assert.That(registryTestId1Provider).IsNotNull();
+    await Assert.That(registryTestId2Provider).IsNotNull();
+
+    // Verify providers work
+    var id1 = registryTestId1Provider!.NewId();
+    var id2 = registryTestId2Provider!.NewId();
+
+    await Assert.That(id1.Value).IsNotEqualTo(Guid.Empty);
+    await Assert.That(id2.Value).IsNotEqualTo(Guid.Empty);
+  }
+
+  [Test]
+  [NotInParallel("WhizbangIdProvider")]  // Shared static state
+  public async Task AddWhizbangIdProviders_WithCustomProvider_UsesCustomProviderAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    var expectedGuid = Guid.NewGuid();
+    var customProvider = new TestIdProvider(expectedGuid);
+
+    try {
+      // Act
+      services.AddWhizbangIdProviders(customProvider);
+      var provider = services.BuildServiceProvider();
+      var typedProvider = provider.GetRequiredService<IWhizbangIdProvider<RegistryTestId1>>();
+
+      var id = typedProvider.NewId();
+
+      // Assert
+      await Assert.That(id.Value).IsEqualTo(expectedGuid);
+    } finally {
+      // Restore default
+      WhizbangIdProvider.SetProvider(new Uuid7IdProvider());
+    }
+  }
+
+  [Test]
+  public async Task AddWhizbangIdProviders_RegistersBaseProviderAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+
+    // Act
+    services.AddWhizbangIdProviders();
+    var provider = services.BuildServiceProvider();
+
+    // Assert
+    var baseProvider = provider.GetService<IWhizbangIdProvider>();
+    await Assert.That(baseProvider).IsNotNull();
+    await Assert.That(baseProvider).IsTypeOf<Uuid7IdProvider>();
+  }
+
+  [Test]
+  public async Task TypedProvider_InjectedInService_CreatesValidIdsAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddWhizbangIdProviders();
+    services.AddSingleton<TestService>();
+
+    // Act
+    var provider = services.BuildServiceProvider();
+    var testService = provider.GetRequiredService<TestService>();
+    var id = testService.CreateId();
+
+    // Assert
+    await Assert.That(id.Value).IsNotEqualTo(Guid.Empty);
+  }
+
+  // Test service that uses typed provider
+  private class TestService {
+    private readonly IWhizbangIdProvider<RegistryTestId1> _provider;
+
+    public TestService(IWhizbangIdProvider<RegistryTestId1> provider) {
+      _provider = provider;
+    }
+
+    public RegistryTestId1 CreateId() => _provider.NewId();
+  }
+
   // Custom test provider for testing
   private class TestIdProvider : IWhizbangIdProvider {
     private readonly Guid _fixedGuid;
