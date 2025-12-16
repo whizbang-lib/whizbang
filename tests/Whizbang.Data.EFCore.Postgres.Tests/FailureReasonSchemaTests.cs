@@ -128,32 +128,32 @@ public class FailureReasonSchemaTests : EFCoreTestBase {
     foreach (var reasonValue in testValues) {
       var insertSql = @"
         INSERT INTO wh_outbox (
-          id, destination, event_type, event_data, metadata,
+          message_id, destination, event_type, event_data, metadata,
           status, created_at, failure_reason
         ) VALUES (
-          @id, 'test-topic', 'TestEvent', '{}', '{}',
+          @message_id, 'test-topic', 'TestEvent', '{}', '{}',
           1, NOW(), @failure_reason
         )
-        ON CONFLICT (id) DO UPDATE SET failure_reason = @failure_reason";
+        ON CONFLICT (message_id) DO UPDATE SET failure_reason = @failure_reason";
 
       await using var insertCommand = new NpgsqlCommand(insertSql, connection);
-      insertCommand.Parameters.AddWithValue("id", messageId);
+      insertCommand.Parameters.AddWithValue("message_id", messageId);
       insertCommand.Parameters.AddWithValue("failure_reason", reasonValue);
       await insertCommand.ExecuteNonQueryAsync();
 
       // Verify value was stored correctly
-      var selectSql = "SELECT failure_reason FROM wh_outbox WHERE id = @id";
+      var selectSql = "SELECT failure_reason FROM wh_outbox WHERE message_id = @message_id";
       await using var selectCommand = new NpgsqlCommand(selectSql, connection);
-      selectCommand.Parameters.AddWithValue("id", messageId);
+      selectCommand.Parameters.AddWithValue("message_id", messageId);
       var storedValue = (int)(await selectCommand.ExecuteScalarAsync() ?? -1);
 
       await Assert.That(storedValue).IsEqualTo(reasonValue);
     }
 
     // Cleanup
-    var deleteSql = "DELETE FROM wh_outbox WHERE id = @id";
+    var deleteSql = "DELETE FROM wh_outbox WHERE message_id = @message_id";
     await using var deleteCommand = new NpgsqlCommand(deleteSql, connection);
-    deleteCommand.Parameters.AddWithValue("id", messageId);
+    deleteCommand.Parameters.AddWithValue("message_id", messageId);
     await deleteCommand.ExecuteNonQueryAsync();
   }
 }
