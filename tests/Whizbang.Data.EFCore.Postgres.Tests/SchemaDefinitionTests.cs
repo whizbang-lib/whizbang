@@ -149,7 +149,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
       foreignKeys.Add((reader.GetString(1), reader.GetString(2), reader.GetString(3)));
     }
 
-    // Assert - FK: event_id -> wh_events.event_id
+    // Assert - FK: event_id -> wh_event_store.event_id
     await Assert.That(foreignKeys).HasCount().GreaterThanOrEqualTo(1);
     var eventFk = foreignKeys.FirstOrDefault(fk => fk.Column == "event_id");
     await Assert.That(eventFk).IsNotEqualTo(default((string, string, string)));
@@ -188,7 +188,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
       foreignKeys.Add((reader.GetString(1), reader.GetString(2), reader.GetString(3)));
     }
 
-    // Assert - FK: last_event_id -> wh_events.event_id
+    // Assert - FK: last_event_id -> wh_event_store.event_id
     await Assert.That(foreignKeys).HasCount().GreaterThanOrEqualTo(1);
     var eventFk = foreignKeys.FirstOrDefault(fk => fk.Column == "last_event_id");
     await Assert.That(eventFk).IsNotEqualTo(default((string, string, string)));

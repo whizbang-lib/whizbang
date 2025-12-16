@@ -79,6 +79,6 @@ public class SchemaInspectionTests : EFCoreTestBase {
     await Assert.That(tables).Contains("wh_per_order");
     await Assert.That(tables).Contains("wh_inbox");
     await Assert.That(tables).Contains("wh_outbox");
-    await Assert.That(tables).Contains("wh_events");
+    await Assert.That(tables).Contains("wh_event_store");
   }
 }

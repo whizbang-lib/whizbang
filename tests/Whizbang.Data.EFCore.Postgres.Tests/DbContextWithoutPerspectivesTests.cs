@@ -60,7 +60,7 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync();
 
-    var tableNames = new[] { "wh_outbox", "wh_inbox", "wh_events", "wh_service_instances" };
+    var tableNames = new[] { "wh_outbox", "wh_inbox", "wh_event_store", "wh_service_instances" };
 
     foreach (var tableName in tableNames) {
       await using var command = new NpgsqlCommand(
