@@ -16,10 +16,13 @@
     Maximum number of test projects to run in parallel (default: CPU core count)
 
 .PARAMETER ProjectFilter
-    Filter to specific test projects (e.g., "Core", "Schema", "EFCore.Postgres")
+    Filter to specific test projects using native .NET 10 --test-modules globbing (e.g., "Core", "EFCore.Postgres")
+    Pattern: **/bin/**/Debug/net10.0/*{Filter}*.dll
 
 .PARAMETER TestFilter
-    Filter to specific tests by name pattern (TUnit filter syntax)
+    Filter to specific tests by name pattern using --treenode-filter (e.g., "ProcessWorkBatchAsync")
+    Pattern: /**/*{Filter}* (matches test names containing the filter string)
+    NOTE: Test filtering may cause issues with some test modules - use with caution
 
 .PARAMETER Verbose
     Show detailed test output for each project
@@ -61,6 +64,18 @@
 
     The global.json configures MTP as the test runner, enabling full integration
     with dotnet test including parallel execution and VS Code Test Explorer.
+
+    This script wraps `dotnet test` to provide:
+    - Automatic parallel detection (CPU core count)
+    - Native .NET 10 filtering (no manual project loops)
+    - AiMode for compact, parseable output
+    - Simplified parameter interface
+
+    Native Filtering (.NET 10):
+    - ProjectFilter uses `--test-modules` with globbing patterns (**/bin/**/Debug/net10.0/*{Filter}*.dll)
+    - TestFilter uses `--treenode-filter` with wildcard patterns (/**/*{Filter}*)
+    - Leverages Microsoft.Testing.Platform filtering for maximum performance
+    - Maintains full parallelism across filtered tests
 
     For more information:
     - TUnit: https://tunit.dev
@@ -119,33 +134,6 @@ try {
     # Build the dotnet test command
     $testArgs = @("test")
 
-    # If we have a project filter, find matching projects instead of using solution
-    if ($ProjectFilter) {
-        $testProjects = Get-ChildItem -Path "tests" -Filter "*.csproj" -Recurse |
-            Where-Object { $_.Name -match $ProjectFilter } |
-            Select-Object -ExpandProperty FullName
-
-        if ($testProjects.Count -eq 0) {
-            Write-Host "No test projects found matching filter: $ProjectFilter" -ForegroundColor Red
-            exit 1
-        }
-
-        if (-not $AiMode) {
-            Write-Host "Found $($testProjects.Count) matching project(s):" -ForegroundColor Gray
-            $testProjects | ForEach-Object { Write-Host "  - $_" -ForegroundColor Gray }
-            Write-Host ""
-        }
-
-        # Add each matching project
-        foreach ($project in $testProjects) {
-            $testArgs += $project
-        }
-    } else {
-        # Use the main solution file (already filtered to test projects via <IsTestProject>)
-        $testArgs += "--solution"
-        $testArgs += "Whizbang.slnx"
-    }
-
     # Add parallel execution
     $testArgs += "--max-parallel-test-modules"
     $testArgs += $MaxParallel.ToString()
@@ -159,10 +147,21 @@ try {
         $testArgs += "minimal"
     }
 
-    # Add test name filter if specified
+    # Use --test-modules with globbing pattern for project filtering
+    if ($ProjectFilter) {
+        # Native .NET 10 globbing: **/bin/**/Debug/net10.0/*{Filter}*.dll
+        $testArgs += "--test-modules"
+        $testArgs += "**/bin/**/Debug/net10.0/*$ProjectFilter*.dll"
+    } else {
+        # Use the main solution file (already filtered to test projects via <IsTestProject>)
+        $testArgs += "--solution"
+        $testArgs += "Whizbang.slnx"
+    }
+
+    # Use --treenode-filter for test name filtering (MTP native filtering)
     if ($TestFilter) {
-        $testArgs += "--filter"
-        $testArgs += $TestFilter
+        $testArgs += "--treenode-filter"
+        $testArgs += "/**/*$TestFilter*"
     }
 
     # Run tests
