@@ -87,7 +87,7 @@ public static class WhizbangModelBuilderExtensions {
 
   private static void ConfigureEventStore(ModelBuilder modelBuilder) {
     modelBuilder.Entity<EventStoreRecord>(entity => {
-      entity.ToTable("wh_events");
+      entity.ToTable("wh_event_store");
       entity.HasKey(e => e.Id);
 
       entity.Property(e => e.Id).HasColumnName("event_id");

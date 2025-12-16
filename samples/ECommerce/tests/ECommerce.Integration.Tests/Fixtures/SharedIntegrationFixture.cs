@@ -178,6 +178,10 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       options.UseNpgsql(inventoryDataSource));
 
     // Register Whizbang with EFCore infrastructure
+    // Note: We don't need to call GeneratedModelRegistration.Initialize() explicitly because
+    // the ModuleInitializer runs automatically when the assembly loads. The Initialize() method
+    // is defensive - it checks DbContext type before registering, so even if called from both
+    // BFF and InventoryWorker assemblies, it only registers models for the matching DbContext.
     _ = builder.Services
       .AddWhizbang()
       .WithEFCore<ECommerce.InventoryWorker.InventoryDbContext>()
@@ -220,6 +224,9 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
         new DefaultTransportReadinessCheck()
       )
     );
+
+    // Register IWorkChannelWriter for communication between strategy and worker
+    builder.Services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
 
     // Register background workers
     builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
@@ -274,6 +281,10 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       options.UseNpgsql(bffDataSource));
 
     // Register Whizbang with EFCore infrastructure
+    // Note: We don't need to call GeneratedModelRegistration.Initialize() explicitly because
+    // the ModuleInitializer runs automatically when the assembly loads. The Initialize() method
+    // is defensive - it checks DbContext type before registering, so even if called from both
+    // BFF and InventoryWorker assemblies, it only registers models for the matching DbContext.
     _ = builder.Services
       .AddWhizbang()
       .WithEFCore<ECommerce.BFF.API.BffDbContext>()
@@ -314,6 +325,9 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
         new DefaultTransportReadinessCheck()
       )
     );
+
+    // Register IWorkChannelWriter for communication between strategy and worker
+    builder.Services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
 
     // Register background workers
     builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();

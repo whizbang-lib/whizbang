@@ -287,10 +287,11 @@ public class IntervalWorkCoordinatorStrategyTests {
   }
 
   // Test envelope implementation
-  private class TestMessageEnvelope : IMessageEnvelope<object> {
+  private class TestMessageEnvelope : IMessageEnvelope<JsonElement> {
     public required MessageId MessageId { get; init; }
     public required List<MessageHop> Hops { get; init; }
-    public object Payload { get; init; } = new { };  // Test payload
+    public JsonElement Payload { get; init; } = JsonDocument.Parse("{}").RootElement;  // Test payload
+    object IMessageEnvelope.Payload => Payload;  // Explicit interface implementation
 
     public void AddHop(MessageHop hop) {
       Hops.Add(hop);

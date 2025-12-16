@@ -40,7 +40,7 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
     await perspective.Update(@event, CancellationToken.None);
 
     // Assert - Verify product was inserted using EF Core
-    var stored = await query.GetByIdAsync(productId.ToString());
+    var stored = await query.GetByIdAsync(productId);
 
     await Assert.That(stored).IsNotNull();
     await Assert.That(stored!.ProductId).IsEqualTo(productId);
@@ -76,7 +76,7 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
     await perspective.Update(@event, CancellationToken.None);
 
     // Assert - Verify null ImageUrl was stored using EF Core
-    var stored = await query.GetByIdAsync(productId.ToString());
+    var stored = await query.GetByIdAsync(productId);
 
     await Assert.That(stored).IsNotNull();
     await Assert.That(stored!.ImageUrl).IsNull();
@@ -118,7 +118,7 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
     await perspective.Update(updatedEvent, CancellationToken.None);
 
     // Assert - Verify product was updated using EF Core
-    var stored = await query.GetByIdAsync(productId.ToString());
+    var stored = await query.GetByIdAsync(productId);
 
     await Assert.That(stored).IsNotNull();
     await Assert.That(stored!.Name).IsEqualTo("Updated Name");
@@ -163,7 +163,7 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
     await perspective.Update(updatedEvent, CancellationToken.None);
 
     // Assert - Only name should be updated using EF Core
-    var stored = await query.GetByIdAsync(productId.ToString());
+    var stored = await query.GetByIdAsync(productId);
 
     await Assert.That(stored).IsNotNull();
     await Assert.That(stored!.Name).IsEqualTo("New Name");
@@ -208,7 +208,7 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
     await perspective.Update(updatedEvent, CancellationToken.None);
 
     // Assert - Verify updated_at was set using EF Core
-    var stored = await query.GetByIdAsync(productId.ToString());
+    var stored = await query.GetByIdAsync(productId);
 
     await Assert.That(stored).IsNotNull();
   }
@@ -246,7 +246,7 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
     await perspective.Update(deletedEvent, CancellationToken.None);
 
     // Assert - Verify product was soft deleted (deleted_at set) using EF Core
-    var stored = await query.GetByIdAsync(productId.ToString());
+    var stored = await query.GetByIdAsync(productId);
 
     await Assert.That(stored).IsNotNull(); // Should still exist
     await Assert.That(stored!.ProductId).IsEqualTo(productId);
@@ -285,7 +285,7 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
     await perspective.Update(deletedEvent, CancellationToken.None);
 
     // Assert - Verify product still exists in database using EF Core
-    var stored = await query.GetByIdAsync(productId.ToString());
+    var stored = await query.GetByIdAsync(productId);
 
     await Assert.That(stored).IsNotNull(); // Should still exist
   }

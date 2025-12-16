@@ -46,6 +46,9 @@ public class ServiceBusConsumerWorkerTests {
     var testEvent = new ServiceBusWorkerTestEvent { Data = "test data" };
     var envelope = _createTestEnvelope(testEvent);
 
+    // Create JsonOptions first (needed for envelope serialization)
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+
     // Create service collection with test invoker
     var services = new ServiceCollection();
 
@@ -54,10 +57,16 @@ public class ServiceBusConsumerWorkerTests {
 
     // Register test work coordinator strategy that returns the message for processing
     services.AddScoped<IWorkCoordinatorStrategy>(sp => new TestWorkCoordinatorStrategy(() => {
+      // Serialize envelope to JsonElement for InboxWork
+      var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
+      var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)
+        ?? throw new InvalidOperationException("Failed to deserialize envelope as MessageEnvelope<JsonElement>");
+
       var inboxWork = new List<InboxWork> {
         new InboxWork {
           MessageId = envelope.MessageId.Value,
-          Envelope = envelope as IMessageEnvelope<object> ?? throw new InvalidOperationException("Envelope must implement IMessageEnvelope<object>"),
+          Envelope = jsonEnvelope,
+          MessageType = typeof(ServiceBusWorkerTestEvent).AssemblyQualifiedName!,
           StreamId = Guid.NewGuid(),
           PartitionNumber = 1,
           Status = MessageProcessingStatus.Stored,
@@ -86,7 +95,6 @@ public class ServiceBusConsumerWorkerTests {
     // Create test dependencies
     var instanceProvider = new TestServiceInstanceProvider();
     var transport = new TestTransport();
-    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     var logger = new TestLogger<ServiceBusConsumerWorker>();
 
     // We can't easily test the protected ExecuteAsync method directly,

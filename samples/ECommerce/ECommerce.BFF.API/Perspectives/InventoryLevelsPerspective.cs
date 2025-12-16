@@ -46,7 +46,7 @@ public class InventoryLevelsPerspective(
       };
 
       // Store handles JSON serialization, metadata, scope, timestamps
-      await _store.UpsertAsync(@event.ProductId.ToString(), model, cancellationToken);
+      await _store.UpsertAsync(@event.ProductId, model, cancellationToken);
 
       _logger.LogInformation(
         "BFF inventory levels initialized: Product {ProductId} created with 0 quantity",
@@ -76,7 +76,7 @@ public class InventoryLevelsPerspective(
   public async Task Update(InventoryRestockedEvent @event, CancellationToken cancellationToken = default) {
     try {
       // Get existing inventory to preserve reserved count
-      var existing = await _query.GetByIdAsync(@event.ProductId.ToString(), cancellationToken);
+      var existing = await _query.GetByIdAsync(@event.ProductId, cancellationToken);
 
       if (existing is null) {
         _logger.LogInformation(
@@ -102,7 +102,7 @@ public class InventoryLevelsPerspective(
       };
 
       // Store handles JSON serialization, metadata, scope, timestamps
-      await _store.UpsertAsync(@event.ProductId.ToString(), model, cancellationToken);
+      await _store.UpsertAsync(@event.ProductId, model, cancellationToken);
 
       _logger.LogInformation(
         "BFF inventory levels updated: Product {ProductId} restocked to {Quantity} (Reserved: {Reserved}, Available: {Available})",
@@ -133,7 +133,7 @@ public class InventoryLevelsPerspective(
   public async Task Update(InventoryReservedEvent @event, CancellationToken cancellationToken = default) {
     try {
       // Get existing inventory to increment reserved count
-      var existing = await _query.GetByIdAsync(@event.ProductId.ToString(), cancellationToken);
+      var existing = await _query.GetByIdAsync(@event.ProductId, cancellationToken);
 
       if (existing is null) {
         _logger.LogWarning(
@@ -158,7 +158,7 @@ public class InventoryLevelsPerspective(
         LastUpdated = @event.ReservedAt
       };
 
-      await _store.UpsertAsync(@event.ProductId.ToString(), updated, cancellationToken);
+      await _store.UpsertAsync(@event.ProductId, updated, cancellationToken);
 
       _logger.LogInformation(
         "BFF inventory levels updated: Product {ProductId} reserved {Quantity} units",
@@ -187,7 +187,7 @@ public class InventoryLevelsPerspective(
   public async Task Update(InventoryReleasedEvent @event, CancellationToken cancellationToken = default) {
     try {
       // Get existing inventory to decrement reserved count
-      var existing = await _query.GetByIdAsync(@event.ProductId.ToString(), cancellationToken);
+      var existing = await _query.GetByIdAsync(@event.ProductId, cancellationToken);
 
       if (existing is null) {
         _logger.LogWarning(
@@ -204,7 +204,7 @@ public class InventoryLevelsPerspective(
         LastUpdated = @event.ReleasedAt
       };
 
-      await _store.UpsertAsync(@event.ProductId.ToString(), updated, cancellationToken);
+      await _store.UpsertAsync(@event.ProductId, updated, cancellationToken);
 
       _logger.LogInformation(
         "BFF inventory levels updated: Product {ProductId} released {Quantity} units",
@@ -228,7 +228,7 @@ public class InventoryLevelsPerspective(
   public async Task Update(InventoryAdjustedEvent @event, CancellationToken cancellationToken = default) {
     try {
       // Get existing inventory to preserve reserved count
-      var existing = await _query.GetByIdAsync(@event.ProductId.ToString(), cancellationToken);
+      var existing = await _query.GetByIdAsync(@event.ProductId, cancellationToken);
 
       if (existing is null) {
         _logger.LogWarning(
@@ -253,7 +253,7 @@ public class InventoryLevelsPerspective(
         LastUpdated = @event.AdjustedAt
       };
 
-      await _store.UpsertAsync(@event.ProductId.ToString(), updated, cancellationToken);
+      await _store.UpsertAsync(@event.ProductId, updated, cancellationToken);
 
       _logger.LogInformation(
         "BFF inventory levels updated: Product {ProductId} adjusted to {Quantity} (Reason: {Reason})",

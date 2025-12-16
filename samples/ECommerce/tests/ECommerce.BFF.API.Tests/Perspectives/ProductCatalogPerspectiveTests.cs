@@ -44,7 +44,7 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
     await perspective.Update(@event, CancellationToken.None);
 
     // Assert - Verify product was inserted using lens query
-    var product = await lens.GetByIdAsync(productId.ToString(), CancellationToken.None);
+    var product = await lens.GetByIdAsync(productId, CancellationToken.None);
 
     await Assert.That(product).IsNotNull();
     await Assert.That(product!.ProductId).IsEqualTo(productId);
@@ -93,7 +93,7 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
     await perspective.Update(updatedEvent, CancellationToken.None);
 
     // Assert - Verify product was updated using lens query
-    var product = await lens.GetByIdAsync(productId.ToString(), CancellationToken.None);
+    var product = await lens.GetByIdAsync(productId, CancellationToken.None);
 
     await Assert.That(product).IsNotNull();
     await Assert.That(product!.Name).IsEqualTo("Updated Name");
@@ -136,7 +136,7 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
     await perspective.Update(deletedEvent, CancellationToken.None);
 
     // Assert - Verify product was soft deleted using lens query
-    var product = await lens.GetByIdAsync(productId.ToString(), CancellationToken.None);
+    var product = await lens.GetByIdAsync(productId, CancellationToken.None);
 
     await Assert.That(product).IsNotNull(); // Should still exist
     await Assert.That(product!.ProductId).IsEqualTo(productId);
@@ -170,7 +170,7 @@ public class ProductCatalogPerspectiveTests : IAsyncDisposable {
 
     // Assert - Should succeed (upsert behavior)
     var lens = _helper.GetLensQuery<ProductDto>();
-    var product = await lens.GetByIdAsync(productId.ToString(), CancellationToken.None);
+    var product = await lens.GetByIdAsync(productId, CancellationToken.None);
     await Assert.That(product).IsNotNull();
     await Assert.That(product!.ProductId).IsEqualTo(productId);
   }

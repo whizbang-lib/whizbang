@@ -25,8 +25,8 @@ public class PaymentFailedPerspective(
 
   public async Task Update(PaymentFailedEvent @event, CancellationToken cancellationToken = default) {
     try {
-      // 1. Read existing order
-      var existing = await _query.GetByIdAsync(@event.OrderId, cancellationToken);
+      // 1. Read existing order (OrderId is a string, parse to Guid)
+      var existing = await _query.GetByIdAsync(Guid.Parse(@event.OrderId), cancellationToken);
 
       if (existing is null) {
         _logger.LogWarning("Order {OrderId} not found for payment failed update", @event.OrderId);
@@ -41,7 +41,7 @@ public class PaymentFailedPerspective(
       };
 
       // 3. Write back to store
-      await _store.UpsertAsync(@event.OrderId, updated, cancellationToken);
+      await _store.UpsertAsync(Guid.Parse(@event.OrderId), updated, cancellationToken);
 
       // 4. Push SignalR update (PaymentFailedEvent has CustomerId directly)
       await _hubContext.Clients.User(@event.CustomerId)

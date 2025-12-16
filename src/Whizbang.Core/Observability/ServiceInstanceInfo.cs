@@ -44,4 +44,15 @@ public record ServiceInstanceInfo {
   /// <tests>tests/Whizbang.Observability.Tests/SerializationTests.cs</tests>
   /// <tests>tests/Whizbang.Observability.Tests/MessageTracingTests.cs</tests>
   public ServiceInstanceInfo() { }
+
+  /// <summary>
+  /// Sentinel value for when service instance information is not available.
+  /// Used when IServiceInstanceProvider is not configured in TransportManager.
+  /// </summary>
+  public static readonly ServiceInstanceInfo Unknown = new() {
+    ServiceName = "Unknown",
+    InstanceId = Guid.Empty,
+    HostName = "Unknown",
+    ProcessId = 0
+  };
 };

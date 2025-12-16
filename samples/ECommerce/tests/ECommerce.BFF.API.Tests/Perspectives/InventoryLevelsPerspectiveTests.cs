@@ -42,7 +42,7 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     await perspective.Update(@event, CancellationToken.None);
 
     // Assert - Verify inventory was created/updated using lens query
-    var inventory = await lens.GetByIdAsync(productId.ToString(), CancellationToken.None);
+    var inventory = await lens.GetByIdAsync(productId, CancellationToken.None);
 
     await Assert.That(inventory).IsNotNull();
     await Assert.That(inventory!.ProductId).IsEqualTo(productId);
@@ -84,7 +84,7 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     await perspective.Update(reservedEvent, CancellationToken.None);
 
     // Assert - Verify reserved and available were updated using lens query
-    var inventory = await lens.GetByIdAsync(productId.ToString(), CancellationToken.None);
+    var inventory = await lens.GetByIdAsync(productId, CancellationToken.None);
 
     await Assert.That(inventory).IsNotNull();
     await Assert.That(inventory!.Quantity).IsEqualTo(100);
@@ -134,7 +134,7 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     await perspective.Update(releasedEvent, CancellationToken.None);
 
     // Assert - Verify reserved and available were updated using lens query
-    var inventory = await lens.GetByIdAsync(productId.ToString(), CancellationToken.None);
+    var inventory = await lens.GetByIdAsync(productId, CancellationToken.None);
 
     await Assert.That(inventory).IsNotNull();
     await Assert.That(inventory!.Quantity).IsEqualTo(100);
@@ -176,7 +176,7 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     await perspective.Update(adjustedEvent, CancellationToken.None);
 
     // Assert - Verify quantity and available were updated using lens query
-    var inventory = await lens.GetByIdAsync(productId.ToString(), CancellationToken.None);
+    var inventory = await lens.GetByIdAsync(productId, CancellationToken.None);
 
     await Assert.That(inventory).IsNotNull();
     await Assert.That(inventory!.Quantity).IsEqualTo(90);

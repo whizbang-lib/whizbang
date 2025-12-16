@@ -2,6 +2,7 @@
 -- Date: 2025-12-02
 -- Updated: 2025-12-04 - Added instance management and stale cleanup
 -- Updated: 2025-12-06 - Complete rewrite for partition-based stream ordering
+-- Updated: 2025-12-15 - Fix NULL metadata constraint (COALESCE empty Hops array)
 -- Description: Single SQL function that handles all work coordination operations:
 --              - Register/update instance with real metadata
 --              - Clean up stale instances (expired heartbeats)
@@ -101,7 +102,7 @@ DECLARE
 
 BEGIN
   -- DEBUG: Migration version identifier
-  RAISE NOTICE '====  MIGRATION VERSION: 2025-12-08_06-30 MODULO DISTRIBUTION ===';
+  RAISE NOTICE '====  MIGRATION VERSION: 2025-12-15_NULL_METADATA_FIX ===';
 
   -- DEBUG: Log input parameters for completions
   RAISE NOTICE '=== SECTION 0: INPUT PARAMETERS ===';
@@ -382,7 +383,7 @@ BEGIN
         elem->>'MessageType' as message_type,
         elem->>'EnvelopeType' as envelope_type,
         (elem->'Envelope')::TEXT as envelope_data,  -- Extract envelope sub-object and serialize as TEXT
-        (elem->'Envelope'->'Hops'->>0)::TEXT as metadata,  -- Temporary: extract first hop as metadata (FIXME)
+        COALESCE((elem->'Envelope'->'Hops'->0)::TEXT, '{}') as metadata,  -- Extract first hop as metadata (use -> not ->> to get object), default to empty object
         NULL::TEXT as scope,  -- Scope is not currently used in OutboxMessage
         (elem->>'IsEvent')::BOOLEAN as is_event,
         (elem->>'StreamId')::UUID as stream_id
@@ -445,7 +446,7 @@ BEGIN
         elem->>'MessageType' as message_type,
         elem->>'EnvelopeType' as envelope_type,
         (elem->'Envelope')::TEXT as envelope_data,  -- Extract envelope sub-object and serialize as TEXT
-        (elem->'Envelope'->'Hops'->>0)::TEXT as metadata,  -- Temporary: extract first hop as metadata (FIXME)
+        COALESCE((elem->'Envelope'->'Hops'->0)::TEXT, '{}') as metadata,  -- Extract first hop as metadata (use -> not ->> to get object), default to empty object
         NULL::TEXT as scope,  -- Scope is not currently used in InboxMessage
         (elem->>'IsEvent')::BOOLEAN as is_event,
         (elem->>'StreamId')::UUID as stream_id

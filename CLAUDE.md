@@ -179,23 +179,41 @@ src/
 # Clean build
 dotnet clean && dotnet build
 
-# Run ALL tests
-dotnet test
+# Run ALL tests (parallel execution, .NET 10 native)
+dotnet test --max-parallel-test-modules 8
 
-# Run tests without rebuilding
-dotnet test --no-build
+# Or use PowerShell script for convenience
+pwsh scripts/Test-All.ps1
 
-# Run a specific test project
+# Run tests with automatic parallel detection (uses CPU core count)
+pwsh scripts/Test-All.ps1 -MaxParallel 0
+
+# Run tests with custom parallel level
+pwsh scripts/Test-All.ps1 -MaxParallel 4
+
+# Run tests with verbose output
+pwsh scripts/Test-All.ps1 -Verbose
+
+# Run tests in AI Mode (compact, parseable output for Claude/AI tools)
+pwsh scripts/Test-All.ps1 -AiMode
+
+# Run a specific test project directly
 cd tests/Whizbang.Core.Tests && dotnet run
 
 # Format code (ALWAYS run before completion)
 dotnet format
 
 # Full cycle
-dotnet clean && dotnet build && dotnet test && dotnet format
+dotnet clean && dotnet build && dotnet test --max-parallel-test-modules 8 && dotnet format
 ```
 
-**Note**: .NET 10 uses Microsoft.Testing.Platform (configured via `global.json`) for native `dotnet test` support.
+**Important Notes:**
+- **.NET 10 fully supports `dotnet test`** with Microsoft.Testing.Platform (configured in global.json)
+- **Parallel execution** via `--max-parallel-test-modules` runs multiple test projects concurrently (like VS Code Test Explorer)
+- **Default parallelism** is Environment.ProcessorCount (typically your CPU core count)
+- **TUnit tests** run in parallel by design, both within and across test projects
+- **VS Code Test Explorer** uses the same MTP infrastructure for optimal performance
+- **AI Mode** (`-AiMode` flag): Provides compact, parseable test output optimized for AI analysis (filters noise, summarizes results)
 
 ---
 
@@ -247,12 +265,22 @@ grep "line-rate" bin/Debug/net10.0/TestResults/coverage.xml | head -5
 
 ## Technology Stack
 
-- **.NET 10.0 RC2** - Target framework
-- **Vogen** - Source-generated value objects (`MessageId`, etc.)
-- **TUnit v0.88** - Modern test framework with source generation
-- **TUnit.Assertions** - Fluent assertion library
-- **Rocks** - Source-generated mocking (future)
+**As of December 2025:**
+
+- **.NET 10.0.1** (LTS release, November 2025) - Target framework with 3-year support
+- **TUnit 1.2.11+** - Modern source-generated testing framework built on Microsoft.Testing.Platform
+- **TUnit.Assertions** - Native fluent assertion library
+- **Rocks 9.3.0+** - Roslyn-based source-generated mocking for AOT compatibility
+- **Vogen** - Source-generated value objects (`MessageId`, `CorrelationId`, etc.)
 - **Bogus** - Test data generation (future)
+- **Microsoft.Testing.Platform 2.0+** - Native test runner (replaces VSTest)
+
+**Important Notes:**
+- **.NET 10 natively integrates Microsoft.Testing.Platform** - configured in `global.json`
+- **`dotnet test` works perfectly** in .NET 10 with `--max-parallel-test-modules` for concurrent execution
+- **VS Code Test Explorer** uses the same MTP infrastructure, providing the same parallel execution you see in the UI
+- All testing infrastructure is source-generated for zero reflection and AOT compatibility
+- Use `pwsh scripts/Test-All.ps1` as a convenient wrapper around `dotnet test` with automatic parallelism detection
 
 ---
 

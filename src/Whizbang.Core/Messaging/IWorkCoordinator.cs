@@ -148,7 +148,7 @@ public record WorkBatch {
 /// <summary>
 /// Represents an outbox message to be stored in process_work_batch.
 /// Used for immediate processing pattern (store + immediately return for publishing).
-/// Envelope is IMessageEnvelope&lt;object&gt; to support heterogeneous collections while preserving type info in the envelope itself.
+/// Envelope is IMessageEnvelope&lt;JsonElement&gt; for AOT-compatible, type-safe serialization.
 /// </summary>
 public record OutboxMessage {
   /// <summary>
@@ -162,10 +162,10 @@ public record OutboxMessage {
   public required string Destination { get; init; }
 
   /// <summary>
-  /// Complete MessageEnvelope object (including payload, message type, hops, metadata).
-  /// Type information is preserved in the MessageEnvelope&lt;TMessage&gt; instance itself.
+  /// Complete MessageEnvelope object (including payload as JsonElement, hops, metadata).
+  /// JsonElement provides AOT-compatible serialization without runtime type resolution.
   /// </summary>
-  public required IMessageEnvelope<object> Envelope { get; init; }
+  public required IMessageEnvelope<JsonElement> Envelope { get; init; }
 
   /// <summary>
   /// Assembly-qualified name of the envelope type (e.g., "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.CreateProductCommand, MyApp]], Whizbang.Core").
@@ -195,7 +195,7 @@ public record OutboxMessage {
 /// <summary>
 /// Represents an inbox message to be stored in process_work_batch.
 /// Includes atomic deduplication (ON CONFLICT DO NOTHING) and optional event store integration.
-/// Envelope is IMessageEnvelope&lt;object&gt; to support heterogeneous collections while preserving type info in the envelope itself.
+/// Envelope is IMessageEnvelope&lt;JsonElement&gt; for AOT-compatible, type-safe serialization.
 /// </summary>
 public record InboxMessage {
   /// <summary>
@@ -209,10 +209,10 @@ public record InboxMessage {
   public required string HandlerName { get; init; }
 
   /// <summary>
-  /// Complete MessageEnvelope object (including payload, message type, hops, metadata).
-  /// Type information is preserved in the MessageEnvelope&lt;TMessage&gt; instance itself.
+  /// Complete MessageEnvelope object (including payload as JsonElement, hops, metadata).
+  /// JsonElement provides AOT-compatible serialization without runtime type resolution.
   /// </summary>
-  public required IMessageEnvelope<object> Envelope { get; init; }
+  public required IMessageEnvelope<JsonElement> Envelope { get; init; }
 
   /// <summary>
   /// Assembly-qualified name of the envelope type (e.g., "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.ProductCreatedEvent, MyApp]], Whizbang.Core").
@@ -317,7 +317,7 @@ public record FailedMessage {
 /// <summary>
 /// Represents outbox work that needs to be published.
 /// Includes both new pending messages and messages with expired leases (orphaned).
-/// Envelope is IMessageEnvelope&lt;object&gt; to support heterogeneous collections while preserving type info in the envelope itself.
+/// Envelope is IMessageEnvelope&lt;JsonElement&gt; for AOT-compatible, type-safe serialization.
 /// </summary>
 public record OutboxWork {
   /// <summary>
@@ -331,11 +331,11 @@ public record OutboxWork {
   public required string Destination { get; init; }
 
   /// <summary>
-  /// Complete MessageEnvelope object (including payload, message type, hops, metadata).
-  /// Type information is preserved in the MessageEnvelope&lt;TMessage&gt; instance itself.
+  /// Complete MessageEnvelope object with JsonElement payload.
   /// Deserialized from database - ready to publish.
+  /// JsonElement provides AOT-compatible serialization without runtime type resolution.
   /// </summary>
-  public required IMessageEnvelope<object> Envelope { get; init; }
+  public required IMessageEnvelope<JsonElement> Envelope { get; init; }
 
   /// <summary>
   /// Stream ID for ordering (aggregate ID or message ID).
@@ -377,7 +377,7 @@ public record OutboxWork {
 /// Represents inbox work that needs to be processed.
 /// Includes both new pending messages and messages with expired leases (orphaned).
 /// From the application's perspective, these are the next messages to handle.
-/// Envelope is IMessageEnvelope&lt;object&gt; to support heterogeneous collections while preserving type info in the envelope itself.
+/// Envelope is IMessageEnvelope&lt;JsonElement&gt; for AOT-compatible, type-safe serialization.
 /// </summary>
 public record InboxWork {
   /// <summary>
@@ -386,11 +386,17 @@ public record InboxWork {
   public required Guid MessageId { get; init; }
 
   /// <summary>
-  /// Complete MessageEnvelope object (including payload, message type, hops, metadata).
-  /// Type information is preserved in the MessageEnvelope&lt;TMessage&gt; instance itself.
+  /// Complete MessageEnvelope object with JsonElement payload.
   /// Deserialized from database - ready to process.
+  /// JsonElement provides AOT-compatible serialization without runtime type resolution.
   /// </summary>
-  public required IMessageEnvelope<object> Envelope { get; init; }
+  public required IMessageEnvelope<JsonElement> Envelope { get; init; }
+
+  /// <summary>
+  /// Assembly-qualified name of the message payload type (e.g., "MyApp.Events.ProductCreatedEvent, MyApp").
+  /// Used for deserializing the JsonElement payload back to the actual event type.
+  /// </summary>
+  public required string MessageType { get; init; }
 
   /// <summary>
   /// Stream ID for ordering (aggregate ID or message ID).

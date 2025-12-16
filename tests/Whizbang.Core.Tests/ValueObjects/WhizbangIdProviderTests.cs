@@ -15,6 +15,7 @@ namespace Whizbang.Core.Tests.ValueObjects;
 public class WhizbangIdProviderTests {
 
   [Test]
+  [NotInParallel("WhizbangIdProvider")]  // Shared static state - must run sequentially
   public async Task SetProvider_WithValidProvider_ShouldUseCustomProviderAsync() {
     // Arrange
     var expectedGuid = Guid.Parse("12345678-1234-5678-1234-567812345678");
@@ -34,6 +35,7 @@ public class WhizbangIdProviderTests {
   }
 
   [Test]
+  [NotInParallel("WhizbangIdProvider")]  // Shared static state - must run sequentially
   public async Task SetProvider_WithNullProvider_ShouldThrowArgumentNullExceptionAsync() {
     // Arrange & Act & Assert
     await Assert.That(() => WhizbangIdProvider.SetProvider(null!))
@@ -42,6 +44,7 @@ public class WhizbangIdProviderTests {
   }
 
   [Test]
+  [NotInParallel("WhizbangIdProvider")]  // Shared static state - must run sequentially
   public async Task NewGuid_WithDefaultProvider_ShouldReturnUuidV7Async() {
     // Arrange
     // Ensure default provider is in place
@@ -59,6 +62,7 @@ public class WhizbangIdProviderTests {
   }
 
   [Test]
+  [NotInParallel("WhizbangIdProvider")]  // Shared static state - must run sequentially
   public async Task NewGuid_WithCustomProvider_ShouldReturnCustomGuidAsync() {
     // Arrange
     var expectedGuid = Guid.Parse("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
@@ -78,6 +82,7 @@ public class WhizbangIdProviderTests {
   }
 
   [Test]
+  [NotInParallel("WhizbangIdProvider")]  // Shared static state - must run sequentially
   public async Task SetProvider_CalledMultipleTimes_ShouldUseLatestProviderAsync() {
     // Arrange
     var firstGuid = Guid.Parse("11111111-1111-1111-1111-111111111111");

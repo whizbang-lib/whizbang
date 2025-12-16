@@ -85,7 +85,8 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
   protected static TestMessageEnvelope CreateTestEnvelope(Guid messageId) {
     return new TestMessageEnvelope {
       MessageId = MessageId.From(messageId),
-      Hops = []
+      Hops = [],
+      Payload = JsonDocument.Parse("{}").RootElement  // Empty JSON object for testing
     };
   }
 
@@ -97,7 +98,7 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
       MessageId = messageId,
       Destination = destination,
       Envelope = CreateTestEnvelope(messageId),
-      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
       MessageType = "TestMessage, TestAssembly",
       StreamId = streamId,
       IsEvent = isEvent
@@ -105,20 +106,16 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
   }
 
   /// <summary>
-  /// Simple test message type for EFCore integration tests.
-  /// </summary>
-  protected record TestMessage {
-    public string Data { get; init; } = "test";
-  }
-
-  /// <summary>
   /// Simple test message envelope for integration tests.
-  /// Implements IMessageEnvelope&lt;object&gt; with minimal required properties.
+  /// Uses JsonElement for AOT-compatible, type-safe serialization.
   /// </summary>
-  protected class TestMessageEnvelope : IMessageEnvelope<object> {
+  protected class TestMessageEnvelope : IMessageEnvelope<JsonElement> {
     public required MessageId MessageId { get; init; }
     public required List<MessageHop> Hops { get; init; }
-    public object Payload { get; init; } = new TestMessage();  // Use concrete type instead of anonymous
+    public required JsonElement Payload { get; init; }
+
+    // Explicit implementation of base interface Payload property
+    object IMessageEnvelope.Payload => Payload;
 
     public void AddHop(MessageHop hop) {
       Hops.Add(hop);

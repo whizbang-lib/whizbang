@@ -202,7 +202,7 @@ public class TransportManager(IMessageSerializer serializer, IServiceInstancePro
       Hops = [
         new MessageHop {
           Type = HopType.Current,
-          ServiceInstance = _instanceProvider!.ToInfo(),
+          ServiceInstance = _instanceProvider?.ToInfo() ?? ServiceInstanceInfo.Unknown,
           Timestamp = DateTimeOffset.UtcNow,
           Metadata = new Dictionary<string, JsonElement> {
             ["CorrelationId"] = JsonElementHelper.FromString(context.CorrelationId.ToString()),

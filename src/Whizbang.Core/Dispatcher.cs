@@ -1083,15 +1083,20 @@ public abstract class Dispatcher(
     var envelopeTypeName = envelope.GetType().AssemblyQualifiedName
       ?? throw new InvalidOperationException($"Envelope type {envelope.GetType().Name} must have an assembly-qualified name");
 
-    // Cast envelope to IMessageEnvelope<object> for heterogeneous collections
-    // Type information is preserved in the MessageEnvelope<TMessage> instance itself
-    var objectEnvelope = envelope as IMessageEnvelope<object>
-      ?? throw new InvalidOperationException($"Envelope must implement IMessageEnvelope<object> for message {envelope.MessageId}");
+    // Serialize the envelope to JSON and deserialize as MessageEnvelope<JsonElement>
+    // This allows AOT-compatible storage without runtime type resolution
+    if (_jsonOptions == null) {
+      throw new InvalidOperationException("JsonSerializerOptions required for envelope serialization");
+    }
+
+    var envelopeJson = JsonSerializer.Serialize((object)envelope, _jsonOptions);
+    var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, _jsonOptions)
+      ?? throw new InvalidOperationException($"Failed to deserialize envelope as MessageEnvelope<JsonElement> for message {envelope.MessageId}");
 
     return new OutboxMessage {
       MessageId = envelope.MessageId.Value,
       Destination = destination,
-      Envelope = objectEnvelope,  // IMessageEnvelope<object> for heterogeneous collections
+      Envelope = jsonEnvelope,  // MessageEnvelope<JsonElement>
       EnvelopeType = envelopeTypeName,
       StreamId = streamId,
       IsEvent = payload is IEvent,

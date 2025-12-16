@@ -52,7 +52,7 @@ public class EFCorePostgresLensQuery<TModel> : ILensQuery<TModel>
   /// <inheritdoc/>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:GetByIdAsync_WhenModelExists_ReturnsModelAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:GetByIdAsync_WhenModelDoesNotExist_ReturnsNullAsync</tests>
-  public async Task<TModel?> GetByIdAsync(string id, CancellationToken cancellationToken = default) {
+  public async Task<TModel?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) {
     var row = await _context.Set<PerspectiveRow<TModel>>()
         .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
 

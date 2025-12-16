@@ -202,7 +202,7 @@ public class JsonMessageSerializerTests {
         ""Payload"": {{ ""Content"": ""test"", ""Value"": 1 }},
         ""Hops"": [{{
           ""Type"": 0,
-          ""ServiceName"": ""Test"",
+          ""ServiceInstance"": {{ ""ServiceName"": ""Test"", ""InstanceId"": ""{Guid.NewGuid()}"", ""HostName"": ""test-host"", ""ProcessId"": 12345 }},
           ""Timestamp"": ""2025-01-01T00:00:00Z"",
           ""CorrelationId"": null
         }}]
@@ -317,39 +317,41 @@ public class JsonMessageSerializerTests {
   }
 
   [Test]
-  public async Task Metadata_WithUnsupportedValueType_ShouldThrowAsync() {
+  public async Task Metadata_WithArrayValue_ShouldDeserializeAsync() {
     // Arrange
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var messageId = MessageId.New();
-    // Array value in metadata (not supported)
+    // Array value in metadata - now supported as JsonElement
     var json = $@"{{
         ""MessageId"": ""{messageId.Value}"",
         ""Payload"": {{ ""Content"": ""test"", ""Value"": 1 }},
         ""Hops"": [{{
           ""Type"": 0,
-          ""ServiceName"": ""Test"",
+          ""ServiceInstance"": {{ ""ServiceName"": ""Test"", ""InstanceId"": ""{Guid.NewGuid()}"", ""HostName"": ""test-host"", ""ProcessId"": 12345 }},
           ""Timestamp"": ""2025-01-01T00:00:00Z"",
           ""Metadata"": {{ ""key"": [""array"", ""value""] }}
         }}]
       }}";
-    var jsonWithUnsupportedValue = Encoding.UTF8.GetBytes(json);
+    var jsonWithArrayValue = Encoding.UTF8.GetBytes(json);
 
-    // Act & Assert
-    var exception = await Assert.That(async () => await serializer.DeserializeAsync<TestMessage>(jsonWithUnsupportedValue))
-      .ThrowsExactly<JsonException>();
-    await Assert.That(exception.Message).Contains("Unsupported JSON token type");
+    // Act
+    var deserialized = await serializer.DeserializeAsync<TestMessage>(jsonWithArrayValue);
+
+    // Assert - Array values are now supported via JsonElement
+    await Assert.That(deserialized.Hops[0].Metadata).IsNotNull();
+    await Assert.That(deserialized.Hops[0].Metadata!["key"].ValueKind).IsEqualTo(JsonValueKind.Array);
   }
 
   [Test]
   [RequiresUnreferencedCode("")]
   [RequiresDynamicCode("")]
-  public async Task Metadata_WithUnsupportedWriteType_ShouldThrowAsync() {
+  public async Task Metadata_WithDateTimeValue_ShouldSerializeAsync() {
     // Arrange
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
     var metadata = new Dictionary<string, JsonElement> {
-      ["unsupportedType"] = JsonSerializer.SerializeToElement(new DateTime(2025, 1, 1)) // DateTime gets serialized as string
+      ["dateTime"] = JsonSerializer.SerializeToElement(new DateTime(2025, 1, 1)) // DateTime gets serialized as string in JsonElement
     };
 
     var envelope = new MessageEnvelope<TestMessage> {
@@ -370,10 +372,13 @@ public class JsonMessageSerializerTests {
       ]
     };
 
-    // Act & Assert
-    var exception = await Assert.That(async () => await serializer.SerializeAsync(envelope))
-      .ThrowsExactly<JsonException>();
-    await Assert.That(exception.Message).Contains("Unsupported metadata value type");
+    // Act - DateTime metadata values are now supported (serialized as string)
+    var bytes = await serializer.SerializeAsync(envelope);
+    var deserialized = await serializer.DeserializeAsync<TestMessage>(bytes);
+
+    // Assert
+    await Assert.That(deserialized.Hops[0].Metadata).IsNotNull();
+    await Assert.That(deserialized.Hops[0].Metadata!["dateTime"].ValueKind).IsEqualTo(JsonValueKind.String);
   }
 
   [Test]
@@ -389,7 +394,7 @@ public class JsonMessageSerializerTests {
         ""Payload"": {{ ""Content"": ""test"", ""Value"": 1 }},
         ""Hops"": [{{
           ""Type"": 0,
-          ""ServiceName"": ""Test"",
+          ""ServiceInstance"": {{ ""ServiceName"": ""Test"", ""InstanceId"": ""{Guid.NewGuid()}"", ""HostName"": ""test-host"", ""ProcessId"": 12345 }},
           ""Timestamp"": ""2025-01-01T00:00:00Z"",
           ""Metadata"": {{ ""key"": null }}
         }}]

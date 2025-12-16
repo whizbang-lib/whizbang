@@ -13,7 +13,7 @@ public class ProductLens(ILensQuery<ProductDto> query) : IProductLens {
 
   /// <inheritdoc />
   public async Task<ProductDto?> GetByIdAsync(Guid productId, CancellationToken cancellationToken = default) {
-    var product = await _query.GetByIdAsync(productId.ToString(), cancellationToken);
+    var product = await _query.GetByIdAsync(productId, cancellationToken);
 
     // Filter out deleted products
     if (product?.DeletedAt != null) {
@@ -40,7 +40,7 @@ public class ProductLens(ILensQuery<ProductDto> query) : IProductLens {
 
   /// <inheritdoc />
   public async Task<IReadOnlyList<ProductDto>> GetByIdsAsync(IEnumerable<Guid> productIds, CancellationToken cancellationToken = default) {
-    var ids = productIds.Select(id => id.ToString()).ToList();
+    var ids = productIds.ToList();
     if (ids.Count == 0) {
       return Array.Empty<ProductDto>();
     }

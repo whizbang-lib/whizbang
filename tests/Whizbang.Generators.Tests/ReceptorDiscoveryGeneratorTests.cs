@@ -128,7 +128,7 @@ public class UpdateReceptor : IReceptor<UpdateOrder, OrderUpdated> {
 
   [Test]
   [RequiresAssemblyFiles()]
-  public async Task Generator_WithNoReceptors_GeneratesWarningAsync() {
+  public async Task Generator_WithNoReceptors_GeneratesInfoAsync() {
     // Arrange - Tests WHIZ002 diagnostic when no receptors or perspectives found
     var source = @"
 namespace MyApp;
@@ -141,11 +141,11 @@ public class SomeClass {
     // Act
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
-    // Assert - Should report WHIZ002 warning
-    var warnings = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Warning).ToArray();
-    await Assert.That(warnings).HasCount().GreaterThanOrEqualTo(1);
+    // Assert - Should report WHIZ002 info diagnostic (not warning anymore)
+    var infos = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Info).ToArray();
+    await Assert.That(infos).HasCount().GreaterThanOrEqualTo(1);
 
-    var whiz002 = warnings.FirstOrDefault(d => d.Id == "WHIZ002");
+    var whiz002 = infos.FirstOrDefault(d => d.Id == "WHIZ002");
     await Assert.That(whiz002).IsNotNull();
     await Assert.That(whiz002!.GetMessage()).Contains("No IReceptor");
   }
@@ -225,7 +225,7 @@ public class NoBaseClass {
     // Act
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
-    // Assert - Should skip classes without base list (caught by predicate)
+    // Assert - Should skip classes without base list and report WHIZ002 info
     await Assert.That(result.Diagnostics).Contains(d => d.Id == "WHIZ002");
   }
 
@@ -436,9 +436,9 @@ public class NotAReceptor {
     // Act
     var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
 
-    // Assert - Should report WHIZ002 (no receptors found)
-    var warnings = result.Diagnostics.Where(d => d.Id == "WHIZ002").ToArray();
-    await Assert.That(warnings).HasCount().GreaterThanOrEqualTo(1);
+    // Assert - Should report WHIZ002 info (no receptors found)
+    var infos = result.Diagnostics.Where(d => d.Id == "WHIZ002").ToArray();
+    await Assert.That(infos).HasCount().GreaterThanOrEqualTo(1);
   }
 
   [Test]

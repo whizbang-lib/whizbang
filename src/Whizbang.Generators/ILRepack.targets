@@ -65,7 +65,7 @@
     <ILRepack
       Parallel="true"
       DebugInfo="true"
-      Internalize="true"
+      Internalize="false"
       InputAssemblies="@(InputAssemblies)"
       TargetKind="SameAsPrimaryAssembly"
       OutputFile="$(OutputPath)$(TargetName)$(TargetExt)"

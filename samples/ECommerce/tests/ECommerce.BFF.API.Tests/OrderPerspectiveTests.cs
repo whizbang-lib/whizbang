@@ -45,7 +45,7 @@ public class OrderPerspectiveTests : IAsyncDisposable {
     await perspective.Update(@event, CancellationToken.None);
 
     // Assert - Verify order was inserted using lens query
-    var order = await lens.GetByIdAsync(orderId.Value.ToString(), CancellationToken.None);
+    var order = await lens.GetByIdAsync(orderId.Value, CancellationToken.None);
 
     await Assert.That(order).IsNotNull();
     await Assert.That(order!.OrderId).IsEqualTo(orderId.Value.ToString());
@@ -74,7 +74,7 @@ public class OrderPerspectiveTests : IAsyncDisposable {
     await perspective.Update(@event, CancellationToken.None);
 
     // Assert - Verify order was stored with correct status
-    var order = await lens.GetByIdAsync(orderId.Value.ToString(), CancellationToken.None);
+    var order = await lens.GetByIdAsync(orderId.Value, CancellationToken.None);
 
     await Assert.That(order).IsNotNull();
     await Assert.That(order!.OrderId).IsEqualTo(orderId.Value.ToString());
@@ -137,7 +137,7 @@ public class OrderPerspectiveTests : IAsyncDisposable {
     await perspective.Update(@event, CancellationToken.None);
 
     // Assert - Verify item count is correct using lens query
-    var order = await lens.GetByIdAsync(orderId.Value.ToString(), CancellationToken.None);
+    var order = await lens.GetByIdAsync(orderId.Value, CancellationToken.None);
 
     await Assert.That(order).IsNotNull();
     await Assert.That(order!.ItemCount).IsEqualTo(3); // 3 line items
@@ -173,7 +173,7 @@ public class OrderPerspectiveTests : IAsyncDisposable {
     await perspective.Update(secondEvent, CancellationToken.None);
 
     // Assert - Verify only one record exists (upsert behavior)
-    var order = await lens.GetByIdAsync(orderId.Value.ToString(), CancellationToken.None);
+    var order = await lens.GetByIdAsync(orderId.Value, CancellationToken.None);
 
     await Assert.That(order).IsNotNull();
     await Assert.That(order!.OrderId).IsEqualTo(orderId.Value.ToString());
@@ -207,9 +207,9 @@ public class OrderPerspectiveTests : IAsyncDisposable {
     await perspective.Update(event3, CancellationToken.None);
 
     // Assert - All orders were stored correctly
-    var order1 = await lens.GetByIdAsync(orderId1.Value.ToString(), CancellationToken.None);
-    var order2 = await lens.GetByIdAsync(orderId2.Value.ToString(), CancellationToken.None);
-    var order3 = await lens.GetByIdAsync(orderId3.Value.ToString(), CancellationToken.None);
+    var order1 = await lens.GetByIdAsync(orderId1.Value, CancellationToken.None);
+    var order2 = await lens.GetByIdAsync(orderId2.Value, CancellationToken.None);
+    var order3 = await lens.GetByIdAsync(orderId3.Value, CancellationToken.None);
 
     await Assert.That(order1).IsNotNull();
     await Assert.That(order2).IsNotNull();

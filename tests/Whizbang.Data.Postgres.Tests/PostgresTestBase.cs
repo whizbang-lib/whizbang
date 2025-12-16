@@ -103,7 +103,7 @@ public abstract class PostgresTestBase : IAsyncDisposable {
     var functionPath = Path.Combine(
       AppContext.BaseDirectory,
       "..", "..", "..", "..", "..",
-      "src", "Whizbang.Data.EFCore.Postgres.Generators", "Templates", "Migrations", "004_CreateProcessWorkBatchFunction.sql");
+      "src", "Whizbang.Data.EFCore.Postgres.Generators", "Templates", "Migrations", "014_CreateProcessWorkBatchFunction.sql");
 
     var functionSql = await File.ReadAllTextAsync(functionPath);
 

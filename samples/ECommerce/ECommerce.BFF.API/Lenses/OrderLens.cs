@@ -12,7 +12,7 @@ public class OrderLens(ILensQuery<OrderReadModel> query, ILogger<OrderLens> logg
   private readonly ILogger<OrderLens> _logger = logger;
 
   public async Task<OrderReadModel?> GetByIdAsync(string orderId, CancellationToken cancellationToken = default) {
-    return await _query.GetByIdAsync(orderId, cancellationToken);
+    return await _query.GetByIdAsync(Guid.Parse(orderId), cancellationToken);
   }
 
   public async Task<IEnumerable<OrderReadModel>> GetByCustomerIdAsync(string customerId, CancellationToken cancellationToken = default) {

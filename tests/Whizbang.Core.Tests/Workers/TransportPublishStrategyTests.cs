@@ -20,10 +20,10 @@ public class TransportPublishStrategyTests {
   public record TestMessage : IEvent { }
 
   // Helper to create a MessageEnvelope for testing
-  private static MessageEnvelope<TestMessage> _createTestEnvelope(Guid messageId) {
-    return new MessageEnvelope<TestMessage>(
+  private static MessageEnvelope<JsonElement> _createTestEnvelope(Guid messageId) {
+    return new MessageEnvelope<JsonElement>(
       messageId: MessageId.From(messageId),
-      payload: new TestMessage(),
+      payload: JsonDocument.Parse("{}").RootElement,
       hops: new List<MessageHop>()
     );
   }

@@ -82,6 +82,7 @@ public class WhizbangIdServiceCollectionExtensionsTests {
   }
 
   [Test]
+  [NotInParallel("WhizbangIdProvider")]  // Shared static state - must run sequentially
   public async Task ConfigureWhizbangIdProvider_WithValidProvider_ShouldSetGlobalProviderAsync() {
     // Arrange
     var services = new ServiceCollection();
@@ -102,6 +103,7 @@ public class WhizbangIdServiceCollectionExtensionsTests {
   }
 
   [Test]
+  [NotInParallel("WhizbangIdProvider")]  // Shared static state - must run sequentially
   public async Task ConfigureWhizbangIdProvider_ShouldReturnServiceCollectionAsync() {
     // Arrange
     var services = new ServiceCollection();
@@ -120,6 +122,7 @@ public class WhizbangIdServiceCollectionExtensionsTests {
   }
 
   [Test]
+  [NotInParallel("WhizbangIdProvider")]  // Shared static state - must run sequentially
   public async Task ConfigureWhizbangIdProvider_WithCustomProvider_ShouldAffectGlobalGenerationAsync() {
     // Arrange
     var services = new ServiceCollection();

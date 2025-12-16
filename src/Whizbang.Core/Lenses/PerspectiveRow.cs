@@ -27,7 +27,7 @@ public class PerspectiveRow<TModel> where TModel : class {
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OrderPerspectiveTests.cs:OrderPerspective_Update_WithOrderCreatedEvent_SavesOrderModelAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:GetByIdAsync_WhenModelExists_ReturnsModelAsync</tests>
-  public required string Id { get; init; }
+  public required Guid Id { get; init; }
 
   /// <summary>
   /// The denormalized read model data.

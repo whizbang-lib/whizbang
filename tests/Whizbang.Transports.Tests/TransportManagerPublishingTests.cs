@@ -216,7 +216,8 @@ public class TransportManagerPublishingTests {
     await Assert.That(envelope).IsNotNull();
     await Assert.That(envelope!.Hops).HasCount().EqualTo(1);
     await Assert.That(envelope.Hops[0].Type).IsEqualTo(HopType.Current);
-    await Assert.That(envelope.Hops[0].ServiceInstance.ServiceName).IsEqualTo("TransportManager");
+    await Assert.That(envelope.Hops[0].ServiceInstance.ServiceName).IsEqualTo("Unknown");  // No instance provider configured
+    await Assert.That(envelope.Hops[0].ServiceInstance.InstanceId).IsEqualTo(Guid.Empty);
     await Assert.That(envelope.Hops[0].Metadata).IsNotNull();
   }
 

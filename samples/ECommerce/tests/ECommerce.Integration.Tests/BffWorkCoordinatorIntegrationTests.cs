@@ -1,3 +1,4 @@
+using System.Text.Json;
 using ECommerce.BFF.API;
 using ECommerce.BFF.API.Generated;
 using Microsoft.EntityFrameworkCore;
@@ -30,15 +31,13 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
 
   private record TestEvent { }
 
-  private static IMessageEnvelope<object> CreateTestEnvelope(Guid messageId) {
-    var envelope = new MessageEnvelope<TestEvent> {
+  private static IMessageEnvelope<JsonElement> CreateTestEnvelope(Guid messageId) {
+    var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
-      Payload = new TestEvent(),
+      Payload = JsonDocument.Parse("{}").RootElement,
       Hops = []
     };
-    // Cast to IMessageEnvelope<object> - safe because MessageEnvelope<TMessage> implements IMessageEnvelope<object> via interface hierarchy
-    return envelope as IMessageEnvelope<object>
-      ?? throw new InvalidOperationException("Envelope must implement IMessageEnvelope<object>");
+    return envelope;
   }
 
   [Before(Test)]
@@ -98,6 +97,9 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
             new DefaultTransportReadinessCheck()
           )
         );
+
+        // Register IWorkChannelWriter for communication between strategy and worker
+        services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
 
         // Register the worker (same as Program.cs)
         services.AddHostedService<WorkCoordinatorPublisherWorker>();
@@ -163,7 +165,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
             MessageId = messageId.Value,
             Destination = "products",
             Envelope = CreateTestEnvelope(messageId.Value),
-            EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+            EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
             IsEvent = true,
             StreamId = streamId,
             MessageType = "TestMessage, TestAssembly"
@@ -264,7 +266,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
             MessageId = messageId1.Value,
             Destination = "products",
             Envelope = CreateTestEnvelope(messageId1.Value),
-            EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+            EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
             IsEvent = true,
             StreamId = streamId,
             MessageType = "TestMessage, TestAssembly"
@@ -273,7 +275,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
             MessageId = messageId2.Value,
             Destination = "products",
             Envelope = CreateTestEnvelope(messageId2.Value),
-            EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+            EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
             IsEvent = true,
             StreamId = streamId,
             MessageType = "TestMessage, TestAssembly"
@@ -282,7 +284,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
             MessageId = messageId3.Value,
             Destination = "products",
             Envelope = CreateTestEnvelope(messageId3.Value),
-            EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+            EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
             IsEvent = true,
             StreamId = streamId,
             MessageType = "TestMessage, TestAssembly"
@@ -357,7 +359,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
             MessageId = messageId.Value,
             Destination = "products",
             Envelope = CreateTestEnvelope(messageId.Value),
-            EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+            EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
             IsEvent = true,
             StreamId = streamId,
             MessageType = "TestMessage, TestAssembly"

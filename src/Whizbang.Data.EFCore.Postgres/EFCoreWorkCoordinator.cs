@@ -197,14 +197,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
       .Where(r => r.Source == "outbox")
       .Select(r => {
         var envelope = DeserializeEnvelope(r.EnvelopeType, r.EnvelopeData);
-        // Cast to IMessageEnvelope<object> - envelope type is unknown at deserialization
-        var typedEnvelope = envelope as IMessageEnvelope<object>
-          ?? throw new InvalidOperationException($"Envelope must implement IMessageEnvelope<object> for message {r.MessageId}");
+        // Cast to IMessageEnvelope<JsonElement> - envelope is always deserialized as MessageEnvelope<JsonElement>
+        var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
+          ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.MessageId}");
 
         return new OutboxWork {
           MessageId = r.MessageId,
           Destination = r.Destination!,
-          Envelope = typedEnvelope,
+          Envelope = jsonEnvelope,
           StreamId = r.StreamId,
           PartitionNumber = r.PartitionNumber,
           Attempts = r.Attempts,
@@ -213,19 +213,20 @@ public class EFCoreWorkCoordinator<TDbContext>(
           SequenceOrder = r.SequenceOrder
         };
       })
-      .ToList();  // OutboxWork is non-generic
+      .ToList();
 
     var inboxWork = results
       .Where(r => r.Source == "inbox")
       .Select(r => {
         var envelope = DeserializeEnvelope(r.EnvelopeType, r.EnvelopeData);
-        // Cast to IMessageEnvelope<object> - envelope type is unknown at deserialization
-        var typedEnvelope = envelope as IMessageEnvelope<object>
-          ?? throw new InvalidOperationException($"Envelope must implement IMessageEnvelope<object> for message {r.MessageId}");
+        // Cast to IMessageEnvelope<JsonElement> - envelope is always deserialized as MessageEnvelope<JsonElement>
+        var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
+          ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.MessageId}");
 
         return new InboxWork {
           MessageId = r.MessageId,
-          Envelope = typedEnvelope,
+          Envelope = jsonEnvelope,
+          MessageType = r.EnvelopeType,  // Use envelope_type until event_type is added to WorkBatchRow
           StreamId = r.StreamId,
           PartitionNumber = r.PartitionNumber,
           Status = (MessageProcessingStatus)r.Status,
@@ -233,7 +234,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           SequenceOrder = r.SequenceOrder
         };
       })
-      .ToList();  // InboxWork is non-generic
+      .ToList();
 
     // Only log when there's actual work to report
     if (outboxWork.Count > 0 || inboxWork.Count > 0) {
@@ -380,11 +381,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
   /// <summary>
   /// Deserializes envelope from database envelope_type and envelope_data columns.
+  /// Always deserializes as MessageEnvelope&lt;JsonElement&gt; for AOT-compatible, type-safe serialization.
   /// </summary>
-  /// <remarks>
-  /// TODO (Phase 4): IL2057 - Type.GetType() is not AOT-compatible.
-  /// Use generated type registry from core library source generators instead.
-  /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_ReturnedWork_HasCorrectPascalCaseColumnMappingAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_JsonbColumns_ReturnAsTextCorrectlyAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_RecoversOrphanedOutboxMessages_ReturnsExpiredLeasesAsync</tests>
@@ -394,17 +392,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
       envelopeTypeName,
       envelopeDataJson.Length > 500 ? envelopeDataJson.Substring(0, 500) + "..." : envelopeDataJson);
 
-    // Resolve the envelope type from stored type name
-    var envelopeType = Type.GetType(envelopeTypeName)
-      ?? throw new InvalidOperationException($"Could not resolve envelope type '{envelopeTypeName}'");
+    // Always deserialize as MessageEnvelope<JsonElement> for AOT compatibility
+    // This eliminates the need for Type.GetType() and runtime type resolution
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for MessageEnvelope<JsonElement>. Ensure it is registered via JsonContextRegistry.");
 
-    // Get JsonTypeInfo for the envelope type
-    var typeInfo = _jsonOptions.GetTypeInfo(envelopeType)
-      ?? throw new InvalidOperationException($"No JsonTypeInfo found for envelope type '{envelopeTypeName}'. Ensure the envelope type is registered via JsonContextRegistry.");
-
-    // Deserialize the complete envelope
+    // Deserialize the complete envelope as MessageEnvelope<JsonElement>
     var envelope = JsonSerializer.Deserialize(envelopeDataJson, typeInfo) as IMessageEnvelope
-      ?? throw new InvalidOperationException($"Failed to deserialize envelope of type '{envelopeTypeName}'");
+      ?? throw new InvalidOperationException("Failed to deserialize envelope as MessageEnvelope<JsonElement>");
 
     _logger?.LogDebug("Deserialized envelope: MessageId={MessageId}, HopsCount={HopsCount}",
       envelope.MessageId,

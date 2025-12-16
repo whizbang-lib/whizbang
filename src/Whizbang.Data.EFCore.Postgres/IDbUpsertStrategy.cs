@@ -33,7 +33,7 @@ public interface IDbUpsertStrategy {
   Task UpsertPerspectiveRowAsync<TModel>(
       DbContext context,
       string tableName,
-      string id,
+      Guid id,
       TModel model,
       PerspectiveMetadata metadata,
       PerspectiveScope scope,

@@ -12,7 +12,7 @@ public class InventoryLevelsLens(ILensQuery<InventoryLevelDto> query) : IInvento
 
   /// <inheritdoc />
   public async Task<InventoryLevelDto?> GetByProductIdAsync(Guid productId, CancellationToken cancellationToken = default) {
-    return await _query.GetByIdAsync(productId.ToString(), cancellationToken);
+    return await _query.GetByIdAsync(productId, cancellationToken);
   }
 
   /// <inheritdoc />

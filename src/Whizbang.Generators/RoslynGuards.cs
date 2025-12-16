@@ -29,7 +29,7 @@ namespace Whizbang.Generators;
 /// </remarks>
 /// <tests>tests/Whizbang.Generators.Tests/RoslynGuardsTests.cs</tests>
 [ExcludeFromCodeCoverage]
-internal static class RoslynGuards {
+public static class RoslynGuards {
 
   /// <summary>
   /// Gets the declared symbol for a class declaration, or throws if null.

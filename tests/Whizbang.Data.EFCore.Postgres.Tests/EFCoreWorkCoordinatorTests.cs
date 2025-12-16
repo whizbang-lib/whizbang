@@ -382,9 +382,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     var work2 = result.OutboxWork.First(m => m.MessageId == orphanedId2);
 
     await Assert.That(work1.Destination).IsEqualTo("topic1");
-// TODO: Fix after Envelope API change -     await Assert.That(work1.MessageType).IsEqualTo("OrphanedEvent1");
     await Assert.That(work2.Destination).IsEqualTo("topic2");
-// TODO: Fix after Envelope API change -     await Assert.That(work2.MessageType).IsEqualTo("OrphanedEvent2");
 
     // Verify orphaned messages now have new lease
     var newInstanceId = await GetOutboxInstanceIdAsync(orphanedId1);
@@ -446,9 +444,6 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     var work1 = result.InboxWork.First(m => m.MessageId == orphanedId1);
     var work2 = result.InboxWork.First(m => m.MessageId == orphanedId2);
-
-// TODO: Fix after Envelope API change -     await Assert.That(work1.MessageType).IsEqualTo("OrphanedEvent1");
-// TODO: Fix after Envelope API change -     await Assert.That(work2.MessageType).IsEqualTo("OrphanedEvent2");
 
     // Verify orphaned messages now have new lease
     var newInstanceId = await GetInboxInstanceIdAsync(orphanedId1);
@@ -595,10 +590,6 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     await Assert.That(work.MessageId).IsEqualTo(messageId);
     await Assert.That(work.Destination).IsEqualTo("test-topic");
-// TODO: Fix after Envelope API change -     await Assert.That(work.MessageType).IsEqualTo("TestEventType");
-    // PostgreSQL JSONB normalizes JSON by adding spaces after colons
-// TODO: Fix after Envelope API change -     await Assert.That(work.MessageData).IsEqualTo("{\"key\": \"value\"}");
-// TODO: Fix after Envelope API change -     await Assert.That(work.Metadata).IsNotNull();
     await Assert.That(work.Attempts).IsGreaterThanOrEqualTo(0);  // Attempts starts at 0, only increments on failures
   }
 
@@ -643,10 +634,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await Assert.That(result.OutboxWork).HasCount().EqualTo(1);
     var work = result.OutboxWork[0];
 
-// TODO: Fix after Envelope API change -     await Assert.That(work.MessageData).Contains("nested");
-// TODO: Fix after Envelope API change -     await Assert.That(work.MessageData).Contains("array");
-// TODO: Fix after Envelope API change -     await Assert.That(work.Metadata).Contains("correlation_id");
-// TODO: Fix after Envelope API change -     await Assert.That(work.Metadata).Contains("abc-123");
+    // Envelope contains the complete message data and metadata
+    await Assert.That(work.Envelope).IsNotNull();
   }
 
   // Helper methods for test data setup and verification

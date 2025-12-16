@@ -27,7 +27,7 @@ public class OrderPerspective(
   public async Task Update(OrderCreatedEvent @event, CancellationToken cancellationToken = default) {
     try {
       // Check if order already exists to preserve original CreatedAt
-      var existingOrder = await _lens.GetByIdAsync(@event.OrderId.Value.ToString(), cancellationToken);
+      var existingOrder = await _lens.GetByIdAsync(@event.OrderId.Value, cancellationToken);
       var createdAt = existingOrder?.CreatedAt ?? @event.CreatedAt;
 
       // Build OrderReadModel for persistence
@@ -52,7 +52,7 @@ public class OrderPerspective(
       };
 
       // Store handles JSON serialization, metadata, scope, timestamps, versioning
-      await _store.UpsertAsync(@event.OrderId.Value.ToString(), orderReadModel, cancellationToken);
+      await _store.UpsertAsync(@event.OrderId.Value, orderReadModel, cancellationToken);
 
       // Push real-time update via SignalR
       await _hubContext.Clients.User(@event.CustomerId.Value.ToString())

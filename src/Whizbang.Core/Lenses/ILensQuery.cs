@@ -31,5 +31,5 @@ public interface ILensQuery<TModel> where TModel : class {
   /// <returns>The read model, or null if not found</returns>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:GetByIdAsync_WhenModelExists_ReturnsModelAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:GetByIdAsync_WhenModelDoesNotExist_ReturnsNullAsync</tests>
-  Task<TModel?> GetByIdAsync(string id, CancellationToken cancellationToken = default);
+  Task<TModel?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default);
 }

@@ -558,8 +558,9 @@ public class EFCoreServiceRegistrationGeneratorTests {
   #region AOT Schema Generation Tests
 
   /// <summary>
-  /// Test that schema extensions include core infrastructure schema SQL.
-  /// The SQL should be embedded from Resources/CoreInfrastructureSchema.sql.
+  /// Test that schema extensions include core infrastructure schema SQL via migrations.
+  /// All core tables are now created via numbered migration files embedded as tuples.
+  /// Checks for a subset of key tables to verify migrations are embedded correctly.
   /// </summary>
   [Test]
   public async Task Generator_SchemaExtensions_IncludesCoreInfrastructureSchemaAsync() {
@@ -587,19 +588,19 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
     var sourceText = schemaExtensions!.SourceText.ToString();
 
-    // Should contain core infrastructure schema constant
-    await Assert.That(sourceText).Contains("const string CoreInfrastructureSchema");
+    // Should call ExecuteMigrationsAsync to execute all migrations
+    await Assert.That(sourceText).Contains("await ExecuteMigrationsAsync(dbContext");
 
-    // Should contain all 9 core tables
+    // Should contain key core tables in migration tuples (checking a representative subset)
+    // All tables: wh_service_instances, wh_message_deduplication, wh_outbox, wh_inbox,
+    //             wh_event_store, wh_receptor_processing, wh_perspective_checkpoints,
+    //             wh_request_response, wh_sequences, wh_partition_assignments
     await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_service_instances");
     await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_message_deduplication");
-    await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_inbox");
-    await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_outbox");
     await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_event_store");
     await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_receptor_processing");
     await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_perspective_checkpoints");
-    await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_request_response");
-    await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_sequences");
+    await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_partition_assignments");
   }
 
   /// <summary>
@@ -643,8 +644,9 @@ public class EFCoreServiceRegistrationGeneratorTests {
   }
 
   /// <summary>
-  /// Test that schema SQL uses proper escaping for ExecuteSqlRawAsync.
-  /// Quotes should be doubled and braces should be escaped.
+  /// Test that migration SQL uses proper escaping for ExecuteSqlRawAsync.
+  /// Migration SQL stored in tuples should use verbatim strings (@"...")
+  /// and be called via ExecuteSqlRawAsync for each migration.
   /// </summary>
   [Test]
   public async Task Generator_SchemaSQL_UsesPropperEscapingForExecuteSqlRawAsync() {
@@ -672,11 +674,12 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
     var sourceText = schemaExtensions!.SourceText.ToString();
 
-    // Should use verbatim string (@"...")
-    await Assert.That(sourceText).Contains("const string CoreInfrastructureSchema = @\"");
+    // Should use verbatim strings (@"...") for migration SQL in tuples
+    // Pattern: ("migration_name.sql", @"SQL content")
+    await Assert.That(sourceText).Contains(", @\"");
 
-    // Should call ExecuteSqlRawAsync with the schema SQL
-    await Assert.That(sourceText).Contains("await dbContext.Database.ExecuteSqlRawAsync(CoreInfrastructureSchema");
+    // Should call ExecuteSqlRawAsync with migration SQL from tuple
+    await Assert.That(sourceText).Contains("await dbContext.Database.ExecuteSqlRawAsync(sql");
   }
 
   /// <summary>

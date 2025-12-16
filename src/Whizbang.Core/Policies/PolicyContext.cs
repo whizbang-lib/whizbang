@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Policies;
@@ -163,6 +164,24 @@ public class PolicyContext {
   /// <tests>Whizbang.Policies.Tests/PolicyContextTests.cs:HasTag_ReturnsTrue_WhenTagsAreIEnumerableAsync</tests>
   public bool HasTag(string tag) {
     var tags = GetMetadata("tags");
+    if (tags is null) {
+      return false;
+    }
+
+    // Handle JsonElement (returned from MessageEnvelope.GetMetadata)
+    if (tags is JsonElement jsonElement) {
+      if (jsonElement.ValueKind != JsonValueKind.Array) {
+        return false;
+      }
+      foreach (var item in jsonElement.EnumerateArray()) {
+        if (item.ValueKind == JsonValueKind.String && item.GetString() == tag) {
+          return true;
+        }
+      }
+      return false;
+    }
+
+    // Handle direct string arrays (for backwards compatibility)
     if (tags is string[] tagArray) {
       return tagArray.Contains(tag);
     }
@@ -187,11 +206,20 @@ public class PolicyContext {
       return false;
     }
 
-    // Convert both to underlying type for comparison
-    var flagsValue = Convert.ToInt64(flags);
-    var targetFlagValue = Convert.ToInt64(flag);
+    // Handle JsonElement (returned from MessageEnvelope.GetMetadata)
+    if (flags is JsonElement jsonElement) {
+      if (jsonElement.ValueKind != JsonValueKind.Number) {
+        return false;
+      }
+      var flagsValue = jsonElement.GetInt64();
+      var targetFlagValue = Convert.ToInt64(flag);
+      return (flagsValue & targetFlagValue) == targetFlagValue;
+    }
 
-    return (flagsValue & targetFlagValue) == targetFlagValue;
+    // Handle direct numeric values (for backwards compatibility)
+    var flagsNumeric = Convert.ToInt64(flags);
+    var targetFlag = Convert.ToInt64(flag);
+    return (flagsNumeric & targetFlag) == targetFlag;
   }
 
   /// <summary>

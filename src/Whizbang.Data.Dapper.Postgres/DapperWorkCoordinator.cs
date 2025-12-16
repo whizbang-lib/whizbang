@@ -178,14 +178,14 @@ public class DapperWorkCoordinator(
       .Where(r => r.source == "outbox")
       .Select(r => {
         var envelope = DeserializeEnvelope(r.envelope_type, r.envelope_data);
-        // Cast to IMessageEnvelope<object> - envelope type is unknown at deserialization
-        var typedEnvelope = envelope as IMessageEnvelope<object>
-          ?? throw new InvalidOperationException($"Envelope must implement IMessageEnvelope<object> for message {r.msg_id}");
+        // Cast to IMessageEnvelope<JsonElement> - envelope is always deserialized as MessageEnvelope<JsonElement>
+        var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
+          ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.msg_id}");
 
         return new OutboxWork {
           MessageId = r.msg_id,
           Destination = r.destination!,
-          Envelope = typedEnvelope,
+          Envelope = jsonEnvelope,
           StreamId = r.stream_uuid,
           PartitionNumber = r.partition_num,
           Attempts = r.attempts,
@@ -194,19 +194,20 @@ public class DapperWorkCoordinator(
           SequenceOrder = r.sequence_order
         };
       })
-      .ToList();  // OutboxWork is non-generic
+      .ToList();
 
     var inboxWork = resultList
       .Where(r => r.source == "inbox")
       .Select(r => {
         var envelope = DeserializeEnvelope(r.envelope_type, r.envelope_data);
-        // Cast to IMessageEnvelope<object> - envelope type is unknown at deserialization
-        var typedEnvelope = envelope as IMessageEnvelope<object>
-          ?? throw new InvalidOperationException($"Envelope must implement IMessageEnvelope<object> for message {r.msg_id}");
+        // Cast to IMessageEnvelope<JsonElement> - envelope is always deserialized as MessageEnvelope<JsonElement>
+        var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
+          ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.msg_id}");
 
         return new InboxWork {
           MessageId = r.msg_id,
-          Envelope = typedEnvelope,
+          Envelope = jsonEnvelope,
+          MessageType = r.envelope_type,  // Use envelope_type until event_type is added to WorkBatchRow
           StreamId = r.stream_uuid,
           PartitionNumber = r.partition_num,
           Status = (MessageProcessingStatus)r.status,
@@ -214,7 +215,7 @@ public class DapperWorkCoordinator(
           SequenceOrder = r.sequence_order
         };
       })
-      .ToList();  // InboxWork is non-generic
+      .ToList();
 
     _logger?.LogInformation(
       "Work batch processed: {OutboxWork} outbox work, {InboxWork} inbox work",
@@ -345,22 +346,20 @@ public class DapperWorkCoordinator(
 
   /// <summary>
   /// Deserializes envelope from database envelope_type and envelope_data columns.
+  /// Envelopes are always deserialized as MessageEnvelope&lt;JsonElement&gt; to support covariant casting to IMessageEnvelope&lt;object&gt;.
   /// </summary>
   private IMessageEnvelope DeserializeEnvelope(string envelopeTypeName, string envelopeDataJson) {
     // Log the envelope data for debugging
     _logger?.LogDebug("Deserializing envelope: Type={EnvelopeType}, JSON={EnvelopeJson}", envelopeTypeName, envelopeDataJson);
 
-    // Resolve the envelope type from stored type name
-    var envelopeType = Type.GetType(envelopeTypeName)
-      ?? throw new InvalidOperationException($"Could not resolve envelope type '{envelopeTypeName}'");
+    // Always deserialize as MessageEnvelope<JsonElement> to support covariance casting to IMessageEnvelope<object>
+    // (JsonElement is a value type, but the envelope interface is covariant and can be cast to object)
+    var typeInfo = _jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>))
+      ?? throw new InvalidOperationException("No JsonTypeInfo found for MessageEnvelope<JsonElement>. Ensure it is registered via JsonContextRegistry.");
 
-    // Get JsonTypeInfo for the envelope type
-    var typeInfo = _jsonOptions.GetTypeInfo(envelopeType)
-      ?? throw new InvalidOperationException($"No JsonTypeInfo found for envelope type '{envelopeTypeName}'. Ensure the envelope type is registered via JsonContextRegistry.");
-
-    // Deserialize the complete envelope
+    // Deserialize the complete envelope as MessageEnvelope<JsonElement>
     var envelope = JsonSerializer.Deserialize(envelopeDataJson, typeInfo) as IMessageEnvelope
-      ?? throw new InvalidOperationException($"Failed to deserialize envelope of type '{envelopeTypeName}'");
+      ?? throw new InvalidOperationException($"Failed to deserialize envelope as MessageEnvelope<JsonElement>");
 
     // Log result for debugging
     _logger?.LogDebug("Deserialized envelope: MessageId={MessageId}, Hops={HopsCount}", envelope.MessageId, envelope.Hops.Count);

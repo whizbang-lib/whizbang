@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -15,9 +16,9 @@ public class ScopedWorkCoordinatorStrategyTests {
   private readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
 
   // Test message types
-  private record _testEvent1 { }
-  private record _testEvent2 { }
-  private record _testEvent3 { }
+  public record _testEvent1 : IEvent { }
+  public record _testEvent2 : IEvent { }
+  public record _testEvent3 : IEvent { }
 
   // ========================================
   // Priority 3 Tests: Scoped Strategy
@@ -47,6 +48,8 @@ public class ScopedWorkCoordinatorStrategyTests {
     var messageId1 = _idProvider.NewGuid();
     var messageId2 = _idProvider.NewGuid();
 
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+
     var envelope1 = new MessageEnvelope<_testEvent1> {
       MessageId = MessageId.From(messageId1),
       Payload = new _testEvent1(),
@@ -62,10 +65,15 @@ public class ScopedWorkCoordinatorStrategyTests {
       ]
     };
 
+    // Serialize to JsonElement envelope
+    var envelope1Json = JsonSerializer.Serialize((object)envelope1, jsonOptions);
+    var jsonEnvelope1 = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelope1Json, jsonOptions)
+      ?? throw new InvalidOperationException("Failed to deserialize envelope");
+
     sut.QueueOutboxMessage(new OutboxMessage {
       MessageId = messageId1,
       Destination = "topic1",
-      Envelope = envelope1,
+      Envelope = jsonEnvelope1,
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
       IsEvent = true,
@@ -87,10 +95,15 @@ public class ScopedWorkCoordinatorStrategyTests {
       ]
     };
 
+    // Serialize to JsonElement envelope
+    var envelope2Json = JsonSerializer.Serialize((object)envelope2, jsonOptions);
+    var jsonEnvelope2 = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelope2Json, jsonOptions)
+      ?? throw new InvalidOperationException("Failed to deserialize envelope");
+
     sut.QueueInboxMessage(new InboxMessage {
       MessageId = messageId2,
       HandlerName = "Handler1",
-      Envelope = envelope2,
+      Envelope = jsonEnvelope2,
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
       IsEvent = true,
@@ -132,6 +145,8 @@ public class ScopedWorkCoordinatorStrategyTests {
 
     var messageId = _idProvider.NewGuid();
 
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+
     var envelope = new MessageEnvelope<_testEvent1> {
       MessageId = MessageId.From(messageId),
       Payload = new _testEvent1(),
@@ -147,10 +162,15 @@ public class ScopedWorkCoordinatorStrategyTests {
       ]
     };
 
+    // Serialize to JsonElement envelope
+    var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
+    var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)
+      ?? throw new InvalidOperationException("Failed to deserialize envelope");
+
     sut.QueueOutboxMessage(new OutboxMessage {
       MessageId = messageId,
       Destination = "test-topic",
-      Envelope = envelope,
+      Envelope = jsonEnvelope,
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
       IsEvent = true,
@@ -201,6 +221,8 @@ public class ScopedWorkCoordinatorStrategyTests {
     var completionId = _idProvider.NewGuid();
     var failureId = _idProvider.NewGuid();
 
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+
     // Queue multiple types of operations
     var envelope1 = new MessageEnvelope<_testEvent1> {
       MessageId = MessageId.From(outboxId1),
@@ -217,10 +239,14 @@ public class ScopedWorkCoordinatorStrategyTests {
       ]
     };
 
+    var envelope1Json = JsonSerializer.Serialize((object)envelope1, jsonOptions);
+    var jsonEnvelope1 = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelope1Json, jsonOptions)
+      ?? throw new InvalidOperationException("Failed to deserialize envelope");
+
     sut.QueueOutboxMessage(new OutboxMessage {
       MessageId = outboxId1,
       Destination = "topic1",
-      Envelope = envelope1,
+      Envelope = jsonEnvelope1,
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
       IsEvent = true,
@@ -242,10 +268,14 @@ public class ScopedWorkCoordinatorStrategyTests {
       ]
     };
 
+    var envelope2Json = JsonSerializer.Serialize((object)envelope2, jsonOptions);
+    var jsonEnvelope2 = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelope2Json, jsonOptions)
+      ?? throw new InvalidOperationException("Failed to deserialize envelope");
+
     sut.QueueOutboxMessage(new OutboxMessage {
       MessageId = outboxId2,
       Destination = "topic2",
-      Envelope = envelope2,
+      Envelope = jsonEnvelope2,
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
       IsEvent = true,
@@ -267,10 +297,14 @@ public class ScopedWorkCoordinatorStrategyTests {
       ]
     };
 
+    var envelope3Json = JsonSerializer.Serialize((object)envelope3, jsonOptions);
+    var jsonEnvelope3 = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelope3Json, jsonOptions)
+      ?? throw new InvalidOperationException("Failed to deserialize envelope");
+
     sut.QueueInboxMessage(new InboxMessage {
       MessageId = inboxId1,
       HandlerName = "Handler1",
-      Envelope = envelope3,
+      Envelope = jsonEnvelope3,
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
       IsEvent = true,

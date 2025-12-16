@@ -390,6 +390,15 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
       // Generate factory for DI scenarios
       var factoryCode = GenerateFactory(id);
       context.AddSource($"{hintNamePrefix}{id.TypeName}Factory.g.cs", factoryCode);
+
+      // Generate provider class
+      var providerCode = GenerateProvider(id);
+      context.AddSource($"{hintNamePrefix}{id.TypeName}Provider.g.cs", providerCode);
+    }
+
+    // Generate registration class (one per assembly)
+    if (deduplicated.Count > 0) {
+      GenerateProviderRegistration(context, deduplicated);
     }
   }
 
@@ -484,6 +493,17 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     // Parse method for string deserialization
     sb.AppendLine("  /// <summary>Parses a string representation of a Guid into this ID type.</summary>");
     sb.AppendLine($"  public static {id.TypeName} Parse(string value) => From(Guid.Parse(value));");
+    sb.AppendLine();
+
+    // CreateProvider method
+    sb.AppendLine("  /// <summary>");
+    sb.AppendLine($"  /// Creates a strongly-typed provider for {id.TypeName} instances.");
+    sb.AppendLine("  /// Useful for direct instantiation without DI.");
+    sb.AppendLine("  /// </summary>");
+    sb.AppendLine($"  public static global::Whizbang.Core.IWhizbangIdProvider<{id.TypeName}> CreateProvider(");
+    sb.AppendLine("      global::Whizbang.Core.IWhizbangIdProvider baseProvider) {");
+    sb.AppendLine($"    return new {id.TypeName}Provider(baseProvider);");
+    sb.AppendLine("  }");
 
     sb.AppendLine("}");
 
@@ -571,6 +591,76 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine("}");
 
     return sb.ToString();
+  }
+
+  /// <summary>
+  /// Generates a strongly-typed provider for the WhizbangId.
+  /// </summary>
+  private static string GenerateProvider(WhizbangIdInfo id) {
+    var assembly = typeof(WhizbangIdGenerator).Assembly;
+    var template = TemplateUtilities.GetEmbeddedTemplate(assembly, "WhizbangIdProviderTemplate.cs");
+
+    // Replace namespace
+    template = template.Replace("__NAMESPACE__", id.Namespace);
+
+    // Replace type name
+    template = template.Replace("__TYPE_NAME__", id.TypeName);
+
+    // Replace header region
+    template = TemplateUtilities.ReplaceHeaderRegion(assembly, template);
+
+    return template;
+  }
+
+  /// <summary>
+  /// Generates WhizbangIdProviderRegistration class for the assembly.
+  /// </summary>
+  private static void GenerateProviderRegistration(
+      SourceProductionContext context,
+      List<WhizbangIdInfo> ids) {
+
+    var assembly = typeof(WhizbangIdGenerator).Assembly;
+    var template = TemplateUtilities.GetEmbeddedTemplate(
+      assembly,
+      "WhizbangIdProviderRegistrationTemplate.cs"
+    );
+
+    // Determine namespace (use first ID's namespace for the Generated sub-namespace)
+    var firstNamespace = ids[0].Namespace;
+    template = template.Replace("__NAMESPACE__", firstNamespace);
+
+    // Replace header
+    template = TemplateUtilities.ReplaceHeaderRegion(assembly, template);
+
+    // Generate factory registrations
+    var factoryRegistrations = new StringBuilder();
+    foreach (var id in ids) {
+      factoryRegistrations.AppendLine(
+        $"    global::Whizbang.Core.WhizbangIdProviderRegistry.RegisterFactory<{id.FullyQualifiedName}>(" +
+        $"baseProvider => new {id.TypeName}Provider(baseProvider));"
+      );
+    }
+    template = TemplateUtilities.ReplaceRegion(
+      template,
+      "FACTORY_REGISTRATIONS",
+      factoryRegistrations.ToString()
+    );
+
+    // Generate DI registrations
+    var diRegistrations = new StringBuilder();
+    foreach (var id in ids) {
+      diRegistrations.AppendLine(
+        $"    services.AddSingleton<global::Whizbang.Core.IWhizbangIdProvider<{id.FullyQualifiedName}>>(" +
+        $"sp => new {id.TypeName}Provider(sp.GetRequiredService<global::Whizbang.Core.IWhizbangIdProvider>()));"
+      );
+    }
+    template = TemplateUtilities.ReplaceRegion(
+      template,
+      "DI_REGISTRATIONS",
+      diRegistrations.ToString()
+    );
+
+    context.AddSource("WhizbangIdProviderRegistration.g.cs", template);
   }
 
   /// <summary>

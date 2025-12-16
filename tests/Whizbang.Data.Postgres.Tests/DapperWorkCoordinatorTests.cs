@@ -46,13 +46,13 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
   // Test helper record and envelope creation
   public record TestEvent { }
 
-  private static IMessageEnvelope<object> CreateTestEnvelope(Guid messageId) {
-    var envelope = new MessageEnvelope<TestEvent> {
+  private static IMessageEnvelope<JsonElement> CreateTestEnvelope(Guid messageId) {
+    var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
-      Payload = new TestEvent(),
+      Payload = JsonDocument.Parse("{}").RootElement,  // Empty JSON object for testing
       Hops = []
     };
-    return envelope as IMessageEnvelope<object> ?? throw new InvalidOperationException("Envelope must implement IMessageEnvelope<object>");
+    return envelope;
   }
 
   [Before(Test)]
@@ -523,7 +523,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = CreateTestEnvelope(messageId),
-      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
       StreamId = streamId,
       IsEvent = true,
       MessageType = "TestMessage, TestAssembly"
@@ -571,7 +571,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       MessageId = messageId,
       HandlerName = "TestHandler",
       Envelope = CreateTestEnvelope(messageId),
-      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
       StreamId = _idProvider.NewGuid(),
       IsEvent = true,
       MessageType = "TestMessage, TestAssembly"
@@ -640,7 +640,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       MessageId = messageId,
       HandlerName = "TestHandler",
       Envelope = CreateTestEnvelope(messageId),
-      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
       StreamId = streamId,
       IsEvent = true,
       MessageType = "TestMessage, TestAssembly"
@@ -690,7 +690,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = CreateTestEnvelope(messageId),
-      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
       StreamId = streamId,
       IsEvent = true,
       MessageType = "TestMessage, TestAssembly"
@@ -744,7 +744,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = CreateTestEnvelope(messageId),
-      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
       StreamId = streamId,
       IsEvent = true,
       MessageType = "TestMessage, TestAssembly"
@@ -789,7 +789,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       MessageId = messageId,
       HandlerName = "TestHandler",
       Envelope = CreateTestEnvelope(messageId),
-      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
       StreamId = streamId,
       IsEvent = true,
       MessageType = "TestMessage, TestAssembly"
@@ -838,7 +838,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       MessageId = messageId2,
       HandlerName = "TestHandler",
       Envelope = CreateTestEnvelope(messageId2),
-      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
       StreamId = streamId,
       IsEvent = true,
       MessageType = "TestMessage, TestAssembly"
@@ -891,7 +891,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         MessageId = messageId1,
         Destination = "topic1",
         Envelope = CreateTestEnvelope(messageId1),
-      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
         StreamId = streamId,
         IsEvent = true,
         MessageType = "TestMessage, TestAssembly"
@@ -900,7 +900,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         MessageId = messageId2,
         Destination = "topic1",
         Envelope = CreateTestEnvelope(messageId2),
-      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
         StreamId = streamId,
         IsEvent = true,
         MessageType = "TestMessage, TestAssembly"
@@ -909,7 +909,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         MessageId = messageId3,
         Destination = "topic1",
         Envelope = CreateTestEnvelope(messageId3),
-      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
         StreamId = streamId,
         IsEvent = true,
         MessageType = "TestMessage, TestAssembly"
@@ -957,7 +957,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = CreateTestEnvelope(messageId),
-      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
       StreamId = streamId,
       IsEvent = false,  // CRITICAL: IsEvent = false (command, not event)
       MessageType = "TestMessage, TestAssembly"
@@ -1014,7 +1014,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         MessageId = messageId,
         Destination = "test-topic",
         Envelope = CreateTestEnvelope(messageId),
-        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+        EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
         StreamId = streamId,  // SAME stream_id for all
         IsEvent = true,
         MessageType = "TestMessage, TestAssembly"
@@ -1069,7 +1069,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         MessageId = messageId,
         Destination = "test-topic",
         Envelope = CreateTestEnvelope(messageId),
-        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+        EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
         StreamId = streamId,
         IsEvent = true,
         MessageType = "TestMessage, TestAssembly"
@@ -1442,7 +1442,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       MessageId = newMessageId,
       Destination = "test-topic",
       Envelope = CreateTestEnvelope(newMessageId),
-      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
       StreamId = _idProvider.NewGuid(),
       IsEvent = true,
       MessageType = "TestMessage, TestAssembly"
@@ -1587,7 +1587,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = CreateTestEnvelope(messageId),
-      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
       StreamId = _idProvider.NewGuid(),
       IsEvent = true,  // CRITICAL: IsEvent = true
       MessageType = "TestMessage, TestAssembly"
@@ -1629,7 +1629,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = CreateTestEnvelope(messageId),
-      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
       StreamId = _idProvider.NewGuid(),
       IsEvent = false,  // CRITICAL: IsEvent
       MessageType = "TestMessage, TestAssembly"
@@ -1671,7 +1671,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       MessageId = messageId,
       HandlerName = "TestHandler",
       Envelope = CreateTestEnvelope(messageId),
-      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
       StreamId = _idProvider.NewGuid(),
       IsEvent = true,  // CRITICAL: IsEvent
       MessageType = "TestMessage, TestAssembly"
@@ -1713,7 +1713,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       MessageId = messageId,
       HandlerName = "TestHandler",
       Envelope = CreateTestEnvelope(messageId),
-      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
+      EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
       StreamId = _idProvider.NewGuid(),
       IsEvent = false,  // CRITICAL: IsEvent
       MessageType = "TestMessage, TestAssembly"

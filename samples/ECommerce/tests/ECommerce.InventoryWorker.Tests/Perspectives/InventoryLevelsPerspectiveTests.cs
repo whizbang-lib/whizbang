@@ -38,7 +38,7 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     await perspective.Update(@event, CancellationToken.None);
 
     // Assert - Verify inventory record was created using EF Core
-    var stored = await query.GetByIdAsync(productId.ToString());
+    var stored = await query.GetByIdAsync(productId);
 
     await Assert.That(stored).IsNotNull();
     await Assert.That(stored!.ProductId).IsEqualTo(productId);
@@ -79,7 +79,7 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     await perspective.Update(restockEvent, CancellationToken.None);
 
     // Assert - Verify quantity was updated using EF Core
-    var stored = await query.GetByIdAsync(productId.ToString());
+    var stored = await query.GetByIdAsync(productId);
 
     await Assert.That(stored).IsNotNull();
     await Assert.That(stored!.Quantity).IsEqualTo(125);
@@ -110,7 +110,7 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     await perspective.Update(@event, CancellationToken.None);
 
     // Assert - Verify last_updated was set using EF Core
-    var stored = await query.GetByIdAsync(productId.ToString());
+    var stored = await query.GetByIdAsync(productId);
 
     await Assert.That(stored).IsNotNull();
   }
@@ -148,7 +148,7 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     await perspective.Update(reservedEvent, CancellationToken.None);
 
     // Assert - Verify reserved was updated using EF Core
-    var stored = await query.GetByIdAsync(productId.ToString());
+    var stored = await query.GetByIdAsync(productId);
 
     await Assert.That(stored).IsNotNull();
     await Assert.That(stored!.Quantity).IsEqualTo(100);
@@ -197,7 +197,7 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     await perspective.Update(reservation2, CancellationToken.None);
 
     // Assert - Verify reserved accumulated using EF Core
-    var stored = await query.GetByIdAsync(productId.ToString());
+    var stored = await query.GetByIdAsync(productId);
 
     await Assert.That(stored).IsNotNull();
     await Assert.That(stored!.Quantity).IsEqualTo(100);
@@ -238,7 +238,7 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     await perspective.Update(reservedEvent, CancellationToken.None);
 
     // Assert - Verify last_updated was updated using EF Core
-    var stored = await query.GetByIdAsync(productId.ToString());
+    var stored = await query.GetByIdAsync(productId);
 
     await Assert.That(stored).IsNotNull();
   }
@@ -277,7 +277,7 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     await perspective.Update(adjustedEvent, CancellationToken.None);
 
     // Assert - Verify quantity was adjusted using EF Core
-    var stored = await query.GetByIdAsync(productId.ToString());
+    var stored = await query.GetByIdAsync(productId);
 
     await Assert.That(stored).IsNotNull();
     await Assert.That(stored!.Quantity).IsEqualTo(90);
@@ -317,7 +317,7 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     await perspective.Update(adjustedEvent, CancellationToken.None);
 
     // Assert - Verify quantity was increased using EF Core
-    var stored = await query.GetByIdAsync(productId.ToString());
+    var stored = await query.GetByIdAsync(productId);
 
     await Assert.That(stored).IsNotNull();
     await Assert.That(stored!.Quantity).IsEqualTo(115);
@@ -357,7 +357,7 @@ public class InventoryLevelsPerspectiveTests : IAsyncDisposable {
     await perspective.Update(adjustedEvent, CancellationToken.None);
 
     // Assert - Verify last_updated was updated using EF Core
-    var stored = await query.GetByIdAsync(productId.ToString());
+    var stored = await query.GetByIdAsync(productId);
 
     await Assert.That(stored).IsNotNull();
   }

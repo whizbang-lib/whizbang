@@ -2,6 +2,7 @@ using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text.Json;
 using System.Threading;
 using System.Threading.Channels;
 using System.Threading.Tasks;
@@ -21,13 +22,13 @@ namespace Whizbang.Core.Tests.Workers;
 public class WorkCoordinatorPublisherWorkerChannelTests {
   private record _testMessage { }
 
-  private static IMessageEnvelope<object> _createTestEnvelope(Guid messageId) {
-    var envelope = new MessageEnvelope<_testMessage> {
+  private static IMessageEnvelope<JsonElement> _createTestEnvelope(Guid messageId) {
+    var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
-      Payload = new _testMessage(),
+      Payload = JsonDocument.Parse("{}").RootElement,
       Hops = []
     };
-    return envelope as IMessageEnvelope<object> ?? throw new InvalidOperationException("Envelope must implement IMessageEnvelope<object>");
+    return envelope;
   }
 
   private class TestWorkCoordinator : IWorkCoordinator {
@@ -233,23 +234,27 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
 
   // Test helper - Mock work channel writer
   private class TestWorkChannelWriter : IWorkChannelWriter {
+    private readonly System.Threading.Channels.Channel<OutboxWork> _channel;
     public List<OutboxWork> WrittenWork { get; } = [];
 
-    public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
-      throw new NotImplementedException("Reader not needed for tests");
+    public TestWorkChannelWriter() {
+      _channel = System.Threading.Channels.Channel.CreateUnbounded<OutboxWork>();
+    }
+
+    public System.Threading.Channels.ChannelReader<OutboxWork> Reader => _channel.Reader;
 
     public ValueTask WriteAsync(OutboxWork work, CancellationToken ct) {
       WrittenWork.Add(work);
-      return ValueTask.CompletedTask;
+      return _channel.Writer.WriteAsync(work, ct);
     }
 
     public bool TryWrite(OutboxWork work) {
       WrittenWork.Add(work);
-      return true;
+      return _channel.Writer.TryWrite(work);
     }
 
     public void Complete() {
-      // No-op for testing
+      _channel.Writer.Complete();
     }
   }
 }

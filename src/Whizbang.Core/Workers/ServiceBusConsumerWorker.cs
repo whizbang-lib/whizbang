@@ -210,8 +210,8 @@ public class ServiceBusConsumerWorker(
 
   /// <summary>
   /// Creates InboxMessage for work coordinator pattern.
-  /// Uses InboxMessage&lt;object&gt; since the compile-time type is unknown (envelope comes from transport).
-  /// The actual type is preserved in EnvelopeType for deserialization.
+  /// Serializes envelope to JSON and deserializes as MessageEnvelope&lt;JsonElement&gt; for storage.
+  /// The actual type is preserved in EnvelopeType for later typed deserialization.
   /// </summary>
   /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
   /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
@@ -233,17 +233,16 @@ public class ServiceBusConsumerWorker(
     var envelopeTypeName = envelope.GetType().AssemblyQualifiedName
       ?? throw new InvalidOperationException($"Envelope type {envelope.GetType().Name} must have an assembly-qualified name");
 
-    // Create InboxMessage<object> - type is unknown at compile time
-    // The actual envelope is strongly typed (e.g., MessageEnvelope<ProductCreatedEvent>)
-    // but we treat it as IMessageEnvelope to work with heterogeneous collections
-    // Cast to IMessageEnvelope<object> - this is safe because we know it implements that interface
-    var typedEnvelope = envelope as IMessageEnvelope<object>
-      ?? throw new InvalidOperationException($"Envelope must implement IMessageEnvelope<object> for message {envelope.MessageId}");
+    // Serialize the envelope to JSON and deserialize as MessageEnvelope<JsonElement>
+    // This allows AOT-compatible storage without runtime type resolution
+    var envelopeJson = JsonSerializer.Serialize((object)envelope, _jsonOptions);
+    var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, _jsonOptions)
+      ?? throw new InvalidOperationException($"Failed to deserialize envelope as MessageEnvelope<JsonElement> for message {envelope.MessageId}");
 
     return new InboxMessage {
       MessageId = envelope.MessageId.Value,
       HandlerName = handlerName,
-      Envelope = typedEnvelope,  // Cast to IMessageEnvelope<object>
+      Envelope = jsonEnvelope,  // MessageEnvelope<JsonElement>
       EnvelopeType = envelopeTypeName,
       StreamId = streamId,
       IsEvent = payload is IEvent,
@@ -253,17 +252,28 @@ public class ServiceBusConsumerWorker(
 
   /// <summary>
   /// Extracts event payload from InboxWork for processing.
-  /// Envelope is already deserialized - just get the payload.
+  /// Envelope is deserialized as MessageEnvelope&lt;JsonElement&gt;, so we need to deserialize the payload.
   /// </summary>
   /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
   /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   private object? _deserializeEvent(InboxWork work) {
     try {
-      // InboxWork is non-generic - Envelope is IMessageEnvelope<object>
-      // Just access Payload directly
-      return work.Envelope.Payload;
+      // InboxWork envelope is IMessageEnvelope<JsonElement>
+      // Deserialize the JsonElement payload back to the actual event type
+      var jsonElement = work.Envelope.Payload;
+
+      // Get the message type from the work item
+      var messageType = Type.GetType(work.MessageType);
+      if (messageType == null) {
+        _logger.LogError("Could not resolve message type {MessageType} for message {MessageId}", work.MessageType, work.MessageId);
+        return null;
+      }
+
+      // Deserialize JsonElement to the actual event type
+      var @event = JsonSerializer.Deserialize(jsonElement, messageType, _jsonOptions);
+      return @event;
     } catch (Exception ex) {
-      _logger.LogError(ex, "Failed to extract payload from envelope for message {MessageId}", work.MessageId);
+      _logger.LogError(ex, "Failed to deserialize event payload from envelope for message {MessageId}", work.MessageId);
       return null;
     }
   }

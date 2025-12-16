@@ -38,7 +38,7 @@ public class InventoryLevelsPerspective(
         LastUpdated = @event.CreatedAt
       };
 
-      await _store.UpsertAsync(@event.ProductId.ToString(), inventory, cancellationToken);
+      await _store.UpsertAsync(@event.ProductId, inventory, cancellationToken);
 
       _logger.LogInformation(
         "Inventory levels initialized: Product {ProductId} created with 0 quantity",
@@ -58,7 +58,7 @@ public class InventoryLevelsPerspective(
   public async Task Update(InventoryRestockedEvent @event, CancellationToken cancellationToken = default) {
     try {
       // Get existing inventory or create new with defaults
-      var existing = await _query.GetByIdAsync(@event.ProductId.ToString(), cancellationToken);
+      var existing = await _query.GetByIdAsync(@event.ProductId, cancellationToken);
 
       var reserved = existing?.Reserved ?? 0;
       var inventory = new InventoryLevelDto {
@@ -69,7 +69,7 @@ public class InventoryLevelsPerspective(
         LastUpdated = @event.RestockedAt
       };
 
-      await _store.UpsertAsync(@event.ProductId.ToString(), inventory, cancellationToken);
+      await _store.UpsertAsync(@event.ProductId, inventory, cancellationToken);
 
       _logger.LogInformation(
         "Inventory levels updated: Product {ProductId} restocked to {Quantity}",
@@ -89,7 +89,7 @@ public class InventoryLevelsPerspective(
   public async Task Update(InventoryReservedEvent @event, CancellationToken cancellationToken = default) {
     try {
       // Get existing inventory to increment reserved
-      var existing = await _query.GetByIdAsync(@event.ProductId.ToString(), cancellationToken);
+      var existing = await _query.GetByIdAsync(@event.ProductId, cancellationToken);
       if (existing == null) {
         _logger.LogWarning(
           "Inventory {ProductId} not found for reservation, skipping",
@@ -106,7 +106,7 @@ public class InventoryLevelsPerspective(
         LastUpdated = @event.ReservedAt
       };
 
-      await _store.UpsertAsync(@event.ProductId.ToString(), updated, cancellationToken);
+      await _store.UpsertAsync(@event.ProductId, updated, cancellationToken);
 
       _logger.LogInformation(
         "Inventory levels updated: Product {ProductId} reserved {Quantity} units",
@@ -127,7 +127,7 @@ public class InventoryLevelsPerspective(
   public async Task Update(InventoryAdjustedEvent @event, CancellationToken cancellationToken = default) {
     try {
       // Get existing inventory to preserve reserved count
-      var existing = await _query.GetByIdAsync(@event.ProductId.ToString(), cancellationToken);
+      var existing = await _query.GetByIdAsync(@event.ProductId, cancellationToken);
       if (existing == null) {
         _logger.LogWarning(
           "Inventory {ProductId} not found for adjustment, skipping",
@@ -143,7 +143,7 @@ public class InventoryLevelsPerspective(
         LastUpdated = @event.AdjustedAt
       };
 
-      await _store.UpsertAsync(@event.ProductId.ToString(), updated, cancellationToken);
+      await _store.UpsertAsync(@event.ProductId, updated, cancellationToken);
 
       _logger.LogInformation(
         "Inventory levels updated: Product {ProductId} adjusted to {Quantity} (Reason: {Reason})",
