@@ -166,27 +166,26 @@ public class SchemaInitializationTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Create just the outbox table (simulating partial initialization)
+    // This matches migration 001_CreateOutboxTable.sql schema
     var coreTableSql = @"
       CREATE TABLE IF NOT EXISTS wh_outbox (
         message_id UUID NOT NULL PRIMARY KEY,
-        correlation_id UUID NOT NULL,
-        causation_id UUID NOT NULL,
-        topic VARCHAR(500) NOT NULL,
-        stream_key UUID NULL,
-        partition_index INTEGER NULL,
-        sequence_number BIGINT NULL,
-        message_type VARCHAR(500) NOT NULL,
-        message_data JSONB NOT NULL,
-        hops JSONB NOT NULL,
-        status VARCHAR(50) NOT NULL DEFAULT 'Stored',
+        destination VARCHAR(500) NOT NULL,
+        event_type VARCHAR(500) NOT NULL,
+        event_data JSONB NOT NULL,
+        metadata JSONB NOT NULL,
+        scope JSONB NULL,
+        stream_id UUID NULL,
+        partition_number INTEGER NULL,
+        status INTEGER NOT NULL DEFAULT 1,
         attempts INTEGER NOT NULL DEFAULT 0,
+        error TEXT NULL,
         instance_id UUID NULL,
         lease_expiry TIMESTAMPTZ NULL,
-        partition_number INTEGER NULL,
+        failure_reason INTEGER NOT NULL DEFAULT 99,
         created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
         published_at TIMESTAMPTZ NULL,
-        failure_reason TEXT NULL
+        processed_at TIMESTAMPTZ NULL
       )";
 
     await using var createCommand = new NpgsqlCommand(coreTableSql, connection);
