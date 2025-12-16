@@ -32,10 +32,13 @@ cat /Users/philcarbone/src/whizbang/plans/strongly-typed-id-providers-implementa
 - **All 354 tests running** (353 passing, 1 pre-existing flaky test)
 
 ### Phase 4: Fix EFCore.Postgres.Tests (Complete)
-- Fixed 26 compilation errors by converting string IDs to Guid IDs
-- Updated 4 test files to use `IWhizbangIdProvider` for ID generation
-- **Build Status**: 0 errors, 21 warnings (success)
+- Created `TestIds.cs` with strongly-typed test IDs (`TestOrderId`, `TestPerspectiveId`)
+- Updated `OrderPerspectiveTests` to use typed providers (`IWhizbangIdProvider<TestOrderId>`)
+- Updated `SamplePerspective.cs` and `Order` model to use `TestOrderId`
+- Added Whizbang.Generators reference to test project for ID generation
+- **Build Status**: 0 errors, 24 warnings (success)
 - **Test Status**: 110 passing, 21 failing (pre-existing failures unrelated to changes)
+- **Demonstrates**: Both strongly-typed IDs (OrderPerspectiveTests) AND Guid-based IDs (other tests) working side-by-side!
 
 ## What's Next 🔧
 
