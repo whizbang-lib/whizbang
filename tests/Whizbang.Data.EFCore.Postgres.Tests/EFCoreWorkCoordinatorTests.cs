@@ -138,8 +138,10 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     // Verify messages marked as Published (using bitwise AND to check if bit is set)
     var status1 = await GetOutboxStatusFlagsAsync(messageId1);
     var status2 = await GetOutboxStatusFlagsAsync(messageId2);
-    await Assert.That((status1.Value & MessageProcessingStatus.Published) == MessageProcessingStatus.Published).IsTrue();
-    await Assert.That((status2.Value & MessageProcessingStatus.Published) == MessageProcessingStatus.Published).IsTrue();
+    await Assert.That(status1).IsNotNull().Because("Message 1 should still exist after completion");
+    await Assert.That(status2).IsNotNull().Because("Message 2 should still exist after completion");
+    await Assert.That((status1!.Value & MessageProcessingStatus.Published) == MessageProcessingStatus.Published).IsTrue();
+    await Assert.That((status2!.Value & MessageProcessingStatus.Published) == MessageProcessingStatus.Published).IsTrue();
   }
 
   [Test]
@@ -531,16 +533,19 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     // Verify completed (using bitwise AND to check if bit is set)
     var completedStatus = await GetOutboxStatusFlagsAsync(completedOutboxId);
-    await Assert.That((completedStatus.Value & MessageProcessingStatus.Published) == MessageProcessingStatus.Published).IsTrue();
+    await Assert.That(completedStatus).IsNotNull().Because("Completed outbox message should still exist");
+    await Assert.That((completedStatus!.Value & MessageProcessingStatus.Published) == MessageProcessingStatus.Published).IsTrue();
     await Assert.That(await GetInboxStatusFlagsAsync(completedInboxId)).IsNull()
       .Because("Fully completed inbox messages should be deleted");
 
     // Verify failed (failures have the Failed flag set)
     var failedOutboxStatus = await GetOutboxStatusFlagsAsync(failedOutboxId);
-    await Assert.That((failedOutboxStatus.Value & MessageProcessingStatus.Failed) == MessageProcessingStatus.Failed).IsTrue()
+    await Assert.That(failedOutboxStatus).IsNotNull().Because("Failed outbox message should still exist");
+    await Assert.That((failedOutboxStatus!.Value & MessageProcessingStatus.Failed) == MessageProcessingStatus.Failed).IsTrue()
       .Because("Failed messages should have the Failed flag set");
     var failedInboxStatus = await GetInboxStatusFlagsAsync(failedInboxId);
-    await Assert.That((failedInboxStatus.Value & MessageProcessingStatus.Failed) == MessageProcessingStatus.Failed).IsTrue()
+    await Assert.That(failedInboxStatus).IsNotNull().Because("Failed inbox message should still exist");
+    await Assert.That((failedInboxStatus!.Value & MessageProcessingStatus.Failed) == MessageProcessingStatus.Failed).IsTrue()
       .Because("Failed messages should have the Failed flag set");
 
     // Verify work returned and claimed
@@ -1480,11 +1485,13 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     var status3 = await GetOutboxStatusFlagsAsync(message3Id);
 
     // Message 1 should be marked as Published
-    await Assert.That((status1.Value & MessageProcessingStatus.Published) == MessageProcessingStatus.Published).IsTrue()
+    await Assert.That(status1).IsNotNull().Because("Message 1 should still exist");
+    await Assert.That((status1!.Value & MessageProcessingStatus.Published) == MessageProcessingStatus.Published).IsTrue()
       .Because("Message 1 should be marked as Published");
 
     // Message 2 should be marked as Failed
-    await Assert.That((status2.Value & MessageProcessingStatus.Failed) == MessageProcessingStatus.Failed).IsTrue()
+    await Assert.That(status2).IsNotNull().Because("Message 2 should still exist");
+    await Assert.That((status2!.Value & MessageProcessingStatus.Failed) == MessageProcessingStatus.Failed).IsTrue()
       .Because("Message 2 should be marked as Failed");
 
     // Message 3 should have status unchanged (Status = 0 doesn't modify status flags)
