@@ -18,50 +18,17 @@ public record OrderCreatedEvent : IEvent {
 }
 
 /// <summary>
-/// Test DbContext for EFCoreEventStore tests.
-/// </summary>
-public class EventStoreTestDbContext : DbContext {
-  public EventStoreTestDbContext(DbContextOptions<EventStoreTestDbContext> options) : base(options) { }
-
-  protected override void OnModelCreating(ModelBuilder modelBuilder) {
-    modelBuilder.Entity<EventStoreRecord>(entity => {
-      entity.ToTable("wh_events");
-      entity.HasKey(e => e.Id);
-
-      entity.Property(e => e.Id).HasColumnName("event_id");
-      entity.Property(e => e.StreamId).HasColumnName("stream_id").IsRequired();
-      entity.Property(e => e.AggregateId).HasColumnName("aggregate_id").IsRequired();
-      entity.Property(e => e.AggregateType).HasColumnName("aggregate_type").IsRequired();
-      entity.Property(e => e.Sequence).HasColumnName("sequence_number").IsRequired();
-      entity.Property(e => e.Version).HasColumnName("version").IsRequired();
-      entity.Property(e => e.EventType).HasColumnName("event_type").IsRequired();
-      entity.Property(e => e.EventData).HasColumnName("event_data").IsRequired().HasColumnType("jsonb");
-      entity.Property(e => e.Metadata).HasColumnName("metadata").IsRequired().HasColumnType("jsonb");
-      entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType("jsonb");
-      entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
-
-      entity.HasIndex(e => new { e.StreamId, e.Version }).IsUnique();
-      entity.HasIndex(e => new { e.AggregateId, e.Version }).IsUnique();
-      entity.HasIndex(e => new { e.StreamId, e.Sequence }).IsUnique();
-    });
-  }
-}
-
-/// <summary>
 /// Tests for EFCoreEventStore.
 /// Verifies append-only event storage with stream-based organization and sequence numbers.
+/// Uses PostgreSQL Testcontainers for real database testing with JsonDocument support.
 /// Target: 100% branch coverage.
 /// </summary>
-public class EFCoreEventStoreTests {
+public class EFCoreEventStoreTests : EFCoreTestBase {
   [Test]
   public async Task AppendAsync_WithValidEnvelope_AppendsEventToStreamAsync() {
     // Arrange
-    var options = new DbContextOptionsBuilder<EventStoreTestDbContext>()
-      .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-      .Options;
-
-    await using var context = new EventStoreTestDbContext(options);
-    var eventStore = new EFCoreEventStore<EventStoreTestDbContext>(context);
+    await using var context = CreateDbContext();
+    var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(context);
 
     var streamId = Guid.NewGuid();
     var envelope = new MessageEnvelope<OrderCreatedEvent> {
@@ -96,12 +63,8 @@ public class EFCoreEventStoreTests {
   [Test]
   public async Task AppendAsync_WithMultipleEvents_AssignsSequentialSequenceNumbersAsync() {
     // Arrange
-    var options = new DbContextOptionsBuilder<EventStoreTestDbContext>()
-      .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-      .Options;
-
-    await using var context = new EventStoreTestDbContext(options);
-    var eventStore = new EFCoreEventStore<EventStoreTestDbContext>(context);
+    await using var context = CreateDbContext();
+    var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(context);
 
     var streamId = Guid.NewGuid();
 
@@ -144,12 +107,8 @@ public class EFCoreEventStoreTests {
   [Test]
   public async Task ReadAsync_WithExistingEvents_ReturnsEventsInSequenceOrderAsync() {
     // Arrange
-    var options = new DbContextOptionsBuilder<EventStoreTestDbContext>()
-      .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-      .Options;
-
-    await using var context = new EventStoreTestDbContext(options);
-    var eventStore = new EFCoreEventStore<EventStoreTestDbContext>(context);
+    await using var context = CreateDbContext();
+    var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(context);
 
     var streamId = Guid.NewGuid();
 
@@ -193,12 +152,8 @@ public class EFCoreEventStoreTests {
   [Test]
   public async Task GetLastSequenceAsync_WithEmptyStream_ReturnsMinusOneAsync() {
     // Arrange
-    var options = new DbContextOptionsBuilder<EventStoreTestDbContext>()
-      .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-      .Options;
-
-    await using var context = new EventStoreTestDbContext(options);
-    var eventStore = new EFCoreEventStore<EventStoreTestDbContext>(context);
+    await using var context = CreateDbContext();
+    var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(context);
 
     var streamId = Guid.NewGuid();
 
@@ -212,12 +167,8 @@ public class EFCoreEventStoreTests {
   [Test]
   public async Task GetLastSequenceAsync_WithExistingEvents_ReturnsHighestSequenceAsync() {
     // Arrange
-    var options = new DbContextOptionsBuilder<EventStoreTestDbContext>()
-      .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-      .Options;
-
-    await using var context = new EventStoreTestDbContext(options);
-    var eventStore = new EFCoreEventStore<EventStoreTestDbContext>(context);
+    await using var context = CreateDbContext();
+    var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(context);
 
     var streamId = Guid.NewGuid();
 

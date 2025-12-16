@@ -8,30 +8,16 @@ using Whizbang.Data.EFCore.Postgres.Configuration;
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
-/// Test DbContext for WhizbangModelBuilderExtensions tests.
-/// </summary>
-public class WhizbangInfraDbContext : DbContext {
-  public WhizbangInfraDbContext(DbContextOptions<WhizbangInfraDbContext> options) : base(options) { }
-
-  protected override void OnModelCreating(ModelBuilder modelBuilder) {
-    modelBuilder.ConfigureWhizbangInfrastructure();
-  }
-}
-
-/// <summary>
 /// Tests for WhizbangModelBuilderExtensions (ConfigureWhizbangInfrastructure).
 /// Verifies entity configuration for Inbox, Outbox, EventStore, ServiceInstance, and MessageDeduplication.
+/// Uses PostgreSQL Testcontainers for real database testing with JsonDocument support.
 /// Target: 100% branch coverage.
 /// </summary>
-public class WhizbangModelBuilderExtensionsTests {
+public class WhizbangModelBuilderExtensionsTests : EFCoreTestBase {
   [Test]
   public async Task ConfigureWhizbangInfrastructure_ConfiguresInboxEntityAsync() {
     // Arrange
-    var options = new DbContextOptionsBuilder<WhizbangInfraDbContext>()
-      .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-      .Options;
-
-    await using var context = new WhizbangInfraDbContext(options);
+    await using var context = CreateDbContext();
 
     // Act
     var inboxEntityType = context.Model.FindEntityType(typeof(InboxRecord));
@@ -44,11 +30,7 @@ public class WhizbangModelBuilderExtensionsTests {
   [Test]
   public async Task ConfigureWhizbangInfrastructure_ConfiguresOutboxEntityAsync() {
     // Arrange
-    var options = new DbContextOptionsBuilder<WhizbangInfraDbContext>()
-      .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-      .Options;
-
-    await using var context = new WhizbangInfraDbContext(options);
+    await using var context = CreateDbContext();
 
     // Act
     var outboxEntityType = context.Model.FindEntityType(typeof(OutboxRecord));
@@ -61,28 +43,20 @@ public class WhizbangModelBuilderExtensionsTests {
   [Test]
   public async Task ConfigureWhizbangInfrastructure_ConfiguresEventStoreEntityAsync() {
     // Arrange
-    var options = new DbContextOptionsBuilder<WhizbangInfraDbContext>()
-      .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-      .Options;
-
-    await using var context = new WhizbangInfraDbContext(options);
+    await using var context = CreateDbContext();
 
     // Act
     var eventStoreEntityType = context.Model.FindEntityType(typeof(EventStoreRecord));
 
     // Assert
     await Assert.That(eventStoreEntityType).IsNotNull();
-    await Assert.That(eventStoreEntityType!.GetTableName()).IsEqualTo("wh_events");
+    await Assert.That(eventStoreEntityType!.GetTableName()).IsEqualTo("wh_event_store");
   }
 
   [Test]
   public async Task ConfigureWhizbangInfrastructure_ConfiguresServiceInstanceEntityAsync() {
     // Arrange
-    var options = new DbContextOptionsBuilder<WhizbangInfraDbContext>()
-      .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-      .Options;
-
-    await using var context = new WhizbangInfraDbContext(options);
+    await using var context = CreateDbContext();
 
     // Act
     var serviceInstanceEntityType = context.Model.FindEntityType(typeof(ServiceInstanceRecord));
@@ -95,11 +69,7 @@ public class WhizbangModelBuilderExtensionsTests {
   [Test]
   public async Task ConfigureWhizbangInfrastructure_ConfiguresMessageDeduplicationEntityAsync() {
     // Arrange
-    var options = new DbContextOptionsBuilder<WhizbangInfraDbContext>()
-      .UseInMemoryDatabase(databaseName: Guid.NewGuid().ToString())
-      .Options;
-
-    await using var context = new WhizbangInfraDbContext(options);
+    await using var context = CreateDbContext();
 
     // Act
     var deduplicationEntityType = context.Model.FindEntityType(typeof(MessageDeduplicationRecord));
