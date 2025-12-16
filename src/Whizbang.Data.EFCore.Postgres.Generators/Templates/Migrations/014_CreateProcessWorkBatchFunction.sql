@@ -3,6 +3,7 @@
 -- Updated: 2025-12-04 - Added instance management and stale cleanup
 -- Updated: 2025-12-06 - Complete rewrite for partition-based stream ordering
 -- Updated: 2025-12-15 - Fix NULL metadata constraint (COALESCE empty Hops array)
+-- Updated: 2025-12-16 - Add scheduled_for support for retries with exponential backoff and stream ordering protection
 -- Description: Single SQL function that handles all work coordination operations:
 --              - Register/update instance with real metadata
 --              - Clean up stale instances (expired heartbeats)
@@ -102,7 +103,7 @@ DECLARE
 
 BEGIN
   -- DEBUG: Migration version identifier
-  RAISE NOTICE '====  MIGRATION VERSION: 2025-12-15_NULL_METADATA_FIX ===';
+  RAISE NOTICE '====  MIGRATION VERSION: 2025-12-16_SCHEDULED_FOR_RETRY_SUPPORT ===';
 
   -- DEBUG: Log input parameters for completions
   RAISE NOTICE '=== SECTION 0: INPUT PARAMETERS ===';
@@ -120,11 +121,30 @@ BEGIN
     last_heartbeat_at = v_now,
     metadata = COALESCE(EXCLUDED.metadata, wh_service_instances.metadata);
 
-  -- 2. Clean up stale instances
-  DELETE FROM wh_service_instances
+  -- 2. Clean up stale instances and release their messages
+  -- First, identify stale instances before deleting them
+  CREATE TEMP TABLE IF NOT EXISTS deleted_instance_ids (instance_id UUID);
+  DELETE FROM deleted_instance_ids;
+
+  INSERT INTO deleted_instance_ids (instance_id)
+  SELECT instance_id FROM wh_service_instances
   WHERE last_heartbeat_at < v_stale_cutoff AND instance_id != p_instance_id;
 
-  -- Partition assignments will cascade delete automatically (ON DELETE CASCADE)
+  -- Delete the stale instances (partition assignments CASCADE DELETE automatically)
+  DELETE FROM wh_service_instances
+  WHERE instance_id IN (SELECT instance_id FROM deleted_instance_ids);
+
+  -- Release outbox messages from deleted instances so they can be reclaimed
+  UPDATE wh_outbox
+  SET instance_id = NULL,
+      lease_expiry = NULL
+  WHERE instance_id IN (SELECT instance_id FROM deleted_instance_ids);
+
+  -- Release inbox messages from deleted instances so they can be reclaimed
+  UPDATE wh_inbox
+  SET instance_id = NULL,
+      lease_expiry = NULL
+  WHERE instance_id IN (SELECT instance_id FROM deleted_instance_ids);
 
   -- 2.5. Calculate dynamic max partitions based on active instance count
   -- This ensures single instances own all partitions, while multiple instances share evenly
@@ -246,6 +266,7 @@ BEGIN
       SET status = (wh_outbox.status | v_failure.status_flags | 32768),  -- Add completed flags + Failed flag (bit 15)
           error = v_failure.error_message,
           attempts = wh_outbox.attempts + 1,
+          scheduled_for = v_now + (INTERVAL '30 seconds' * POWER(2, wh_outbox.attempts + 1)),  -- Exponential backoff: 1m, 2m, 4m, 8m, ...
           instance_id = NULL,
           lease_expiry = NULL
       WHERE wh_outbox.message_id = v_failure.msg_id;
@@ -264,6 +285,7 @@ BEGIN
       SET status = (wh_inbox.status | v_failure.status_flags | 32768),
           error = v_failure.error_message,
           attempts = wh_inbox.attempts + 1,
+          scheduled_for = v_now + (INTERVAL '30 seconds' * POWER(2, wh_inbox.attempts + 1)),  -- Exponential backoff: 1m, 2m, 4m, 8m, ...
           instance_id = NULL,
           lease_expiry = NULL
       WHERE wh_inbox.message_id = v_failure.msg_id;
@@ -719,11 +741,24 @@ BEGIN
       SELECT wh_partition_assignments.partition_number FROM wh_partition_assignments WHERE wh_partition_assignments.instance_id = p_instance_id
     )
     AND (wh_outbox.instance_id IS NULL OR wh_outbox.lease_expiry IS NULL OR wh_outbox.lease_expiry < v_now)
-    AND (wh_outbox.status & 32768) = 0  -- Not failed
+    -- REMOVED: AND (wh_outbox.status & 32768) = 0  -- Now allow failed messages to retry
     AND (wh_outbox.status & 4) != 4     -- Not published (outbox is done when published)
-    AND NOT EXISTS (  -- Don't reclaim messages being completed
+    AND (wh_outbox.scheduled_for IS NULL OR wh_outbox.scheduled_for <= v_now)  -- NEW: Check scheduled time
+    AND NOT EXISTS (  -- CRITICAL: Stream ordering protection - don't claim if earlier message is scheduled or processing
+      SELECT 1 FROM wh_outbox earlier
+      WHERE earlier.stream_id = wh_outbox.stream_id
+        AND earlier.created_at < wh_outbox.created_at  -- Earlier message in stream
+        AND (
+          -- Earlier message is scheduled for future retry
+          (earlier.scheduled_for IS NOT NULL AND earlier.scheduled_for > v_now)
+          -- OR earlier message is currently being processed by another instance
+          OR (earlier.instance_id IS NOT NULL AND earlier.lease_expiry > v_now)
+        )
+    )
+    AND NOT EXISTS (  -- Don't reclaim messages being completed with Status > 0
       SELECT 1 FROM jsonb_array_elements(p_outbox_completions) elem
       WHERE (elem->>'MessageId')::UUID = wh_outbox.message_id
+        AND ((elem->>'Status')::INTEGER) > 0  -- NEW: Only exclude if actual status change (Status=0 releases are OK)
     )
     AND NOT EXISTS (  -- Don't reclaim messages being failed
       SELECT 1 FROM jsonb_array_elements(p_outbox_failures) elem
@@ -748,11 +783,24 @@ BEGIN
       SELECT wh_partition_assignments.partition_number FROM wh_partition_assignments WHERE wh_partition_assignments.instance_id = p_instance_id
     )
     AND (wh_inbox.instance_id IS NULL OR wh_inbox.lease_expiry IS NULL OR wh_inbox.lease_expiry < v_now)
-    AND (wh_inbox.status & 32768) = 0  -- Not failed
+    -- REMOVED: AND (wh_inbox.status & 32768) = 0  -- Now allow failed messages to retry
     AND (wh_inbox.status & 2) != 2     -- Not event stored (inbox is done when event stored)
-    AND NOT EXISTS (  -- Don't reclaim messages being completed
+    AND (wh_inbox.scheduled_for IS NULL OR wh_inbox.scheduled_for <= v_now)  -- NEW: Check scheduled time
+    AND NOT EXISTS (  -- CRITICAL: Stream ordering protection - don't claim if earlier message is scheduled or processing
+      SELECT 1 FROM wh_inbox earlier
+      WHERE earlier.stream_id = wh_inbox.stream_id
+        AND earlier.received_at < wh_inbox.received_at  -- Earlier message in stream
+        AND (
+          -- Earlier message is scheduled for future retry
+          (earlier.scheduled_for IS NOT NULL AND earlier.scheduled_for > v_now)
+          -- OR earlier message is currently being processed by another instance
+          OR (earlier.instance_id IS NOT NULL AND earlier.lease_expiry > v_now)
+        )
+    )
+    AND NOT EXISTS (  -- Don't reclaim messages being completed with Status > 0
       SELECT 1 FROM jsonb_array_elements(p_inbox_completions) elem
       WHERE (elem->>'MessageId')::UUID = wh_inbox.message_id
+        AND ((elem->>'Status')::INTEGER) > 0  -- NEW: Only exclude if actual status change (Status=0 releases are OK)
     )
     AND NOT EXISTS (  -- Don't reclaim messages being failed
       SELECT 1 FROM jsonb_array_elements(p_inbox_failures) elem
