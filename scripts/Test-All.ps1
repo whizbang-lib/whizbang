@@ -15,8 +15,11 @@
 .PARAMETER MaxParallel
     Maximum number of test projects to run in parallel (default: CPU core count)
 
-.PARAMETER Filter
-    Filter to specific test projects (e.g., "Core", "Schema")
+.PARAMETER ProjectFilter
+    Filter to specific test projects (e.g., "Core", "Schema", "EFCore.Postgres")
+
+.PARAMETER TestFilter
+    Filter to specific tests by name pattern (TUnit filter syntax)
 
 .PARAMETER Verbose
     Show detailed test output for each project
@@ -30,8 +33,12 @@
     Runs tests with maximum 4 projects in parallel
 
 .EXAMPLE
-    ./Test-All.ps1 -Filter "Core"
+    ./Test-All.ps1 -ProjectFilter "Core"
     Runs only test projects with "Core" in the name
+
+.EXAMPLE
+    ./Test-All.ps1 -ProjectFilter "EFCore.Postgres" -TestFilter "ProcessWorkBatchAsync"
+    Runs only tests containing "ProcessWorkBatchAsync" in EFCore.Postgres test project
 
 .EXAMPLE
     ./Test-All.ps1 -Verbose
@@ -40,6 +47,10 @@
 .EXAMPLE
     ./Test-All.ps1 -AiMode
     Runs all tests with compact, parseable output optimized for AI analysis
+
+.EXAMPLE
+    ./Test-All.ps1 -AiMode -ProjectFilter "EFCore.Postgres"
+    Runs EFCore.Postgres tests with AI-optimized compact output
 
 .NOTES
     Technology Stack (as of December 2025):
@@ -61,7 +72,8 @@
 [CmdletBinding()]
 param(
     [int]$MaxParallel = 0,  # 0 = use Environment.ProcessorCount
-    [string]$Filter = "",
+    [string]$ProjectFilter = "",
+    [string]$TestFilter = "",
     [switch]$VerboseOutput,
     [switch]$AiMode
 )
@@ -86,18 +98,53 @@ try {
         Write-Host "=====================================" -ForegroundColor Cyan
         Write-Host ""
         Write-Host "Parallel Test Execution: Up to $MaxParallel test modules concurrently" -ForegroundColor Yellow
+        if ($ProjectFilter) {
+            Write-Host "Project Filter: $ProjectFilter" -ForegroundColor Yellow
+        }
+        if ($TestFilter) {
+            Write-Host "Test Filter: $TestFilter" -ForegroundColor Yellow
+        }
         Write-Host ""
     } else {
         Write-Host "[WHIZBANG TEST SUITE - AI MODE]" -ForegroundColor Cyan
         Write-Host "Max Parallel: $MaxParallel" -ForegroundColor Gray
+        if ($ProjectFilter) {
+            Write-Host "Project Filter: $ProjectFilter" -ForegroundColor Gray
+        }
+        if ($TestFilter) {
+            Write-Host "Test Filter: $TestFilter" -ForegroundColor Gray
+        }
     }
 
-    # Build the dotnet test command with solution file
+    # Build the dotnet test command
     $testArgs = @("test")
 
-    # Use the main solution file (already filtered to test projects via <IsTestProject>)
-    $testArgs += "--solution"
-    $testArgs += "Whizbang.slnx"
+    # If we have a project filter, find matching projects instead of using solution
+    if ($ProjectFilter) {
+        $testProjects = Get-ChildItem -Path "tests" -Filter "*.csproj" -Recurse |
+            Where-Object { $_.Name -match $ProjectFilter } |
+            Select-Object -ExpandProperty FullName
+
+        if ($testProjects.Count -eq 0) {
+            Write-Host "No test projects found matching filter: $ProjectFilter" -ForegroundColor Red
+            exit 1
+        }
+
+        if (-not $AiMode) {
+            Write-Host "Found $($testProjects.Count) matching project(s):" -ForegroundColor Gray
+            $testProjects | ForEach-Object { Write-Host "  - $_" -ForegroundColor Gray }
+            Write-Host ""
+        }
+
+        # Add each matching project
+        foreach ($project in $testProjects) {
+            $testArgs += $project
+        }
+    } else {
+        # Use the main solution file (already filtered to test projects via <IsTestProject>)
+        $testArgs += "--solution"
+        $testArgs += "Whizbang.slnx"
+    }
 
     # Add parallel execution
     $testArgs += "--max-parallel-test-modules"
@@ -112,15 +159,19 @@ try {
         $testArgs += "minimal"
     }
 
-    # Add filter if specified (note: dotnet test doesn't support project filtering with --solution)
-    if ($Filter) {
-        Write-Host "Note: --Filter parameter applies to test names, not projects when using --solution" -ForegroundColor Yellow
-        Write-Host ""
+    # Add test name filter if specified
+    if ($TestFilter) {
+        $testArgs += "--filter"
+        $testArgs += $TestFilter
     }
 
     # Run tests
     if (-not $AiMode) {
-        Write-Host "Executing: dotnet test Whizbang.slnx --max-parallel-test-modules $MaxParallel" -ForegroundColor Gray
+        $cmdDisplay = "dotnet " + ($testArgs -join " ")
+        if ($cmdDisplay.Length -gt 100) {
+            $cmdDisplay = $cmdDisplay.Substring(0, 97) + "..."
+        }
+        Write-Host "Executing: $cmdDisplay" -ForegroundColor Gray
         Write-Host ""
     }
 
