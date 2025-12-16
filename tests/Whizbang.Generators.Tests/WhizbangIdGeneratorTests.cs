@@ -442,6 +442,32 @@ public partial class WhizbangIdGeneratorTests {
     await Assert.That(warning).IsNull();
   }
 
+  /// <summary>
+  /// Test that generator creates CreateProvider() static method on value object.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_GeneratesCreateProviderMethodAsync() {
+    // Arrange
+    var source = """
+            using Whizbang.Core;
+
+            namespace MyApp.Domain;
+
+            [WhizbangId]
+            public readonly partial struct TestId;
+            """;
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<WhizbangIdGenerator>(source);
+
+    // Assert - Should generate CreateProvider method
+    var valueObjectSource = GeneratorTestHelper.GetGeneratedSource(result, "TestId.g.cs");
+    await Assert.That(valueObjectSource).IsNotNull();
+    await Assert.That(valueObjectSource!).Contains("public static global::Whizbang.Core.IWhizbangIdProvider<TestId> CreateProvider(");
+    await Assert.That(valueObjectSource).Contains("return new TestIdProvider(baseProvider);");
+  }
+
   [System.Text.RegularExpressions.GeneratedRegex(@"public readonly partial struct ProductId"
   )]
   private static partial System.Text.RegularExpressions.Regex MyRegex();
