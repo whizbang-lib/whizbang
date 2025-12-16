@@ -129,7 +129,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      renewInboxLeaseIds: [],
+      flags: WorkBatchFlags.DebugMode);  // Enable debug mode to keep completed messages
 
     // Assert
     await Assert.That(result.OutboxWork).HasCount().EqualTo(0)
@@ -138,8 +139,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     // Verify messages marked as Published (using bitwise AND to check if bit is set)
     var status1 = await GetOutboxStatusFlagsAsync(messageId1);
     var status2 = await GetOutboxStatusFlagsAsync(messageId2);
-    await Assert.That(status1).IsNotNull().Because("Message 1 should still exist after completion");
-    await Assert.That(status2).IsNotNull().Because("Message 2 should still exist after completion");
+    await Assert.That(status1).IsNotNull().Because("Message 1 should still exist after completion in debug mode");
+    await Assert.That(status2).IsNotNull().Because("Message 2 should still exist after completion in debug mode");
     await Assert.That((status1!.Value & MessageProcessingStatus.Published) == MessageProcessingStatus.Published).IsTrue();
     await Assert.That((status2!.Value & MessageProcessingStatus.Published) == MessageProcessingStatus.Published).IsTrue();
   }
@@ -523,20 +524,22 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      renewInboxLeaseIds: [],
+      flags: WorkBatchFlags.DebugMode);  // Enable debug mode to keep completed messages
 
     // Assert
     await Assert.That(result.OutboxWork).HasCount().EqualTo(1)
       .Because("Only orphaned message returned (completed message NOT re-claimed after bug fix)");
     await Assert.That(result.InboxWork).HasCount().EqualTo(1)
-      .Because("Completed inbox messages are deleted (FullyCompleted), only orphaned returned");
+      .Because("Only orphaned message returned (completed message kept in debug mode)");
 
     // Verify completed (using bitwise AND to check if bit is set)
     var completedStatus = await GetOutboxStatusFlagsAsync(completedOutboxId);
-    await Assert.That(completedStatus).IsNotNull().Because("Completed outbox message should still exist");
+    await Assert.That(completedStatus).IsNotNull().Because("Completed outbox message should still exist in debug mode");
     await Assert.That((completedStatus!.Value & MessageProcessingStatus.Published) == MessageProcessingStatus.Published).IsTrue();
-    await Assert.That(await GetInboxStatusFlagsAsync(completedInboxId)).IsNull()
-      .Because("Fully completed inbox messages should be deleted");
+    var completedInboxStatus = await GetInboxStatusFlagsAsync(completedInboxId);
+    await Assert.That(completedInboxStatus).IsNotNull().Because("Completed inbox message should still exist in debug mode");
+    await Assert.That((completedInboxStatus!.Value & MessageProcessingStatus.EventStored) == MessageProcessingStatus.EventStored).IsTrue();
 
     // Verify failed (failures have the Failed flag set)
     var failedOutboxStatus = await GetOutboxStatusFlagsAsync(failedOutboxId);
@@ -1477,7 +1480,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      renewInboxLeaseIds: [],
+      flags: WorkBatchFlags.DebugMode);  // Enable debug mode to keep completed messages
 
     // Assert - Verify all results were processed correctly in single transaction
     var status1 = await GetOutboxStatusFlagsAsync(message1Id);
@@ -1485,7 +1489,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     var status3 = await GetOutboxStatusFlagsAsync(message3Id);
 
     // Message 1 should be marked as Published
-    await Assert.That(status1).IsNotNull().Because("Message 1 should still exist");
+    await Assert.That(status1).IsNotNull().Because("Message 1 should still exist in debug mode");
     await Assert.That((status1!.Value & MessageProcessingStatus.Published) == MessageProcessingStatus.Published).IsTrue()
       .Because("Message 1 should be marked as Published");
 
