@@ -254,12 +254,12 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     }
 
     // Assert - Partial indexes exist
-    await Assert.That(partialIndexes).ContainsKey("idx_receptor_processing_status_failed");
+    await Assert.That(partialIndexes).ContainsKey("idx_receptor_processing_status");
     await Assert.That(partialIndexes).ContainsKey("idx_perspective_checkpoints_catching_up");
     await Assert.That(partialIndexes).ContainsKey("idx_perspective_checkpoints_failed");
 
     // Assert - Partial index definitions contain status checks
-    await Assert.That(partialIndexes["idx_receptor_processing_status_failed"]).Contains("WHERE");
+    await Assert.That(partialIndexes["idx_receptor_processing_status"]).Contains("WHERE");
     await Assert.That(partialIndexes["idx_perspective_checkpoints_catching_up"]).Contains("WHERE");
     await Assert.That(partialIndexes["idx_perspective_checkpoints_failed"]).Contains("WHERE");
   }
