@@ -159,6 +159,7 @@ public class ServiceCollectionExtensionsTests : IAsyncDisposable {
   public async Task AddWhizbangPostgresHealthChecks_RegistersHealthCheckAsync() {
     // Arrange
     var services = new ServiceCollection();
+    services.AddLogging();  // Health check service requires logging
 
     // Act
     services.AddWhizbangPostgresHealthChecks();
