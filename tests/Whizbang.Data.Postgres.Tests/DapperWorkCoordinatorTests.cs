@@ -130,12 +130,13 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      renewInboxLeaseIds: [],
+      flags: WorkBatchFlags.DebugMode);  // Keep completed messages in database for verification
 
     // Assert
     await Assert.That(result.OutboxWork).HasCount().EqualTo(0);
 
-    // Verify messages marked as Published
+    // Verify messages marked as Published in debug mode
     var status1 = await GetOutboxStatusAsync(messageId1);
     var status2 = await GetOutboxStatusAsync(messageId2);
     await Assert.That(status1).IsEqualTo("Published");
@@ -486,16 +487,17 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      renewInboxLeaseIds: [],
+      flags: WorkBatchFlags.DebugMode);  // Keep completed messages in database for verification
 
     // Assert
     await Assert.That(result.OutboxWork).HasCount().EqualTo(1);
     await Assert.That(result.InboxWork).HasCount().EqualTo(1);
 
-    // Verify completed
+    // Verify completed in debug mode
     await Assert.That(await GetOutboxStatusAsync(completedOutboxId)).IsEqualTo("Published");
     await Assert.That(await GetInboxStatusAsync(completedInboxId)).IsNull()
-      .Because("Fully completed inbox messages should be deleted");
+      .Because("Fully completed inbox messages should be deleted even in debug mode");
 
     // Verify failed
     await Assert.That(await GetOutboxStatusAsync(failedOutboxId)).IsEqualTo("Failed");
@@ -1327,9 +1329,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      renewInboxLeaseIds: [],
+      flags: WorkBatchFlags.DebugMode);  // Keep message in database for verification
 
-    // Verify status after first completion
+    // Verify status after first completion in debug mode
     var status1 = await GetOutboxStatusFlagsAsync(messageId);
     await Assert.That((status1 & MessageProcessingStatus.Stored) == MessageProcessingStatus.Stored).IsTrue()
       .Because("Status should include Stored flag");
@@ -1354,9 +1357,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: []);
+      renewInboxLeaseIds: [],
+      flags: WorkBatchFlags.DebugMode);  // Keep message in database for verification
 
-    // Assert - Status should accumulate (bitwise OR)
+    // Assert - Status should accumulate (bitwise OR) in debug mode
     var status2 = await GetOutboxStatusFlagsAsync(messageId);
     await Assert.That((status2 & MessageProcessingStatus.Stored) == MessageProcessingStatus.Stored).IsTrue()
       .Because("Status should retain Stored flag");
