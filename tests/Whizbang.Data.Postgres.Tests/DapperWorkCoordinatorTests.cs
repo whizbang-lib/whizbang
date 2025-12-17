@@ -1772,7 +1772,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     Guid? instanceId = null,
     DateTimeOffset? leaseExpiry = null,
     Guid? streamId = null,
-    bool isEvent = false) {
+    bool isEvent = false,
+    DateTimeOffset? scheduledFor = null) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
 
     // Map status string to MessageProcessingStatus flags
@@ -1805,12 +1806,13 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       INSERT INTO wh_outbox (
         message_id, destination, event_type, event_data, metadata, scope,
         status, attempts, error, created_at, published_at,
-        instance_id, lease_expiry, stream_id, partition_number
+        instance_id, lease_expiry, stream_id, partition_number, scheduled_for
       ) VALUES (
         @messageId, @destination, @envelopeType, @envelopeJson::jsonb, '{}'::jsonb, NULL,
         @statusFlags, 0, NULL, @now, NULL,
         @instanceId, @leaseExpiry, @streamId,
-        CASE WHEN @streamId IS NULL THEN NULL ELSE compute_partition(@streamId::uuid, 10000) END
+        CASE WHEN @streamId IS NULL THEN NULL ELSE compute_partition(@streamId::uuid, 10000) END,
+        @scheduledFor
       )",
       new {
         messageId,
@@ -1821,6 +1823,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         instanceId,
         leaseExpiry,
         streamId,
+        scheduledFor,
         now = DateTimeOffset.UtcNow
       });
   }
@@ -1882,7 +1885,8 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     Guid? instanceId = null,
     DateTimeOffset? leaseExpiry = null,
     Guid? streamId = null,
-    bool isEvent = false) {
+    bool isEvent = false,
+    DateTimeOffset? scheduledFor = null) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
 
     // Map status string to MessageProcessingStatus flags
@@ -1915,12 +1919,13 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       INSERT INTO wh_inbox (
         message_id, handler_name, event_type, event_data, metadata, scope,
         status, attempts, received_at, processed_at, instance_id, lease_expiry,
-        stream_id, partition_number
+        stream_id, partition_number, scheduled_for
       ) VALUES (
         @messageId, @handlerName, @envelopeType, @envelopeJson::jsonb, '{}'::jsonb, NULL,
         @statusFlags, 0, @now, NULL, @instanceId, @leaseExpiry,
         @streamId,
-        CASE WHEN @streamId IS NULL THEN NULL ELSE compute_partition(@streamId::uuid, 10000) END
+        CASE WHEN @streamId IS NULL THEN NULL ELSE compute_partition(@streamId::uuid, 10000) END,
+        @scheduledFor
       )",
       new {
         messageId,
@@ -1931,6 +1936,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         instanceId,
         leaseExpiry,
         streamId,
+        scheduledFor,
         now = DateTimeOffset.UtcNow
       });
   }
