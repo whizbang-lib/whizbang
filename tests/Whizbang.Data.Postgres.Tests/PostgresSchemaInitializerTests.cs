@@ -90,7 +90,7 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
       SELECT EXISTS (
         SELECT FROM information_schema.tables
         WHERE table_schema = 'public'
-        AND table_name = 'whizbang_event_store'
+        AND table_name = 'wh_event_store'
       );";
 
     var exists = await command.ExecuteScalarAsync();
@@ -125,7 +125,7 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
       SELECT EXISTS (
         SELECT FROM information_schema.tables
         WHERE table_schema = 'public'
-        AND table_name = 'whizbang_event_store'
+        AND table_name = 'wh_event_store'
       );";
     var infraExists = await infraCommand.ExecuteScalarAsync();
     await Assert.That((bool)infraExists!).IsTrue();
@@ -163,7 +163,7 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
       SELECT EXISTS (
         SELECT FROM information_schema.tables
         WHERE table_schema = 'public'
-        AND table_name = 'whizbang_event_store'
+        AND table_name = 'wh_event_store'
       );";
 
     var exists = await command.ExecuteScalarAsync();
@@ -191,7 +191,7 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
       SELECT EXISTS (
         SELECT FROM information_schema.tables
         WHERE table_schema = 'public'
-        AND table_name = 'whizbang_event_store'
+        AND table_name = 'wh_event_store'
       );";
 
     var exists = await command.ExecuteScalarAsync();
@@ -218,7 +218,7 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
       SELECT EXISTS (
         SELECT FROM information_schema.tables
         WHERE table_schema = 'public'
-        AND table_name = 'whizbang_event_store'
+        AND table_name = 'wh_event_store'
       );";
 
     var exists = await command.ExecuteScalarAsync();
@@ -253,7 +253,7 @@ public class PostgresSchemaInitializerTests : IAsyncDisposable {
       SELECT EXISTS (
         SELECT FROM information_schema.tables
         WHERE table_schema = 'public'
-        AND table_name = 'whizbang_event_store'
+        AND table_name = 'wh_event_store'
       );";
     var infraExists = await infraCommand.ExecuteScalarAsync();
     await Assert.That((bool)infraExists!).IsTrue();
