@@ -51,6 +51,10 @@ var angularUrl = builder.Configuration["services:ui:http:0"]
 // BEFORE AddAzureServiceBusTransport() calls JsonContextRegistry.CreateCombinedOptions()
 _ = typeof(ECommerce.Contracts.Commands.CreateProductCommand).Assembly;
 
+// Register combined JsonSerializerOptions in DI container for ServiceBusConsumerWorker
+// Must be registered AFTER forcing Contracts assembly to load (above)
+builder.Services.AddSingleton(Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
+
 // Register Azure Service Bus transport
 // Note: Transport creates JsonSerializerOptions from registry (now includes ECommerce.Contracts converters)
 builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
