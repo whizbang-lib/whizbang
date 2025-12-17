@@ -466,7 +466,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine($"  /// </summary>");
       sb.AppendLine($"  protected override void OnModelCreating(ModelBuilder modelBuilder) {{");
       sb.AppendLine($"    // Apply Whizbang-generated configurations");
-      sb.AppendLine($"    modelBuilder.ConfigureWhizbangInfrastructure();");
+      sb.AppendLine($"    modelBuilder.ConfigureWhizbang();");
       sb.AppendLine();
       sb.AppendLine($"    // Call user's extended configuration");
       sb.AppendLine($"    OnModelCreatingExtended(modelBuilder);");
