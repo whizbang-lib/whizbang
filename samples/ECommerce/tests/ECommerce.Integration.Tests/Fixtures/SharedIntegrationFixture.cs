@@ -178,8 +178,9 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       options.UseNpgsql(inventoryDataSource));
 
     // Register Whizbang with EFCore infrastructure
-    // Note: Module initializers in ECommerce.InventoryWorker assembly should run automatically.
-    // The .WithDriver.Postgres property getter will invoke the registered model registration callback.
+    // IMPORTANT: Explicitly call module initializer for test assemblies (may not run automatically)
+    ECommerce.InventoryWorker.Generated.GeneratedModelRegistration.Initialize();
+
     _ = builder.Services
       .AddWhizbang()
       .WithEFCore<ECommerce.InventoryWorker.InventoryDbContext>()
@@ -279,8 +280,9 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       options.UseNpgsql(bffDataSource));
 
     // Register Whizbang with EFCore infrastructure
-    // Note: Module initializers in ECommerce.BFF.API assembly should run automatically.
-    // The .WithDriver.Postgres property getter will invoke the registered model registration callback.
+    // IMPORTANT: Explicitly call module initializer for test assemblies (may not run automatically)
+    ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();
+
     _ = builder.Services
       .AddWhizbang()
       .WithEFCore<ECommerce.BFF.API.BffDbContext>()
