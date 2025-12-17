@@ -372,8 +372,9 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Waits for asynchronous event processing to complete.
   /// Gives the Service Bus consumer and perspectives time to process published events.
+  /// Default increased to 10 seconds to ensure reliable event processing in Docker containers.
   /// </summary>
-  public async Task WaitForEventProcessingAsync(int millisecondsDelay = 5000) {
+  public async Task WaitForEventProcessingAsync(int millisecondsDelay = 10000) {
     await Task.Delay(millisecondsDelay);
   }
 
@@ -391,13 +392,20 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     using (var scope = _inventoryHost!.Services.CreateScope()) {
       var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
-      // Truncate Whizbang core tables and all perspective tables
+      // Truncate Whizbang core tables, perspective tables, and checkpoints
       // CASCADE ensures all dependent data is cleared
       // Use DO block to gracefully handle case where tables don't exist
       await dbContext.Database.ExecuteSqlRawAsync(@"
         DO $$
         BEGIN
-          TRUNCATE TABLE wh_event_store, wh_outbox, wh_inbox CASCADE;
+          -- Truncate core infrastructure tables
+          TRUNCATE TABLE wh_event_store, wh_outbox, wh_inbox, wh_perspective_checkpoints, wh_receptor_processing CASCADE;
+
+          -- Truncate all perspective tables (pattern: wh_per_*)
+          -- This clears materialized views from both InventoryWorker and BFF
+          TRUNCATE TABLE wh_per_inventory_level_dto CASCADE;
+          TRUNCATE TABLE wh_per_order_read_model CASCADE;
+          TRUNCATE TABLE wh_per_product_dto CASCADE;
         EXCEPTION
           WHEN undefined_table THEN
             -- Tables don't exist, nothing to clean up

@@ -82,6 +82,7 @@ public class MessageSerializationTests {
   /// </summary>
   [Test]
   [RequiresUnreferencedCode("JSON serialization may require unreferenced code")]
+  [RequiresDynamicCode("JSON serialization may require dynamic code")]
   public async Task WhizbangIds_Serialize_AsNonEmptyStringsAsync() {
     // Arrange
     var orderId = OrderId.New();
@@ -111,6 +112,7 @@ public class MessageSerializationTests {
   /// </summary>
   [Test]
   [RequiresUnreferencedCode("JSON serialization may require unreferenced code")]
+  [RequiresDynamicCode("JSON serialization may require dynamic code")]
   public async Task MessageEnvelope_WithCreateProductCommand_SerializesWhizbangIdsCorrectlyAsync() {
     // Arrange - Create a real CreateProductCommand with ProductId (WhizbangId)
     var productId = ProductId.New();
@@ -154,7 +156,11 @@ public class MessageSerializationTests {
   /// </summary>
   [Test]
   [RequiresUnreferencedCode("JSON serialization may require unreferenced code")]
+  [RequiresDynamicCode("JSON serialization may require dynamic code")]
   public async Task MessageEnvelope_WithCreateOrderCommand_SerializesAllWhizbangIdsCorrectlyAsync() {
+    // Force ECommerce.Contracts assembly to load (ensures JSON converters are registered)
+    _ = typeof(CreateOrderCommand).Assembly;
+
     // Arrange - Create CreateOrderCommand with all three WhizbangId types
     var orderId = OrderId.New();
     var customerId = CustomerId.New();
