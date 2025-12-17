@@ -30,7 +30,7 @@ using Whizbang.Data.Schema;
 using Whizbang.Data.Dapper.Postgres.Schema;
 
 var config = new SchemaConfiguration("wh_", "wh_per_", "public", 1);
-var sql = PostgresSchemaBuilder.BuildInfrastructureSchema(config);
+var sql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(config);
 
 var outputPath = args[0];
 Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
@@ -69,7 +69,7 @@ using Whizbang.Data.Schema;
 using Whizbang.Data.Dapper.Postgres.Schema;
 
 var config = new SchemaConfiguration("wh_", "wh_per_", "public", 1);
-var sql = PostgresSchemaBuilder.BuildInfrastructureSchema(config);
+var sql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(config);
 
 var outputPath = args[0];
 Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);

@@ -6,8 +6,11 @@ namespace Whizbang.Data.Schema.Tests;
 
 /// <summary>
 /// Tests for SqliteSchemaBuilder - generates SQLite DDL from schema definitions.
+/// Inherits from ISchemaBuilderContractTests to ensure compliance with ISchemaBuilder interface.
 /// </summary>
-public class SqliteSchemaBuilderTests {
+public class SqliteSchemaBuilderTests : ISchemaBuilderContractTests {
+  protected override ISchemaBuilder CreateBuilder() => new SqliteSchemaBuilder();
+  protected override string ExpectedDatabaseEngine => "SQLite";
   [Test]
   public async Task BuildCreateTable_SimpleTable_GeneratesCreateStatementAsync() {
     // Arrange
@@ -20,7 +23,7 @@ public class SqliteSchemaBuilderTests {
     var config = new SchemaConfiguration();
 
     // Act
-    var sql = SqliteSchemaBuilder.BuildCreateTable(table, config.InfrastructurePrefix);
+    var sql = SqliteSchemaBuilder.Instance.BuildCreateTable(table, config.InfrastructurePrefix);
 
     // Assert
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wb_test_table");
@@ -41,7 +44,7 @@ public class SqliteSchemaBuilderTests {
     var config = new SchemaConfiguration();
 
     // Act
-    var sql = SqliteSchemaBuilder.BuildCreateTable(table, config.InfrastructurePrefix);
+    var sql = SqliteSchemaBuilder.Instance.BuildCreateTable(table, config.InfrastructurePrefix);
 
     // Assert
     await Assert.That(sql).Contains("id TEXT NOT NULL PRIMARY KEY");
@@ -67,7 +70,7 @@ public class SqliteSchemaBuilderTests {
     var config = new SchemaConfiguration();
 
     // Act
-    var sql = SqliteSchemaBuilder.BuildCreateTable(table, config.InfrastructurePrefix);
+    var sql = SqliteSchemaBuilder.Instance.BuildCreateTable(table, config.InfrastructurePrefix);
 
     // Assert
     await Assert.That(sql).Contains("created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP");
@@ -86,7 +89,7 @@ public class SqliteSchemaBuilderTests {
     var config = new SchemaConfiguration();
 
     // Act
-    var sql = SqliteSchemaBuilder.BuildCreateTable(table, config.InfrastructurePrefix);
+    var sql = SqliteSchemaBuilder.Instance.BuildCreateTable(table, config.InfrastructurePrefix);
 
     // Assert
     await Assert.That(sql).Contains("email TEXT NOT NULL UNIQUE");
@@ -104,7 +107,7 @@ public class SqliteSchemaBuilderTests {
     var config = new SchemaConfiguration();
 
     // Act
-    var sql = SqliteSchemaBuilder.BuildCreateTable(table, config.PerspectivePrefix);
+    var sql = SqliteSchemaBuilder.Instance.BuildCreateTable(table, config.PerspectivePrefix);
 
     // Assert
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wb_per_product_dto");
@@ -121,7 +124,7 @@ public class SqliteSchemaBuilderTests {
     var prefix = "wb_";
 
     // Act
-    var sql = SqliteSchemaBuilder.BuildCreateIndex(index, tableName, prefix);
+    var sql = SqliteSchemaBuilder.Instance.BuildCreateIndex(index, tableName, prefix);
 
     // Assert
     await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_users_email");
@@ -139,7 +142,7 @@ public class SqliteSchemaBuilderTests {
     var prefix = "wb_";
 
     // Act
-    var sql = SqliteSchemaBuilder.BuildCreateIndex(index, tableName, prefix);
+    var sql = SqliteSchemaBuilder.Instance.BuildCreateIndex(index, tableName, prefix);
 
     // Assert
     await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_events_type_created");
@@ -158,7 +161,7 @@ public class SqliteSchemaBuilderTests {
     var prefix = "wb_";
 
     // Act
-    var sql = SqliteSchemaBuilder.BuildCreateIndex(index, tableName, prefix);
+    var sql = SqliteSchemaBuilder.Instance.BuildCreateIndex(index, tableName, prefix);
 
     // Assert
     await Assert.That(sql).Contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_aggregate_version");
@@ -171,7 +174,7 @@ public class SqliteSchemaBuilderTests {
     var config = new SchemaConfiguration();
 
     // Act
-    var sql = SqliteSchemaBuilder.BuildInfrastructureSchema(config);
+    var sql = SqliteSchemaBuilder.Instance.BuildInfrastructureSchema(config);
 
     // Assert
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wb_inbox");
@@ -187,7 +190,7 @@ public class SqliteSchemaBuilderTests {
     var config = new SchemaConfiguration();
 
     // Act
-    var sql = SqliteSchemaBuilder.BuildInfrastructureSchema(config);
+    var sql = SqliteSchemaBuilder.Instance.BuildInfrastructureSchema(config);
 
     // Assert
     // Inbox indexes
@@ -215,7 +218,7 @@ public class SqliteSchemaBuilderTests {
     var config = new SchemaConfiguration();
 
     // Act
-    var sql = SqliteSchemaBuilder.BuildInfrastructureSchema(config);
+    var sql = SqliteSchemaBuilder.Instance.BuildInfrastructureSchema(config);
 
     // Assert
     await Assert.That(sql).Contains("message_id TEXT NOT NULL PRIMARY KEY");
@@ -233,7 +236,7 @@ public class SqliteSchemaBuilderTests {
     var config = new SchemaConfiguration();
 
     // Act
-    var sql = SqliteSchemaBuilder.BuildInfrastructureSchema(config);
+    var sql = SqliteSchemaBuilder.Instance.BuildInfrastructureSchema(config);
 
     // Assert
     await Assert.That(sql).Contains("status TEXT NOT NULL DEFAULT 'Pending'");
@@ -246,7 +249,7 @@ public class SqliteSchemaBuilderTests {
     var config = new SchemaConfiguration();
 
     // Act
-    var sql = SqliteSchemaBuilder.BuildInfrastructureSchema(config);
+    var sql = SqliteSchemaBuilder.Instance.BuildInfrastructureSchema(config);
 
     // Assert
     await Assert.That(sql).Contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_event_store_aggregate");
@@ -259,7 +262,7 @@ public class SqliteSchemaBuilderTests {
     var config = new SchemaConfiguration(InfrastructurePrefix: "custom_");
 
     // Act
-    var sql = SqliteSchemaBuilder.BuildInfrastructureSchema(config);
+    var sql = SqliteSchemaBuilder.Instance.BuildInfrastructureSchema(config);
 
     // Assert
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS custom_inbox");

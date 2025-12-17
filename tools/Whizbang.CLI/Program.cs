@@ -97,8 +97,8 @@ async Task<int> GenerateSchemaAsync(string[] commandArgs) {
 
   // Generate schema
   var sql = database switch {
-    "postgres" => PostgresSchemaBuilder.BuildInfrastructureSchema(config),
-    "sqlite" => SqliteSchemaBuilder.BuildInfrastructureSchema(config),
+    "postgres" => PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(config),
+    "sqlite" => SqliteSchemaBuilder.Instance.BuildInfrastructureSchema(config),
     _ => throw new InvalidOperationException($"Unsupported database: {database}")
   };
 

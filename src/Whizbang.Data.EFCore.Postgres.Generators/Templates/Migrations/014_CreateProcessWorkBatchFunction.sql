@@ -5,13 +5,14 @@
 -- Updated: 2025-12-15 - Fix NULL metadata constraint (COALESCE empty Hops array)
 -- Updated: 2025-12-16 - Add scheduled_for support for retries with exponential backoff and stream ordering protection
 -- Updated: 2025-12-17 - Fix partition claiming for new messages (allow stealing from stale instances)
+-- Updated: 2025-12-17 - Replace partition assignments table with virtual (hash-based) partition distribution
 -- Description: Single SQL function that handles all work coordination operations:
 --              - Register/update instance with real metadata
 --              - Clean up stale instances (expired heartbeats)
 --              - Mark completed/failed messages (outbox and inbox separately)
---              - Claim orphaned work (expired leases)
+--              - Claim orphaned work (expired leases) using consistent hashing on UUIDv7 stream_id/instance_id
 --              - Return orphaned work to process
---              - Partition-based stream ordering with fair work distribution
+--              - Virtual partition-based stream ordering with fair work distribution
 --              - Event store integration for events
 --              - Granular status tracking with MessageProcessingStatus flags
 --              This minimizes database round-trips and ensures atomic operations
@@ -168,10 +169,7 @@ BEGIN
     v_dynamic_max_partitions := v_fair_share;
   END IF;
 
-  -- 3. Update heartbeat for already-owned partitions
-  UPDATE wh_partition_assignments
-  SET last_heartbeat = v_now
-  WHERE instance_id = p_instance_id;
+  -- 3. Partition heartbeat update removed - partitions are virtual (algorithmic)
 
   -- 4. Process completions (with status pairing)
   RAISE NOTICE '=== SECTION 4: PROCESS COMPLETIONS ===';
@@ -502,100 +500,53 @@ BEGIN
     END LOOP;
   END IF;
 
-  -- 7.25. Claim partitions for newly stored messages
-  -- Ensure the instance owns the partitions of newly created messages
-  -- Uses ON CONFLICT DO UPDATE to allow stealing partitions from stale instances
-  INSERT INTO wh_partition_assignments (partition_number, instance_id, assigned_at, last_heartbeat)
-  SELECT DISTINCT o.partition_number, p_instance_id, v_now, v_now
-  FROM wh_outbox o
-  WHERE o.instance_id = p_instance_id
-    AND o.partition_number NOT IN (SELECT wh_partition_assignments.partition_number FROM wh_partition_assignments WHERE wh_partition_assignments.instance_id = p_instance_id)
-  LIMIT v_dynamic_max_partitions - (SELECT COUNT(*) FROM wh_partition_assignments WHERE wh_partition_assignments.instance_id = p_instance_id)
-  ON CONFLICT (partition_number) DO UPDATE SET
-    instance_id = EXCLUDED.instance_id,
-    assigned_at = EXCLUDED.assigned_at,
-    last_heartbeat = EXCLUDED.last_heartbeat
-  WHERE wh_partition_assignments.instance_id = p_instance_id
-     OR wh_partition_assignments.instance_id NOT IN (
-       SELECT instance_id FROM wh_service_instances WHERE last_heartbeat_at >= v_stale_cutoff
-     );
-
-  INSERT INTO wh_partition_assignments (partition_number, instance_id, assigned_at, last_heartbeat)
-  SELECT DISTINCT i.partition_number, p_instance_id, v_now, v_now
-  FROM wh_inbox i
-  WHERE i.instance_id = p_instance_id
-    AND i.partition_number NOT IN (SELECT wh_partition_assignments.partition_number FROM wh_partition_assignments WHERE wh_partition_assignments.instance_id = p_instance_id)
-  LIMIT v_dynamic_max_partitions - (SELECT COUNT(*) FROM wh_partition_assignments WHERE wh_partition_assignments.instance_id = p_instance_id)
-  ON CONFLICT (partition_number) DO UPDATE SET
-    instance_id = EXCLUDED.instance_id,
-    assigned_at = EXCLUDED.assigned_at,
-    last_heartbeat = EXCLUDED.last_heartbeat
-  WHERE wh_partition_assignments.instance_id = p_instance_id
-     OR wh_partition_assignments.instance_id NOT IN (
-       SELECT instance_id FROM wh_service_instances WHERE last_heartbeat_at >= v_stale_cutoff
-     );
-
-  -- 7.4. Claim partitions for orphaned/unleased messages (with load balancing)
-  -- Prioritizes claiming partitions that have actual work (orphaned messages)
-  -- Respects v_dynamic_max_partitions limit for fair distribution across instances
-  WITH orphaned_partitions AS (
-    -- Find all partitions with orphaned/unleased work
-    SELECT DISTINCT wh_outbox.partition_number
-    FROM wh_outbox
-    WHERE (wh_outbox.instance_id IS NULL OR wh_outbox.lease_expiry IS NULL OR wh_outbox.lease_expiry < v_now)
-      AND (wh_outbox.status & 32768) = 0  -- Not failed
-      AND (wh_outbox.status & 4) != 4     -- Not published (outbox is done when published)
-      AND wh_outbox.partition_number IS NOT NULL
-    UNION
-    SELECT DISTINCT wh_inbox.partition_number
-    FROM wh_inbox
-    WHERE (wh_inbox.instance_id IS NULL OR wh_inbox.lease_expiry IS NULL OR wh_inbox.lease_expiry < v_now)
-      AND (wh_inbox.status & 32768) = 0  -- Not failed
-      AND (wh_inbox.status & 2) != 2     -- Not event stored (inbox is done when event stored)
-      AND wh_inbox.partition_number IS NOT NULL
-  ),
-  available_orphaned_partitions AS (
-    -- Only claim partitions not already owned by this instance or other active instances
-    SELECT op.partition_number
-    FROM orphaned_partitions op
-    LEFT JOIN wh_partition_assignments pa ON op.partition_number = pa.partition_number
-    WHERE pa.partition_number IS NULL  -- Unassigned
-       OR pa.instance_id = p_instance_id  -- Already owned by this instance
-       OR pa.instance_id NOT IN (  -- Owned by stale instance
-         SELECT instance_id FROM wh_service_instances WHERE last_heartbeat_at >= v_stale_cutoff
-       )
-  ),
-  active_instances AS (
-    -- Get all active instances sorted deterministically for modulo-based distribution
-    SELECT
-      instance_id,
-      ROW_NUMBER() OVER (ORDER BY instance_id) - 1 AS instance_index  -- 0-based index
-    FROM wh_service_instances
-    WHERE last_heartbeat_at >= v_stale_cutoff
-  ),
-  partitions_to_claim AS (
-    -- Use modulo-based distribution: partition_number % instance_count = instance_index
-    SELECT
-      aop.partition_number
-    FROM available_orphaned_partitions aop
-    CROSS JOIN active_instances ai
-    WHERE ai.instance_id = p_instance_id
-      AND (aop.partition_number % v_active_instance_count) = ai.instance_index
-    LIMIT v_dynamic_max_partitions - (
-      SELECT COUNT(*) FROM wh_partition_assignments WHERE wh_partition_assignments.instance_id = p_instance_id
-    )
-  )
-  INSERT INTO wh_partition_assignments (partition_number, instance_id, assigned_at, last_heartbeat)
-  SELECT partition_number, p_instance_id, v_now, v_now
-  FROM partitions_to_claim
-  ON CONFLICT (partition_number) DO UPDATE SET
-    instance_id = EXCLUDED.instance_id,
-    assigned_at = EXCLUDED.assigned_at,
-    last_heartbeat = EXCLUDED.last_heartbeat
-  WHERE wh_partition_assignments.instance_id = p_instance_id
-     OR wh_partition_assignments.instance_id NOT IN (
-       SELECT instance_id FROM wh_service_instances WHERE last_heartbeat_at >= v_stale_cutoff
-     );
+  -- 7.25. Virtual Partition Assignment & Stream Ordering Guarantees
+  -- <docs>messaging/work-coordination</docs>
+  --
+  -- VIRTUAL PARTITION ARCHITECTURE:
+  -- 1. Partition numbers ARE computed and stored on messages via compute_partition(stream_id, partition_count)
+  --    - Uses: abs(hashtext(stream_id::TEXT)) % partition_count
+  --    - Ensures same stream_id always maps to same partition number
+  --
+  -- 2. Instance ownership calculated via consistent hashing on UUIDs (both UUIDv7):
+  --    - (hashtext(stream_id::TEXT) % active_instance_count) = (hashtext(instance_id::TEXT) % active_instance_count)
+  --    - Self-contained: depends only on UUID properties, NOT database query state
+  --    - Deterministic: same UUIDs always produce same result
+  --
+  -- 3. No wh_partition_assignments table needed - assignment is purely algorithmic
+  --
+  -- INSTANCE JOINING/LEAVING BEHAVIOR:
+  -- When instances join or leave, active_instance_count changes, causing hash distribution to shift.
+  -- We assign instance_id to each record to preserve its original assignment. This prevents:
+  --   - Messages being stolen mid-processing when new instances arrive
+  --   - Duplicate processing during instance transitions
+  --
+  -- STREAM ORDERING GUARANTEES (lines 675-684 outbox, 723-732 inbox):
+  -- Critical invariant: Messages from the same stream MUST be processed in time order.
+  --
+  -- NOT EXISTS clauses enforce:
+  --   1. Cannot claim message if earlier message in stream is scheduled for future retry
+  --   2. Cannot claim message if earlier message in stream is currently being processed (even on different instance)
+  --   3. Earlier messages MUST complete before later messages can be claimed
+  --
+  -- INSTANCE TRANSITION SCENARIO:
+  -- If stream changes instances (hash redistribution when instances join/leave) but both instances still active:
+  --   - Records are split across instances based on created_at/received_at timestamps
+  --   - Earlier records (created first) remain on original instance with assigned instance_id
+  --   - Later records (created after redistribution) get new instance assignment
+  --   - NOT EXISTS protection ensures earlier records MUST complete before later records are claimed
+  --   - Guarantees: time-ordered processing, single-processing (no duplicates)
+  --
+  -- Example:
+  --   Stream A: Msg1(t=10, instance=I1) -> Msg2(t=20, instance=I1) -> [instance I2 joins] -> Msg3(t=30, instance=I2)
+  --   Processing order enforced: Msg1 completes on I1, then Msg2 completes on I1, THEN Msg3 can be claimed by I2
+  --
+  -- BENEFITS:
+  -- - Fair load distribution across instances
+  -- - Automatic rebalancing when instances join/leave
+  -- - Strong stream ordering guarantees
+  -- - Single-processing guarantee (exactly-once within lease boundaries)
+  -- - Self-contained assignment (no external state dependencies)
 
   -- 7.5. Event Store Integration (Phase 7)
   -- Atomically persist events from both inbox and outbox to event store
@@ -740,26 +691,29 @@ BEGIN
   RAISE NOTICE 'Messages that WOULD be claimed (before NOT EXISTS check): %', (
     SELECT array_agg(wh_outbox.message_id)
     FROM wh_outbox
-    WHERE wh_outbox.partition_number IN (
-      SELECT wh_partition_assignments.partition_number FROM wh_partition_assignments WHERE wh_partition_assignments.instance_id = p_instance_id
-    )
-    AND (wh_outbox.instance_id IS NULL OR wh_outbox.lease_expiry IS NULL OR wh_outbox.lease_expiry < v_now)
+    WHERE (wh_outbox.instance_id IS NULL OR wh_outbox.lease_expiry IS NULL OR wh_outbox.lease_expiry < v_now)
     AND (wh_outbox.status & 32768) = 0  -- Not failed
     AND (wh_outbox.status & 4) != 4     -- Not published (prevents reclaiming completed messages)
     AND (wh_outbox.status & 24) != 24   -- Not fully completed
   );
 
-  WITH orphaned AS (
+  WITH active_instances AS (
+    -- Get all active instances sorted deterministically for hash-based distribution
+    SELECT instance_id
+    FROM wh_service_instances
+    WHERE last_heartbeat_at >= v_stale_cutoff
+  ),
+  orphaned AS (
     UPDATE wh_outbox
     SET instance_id = p_instance_id,
         lease_expiry = v_lease_expiry
-    WHERE wh_outbox.partition_number IN (
-      SELECT wh_partition_assignments.partition_number FROM wh_partition_assignments WHERE wh_partition_assignments.instance_id = p_instance_id
-    )
-    AND (wh_outbox.instance_id IS NULL OR wh_outbox.lease_expiry IS NULL OR wh_outbox.lease_expiry < v_now)
+    WHERE (wh_outbox.instance_id IS NULL OR wh_outbox.lease_expiry IS NULL OR wh_outbox.lease_expiry < v_now)
     -- REMOVED: AND (wh_outbox.status & 32768) = 0  -- Now allow failed messages to retry
     AND (wh_outbox.status & 4) != 4     -- Not published (outbox is done when published)
     AND (wh_outbox.scheduled_for IS NULL OR wh_outbox.scheduled_for <= v_now)  -- NEW: Check scheduled time
+    -- Virtual partition claiming: Use consistent hashing based on stream_id and instance_id (both UUIDv7)
+    -- Hash both UUIDs and take modulo to determine ownership
+    AND (hashtext(wh_outbox.stream_id::TEXT) % v_active_instance_count) = (hashtext(p_instance_id::TEXT) % v_active_instance_count)
     AND NOT EXISTS (  -- CRITICAL: Stream ordering protection - don't claim if earlier message is scheduled or processing
       SELECT 1 FROM wh_outbox earlier
       WHERE earlier.stream_id = wh_outbox.stream_id
@@ -791,17 +745,23 @@ BEGIN
 
   -- Claim orphaned inbox messages and track them in array
   -- Exclude messages that were just completed/failed in this call by checking JSONB parameters directly
-  WITH orphaned AS (
+  WITH active_instances AS (
+    -- Get all active instances sorted deterministically for hash-based distribution
+    SELECT instance_id
+    FROM wh_service_instances
+    WHERE last_heartbeat_at >= v_stale_cutoff
+  ),
+  orphaned AS (
     UPDATE wh_inbox
     SET instance_id = p_instance_id,
         lease_expiry = v_lease_expiry
-    WHERE wh_inbox.partition_number IN (
-      SELECT wh_partition_assignments.partition_number FROM wh_partition_assignments WHERE wh_partition_assignments.instance_id = p_instance_id
-    )
-    AND (wh_inbox.instance_id IS NULL OR wh_inbox.lease_expiry IS NULL OR wh_inbox.lease_expiry < v_now)
+    WHERE (wh_inbox.instance_id IS NULL OR wh_inbox.lease_expiry IS NULL OR wh_inbox.lease_expiry < v_now)
     -- REMOVED: AND (wh_inbox.status & 32768) = 0  -- Now allow failed messages to retry
     AND (wh_inbox.status & 2) != 2     -- Not event stored (inbox is done when event stored)
     AND (wh_inbox.scheduled_for IS NULL OR wh_inbox.scheduled_for <= v_now)  -- NEW: Check scheduled time
+    -- Virtual partition claiming: Use consistent hashing based on stream_id and instance_id (both UUIDv7)
+    -- Hash both UUIDs and take modulo to determine ownership
+    AND (hashtext(wh_inbox.stream_id::TEXT) % v_active_instance_count) = (hashtext(p_instance_id::TEXT) % v_active_instance_count)
     AND NOT EXISTS (  -- CRITICAL: Stream ordering protection - don't claim if earlier message is scheduled or processing
       SELECT 1 FROM wh_inbox earlier
       WHERE earlier.stream_id = wh_inbox.stream_id
@@ -838,11 +798,6 @@ BEGIN
   RAISE NOTICE 'About to return outbox work. v_new_outbox_ids: %, v_orphaned_outbox_ids: %', v_new_outbox_ids, v_orphaned_outbox_ids;
 
   RETURN QUERY
-  WITH owned_partitions AS (
-    SELECT pa.partition_number AS part_num
-    FROM wh_partition_assignments pa
-    WHERE pa.instance_id = p_instance_id
-  )
   SELECT
     'outbox'::VARCHAR AS source,
     o.message_id AS msg_id,
@@ -861,7 +816,6 @@ BEGIN
     END::INTEGER AS flags,
     EXTRACT(EPOCH FROM o.created_at)::BIGINT * 1000 AS sequence_order  -- Epoch ms
   FROM wh_outbox o
-  INNER JOIN owned_partitions op ON o.partition_number = op.part_num
   WHERE o.instance_id = p_instance_id
     AND o.lease_expiry > v_now
     AND (o.status & 32768) = 0  -- Not failed
@@ -870,11 +824,6 @@ BEGIN
   ORDER BY o.stream_id, o.created_at;  -- CRITICAL: Stream ordering
 
   RETURN QUERY
-  WITH owned_partitions AS (
-    SELECT pa.partition_number AS part_num
-    FROM wh_partition_assignments pa
-    WHERE pa.instance_id = p_instance_id
-  )
   SELECT
     'inbox'::VARCHAR AS source,
     i.message_id AS msg_id,
@@ -893,7 +842,6 @@ BEGIN
     END::INTEGER AS flags,
     EXTRACT(EPOCH FROM i.received_at)::BIGINT * 1000 AS sequence_order
   FROM wh_inbox i
-  INNER JOIN owned_partitions op ON i.partition_number = op.part_num
   WHERE i.instance_id = p_instance_id
     AND i.lease_expiry > v_now
     AND (i.status & 32768) = 0  -- Not failed

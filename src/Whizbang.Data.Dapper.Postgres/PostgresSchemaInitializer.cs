@@ -37,7 +37,7 @@ public sealed class PostgresSchemaInitializer {
       InfrastructurePrefix: "wh_",
       PerspectivePrefix: "wh_per_"
     );
-    var schemaSql = PostgresSchemaBuilder.BuildInfrastructureSchema(schemaConfig);
+    var schemaSql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(schemaConfig);
 
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
@@ -67,7 +67,7 @@ public sealed class PostgresSchemaInitializer {
       InfrastructurePrefix: "wh_",
       PerspectivePrefix: "wh_per_"
     );
-    var schemaSql = PostgresSchemaBuilder.BuildInfrastructureSchema(schemaConfig);
+    var schemaSql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(schemaConfig);
 
     using var connection = new NpgsqlConnection(_connectionString);
     connection.Open();

@@ -94,7 +94,7 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       InfrastructurePrefix: "wh_",
       PerspectivePrefix: "wh_per_"
     );
-    var schemaSql = PostgresSchemaBuilder.BuildInfrastructureSchema(schemaConfig);
+    var schemaSql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(schemaConfig);
 
     using var schemaCommand = (NpgsqlCommand)connection.CreateCommand();
     schemaCommand.CommandText = schemaSql;

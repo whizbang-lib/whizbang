@@ -434,6 +434,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine("using Microsoft.EntityFrameworkCore;");
       sb.AppendLine("using Whizbang.Core.Lenses;");
       sb.AppendLine("using Whizbang.Data.EFCore.Postgres.Generated;");
+      sb.AppendLine("using Whizbang.Data.EFCore.Postgres.Configuration;");
       sb.AppendLine();
 
       sb.AppendLine($"namespace {dbContext.Namespace};");
@@ -465,7 +466,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine($"  /// </summary>");
       sb.AppendLine($"  protected override void OnModelCreating(ModelBuilder modelBuilder) {{");
       sb.AppendLine($"    // Apply Whizbang-generated configurations");
-      sb.AppendLine($"    modelBuilder.ConfigureWhizbang();");
+      sb.AppendLine($"    modelBuilder.ConfigureWhizbangInfrastructure();");
       sb.AppendLine();
       sb.AppendLine($"    // Call user's extended configuration");
       sb.AppendLine($"    OnModelCreatingExtended(modelBuilder);");

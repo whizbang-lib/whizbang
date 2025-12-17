@@ -4,11 +4,20 @@ using Whizbang.Core.Observability;
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
-/// Coordinates work processing across multiple service instances using lease-based coordination.
+/// Coordinates work processing across multiple service instances using virtual partition assignment with consistent hashing.
 /// Provides atomic operations for heartbeat updates, message completion tracking,
 /// event store integration, and orphaned work recovery.
+/// Uses hash-based distribution on UUIDv7 identifiers - no partition assignments table required.
 /// </summary>
-/// <docs>messaging/work-coordinator</docs>
+/// <docs>messaging/work-coordination</docs>
+/// <remarks>
+/// Virtual Partition Architecture:
+/// - Partition numbers computed via: abs(hashtext(stream_id::TEXT)) % partition_count
+/// - Instance ownership calculated via: hashtext(stream_id::TEXT) % active_instance_count = hashtext(instance_id::TEXT) % active_instance_count
+/// - Self-contained: depends only on UUID properties, not database state
+/// - Automatic rebalancing when instances join/leave
+/// - Strong stream ordering guarantees via NOT EXISTS clauses
+/// </remarks>
 public interface IWorkCoordinator {
   /// <summary>
   /// Processes a batch of work in a single atomic operation:
@@ -18,7 +27,7 @@ public interface IWorkCoordinator {
   /// - Stores new inbox messages (deduplication + event store)
   /// - Reports completions with granular status tracking (outbox, inbox, receptors, perspectives)
   /// - Reports failures with partial completion tracking (outbox, inbox, receptors, perspectives)
-  /// - Claims partitions and returns work for this instance
+  /// - Claims work using hash-based virtual partition assignment and returns work for this instance
   ///
   /// Event store integration:
   /// - Receptors: Process individual events (many receptors can process the same event)

@@ -203,7 +203,7 @@ public class DapperPostgresEventStoreRetryTests {
       InfrastructurePrefix: "wh_",
       PerspectivePrefix: "wh_per_"
     );
-    var schemaSql = PostgresSchemaBuilder.BuildInfrastructureSchema(schemaConfig);
+    var schemaSql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(schemaConfig);
     await _testBase.Executor.ExecuteAsync(connection, schemaSql, new { });
   }
 

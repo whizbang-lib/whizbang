@@ -5,6 +5,10 @@ using Whizbang.Data.Schema.Schemas;
 namespace Whizbang.Data.Dapper.Postgres.Schema;
 
 /// <summary>
+/// Builds Postgres DDL (Data Definition Language) from database-agnostic schema definitions.
+/// Generates CREATE TABLE and CREATE INDEX statements with proper Postgres syntax.
+/// </summary>
+/// <docs>data-access/schema-generation-pattern</docs>
 /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_SimpleTable_GeneratesCreateStatementAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_WithMultipleColumns_GeneratesAllColumnsAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_WithDefaultValue_GeneratesDefaultClauseAsync</tests>
@@ -19,10 +23,14 @@ namespace Whizbang.Data.Dapper.Postgres.Schema;
 /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildInfrastructureSchema_OutboxTable_HasCorrectDefaultsAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildInfrastructureSchema_EventStoreTable_HasUniqueConstraintAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildInfrastructureSchema_CustomPrefix_UsesCustomPrefixAsync</tests>
-/// Builds Postgres DDL (Data Definition Language) from database-agnostic schema definitions.
-/// Generates CREATE TABLE and CREATE INDEX statements with proper Postgres syntax.
-/// </summary>
-public static class PostgresSchemaBuilder {
+public class PostgresSchemaBuilder : ISchemaBuilder {
+  /// <inheritdoc />
+  public string DatabaseEngine => "Postgres";
+
+  /// <summary>
+  /// Singleton instance for easy static access (backward compatibility).
+  /// </summary>
+  public static readonly PostgresSchemaBuilder Instance = new();
   /// <summary>
   /// Builds a CREATE TABLE statement for a single table definition.
   /// </summary>
@@ -34,7 +42,7 @@ public static class PostgresSchemaBuilder {
   /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_WithDefaultValue_GeneratesDefaultClauseAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_WithUniqueColumn_GeneratesUniqueConstraintAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_PerspectivePrefix_UsesPerspectivePrefixAsync</tests>
-  public static string BuildCreateTable(TableDefinition table, string prefix) {
+  public string BuildCreateTable(TableDefinition table, string prefix) {
     var sb = new StringBuilder();
     var tableName = $"{prefix}{table.Name}";
 
@@ -108,7 +116,7 @@ public static class PostgresSchemaBuilder {
   /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateIndex_SimpleIndex_GeneratesCreateIndexAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateIndex_CompositeIndex_GeneratesMultiColumnIndexAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateIndex_UniqueIndex_GeneratesUniqueIndexAsync</tests>
-  public static string BuildCreateIndex(IndexDefinition index, string tableName, string prefix) {
+  public string BuildCreateIndex(IndexDefinition index, string tableName, string prefix) {
     var fullTableName = $"{prefix}{tableName}";
     var unique = index.Unique ? "UNIQUE " : "";
     var columns = string.Join(", ", index.Columns);
@@ -123,7 +131,7 @@ public static class PostgresSchemaBuilder {
   /// <param name="sequence">Sequence definition to convert to SQL</param>
   /// <param name="prefix">Sequence name prefix (e.g., "wh_")</param>
   /// <returns>Complete CREATE SEQUENCE statement</returns>
-  public static string BuildCreateSequence(SequenceDefinition sequence, string prefix) {
+  public string BuildCreateSequence(SequenceDefinition sequence, string prefix) {
     var sequenceName = $"{prefix}{sequence.Name}";
     return $"CREATE SEQUENCE IF NOT EXISTS {sequenceName} START WITH {sequence.StartValue} INCREMENT BY {sequence.IncrementBy};";
   }
@@ -140,7 +148,7 @@ public static class PostgresSchemaBuilder {
   /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildInfrastructureSchema_OutboxTable_HasCorrectDefaultsAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildInfrastructureSchema_EventStoreTable_HasUniqueConstraintAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildInfrastructureSchema_CustomPrefix_UsesCustomPrefixAsync</tests>
-  public static string BuildInfrastructureSchema(SchemaConfiguration config) {
+  public string BuildInfrastructureSchema(SchemaConfiguration config) {
     var sb = new StringBuilder();
 
     sb.AppendLine("-- Whizbang Infrastructure Schema for Postgres");
@@ -185,6 +193,25 @@ public static class PostgresSchemaBuilder {
       sb.AppendLine(BuildCreateSequence(sequence, config.InfrastructurePrefix));
       sb.AppendLine();
     }
+
+    return sb.ToString();
+  }
+
+  /// <summary>
+  /// Builds a CREATE TABLE statement for a perspective table.
+  /// Perspectives have fixed schema: stream_id (UUID PK), data (JSONB), version (BIGINT), updated_at (TIMESTAMPTZ).
+  /// </summary>
+  /// <param name="tableName">Full table name with prefix (e.g., "wh_per_product_dto")</param>
+  /// <returns>Complete CREATE TABLE statement for perspective table</returns>
+  public string BuildPerspectiveTable(string tableName) {
+    var sb = new StringBuilder();
+
+    sb.AppendLine($"CREATE TABLE IF NOT EXISTS {tableName} (");
+    sb.AppendLine("  stream_id UUID NOT NULL PRIMARY KEY,");
+    sb.AppendLine("  data JSONB NOT NULL,");
+    sb.AppendLine("  version BIGINT NOT NULL,");
+    sb.AppendLine("  updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP");
+    sb.AppendLine(");");
 
     return sb.ToString();
   }

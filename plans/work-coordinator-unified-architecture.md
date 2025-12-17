@@ -220,25 +220,37 @@ instance_id UUID                  -- Lease owner
 lease_expiry TIMESTAMPTZ          -- Lease timeout
 ```
 
-### Partition Assignment
+### Virtual Partition Assignment (Hash-Based)
 
-```sql
--- Consistent hashing: ensures same stream → same partition → same instance
-partition_number = abs(hashtext(stream_id::text)) % partition_count
-```
+**Architecture**: No partition assignments table - purely algorithmic distribution using consistent hashing on UUIDv7 identifiers.
 
-### Lease-Based Distribution
+**How It Works**:
 
-```sql
--- Claim partitions (max 100 per instance)
-UPDATE inbox
-SET instance_id = p_instance_id, lease_expiry = NOW() + p_lease_seconds
-WHERE partition_number IN (
-  SELECT DISTINCT partition_number
-  FROM available_partitions
-  LIMIT p_max_partitions_per_instance
-)
-```
+1. **Partition Computation** (per message):
+   ```sql
+   partition_number = abs(hashtext(stream_id::TEXT)) % partition_count
+   ```
+   - Same `stream_id` always maps to same partition number
+   - Default: 10,000 partitions
+
+2. **Instance Ownership** (per claim attempt):
+   ```sql
+   (hashtext(stream_id::TEXT) % active_instance_count) = (hashtext(instance_id::TEXT) % active_instance_count)
+   ```
+   - Both `stream_id` and `instance_id` are UUIDv7 (time-ordered)
+   - Self-contained: depends only on UUID properties
+   - Deterministic: same UUIDs always produce same result
+
+3. **Instance Assignment Preservation**:
+   - Each record stores `instance_id` when claimed
+   - Preserves assignment even when `active_instance_count` changes
+   - Prevents stealing messages mid-processing
+
+**Benefits**:
+- No database table for partition assignments
+- Automatic rebalancing when instances join/leave
+- Fair distribution across instances
+- Self-contained assignment logic
 
 ## Status Tracking (Bitwise Flags)
 

@@ -6,8 +6,11 @@ namespace Whizbang.Data.Schema.Tests;
 
 /// <summary>
 /// Tests for PostgresSchemaBuilder - generates Postgres DDL from schema definitions.
+/// Inherits from ISchemaBuilderContractTests to ensure compliance with ISchemaBuilder interface.
 /// </summary>
-public class PostgresSchemaBuilderTests {
+public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
+  protected override ISchemaBuilder CreateBuilder() => new PostgresSchemaBuilder();
+  protected override string ExpectedDatabaseEngine => "Postgres";
   [Test]
   public async Task BuildCreateTable_SimpleTable_GeneratesCreateStatementAsync() {
     // Arrange
@@ -20,7 +23,7 @@ public class PostgresSchemaBuilderTests {
     var config = new SchemaConfiguration();
 
     // Act
-    var sql = PostgresSchemaBuilder.BuildCreateTable(table, config.InfrastructurePrefix);
+    var sql = PostgresSchemaBuilder.Instance.BuildCreateTable(table, config.InfrastructurePrefix);
 
     // Assert
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wb_test_table");
@@ -41,7 +44,7 @@ public class PostgresSchemaBuilderTests {
     var config = new SchemaConfiguration();
 
     // Act
-    var sql = PostgresSchemaBuilder.BuildCreateTable(table, config.InfrastructurePrefix);
+    var sql = PostgresSchemaBuilder.Instance.BuildCreateTable(table, config.InfrastructurePrefix);
 
     // Assert
     await Assert.That(sql).Contains("id UUID NOT NULL PRIMARY KEY");
@@ -67,7 +70,7 @@ public class PostgresSchemaBuilderTests {
     var config = new SchemaConfiguration();
 
     // Act
-    var sql = PostgresSchemaBuilder.BuildCreateTable(table, config.InfrastructurePrefix);
+    var sql = PostgresSchemaBuilder.Instance.BuildCreateTable(table, config.InfrastructurePrefix);
 
     // Assert
     await Assert.That(sql).Contains("created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP");
@@ -86,7 +89,7 @@ public class PostgresSchemaBuilderTests {
     var config = new SchemaConfiguration();
 
     // Act
-    var sql = PostgresSchemaBuilder.BuildCreateTable(table, config.InfrastructurePrefix);
+    var sql = PostgresSchemaBuilder.Instance.BuildCreateTable(table, config.InfrastructurePrefix);
 
     // Assert
     await Assert.That(sql).Contains("email VARCHAR(255) NOT NULL UNIQUE");
@@ -104,7 +107,7 @@ public class PostgresSchemaBuilderTests {
     var config = new SchemaConfiguration();
 
     // Act
-    var sql = PostgresSchemaBuilder.BuildCreateTable(table, config.PerspectivePrefix);
+    var sql = PostgresSchemaBuilder.Instance.BuildCreateTable(table, config.PerspectivePrefix);
 
     // Assert
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wb_per_product_dto");
@@ -121,7 +124,7 @@ public class PostgresSchemaBuilderTests {
     var prefix = "wb_";
 
     // Act
-    var sql = PostgresSchemaBuilder.BuildCreateIndex(index, tableName, prefix);
+    var sql = PostgresSchemaBuilder.Instance.BuildCreateIndex(index, tableName, prefix);
 
     // Assert
     await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_users_email");
@@ -139,7 +142,7 @@ public class PostgresSchemaBuilderTests {
     var prefix = "wb_";
 
     // Act
-    var sql = PostgresSchemaBuilder.BuildCreateIndex(index, tableName, prefix);
+    var sql = PostgresSchemaBuilder.Instance.BuildCreateIndex(index, tableName, prefix);
 
     // Assert
     await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_events_type_created");
@@ -158,7 +161,7 @@ public class PostgresSchemaBuilderTests {
     var prefix = "wb_";
 
     // Act
-    var sql = PostgresSchemaBuilder.BuildCreateIndex(index, tableName, prefix);
+    var sql = PostgresSchemaBuilder.Instance.BuildCreateIndex(index, tableName, prefix);
 
     // Assert
     await Assert.That(sql).Contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_aggregate_version");
@@ -171,7 +174,7 @@ public class PostgresSchemaBuilderTests {
     var config = new SchemaConfiguration();
 
     // Act
-    var sql = PostgresSchemaBuilder.BuildInfrastructureSchema(config);
+    var sql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(config);
 
     // Assert
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wb_inbox");
@@ -187,7 +190,7 @@ public class PostgresSchemaBuilderTests {
     var config = new SchemaConfiguration();
 
     // Act
-    var sql = PostgresSchemaBuilder.BuildInfrastructureSchema(config);
+    var sql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(config);
 
     // Assert
     // Inbox indexes
@@ -215,7 +218,7 @@ public class PostgresSchemaBuilderTests {
     var config = new SchemaConfiguration();
 
     // Act
-    var sql = PostgresSchemaBuilder.BuildInfrastructureSchema(config);
+    var sql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(config);
 
     // Assert
     await Assert.That(sql).Contains("message_id UUID NOT NULL PRIMARY KEY");
@@ -233,7 +236,7 @@ public class PostgresSchemaBuilderTests {
     var config = new SchemaConfiguration();
 
     // Act
-    var sql = PostgresSchemaBuilder.BuildInfrastructureSchema(config);
+    var sql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(config);
 
     // Assert
     await Assert.That(sql).Contains("status VARCHAR(50) NOT NULL DEFAULT 'Pending'");
@@ -246,7 +249,7 @@ public class PostgresSchemaBuilderTests {
     var config = new SchemaConfiguration();
 
     // Act
-    var sql = PostgresSchemaBuilder.BuildInfrastructureSchema(config);
+    var sql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(config);
 
     // Assert
     await Assert.That(sql).Contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_event_store_aggregate");
@@ -259,7 +262,7 @@ public class PostgresSchemaBuilderTests {
     var config = new SchemaConfiguration(InfrastructurePrefix: "custom_");
 
     // Act
-    var sql = PostgresSchemaBuilder.BuildInfrastructureSchema(config);
+    var sql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(config);
 
     // Assert
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS custom_inbox");
@@ -274,7 +277,7 @@ public class PostgresSchemaBuilderTests {
     var prefix = "wh_";
 
     // Act
-    var sql = PostgresSchemaBuilder.BuildCreateSequence(sequence, prefix);
+    var sql = PostgresSchemaBuilder.Instance.BuildCreateSequence(sequence, prefix);
 
     // Assert
     await Assert.That(sql).Contains("CREATE SEQUENCE IF NOT EXISTS wh_event_sequence");
@@ -289,7 +292,7 @@ public class PostgresSchemaBuilderTests {
     var prefix = "wh_";
 
     // Act
-    var sql = PostgresSchemaBuilder.BuildCreateSequence(sequence, prefix);
+    var sql = PostgresSchemaBuilder.Instance.BuildCreateSequence(sequence, prefix);
 
     // Assert
     await Assert.That(sql).Contains("START WITH 1000");
@@ -302,7 +305,7 @@ public class PostgresSchemaBuilderTests {
     var prefix = "wh_";
 
     // Act
-    var sql = PostgresSchemaBuilder.BuildCreateSequence(sequence, prefix);
+    var sql = PostgresSchemaBuilder.Instance.BuildCreateSequence(sequence, prefix);
 
     // Assert
     await Assert.That(sql).Contains("INCREMENT BY 10");
@@ -314,7 +317,7 @@ public class PostgresSchemaBuilderTests {
     var config = new SchemaConfiguration();
 
     // Act
-    var sql = PostgresSchemaBuilder.BuildInfrastructureSchema(config);
+    var sql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(config);
 
     // Assert
     await Assert.That(sql).Contains("CREATE SEQUENCE IF NOT EXISTS wb_event_sequence");
@@ -327,7 +330,7 @@ public class PostgresSchemaBuilderTests {
     var config = new SchemaConfiguration(InfrastructurePrefix: "custom_");
 
     // Act
-    var sql = PostgresSchemaBuilder.BuildInfrastructureSchema(config);
+    var sql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(config);
 
     // Assert
     await Assert.That(sql).Contains("CREATE SEQUENCE IF NOT EXISTS custom_event_sequence");
