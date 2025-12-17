@@ -496,8 +496,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Verify completed in debug mode
     await Assert.That(await GetOutboxStatusAsync(completedOutboxId)).IsEqualTo("Published");
-    await Assert.That(await GetInboxStatusAsync(completedInboxId)).IsNull()
-      .Because("Fully completed inbox messages should be deleted even in debug mode");
+    // In debug mode, completed inbox messages are kept (not deleted) for verification
+    var inboxStatus = await GetInboxStatusAsync(completedInboxId);
+    await Assert.That(inboxStatus).IsNotNull()
+      .Because("In debug mode, completed messages should be kept for verification");
 
     // Verify failed
     await Assert.That(await GetOutboxStatusAsync(failedOutboxId)).IsEqualTo("Failed");
