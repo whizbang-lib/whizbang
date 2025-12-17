@@ -5,6 +5,8 @@ using Testcontainers.PostgreSql;
 using TUnit.Core;
 using Whizbang.Data.Dapper.Custom;
 using Whizbang.Data.Dapper.Postgres;
+using Whizbang.Data.Dapper.Postgres.Schema;
+using Whizbang.Data.Schema;
 
 namespace Whizbang.Data.Postgres.Tests;
 
@@ -87,13 +89,12 @@ public abstract class PostgresTestBase : IAsyncDisposable {
     using var connection = await _connectionFactory!.CreateConnectionAsync();
     // Connection is already opened by PostgresConnectionFactory
 
-    // Read and execute base schema SQL (tables, indexes, helper functions)
-    var schemaPath = Path.Combine(
-      AppContext.BaseDirectory,
-      "..", "..", "..", "..", "..",
-      "src", "Whizbang.Data.Dapper.Postgres", "whizbang-schema.sql");
-
-    var schemaSql = await File.ReadAllTextAsync(schemaPath);
+    // Generate and execute base schema SQL from C# schema definitions
+    var schemaConfig = new SchemaConfiguration(
+      InfrastructurePrefix: "wh_",
+      PerspectivePrefix: "wh_per_"
+    );
+    var schemaSql = PostgresSchemaBuilder.BuildInfrastructureSchema(schemaConfig);
 
     using var schemaCommand = (NpgsqlCommand)connection.CreateCommand();
     schemaCommand.CommandText = schemaSql;

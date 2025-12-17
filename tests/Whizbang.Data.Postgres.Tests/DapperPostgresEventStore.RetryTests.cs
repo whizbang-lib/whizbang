@@ -13,6 +13,8 @@ using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Dapper.Custom;
 using Whizbang.Data.Dapper.Postgres;
+using Whizbang.Data.Dapper.Postgres.Schema;
+using Whizbang.Data.Schema;
 
 namespace Whizbang.Data.Postgres.Tests;
 
@@ -196,12 +198,12 @@ public class DapperPostgresEventStoreRetryTests {
       await _store.AppendAsync(streamId, CreateTestEnvelope(streamId));
     }).ThrowsException();
 
-    // Restore the table for other tests
-    var schemaPath = Path.Combine(
-      AppContext.BaseDirectory,
-      "..", "..", "..", "..", "..",
-      "src", "Whizbang.Data.Dapper.Postgres", "whizbang-schema.sql");
-    var schemaSql = await File.ReadAllTextAsync(schemaPath);
+    // Restore the table for other tests by regenerating schema from C#
+    var schemaConfig = new SchemaConfiguration(
+      InfrastructurePrefix: "wh_",
+      PerspectivePrefix: "wh_per_"
+    );
+    var schemaSql = PostgresSchemaBuilder.BuildInfrastructureSchema(schemaConfig);
     await _testBase.Executor.ExecuteAsync(connection, schemaSql, new { });
   }
 

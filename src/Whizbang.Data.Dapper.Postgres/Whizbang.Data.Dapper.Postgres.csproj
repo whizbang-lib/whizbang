@@ -21,8 +21,4 @@
     <ProjectReference Include="../Whizbang.Data.Postgres/Whizbang.Data.Postgres.csproj" />
   </ItemGroup>
 
-  <ItemGroup>
-    <EmbeddedResource Include="whizbang-schema.sql" />
-  </ItemGroup>
-
 </Project>

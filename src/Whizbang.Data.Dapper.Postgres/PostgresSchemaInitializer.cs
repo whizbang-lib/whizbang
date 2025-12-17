@@ -1,6 +1,7 @@
 using System.Data;
-using System.Reflection;
 using Npgsql;
+using Whizbang.Data.Dapper.Postgres.Schema;
+using Whizbang.Data.Schema;
 
 namespace Whizbang.Data.Dapper.Postgres;
 
@@ -26,12 +27,17 @@ public sealed class PostgresSchemaInitializer {
   }
 
   /// <summary>
-  /// Initializes the Whizbang schema by executing the embedded whizbang-schema.sql file.
+  /// Initializes the Whizbang schema by generating SQL from C# schema definitions.
   /// Optionally executes perspective schema SQL if provided.
   /// This method is idempotent - it can be called multiple times safely.
   /// </summary>
   public async Task InitializeSchemaAsync(CancellationToken cancellationToken = default) {
-    var schemaSql = await LoadEmbeddedSchemaAsync();
+    // Generate schema SQL from C# schema definitions
+    var schemaConfig = new SchemaConfiguration(
+      InfrastructurePrefix: "wh_",
+      PerspectivePrefix: "wh_per_"
+    );
+    var schemaSql = PostgresSchemaBuilder.BuildInfrastructureSchema(schemaConfig);
 
     await using var connection = new NpgsqlConnection(_connectionString);
     await connection.OpenAsync(cancellationToken);
@@ -56,7 +62,12 @@ public sealed class PostgresSchemaInitializer {
   /// Optionally executes perspective schema SQL if provided.
   /// </summary>
   public void InitializeSchema() {
-    var schemaSql = LoadEmbeddedSchema();
+    // Generate schema SQL from C# schema definitions
+    var schemaConfig = new SchemaConfiguration(
+      InfrastructurePrefix: "wh_",
+      PerspectivePrefix: "wh_per_"
+    );
+    var schemaSql = PostgresSchemaBuilder.BuildInfrastructureSchema(schemaConfig);
 
     using var connection = new NpgsqlConnection(_connectionString);
     connection.Open();
@@ -74,27 +85,5 @@ public sealed class PostgresSchemaInitializer {
       perspectiveCommand.CommandTimeout = 30;
       perspectiveCommand.ExecuteNonQuery();
     }
-  }
-
-  private static async Task<string> LoadEmbeddedSchemaAsync() {
-    var assembly = Assembly.GetExecutingAssembly();
-    var resourceName = "Whizbang.Data.Dapper.Postgres.whizbang-schema.sql";
-
-    await using var stream = assembly.GetManifestResourceStream(resourceName)
-      ?? throw new InvalidOperationException($"Embedded resource '{resourceName}' not found. Ensure whizbang-schema.sql is set as an embedded resource.");
-
-    using var reader = new StreamReader(stream);
-    return await reader.ReadToEndAsync();
-  }
-
-  private static string LoadEmbeddedSchema() {
-    var assembly = Assembly.GetExecutingAssembly();
-    var resourceName = "Whizbang.Data.Dapper.Postgres.whizbang-schema.sql";
-
-    using var stream = assembly.GetManifestResourceStream(resourceName)
-      ?? throw new InvalidOperationException($"Embedded resource '{resourceName}' not found. Ensure whizbang-schema.sql is set as an embedded resource.");
-
-    using var reader = new StreamReader(stream);
-    return reader.ReadToEnd();
   }
 }

@@ -4,6 +4,7 @@
 -- Updated: 2025-12-06 - Complete rewrite for partition-based stream ordering
 -- Updated: 2025-12-15 - Fix NULL metadata constraint (COALESCE empty Hops array)
 -- Updated: 2025-12-16 - Add scheduled_for support for retries with exponential backoff and stream ordering protection
+-- Updated: 2025-12-17 - Fix partition claiming for new messages (allow stealing from stale instances)
 -- Description: Single SQL function that handles all work coordination operations:
 --              - Register/update instance with real metadata
 --              - Clean up stale instances (expired heartbeats)
@@ -503,13 +504,21 @@ BEGIN
 
   -- 7.25. Claim partitions for newly stored messages
   -- Ensure the instance owns the partitions of newly created messages
+  -- Uses ON CONFLICT DO UPDATE to allow stealing partitions from stale instances
   INSERT INTO wh_partition_assignments (partition_number, instance_id, assigned_at, last_heartbeat)
   SELECT DISTINCT o.partition_number, p_instance_id, v_now, v_now
   FROM wh_outbox o
   WHERE o.instance_id = p_instance_id
     AND o.partition_number NOT IN (SELECT wh_partition_assignments.partition_number FROM wh_partition_assignments WHERE wh_partition_assignments.instance_id = p_instance_id)
   LIMIT v_dynamic_max_partitions - (SELECT COUNT(*) FROM wh_partition_assignments WHERE wh_partition_assignments.instance_id = p_instance_id)
-  ON CONFLICT (partition_number) DO NOTHING;
+  ON CONFLICT (partition_number) DO UPDATE SET
+    instance_id = EXCLUDED.instance_id,
+    assigned_at = EXCLUDED.assigned_at,
+    last_heartbeat = EXCLUDED.last_heartbeat
+  WHERE wh_partition_assignments.instance_id = p_instance_id
+     OR wh_partition_assignments.instance_id NOT IN (
+       SELECT instance_id FROM wh_service_instances WHERE last_heartbeat_at >= v_stale_cutoff
+     );
 
   INSERT INTO wh_partition_assignments (partition_number, instance_id, assigned_at, last_heartbeat)
   SELECT DISTINCT i.partition_number, p_instance_id, v_now, v_now
@@ -517,7 +526,14 @@ BEGIN
   WHERE i.instance_id = p_instance_id
     AND i.partition_number NOT IN (SELECT wh_partition_assignments.partition_number FROM wh_partition_assignments WHERE wh_partition_assignments.instance_id = p_instance_id)
   LIMIT v_dynamic_max_partitions - (SELECT COUNT(*) FROM wh_partition_assignments WHERE wh_partition_assignments.instance_id = p_instance_id)
-  ON CONFLICT (partition_number) DO NOTHING;
+  ON CONFLICT (partition_number) DO UPDATE SET
+    instance_id = EXCLUDED.instance_id,
+    assigned_at = EXCLUDED.assigned_at,
+    last_heartbeat = EXCLUDED.last_heartbeat
+  WHERE wh_partition_assignments.instance_id = p_instance_id
+     OR wh_partition_assignments.instance_id NOT IN (
+       SELECT instance_id FROM wh_service_instances WHERE last_heartbeat_at >= v_stale_cutoff
+     );
 
   -- 7.4. Claim partitions for orphaned/unleased messages (with load balancing)
   -- Prioritizes claiming partitions that have actual work (orphaned messages)

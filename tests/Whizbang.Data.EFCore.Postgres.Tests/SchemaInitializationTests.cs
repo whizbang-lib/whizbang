@@ -166,7 +166,7 @@ public class SchemaInitializationTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     // Create just the outbox table (simulating partial initialization)
-    // This matches migration 001_CreateOutboxTable.sql schema
+    // This matches OutboxSchema.Table C# schema definition
     var coreTableSql = @"
       CREATE TABLE IF NOT EXISTS wh_outbox (
         message_id UUID NOT NULL PRIMARY KEY,

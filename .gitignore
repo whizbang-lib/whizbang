@@ -46,6 +46,11 @@ Generated\ Files/
 **/.whizbang-generated/
 **/.whizbang/
 
+# Whizbang Generated Schema Files (regenerated from C# schema definitions)
+**/whizbang-schema.sql
+**/whizbang-*-schema.sql
+sql-scripts/whizbang-*.sql
+
 # MSTest test Results
 [Tt]est[Rr]esult*/
 [Bb]uild[Ll]og.*
