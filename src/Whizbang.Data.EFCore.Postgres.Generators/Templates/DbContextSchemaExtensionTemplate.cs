@@ -19,14 +19,15 @@ namespace __DBCONTEXT_NAMESPACE__.Generated;
 public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// <summary>
   /// Ensures Whizbang database schema is fully initialized for __DBCONTEXT_CLASS__.
-  /// Creates perspective tables, executes migrations, and adds constraints.
+  /// Creates core infrastructure tables, perspective tables, executes migrations, and adds constraints.
   /// Idempotent - safe to call multiple times.
   /// AOT-compatible - all SQL is pre-generated at build time.
   ///
   /// Steps:
-  /// 1. Creates perspective tables (PerspectiveRow&lt;TModel&gt; tables)
-  /// 2. Adds composite PK and FK constraints
-  /// 3. Executes PostgreSQL migrations (creates all core infrastructure tables and functions)
+  /// 1. Creates core infrastructure tables (Inbox, Outbox, EventStore, etc.)
+  /// 2. Creates perspective tables (PerspectiveRow&lt;TModel&gt; tables)
+  /// 3. Adds composite PK and FK constraints
+  /// 4. Executes PostgreSQL migrations (creates functions like process_work_batch)
   /// </summary>
   /// <param name="dbContext">The __DBCONTEXT_CLASS__ instance</param>
   /// <param name="logger">Optional logger for diagnostic messages</param>
@@ -36,21 +37,59 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     ILogger? logger = null,
     CancellationToken cancellationToken = default) {
 
-    // Step 1: Create perspective tables (generated at build time from discovered PerspectiveRow<TModel> types)
+    // Step 1: Create core infrastructure tables (Inbox, Outbox, EventStore, etc.)
+    logger?.LogInformation("Creating core infrastructure tables for {DbContext}...", "__DBCONTEXT_CLASS__");
+    await ExecuteCoreInfrastructureTablesAsync(dbContext, logger, cancellationToken);
+
+    // Step 2: Create perspective tables (generated at build time from discovered PerspectiveRow<TModel> types)
     logger?.LogInformation("Creating perspective tables for {DbContext}...", "__DBCONTEXT_CLASS__");
     await ExecutePerspectiveTablesAsync(dbContext, logger, cancellationToken);
 
-    // Step 2: Add constraints (composite PKs, FKs) that TableDefinition doesn't support yet
+    // Step 3: Add constraints (composite PKs, FKs) that TableDefinition doesn't support yet
     logger?.LogInformation("Adding database constraints for {DbContext}...", "__DBCONTEXT_CLASS__");
     await ExecuteConstraintsAsync(dbContext, logger, cancellationToken);
 
-    // Step 3: Create PostgreSQL functions (process_work_batch, etc.)
+    // Step 4: Create PostgreSQL functions (process_work_batch, etc.)
     logger?.LogInformation("Creating PostgreSQL functions for {DbContext}...", "__DBCONTEXT_CLASS__");
     await ExecuteMigrationsAsync(dbContext, logger, cancellationToken);
 
     logger?.LogInformation("Whizbang database initialization complete for {DbContext}", "__DBCONTEXT_CLASS__");
   }
 
+  /// <summary>
+  /// Executes core infrastructure table DDL generated at build time.
+  /// Creates all Whizbang core tables: Inbox, Outbox, EventStore, ReceptorProcessing,
+  /// PerspectiveCheckpoints, RequestResponse, ServiceInstances, PartitionAssignments,
+  /// MessageDeduplication, Sequences, and EventSequence.
+  /// SQL is generated using PostgresSchemaBuilder.Instance.BuildInfrastructureSchema().
+  /// AOT-compatible - SQL is embedded at build time, no dynamic generation.
+  /// </summary>
+  private static async Task ExecuteCoreInfrastructureTablesAsync(
+    __DBCONTEXT_FQN__ dbContext,
+    ILogger? logger,
+    CancellationToken cancellationToken) {
+
+    // SQL embedded by source generator from CoreInfrastructureSchema.sql resource
+    const string CoreInfrastructureSchema = #region CORE_INFRASTRUCTURE_SCHEMA
+    // Core infrastructure DDL will be embedded here by the source generator
+    #endregion;
+
+    if (string.IsNullOrWhiteSpace(CoreInfrastructureSchema)) {
+      logger?.LogWarning("Core infrastructure schema is empty - this should never happen!");
+      return;
+    }
+
+    try {
+      await dbContext.Database.ExecuteSqlRawAsync(CoreInfrastructureSchema, cancellationToken);
+      logger?.LogInformation("Core infrastructure tables created successfully");
+    } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P07") {
+      // 42P07 = duplicate_table (expected if tables already exist)
+      logger?.LogInformation("Core infrastructure tables already exist (expected): {Table}", ex.TableName ?? "unknown");
+    } catch (Exception ex) {
+      logger?.LogError(ex, "Failed to create core infrastructure tables");
+      throw;
+    }
+  }
 
   /// <summary>
   /// Executes perspective table DDL generated at build time.
