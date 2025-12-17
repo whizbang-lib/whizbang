@@ -63,6 +63,9 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
         logging.SetMinimumLevel(LogLevel.Debug);
       })
       .ConfigureServices((context, services) => {
+        // IMPORTANT: Explicitly call module initializer for test assemblies
+        ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();
+
         // Register DbContext (same as Program.cs)
         services.AddDbContext<BffDbContext>(options => {
           options.UseNpgsql(_connectionString);
