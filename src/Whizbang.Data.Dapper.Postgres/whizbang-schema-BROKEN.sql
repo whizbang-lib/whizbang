@@ -1,5 +1,5 @@
 -- Whizbang Infrastructure Schema for Postgres
--- Generated: 2025-12-17 04:30:30 UTC
+-- Generated: 2025-12-17 02:06:16 UTC
 -- Infrastructure Prefix: wh_
 -- Perspective Prefix: wb_per_
 
@@ -16,16 +16,6 @@ CREATE TABLE IF NOT EXISTS wh_service_instances (
 
 CREATE INDEX IF NOT EXISTS idx_service_instances_service_name ON wh_service_instances (service_name, last_heartbeat_at);
 CREATE INDEX IF NOT EXISTS idx_service_instances_heartbeat ON wh_service_instances (last_heartbeat_at);
-
--- Partition Assignments - Distributed work coordination
-CREATE TABLE IF NOT EXISTS wh_partition_assignments (
-  partition_number INTEGER NOT NULL PRIMARY KEY,
-  instance_id UUID NOT NULL,
-  assigned_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE INDEX IF NOT EXISTS idx_partition_assignments_instance ON wh_partition_assignments (instance_id, last_heartbeat);
 
 -- Message Deduplication - Permanent idempotency tracking
 CREATE TABLE IF NOT EXISTS wh_message_deduplication (
@@ -95,19 +85,16 @@ CREATE INDEX IF NOT EXISTS idx_outbox_scheduled_for ON wh_outbox (stream_id, sch
 -- Event Store - Event sourcing and audit trail
 CREATE TABLE IF NOT EXISTS wh_event_store (
   event_id UUID NOT NULL PRIMARY KEY,
-  stream_id UUID NOT NULL,
   aggregate_id UUID NOT NULL,
   aggregate_type VARCHAR(500) NOT NULL,
   event_type VARCHAR(500) NOT NULL,
   event_data JSONB NOT NULL,
   metadata JSONB NOT NULL,
-  scope JSONB NULL,
   sequence_number BIGINT NOT NULL,
   version INTEGER NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_event_store_stream ON wh_event_store (stream_id, version);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_event_store_aggregate ON wh_event_store (aggregate_id, version);
 CREATE INDEX IF NOT EXISTS idx_event_store_aggregate_type ON wh_event_store (aggregate_type, created_at);
 CREATE INDEX IF NOT EXISTS idx_event_store_sequence ON wh_event_store (sequence_number);
@@ -130,14 +117,12 @@ CREATE INDEX IF NOT EXISTS idx_receptor_processing_status ON wh_receptor_process
 
 -- Perspective Checkpoints - Read model projection tracking (checkpoint-style)
 CREATE TABLE IF NOT EXISTS wh_perspective_checkpoints (
-  stream_id UUID NOT NULL,
-  perspective_name TEXT NOT NULL,
+  stream_id UUID NOT NULL PRIMARY KEY,
+  perspective_name TEXT NOT NULL PRIMARY KEY,
   last_event_id UUID NOT NULL,
   status SMALLINT NOT NULL DEFAULT 0,
   processed_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
   error TEXT NULL
-,
-  CONSTRAINT pk_perspective_checkpoints PRIMARY KEY (stream_id, perspective_name)
 );
 
 CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_perspective_name ON wh_perspective_checkpoints (perspective_name);
@@ -157,7 +142,7 @@ CREATE TABLE IF NOT EXISTS wh_request_response (
   expires_at TIMESTAMPTZ NULL
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_request_response_correlation ON wh_request_response (correlation_id);
+CREATE INDEX IF NOT EXISTS idx_request_response_correlation ON wh_request_response (correlation_id);
 CREATE INDEX IF NOT EXISTS idx_request_response_status_created ON wh_request_response (status, created_at);
 CREATE INDEX IF NOT EXISTS idx_request_response_expires ON wh_request_response (expires_at);
 
@@ -169,7 +154,4 @@ CREATE TABLE IF NOT EXISTS wh_sequences (
   last_updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
-
--- Event Sequence - Global sequence for event ordering across all streams
-CREATE SEQUENCE IF NOT EXISTS wh_event_sequence START WITH 1 INCREMENT BY 1;
 

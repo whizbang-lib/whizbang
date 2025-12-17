@@ -28,7 +28,7 @@ public class DapperPostgresSequenceProvider(IDbConnectionFactory connectionFacto
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetNextAsync_ConcurrentCalls_ShouldMaintainMonotonicityAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetNextAsync_ManyCalls_ShouldNeverSkipOrDuplicateAsync</tests>
   protected override string GetUpdateSequenceSql() => @"
-    UPDATE whizbang_sequences
+    UPDATE wh_sequences
     SET current_value = current_value + 1, last_updated_at = @Now
     WHERE sequence_name = @SequenceKey
     RETURNING current_value";
@@ -38,10 +38,10 @@ public class DapperPostgresSequenceProvider(IDbConnectionFactory connectionFacto
   /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetNextAsync_FirstCall_ShouldReturnZeroAsync</tests>
   protected override string GetInsertOrUpdateSequenceSql() => @"
-    INSERT INTO whizbang_sequences (sequence_name, current_value, last_updated_at)
+    INSERT INTO wh_sequences (sequence_name, current_value, last_updated_at)
     VALUES (@SequenceKey, 0, @Now)
     ON CONFLICT (sequence_name) DO UPDATE
-    SET current_value = whizbang_sequences.current_value + 1,
+    SET current_value = wh_sequences.current_value + 1,
         last_updated_at = @Now
     RETURNING current_value";
 
@@ -53,7 +53,7 @@ public class DapperPostgresSequenceProvider(IDbConnectionFactory connectionFacto
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetCurrentAsync_DoesNotIncrement_ShouldReturnSameValueAsync</tests>
   protected override string GetCurrentSequenceSql() => @"
     SELECT current_value
-    FROM whizbang_sequences
+    FROM wh_sequences
     WHERE sequence_name = @SequenceKey";
 
   /// <summary>
@@ -63,7 +63,7 @@ public class DapperPostgresSequenceProvider(IDbConnectionFactory connectionFacto
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:ResetAsync_WithCustomValue_ShouldResetToSpecifiedValueAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:ResetAsync_MultipleTimes_ShouldAlwaysResetAsync</tests>
   protected override string GetResetSequenceSql() => @"
-    INSERT INTO whizbang_sequences (sequence_name, current_value, last_updated_at)
+    INSERT INTO wh_sequences (sequence_name, current_value, last_updated_at)
     VALUES (@SequenceKey, @NewValue - 1, @Now)
     ON CONFLICT (sequence_name) DO UPDATE
     SET current_value = @NewValue - 1,

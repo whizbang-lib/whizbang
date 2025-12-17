@@ -204,7 +204,7 @@ public class PostgresSchemaBuilderTests {
     await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_event_store_sequence");
 
     // RequestResponse indexes
-    await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_request_response_correlation");
+    await Assert.That(sql).Contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_request_response_correlation");
     await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_request_response_status_created");
     await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_request_response_expires");
   }
@@ -265,5 +265,71 @@ public class PostgresSchemaBuilderTests {
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS custom_inbox");
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS custom_outbox");
     await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS custom_event_store");
+  }
+
+  [Test]
+  public async Task BuildCreateSequence_SimpleSequence_GeneratesCreateSequenceAsync() {
+    // Arrange
+    var sequence = new SequenceDefinition("event_sequence");
+    var prefix = "wh_";
+
+    // Act
+    var sql = PostgresSchemaBuilder.BuildCreateSequence(sequence, prefix);
+
+    // Assert
+    await Assert.That(sql).Contains("CREATE SEQUENCE IF NOT EXISTS wh_event_sequence");
+    await Assert.That(sql).Contains("START WITH 1");
+    await Assert.That(sql).Contains("INCREMENT BY 1");
+  }
+
+  [Test]
+  public async Task BuildCreateSequence_WithCustomStartValue_GeneratesCorrectStartAsync() {
+    // Arrange
+    var sequence = new SequenceDefinition("order_sequence", StartValue: 1000);
+    var prefix = "wh_";
+
+    // Act
+    var sql = PostgresSchemaBuilder.BuildCreateSequence(sequence, prefix);
+
+    // Assert
+    await Assert.That(sql).Contains("START WITH 1000");
+  }
+
+  [Test]
+  public async Task BuildCreateSequence_WithCustomIncrement_GeneratesCorrectIncrementAsync() {
+    // Arrange
+    var sequence = new SequenceDefinition("batch_sequence", IncrementBy: 10);
+    var prefix = "wh_";
+
+    // Act
+    var sql = PostgresSchemaBuilder.BuildCreateSequence(sequence, prefix);
+
+    // Assert
+    await Assert.That(sql).Contains("INCREMENT BY 10");
+  }
+
+  [Test]
+  public async Task BuildInfrastructureSchema_GeneratesEventSequenceAsync() {
+    // Arrange
+    var config = new SchemaConfiguration();
+
+    // Act
+    var sql = PostgresSchemaBuilder.BuildInfrastructureSchema(config);
+
+    // Assert
+    await Assert.That(sql).Contains("CREATE SEQUENCE IF NOT EXISTS wb_event_sequence");
+    await Assert.That(sql).Contains("START WITH 1 INCREMENT BY 1");
+  }
+
+  [Test]
+  public async Task BuildInfrastructureSchema_EventSequence_UsesCorrectPrefixAsync() {
+    // Arrange
+    var config = new SchemaConfiguration(InfrastructurePrefix: "custom_");
+
+    // Act
+    var sql = PostgresSchemaBuilder.BuildInfrastructureSchema(config);
+
+    // Assert
+    await Assert.That(sql).Contains("CREATE SEQUENCE IF NOT EXISTS custom_event_sequence");
   }
 }

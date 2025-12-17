@@ -1,6 +1,7 @@
 namespace Whizbang.Data.Schema;
 
 /// <summary>
+/// <docs>extensibility/database-schema-framework</docs>
 /// <tests>tests/Whizbang.Data.Schema.Tests/ColumnDefinitionTests.cs:ColumnDefinition_WithRequiredProperties_CreatesInstanceAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/ColumnDefinitionTests.cs:ColumnDefinition_WithoutOptionalProperties_UsesDefaultsAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/ColumnDefinitionTests.cs:ColumnDefinition_WithPrimaryKey_SetsPropertyAsync</tests>

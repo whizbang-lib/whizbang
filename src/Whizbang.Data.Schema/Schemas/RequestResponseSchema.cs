@@ -84,7 +84,8 @@ public static class RequestResponseSchema {
     Indexes: ImmutableArray.Create(
       new IndexDefinition(
         Name: "idx_request_response_correlation",
-        Columns: ImmutableArray.Create("correlation_id")
+        Columns: ImmutableArray.Create("correlation_id"),
+        Unique: true  // Required for ON CONFLICT(correlation_id) in Dapper code
       ),
       new IndexDefinition(
         Name: "idx_request_response_status_created",

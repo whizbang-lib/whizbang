@@ -11,6 +11,7 @@ namespace Whizbang.Data.Schema.Schemas;
 public static class EventStoreSchema {
   /// <summary>
   /// Complete event_store table definition.
+  /// Includes stream_id for stream-based event sourcing and scope for security/tenant context.
   /// </summary>
   /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/EventStoreSchemaTests.cs:Table_ShouldHaveCorrectNameAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/EventStoreSchemaTests.cs:Table_ShouldDefineCorrectColumnsAsync</tests>
@@ -18,6 +19,9 @@ public static class EventStoreSchema {
   /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/EventStoreSchemaTests.cs:Table_ShouldHavePrimaryKeyAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/EventStoreSchemaTests.cs:Table_ShouldHaveUniqueAggregateVersionIndexAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/EventStoreSchemaTests.cs:Table_ColumnDefaults_ShouldBeCorrectAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/EventStoreSchemaTests.cs:Table_StreamIdColumn_ShouldBeCorrectAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/EventStoreSchemaTests.cs:Table_ScopeColumn_ShouldBeCorrectAsync</tests>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/EventStoreSchemaTests.cs:Table_ShouldHaveUniqueStreamVersionIndexAsync</tests>
   public static readonly TableDefinition Table = new(
     Name: "event_store",
     Columns: ImmutableArray.Create(
@@ -25,6 +29,11 @@ public static class EventStoreSchema {
         Name: "event_id",
         DataType: WhizbangDataType.Uuid,
         PrimaryKey: true,
+        Nullable: false
+      ),
+      new ColumnDefinition(
+        Name: "stream_id",
+        DataType: WhizbangDataType.Uuid,
         Nullable: false
       ),
       new ColumnDefinition(
@@ -55,6 +64,11 @@ public static class EventStoreSchema {
         Nullable: false
       ),
       new ColumnDefinition(
+        Name: "scope",
+        DataType: WhizbangDataType.Json,
+        Nullable: true
+      ),
+      new ColumnDefinition(
         Name: "sequence_number",
         DataType: WhizbangDataType.BigInt,
         Nullable: false
@@ -72,6 +86,11 @@ public static class EventStoreSchema {
       )
     ),
     Indexes: ImmutableArray.Create(
+      new IndexDefinition(
+        Name: "idx_event_store_stream",
+        Columns: ImmutableArray.Create("stream_id", "version"),
+        Unique: true
+      ),
       new IndexDefinition(
         Name: "idx_event_store_aggregate",
         Columns: ImmutableArray.Create("aggregate_id", "version"),
@@ -94,11 +113,13 @@ public static class EventStoreSchema {
   /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/EventStoreSchemaTests.cs:Columns_ShouldProvideAllConstantsAsync</tests>
   public static class Columns {
     public const string EventId = "event_id";
+    public const string StreamId = "stream_id";
     public const string AggregateId = "aggregate_id";
     public const string AggregateType = "aggregate_type";
     public const string EventType = "event_type";
     public const string EventData = "event_data";
     public const string Metadata = "metadata";
+    public const string Scope = "scope";
     public const string SequenceNumber = "sequence_number";
     public const string Version = "version";
     public const string CreatedAt = "created_at";

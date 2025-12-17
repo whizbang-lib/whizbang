@@ -168,7 +168,7 @@ public class DapperPostgresEventStore(
   /// </summary>
   /// <tests>No tests found</tests>
   protected override string GetAppendSql() => @"
-    INSERT INTO whizbang_event_store
+    INSERT INTO wh_event_store
       (event_id, stream_id, aggregate_id, aggregate_type, sequence_number, version, event_type, event_data, metadata, scope, created_at)
     VALUES
       (@EventId, @StreamId, @AggregateId, @AggregateType, @SequenceNumber, @Version, @EventType,
@@ -184,7 +184,7 @@ public class DapperPostgresEventStore(
       event_data::text AS EventData,
       metadata::text AS Metadata,
       scope::text AS Scope
-    FROM whizbang_event_store
+    FROM wh_event_store
     WHERE stream_id = @StreamId AND sequence_number >= @FromSequence
     ORDER BY sequence_number";
 
@@ -194,6 +194,6 @@ public class DapperPostgresEventStore(
   /// <tests>No tests found</tests>
   protected override string GetLastSequenceSql() => @"
     SELECT COALESCE(MAX(sequence_number), -1)
-    FROM whizbang_event_store
+    FROM wh_event_store
     WHERE stream_id = @StreamId";
 }

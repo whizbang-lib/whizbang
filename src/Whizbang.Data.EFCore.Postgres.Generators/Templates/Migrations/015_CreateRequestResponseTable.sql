@@ -16,8 +16,8 @@ CREATE TABLE IF NOT EXISTS wh_request_response (
   expires_at TIMESTAMPTZ NULL
 );
 
--- Index for correlation-based queries
-CREATE INDEX IF NOT EXISTS idx_request_response_correlation ON wh_request_response (correlation_id);
+-- Unique index for correlation-based queries (required for ON CONFLICT in Dapper)
+CREATE UNIQUE INDEX IF NOT EXISTS idx_request_response_correlation ON wh_request_response (correlation_id);
 
 -- Index for status-based queries (pending requests)
 CREATE INDEX IF NOT EXISTS idx_request_response_status_created ON wh_request_response (status, created_at);

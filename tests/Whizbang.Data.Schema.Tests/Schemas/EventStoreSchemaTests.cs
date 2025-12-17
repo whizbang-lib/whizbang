@@ -27,7 +27,7 @@ public class EventStoreSchemaTests {
     var columns = EventStoreSchema.Table.Columns;
 
     // Assert - Verify column count
-    await Assert.That(columns).HasCount().EqualTo(9);
+    await Assert.That(columns).HasCount().EqualTo(11);
 
     // Verify each column definition
     var eventId = columns[0];
@@ -36,44 +36,54 @@ public class EventStoreSchemaTests {
     await Assert.That(eventId.PrimaryKey).IsTrue();
     await Assert.That(eventId.Nullable).IsFalse();
 
-    var aggregateId = columns[1];
+    var streamId = columns[1];
+    await Assert.That(streamId.Name).IsEqualTo("stream_id");
+    await Assert.That(streamId.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(streamId.Nullable).IsFalse();
+
+    var aggregateId = columns[2];
     await Assert.That(aggregateId.Name).IsEqualTo("aggregate_id");
     await Assert.That(aggregateId.DataType).IsEqualTo(WhizbangDataType.Uuid);
     await Assert.That(aggregateId.Nullable).IsFalse();
 
-    var aggregateType = columns[2];
+    var aggregateType = columns[3];
     await Assert.That(aggregateType.Name).IsEqualTo("aggregate_type");
     await Assert.That(aggregateType.DataType).IsEqualTo(WhizbangDataType.String);
     await Assert.That(aggregateType.MaxLength).IsEqualTo(500);
     await Assert.That(aggregateType.Nullable).IsFalse();
 
-    var eventType = columns[3];
+    var eventType = columns[4];
     await Assert.That(eventType.Name).IsEqualTo("event_type");
     await Assert.That(eventType.DataType).IsEqualTo(WhizbangDataType.String);
     await Assert.That(eventType.MaxLength).IsEqualTo(500);
     await Assert.That(eventType.Nullable).IsFalse();
 
-    var eventData = columns[4];
+    var eventData = columns[5];
     await Assert.That(eventData.Name).IsEqualTo("event_data");
     await Assert.That(eventData.DataType).IsEqualTo(WhizbangDataType.Json);
     await Assert.That(eventData.Nullable).IsFalse();
 
-    var metadata = columns[5];
+    var metadata = columns[6];
     await Assert.That(metadata.Name).IsEqualTo("metadata");
     await Assert.That(metadata.DataType).IsEqualTo(WhizbangDataType.Json);
     await Assert.That(metadata.Nullable).IsFalse();
 
-    var sequenceNumber = columns[6];
+    var scope = columns[7];
+    await Assert.That(scope.Name).IsEqualTo("scope");
+    await Assert.That(scope.DataType).IsEqualTo(WhizbangDataType.Json);
+    await Assert.That(scope.Nullable).IsTrue();
+
+    var sequenceNumber = columns[8];
     await Assert.That(sequenceNumber.Name).IsEqualTo("sequence_number");
     await Assert.That(sequenceNumber.DataType).IsEqualTo(WhizbangDataType.BigInt);
     await Assert.That(sequenceNumber.Nullable).IsFalse();
 
-    var version = columns[7];
+    var version = columns[9];
     await Assert.That(version.Name).IsEqualTo("version");
     await Assert.That(version.DataType).IsEqualTo(WhizbangDataType.Integer);
     await Assert.That(version.Nullable).IsFalse();
 
-    var createdAt = columns[8];
+    var createdAt = columns[10];
     await Assert.That(createdAt.Name).IsEqualTo("created_at");
     await Assert.That(createdAt.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
     await Assert.That(createdAt.Nullable).IsFalse();
@@ -86,10 +96,18 @@ public class EventStoreSchemaTests {
     var indexes = EventStoreSchema.Table.Indexes;
 
     // Assert - Verify index count
-    await Assert.That(indexes).HasCount().EqualTo(3);
+    await Assert.That(indexes).HasCount().EqualTo(4);
+
+    // Verify unique stream index
+    var streamIndex = indexes[0];
+    await Assert.That(streamIndex.Name).IsEqualTo("idx_event_store_stream");
+    await Assert.That(streamIndex.Columns).HasCount().EqualTo(2);
+    await Assert.That(streamIndex.Columns[0]).IsEqualTo("stream_id");
+    await Assert.That(streamIndex.Columns[1]).IsEqualTo("version");
+    await Assert.That(streamIndex.Unique).IsTrue();
 
     // Verify unique aggregate index
-    var aggregateIndex = indexes[0];
+    var aggregateIndex = indexes[1];
     await Assert.That(aggregateIndex.Name).IsEqualTo("idx_event_store_aggregate");
     await Assert.That(aggregateIndex.Columns).HasCount().EqualTo(2);
     await Assert.That(aggregateIndex.Columns[0]).IsEqualTo("aggregate_id");
@@ -97,14 +115,14 @@ public class EventStoreSchemaTests {
     await Assert.That(aggregateIndex.Unique).IsTrue();
 
     // Verify aggregate_type index
-    var aggregateTypeIndex = indexes[1];
+    var aggregateTypeIndex = indexes[2];
     await Assert.That(aggregateTypeIndex.Name).IsEqualTo("idx_event_store_aggregate_type");
     await Assert.That(aggregateTypeIndex.Columns).HasCount().EqualTo(2);
     await Assert.That(aggregateTypeIndex.Columns[0]).IsEqualTo("aggregate_type");
     await Assert.That(aggregateTypeIndex.Columns[1]).IsEqualTo("created_at");
 
     // Verify sequence index
-    var sequenceIndex = indexes[2];
+    var sequenceIndex = indexes[3];
     await Assert.That(sequenceIndex.Name).IsEqualTo("idx_event_store_sequence");
     await Assert.That(sequenceIndex.Columns).HasCount().EqualTo(1);
     await Assert.That(sequenceIndex.Columns[0]).IsEqualTo("sequence_number");
@@ -143,22 +161,26 @@ public class EventStoreSchemaTests {
   public async Task Columns_ShouldProvideAllConstantsAsync() {
     // Arrange & Act - Get all column constants
     var eventId = EventStoreSchema.Columns.EventId;
+    var streamId = EventStoreSchema.Columns.StreamId;
     var aggregateId = EventStoreSchema.Columns.AggregateId;
     var aggregateType = EventStoreSchema.Columns.AggregateType;
     var eventType = EventStoreSchema.Columns.EventType;
     var eventData = EventStoreSchema.Columns.EventData;
     var metadata = EventStoreSchema.Columns.Metadata;
+    var scope = EventStoreSchema.Columns.Scope;
     var sequenceNumber = EventStoreSchema.Columns.SequenceNumber;
     var version = EventStoreSchema.Columns.Version;
     var createdAt = EventStoreSchema.Columns.CreatedAt;
 
     // Assert - Verify constants match column names
     await Assert.That(eventId).IsEqualTo("event_id");
+    await Assert.That(streamId).IsEqualTo("stream_id");
     await Assert.That(aggregateId).IsEqualTo("aggregate_id");
     await Assert.That(aggregateType).IsEqualTo("aggregate_type");
     await Assert.That(eventType).IsEqualTo("event_type");
     await Assert.That(eventData).IsEqualTo("event_data");
     await Assert.That(metadata).IsEqualTo("metadata");
+    await Assert.That(scope).IsEqualTo("scope");
     await Assert.That(sequenceNumber).IsEqualTo("sequence_number");
     await Assert.That(version).IsEqualTo("version");
     await Assert.That(createdAt).IsEqualTo("created_at");
@@ -175,5 +197,45 @@ public class EventStoreSchemaTests {
     await Assert.That(createdAtColumn.DefaultValue).IsNotNull();
     await Assert.That(createdAtColumn.DefaultValue).IsTypeOf<FunctionDefault>();
     await Assert.That(((FunctionDefault)createdAtColumn.DefaultValue!).FunctionType).IsEqualTo(DefaultValueFunction.DateTime_Now);
+  }
+
+  [Test]
+  [Category("Schema")]
+  public async Task Table_StreamIdColumn_ShouldBeCorrectAsync() {
+    // Arrange & Act
+    var columns = EventStoreSchema.Table.Columns;
+    var streamIdColumn = columns.First(c => c.Name == "stream_id");
+
+    // Assert
+    await Assert.That(streamIdColumn.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(streamIdColumn.Nullable).IsFalse();
+    await Assert.That(streamIdColumn.PrimaryKey).IsFalse();
+  }
+
+  [Test]
+  [Category("Schema")]
+  public async Task Table_ScopeColumn_ShouldBeCorrectAsync() {
+    // Arrange & Act
+    var columns = EventStoreSchema.Table.Columns;
+    var scopeColumn = columns.First(c => c.Name == "scope");
+
+    // Assert
+    await Assert.That(scopeColumn.DataType).IsEqualTo(WhizbangDataType.Json);
+    await Assert.That(scopeColumn.Nullable).IsTrue();
+  }
+
+  [Test]
+  [Category("Schema")]
+  public async Task Table_ShouldHaveUniqueStreamVersionIndexAsync() {
+    // Arrange & Act
+    var indexes = EventStoreSchema.Table.Indexes;
+    var streamIndex = indexes.FirstOrDefault(i => i.Name == "idx_event_store_stream");
+
+    // Assert
+    await Assert.That(streamIndex).IsNotNull();
+    await Assert.That(streamIndex!.Unique).IsTrue();
+    await Assert.That(streamIndex.Columns).HasCount().EqualTo(2);
+    await Assert.That(streamIndex.Columns[0]).IsEqualTo("stream_id");
+    await Assert.That(streamIndex.Columns[1]).IsEqualTo("version");
   }
 }

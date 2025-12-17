@@ -204,7 +204,7 @@ public class SqliteSchemaBuilderTests {
     await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_event_store_sequence");
 
     // RequestResponse indexes
-    await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_request_response_correlation");
+    await Assert.That(sql).Contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_request_response_correlation");
     await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_request_response_status_created");
     await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_request_response_expires");
   }

@@ -3,6 +3,7 @@ using System.Collections.Immutable;
 namespace Whizbang.Data.Schema;
 
 /// <summary>
+/// <docs>extensibility/database-schema-framework</docs>
 /// <tests>tests/Whizbang.Data.Schema.Tests/TableDefinitionTests.cs:TableDefinition_WithRequiredProperties_CreatesInstanceAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/TableDefinitionTests.cs:TableDefinition_WithoutIndexes_UsesDefaultAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/TableDefinitionTests.cs:TableDefinition_WithIndexes_StoresAllAsync</tests>

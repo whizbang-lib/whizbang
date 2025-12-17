@@ -40,12 +40,25 @@ public static class PostgresSchemaBuilder {
 
     sb.AppendLine($"CREATE TABLE IF NOT EXISTS {tableName} (");
 
+    // Collect primary key columns for composite PK detection
+    var primaryKeyColumns = table.Columns.Where(c => c.PrimaryKey).Select(c => c.Name).ToList();
+    var hasCompositePrimaryKey = primaryKeyColumns.Count > 1;
+
     var columnDefinitions = new List<string>();
     foreach (var column in table.Columns) {
-      columnDefinitions.Add(BuildColumnDefinition(column));
+      // Don't add inline PRIMARY KEY for composite primary keys
+      columnDefinitions.Add(BuildColumnDefinition(column, suppressInlinePrimaryKey: hasCompositePrimaryKey));
     }
 
     sb.AppendLine(string.Join(",\n", columnDefinitions.Select(c => $"  {c}")));
+
+    // Add composite primary key constraint after columns
+    if (hasCompositePrimaryKey) {
+      var pkColumns = string.Join(", ", primaryKeyColumns);
+      sb.AppendLine($",");
+      sb.AppendLine($"  CONSTRAINT pk_{table.Name} PRIMARY KEY ({pkColumns})");
+    }
+
     sb.AppendLine(");");
 
     return sb.ToString();
@@ -54,7 +67,9 @@ public static class PostgresSchemaBuilder {
   /// <summary>
   /// Builds a single column definition line.
   /// </summary>
-  private static string BuildColumnDefinition(ColumnDefinition column) {
+  /// <param name="column">Column definition to convert to SQL</param>
+  /// <param name="suppressInlinePrimaryKey">If true, don't add inline PRIMARY KEY (for composite PKs)</param>
+  private static string BuildColumnDefinition(ColumnDefinition column, bool suppressInlinePrimaryKey = false) {
     var parts = new List<string>();
 
     // Column name and type
@@ -75,8 +90,8 @@ public static class PostgresSchemaBuilder {
       parts.Add("UNIQUE");
     }
 
-    // Primary key
-    if (column.PrimaryKey) {
+    // Primary key (only add inline if not suppressed for composite PK)
+    if (column.PrimaryKey && !suppressInlinePrimaryKey) {
       parts.Add("PRIMARY KEY");
     }
 
@@ -89,7 +104,7 @@ public static class PostgresSchemaBuilder {
   /// <param name="index">Index definition to convert to SQL</param>
   /// <param name="tableName">Table name (without prefix)</param>
   /// <param name="prefix">Table name prefix (e.g., "wb_")</param>
-  /// <returns>Complete CREATE INDEX statement</returns>
+  /// <returns>Complete CREATE INDEX statement with optional WHERE clause for partial indexes</returns>
   /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateIndex_SimpleIndex_GeneratesCreateIndexAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateIndex_CompositeIndex_GeneratesMultiColumnIndexAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateIndex_UniqueIndex_GeneratesUniqueIndexAsync</tests>
@@ -97,8 +112,20 @@ public static class PostgresSchemaBuilder {
     var fullTableName = $"{prefix}{tableName}";
     var unique = index.Unique ? "UNIQUE " : "";
     var columns = string.Join(", ", index.Columns);
+    var whereClause = index.WhereClause != null ? $" WHERE {index.WhereClause}" : "";
 
-    return $"CREATE {unique}INDEX IF NOT EXISTS {index.Name} ON {fullTableName} ({columns});";
+    return $"CREATE {unique}INDEX IF NOT EXISTS {index.Name} ON {fullTableName} ({columns}){whereClause};";
+  }
+
+  /// <summary>
+  /// Builds a CREATE SEQUENCE statement for a single sequence definition.
+  /// </summary>
+  /// <param name="sequence">Sequence definition to convert to SQL</param>
+  /// <param name="prefix">Sequence name prefix (e.g., "wh_")</param>
+  /// <returns>Complete CREATE SEQUENCE statement</returns>
+  public static string BuildCreateSequence(SequenceDefinition sequence, string prefix) {
+    var sequenceName = $"{prefix}{sequence.Name}";
+    return $"CREATE SEQUENCE IF NOT EXISTS {sequenceName} START WITH {sequence.StartValue} INCREMENT BY {sequence.IncrementBy};";
   }
 
   /// <summary>
@@ -125,6 +152,7 @@ public static class PostgresSchemaBuilder {
     // Build all infrastructure tables
     var tables = new[] {
       (ServiceInstancesSchema.Table, "Service Instances - Distributed work coordination"),
+      (PartitionAssignmentsSchema.Table, "Partition Assignments - Distributed work coordination"),
       (MessageDeduplicationSchema.Table, "Message Deduplication - Permanent idempotency tracking"),
       (InboxSchema.Table, "Inbox - Message deduplication and idempotency"),
       (OutboxSchema.Table, "Outbox - Transactional messaging pattern"),
@@ -144,6 +172,17 @@ public static class PostgresSchemaBuilder {
         sb.AppendLine(BuildCreateIndex(index, table.Name, config.InfrastructurePrefix));
       }
 
+      sb.AppendLine();
+    }
+
+    // Build infrastructure sequences
+    var sequences = new[] {
+      (new SequenceDefinition("event_sequence"), "Event Sequence - Global sequence for event ordering across all streams")
+    };
+
+    foreach (var (sequence, description) in sequences) {
+      sb.AppendLine($"-- {description}");
+      sb.AppendLine(BuildCreateSequence(sequence, config.InfrastructurePrefix));
       sb.AppendLine();
     }
 

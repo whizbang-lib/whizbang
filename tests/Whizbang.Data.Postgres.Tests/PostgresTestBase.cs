@@ -99,16 +99,28 @@ public abstract class PostgresTestBase : IAsyncDisposable {
     schemaCommand.CommandText = schemaSql;
     await schemaCommand.ExecuteNonQueryAsync();
 
-    // Read and execute process_work_batch function from shared library
-    var functionPath = Path.Combine(
+    // Read and execute all PostgreSQL functions from EF Core migrations
+    var migrationPath = Path.Combine(
       AppContext.BaseDirectory,
       "..", "..", "..", "..", "..",
-      "src", "Whizbang.Data.EFCore.Postgres.Generators", "Templates", "Migrations", "014_CreateProcessWorkBatchFunction.sql");
+      "src", "Whizbang.Data.EFCore.Postgres.Generators", "Templates", "Migrations");
 
-    var functionSql = await File.ReadAllTextAsync(functionPath);
+    var functionFiles = new[] {
+      "005_CreateComputePartitionFunction.sql",
+      "010_CreateAcquireReceptorProcessingFunction.sql",
+      "011_CreateCompleteReceptorProcessingFunction.sql",
+      "012_CreateAcquirePerspectiveCheckpointFunction.sql",
+      "013_CreateCompletePerspectiveCheckpointFunction.sql",
+      "014_CreateProcessWorkBatchFunction.sql"
+    };
 
-    using var functionCommand = (NpgsqlCommand)connection.CreateCommand();
-    functionCommand.CommandText = functionSql;
-    await functionCommand.ExecuteNonQueryAsync();
+    foreach (var functionFile in functionFiles) {
+      var functionFilePath = Path.Combine(migrationPath, functionFile);
+      var functionSql = await File.ReadAllTextAsync(functionFilePath);
+
+      using var functionCommand = (NpgsqlCommand)connection.CreateCommand();
+      functionCommand.CommandText = functionSql;
+      await functionCommand.ExecuteNonQueryAsync();
+    }
   }
 }

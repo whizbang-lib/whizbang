@@ -1,6 +1,7 @@
 namespace Whizbang.Data.Schema;
 
 /// <summary>
+/// <docs>extensibility/database-schema-framework</docs>
 /// Abstract base record for column default values.
 /// Pure enum-based pattern matching - no string comparisons in implementations.
 /// Uses sealed record variants for type safety and structural equality (critical for incremental generators).

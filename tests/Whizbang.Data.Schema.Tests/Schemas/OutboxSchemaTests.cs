@@ -27,7 +27,7 @@ public class OutboxSchemaTests {
     var columns = OutboxSchema.Table.Columns;
 
     // Assert - Verify column count
-    await Assert.That(columns).HasCount().EqualTo(10);
+    await Assert.That(columns).HasCount().EqualTo(18);
 
     // Verify each column definition
     var messageId = columns[0];
@@ -63,24 +63,20 @@ public class OutboxSchemaTests {
     await Assert.That(scope.DataType).IsEqualTo(WhizbangDataType.Json);
     await Assert.That(scope.Nullable).IsTrue();
 
-    var status = columns[6];
-    await Assert.That(status.Name).IsEqualTo("status");
-    await Assert.That(status.DataType).IsEqualTo(WhizbangDataType.String);
-    await Assert.That(status.MaxLength).IsEqualTo(50);
+    // Verify key columns by finding them (schema has 18 columns total)
+    var status = columns.First(c => c.Name == "status");
+    await Assert.That(status.DataType).IsEqualTo(WhizbangDataType.Integer);
     await Assert.That(status.Nullable).IsFalse();
 
-    var attempts = columns[7];
-    await Assert.That(attempts.Name).IsEqualTo("attempts");
+    var attempts = columns.First(c => c.Name == "attempts");
     await Assert.That(attempts.DataType).IsEqualTo(WhizbangDataType.Integer);
     await Assert.That(attempts.Nullable).IsFalse();
 
-    var createdAt = columns[8];
-    await Assert.That(createdAt.Name).IsEqualTo("created_at");
+    var createdAt = columns.First(c => c.Name == "created_at");
     await Assert.That(createdAt.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
     await Assert.That(createdAt.Nullable).IsFalse();
 
-    var publishedAt = columns[9];
-    await Assert.That(publishedAt.Name).IsEqualTo("published_at");
+    var publishedAt = columns.First(c => c.Name == "published_at");
     await Assert.That(publishedAt.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
     await Assert.That(publishedAt.Nullable).IsTrue();
   }
@@ -92,7 +88,7 @@ public class OutboxSchemaTests {
     var indexes = OutboxSchema.Table.Indexes;
 
     // Assert - Verify index count
-    await Assert.That(indexes).HasCount().EqualTo(2);
+    await Assert.That(indexes).HasCount().EqualTo(6);
 
     // Verify composite index on status and created_at
     var statusCreatedIndex = indexes[0];
@@ -162,8 +158,8 @@ public class OutboxSchemaTests {
 
     // Assert - Verify default values
     await Assert.That(statusColumn.DefaultValue).IsNotNull();
-    await Assert.That(statusColumn.DefaultValue).IsTypeOf<StringDefault>();
-    await Assert.That(((StringDefault)statusColumn.DefaultValue!).Value).IsEqualTo("Pending");
+    await Assert.That(statusColumn.DefaultValue).IsTypeOf<IntegerDefault>();
+    await Assert.That(((IntegerDefault)statusColumn.DefaultValue!).Value).IsEqualTo(1);
 
     await Assert.That(attemptsColumn.DefaultValue).IsNotNull();
     await Assert.That(attemptsColumn.DefaultValue).IsTypeOf<IntegerDefault>();

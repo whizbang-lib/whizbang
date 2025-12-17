@@ -65,6 +65,15 @@ public class WhizbangDataTypeTests {
   }
 
   [Test]
+  public async Task WhizbangDataType_HasSmallIntTypeAsync() {
+    // Arrange & Act
+    var hasSmallInt = Enum.IsDefined(typeof(WhizbangDataType), "SmallInt");
+
+    // Assert
+    await Assert.That(hasSmallInt).IsTrue();
+  }
+
+  [Test]
   public async Task WhizbangDataType_HasBooleanTypeAsync() {
     // Arrange & Act
     var hasBoolean = Enum.IsDefined(typeof(WhizbangDataType), "Boolean");
@@ -74,12 +83,12 @@ public class WhizbangDataTypeTests {
   }
 
   [Test]
-  public async Task WhizbangDataType_HasExactlySevenTypesAsync() {
+  public async Task WhizbangDataType_HasExactlyEightTypesAsync() {
     // Arrange & Act - Use generic GetValues for AOT compatibility
     var typeCount = Enum.GetValues<WhizbangDataType>().Length;
 
     // Assert
-    await Assert.That(typeCount).IsEqualTo(7);
+    await Assert.That(typeCount).IsEqualTo(8);
   }
 
   [Test]
@@ -98,7 +107,7 @@ public class WhizbangDataTypeTests {
   [Test]
   public async Task WhizbangDataType_ToStringReturnsCorrectNamesAsync() {
     // Arrange
-    var expectedNames = new[] { "Uuid", "String", "TimestampTz", "Json", "BigInt", "Integer", "Boolean" };
+    var expectedNames = new[] { "Uuid", "String", "TimestampTz", "Json", "BigInt", "Integer", "SmallInt", "Boolean" };
 
     // Act - Use generic GetNames for AOT compatibility
     var actualNames = Enum.GetNames<WhizbangDataType>();
