@@ -583,7 +583,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     sb.AppendLine("using Whizbang.Data.EFCore.Postgres;");
     sb.AppendLine();
 
-    sb.AppendLine("namespace Whizbang.Data.EFCore.Postgres.Generated;");
+    // Use consumer assembly's namespace to avoid collisions when multiple assemblies reference same generator
+    // Each consumer assembly (e.g., ECommerce.BFF.API, ECommerce.InventoryWorker) gets its own .Generated namespace
+    var consumerNamespace = dbContextGroups.First().DbContext.Namespace;
+    sb.AppendLine($"namespace {consumerNamespace}.Generated;");
     sb.AppendLine();
 
     sb.AppendLine("/// <summary>");
