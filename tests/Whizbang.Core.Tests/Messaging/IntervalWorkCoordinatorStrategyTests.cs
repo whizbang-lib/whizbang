@@ -57,8 +57,8 @@ public class IntervalWorkCoordinatorStrategyTests {
       MessageType = "TestMessage, TestAssembly"
     });
 
-    // Act - Wait for timer to fire (give it 250ms = 2+ intervals)
-    await Task.Delay(250);
+    // Act - Wait for timer to fire (give it 500ms = 5x the interval for reliability under load)
+    await Task.Delay(500);
 
     // Assert - Timer should have flushed the queued message
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
