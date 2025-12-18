@@ -100,10 +100,9 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
         ex);
     }
 
-    // Queue event for perspective invocation at scope disposal
-    if (_perspectiveInvoker != null && envelope.Payload is IEvent @event) {
-      _perspectiveInvoker.QueueEvent(@event);
-    }
+    // NOTE: Inline perspective invocation removed - perspectives are now processed via PerspectiveWorker
+    // using checkpoint-based processing for better reliability and scalability.
+    // See: Stage 4 of perspective worker refactoring (2025-12-18)
   }
 
   /// <summary>
