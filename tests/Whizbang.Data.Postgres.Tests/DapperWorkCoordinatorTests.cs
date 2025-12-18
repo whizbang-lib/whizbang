@@ -1120,8 +1120,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await InsertServiceInstanceAsync(instance2, "Service2", "host2", 2);
     await InsertServiceInstanceAsync(instance3, "Service3", "host3", 3);
 
-    // Insert 30 messages (30 different streams)
-    for (int i = 0; i < 30; i++) {
+    // Insert 100 messages (100 different streams)
+    // With larger sample size, hash distribution is more likely to spread across all 3 instances
+    for (int i = 0; i < 100; i++) {
       var messageId = _idProvider.NewGuid();
       var streamId = _idProvider.NewGuid();
 
@@ -1186,13 +1187,17 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       renewOutboxLeaseIds: [],
       renewInboxLeaseIds: []);
 
-    // Assert - Work distributed across instances
-    // Note: With random stream IDs hashing to partition numbers and modulo-based distribution,
-    // each instance claims all partitions assigned to it via modulo.
-    // The key test is that work IS distributed across multiple instances.
+    // Assert - ALL messages must be claimed
+    // With rank-based partition claiming, every partition (0-9999) is assigned to exactly one instance.
+    // Formula: partition_number % instance_count == instance_rank (where instances are sorted by instance_id)
+    // This guarantees complete coverage - every message gets claimed by some instance.
+    //
+    // Expected: 100 messages inserted → 100 messages claimed across 3 instances
+    // Distribution will be roughly even (33/33/34) but may vary slightly due to hash distribution
     var totalWork = result1.OutboxWork.Count + result2.OutboxWork.Count + result3.OutboxWork.Count;
-    await Assert.That(totalWork).IsGreaterThan(20)
-      .Because("Most messages should be claimed across instances (hash distribution may leave some unclaimed)");
+    Console.WriteLine($"DEBUG: Instance1 claimed {result1.OutboxWork.Count}, Instance2 claimed {result2.OutboxWork.Count}, Instance3 claimed {result3.OutboxWork.Count}, Total={totalWork}");
+    await Assert.That(totalWork).IsEqualTo(100)
+      .Because($"Rank-based partition claiming MUST distribute ALL messages to instances - no messages can be dropped. Got {result1.OutboxWork.Count}/{result2.OutboxWork.Count}/{result3.OutboxWork.Count} = {totalWork}");
 
     // Each instance should claim some work (not all to one instance)
     await Assert.That(result1.OutboxWork.Count).IsGreaterThan(0)

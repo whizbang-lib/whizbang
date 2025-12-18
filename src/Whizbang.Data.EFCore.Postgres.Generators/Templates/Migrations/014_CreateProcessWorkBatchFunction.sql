@@ -693,9 +693,15 @@ BEGIN
     -- REMOVED: AND (wh_outbox.status & 32768) = 0  -- Now allow failed messages to retry
     AND (wh_outbox.status & 4) != 4     -- Not published (outbox is done when published)
     AND (wh_outbox.scheduled_for IS NULL OR wh_outbox.scheduled_for <= v_now)  -- NEW: Check scheduled time
-    -- Virtual partition claiming: Use consistent hashing based on stream_id and instance_id (both UUIDv7)
-    -- Hash both UUIDs and take modulo to determine ownership - each instance claims ALL matching partitions
-    AND (hashtext(wh_outbox.stream_id::TEXT) % v_active_instance_count) = (hashtext(p_instance_id::TEXT) % v_active_instance_count)
+    -- Virtual partition claiming: Rank-based distribution
+    -- Each instance gets a rank (0 to N-1) based on sorted instance_id (deterministic ordering)
+    -- Partition numbers (0-9999) are distributed via modulo: partition_number % instance_count == instance_rank
+    -- This guarantees EVERY partition is claimed by exactly one instance (full coverage, no gaps)
+    AND wh_outbox.partition_number % v_active_instance_count = (
+      SELECT (ROW_NUMBER() OVER (ORDER BY instance_id) - 1)
+      FROM wh_service_instances
+      WHERE last_heartbeat_at >= v_stale_cutoff AND instance_id = p_instance_id
+    )
     AND NOT EXISTS (  -- CRITICAL: Stream ordering protection - don't claim if earlier message is scheduled or processing
       SELECT 1 FROM wh_outbox earlier
       WHERE earlier.stream_id = wh_outbox.stream_id
@@ -735,9 +741,15 @@ BEGIN
     -- REMOVED: AND (wh_inbox.status & 32768) = 0  -- Now allow failed messages to retry
     AND (wh_inbox.status & 2) != 2     -- Not event stored (inbox is done when event stored)
     AND (wh_inbox.scheduled_for IS NULL OR wh_inbox.scheduled_for <= v_now)  -- NEW: Check scheduled time
-    -- Virtual partition claiming: Use consistent hashing based on stream_id and instance_id (both UUIDv7)
-    -- Hash both UUIDs and take modulo to determine ownership - each instance claims ALL matching partitions
-    AND (hashtext(wh_inbox.stream_id::TEXT) % v_active_instance_count) = (hashtext(p_instance_id::TEXT) % v_active_instance_count)
+    -- Virtual partition claiming: Rank-based distribution
+    -- Each instance gets a rank (0 to N-1) based on sorted instance_id (deterministic ordering)
+    -- Partition numbers (0-9999) are distributed via modulo: partition_number % instance_count == instance_rank
+    -- This guarantees EVERY partition is claimed by exactly one instance (full coverage, no gaps)
+    AND wh_inbox.partition_number % v_active_instance_count = (
+      SELECT (ROW_NUMBER() OVER (ORDER BY instance_id) - 1)
+      FROM wh_service_instances
+      WHERE last_heartbeat_at >= v_stale_cutoff AND instance_id = p_instance_id
+    )
     AND NOT EXISTS (  -- CRITICAL: Stream ordering protection - don't claim if earlier message is scheduled or processing
       SELECT 1 FROM wh_inbox earlier
       WHERE earlier.stream_id = wh_inbox.stream_id
