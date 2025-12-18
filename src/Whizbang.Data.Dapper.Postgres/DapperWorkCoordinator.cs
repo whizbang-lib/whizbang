@@ -94,6 +94,11 @@ public class DapperWorkCoordinator(
     );
 
     await using var connection = new NpgsqlConnection(_connectionString);
+
+    // Hook PostgreSQL RAISE NOTICE messages for debugging (before opening connection)
+    // Notices are only generated when WorkBatchFlags.DebugMode is set in SQL function
+    connection.Notice += OnNotice;
+
     await connection.OpenAsync(cancellationToken);
 
     // Convert to JSON
@@ -362,6 +367,15 @@ public class DapperWorkCoordinator(
     _logger?.LogDebug("Deserialized envelope: MessageId={MessageId}, Hops={HopsCount}", envelope.MessageId, envelope.Hops.Count);
 
     return envelope;
+  }
+
+  /// <summary>
+  /// Handles PostgreSQL RAISE NOTICE messages by logging them at Debug level.
+  /// Notices are only generated when WorkBatchFlags.DebugMode is set in the SQL function.
+  /// </summary>
+  private void OnNotice(object? sender, NpgsqlNoticeEventArgs args) {
+    _logger?.LogDebug("PostgreSQL Notice [{Severity}]: {Message}",
+      args.Notice.Severity, args.Notice.MessageText);
   }
 }
 

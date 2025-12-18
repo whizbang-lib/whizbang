@@ -2,6 +2,7 @@ using System.ComponentModel.DataAnnotations.Schema;
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Data.Postgres;
@@ -162,6 +163,16 @@ public class EFCoreWorkCoordinator<TDbContext>(
         @p_partition_count
       )";
 
+    // Hook PostgreSQL RAISE NOTICE messages for debugging
+    // Access the underlying NpgsqlConnection from EF Core's DbContext
+    var dbConnection = _dbContext.Database.GetDbConnection();
+    if (dbConnection is NpgsqlConnection npgsqlConnection) {
+      // Wire up notice handler if not already connected
+      if (npgsqlConnection.State != System.Data.ConnectionState.Open) {
+        npgsqlConnection.Notice += OnNotice;
+      }
+    }
+
     var results = await _dbContext.Database
       .SqlQueryRaw<WorkBatchRow>(
         sql,
@@ -188,6 +199,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
         new Npgsql.NpgsqlParameter("p_partition_count", partitionCount)
       )
       .ToListAsync(cancellationToken);
+
+    // Process results and return work batch
+    return ProcessResults(results);
+  }
+
+  /// <summary>
+  /// Processes the query results and maps them to a WorkBatch
+  /// </summary>
+  private WorkBatch ProcessResults(List<WorkBatchRow> results) {
 
     // Map results to WorkBatch - deserialize envelopes from database
     var outboxWork = results
@@ -403,6 +423,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
       envelope.Hops?.Count ?? 0);
 
     return envelope;
+  }
+
+  /// <summary>
+  /// Handles PostgreSQL RAISE NOTICE messages by logging them at Debug level.
+  /// Notices are only generated when WorkBatchFlags.DebugMode is set in the SQL function.
+  /// </summary>
+  private void OnNotice(object? sender, NpgsqlNoticeEventArgs args) {
+    _logger?.LogDebug("PostgreSQL Notice [{Severity}]: {Message}",
+      args.Notice.Severity, args.Notice.MessageText);
   }
 }
 
