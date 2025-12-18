@@ -24,6 +24,10 @@ public class RestockInventoryWorkflowTests {
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
     _fixture = await SharedFixtureSource.GetFixtureAsync();
+
+    // Clean database before each test to ensure isolated state
+    // This is critical for integration tests that check specific quantities
+    await _fixture.CleanupDatabaseAsync();
   }
 
   [After(Class)]

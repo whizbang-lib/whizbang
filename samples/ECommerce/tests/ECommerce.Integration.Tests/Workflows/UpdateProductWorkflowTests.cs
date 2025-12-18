@@ -25,6 +25,10 @@ public class UpdateProductWorkflowTests {
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
     _fixture = await SharedFixtureSource.GetFixtureAsync();
+
+    // Clean database before each test to ensure isolated state
+    // This prevents deadlocks from transaction locks held by previous tests
+    await _fixture.CleanupDatabaseAsync();
   }
 
   [After(Class)]
