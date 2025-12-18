@@ -34,7 +34,6 @@ public class IntervalWorkCoordinatorStrategyTests {
     var options = new WorkCoordinatorOptions {
       IntervalMilliseconds = 100,  // 100ms interval for fast test
       PartitionCount = 10000,
-      MaxPartitionsPerInstance = 100,
       LeaseSeconds = 300,
       StaleThresholdSeconds = 300,
       DebugMode = false
@@ -75,9 +74,8 @@ public class IntervalWorkCoordinatorStrategyTests {
     var fakeCoordinator = new FakeWorkCoordinator();
     var instanceProvider = new FakeServiceInstanceProvider();
     var options = new WorkCoordinatorOptions {
-      IntervalMilliseconds = 500,  // 500ms interval
+      IntervalMilliseconds = 1000,  // 1 second interval (longer to avoid races)
       PartitionCount = 10000,
-      MaxPartitionsPerInstance = 100,
       LeaseSeconds = 300,
       StaleThresholdSeconds = 300,
       DebugMode = false
@@ -92,7 +90,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     var messageId1 = _idProvider.NewGuid();
     var messageId2 = _idProvider.NewGuid();
 
-    // Act - Queue two messages quickly (before timer fires)
+    // Act - Queue two messages quickly (well before timer fires)
     var envelope1 = _createTestEnvelope(messageId1);
     sut.QueueOutboxMessage(new OutboxMessage {
       MessageId = messageId1,
@@ -104,7 +102,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       MessageType = "TestMessage, TestAssembly"
     });
 
-    await Task.Delay(50);  // Small delay, but less than timer interval
+    await Task.Delay(100);  // Delay between messages (still less than 1s interval)
 
     var envelope2 = _createTestEnvelope(messageId2);
     sut.QueueOutboxMessage(new OutboxMessage {
@@ -117,13 +115,13 @@ public class IntervalWorkCoordinatorStrategyTests {
       MessageType = "TestMessage, TestAssembly"
     });
 
-    // Wait for timer to fire
-    await Task.Delay(600);
+    // Wait for timer to fire (1s interval + buffer)
+    await Task.Delay(1500);
 
     // Assert - Both messages should be batched together in single flush
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1)
-      .Because("Timer should batch and flush messages together");
-    await Assert.That(fakeCoordinator.LastNewOutboxMessages.Length).IsGreaterThanOrEqualTo(2)
+      .Because("Timer should have fired and flushed messages");
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages.Length).IsEqualTo(2)
       .Because("Both messages should be batched in the same flush");
 
     // Cleanup
@@ -138,7 +136,6 @@ public class IntervalWorkCoordinatorStrategyTests {
     var options = new WorkCoordinatorOptions {
       IntervalMilliseconds = 1000,  // 1 second interval
       PartitionCount = 10000,
-      MaxPartitionsPerInstance = 100,
       LeaseSeconds = 300,
       StaleThresholdSeconds = 300,
       DebugMode = false
@@ -189,7 +186,6 @@ public class IntervalWorkCoordinatorStrategyTests {
     var options = new WorkCoordinatorOptions {
       IntervalMilliseconds = 5000,  // 5 second interval (long)
       PartitionCount = 10000,
-      MaxPartitionsPerInstance = 100,
       LeaseSeconds = 300,
       StaleThresholdSeconds = 300,
       DebugMode = false
@@ -255,7 +251,6 @@ public class IntervalWorkCoordinatorStrategyTests {
       Guid[] renewInboxLeaseIds,
       WorkBatchFlags flags = WorkBatchFlags.None,
       int partitionCount = 10000,
-      int maxPartitionsPerInstance = 100,
       int leaseSeconds = 300,
       int staleThresholdSeconds = 300,
       CancellationToken cancellationToken = default) {

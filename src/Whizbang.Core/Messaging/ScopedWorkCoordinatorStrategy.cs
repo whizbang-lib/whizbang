@@ -147,7 +147,6 @@ public class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncDis
       renewInboxLeaseIds: [],
       flags: flags | (_options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None),
       partitionCount: _options.PartitionCount,
-      maxPartitionsPerInstance: _options.MaxPartitionsPerInstance,
       leaseSeconds: _options.LeaseSeconds,
       staleThresholdSeconds: _options.StaleThresholdSeconds,
       cancellationToken: ct

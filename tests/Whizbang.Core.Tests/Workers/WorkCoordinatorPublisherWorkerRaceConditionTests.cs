@@ -69,7 +69,6 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
       Guid[] renewInboxLeaseIds,
       WorkBatchFlags flags = WorkBatchFlags.None,
       int partitionCount = 10000,
-      int maxPartitionsPerInstance = 100,
       int leaseSeconds = 300,
       int staleThresholdSeconds = 600,
       CancellationToken cancellationToken = default) {
@@ -89,9 +88,9 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
       }
 
       // Simulate partition-based claiming (only unclaimed messages)
+      // No maxPartitionsPerInstance limit - each instance claims all partitions assigned via modulo
       var unclaimedWork = AvailableWork
         .Where(w => !_claimedMessages.ContainsKey(w.MessageId))
-        .Take(maxPartitionsPerInstance)
         .ToList();
 
       // Mark as claimed

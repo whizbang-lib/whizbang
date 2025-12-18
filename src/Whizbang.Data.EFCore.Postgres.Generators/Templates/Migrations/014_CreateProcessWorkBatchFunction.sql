@@ -6,6 +6,7 @@
 -- Updated: 2025-12-16 - Add scheduled_for support for retries with exponential backoff and stream ordering protection
 -- Updated: 2025-12-17 - Fix partition claiming for new messages (allow stealing from stale instances)
 -- Updated: 2025-12-17 - Replace partition assignments table with virtual (hash-based) partition distribution
+-- Updated: 2025-12-18 - Fix EventStored flag on new messages (set only AFTER application processes event, not on insert)
 -- Description: Single SQL function that handles all work coordination operations:
 --              - Register/update instance with real metadata
 --              - Clean up stale instances (expired heartbeats)
@@ -59,8 +60,7 @@ CREATE OR REPLACE FUNCTION process_work_batch(
   p_lease_seconds INTEGER DEFAULT 300,
   p_stale_threshold_seconds INTEGER DEFAULT 600,
   p_flags INTEGER DEFAULT 0,  -- WorkBatchFlags
-  p_partition_count INTEGER DEFAULT 10000,
-  p_max_partitions_per_instance INTEGER DEFAULT NULL  -- NULL = no limit, or set explicitly for load balancing
+  p_partition_count INTEGER DEFAULT 10000
 )
 RETURNS TABLE(
   source VARCHAR,
@@ -88,8 +88,6 @@ DECLARE
   v_failure RECORD;
   v_current_status INTEGER;
   v_active_instance_count INTEGER;
-  v_dynamic_max_partitions INTEGER;
-  v_fair_share INTEGER;
   -- Arrays to track message IDs instead of temp tables
   v_new_outbox_ids UUID[] := '{}';
   v_new_inbox_ids UUID[] := '{}';
@@ -156,18 +154,6 @@ BEGIN
 
   -- Ensure at least 1 instance (this instance just registered/updated)
   v_active_instance_count := GREATEST(v_active_instance_count, 1);
-
-  -- Calculate fair share per instance
-  v_fair_share := CEIL(p_partition_count::NUMERIC / v_active_instance_count::NUMERIC)::INTEGER;
-
-  -- Apply explicit limit if provided (for load balancing), otherwise use fair share
-  -- When maxPartitionsPerInstance is NULL (default): single instance claims all needed partitions
-  -- When explicitly set (e.g., testing with maxPartitionsPerInstance: 10): enforces load balancing
-  IF p_max_partitions_per_instance IS NOT NULL THEN
-    v_dynamic_max_partitions := LEAST(p_max_partitions_per_instance, v_fair_share);
-  ELSE
-    v_dynamic_max_partitions := v_fair_share;
-  END IF;
 
   -- 3. Partition heartbeat update removed - partitions are virtual (algorithmic)
 
@@ -416,7 +402,7 @@ BEGIN
       -- Store in outbox with lease
       INSERT INTO wh_outbox (
         message_id, destination, event_type, event_data, metadata, scope,
-        stream_id, partition_number,
+        stream_id, partition_number, is_event,
         status, attempts, instance_id, lease_expiry, created_at
       ) VALUES (
         v_new_msg.message_id,
@@ -427,7 +413,8 @@ BEGIN
         CASE WHEN v_new_msg.scope IS NOT NULL THEN v_new_msg.scope::JSONB ELSE NULL END,
         v_new_msg.stream_id,
         v_partition,
-        1 | CASE WHEN v_new_msg.is_event THEN 2 ELSE 0 END,  -- Stored | EventStored (if event)
+        v_new_msg.is_event,  -- Store is_event flag
+        1,  -- Stored only (EventStored is set by application after event is persisted to event store)
         0,
         p_instance_id,
         v_lease_expiry,
@@ -480,7 +467,7 @@ BEGIN
       -- Insert into inbox (we know it's not a duplicate)
       INSERT INTO wh_inbox (
         message_id, handler_name, event_type, event_data, metadata, scope,
-        stream_id, partition_number,
+        stream_id, partition_number, is_event,
         status, attempts, instance_id, lease_expiry, received_at
       ) VALUES (
         v_new_msg.message_id,
@@ -491,7 +478,8 @@ BEGIN
         CASE WHEN v_new_msg.scope IS NOT NULL THEN v_new_msg.scope::JSONB ELSE NULL END,
         v_new_msg.stream_id,
         v_partition,
-        1 | CASE WHEN v_new_msg.is_event THEN 2 ELSE 0 END,  -- Stored | EventStored (if event)
+        v_new_msg.is_event,  -- Store is_event flag
+        1,  -- Stored only (EventStored is set by application after event is persisted to event store)
         0,
         p_instance_id,
         v_lease_expiry,
@@ -697,13 +685,7 @@ BEGIN
     AND (wh_outbox.status & 24) != 24   -- Not fully completed
   );
 
-  WITH active_instances AS (
-    -- Get all active instances sorted deterministically for hash-based distribution
-    SELECT instance_id
-    FROM wh_service_instances
-    WHERE last_heartbeat_at >= v_stale_cutoff
-  ),
-  orphaned AS (
+  WITH orphaned AS (
     UPDATE wh_outbox
     SET instance_id = p_instance_id,
         lease_expiry = v_lease_expiry
@@ -712,7 +694,7 @@ BEGIN
     AND (wh_outbox.status & 4) != 4     -- Not published (outbox is done when published)
     AND (wh_outbox.scheduled_for IS NULL OR wh_outbox.scheduled_for <= v_now)  -- NEW: Check scheduled time
     -- Virtual partition claiming: Use consistent hashing based on stream_id and instance_id (both UUIDv7)
-    -- Hash both UUIDs and take modulo to determine ownership
+    -- Hash both UUIDs and take modulo to determine ownership - each instance claims ALL matching partitions
     AND (hashtext(wh_outbox.stream_id::TEXT) % v_active_instance_count) = (hashtext(p_instance_id::TEXT) % v_active_instance_count)
     AND NOT EXISTS (  -- CRITICAL: Stream ordering protection - don't claim if earlier message is scheduled or processing
       SELECT 1 FROM wh_outbox earlier
@@ -745,13 +727,7 @@ BEGIN
 
   -- Claim orphaned inbox messages and track them in array
   -- Exclude messages that were just completed/failed in this call by checking JSONB parameters directly
-  WITH active_instances AS (
-    -- Get all active instances sorted deterministically for hash-based distribution
-    SELECT instance_id
-    FROM wh_service_instances
-    WHERE last_heartbeat_at >= v_stale_cutoff
-  ),
-  orphaned AS (
+  WITH orphaned AS (
     UPDATE wh_inbox
     SET instance_id = p_instance_id,
         lease_expiry = v_lease_expiry
@@ -760,7 +736,7 @@ BEGIN
     AND (wh_inbox.status & 2) != 2     -- Not event stored (inbox is done when event stored)
     AND (wh_inbox.scheduled_for IS NULL OR wh_inbox.scheduled_for <= v_now)  -- NEW: Check scheduled time
     -- Virtual partition claiming: Use consistent hashing based on stream_id and instance_id (both UUIDv7)
-    -- Hash both UUIDs and take modulo to determine ownership
+    -- Hash both UUIDs and take modulo to determine ownership - each instance claims ALL matching partitions
     AND (hashtext(wh_inbox.stream_id::TEXT) % v_active_instance_count) = (hashtext(p_instance_id::TEXT) % v_active_instance_count)
     AND NOT EXISTS (  -- CRITICAL: Stream ordering protection - don't claim if earlier message is scheduled or processing
       SELECT 1 FROM wh_inbox earlier

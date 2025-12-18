@@ -66,9 +66,15 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
         // IMPORTANT: Explicitly call module initializer for test assemblies
         ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();
 
+        // Register NpgsqlDataSource (required for Npgsql 9.0+ with JSONB)
+        var dataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(_connectionString);
+        dataSourceBuilder.EnableDynamicJson();
+        var dataSource = dataSourceBuilder.Build();
+        services.AddSingleton(dataSource);
+
         // Register DbContext (same as Program.cs)
         services.AddDbContext<BffDbContext>(options => {
-          options.UseNpgsql(_connectionString);
+          options.UseNpgsql(dataSource);
         });
 
         // Register service instance provider (same as Program.cs)
@@ -86,10 +92,12 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
         services.AddSingleton<OrderedStreamProcessor>();
 
         // Register WorkCoordinatorPublisherWorker options (same as Program.cs would use)
-        services.AddSingleton(new WorkCoordinatorPublisherOptions {
-          PollingIntervalMilliseconds = 100, // Fast polling for tests
-          LeaseSeconds = 300,
-          StaleThresholdSeconds = 600
+        services.Configure<WorkCoordinatorPublisherOptions>(options => {
+          options.PollingIntervalMilliseconds = 100; // Fast polling for tests
+          options.LeaseSeconds = 300;
+          options.StaleThresholdSeconds = 600;
+          options.DebugMode = false;
+          options.PartitionCount = 10000;
         });
 
         // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker

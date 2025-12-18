@@ -236,7 +236,6 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
       System.Guid[] renewInboxLeaseIds,
       WorkBatchFlags flags,
       int partitionCount,
-      int maxPartitionsPerInstance,
       int leaseSeconds,
       int staleThresholdSeconds,
       CancellationToken cancellationToken = default

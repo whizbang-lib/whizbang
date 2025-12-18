@@ -62,7 +62,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
     Guid[] renewInboxLeaseIds,
     WorkBatchFlags flags = WorkBatchFlags.None,
     int partitionCount = 10_000,
-    int maxPartitionsPerInstance = 100,
     int leaseSeconds = 300,
     int staleThresholdSeconds = 600,
     CancellationToken cancellationToken = default
@@ -160,8 +159,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         @p_lease_seconds,
         @p_stale_threshold_seconds,
         @p_flags,
-        @p_partition_count,
-        @p_max_partitions_per_instance
+        @p_partition_count
       )";
 
     var results = await _dbContext.Database
@@ -187,8 +185,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         new Npgsql.NpgsqlParameter("p_lease_seconds", leaseSeconds),
         new Npgsql.NpgsqlParameter("p_stale_threshold_seconds", staleThresholdSeconds),
         new Npgsql.NpgsqlParameter("p_flags", (int)flags),
-        new Npgsql.NpgsqlParameter("p_partition_count", partitionCount),
-        new Npgsql.NpgsqlParameter("p_max_partitions_per_instance", maxPartitionsPerInstance)
+        new Npgsql.NpgsqlParameter("p_partition_count", partitionCount)
       )
       .ToListAsync(cancellationToken);
 

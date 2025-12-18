@@ -178,8 +178,9 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       options.UseNpgsql(inventoryDataSource));
 
     // Register Whizbang with EFCore infrastructure
-    // IMPORTANT: Explicitly call module initializer for test assemblies (may not run automatically)
+    // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.InventoryWorker.Generated.GeneratedModelRegistration.Initialize();
+    ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
 
     _ = builder.Services
       .AddWhizbang()
@@ -189,6 +190,15 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     // Register Whizbang generated services
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddReceptors(builder.Services);
     builder.Services.AddWhizbangAggregateIdExtractor();
+
+    // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
+    builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
+      options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
+      options.LeaseSeconds = 300;
+      options.StaleThresholdSeconds = 600;
+      options.DebugMode = false;
+      options.PartitionCount = 10000;
+    });
 
     // Register perspective invoker for scoped event processing (use InventoryWorker's generated invoker)
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangPerspectiveInvoker(builder.Services);
@@ -280,8 +290,9 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       options.UseNpgsql(bffDataSource));
 
     // Register Whizbang with EFCore infrastructure
-    // IMPORTANT: Explicitly call module initializer for test assemblies (may not run automatically)
+    // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
     ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();
+    ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
 
     _ = builder.Services
       .AddWhizbang()
@@ -293,6 +304,15 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
 
     // Register perspectives
     _ = ECommerce.BFF.API.Generated.PerspectiveRegistrationExtensions.AddWhizbangPerspectives(builder.Services);
+
+    // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
+    builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
+      options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
+      options.LeaseSeconds = 300;
+      options.StaleThresholdSeconds = 600;
+      options.DebugMode = false;
+      options.PartitionCount = 10000;
+    });
 
     // Register dispatcher (needed for event consumption)
     ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangDispatcher(builder.Services);

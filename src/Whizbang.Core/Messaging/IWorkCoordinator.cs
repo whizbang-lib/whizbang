@@ -54,7 +54,6 @@ public interface IWorkCoordinator {
   /// <param name="renewInboxLeaseIds">Message IDs to renew lease for (inbox) - for buffered messages awaiting processing</param>
   /// <param name="flags">Work batch flags (e.g., DebugMode to preserve completed messages)</param>
   /// <param name="partitionCount">Total number of partitions (default 10,000)</param>
-  /// <param name="maxPartitionsPerInstance">Max partitions per instance (default 100)</param>
   /// <param name="leaseSeconds">Lease duration in seconds (default 300 = 5 minutes)</param>
   /// <param name="staleThresholdSeconds">Stale instance threshold in seconds (default 600 = 10 minutes)</param>
   /// <param name="cancellationToken">Cancellation token</param>
@@ -131,7 +130,6 @@ public interface IWorkCoordinator {
     Guid[] renewInboxLeaseIds,
     WorkBatchFlags flags = WorkBatchFlags.None,
     int partitionCount = 10_000,
-    int maxPartitionsPerInstance = 100,
     int leaseSeconds = 300,
     int staleThresholdSeconds = 600,
     CancellationToken cancellationToken = default

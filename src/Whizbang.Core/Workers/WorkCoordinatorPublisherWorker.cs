@@ -237,21 +237,34 @@ public class WorkCoordinatorPublisherWorker(
             Status = result.CompletedStatus
           });
         } else {
-          _failures.Add(new MessageFailure {
-            MessageId = work.MessageId,
-            CompletedStatus = result.CompletedStatus,
-            Error = result.Error ?? "Unknown error",
-            Reason = result.Reason
-          });
+          // For retryable failures, renew lease instead of marking as failed
+          // This allows the message to be re-claimed and retried
+          if (result.Reason == MessageFailureReason.TransportException) {
+            _leaseRenewals.Add(work.MessageId);
 
-          // Still log individual errors for debugging
-          _logger.LogError(
-            "Failed to publish outbox message {MessageId} to {Destination}: {Error} (Reason: {Reason})",
-            work.MessageId,
-            work.Destination,
-            result.Error,
-            result.Reason
-          );
+            _logger.LogWarning(
+              "Transport failure for message {MessageId} to {Destination}: {Error}. Renewing lease for retry.",
+              work.MessageId,
+              work.Destination,
+              result.Error
+            );
+          } else {
+            // Non-retryable failures (serialization, validation, etc.) - mark as failed
+            _failures.Add(new MessageFailure {
+              MessageId = work.MessageId,
+              CompletedStatus = result.CompletedStatus,
+              Error = result.Error ?? "Unknown error",
+              Reason = result.Reason
+            });
+
+            _logger.LogError(
+              "Failed to publish outbox message {MessageId} to {Destination}: {Error} (Reason: {Reason})",
+              work.MessageId,
+              work.Destination,
+              result.Error,
+              result.Reason
+            );
+          }
         }
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         _logger.LogError(
@@ -311,7 +324,6 @@ public class WorkCoordinatorPublisherWorker(
       renewInboxLeaseIds: [],
       flags: _options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None,
       partitionCount: _options.PartitionCount,
-      maxPartitionsPerInstance: _options.MaxPartitionsPerInstance,
       leaseSeconds: _options.LeaseSeconds,
       staleThresholdSeconds: _options.StaleThresholdSeconds,
       cancellationToken: cancellationToken
@@ -418,11 +430,4 @@ public class WorkCoordinatorPublisherOptions {
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:WorkerProcessesOutboxMessages_EndToEndAsync</tests>
   public int PartitionCount { get; set; } = 10_000;
-
-  /// <summary>
-  /// Maximum number of partitions a single instance can claim.
-  /// Default: 100
-  /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:WorkerProcessesOutboxMessages_EndToEndAsync</tests>
-  public int MaxPartitionsPerInstance { get; set; } = 100;
 }

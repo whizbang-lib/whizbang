@@ -112,12 +112,6 @@ public class WorkCoordinatorOptions {
   public int PartitionCount { get; set; } = 10_000;
 
   /// <summary>
-  /// Maximum partitions a single instance can own (default 100).
-  /// Prevents single instance from claiming all partitions.
-  /// </summary>
-  public int MaxPartitionsPerInstance { get; set; } = 100;
-
-  /// <summary>
   /// Process different streams in parallel within an instance (default false).
   /// When true: Stream A and Stream B can be processed concurrently.
   /// When false: Streams processed sequentially (safer, simpler debugging).

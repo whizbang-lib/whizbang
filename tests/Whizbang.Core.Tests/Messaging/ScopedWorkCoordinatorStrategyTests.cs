@@ -32,7 +32,6 @@ public class ScopedWorkCoordinatorStrategyTests {
     var options = new WorkCoordinatorOptions {
       IntervalMilliseconds = 1000,
       PartitionCount = 10000,
-      MaxPartitionsPerInstance = 100,
       LeaseSeconds = 300,
       StaleThresholdSeconds = 300,
       DebugMode = false
@@ -130,7 +129,6 @@ public class ScopedWorkCoordinatorStrategyTests {
     var options = new WorkCoordinatorOptions {
       IntervalMilliseconds = 1000,
       PartitionCount = 10000,
-      MaxPartitionsPerInstance = 100,
       LeaseSeconds = 300,
       StaleThresholdSeconds = 300,
       DebugMode = false
@@ -202,7 +200,6 @@ public class ScopedWorkCoordinatorStrategyTests {
     var options = new WorkCoordinatorOptions {
       IntervalMilliseconds = 1000,
       PartitionCount = 10000,
-      MaxPartitionsPerInstance = 100,
       LeaseSeconds = 300,
       StaleThresholdSeconds = 300,
       DebugMode = false
@@ -357,7 +354,6 @@ public class ScopedWorkCoordinatorStrategyTests {
       Guid[] renewInboxLeaseIds,
       WorkBatchFlags flags = WorkBatchFlags.None,
       int partitionCount = 10000,
-      int maxPartitionsPerInstance = 100,
       int leaseSeconds = 300,
       int staleThresholdSeconds = 300,
       CancellationToken cancellationToken = default) {

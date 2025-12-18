@@ -1152,8 +1152,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
-      maxPartitionsPerInstance: 10);
+      renewInboxLeaseIds: []);
 
     var result2 = await _sut.ProcessWorkBatchAsync(
       instance2, "Service2", "host2", 2,
@@ -1169,8 +1168,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
-      maxPartitionsPerInstance: 10);
+      renewInboxLeaseIds: []);
 
     var result3 = await _sut.ProcessWorkBatchAsync(
       instance3, "Service3", "host3", 3,
@@ -1186,12 +1184,11 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       newOutboxMessages: [],
       newInboxMessages: [],
       renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
-      maxPartitionsPerInstance: 10);
+      renewInboxLeaseIds: []);
 
     // Assert - Work distributed across instances
     // Note: With random stream IDs hashing to partition numbers and modulo-based distribution,
-    // not all messages may be claimed if maxPartitionsPerInstance limits are reached.
+    // each instance claims all partitions assigned to it via modulo.
     // The key test is that work IS distributed across multiple instances.
     var totalWork = result1.OutboxWork.Count + result2.OutboxWork.Count + result3.OutboxWork.Count;
     await Assert.That(totalWork).IsGreaterThan(20)
@@ -1812,12 +1809,13 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       INSERT INTO wh_outbox (
         message_id, destination, event_type, event_data, metadata, scope,
         status, attempts, error, created_at, published_at,
-        instance_id, lease_expiry, stream_id, partition_number, scheduled_for
+        instance_id, lease_expiry, stream_id, partition_number, is_event, scheduled_for
       ) VALUES (
         @messageId, @destination, @envelopeType, @envelopeJson::jsonb, '{}'::jsonb, NULL,
         @statusFlags, 0, NULL, @now, NULL,
         @instanceId, @leaseExpiry, @streamId,
         CASE WHEN @streamId IS NULL THEN NULL ELSE compute_partition(@streamId::uuid, 10000) END,
+        @isEvent,
         @scheduledFor
       )",
       new {
@@ -1829,6 +1827,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         instanceId,
         leaseExpiry,
         streamId,
+        isEvent,
         scheduledFor,
         now = DateTimeOffset.UtcNow
       });
@@ -1925,12 +1924,13 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       INSERT INTO wh_inbox (
         message_id, handler_name, event_type, event_data, metadata, scope,
         status, attempts, received_at, processed_at, instance_id, lease_expiry,
-        stream_id, partition_number, scheduled_for
+        stream_id, partition_number, is_event, scheduled_for
       ) VALUES (
         @messageId, @handlerName, @envelopeType, @envelopeJson::jsonb, '{}'::jsonb, NULL,
         @statusFlags, 0, @now, NULL, @instanceId, @leaseExpiry,
         @streamId,
         CASE WHEN @streamId IS NULL THEN NULL ELSE compute_partition(@streamId::uuid, 10000) END,
+        @isEvent,
         @scheduledFor
       )",
       new {
@@ -1942,6 +1942,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         instanceId,
         leaseExpiry,
         streamId,
+        isEvent,
         scheduledFor,
         now = DateTimeOffset.UtcNow
       });
@@ -2022,20 +2023,18 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
   private async Task<bool> GetOutboxIsEventAsync(Guid messageId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
-    var status = await connection.QueryFirstOrDefaultAsync<int>(@"
-      SELECT status FROM wh_outbox WHERE message_id = @messageId",
+    var isEvent = await connection.QueryFirstOrDefaultAsync<bool>(@"
+      SELECT is_event FROM wh_outbox WHERE message_id = @messageId",
       new { messageId });
-    // Check if EventStored bit (bit 2, value 2) is set
-    return (status & 2) == 2;
+    return isEvent;
   }
 
   private async Task<bool> GetInboxIsEventAsync(Guid messageId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
-    var status = await connection.QueryFirstOrDefaultAsync<int>(@"
-      SELECT status FROM wh_inbox WHERE message_id = @messageId",
+    var isEvent = await connection.QueryFirstOrDefaultAsync<bool>(@"
+      SELECT is_event FROM wh_inbox WHERE message_id = @messageId",
       new { messageId });
-    // Check if EventStored bit (bit 2, value 2) is set
-    return (status & 2) == 2;
+    return isEvent;
   }
 
   private async Task<int?> GetOutboxPartitionNumberAsync(Guid messageId) {

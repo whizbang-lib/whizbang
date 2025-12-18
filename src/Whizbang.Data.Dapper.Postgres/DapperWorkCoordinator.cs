@@ -74,7 +74,6 @@ public class DapperWorkCoordinator(
     Guid[] renewInboxLeaseIds,
     WorkBatchFlags flags = WorkBatchFlags.None,
     int partitionCount = 10_000,
-    int maxPartitionsPerInstance = 100,
     int leaseSeconds = 300,
     int staleThresholdSeconds = 600,
     CancellationToken cancellationToken = default
@@ -135,8 +134,7 @@ public class DapperWorkCoordinator(
         @p_lease_seconds::int,
         @p_stale_threshold_seconds::int,
         @p_flags::int,
-        @p_partition_count::int,
-        @p_max_partitions_per_instance::int
+        @p_partition_count::int
       )";
 
     var parameters = new {
@@ -160,8 +158,7 @@ public class DapperWorkCoordinator(
       p_lease_seconds = leaseSeconds,
       p_stale_threshold_seconds = staleThresholdSeconds,
       p_flags = (int)flags,
-      p_partition_count = partitionCount,
-      p_max_partitions_per_instance = maxPartitionsPerInstance
+      p_partition_count = partitionCount
     };
 
     var commandDefinition = new CommandDefinition(
