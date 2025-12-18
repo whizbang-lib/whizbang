@@ -88,6 +88,7 @@ DECLARE
   v_failure RECORD;
   v_current_status INTEGER;
   v_active_instance_count INTEGER;
+  v_instance_rank INTEGER;  -- This instance's rank (0 to N-1) for partition claiming
   -- Arrays to track message IDs instead of temp tables
   v_new_outbox_ids UUID[] := '{}';
   v_new_inbox_ids UUID[] := '{}';
@@ -154,6 +155,29 @@ BEGIN
 
   -- Ensure at least 1 instance (this instance just registered/updated)
   v_active_instance_count := GREATEST(v_active_instance_count, 1);
+
+  -- 2.6. Calculate this instance's rank (0 to N-1) for partition claiming
+  -- Instances are sorted by instance_id to ensure deterministic ordering
+  -- Each instance gets a unique rank which maps to specific partition numbers via modulo
+  -- CRITICAL: ROW_NUMBER() must see ALL active instances to assign correct ranks
+  WITH instance_ranks AS (
+    SELECT instance_id,
+           (ROW_NUMBER() OVER (ORDER BY instance_id) - 1) as rank
+    FROM wh_service_instances
+    WHERE last_heartbeat_at >= v_stale_cutoff
+  )
+  SELECT rank INTO v_instance_rank
+  FROM instance_ranks
+  WHERE instance_id = p_instance_id;
+
+  -- Handle NULL rank (should never happen, but defensive programming)
+  IF v_instance_rank IS NULL THEN
+    RAISE EXCEPTION 'Failed to calculate rank for instance %. Instance not found in active instances.', p_instance_id;
+  END IF;
+
+  -- DEBUG: Log rank calculation for troubleshooting
+  RAISE NOTICE 'Instance % has rank % out of % active instances',
+    p_instance_id, v_instance_rank, v_active_instance_count;
 
   -- 3. Partition heartbeat update removed - partitions are virtual (algorithmic)
 
@@ -697,11 +721,7 @@ BEGIN
     -- Each instance gets a rank (0 to N-1) based on sorted instance_id (deterministic ordering)
     -- Partition numbers (0-9999) are distributed via modulo: partition_number % instance_count == instance_rank
     -- This guarantees EVERY partition is claimed by exactly one instance (full coverage, no gaps)
-    AND wh_outbox.partition_number % v_active_instance_count = (
-      SELECT (ROW_NUMBER() OVER (ORDER BY instance_id) - 1)
-      FROM wh_service_instances
-      WHERE last_heartbeat_at >= v_stale_cutoff AND instance_id = p_instance_id
-    )
+    AND wh_outbox.partition_number % v_active_instance_count = v_instance_rank
     AND NOT EXISTS (  -- CRITICAL: Stream ordering protection - don't claim if earlier message is scheduled or processing
       SELECT 1 FROM wh_outbox earlier
       WHERE earlier.stream_id = wh_outbox.stream_id
@@ -745,11 +765,7 @@ BEGIN
     -- Each instance gets a rank (0 to N-1) based on sorted instance_id (deterministic ordering)
     -- Partition numbers (0-9999) are distributed via modulo: partition_number % instance_count == instance_rank
     -- This guarantees EVERY partition is claimed by exactly one instance (full coverage, no gaps)
-    AND wh_inbox.partition_number % v_active_instance_count = (
-      SELECT (ROW_NUMBER() OVER (ORDER BY instance_id) - 1)
-      FROM wh_service_instances
-      WHERE last_heartbeat_at >= v_stale_cutoff AND instance_id = p_instance_id
-    )
+    AND wh_inbox.partition_number % v_active_instance_count = v_instance_rank
     AND NOT EXISTS (  -- CRITICAL: Stream ordering protection - don't claim if earlier message is scheduled or processing
       SELECT 1 FROM wh_inbox earlier
       WHERE earlier.stream_id = wh_inbox.stream_id
