@@ -163,6 +163,7 @@ public abstract class ISchemaBuilderContractTests {
     await Assert.That(sql).Contains("wb_outbox");
     await Assert.That(sql).Contains("wb_event_store");
     await Assert.That(sql).Contains("wb_service_instances");
+    await Assert.That(sql).Contains("wb_active_streams");
     await Assert.That(sql).Contains("wb_partition_assignments");
     await Assert.That(sql).Contains("wb_message_deduplication");
     await Assert.That(sql).Contains("wb_receptor_processing");

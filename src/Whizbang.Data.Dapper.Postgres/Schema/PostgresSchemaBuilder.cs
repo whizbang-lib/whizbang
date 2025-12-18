@@ -160,6 +160,7 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
     // Build all infrastructure tables
     var tables = new[] {
       (ServiceInstancesSchema.Table, "Service Instances - Distributed work coordination"),
+      (ActiveStreamsSchema.Table, "Active Streams - Ephemeral stream coordination"),
       (PartitionAssignmentsSchema.Table, "Partition Assignments - Distributed work coordination"),
       (MessageDeduplicationSchema.Table, "Message Deduplication - Permanent idempotency tracking"),
       (InboxSchema.Table, "Inbox - Message deduplication and idempotency"),

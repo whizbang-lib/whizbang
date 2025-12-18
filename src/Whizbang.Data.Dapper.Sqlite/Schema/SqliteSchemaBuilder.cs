@@ -148,6 +148,7 @@ public class SqliteSchemaBuilder : ISchemaBuilder {
       (InboxSchema.Table, "Inbox - Message deduplication and idempotency"),
       (OutboxSchema.Table, "Outbox - Transactional messaging pattern"),
       (EventStoreSchema.Table, "Event Store - Event sourcing and audit trail"),
+      (ActiveStreamsSchema.Table, "Active Streams - Ephemeral stream coordination"),
       (RequestResponseSchema.Table, "Request/Response - Async request/response tracking"),
       (SequencesSchema.Table, "Sequences - Distributed sequence generation")
     };
