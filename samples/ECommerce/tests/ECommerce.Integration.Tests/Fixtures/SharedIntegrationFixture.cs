@@ -31,6 +31,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   private bool _isInitialized;
   private IHost? _inventoryHost;
   private IHost? _bffHost;
+  private readonly Guid _sharedInstanceId = Guid.CreateVersion7(); // Shared across both services for partition claiming
 
   public SharedIntegrationFixture() {
     _postgresContainer = new PostgreSqlBuilder()
@@ -151,8 +152,8 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   private IHost CreateInventoryHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
 
-    // Register service instance provider
-    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(Guid.CreateVersion7(), "InventoryWorker"));
+    // Register service instance provider (uses shared instance ID for partition claiming compatibility)
+    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(_sharedInstanceId, "InventoryWorker"));
 
     // Register Azure Service Bus transport
     var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
@@ -262,8 +263,8 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   private IHost CreateBffHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
 
-    // Register service instance provider
-    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(Guid.CreateVersion7(), "BFF.API"));
+    // Register service instance provider (uses shared instance ID for partition claiming compatibility)
+    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(_sharedInstanceId, "BFF.API"));
 
     var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
 
