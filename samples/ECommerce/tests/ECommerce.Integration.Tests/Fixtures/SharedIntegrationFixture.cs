@@ -199,6 +199,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       options.StaleThresholdSeconds = 600;
       options.DebugMode = false;
       options.PartitionCount = 10000;
+      options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
     });
 
     // Register perspective invoker for scoped event processing (use InventoryWorker's generated invoker)
@@ -313,6 +314,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       options.StaleThresholdSeconds = 600;
       options.DebugMode = false;
       options.PartitionCount = 10000;
+      options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
     });
 
     // Register dispatcher (needed for event consumption)
@@ -391,12 +393,84 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   }
 
   /// <summary>
-  /// Waits for asynchronous event processing to complete.
-  /// Gives the Service Bus consumer and perspectives time to process published events.
-  /// Default increased to 10 seconds to ensure reliable event processing in Docker containers.
+  /// Waits for both InventoryWorker and BFF work processing to become idle.
+  /// Uses event callbacks from WorkCoordinatorPublisherWorker to efficiently detect when all event processing is complete.
+  /// Falls back to timeout if idle state is not reached within the specified time.
   /// </summary>
-  public async Task WaitForEventProcessingAsync(int millisecondsDelay = 10000) {
-    await Task.Delay(millisecondsDelay);
+  public async Task WaitForEventProcessingAsync(int timeoutMilliseconds = 30000) {
+    // Get worker instances
+    var inventoryWorker = _inventoryHost!.Services.GetServices<IHostedService>()
+      .OfType<WorkCoordinatorPublisherWorker>()
+      .FirstOrDefault();
+
+    var bffWorker = _bffHost!.Services.GetServices<IHostedService>()
+      .OfType<WorkCoordinatorPublisherWorker>()
+      .FirstOrDefault();
+
+    // Create TaskCompletionSources for this wait
+    var inventoryIdleTcs = new TaskCompletionSource<bool>();
+    var bffIdleTcs = new TaskCompletionSource<bool>();
+
+    // Wire up one-time idle callbacks
+    WorkProcessingIdleHandler? inventoryHandler = null;
+    WorkProcessingIdleHandler? bffHandler = null;
+
+    inventoryHandler = () => {
+      inventoryIdleTcs.TrySetResult(true);
+      if (inventoryWorker != null && inventoryHandler != null) {
+        inventoryWorker.OnWorkProcessingIdle -= inventoryHandler;
+      }
+    };
+
+    bffHandler = () => {
+      bffIdleTcs.TrySetResult(true);
+      if (bffWorker != null && bffHandler != null) {
+        bffWorker.OnWorkProcessingIdle -= bffHandler;
+      }
+    };
+
+    if (inventoryWorker != null) {
+      inventoryWorker.OnWorkProcessingIdle += inventoryHandler;
+      // If already idle, set result immediately
+      if (inventoryWorker.IsIdle) {
+        inventoryIdleTcs.TrySetResult(true);
+      }
+    } else {
+      inventoryIdleTcs.TrySetResult(true);  // No worker, consider idle
+    }
+
+    if (bffWorker != null) {
+      bffWorker.OnWorkProcessingIdle += bffHandler;
+      // If already idle, set result immediately
+      if (bffWorker.IsIdle) {
+        bffIdleTcs.TrySetResult(true);
+      }
+    } else {
+      bffIdleTcs.TrySetResult(true);  // No worker, consider idle
+    }
+
+    // Wait for both to become idle (or timeout)
+    using var cts = new CancellationTokenSource(timeoutMilliseconds);
+
+    try {
+      await Task.WhenAll(
+        inventoryIdleTcs.Task,
+        bffIdleTcs.Task
+      ).WaitAsync(cts.Token);
+
+      Console.WriteLine("[SharedFixture] Event processing idle - all workers have no pending work");
+    } catch (OperationCanceledException) {
+      Console.WriteLine($"[SharedFixture] WARNING: Event processing did not reach idle state within {timeoutMilliseconds}ms timeout");
+      Console.WriteLine($"[SharedFixture] InventoryWorker idle: {inventoryWorker?.IsIdle ?? true}, BFF idle: {bffWorker?.IsIdle ?? true}");
+    } finally {
+      // Clean up handlers
+      if (inventoryWorker != null && inventoryHandler != null) {
+        inventoryWorker.OnWorkProcessingIdle -= inventoryHandler;
+      }
+      if (bffWorker != null && bffHandler != null) {
+        bffWorker.OnWorkProcessingIdle -= bffHandler;
+      }
+    }
   }
 
   /// <summary>

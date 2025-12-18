@@ -80,6 +80,10 @@ public class WorkCoordinatorPublisherWorker(
   private long _totalLeaseRenewals;
   private long _totalBufferedMessages;
 
+  // Work processing state tracking
+  private int _consecutiveEmptyPolls;
+  private bool _isIdle = true;  // Start in idle state
+
   /// <summary>
   /// Gets the number of consecutive times the transport was not ready.
   /// Resets to 0 when transport becomes ready.
@@ -109,6 +113,30 @@ public class WorkCoordinatorPublisherWorker(
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerMetricsTests.cs:LeaseRenewals_TrackedInMetricsAsync</tests>
   public long TotalLeaseRenewals => _totalLeaseRenewals;
+
+  /// <summary>
+  /// Gets the number of consecutive empty work polls (no outbox or inbox work returned).
+  /// Resets to 0 when work is found.
+  /// </summary>
+  public int ConsecutiveEmptyPolls => _consecutiveEmptyPolls;
+
+  /// <summary>
+  /// Gets whether the worker is currently in idle state (no work being processed).
+  /// </summary>
+  public bool IsIdle => _isIdle;
+
+  /// <summary>
+  /// Event fired when work processing starts (idle → active transition).
+  /// Fires when work appears after consecutive empty polls.
+  /// </summary>
+  public event WorkProcessingStartedHandler? OnWorkProcessingStarted;
+
+  /// <summary>
+  /// Event fired when work processing becomes idle (active → idle transition).
+  /// Fires after N consecutive polls returned no work (configured via IdleThresholdPolls).
+  /// Useful for integration tests to wait for event processing completion.
+  /// </summary>
+  public event WorkProcessingIdleHandler? OnWorkProcessingIdle;
 
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
     _logger.LogInformation(
@@ -368,6 +396,31 @@ public class WorkCoordinatorPublisherWorker(
         });
       }
     }
+
+    // Track work state transitions for OnWorkProcessingStarted / OnWorkProcessingIdle callbacks
+    bool hasWork = workBatch.OutboxWork.Count > 0 || workBatch.InboxWork.Count > 0;
+
+    if (hasWork) {
+      // Reset empty poll counter
+      Interlocked.Exchange(ref _consecutiveEmptyPolls, 0);
+
+      // Transition to active if was idle
+      if (_isIdle) {
+        _isIdle = false;
+        OnWorkProcessingStarted?.Invoke();
+        _logger.LogDebug("Work processing started (idle → active)");
+      }
+    } else {
+      // Increment empty poll counter
+      Interlocked.Increment(ref _consecutiveEmptyPolls);
+
+      // Check if should transition to idle
+      if (!_isIdle && _consecutiveEmptyPolls >= _options.IdleThresholdPolls) {
+        _isIdle = true;
+        OnWorkProcessingIdle?.Invoke();
+        _logger.LogDebug("Work processing idle (active → idle) after {EmptyPolls} empty polls", _consecutiveEmptyPolls);
+      }
+    }
   }
 
 }
@@ -430,4 +483,23 @@ public class WorkCoordinatorPublisherOptions {
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:WorkerProcessesOutboxMessages_EndToEndAsync</tests>
   public int PartitionCount { get; set; } = 10_000;
+
+  /// <summary>
+  /// Number of consecutive empty work polls required to trigger OnWorkProcessingIdle callback.
+  /// Default: 2
+  /// </summary>
+  public int IdleThresholdPolls { get; set; } = 2;
 }
+
+/// <summary>
+/// Callback invoked when work processing transitions from idle to active state.
+/// Fires when work appears after consecutive empty polls.
+/// </summary>
+public delegate void WorkProcessingStartedHandler();
+
+/// <summary>
+/// Callback invoked when work processing transitions from active to idle state.
+/// Fires after N consecutive polls returned no work (configurable via IdleThresholdPolls).
+/// Useful for integration tests to wait for event processing completion.
+/// </summary>
+public delegate void WorkProcessingIdleHandler();
