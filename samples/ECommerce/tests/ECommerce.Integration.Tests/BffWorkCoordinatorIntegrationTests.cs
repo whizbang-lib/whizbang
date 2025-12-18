@@ -77,6 +77,10 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
           options.UseNpgsql(dataSource);
         });
 
+        // Register JsonSerializerOptions (required by EFCoreWorkCoordinator constructor)
+        var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+        services.AddSingleton(jsonOptions);
+
         // Register service instance provider (same as Program.cs)
         services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(_instanceId));
 
@@ -96,12 +100,11 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
           options.PollingIntervalMilliseconds = 100; // Fast polling for tests
           options.LeaseSeconds = 300;
           options.StaleThresholdSeconds = 600;
-          options.DebugMode = false;
+          options.DebugMode = true; // Keep completed messages for verification
           options.PartitionCount = 10000;
         });
 
         // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
-        var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
         services.AddSingleton<IMessagePublishStrategy>(sp =>
           new TransportPublishStrategy(
             sp.GetRequiredService<ITransport>(),
@@ -184,7 +187,8 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
         ],
         newInboxMessages: [],
         renewOutboxLeaseIds: [],
-        renewInboxLeaseIds: []
+        renewInboxLeaseIds: [],
+        leaseSeconds: -1  // Immediately expired - worker can reclaim
       );
     }
 
@@ -219,10 +223,10 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
         .FirstOrDefaultAsync();
 
       await Assert.That(outboxRecord).IsNotNull();
-      await Assert.That(outboxRecord!.Status & (int)MessageProcessingStatus.Published)
+      await Assert.That(outboxRecord!.status & (int)MessageProcessingStatus.Published)
         .IsEqualTo((int)MessageProcessingStatus.Published)
         .Because("Message should be marked as Published in the database");
-      await Assert.That(outboxRecord.PublishedAt).IsNotNull()
+      await Assert.That(outboxRecord.published_at).IsNotNull()
         .Because("PublishedAt timestamp should be set");
     }
   }
@@ -303,7 +307,8 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
         ],
         newInboxMessages: [],
         renewOutboxLeaseIds: [],
-        renewInboxLeaseIds: []
+        renewInboxLeaseIds: [],
+        leaseSeconds: -1  // Immediately expired - worker can reclaim
       );
     }
 
@@ -408,14 +413,17 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
 
 /// <summary>
 /// Simple DTO to read outbox records from database for verification.
+/// Properties use snake_case to match PostgreSQL column names.
 /// </summary>
+#pragma warning disable IDE1006 // Naming Styles
 public class OutboxMessageRecord {
-  public Guid MessageId { get; set; }
-  public int Status { get; set; }
-  public DateTimeOffset? PublishedAt { get; set; }
-  public Guid? InstanceId { get; set; }
-  public DateTimeOffset? LeaseExpiry { get; set; }
+  public Guid message_id { get; set; }
+  public int status { get; set; }
+  public DateTimeOffset? published_at { get; set; }
+  public Guid? instance_id { get; set; }
+  public DateTimeOffset? lease_expiry { get; set; }
 }
+#pragma warning restore IDE1006 // Naming Styles
 
 /// <summary>
 /// Test transport that captures published messages for verification.
