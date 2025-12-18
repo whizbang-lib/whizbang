@@ -103,14 +103,14 @@ DECLARE
   v_after_status INTEGER;
 
 BEGIN
-  -- DEBUG: Migration version identifier
-  RAISE NOTICE '====  MIGRATION VERSION: 2025-12-16_SCHEDULED_FOR_RETRY_SUPPORT ===';
-
-  -- DEBUG: Log input parameters for completions
-  RAISE NOTICE '=== SECTION 0: INPUT PARAMETERS ===';
-  RAISE NOTICE 'p_outbox_completions: %', p_outbox_completions;
-  RAISE NOTICE 'p_outbox_failures: %', p_outbox_failures;
-  RAISE NOTICE 'p_new_outbox_messages count: %', jsonb_array_length(p_new_outbox_messages);
+  -- DEBUG: Migration version identifier (only in debug mode)
+  IF v_debug_mode THEN
+    RAISE NOTICE '====  MIGRATION VERSION: 2025-12-16_SCHEDULED_FOR_RETRY_SUPPORT ===';
+    RAISE NOTICE '=== SECTION 0: INPUT PARAMETERS ===';
+    RAISE NOTICE 'p_outbox_completions: %', p_outbox_completions;
+    RAISE NOTICE 'p_outbox_failures: %', p_outbox_failures;
+    RAISE NOTICE 'p_new_outbox_messages count: %', jsonb_array_length(p_new_outbox_messages);
+  END IF;
 
   -- 1. Register/update this instance with heartbeat
   INSERT INTO wh_service_instances (
@@ -175,14 +175,19 @@ BEGIN
     RAISE EXCEPTION 'Failed to calculate rank for instance %. Instance not found in active instances.', p_instance_id;
   END IF;
 
-  -- DEBUG: Log rank calculation for troubleshooting
-  RAISE NOTICE 'Instance % has rank % out of % active instances',
-    p_instance_id, v_instance_rank, v_active_instance_count;
+  -- DEBUG: Log rank calculation for troubleshooting (only in debug mode)
+  IF v_debug_mode THEN
+    RAISE NOTICE 'Instance % has rank % out of % active instances',
+      p_instance_id, v_instance_rank, v_active_instance_count;
+  END IF;
 
   -- 3. Partition heartbeat update removed - partitions are virtual (algorithmic)
 
   -- 4. Process completions (with status pairing)
-  RAISE NOTICE '=== SECTION 4: PROCESS COMPLETIONS ===';
+  IF v_debug_mode THEN
+    RAISE NOTICE '=== SECTION 4: PROCESS COMPLETIONS ===';
+  END IF;
+
   IF jsonb_array_length(p_outbox_completions) > 0 THEN
     FOR v_completion IN
       SELECT
@@ -190,7 +195,9 @@ BEGIN
         (elem->>'Status')::INTEGER as status_flags
       FROM jsonb_array_elements(p_outbox_completions) as elem
     LOOP
-      RAISE NOTICE 'Processing completion: messageId=%, status=%', v_completion.msg_id, v_completion.status_flags;
+      IF v_debug_mode THEN
+        RAISE NOTICE 'Processing completion: messageId=%, status=%', v_completion.msg_id, v_completion.status_flags;
+      END IF;
 
       IF v_debug_mode THEN
         -- Keep completed messages, update status and timestamps
@@ -208,7 +215,9 @@ BEGIN
         -- Delete if Published (outbox messages are done once published to transport)
         IF ((v_current_status | v_completion.status_flags) & 4) = 4 THEN
           DELETE FROM wh_outbox WHERE wh_outbox.message_id = v_completion.msg_id;
-          RAISE NOTICE 'DELETED outbox message (published): messageId=%', v_completion.msg_id;
+          IF v_debug_mode THEN
+            RAISE NOTICE 'DELETED outbox message (published): messageId=%', v_completion.msg_id;
+          END IF;
         ELSE
           -- Partially completed - update status
           UPDATE wh_outbox AS o
@@ -219,13 +228,17 @@ BEGIN
               lease_expiry = NULL
           WHERE o.message_id = v_completion.msg_id;
 
-          RAISE NOTICE 'Updated message (partially completed): messageId=%', v_completion.msg_id;
+          IF v_debug_mode THEN
+            RAISE NOTICE 'Updated message (partially completed): messageId=%', v_completion.msg_id;
+          END IF;
         END IF;
       END IF;
     END LOOP;
   END IF;
 
-  RAISE NOTICE '=== SECTION 4 COMPLETE: All completions processed ===' ;
+  IF v_debug_mode THEN
+    RAISE NOTICE '=== SECTION 4 COMPLETE: All completions processed ===';
+  END IF;
 
   -- Similar for inbox completions
   IF jsonb_array_length(p_inbox_completions) > 0 THEN
@@ -249,7 +262,9 @@ BEGIN
         -- Delete if EventStored (inbox messages are done once event is stored and handlers invoked)
         IF ((v_current_status | v_completion.status_flags) & 2) = 2 THEN
           DELETE FROM wh_inbox WHERE wh_inbox.message_id = v_completion.msg_id;
-          RAISE NOTICE 'DELETED inbox message (event stored): messageId=%', v_completion.msg_id;
+          IF v_debug_mode THEN
+            RAISE NOTICE 'DELETED inbox message (event stored): messageId=%', v_completion.msg_id;
+          END IF;
         ELSE
           UPDATE wh_inbox
           SET status = wh_inbox.status | v_completion.status_flags,
@@ -405,7 +420,10 @@ BEGIN
 
   -- 6. Store new outbox messages (with partition assignment)
   -- Note: Outbox doesn't use deduplication table (outbox is transactional within service boundary)
-  RAISE NOTICE '=== SECTION 6: STORE NEW OUTBOX MESSAGES ===';
+  IF v_debug_mode THEN
+    RAISE NOTICE '=== SECTION 6: STORE NEW OUTBOX MESSAGES ===';
+  END IF;
+
   IF jsonb_array_length(p_new_outbox_messages) > 0 THEN
     FOR v_new_msg IN
       SELECT
@@ -447,11 +465,15 @@ BEGIN
 
       -- Track newly stored outbox message in array
       v_new_outbox_ids := array_append(v_new_outbox_ids, v_new_msg.message_id);
-      RAISE NOTICE 'Stored new outbox message: %, v_new_outbox_ids now: %', v_new_msg.message_id, v_new_outbox_ids;
+      IF v_debug_mode THEN
+        RAISE NOTICE 'Stored new outbox message: %, v_new_outbox_ids now: %', v_new_msg.message_id, v_new_outbox_ids;
+      END IF;
     END LOOP;
   END IF;
 
-  RAISE NOTICE 'Final v_new_outbox_ids: %, cardinality: %', v_new_outbox_ids, cardinality(v_new_outbox_ids);
+  IF v_debug_mode THEN
+    RAISE NOTICE 'Final v_new_outbox_ids: %, cardinality: %', v_new_outbox_ids, cardinality(v_new_outbox_ids);
+  END IF;
 
   -- 7. Store new inbox messages (with partition assignment and deduplication)
   -- Uses permanent deduplication table to track which messages are truly new
@@ -564,10 +586,12 @@ BEGIN
   -- Atomically persist events from both inbox and outbox to event store
   -- Events are identified by IsEvent=true flag and must have stream_id
 
-  -- DEBUG: Output sample JSON to see structure
-  RAISE NOTICE '=== DEBUG: Sample outbox message JSON ===';
-  RAISE NOTICE 'First outbox message: %', (SELECT jsonb_array_element(p_new_outbox_messages, 0));
-  RAISE NOTICE 'Envelope property: %', (SELECT jsonb_array_element(p_new_outbox_messages, 0)->'Envelope');
+  -- DEBUG: Output sample JSON to see structure (only in debug mode)
+  IF v_debug_mode THEN
+    RAISE NOTICE '=== DEBUG: Sample outbox message JSON ===';
+    RAISE NOTICE 'First outbox message: %', (SELECT jsonb_array_element(p_new_outbox_messages, 0));
+    RAISE NOTICE 'Envelope property: %', (SELECT jsonb_array_element(p_new_outbox_messages, 0)->'Envelope');
+  END IF;
 
   -- Insert events from outbox (published events)
   -- Uses windowing function to handle multiple events in same stream within a single batch
@@ -695,19 +719,21 @@ BEGIN
 
   -- Claim orphaned outbox messages and track them in array
   -- Exclude messages that were just completed/failed in this call by checking JSONB parameters directly
-  RAISE NOTICE '=== SECTION 7.75: CLAIM ORPHANED MESSAGES ===';
-  RAISE NOTICE 'About to claim orphaned outbox messages. Exclusion check against completions: %', p_outbox_completions;
-  RAISE NOTICE 'About to claim orphaned outbox messages. Exclusion check against failures: %', p_outbox_failures;
+  IF v_debug_mode THEN
+    RAISE NOTICE '=== SECTION 7.75: CLAIM ORPHANED MESSAGES ===';
+    RAISE NOTICE 'About to claim orphaned outbox messages. Exclusion check against completions: %', p_outbox_completions;
+    RAISE NOTICE 'About to claim orphaned outbox messages. Exclusion check against failures: %', p_outbox_failures;
 
-  -- First, let's see what messages would match WITHOUT the NOT EXISTS exclusion
-  RAISE NOTICE 'Messages that WOULD be claimed (before NOT EXISTS check): %', (
-    SELECT array_agg(wh_outbox.message_id)
-    FROM wh_outbox
-    WHERE (wh_outbox.instance_id IS NULL OR wh_outbox.lease_expiry IS NULL OR wh_outbox.lease_expiry < v_now)
-    AND (wh_outbox.status & 32768) = 0  -- Not failed
-    AND (wh_outbox.status & 4) != 4     -- Not published (prevents reclaiming completed messages)
-    AND (wh_outbox.status & 24) != 24   -- Not fully completed
-  );
+    -- First, let's see what messages would match WITHOUT the NOT EXISTS exclusion
+    RAISE NOTICE 'Messages that WOULD be claimed (before NOT EXISTS check): %', (
+      SELECT array_agg(wh_outbox.message_id)
+      FROM wh_outbox
+      WHERE (wh_outbox.instance_id IS NULL OR wh_outbox.lease_expiry IS NULL OR wh_outbox.lease_expiry < v_now)
+      AND (wh_outbox.status & 32768) = 0  -- Not failed
+      AND (wh_outbox.status & 4) != 4     -- Not published (prevents reclaiming completed messages)
+      AND (wh_outbox.status & 24) != 24   -- Not fully completed
+    );
+  END IF;
 
   WITH orphaned AS (
     UPDATE wh_outbox
@@ -749,7 +775,9 @@ BEGIN
   -- Handle NULL case (no orphaned messages)
   v_orphaned_outbox_ids := COALESCE(v_orphaned_outbox_ids, '{}');
 
-  RAISE NOTICE 'Claimed v_orphaned_outbox_ids: %, cardinality: %', v_orphaned_outbox_ids, cardinality(v_orphaned_outbox_ids);
+  IF v_debug_mode THEN
+    RAISE NOTICE 'Claimed v_orphaned_outbox_ids: %, cardinality: %', v_orphaned_outbox_ids, cardinality(v_orphaned_outbox_ids);
+  END IF;
 
   -- Claim orphaned inbox messages and track them in array
   -- Exclude messages that were just completed/failed in this call by checking JSONB parameters directly
@@ -797,9 +825,11 @@ BEGIN
   -- Only return messages that were newly stored OR orphaned and re-leased in this call
   -- This prevents returning messages that already had a valid lease before this call
 
-  -- DEBUG: Log what we're about to return
-  RAISE NOTICE '=== SECTION 8: RETURNING WORK ===';
-  RAISE NOTICE 'About to return outbox work. v_new_outbox_ids: %, v_orphaned_outbox_ids: %', v_new_outbox_ids, v_orphaned_outbox_ids;
+  -- DEBUG: Log what we're about to return (only in debug mode)
+  IF v_debug_mode THEN
+    RAISE NOTICE '=== SECTION 8: RETURNING WORK ===';
+    RAISE NOTICE 'About to return outbox work. v_new_outbox_ids: %, v_orphaned_outbox_ids: %', v_new_outbox_ids, v_orphaned_outbox_ids;
+  END IF;
 
   RETURN QUERY
   SELECT
