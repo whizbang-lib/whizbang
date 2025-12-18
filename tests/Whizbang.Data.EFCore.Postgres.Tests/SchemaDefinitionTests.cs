@@ -307,7 +307,7 @@ public class SchemaDefinitionTests : EFCoreTestBase {
     var config = new SchemaConfiguration("wh_", "wh_per_", "public", 1);
 
     // Act
-    var sql = PostgresSchemaBuilder.BuildInfrastructureSchema(config);
+    var sql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(config);
 
     // Assert - SQL should not be empty
     await Assert.That(sql).IsNotNull();

@@ -21,8 +21,8 @@
 
 .PARAMETER TestFilter
     Filter to specific tests by name pattern using --treenode-filter (e.g., "ProcessWorkBatchAsync")
-    Pattern: /**/*{Filter}* (matches test names containing the filter string)
-    NOTE: Test filtering may cause issues with some test modules - use with caution
+    Pattern: /*/*/*/*{Filter}* (matches test names containing the filter string)
+    Uses MTP tree filter syntax for TUnit compatibility
 
 .PARAMETER Verbose
     Show detailed test output for each project
@@ -73,7 +73,7 @@
 
     Native Filtering (.NET 10):
     - ProjectFilter uses `--test-modules` with globbing patterns (**/bin/**/Debug/net10.0/*{Filter}*.dll)
-    - TestFilter uses `--treenode-filter` with wildcard patterns (/**/*{Filter}*)
+    - TestFilter uses `--treenode-filter` with wildcard patterns (/*/*/*/*{Filter}*)
     - Leverages Microsoft.Testing.Platform filtering for maximum performance
     - Maintains full parallelism across filtered tests
 
@@ -159,9 +159,10 @@ try {
     }
 
     # Use --treenode-filter for test name filtering (MTP native filtering)
+    # Pattern: /*/*/*/*{Filter}* matches any assembly/namespace/class/method containing the filter
     if ($TestFilter) {
         $testArgs += "--treenode-filter"
-        $testArgs += "/**/*$TestFilter*"
+        $testArgs += "/*/*/*/*$TestFilter*"
     }
 
     # Run tests
@@ -184,8 +185,12 @@ try {
         $totalFailed = 0
         $totalSkipped = 0
         $failedTests = @()
+        $testDetails = @{}  # Dictionary to store detailed error info per test
         $buildErrors = @()
         $buildWarnings = @()
+        $currentFailedTest = $null
+        $capturingStackTrace = $false
+        $stackTraceLines = @()
 
         foreach ($line in $output) {
             $lineStr = $line.ToString()
@@ -205,10 +210,68 @@ try {
             }
             # Capture failed test names (lines starting with "failed " followed by test name)
             elseif ($lineStr -match "^failed\s+([^\(]+)\s+\(") {
+                # Save previous test's stack trace if we were capturing
+                if ($currentFailedTest -and $stackTraceLines.Count -gt 0) {
+                    $testDetails[$currentFailedTest]["StackTrace"] = $stackTraceLines -join "`n"
+                    $stackTraceLines = @()
+                }
+
                 $testName = $matches[1].Trim()
                 # Exclude false positives (EF Core logging, etc.)
                 if ($testName -notmatch "executing|DbCommand|Executed") {
                     $failedTests += $testName
+                    $currentFailedTest = $testName
+                    $testDetails[$testName] = @{
+                        "ErrorMessage" = ""
+                        "StackTrace" = ""
+                        "Exception" = ""
+                    }
+                    $capturingStackTrace = $false
+                }
+            }
+            # Capture error messages and exception details for current failed test
+            elseif ($currentFailedTest) {
+                # Detect exception type lines (e.g., "System.InvalidOperationException: Message")
+                if ($lineStr -match "^\s*(System\.\w+Exception|TUnit\.\w+Exception|.*Exception):\s*(.+)") {
+                    $testDetails[$currentFailedTest]["Exception"] = $matches[1].Trim()
+                    $testDetails[$currentFailedTest]["ErrorMessage"] = $matches[2].Trim()
+                }
+                # Detect assertion failure messages (TUnit specific patterns)
+                elseif ($lineStr -match "Expected:?\s*(.+)") {
+                    $testDetails[$currentFailedTest]["ErrorMessage"] += "`nExpected: " + $matches[1].Trim()
+                }
+                elseif ($lineStr -match "Actual:?\s*(.+)") {
+                    $testDetails[$currentFailedTest]["ErrorMessage"] += "`nActual: " + $matches[1].Trim()
+                }
+                elseif ($lineStr -match "But was:?\s*(.+)") {
+                    $testDetails[$currentFailedTest]["ErrorMessage"] += "`nBut was: " + $matches[1].Trim()
+                }
+                # Detect start of stack trace (lines with "at " followed by namespace/method)
+                elseif ($lineStr -match "^\s+at\s+[\w\.]+") {
+                    $capturingStackTrace = $true
+                    $stackTraceLines += $lineStr.Trim()
+                }
+                # Continue capturing stack trace lines
+                elseif ($capturingStackTrace) {
+                    # Stack trace continues if line starts with whitespace and contains "at " or file path
+                    if ($lineStr -match "^\s+at\s+" -or $lineStr -match "^\s+in\s+.*:\s*line\s+\d+") {
+                        $stackTraceLines += $lineStr.Trim()
+                    }
+                    else {
+                        # Stack trace ended
+                        $capturingStackTrace = $false
+                        if ($stackTraceLines.Count -gt 0) {
+                            $testDetails[$currentFailedTest]["StackTrace"] = $stackTraceLines -join "`n"
+                            $stackTraceLines = @()
+                        }
+                    }
+                }
+                # Generic error message capture (non-empty lines that don't match other patterns)
+                elseif ($lineStr.Trim() -ne "" -and
+                        $lineStr -notmatch "^\s*(duration|total|failed|succeeded|skipped|passed):" -and
+                        $lineStr -notmatch "^(Building|Determining|Restored)" -and
+                        $testDetails[$currentFailedTest]["ErrorMessage"] -eq "") {
+                    $testDetails[$currentFailedTest]["ErrorMessage"] = $lineStr.Trim()
                 }
             }
             # Capture build errors
@@ -234,6 +297,11 @@ try {
             }
         }
 
+        # Save final test's stack trace if we were capturing
+        if ($currentFailedTest -and $stackTraceLines.Count -gt 0) {
+            $testDetails[$currentFailedTest]["StackTrace"] = $stackTraceLines -join "`n"
+        }
+
         # Display summary
         Write-Host ""
         Write-Host "=== TEST RESULTS SUMMARY ===" -ForegroundColor Cyan
@@ -248,7 +316,15 @@ try {
                 Write-Host "Warning: Test counts don't add up (${totalPassed} + ${totalFailed} + ${totalSkipped} != ${totalTests})" -ForegroundColor Yellow
             }
         } else {
-            Write-Host "No test results parsed (build may have failed)" -ForegroundColor Yellow
+            Write-Host "No test results parsed" -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "Possible reasons:" -ForegroundColor Yellow
+            Write-Host "  1. Build failed (check BUILD ERRORS section above)" -ForegroundColor Gray
+            Write-Host "  2. Test filter matched zero tests (try broader pattern)" -ForegroundColor Gray
+            Write-Host "  3. Project filter matched zero projects (check project name)" -ForegroundColor Gray
+            Write-Host ""
+            Write-Host "Try running without filters to see all tests:" -ForegroundColor Yellow
+            Write-Host "  pwsh scripts/Test-All.ps1 -AiMode" -ForegroundColor Gray
         }
 
         if ($buildErrors.Count -gt 0) {
@@ -270,7 +346,42 @@ try {
         if ($failedTests.Count -gt 0) {
             Write-Host ""
             Write-Host "=== FAILED TESTS ($($failedTests.Count)) ===" -ForegroundColor Red
-            $failedTests | ForEach-Object { Write-Host "  - $_" -ForegroundColor Red }
+            Write-Host ""
+
+            foreach ($testName in $failedTests) {
+                Write-Host "TEST: $testName" -ForegroundColor Red
+                Write-Host "----------------------------------------" -ForegroundColor DarkGray
+
+                $details = $testDetails[$testName]
+
+                # Show exception type if captured
+                if ($details["Exception"] -ne "") {
+                    Write-Host "Exception: $($details["Exception"])" -ForegroundColor Yellow
+                }
+
+                # Show error message
+                if ($details["ErrorMessage"] -ne "") {
+                    Write-Host "Error Message:" -ForegroundColor Yellow
+                    Write-Host $details["ErrorMessage"] -ForegroundColor Gray
+                }
+
+                # Show stack trace (limit to most relevant lines)
+                if ($details["StackTrace"] -ne "") {
+                    Write-Host ""
+                    Write-Host "Stack Trace:" -ForegroundColor Yellow
+                    $stackLines = $details["StackTrace"] -split "`n"
+                    # Show first 15 lines of stack trace (usually the most relevant)
+                    $linesToShow = [Math]::Min($stackLines.Count, 15)
+                    for ($i = 0; $i -lt $linesToShow; $i++) {
+                        Write-Host "  $($stackLines[$i])" -ForegroundColor Gray
+                    }
+                    if ($stackLines.Count -gt 15) {
+                        Write-Host "  ... ($($stackLines.Count - 15) more lines)" -ForegroundColor DarkGray
+                    }
+                }
+
+                Write-Host ""
+            }
         }
 
         Write-Host ""

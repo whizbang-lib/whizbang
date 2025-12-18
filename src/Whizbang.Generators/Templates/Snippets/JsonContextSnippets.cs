@@ -65,6 +65,7 @@ if (type == typeof(global::System.Collections.Generic.List<__ELEMENT_TYPE__>)) {
 private JsonTypeInfo<global::System.Collections.Generic.List<__ELEMENT_TYPE__>> CreateList___ELEMENT_SIMPLE_NAME__(JsonSerializerOptions options) {
   var elementInfo = GetOrCreateTypeInfo<__ELEMENT_TYPE__>(options);
   var collectionInfo = new JsonCollectionInfoValues<global::System.Collections.Generic.List<__ELEMENT_TYPE__>> {
+    ObjectCreator = static () => new global::System.Collections.Generic.List<__ELEMENT_TYPE__>(),
     ElementInfo = elementInfo
   };
   var jsonTypeInfo = JsonMetadataServices.CreateListInfo<global::System.Collections.Generic.List<__ELEMENT_TYPE__>, __ELEMENT_TYPE__>(options, collectionInfo);

@@ -933,21 +933,21 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await Assert.That(claimedByInstance1.Count + claimedByInstance2.Count).IsEqualTo(10)
       .Because("All messages should be claimed between both instances");
 
-    // Verify modulo distribution: each claimed message's partition % 2 should match instance index
-    // Instance 1 should be index 0 (first in sorted order), Instance 2 should be index 1
-    var instance1Index = instance1Id.CompareTo(instance2Id) < 0 ? 0 : 1;
-    var instance2Index = 1 - instance1Index;
+    // Verify modulo distribution: each instance claims messages where partition % 2 matches its sorted index
+    // Sorted index: instance with smaller UUID gets bucket 0, larger UUID gets bucket 1
+    var instance1Bucket = instance1Id.CompareTo(instance2Id) < 0 ? 0 : 1;
+    var instance2Bucket = 1 - instance1Bucket;
 
     foreach (var messageId in claimedByInstance1) {
       var partition = messages.First(m => m.messageId == messageId).partition;
-      await Assert.That(partition % 2).IsEqualTo(instance1Index)
-        .Because($"Instance 1 should only claim partitions where partition % 2 = {instance1Index}");
+      await Assert.That(partition % 2).IsEqualTo(instance1Bucket)
+        .Because($"Instance 1 has sorted bucket {instance1Bucket}, so should only claim partitions where partition % 2 = {instance1Bucket}");
     }
 
     foreach (var messageId in claimedByInstance2) {
       var partition = messages.First(m => m.messageId == messageId).partition;
-      await Assert.That(partition % 2).IsEqualTo(instance2Index)
-        .Because($"Instance 2 should only claim partitions where partition % 2 = {instance2Index}");
+      await Assert.That(partition % 2).IsEqualTo(instance2Bucket)
+        .Because($"Instance 2 has sorted bucket {instance2Bucket}, so should only claim partitions where partition % 2 = {instance2Bucket}");
     }
   }
 
@@ -1063,26 +1063,29 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await Assert.That(claimedByInstance2.Count).IsGreaterThanOrEqualTo(1);
     await Assert.That(claimedByInstance3.Count).IsGreaterThanOrEqualTo(1);
 
-    // Determine instance indices (0-based, sorted by instance ID)
+    // Verify modulo distribution: each instance claims messages where partition % 3 matches its sorted index
+    // Determine sorted instance buckets (0, 1, 2) based on UUID ordering
     var instances = new[] { instance1Id, instance2Id, instance3Id }.OrderBy(id => id).ToArray();
-    var instance1Index = Array.IndexOf(instances, instance1Id);
-    var instance2Index = Array.IndexOf(instances, instance2Id);
-    var instance3Index = Array.IndexOf(instances, instance3Id);
+    var instance1Bucket = Array.IndexOf(instances, instance1Id);
+    var instance2Bucket = Array.IndexOf(instances, instance2Id);
+    var instance3Bucket = Array.IndexOf(instances, instance3Id);
 
-    // Verify modulo distribution
     foreach (var messageId in claimedByInstance1) {
       var partition = messages.First(m => m.messageId == messageId).partition;
-      await Assert.That(partition % 3).IsEqualTo(instance1Index);
+      await Assert.That(partition % 3).IsEqualTo(instance1Bucket)
+        .Because($"Instance 1 has sorted bucket {instance1Bucket}, so should only claim partitions where partition % 3 = {instance1Bucket}");
     }
 
     foreach (var messageId in claimedByInstance2) {
       var partition = messages.First(m => m.messageId == messageId).partition;
-      await Assert.That(partition % 3).IsEqualTo(instance2Index);
+      await Assert.That(partition % 3).IsEqualTo(instance2Bucket)
+        .Because($"Instance 2 has sorted bucket {instance2Bucket}, so should only claim partitions where partition % 3 = {instance2Bucket}");
     }
 
     foreach (var messageId in claimedByInstance3) {
       var partition = messages.First(m => m.messageId == messageId).partition;
-      await Assert.That(partition % 3).IsEqualTo(instance3Index);
+      await Assert.That(partition % 3).IsEqualTo(instance3Bucket)
+        .Because($"Instance 3 has sorted bucket {instance3Bucket}, so should only claim partitions where partition % 3 = {instance3Bucket}");
     }
   }
 

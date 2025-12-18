@@ -18,6 +18,7 @@ public class RegistryTestDbContext : DbContext {
 /// Verifies AOT-compatible model registration callback mechanism.
 /// Target: 100% branch coverage.
 /// </summary>
+[NotInParallel("ModelRegistrationRegistry tests share static state")]
 public class ModelRegistrationRegistryTests {
   [Test]
   public async Task RegisterModels_WithValidRegistrar_StoresCallbackAsync() {

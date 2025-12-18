@@ -135,19 +135,6 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     CancellationToken cancellationToken) {
 
     const string Constraints = @"
--- Composite PK for perspective_checkpoints (stream_id, perspective_name)
--- First drop the individual PKs created by the schema builder
-DO $$
-BEGIN
-  IF EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'wh_perspective_checkpoints_pkey') THEN
-    ALTER TABLE wh_perspective_checkpoints DROP CONSTRAINT wh_perspective_checkpoints_pkey CASCADE;
-  END IF;
-END $$;
-
--- Add composite primary key
-ALTER TABLE wh_perspective_checkpoints
-  ADD CONSTRAINT pk_perspective_checkpoints PRIMARY KEY (stream_id, perspective_name);
-
 -- Foreign keys (note: PostgreSQL doesn't support IF NOT EXISTS for FK constraints)
 DO $$
 BEGIN

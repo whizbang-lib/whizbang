@@ -64,6 +64,12 @@ public static class InboxSchema {
         Nullable: true
       ),
       new ColumnDefinition(
+        Name: "is_event",
+        DataType: WhizbangDataType.Boolean,
+        Nullable: false,
+        DefaultValue: DefaultValue.Boolean(false)
+      ),
+      new ColumnDefinition(
         Name: "status",
         DataType: WhizbangDataType.Integer,
         Nullable: false,
@@ -158,6 +164,7 @@ public static class InboxSchema {
     public const string Scope = "scope";
     public const string StreamId = "stream_id";
     public const string PartitionNumber = "partition_number";
+    public const string IsEvent = "is_event";
     public const string Status = "status";
     public const string Attempts = "attempts";
     public const string Error = "error";

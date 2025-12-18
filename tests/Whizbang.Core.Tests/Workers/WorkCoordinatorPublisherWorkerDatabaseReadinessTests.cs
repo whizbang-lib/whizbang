@@ -262,7 +262,6 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
       Guid[] renewInboxLeaseIds,
       WorkBatchFlags flags = WorkBatchFlags.None,
       int partitionCount = 10000,
-      int maxPartitionsPerInstance = 100,
       int leaseSeconds = 300,
       int staleThresholdSeconds = 600,
       CancellationToken cancellationToken = default) {
