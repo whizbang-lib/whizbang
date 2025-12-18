@@ -32,7 +32,18 @@ public class SeedMutations {
   public async Task<int> SeedProducts(CancellationToken cancellationToken = default) {
     _logger.LogInformation("SeedProducts mutation called - checking if seeding is needed...");
 
-    // Generate deterministic UUIDv7 IDs for the 12 products
+    // Check if any products already exist (idempotency check)
+    // Use GetAllAsync instead of checking specific IDs since UUIDv7 generates new IDs each time
+    var existingProducts = await _productLens.GetAllAsync(includeDeleted: false, cancellationToken);
+
+    if (existingProducts.Count > 0) {
+      _logger.LogInformation(
+        "Products already exist ({Count} found), skipping seed",
+        existingProducts.Count);
+      return 0;
+    }
+
+    // Generate UUIDv7 IDs for the 12 products
     var prod1 = Guid.CreateVersion7();
     var prod2 = Guid.CreateVersion7();
     var prod3 = Guid.CreateVersion7();
@@ -45,22 +56,6 @@ public class SeedMutations {
     var prod10 = Guid.CreateVersion7();
     var prod11 = Guid.CreateVersion7();
     var prod12 = Guid.CreateVersion7();
-
-    // Check if any of the 12 products already exist (idempotency check)
-    var productIds = new[] {
-      prod1, prod2, prod3, prod4,
-      prod5, prod6, prod7, prod8,
-      prod9, prod10, prod11, prod12
-    };
-
-    var existingProducts = await _productLens.GetByIdsAsync(productIds, cancellationToken);
-
-    if (existingProducts.Count > 0) {
-      _logger.LogInformation(
-        "Products already exist ({Count} found), skipping seed",
-        existingProducts.Count);
-      return 0;
-    }
 
     _logger.LogInformation("Seeding 12 products via CreateProductCommand...");
 

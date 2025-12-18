@@ -67,7 +67,9 @@ public class SeedMutationsTests {
     public Task<IReadOnlyList<ProductDto>> GetByIdsAsync(IEnumerable<Guid> productIds, CancellationToken cancellationToken = default) {
       return Task.FromResult<IReadOnlyList<ProductDto>>(_products);
     }
-    public Task<IReadOnlyList<ProductDto>> GetAllAsync(bool includeDeleted = false, CancellationToken cancellationToken = default) => throw new NotImplementedException();
+    public Task<IReadOnlyList<ProductDto>> GetAllAsync(bool includeDeleted = false, CancellationToken cancellationToken = default) {
+      return Task.FromResult<IReadOnlyList<ProductDto>>(_products);
+    }
   }
 
   /// <summary>
