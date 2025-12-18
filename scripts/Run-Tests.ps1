@@ -212,39 +212,69 @@ try {
         $lastProgressTime = $startTime
         $lastTotalTests = 0
         $lastTotalFailed = 0
+        $lineCounter = 0
 
         & dotnet @testArgs 2>&1 | ForEach-Object {
             $lineStr = $_.ToString()
+            $lineCounter++
 
-            # Capture test summary lines (TUnit format: "total:", "failed:", "succeeded:", "skipped:")
-            if ($lineStr -match "^\s*total:\s+(\d+)\s*$") {
-                $totalTests = [int]$matches[1]
+            # Capture test counts from TUnit progress format: [+passed/xfailed/?skipped]
+            # Note: Multiple test projects run in parallel, we track the highest seen for approximate progress
+            if ($lineStr -match '\[\+(\d+)/x(\d+)/\?(\d+)\]') {
+                $passed = [int]$matches[1]
+                $failed = [int]$matches[2]
+                $skipped = [int]$matches[3]
+
+                # Track highest values seen across parallel projects (approximate total)
+                if ($passed -gt $totalPassed) { $totalPassed = $passed }
+                if ($failed -gt $totalFailed) { $totalFailed = $failed }
+                if ($skipped -gt $totalSkipped) { $totalSkipped = $skipped }
+                $totalTests = $totalPassed + $totalFailed + $totalSkipped
+            }
+            # Capture final summary lines and accumulate totals across test projects
+            elseif ($lineStr -match "^\s*succeeded:\s+(\d+)\s*$") {
+                # When a project completes, add its results to cumulative total
+                $totalPassed += [int]$matches[1]
+                $totalTests = $totalPassed + $totalFailed + $totalSkipped
             }
             elseif ($lineStr -match "^\s*failed:\s+(\d+)\s*$") {
-                $totalFailed = [int]$matches[1]
-            }
-            elseif ($lineStr -match "^\s*succeeded:\s+(\d+)\s*$") {
-                $totalPassed = [int]$matches[1]
+                $totalFailed += [int]$matches[1]
+                $totalTests = $totalPassed + $totalFailed + $totalSkipped
             }
             elseif ($lineStr -match "^\s*skipped:\s+(\d+)\s*$") {
-                $totalSkipped = [int]$matches[1]
+                $totalSkipped += [int]$matches[1]
+                $totalTests = $totalPassed + $totalFailed + $totalSkipped
             }
 
-            # Smart progress updates
-            $now = Get-Date
-            $elapsedSinceLastProgress = ($now - $lastProgressTime).TotalSeconds
-            $testCountChange = $totalTests - $lastTotalTests
-            $failureCountChange = $totalFailed - $lastTotalFailed
+            # Smart progress updates (check time every 100 lines to avoid overhead)
+            if ($lineCounter % 100 -eq 0 -or $totalTests -ne $lastTotalTests -or $totalFailed -ne $lastTotalFailed) {
+                $now = Get-Date
+                $elapsedSinceLastProgress = ($now - $lastProgressTime).TotalSeconds
+                $testCountChange = $totalTests - $lastTotalTests
+                $failureCountChange = $totalFailed - $lastTotalFailed
 
-            # Show progress if:
-            # - ProgressInterval seconds elapsed, OR
-            # - Test count increased by 100+, OR
-            # - Failure count changed
-            if ($elapsedSinceLastProgress -ge $ProgressInterval -or
-                $testCountChange -ge 100 -or
-                $failureCountChange -gt 0) {
+                # Show progress if:
+                # - ProgressInterval seconds elapsed, OR
+                # - Test count increased by 100+, OR
+                # - Failure count changed
+                if ($elapsedSinceLastProgress -ge $ProgressInterval) {
+                    $elapsedMinutes = [Math]::Floor(($now - $startTime).TotalMinutes)
 
-                if ($totalTests -gt 0) {
+                    if ($totalTests -gt 0) {
+                        # Show test progress
+                        $failureIndicator = if ($totalFailed -gt 0) { " ⚠️" } else { "" }
+                        Write-Host "[$($elapsedMinutes)m] Progress: $totalPassed passed, $totalFailed failed, $totalSkipped skipped$failureIndicator" -ForegroundColor Gray
+                    } else {
+                        # Show heartbeat (building/not yet testing)
+                        Write-Host "[$($elapsedMinutes)m] Running... (building or preparing tests)" -ForegroundColor DarkGray
+                    }
+
+                    $lastProgressTime = $now
+                    $lastTotalTests = $totalTests
+                    $lastTotalFailed = $totalFailed
+                }
+                elseif ($totalTests -gt 0 -and ($testCountChange -ge 100 -or $failureCountChange -gt 0)) {
+                    # Show immediate update for significant changes
                     $elapsedMinutes = [Math]::Floor(($now - $startTime).TotalMinutes)
                     $failureIndicator = if ($totalFailed -gt 0) { " ⚠️" } else { "" }
                     Write-Host "[$($elapsedMinutes)m] Progress: $totalPassed passed, $totalFailed failed, $totalSkipped skipped$failureIndicator" -ForegroundColor Gray
@@ -254,6 +284,7 @@ try {
                     $lastTotalFailed = $totalFailed
                 }
             }
+
             # Capture failed test names (lines starting with "failed " followed by test name)
             elseif ($lineStr -match "^failed\s+([^\(]+)\s+\(") {
                 # Save previous test's stack trace if we were capturing
