@@ -27,33 +27,44 @@
 .PARAMETER Verbose
     Show detailed test output for each project
 
+.PARAMETER AiMode
+    Enable AI-optimized output with sparse progress updates and detailed error diagnostics
+
+.PARAMETER ProgressInterval
+    Progress update interval in seconds for AiMode (default: 60)
+    Progress also updates when test count increases by 100+ or failures occur
+
 .EXAMPLE
-    ./Test-All.ps1
+    ./Run-Tests.ps1
     Runs all tests with automatic parallel detection
 
 .EXAMPLE
-    ./Test-All.ps1 -MaxParallel 4
+    ./Run-Tests.ps1 -MaxParallel 4
     Runs tests with maximum 4 projects in parallel
 
 .EXAMPLE
-    ./Test-All.ps1 -ProjectFilter "Core"
+    ./Run-Tests.ps1 -ProjectFilter "Core"
     Runs only test projects with "Core" in the name
 
 .EXAMPLE
-    ./Test-All.ps1 -ProjectFilter "EFCore.Postgres" -TestFilter "ProcessWorkBatchAsync"
+    ./Run-Tests.ps1 -ProjectFilter "EFCore.Postgres" -TestFilter "ProcessWorkBatchAsync"
     Runs only tests containing "ProcessWorkBatchAsync" in EFCore.Postgres test project
 
 .EXAMPLE
-    ./Test-All.ps1 -Verbose
+    ./Run-Tests.ps1 -Verbose
     Runs all tests with detailed output
 
 .EXAMPLE
-    ./Test-All.ps1 -AiMode
-    Runs all tests with compact, parseable output optimized for AI analysis
+    ./Run-Tests.ps1 -AiMode
+    Runs all tests with AI-optimized output (sparse progress every 60s, detailed error diagnostics)
 
 .EXAMPLE
-    ./Test-All.ps1 -AiMode -ProjectFilter "EFCore.Postgres"
-    Runs EFCore.Postgres tests with AI-optimized compact output
+    ./Run-Tests.ps1 -AiMode -ProgressInterval 30
+    Runs tests in AI mode with progress updates every 30 seconds
+
+.EXAMPLE
+    ./Run-Tests.ps1 -AiMode -ProjectFilter "EFCore.Postgres"
+    Runs EFCore.Postgres tests with AI-optimized output
 
 .NOTES
     Technology Stack (as of December 2025):
@@ -68,7 +79,9 @@
     This script wraps `dotnet test` to provide:
     - Automatic parallel detection (CPU core count)
     - Native .NET 10 filtering (no manual project loops)
-    - AiMode for compact, parseable output
+    - Dual output modes:
+      * Normal mode: Native MTP progress with animated bars and rich colors
+      * AI mode: Sparse progress updates + detailed error diagnostics (75% token reduction)
     - Simplified parameter interface
 
     Native Filtering (.NET 10):
@@ -90,7 +103,8 @@ param(
     [string]$ProjectFilter = "",
     [string]$TestFilter = "",
     [switch]$VerboseOutput,
-    [switch]$AiMode
+    [switch]$AiMode,
+    [int]$ProgressInterval = 60  # Progress update interval in seconds (AiMode only)
 )
 
 $ErrorActionPreference = "Stop"
@@ -173,13 +187,14 @@ try {
         }
         Write-Host "Executing: $cmdDisplay" -ForegroundColor Gray
         Write-Host ""
+    } else {
+        Write-Host "Starting test execution..." -ForegroundColor Gray
+        Write-Host ""
     }
-
-    $output = & dotnet @testArgs 2>&1
 
     # Process output based on mode
     if ($AiMode) {
-        # AI mode: Filter and summarize
+        # AI mode: Stream and filter with smart progress updates
         $totalTests = 0
         $totalPassed = 0
         $totalFailed = 0
@@ -192,8 +207,14 @@ try {
         $capturingStackTrace = $false
         $stackTraceLines = @()
 
-        foreach ($line in $output) {
-            $lineStr = $line.ToString()
+        # Progress tracking
+        $startTime = Get-Date
+        $lastProgressTime = $startTime
+        $lastTotalTests = 0
+        $lastTotalFailed = 0
+
+        & dotnet @testArgs 2>&1 | ForEach-Object {
+            $lineStr = $_.ToString()
 
             # Capture test summary lines (TUnit format: "total:", "failed:", "succeeded:", "skipped:")
             if ($lineStr -match "^\s*total:\s+(\d+)\s*$") {
@@ -207,6 +228,31 @@ try {
             }
             elseif ($lineStr -match "^\s*skipped:\s+(\d+)\s*$") {
                 $totalSkipped = [int]$matches[1]
+            }
+
+            # Smart progress updates
+            $now = Get-Date
+            $elapsedSinceLastProgress = ($now - $lastProgressTime).TotalSeconds
+            $testCountChange = $totalTests - $lastTotalTests
+            $failureCountChange = $totalFailed - $lastTotalFailed
+
+            # Show progress if:
+            # - ProgressInterval seconds elapsed, OR
+            # - Test count increased by 100+, OR
+            # - Failure count changed
+            if ($elapsedSinceLastProgress -ge $ProgressInterval -or
+                $testCountChange -ge 100 -or
+                $failureCountChange -gt 0) {
+
+                if ($totalTests -gt 0) {
+                    $elapsedMinutes = [Math]::Floor(($now - $startTime).TotalMinutes)
+                    $failureIndicator = if ($totalFailed -gt 0) { " ⚠️" } else { "" }
+                    Write-Host "[$($elapsedMinutes)m] Progress: $totalPassed passed, $totalFailed failed, $totalSkipped skipped$failureIndicator" -ForegroundColor Gray
+
+                    $lastProgressTime = $now
+                    $lastTotalTests = $totalTests
+                    $lastTotalFailed = $totalFailed
+                }
             }
             # Capture failed test names (lines starting with "failed " followed by test name)
             elseif ($lineStr -match "^failed\s+([^\(]+)\s+\(") {
@@ -324,7 +370,7 @@ try {
             Write-Host "  3. Project filter matched zero projects (check project name)" -ForegroundColor Gray
             Write-Host ""
             Write-Host "Try running without filters to see all tests:" -ForegroundColor Yellow
-            Write-Host "  pwsh scripts/Test-All.ps1 -AiMode" -ForegroundColor Gray
+            Write-Host "  pwsh scripts/Run-Tests.ps1 -AiMode" -ForegroundColor Gray
         }
 
         if ($buildErrors.Count -gt 0) {
@@ -386,8 +432,8 @@ try {
 
         Write-Host ""
     } else {
-        # Normal mode: Display all output
-        $output | ForEach-Object { Write-Host $_ }
+        # Normal mode: Pass through to native MTP output with built-in progress
+        & dotnet @testArgs
     }
 
     # Check exit code

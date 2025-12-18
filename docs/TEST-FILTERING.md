@@ -1,6 +1,6 @@
 # Test Filtering Guide
 
-Quick reference for filtering tests using the `Test-All.ps1` script.
+Quick reference for filtering tests using the `Run-Tests.ps1` script.
 
 ---
 
@@ -8,10 +8,10 @@ Quick reference for filtering tests using the `Test-All.ps1` script.
 
 ```bash
 # Run all tests
-pwsh scripts/Test-All.ps1
+pwsh scripts/Run-Tests.ps1
 
 # Run all tests in AI mode (compact output)
-pwsh scripts/Test-All.ps1 -AiMode
+pwsh scripts/Run-Tests.ps1 -AiMode
 ```
 
 ---
@@ -24,10 +24,10 @@ Filter to specific test projects using `-ProjectFilter`:
 
 ```bash
 # Run only EFCore.Postgres tests
-pwsh scripts/Test-All.ps1 -ProjectFilter "EFCore.Postgres"
+pwsh scripts/Run-Tests.ps1 -ProjectFilter "EFCore.Postgres"
 
 # Run only Core tests
-pwsh scripts/Test-All.ps1 -ProjectFilter "Core"
+pwsh scripts/Run-Tests.ps1 -ProjectFilter "Core"
 ```
 
 **Pattern**: Matches test project names (case-insensitive substring match)
@@ -38,10 +38,10 @@ Filter to specific tests using `-TestFilter`:
 
 ```bash
 # Run only tests with "ProcessWorkBatchAsync" in the name
-pwsh scripts/Test-All.ps1 -TestFilter "ProcessWorkBatchAsync"
+pwsh scripts/Run-Tests.ps1 -TestFilter "ProcessWorkBatchAsync"
 
 # Run only tests with "NoWork" in the name
-pwsh scripts/Test-All.ps1 -TestFilter "NoWork"
+pwsh scripts/Run-Tests.ps1 -TestFilter "NoWork"
 ```
 
 **Pattern**: Uses MTP `--treenode-filter` syntax: `/*/*/*/*pattern*` (matches any test method containing the pattern)
@@ -50,10 +50,10 @@ pwsh scripts/Test-All.ps1 -TestFilter "NoWork"
 
 ```bash
 # Run ProcessWorkBatchAsync tests in EFCore.Postgres project only
-pwsh scripts/Test-All.ps1 -ProjectFilter "EFCore.Postgres" -TestFilter "ProcessWorkBatchAsync"
+pwsh scripts/Run-Tests.ps1 -ProjectFilter "EFCore.Postgres" -TestFilter "ProcessWorkBatchAsync"
 
 # Run NoWork tests in Core project only
-pwsh scripts/Test-All.ps1 -ProjectFilter "Core" -TestFilter "NoWork"
+pwsh scripts/Run-Tests.ps1 -ProjectFilter "Core" -TestFilter "NoWork"
 ```
 
 ---
@@ -76,13 +76,13 @@ The `-TestFilter` parameter uses MTP tree node filtering with wildcards:
 
 ```bash
 # Custom parallelism (default: CPU core count)
-pwsh scripts/Test-All.ps1 -MaxParallel 4
+pwsh scripts/Run-Tests.ps1 -MaxParallel 4
 
 # Verbose output
-pwsh scripts/Test-All.ps1 -Verbose
+pwsh scripts/Run-Tests.ps1 -Verbose
 
 # Combine options
-pwsh scripts/Test-All.ps1 -ProjectFilter "EFCore" -TestFilter "NoWork" -AiMode
+pwsh scripts/Run-Tests.ps1 -ProjectFilter "EFCore" -TestFilter "NoWork" -AiMode
 ```
 
 ---
@@ -102,16 +102,16 @@ pwsh scripts/Test-All.ps1 -ProjectFilter "EFCore" -TestFilter "NoWork" -AiMode
 
 ```bash
 # Run all work coordinator tests
-pwsh scripts/Test-All.ps1 -TestFilter "WorkCoordinator"
+pwsh scripts/Run-Tests.ps1 -TestFilter "WorkCoordinator"
 
 # Run all schema tests in Data.Schema project
-pwsh scripts/Test-All.ps1 -ProjectFilter "Data.Schema"
+pwsh scripts/Run-Tests.ps1 -ProjectFilter "Data.Schema"
 
 # Run specific test across all projects
-pwsh scripts/Test-All.ps1 -TestFilter "ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync"
+pwsh scripts/Run-Tests.ps1 -TestFilter "ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync"
 
 # Run integration tests only
-pwsh scripts/Test-All.ps1 -TestFilter "Integration"
+pwsh scripts/Run-Tests.ps1 -TestFilter "Integration"
 ```
 
 ---
