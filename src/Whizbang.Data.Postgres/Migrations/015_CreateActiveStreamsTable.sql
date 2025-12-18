@@ -25,8 +25,8 @@ CREATE INDEX idx_active_streams_instance ON wh_active_streams(assigned_instance_
 -- Index for partition queries (which streams in partition X are available?)
 CREATE INDEX idx_active_streams_partition ON wh_active_streams(partition_number) WHERE assigned_instance_id IS NULL;
 
--- Index for lease expiry queries (which streams have expired leases?)
-CREATE INDEX idx_active_streams_lease_expired ON wh_active_streams(lease_expiry) WHERE lease_expiry < NOW();
+-- Index for lease expiry queries (scan by lease_expiry for expired lease detection)
+CREATE INDEX idx_active_streams_lease_expiry ON wh_active_streams(lease_expiry) WHERE lease_expiry IS NOT NULL;
 
 COMMENT ON TABLE wh_active_streams IS 'Ephemeral coordination table tracking which instance owns each active stream. Streams are added when first work arrives and removed when all work completes. Provides sticky assignment and cross-subsystem coordination.';
 COMMENT ON COLUMN wh_active_streams.stream_id IS 'UUIDv7 stream identifier - naturally time-ordered';
