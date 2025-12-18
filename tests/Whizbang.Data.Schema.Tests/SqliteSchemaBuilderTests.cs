@@ -4,6 +4,8 @@ using Whizbang.Data.Schema.Schemas;
 
 namespace Whizbang.Data.Schema.Tests;
 
+[InheritsTests]
+
 /// <summary>
 /// Tests for SqliteSchemaBuilder - generates SQLite DDL from schema definitions.
 /// Inherits from ISchemaBuilderContractTests to ensure compliance with ISchemaBuilder interface.
