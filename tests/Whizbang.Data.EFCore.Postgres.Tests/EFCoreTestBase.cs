@@ -26,29 +26,39 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
 
   [Before(Test)]
   public async Task SetupAsync() {
-    // Create fresh container for THIS test
-    _postgresContainer = new PostgreSqlBuilder()
-      .WithImage("postgres:17-alpine")
-      .WithDatabase("whizbang_test")
-      .WithUsername("postgres")
-      .WithPassword("postgres")
-      .Build();
+    var setupSucceeded = false;
+    try {
+      // Create fresh container for THIS test
+      _postgresContainer = new PostgreSqlBuilder()
+        .WithImage("postgres:17-alpine")
+        .WithDatabase("whizbang_test")
+        .WithUsername("postgres")
+        .WithPassword("postgres")
+        .Build();
 
-    await _postgresContainer.StartAsync();
+      await _postgresContainer.StartAsync();
 
-    // Create connection string with DateTimeOffset support
-    var baseConnectionString = _postgresContainer.GetConnectionString();
-    // Add Timezone=UTC to ensure TIMESTAMPTZ columns map to DateTimeOffset
-    // Add Include Error Detail=true to see detailed error messages for debugging
-    ConnectionString = $"{baseConnectionString};Timezone=UTC;Include Error Detail=true";
+      // Create connection string with DateTimeOffset support
+      var baseConnectionString = _postgresContainer.GetConnectionString();
+      // Add Timezone=UTC to ensure TIMESTAMPTZ columns map to DateTimeOffset
+      // Add Include Error Detail=true to see detailed error messages for debugging
+      ConnectionString = $"{baseConnectionString};Timezone=UTC;Include Error Detail=true";
 
-    // Configure DbContext options
-    var optionsBuilder = new DbContextOptionsBuilder<WorkCoordinationDbContext>();
-    optionsBuilder.UseNpgsql(ConnectionString);
-    DbContextOptions = optionsBuilder.Options;
+      // Configure DbContext options
+      var optionsBuilder = new DbContextOptionsBuilder<WorkCoordinationDbContext>();
+      optionsBuilder.UseNpgsql(ConnectionString);
+      DbContextOptions = optionsBuilder.Options;
 
-    // Initialize database schema
-    await InitializeDatabaseAsync();
+      // Initialize database schema
+      await InitializeDatabaseAsync();
+
+      setupSucceeded = true;
+    } finally {
+      // Ensure container is cleaned up if setup fails
+      if (!setupSucceeded) {
+        await TeardownAsync();
+      }
+    }
   }
 
   [After(Test)]

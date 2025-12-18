@@ -1,8 +1,8 @@
 using Npgsql;
 using TUnit.Core;
 using Whizbang.Data.Dapper.Postgres.Schema;
-using Whizbang.Data.Schema;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
+using Whizbang.Data.Schema;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 

@@ -32,7 +32,10 @@
 
 .PARAMETER ProgressInterval
     Progress update interval in seconds for AiMode (default: 60)
-    Progress also updates when test count increases by 100+ or failures occur
+
+.PARAMETER LiveUpdates
+    Show progress immediately when test counts change (AiMode only)
+    Without this flag, progress respects ProgressInterval for sparse updates
 
 .EXAMPLE
     ./Run-Tests.ps1
@@ -61,6 +64,10 @@
 .EXAMPLE
     ./Run-Tests.ps1 -AiMode -ProgressInterval 30
     Runs tests in AI mode with progress updates every 30 seconds
+
+.EXAMPLE
+    ./Run-Tests.ps1 -AiMode -LiveUpdates
+    Runs tests in AI mode with immediate progress updates when counts change
 
 .EXAMPLE
     ./Run-Tests.ps1 -AiMode -ProjectFilter "EFCore.Postgres"
@@ -104,7 +111,8 @@ param(
     [string]$TestFilter = "",
     [switch]$VerboseOutput,
     [switch]$AiMode,
-    [int]$ProgressInterval = 60  # Progress update interval in seconds (AiMode only)
+    [int]$ProgressInterval = 60,  # Progress update interval in seconds (AiMode only)
+    [switch]$LiveUpdates  # Show progress immediately when counts change (AiMode only)
 )
 
 $ErrorActionPreference = "Stop"
@@ -246,18 +254,21 @@ try {
                 $totalTests = $totalPassed + $totalFailed + $totalSkipped
             }
 
-            # Smart progress updates (check time every 100 lines to avoid overhead)
-            if ($lineCounter % 100 -eq 0 -or $totalTests -ne $lastTotalTests -or $totalFailed -ne $lastTotalFailed) {
+            # Smart progress updates
+            # Check time every 100 lines OR when counts change (if LiveUpdates enabled)
+            $shouldCheckTime = $lineCounter % 100 -eq 0
+            $countsChanged = $LiveUpdates -and ($totalTests -ne $lastTotalTests -or $totalFailed -ne $lastTotalFailed)
+
+            if ($shouldCheckTime -or $countsChanged) {
                 $now = Get-Date
                 $elapsedSinceLastProgress = ($now - $lastProgressTime).TotalSeconds
-                $testCountChange = $totalTests - $lastTotalTests
-                $failureCountChange = $totalFailed - $lastTotalFailed
 
                 # Show progress if:
-                # - ProgressInterval seconds elapsed, OR
-                # - Test count increased by 100+, OR
-                # - Failure count changed
-                if ($elapsedSinceLastProgress -ge $ProgressInterval) {
+                # - ProgressInterval elapsed (always), OR
+                # - LiveUpdates mode and counts changed
+                $shouldShow = $elapsedSinceLastProgress -ge $ProgressInterval -or $countsChanged
+
+                if ($shouldShow) {
                     $elapsedMinutes = [Math]::Floor(($now - $startTime).TotalMinutes)
 
                     if ($totalTests -gt 0) {
@@ -268,16 +279,6 @@ try {
                         # Show heartbeat (building/not yet testing)
                         Write-Host "[$($elapsedMinutes)m] Running... (building or preparing tests)" -ForegroundColor DarkGray
                     }
-
-                    $lastProgressTime = $now
-                    $lastTotalTests = $totalTests
-                    $lastTotalFailed = $totalFailed
-                }
-                elseif ($totalTests -gt 0 -and ($testCountChange -ge 100 -or $failureCountChange -gt 0)) {
-                    # Show immediate update for significant changes
-                    $elapsedMinutes = [Math]::Floor(($now - $startTime).TotalMinutes)
-                    $failureIndicator = if ($totalFailed -gt 0) { " ⚠️" } else { "" }
-                    Write-Host "[$($elapsedMinutes)m] Progress: $totalPassed passed, $totalFailed failed, $totalSkipped skipped$failureIndicator" -ForegroundColor Gray
 
                     $lastProgressTime = $now
                     $lastTotalTests = $totalTests

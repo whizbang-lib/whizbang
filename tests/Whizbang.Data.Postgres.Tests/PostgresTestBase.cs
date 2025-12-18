@@ -44,30 +44,40 @@ public abstract class PostgresTestBase : IAsyncDisposable {
 
   [Before(Test)]
   public async Task SetupAsync() {
-    // Create fresh container for THIS test
-    _postgresContainer = new PostgreSqlBuilder()
-      .WithImage("postgres:17-alpine")
-      .WithDatabase("whizbang_test")
-      .WithUsername("postgres")
-      .WithPassword("postgres")
-      .Build();
+    var setupSucceeded = false;
+    try {
+      // Create fresh container for THIS test
+      _postgresContainer = new PostgreSqlBuilder()
+        .WithImage("postgres:17-alpine")
+        .WithDatabase("whizbang_test")
+        .WithUsername("postgres")
+        .WithPassword("postgres")
+        .Build();
 
-    await _postgresContainer.StartAsync();
+      await _postgresContainer.StartAsync();
 
-    // Create connection factory with DateTimeOffset support
-    var baseConnectionString = _postgresContainer.GetConnectionString();
-    // Add Timezone=UTC to ensure TIMESTAMPTZ columns map to DateTimeOffset
-    // Add Include Error Detail=true to get detailed PostgreSQL error messages
-    var connectionString = $"{baseConnectionString};Timezone=UTC;Include Error Detail=true";
-    _connectionFactory = new PostgresConnectionFactory(connectionString);
+      // Create connection factory with DateTimeOffset support
+      var baseConnectionString = _postgresContainer.GetConnectionString();
+      // Add Timezone=UTC to ensure TIMESTAMPTZ columns map to DateTimeOffset
+      // Add Include Error Detail=true to get detailed PostgreSQL error messages
+      var connectionString = $"{baseConnectionString};Timezone=UTC;Include Error Detail=true";
+      _connectionFactory = new PostgresConnectionFactory(connectionString);
 
-    // Setup per-test instances
-    Executor = new DapperDbExecutor();
-    ConnectionFactory = _connectionFactory;
-    ConnectionString = connectionString;
+      // Setup per-test instances
+      Executor = new DapperDbExecutor();
+      ConnectionFactory = _connectionFactory;
+      ConnectionString = connectionString;
 
-    // Initialize database schema
-    await InitializeDatabaseAsync();
+      // Initialize database schema
+      await InitializeDatabaseAsync();
+
+      setupSucceeded = true;
+    } finally {
+      // Ensure container is cleaned up if setup fails
+      if (!setupSucceeded) {
+        await TeardownAsync();
+      }
+    }
   }
 
   [After(Test)]
@@ -100,11 +110,11 @@ public abstract class PostgresTestBase : IAsyncDisposable {
     schemaCommand.CommandText = schemaSql;
     await schemaCommand.ExecuteNonQueryAsync();
 
-    // Read and execute all PostgreSQL functions from EF Core migrations
+    // Read and execute all PostgreSQL functions from shared Whizbang.Data.Postgres migrations
     var migrationPath = Path.Combine(
       AppContext.BaseDirectory,
       "..", "..", "..", "..", "..",
-      "src", "Whizbang.Data.EFCore.Postgres.Generators", "Templates", "Migrations");
+      "src", "Whizbang.Data.Postgres", "Migrations");
 
     var functionFiles = new[] {
       "005_CreateComputePartitionFunction.sql",
