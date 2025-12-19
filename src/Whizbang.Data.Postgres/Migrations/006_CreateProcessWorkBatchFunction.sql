@@ -265,9 +265,9 @@ BEGIN
   LOOP
     -- Check if stream has any remaining work
     IF NOT EXISTS (
-      SELECT 1 FROM wh_outbox WHERE stream_id = v_stream_id AND (status & 4) != 4  -- Not published
+      SELECT 1 FROM wh_outbox WHERE wh_outbox.stream_id = v_stream_id AND (wh_outbox.status & 4) != 4  -- Not published
     ) AND NOT EXISTS (
-      SELECT 1 FROM wh_inbox WHERE stream_id = v_stream_id AND (status & 2) != 2   -- Not event stored
+      SELECT 1 FROM wh_inbox WHERE wh_inbox.stream_id = v_stream_id AND (wh_inbox.status & 2) != 2   -- Not event stored
     ) THEN
       -- No more work for this stream - remove from active streams
       DELETE FROM wh_active_streams WHERE wh_active_streams.stream_id = v_stream_id;
