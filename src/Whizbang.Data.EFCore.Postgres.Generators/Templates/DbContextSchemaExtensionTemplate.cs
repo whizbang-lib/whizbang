@@ -9,23 +9,25 @@ using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
+using Whizbang.Data.Postgres.Schema;
+using Whizbang.Data.Schema;
 
 namespace __DBCONTEXT_NAMESPACE__.Generated;
 
 /// <summary>
 /// Extension methods for __DBCONTEXT_CLASS__ schema initialization.
-/// AOT-compatible - uses pre-generated SQL instead of EF Core's GenerateCreateScript().
+/// AOT-compatible - uses PostgresSchemaBuilder instead of EF Core's GenerateCreateScript().
 /// </summary>
 public static class __DBCONTEXT_CLASS__SchemaExtensions {
   /// <summary>
   /// Ensures Whizbang database schema is fully initialized for __DBCONTEXT_CLASS__.
   /// Creates core infrastructure tables, perspective tables, executes migrations, and adds constraints.
   /// Idempotent - safe to call multiple times.
-  /// AOT-compatible - all SQL is pre-generated at build time.
+  /// AOT-compatible - no reflection, no dynamic code generation.
   ///
   /// Steps:
-  /// 1. Creates core infrastructure tables (Inbox, Outbox, EventStore, etc.)
-  /// 2. Creates perspective tables (PerspectiveRow&lt;TModel&gt; tables)
+  /// 1. Creates core infrastructure tables (Inbox, Outbox, EventStore, etc.) - generated at runtime from C# definitions
+  /// 2. Creates perspective tables (PerspectiveRow&lt;TModel&gt; tables) - generated at build time from discovered types
   /// 3. Adds composite PK and FK constraints
   /// 4. Executes PostgreSQL migrations (creates functions like process_work_batch)
   /// </summary>
@@ -57,30 +59,27 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
   }
 
   /// <summary>
-  /// Executes core infrastructure table DDL generated at build time.
+  /// Executes core infrastructure table DDL at runtime.
   /// Creates all Whizbang core tables: Inbox, Outbox, EventStore, ReceptorProcessing,
   /// PerspectiveCheckpoints, RequestResponse, ServiceInstances, PartitionAssignments,
   /// MessageDeduplication, Sequences, and EventSequence.
-  /// SQL is generated using PostgresSchemaBuilder.Instance.BuildInfrastructureSchema().
-  /// AOT-compatible - SQL is embedded at build time, no dynamic generation.
+  /// SQL is generated at runtime using PostgresSchemaBuilder.Instance.BuildInfrastructureSchema().
+  /// AOT-compatible - no reflection or dynamic code generation, just string building.
   /// </summary>
   private static async Task ExecuteCoreInfrastructureTablesAsync(
     __DBCONTEXT_FQN__ dbContext,
     ILogger? logger,
     CancellationToken cancellationToken) {
 
-    // SQL embedded by source generator from CoreInfrastructureSchema.sql resource
-    const string CoreInfrastructureSchema = #region CORE_INFRASTRUCTURE_SCHEMA
-    // Core infrastructure DDL will be embedded here by the source generator
-    #endregion;
-
-    if (string.IsNullOrWhiteSpace(CoreInfrastructureSchema)) {
-      logger?.LogWarning("Core infrastructure schema is empty - this should never happen!");
-      return;
-    }
+    // Generate schema SQL at runtime from C# definitions
+    var schemaConfig = new SchemaConfiguration(
+      InfrastructurePrefix: "wb_",
+      PerspectivePrefix: "wb_per_"
+    );
+    var coreInfrastructureSchema = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(schemaConfig);
 
     try {
-      await dbContext.Database.ExecuteSqlRawAsync(CoreInfrastructureSchema, cancellationToken);
+      await dbContext.Database.ExecuteSqlRawAsync(coreInfrastructureSchema, cancellationToken);
       logger?.LogInformation("Core infrastructure tables created successfully");
     } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P07") {
       // 42P07 = duplicate_table (expected if tables already exist)

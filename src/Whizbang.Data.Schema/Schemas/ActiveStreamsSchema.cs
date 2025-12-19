@@ -62,9 +62,9 @@ public static class ActiveStreamsSchema {
         WhereClause: "assigned_instance_id IS NULL"
       ),
       new IndexDefinition(
-        Name: "idx_active_streams_lease_expired",
+        Name: "idx_active_streams_lease_expiry",
         Columns: ImmutableArray.Create("lease_expiry"),
-        WhereClause: "lease_expiry < NOW()"
+        WhereClause: "lease_expiry IS NOT NULL"
       )
     )
   );

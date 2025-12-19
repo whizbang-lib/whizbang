@@ -2,7 +2,7 @@ using System.Text;
 using Whizbang.Data.Schema;
 using Whizbang.Data.Schema.Schemas;
 
-namespace Whizbang.Data.Dapper.Postgres.Schema;
+namespace Whizbang.Data.Postgres.Schema;
 
 /// <summary>
 /// Builds Postgres DDL (Data Definition Language) from database-agnostic schema definitions.
@@ -157,7 +157,7 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
     sb.AppendLine($"-- Perspective Prefix: {config.PerspectivePrefix}");
     sb.AppendLine();
 
-    // Build all infrastructure tables
+    // Build all infrastructure tables from C# schema definitions
     var tables = new[] {
       (ServiceInstancesSchema.Table, "Service Instances - Distributed work coordination"),
       (ActiveStreamsSchema.Table, "Active Streams - Ephemeral stream coordination"),

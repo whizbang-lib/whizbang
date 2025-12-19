@@ -9,7 +9,7 @@
     <ItemGroup>
       <!-- Main assembly (must be first) -->
       <InputAssemblies Include="$(OutputPath)$(TargetName)$(TargetExt)" />
-      <!-- Shared library to merge -->
+      <!-- Shared libraries to merge -->
       <InputAssemblies Include="$(OutputPath)Whizbang.Generators.Shared.dll" />
 
       <!-- Build list of search directories from reference paths -->
@@ -34,9 +34,9 @@
     />
   </Target>
 
-  <!-- Clean up the Shared DLL after merging -->
+  <!-- Clean up the merged DLLs after merging -->
   <Target Name="CleanupMergedAssemblies" AfterTargets="MergeSharedAssembly">
     <Delete Files="$(OutputPath)Whizbang.Generators.Shared.dll;$(OutputPath)Whizbang.Generators.Shared.pdb;$(OutputPath)Whizbang.Generators.Shared.xml" />
-    <Message Text="ILRepack: Cleaned up merged Shared DLL files" Importance="High" />
+    <Message Text="ILRepack: Cleaned up merged DLL files" Importance="High" />
   </Target>
 </Project>

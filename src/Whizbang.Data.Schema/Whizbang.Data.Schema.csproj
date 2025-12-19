@@ -1,13 +1,16 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <TargetFramework>net10.0</TargetFramework>
+    <TargetFrameworks>net10.0;netstandard2.0</TargetFrameworks>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../Whizbang.Core/Whizbang.Core.csproj" />
+    <!-- Required for netstandard2.0 support of records and ImmutableArray -->
+    <PackageReference Include="System.Collections.Immutable" />
+    <PackageReference Include="PolySharp" PrivateAssets="all" />
   </ItemGroup>
 
 </Project>

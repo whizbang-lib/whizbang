@@ -1,6 +1,6 @@
 using System.Data;
 using Npgsql;
-using Whizbang.Data.Dapper.Postgres.Schema;
+using Whizbang.Data.Postgres.Schema;
 using Whizbang.Data.Schema;
 
 namespace Whizbang.Data.Dapper.Postgres;

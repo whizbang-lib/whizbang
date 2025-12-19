@@ -1,5 +1,5 @@
-using Whizbang.Data.Dapper.Postgres.Schema;
 using Whizbang.Data.Dapper.Sqlite.Schema;
+using Whizbang.Data.Postgres.Schema;
 using Whizbang.Data.Schema;
 
 const string version = "0.1.0";

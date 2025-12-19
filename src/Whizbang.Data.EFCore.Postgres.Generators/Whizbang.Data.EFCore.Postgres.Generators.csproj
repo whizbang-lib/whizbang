@@ -54,8 +54,6 @@
     <!-- Embed SQL migration files as resources from shared Whizbang.Data.Postgres project -->
     <!-- Link attribute maintains the same resource path (Templates\Migrations\*.sql) for the generator -->
     <EmbeddedResource Include="..\Whizbang.Data.Postgres\Migrations\*.sql" Link="Templates\Migrations\%(Filename)%(Extension)" />
-    <!-- Embed pre-generated schema SQL -->
-    <EmbeddedResource Include="Resources\*.sql" />
   </ItemGroup>
 
   <!-- Note: Cannot reference Whizbang.Core directly due to TFM incompatibility -->

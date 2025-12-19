@@ -5,7 +5,7 @@ using Testcontainers.PostgreSql;
 using TUnit.Core;
 using Whizbang.Data.Dapper.Custom;
 using Whizbang.Data.Dapper.Postgres;
-using Whizbang.Data.Dapper.Postgres.Schema;
+using Whizbang.Data.Postgres.Schema;
 using Whizbang.Data.Schema;
 
 namespace Whizbang.Data.Postgres.Tests;
@@ -117,12 +117,12 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       "src", "Whizbang.Data.Postgres", "Migrations");
 
     var functionFiles = new[] {
-      "005_CreateComputePartitionFunction.sql",
-      "010_CreateAcquireReceptorProcessingFunction.sql",
-      "011_CreateCompleteReceptorProcessingFunction.sql",
-      "012_CreateAcquirePerspectiveCheckpointFunction.sql",
-      "013_CreateCompletePerspectiveCheckpointFunction.sql",
-      "014_CreateProcessWorkBatchFunction.sql"
+      "001_CreateComputePartitionFunction.sql",
+      "002_CreateAcquireReceptorProcessingFunction.sql",
+      "003_CreateCompleteReceptorProcessingFunction.sql",
+      "004_CreateAcquirePerspectiveCheckpointFunction.sql",
+      "005_CreateCompletePerspectiveCheckpointFunction.sql",
+      "006_CreateProcessWorkBatchFunction.sql"  // Table moved to C# schema
     };
 
     foreach (var functionFile in functionFiles) {

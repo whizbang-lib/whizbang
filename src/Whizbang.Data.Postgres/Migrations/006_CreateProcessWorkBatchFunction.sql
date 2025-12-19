@@ -1,12 +1,15 @@
--- Migration 016: Update process_work_batch to manage wh_active_streams
+-- Migration: 006_CreateProcessWorkBatchFunction.sql
 -- Date: 2025-12-18
--- Description: Integrate wh_active_streams management into process_work_batch function
---              - Track stream assignment when claiming work
---              - Remove streams when all work completes
---              - Update stream lease when renewing work
---              Enables sticky stream assignment across subsystems (outbox/inbox/perspectives)
+-- Description: Creates process_work_batch function with stream management, active streams coordination,
+--              and perspective checkpoint processing. This migration consolidates migrations 014-018
+--              into a single clean migration for the v0.1.0 release.
+-- Dependencies: 001-005 (compute_partition, receptor processing, perspectives)
+-- Note: wh_active_streams table is created from C# schema (ActiveStreamsSchema.cs), not SQL migrations.
+--
+-- ======================================================================================
+-- process_work_batch Function with Stream Management and Perspective Support
+-- ======================================================================================
 
--- Drop and recreate function with stream management
 DROP FUNCTION IF EXISTS process_work_batch;
 
 CREATE OR REPLACE FUNCTION process_work_batch(
@@ -58,7 +61,8 @@ RETURNS TABLE(
   attempts INTEGER,
   status INTEGER,
   flags INTEGER,
-  sequence_order BIGINT
+  sequence_order BIGINT,
+  last_event_id UUID  -- Last processed event ID for perspective work
 ) AS $$
 DECLARE
   v_now TIMESTAMPTZ := CURRENT_TIMESTAMP;
@@ -87,7 +91,7 @@ DECLARE
 
 BEGIN
   IF v_debug_mode THEN
-    RAISE NOTICE '====  MIGRATION VERSION: 2025-12-18_ACTIVE_STREAMS_MANAGEMENT ===';
+    RAISE NOTICE '==== MIGRATION VERSION: 2025-12-18_CONSOLIDATED ===';
     RAISE NOTICE '=== SECTION 0: INPUT PARAMETERS ===';
     RAISE NOTICE 'p_outbox_completions: %', p_outbox_completions;
     RAISE NOTICE 'p_outbox_failures: %', p_outbox_failures;
@@ -692,9 +696,9 @@ BEGIN
   FROM base_versions bv
   ON CONFLICT (stream_id, version) DO NOTHING;
 
-  -- 7.75. Claim unleased messages in owned partitions
+  -- 7.75. Claim unleased messages in owned partitions (with stream ownership check)
   IF v_debug_mode THEN
-    RAISE NOTICE '=== SECTION 7.75: CLAIM ORPHANED MESSAGES ===';
+    RAISE NOTICE '=== SECTION 7.75: CLAIM ORPHANED MESSAGES (WITH STREAM OWNERSHIP CHECK) ===';
     RAISE NOTICE 'About to claim orphaned outbox messages. Exclusion check against completions: %', p_outbox_completions;
     RAISE NOTICE 'About to claim orphaned outbox messages. Exclusion check against failures: %', p_outbox_failures;
 
@@ -708,7 +712,7 @@ BEGIN
     );
   END IF;
 
-  -- Claim orphaned outbox messages + update active_streams
+  -- Claim orphaned outbox messages + update active_streams (WITH STREAM OWNERSHIP CHECK)
   WITH orphaned AS (
     UPDATE wh_outbox
     SET instance_id = p_instance_id,
@@ -717,6 +721,13 @@ BEGIN
     AND (wh_outbox.status & 4) != 4
     AND (wh_outbox.scheduled_for IS NULL OR wh_outbox.scheduled_for <= v_now)
     AND wh_outbox.partition_number % v_active_instance_count = v_instance_rank
+    -- STREAM OWNERSHIP CHECK: Only claim if stream is not owned by another instance
+    AND NOT EXISTS (
+      SELECT 1 FROM wh_active_streams
+      WHERE wh_active_streams.stream_id = wh_outbox.stream_id
+        AND wh_active_streams.assigned_instance_id != p_instance_id
+        AND wh_active_streams.lease_expiry > v_now
+    )
     AND NOT EXISTS (
       SELECT 1 FROM wh_outbox earlier
       WHERE earlier.stream_id = wh_outbox.stream_id
@@ -774,7 +785,7 @@ BEGIN
     RAISE NOTICE 'Claimed v_orphaned_outbox_ids: %, cardinality: %', v_orphaned_outbox_ids, cardinality(v_orphaned_outbox_ids);
   END IF;
 
-  -- Claim orphaned inbox messages + update active_streams
+  -- Claim orphaned inbox messages + update active_streams (WITH STREAM OWNERSHIP CHECK)
   WITH orphaned AS (
     UPDATE wh_inbox
     SET instance_id = p_instance_id,
@@ -783,6 +794,13 @@ BEGIN
     AND (wh_inbox.status & 2) != 2
     AND (wh_inbox.scheduled_for IS NULL OR wh_inbox.scheduled_for <= v_now)
     AND wh_inbox.partition_number % v_active_instance_count = v_instance_rank
+    -- STREAM OWNERSHIP CHECK: Only claim if stream is not owned by another instance
+    AND NOT EXISTS (
+      SELECT 1 FROM wh_active_streams
+      WHERE wh_active_streams.stream_id = wh_inbox.stream_id
+        AND wh_active_streams.assigned_instance_id != p_instance_id
+        AND wh_active_streams.lease_expiry > v_now
+    )
     AND NOT EXISTS (
       SELECT 1 FROM wh_inbox earlier
       WHERE earlier.stream_id = wh_inbox.stream_id
@@ -842,6 +860,7 @@ BEGIN
     RAISE NOTICE 'About to return outbox work. v_new_outbox_ids: %, v_orphaned_outbox_ids: %', v_new_outbox_ids, v_orphaned_outbox_ids;
   END IF;
 
+  -- Return outbox work
   RETURN QUERY
   SELECT
     'outbox'::VARCHAR AS source,
@@ -859,7 +878,8 @@ BEGIN
       WHEN o.message_id = ANY(v_new_outbox_ids) THEN 1
       ELSE 2
     END::INTEGER AS flags,
-    EXTRACT(EPOCH FROM o.created_at)::BIGINT * 1000 AS sequence_order
+    EXTRACT(EPOCH FROM o.created_at)::BIGINT * 1000 AS sequence_order,
+    NULL::UUID AS last_event_id  -- Not applicable for outbox work
   FROM wh_outbox o
   WHERE o.instance_id = p_instance_id
     AND o.lease_expiry > v_now
@@ -868,6 +888,7 @@ BEGIN
     AND (o.message_id = ANY(v_new_outbox_ids) OR o.message_id = ANY(v_orphaned_outbox_ids))
   ORDER BY o.stream_id, o.created_at;
 
+  -- Return inbox work
   RETURN QUERY
   SELECT
     'inbox'::VARCHAR AS source,
@@ -885,7 +906,8 @@ BEGIN
       WHEN i.message_id = ANY(v_new_inbox_ids) THEN 1
       ELSE 2
     END::INTEGER AS flags,
-    EXTRACT(EPOCH FROM i.received_at)::BIGINT * 1000 AS sequence_order
+    EXTRACT(EPOCH FROM i.received_at)::BIGINT * 1000 AS sequence_order,
+    NULL::UUID AS last_event_id  -- Not applicable for inbox work
   FROM wh_inbox i
   WHERE i.instance_id = p_instance_id
     AND i.lease_expiry > v_now
@@ -894,7 +916,41 @@ BEGIN
     AND (i.message_id = ANY(v_new_inbox_ids) OR i.message_id = ANY(v_orphaned_inbox_ids))
   ORDER BY i.stream_id, i.received_at;
 
+  -- Return perspective checkpoint work for active streams
+  -- Returns perspective work for streams owned by this instance where:
+  -- 1. Stream is active (assigned to this instance with valid lease)
+  -- 2. Checkpoint status is not Completed (2)
+  -- 3. Events exist in the stream after last_processed_event_id
+  RETURN QUERY
+  SELECT
+    'perspective'::VARCHAR AS source,
+    pc.stream_id AS msg_id,  -- Using stream_id as unique identifier
+    pc.perspective_name::VARCHAR AS destination,
+    ''::VARCHAR AS envelope_type,  -- Not applicable for perspective work
+    ''::TEXT AS envelope_data,  -- Not applicable for perspective work
+    '{}'::TEXT AS metadata,  -- Empty metadata for now
+    NULL::TEXT AS scope,
+    pc.stream_id AS stream_uuid,
+    ast.partition_number::INTEGER AS partition_num,
+    0 AS attempts,  -- Perspectives don't have attempt tracking in checkpoint table
+    pc.status::INTEGER AS status,
+    0::INTEGER AS flags,  -- WorkBatchFlags.None for now
+    0::BIGINT AS sequence_order,  -- Not applicable for perspective work
+    pc.last_event_id AS last_event_id  -- Last event processed by this perspective
+  FROM wh_perspective_checkpoints pc
+  INNER JOIN wh_active_streams ast
+    ON pc.stream_id = ast.stream_id
+    AND ast.assigned_instance_id = p_instance_id
+  WHERE pc.status != 2  -- Not Completed (PerspectiveProcessingStatus.Completed = 1 << 1 = 2)
+    AND EXISTS (
+      SELECT 1 FROM wh_event_store es
+      WHERE es.stream_id = pc.stream_id
+        AND (pc.last_event_id IS NULL OR es.event_id > pc.last_event_id)
+    )
+  ORDER BY ast.partition_number, pc.stream_id, pc.perspective_name
+  LIMIT 100;  -- Limit to prevent overwhelming the worker
+
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION process_work_batch IS 'Atomic work coordination with wh_active_streams management: register/heartbeat instance, cleanup stale instances, mark completed/failed (outbox/inbox/receptor/perspective), claim orphaned work, partition-based stream ordering with event store integration and sticky stream assignment via wh_active_streams table';
+COMMENT ON FUNCTION process_work_batch IS 'Atomic work coordination with sticky stream assignment: register/heartbeat instance, cleanup stale instances, mark completed/failed (outbox/inbox/receptor/perspective), claim orphaned work (respecting wh_active_streams ownership), partition-based stream ordering with event store integration, and return perspective checkpoint work for active streams';

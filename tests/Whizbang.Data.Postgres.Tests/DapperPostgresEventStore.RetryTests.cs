@@ -13,7 +13,7 @@ using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Dapper.Custom;
 using Whizbang.Data.Dapper.Postgres;
-using Whizbang.Data.Dapper.Postgres.Schema;
+using Whizbang.Data.Postgres.Schema;
 using Whizbang.Data.Schema;
 
 namespace Whizbang.Data.Postgres.Tests;

@@ -12,6 +12,7 @@
 
   <ItemGroup>
     <ProjectReference Include="../Whizbang.Core/Whizbang.Core.csproj" />
+    <ProjectReference Include="../Whizbang.Data.Schema/Whizbang.Data.Schema.csproj" />
   </ItemGroup>
 
   <ItemGroup>

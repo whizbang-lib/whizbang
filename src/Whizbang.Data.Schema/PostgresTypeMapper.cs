@@ -1,4 +1,4 @@
-namespace Whizbang.Data.Dapper.Postgres.Schema;
+namespace Whizbang.Data.Postgres.Schema;
 
 /// <summary>
 /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresTypeMapperTests.cs:MapDataType_Uuid_ReturnsUuidAsync</tests>
