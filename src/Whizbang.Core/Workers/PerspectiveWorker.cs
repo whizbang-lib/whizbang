@@ -7,6 +7,7 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Perspectives;
 
 namespace Whizbang.Core.Workers;
 
@@ -182,9 +183,7 @@ public class PerspectiveWorker(
       cancellationToken: cancellationToken
     );
 
-    // Process perspective work (Stage 6: skeleton implementation)
-    // TODO (Stage 7+): Implement actual event loading and perspective invocation
-    // For now, log what was claimed and immediately mark as completed
+    // Process perspective work using IPerspectiveRunner
     foreach (var perspectiveWork in workBatch.PerspectiveWork) {
       try {
         _logger.LogInformation(
@@ -194,21 +193,41 @@ public class PerspectiveWorker(
           perspectiveWork.LastProcessedEventId?.ToString() ?? "null (never processed)"
         );
 
-        // TODO (Stage 7+): Load events from event store starting from LastProcessedEventId
-        // TODO (Stage 7+): Invoke perspective.Update() for each event
-        // For now, just mark as completed immediately (skeleton behavior)
+        // Resolve the generated IPerspectiveRunner for this perspective
+        // Naming convention: PerspectiveName + "Runner" (e.g., "OrderPerspectiveRunner")
+        var runnerTypeName = $"{perspectiveWork.PerspectiveName}Runner";
+        var runnerType = AppDomain.CurrentDomain.GetAssemblies()
+          .SelectMany(a => a.GetTypes())
+          .FirstOrDefault(t => typeof(IPerspectiveRunner).IsAssignableFrom(t) && t.Name == runnerTypeName);
 
-        _completions.Add(new PerspectiveCheckpointCompletion {
-          StreamId = perspectiveWork.StreamId,
-          PerspectiveName = perspectiveWork.PerspectiveName,
-          Status = PerspectiveProcessingStatus.Completed,
-          LastEventId = perspectiveWork.LastProcessedEventId ?? Guid.Empty  // Placeholder
-        });
+        if (runnerType == null) {
+          _logger.LogWarning(
+            "No IPerspectiveRunner found for perspective {PerspectiveName} (expected type name: {RunnerTypeName}). Skipping.",
+            perspectiveWork.PerspectiveName,
+            runnerTypeName
+          );
+          continue;
+        }
+
+        // Get runner instance from DI
+        var runner = (IPerspectiveRunner)scope.ServiceProvider.GetRequiredService(runnerType);
+
+        // Invoke runner to process events
+        var result = await runner.RunAsync(
+          perspectiveWork.StreamId,
+          perspectiveWork.PerspectiveName,
+          perspectiveWork.LastProcessedEventId,
+          cancellationToken
+        );
+
+        // Collect completion
+        _completions.Add(result);
 
         _logger.LogDebug(
-          "Perspective checkpoint marked as completed (skeleton): {PerspectiveName} for stream {StreamId}",
+          "Perspective checkpoint completed: {PerspectiveName} for stream {StreamId}, last event: {LastEventId}",
           perspectiveWork.PerspectiveName,
-          perspectiveWork.StreamId
+          perspectiveWork.StreamId,
+          result.LastEventId
         );
       } catch (Exception ex) {
         _logger.LogError(

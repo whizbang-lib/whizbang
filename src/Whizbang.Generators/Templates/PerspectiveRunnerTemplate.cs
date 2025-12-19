@@ -115,9 +115,10 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       }
 
       return new PerspectiveCheckpointCompletion {
-        Success = true,
-        EventsProcessed = eventsProcessed,
-        LastProcessedEventId = lastSuccessfulEventId
+        StreamId = streamId,
+        PerspectiveName = perspectiveName,
+        LastEventId = lastSuccessfulEventId ?? lastProcessedEventId ?? Guid.Empty,
+        Status = eventsProcessed > 0 ? PerspectiveProcessingStatus.Completed : PerspectiveProcessingStatus.CaughtUp
       };
 
     } catch (Exception ex) {
@@ -146,6 +147,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
               perspectiveName,
               streamId
           );
+          // Re-throw - we couldn't save partial progress
+          throw;
         }
       } else {
         _logger.LogError(
@@ -156,12 +159,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         );
       }
 
-      return new PerspectiveCheckpointCompletion {
-        Success = false,
-        EventsProcessed = eventsProcessed,
-        LastProcessedEventId = lastSuccessfulEventId,
-        Error = ex.Message
-      };
+      // Re-throw - let PerspectiveWorker catch and convert to failure
+      throw;
     }
   }
 
