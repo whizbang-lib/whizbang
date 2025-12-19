@@ -16,8 +16,8 @@ public class SchemaConfigurationTests {
     var config = new SchemaConfiguration();
 
     // Assert - Verify default values
-    await Assert.That(config.InfrastructurePrefix).IsEqualTo("wb_");
-    await Assert.That(config.PerspectivePrefix).IsEqualTo("wb_per_");
+    await Assert.That(config.InfrastructurePrefix).IsEqualTo("wh_");
+    await Assert.That(config.PerspectivePrefix).IsEqualTo("wh_per_");
     await Assert.That(config.SchemaName).IsEqualTo("public");
     await Assert.That(config.Version).IsEqualTo(1);
   }
@@ -29,7 +29,7 @@ public class SchemaConfigurationTests {
 
     // Assert
     await Assert.That(config.InfrastructurePrefix).IsEqualTo("infra_");
-    await Assert.That(config.PerspectivePrefix).IsEqualTo("wb_per_"); // Others use defaults
+    await Assert.That(config.PerspectivePrefix).IsEqualTo("wh_per_"); // Others use defaults
   }
 
   [Test]
@@ -39,7 +39,7 @@ public class SchemaConfigurationTests {
 
     // Assert
     await Assert.That(config.PerspectivePrefix).IsEqualTo("view_");
-    await Assert.That(config.InfrastructurePrefix).IsEqualTo("wb_"); // Others use defaults
+    await Assert.That(config.InfrastructurePrefix).IsEqualTo("wh_"); // Others use defaults
   }
 
   [Test]

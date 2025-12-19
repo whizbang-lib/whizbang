@@ -12,17 +12,17 @@ namespace Whizbang.Data.Schema;
 /// <tests>tests/Whizbang.Data.Schema.Tests/SchemaConfigurationTests.cs:SchemaConfiguration_DifferentPrefix_AreNotEqualAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/SchemaConfigurationTests.cs:SchemaConfiguration_IsRecordAsync</tests>
 /// Schema configuration with dual-prefix system.
-/// Infrastructure tables: wb_inbox, wb_outbox, etc.
-/// Perspective tables: wb_per_product_dto, wb_per_order_summary, etc.
+/// Infrastructure tables: wh_inbox, wh_outbox, etc.
+/// Perspective tables: wh_per_product_dto, wh_per_order_summary, etc.
 /// Uses record with structural equality (critical for incremental generators).
 /// </summary>
-/// <param name="InfrastructurePrefix">Prefix for infrastructure tables (default: "wb_")</param>
-/// <param name="PerspectivePrefix">Prefix for perspective tables (default: "wb_per_")</param>
+/// <param name="InfrastructurePrefix">Prefix for infrastructure tables (default: "wh_")</param>
+/// <param name="PerspectivePrefix">Prefix for perspective tables (default: "wh_per_")</param>
 /// <param name="SchemaName">Database schema name (default: "public")</param>
 /// <param name="Version">Schema version for migrations (default: 1)</param>
 public sealed record SchemaConfiguration(
-  string InfrastructurePrefix = "wb_",
-  string PerspectivePrefix = "wb_per_",
+  string InfrastructurePrefix = "wh_",
+  string PerspectivePrefix = "wh_per_",
   string SchemaName = "public",
   int Version = 1
 );
