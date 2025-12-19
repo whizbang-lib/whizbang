@@ -182,25 +182,67 @@ public class PerspectiveWorker(
       cancellationToken: cancellationToken
     );
 
+    // Process perspective work (Stage 6: skeleton implementation)
+    // TODO (Stage 7+): Implement actual event loading and perspective invocation
+    // For now, log what was claimed and immediately mark as completed
+    foreach (var perspectiveWork in workBatch.PerspectiveWork) {
+      try {
+        _logger.LogInformation(
+          "Processing perspective checkpoint: {PerspectiveName} for stream {StreamId}, last processed event: {LastProcessedEventId}",
+          perspectiveWork.PerspectiveName,
+          perspectiveWork.StreamId,
+          perspectiveWork.LastProcessedEventId?.ToString() ?? "null (never processed)"
+        );
+
+        // TODO (Stage 7+): Load events from event store starting from LastProcessedEventId
+        // TODO (Stage 7+): Invoke perspective.Update() for each event
+        // For now, just mark as completed immediately (skeleton behavior)
+
+        _completions.Add(new PerspectiveCheckpointCompletion {
+          StreamId = perspectiveWork.StreamId,
+          PerspectiveName = perspectiveWork.PerspectiveName,
+          Status = PerspectiveProcessingStatus.Completed,
+          LastEventId = perspectiveWork.LastProcessedEventId ?? Guid.Empty  // Placeholder
+        });
+
+        _logger.LogDebug(
+          "Perspective checkpoint marked as completed (skeleton): {PerspectiveName} for stream {StreamId}",
+          perspectiveWork.PerspectiveName,
+          perspectiveWork.StreamId
+        );
+      } catch (Exception ex) {
+        _logger.LogError(
+          ex,
+          "Error processing perspective checkpoint: {PerspectiveName} for stream {StreamId}",
+          perspectiveWork.PerspectiveName,
+          perspectiveWork.StreamId
+        );
+
+        _failures.Add(new PerspectiveCheckpointFailure {
+          StreamId = perspectiveWork.StreamId,
+          PerspectiveName = perspectiveWork.PerspectiveName,
+          LastEventId = perspectiveWork.LastProcessedEventId ?? Guid.Empty,
+          Status = PerspectiveProcessingStatus.Failed,
+          Error = ex.Message
+        });
+      }
+    }
+
     // Log a summary of perspective processing activity
-    int totalActivity = perspectiveCompletions.Length + perspectiveFailures.Length;
+    int totalActivity = perspectiveCompletions.Length + perspectiveFailures.Length + workBatch.PerspectiveWork.Count;
     if (totalActivity > 0) {
       _logger.LogInformation(
-        "Perspective batch: Completed={Completed}, failed={Failed}",
+        "Perspective batch: Claimed={Claimed}, completed={Completed}, failed={Failed}",
+        workBatch.PerspectiveWork.Count,
         perspectiveCompletions.Length,
         perspectiveFailures.Length
       );
     } else {
-      _logger.LogDebug("Perspective checkpoint processing: no work claimed (Stage 6 not yet implemented)");
+      _logger.LogDebug("Perspective checkpoint processing: no work claimed");
     }
 
-    // NOTE (Stage 5): Skeleton worker only
-    // process_work_batch doesn't return perspective work yet - that will be added in Stage 6
-    // along with actual perspective invocation logic and checkpoint tracking.
-    // For now, this worker just reports perspective completions/failures (which will always be empty).
-
     // Track work state transitions for OnWorkProcessingStarted / OnWorkProcessingIdle callbacks
-    bool hasWork = false;  // Stage 5: No work processing yet
+    bool hasWork = workBatch.PerspectiveWork.Count > 0;
 
     if (hasWork) {
       // Reset empty poll counter
