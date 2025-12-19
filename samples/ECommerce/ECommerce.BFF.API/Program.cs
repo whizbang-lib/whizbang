@@ -154,6 +154,14 @@ builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
 // Options configured via appsettings.json "WorkCoordinatorPublisher" section
 builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
 
+// Configure PerspectiveWorkerOptions from appsettings.json
+builder.Services.AddOptions<PerspectiveWorkerOptions>()
+  .Bind(builder.Configuration.GetSection("PerspectiveWorker"));
+
+// Perspective worker - processes perspective checkpoints (event replay for read models)
+// NOTE: Skeleton implementation - logs checkpoint claims but doesn't invoke perspectives yet
+builder.Services.AddHostedService<PerspectiveWorker>();
+
 // Add FastEndpoints for REST API (AOT-compatible)
 builder.Services.AddFastEndpoints();
 builder.Services.SwaggerDocument();
