@@ -17,19 +17,22 @@ namespace Whizbang.Core.Generated;
 
 /// <summary>
 /// Generated perspective runner for __PERSPECTIVE_SIMPLE_NAME__.
-/// Implements unit-of-work pattern with UUID7 event ordering and configurable batching.
+/// Implements unit-of-work pattern with UUID7 event ordering and pure function event application.
 /// </summary>
 /// <remarks>
-/// Unit of Work Pattern:
+/// Unit of Work Pattern with Pure Functions:
 /// - Reads events in UUID7 order (time-ordered)
-/// - Applies ALL events to in-memory model
+/// - Applies ALL events to in-memory model using pure Apply() functions
+/// - Pure functions: synchronous, deterministic, no I/O or side effects
 /// - Saves model + checkpoint ONCE at batch boundary/failure/end
 /// - On failure: saves checkpoint at last successful event
 ///
 /// This ensures:
+/// - Deterministic replay (pure functions guarantee same result)
 /// - Atomic writes (model + checkpoint saved together)
 /// - Partial progress on failure (checkpoint up to last success)
 /// - No inline saves during event processing
+/// - Compile-time purity enforcement via Roslyn analyzer
 /// </remarks>
 internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   private readonly IServiceProvider _serviceProvider;
@@ -88,8 +91,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         // Extract event from envelope
         var @event = envelope.Message;
 
-        // Apply event to model using perspective's Update method
-        updatedModel = await ApplyEventAsync(perspective, updatedModel, @event, cancellationToken);
+        // Apply event to model using perspective's pure Apply method
+        updatedModel = ApplyEvent(perspective, updatedModel, @event);
 
         // Track success
         lastSuccessfulEventId = envelope.MessageId.Value;
@@ -182,39 +185,39 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   }
 
   /// <summary>
-  /// Applies an event to the model using the perspective's Update method.
+  /// Applies an event to the model using the perspective's synchronous Apply method.
   /// Uses dynamic dispatch since we don't know event types at template time.
+  /// Apply methods are pure functions that return new model state.
   /// </summary>
-  private async Task<__MODEL_TYPE_NAME__> ApplyEventAsync(
+  private __MODEL_TYPE_NAME__ ApplyEvent(
       __PERSPECTIVE_CLASS_NAME__ perspective,
       __MODEL_TYPE_NAME__ currentModel,
-      IEvent @event,
-      CancellationToken cancellationToken) {
+      IEvent @event) {
 
-    // Dynamic dispatch to perspective.Update<TEvent>(model, event)
-    // The perspective implements IPerspectiveOf<TEvent> for each event type it handles
-    var updateMethod = perspective.GetType().GetMethod(
-        nameof(IPerspectiveOf<IEvent>.Update),
-        new[] { typeof(__MODEL_TYPE_NAME__), @event.GetType(), typeof(CancellationToken) }
+    // Dynamic dispatch to perspective.Apply(model, event)
+    // The perspective implements IPerspectiveFor<TModel, TEvent> for each event type it handles
+    var applyMethod = perspective.GetType().GetMethod(
+        "Apply",
+        new[] { typeof(__MODEL_TYPE_NAME__), @event.GetType() }
     );
 
-    if (updateMethod == null) {
+    if (applyMethod == null) {
       throw new InvalidOperationException(
           $"Perspective {perspective.GetType().Name} does not handle event type {@event.GetType().Name}"
       );
     }
 
-    var result = updateMethod.Invoke(
+    var result = applyMethod.Invoke(
         perspective,
-        new object[] { currentModel, @event, cancellationToken }
+        new object[] { currentModel, @event }
     );
 
-    if (result is Task<__MODEL_TYPE_NAME__> task) {
-      return await task;
+    if (result is __MODEL_TYPE_NAME__ model) {
+      return model;
     }
 
     throw new InvalidOperationException(
-        $"Update method for {@event.GetType().Name} did not return Task<{typeof(__MODEL_TYPE_NAME__).Name}>"
+        $"Apply method for {@event.GetType().Name} did not return {typeof(__MODEL_TYPE_NAME__).Name}"
     );
   }
 

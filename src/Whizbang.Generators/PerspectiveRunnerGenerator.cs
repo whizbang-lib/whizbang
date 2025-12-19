@@ -8,13 +8,14 @@ using Whizbang.Generators.Shared.Utilities;
 namespace Whizbang.Generators;
 
 /// <summary>
-/// Generates IPerspectiveRunner implementations for perspectives that implement IPerspectiveModel&lt;TModel&gt;.
+/// Generates IPerspectiveRunner implementations for perspectives that implement IPerspectiveFor&lt;TModel, TEvent&gt;.
 /// Runners handle unit-of-work event replay with UUID7 ordering, configurable batching, and checkpoint management.
+/// Supports both single-stream (IPerspectiveFor) and multi-stream (IGlobalPerspectiveFor) perspectives.
 /// </summary>
 [Generator]
 public class PerspectiveRunnerGenerator : IIncrementalGenerator {
-  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.IPerspectiveOf";
-  private const string PERSPECTIVE_MODEL_INTERFACE_NAME = "Whizbang.Core.IPerspectiveModel";
+  private const string PERSPECTIVE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
+  private const string GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IGlobalPerspectiveFor";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Reuse the same discovery logic as PerspectiveDiscoveryGenerator
@@ -38,7 +39,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// Extracts perspective information from a class declaration.
-  /// Returns null if the class doesn't implement IPerspectiveOf or IPerspectiveModel.
+  /// Returns null if the class doesn't implement IPerspectiveFor&lt;TModel, TEvent&gt; or IGlobalPerspectiveFor&lt;TModel, TPartitionKey, TEvent&gt;.
   /// </summary>
   private static PerspectiveInfo? ExtractPerspectiveInfo(
       GeneratorSyntaxContext context,
@@ -54,35 +55,78 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Look for IPerspectiveOf<TEvent> interfaces
-    var perspectiveInterfaces = classSymbol.AllInterfaces
-        .Where(i => i.OriginalDefinition.ToDisplayString() == PERSPECTIVE_INTERFACE_NAME + "<TEvent>"
-                    && i.TypeArguments.Length == 1)
+    // Look for IPerspectiveFor<TModel, TEvent1..3> interfaces (single-stream)
+    // Format: Whizbang.Core.Perspectives.IPerspectiveFor<TModel, TEvent1> (2 type args)
+    // Format: Whizbang.Core.Perspectives.IPerspectiveFor<TModel, TEvent1, TEvent2> (3 type args)
+    // Format: Whizbang.Core.Perspectives.IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3> (4 type args)
+    var singleStreamInterfaces = classSymbol.AllInterfaces
+        .Where(i => {
+          var originalDef = i.OriginalDefinition.ToDisplayString();
+          return (originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1>" ||
+                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2>" ||
+                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2, TEvent3>")
+                 && i.TypeArguments.Length >= 2;
+        })
         .ToList();
 
-    if (perspectiveInterfaces.Count == 0) {
+    // Look for IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1..3> interfaces (multi-stream)
+    // Format: Whizbang.Core.Perspectives.IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1> (3 type args)
+    var globalInterfaces = classSymbol.AllInterfaces
+        .Where(i => {
+          var originalDef = i.OriginalDefinition.ToDisplayString();
+          return (originalDef == GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent1>" ||
+                  originalDef == GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent1, TEvent2>" ||
+                  originalDef == GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent1, TEvent2, TEvent3>")
+                 && i.TypeArguments.Length >= 3;
+        })
+        .ToList();
+
+    if (singleStreamInterfaces.Count == 0 && globalInterfaces.Count == 0) {
       return null;
     }
 
-    // Extract all event types
-    var eventTypes = perspectiveInterfaces
-        .Select(i => i.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
-        .ToArray();
+    // Extract model type (first type argument in both IPerspectiveFor and IGlobalPerspectiveFor)
+    ITypeSymbol? modelType = null;
+    if (singleStreamInterfaces.Count > 0) {
+      modelType = singleStreamInterfaces[0].TypeArguments[0];
+    } else if (globalInterfaces.Count > 0) {
+      modelType = globalInterfaces[0].TypeArguments[0];
+    }
 
-    // Extract model type from IPerspectiveModel<TModel> if implemented
-    var modelInterface = classSymbol.AllInterfaces
-        .FirstOrDefault(i => i.OriginalDefinition.ToDisplayString() == PERSPECTIVE_MODEL_INTERFACE_NAME + "<TModel>"
-                             && i.TypeArguments.Length == 1);
-
-    // ONLY generate runner for perspectives with IPerspectiveModel
-    if (modelInterface is null) {
+    if (modelType is null) {
       return null;
     }
 
-    var modelType = modelInterface.TypeArguments[0];
     var modelTypeName = modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
-    // Find property with [StreamKey] attribute
+    // Extract event types from all interfaces
+    var eventTypes = new List<string>();
+
+    // Extract from single-stream: skip TModel (index 0), all others are events
+    foreach (var iface in singleStreamInterfaces) {
+      for (int i = 1; i < iface.TypeArguments.Length; i++) {
+        var eventType = iface.TypeArguments[i].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        if (!eventTypes.Contains(eventType)) {
+          eventTypes.Add(eventType);
+        }
+      }
+    }
+
+    // Extract from global: skip TModel (index 0) and TPartitionKey (index 1), rest are events
+    foreach (var iface in globalInterfaces) {
+      for (int i = 2; i < iface.TypeArguments.Length; i++) {
+        var eventType = iface.TypeArguments[i].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        if (!eventTypes.Contains(eventType)) {
+          eventTypes.Add(eventType);
+        }
+      }
+    }
+
+    if (eventTypes.Count == 0) {
+      return null;
+    }
+
+    // Find property with [StreamKey] attribute on the model
     string? streamKeyPropertyName = null;
     foreach (var member in modelType.GetMembers()) {
       if (member is IPropertySymbol property) {
@@ -97,13 +141,13 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     }
 
     if (streamKeyPropertyName is null) {
-      // Cannot generate runner without StreamKey - warn user
+      // Cannot generate runner without StreamKey - skip silently
       return null;
     }
 
     return new PerspectiveInfo(
         ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        EventTypes: eventTypes,
+        EventTypes: eventTypes.ToArray(),
         ModelTypeName: modelTypeName,
         StreamKeyPropertyName: streamKeyPropertyName
     );
