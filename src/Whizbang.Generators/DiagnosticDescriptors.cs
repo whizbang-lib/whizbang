@@ -258,6 +258,19 @@ public static class DiagnosticDescriptors {
       description: "The source generator did not find any commands with [TopicFilter] attributes."
   );
 
+  /// <summary>
+  /// WHIZ027: Info - Perspective runner generated for perspective with model.
+  /// </summary>
+  public static readonly DiagnosticDescriptor PerspectiveRunnerGenerated = new(
+      id: "WHIZ027",
+      title: "Perspective Runner Generated",
+      messageFormat: "Generated perspective runner '{1}' for perspective '{0}'",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "A perspective runner implementation was generated for a perspective implementing IPerspectiveModel<TModel>."
+  );
+
   // ========================================
   // Test Linking Diagnostics (WHIZ050-069)
   // ========================================
