@@ -46,7 +46,7 @@ public class InventoryLevelsPerspective(
       };
 
       // Store handles JSON serialization, metadata, scope, timestamps
-      await _store.UpsertAsync(@event.ProductId, model, cancellationToken);
+      await _store.UpsertAsync(@event.ProductId.ToString(), model, cancellationToken);
 
       _logger.LogInformation(
         "BFF inventory levels initialized: Product {ProductId} created with 0 quantity",
@@ -102,7 +102,7 @@ public class InventoryLevelsPerspective(
       };
 
       // Store handles JSON serialization, metadata, scope, timestamps
-      await _store.UpsertAsync(@event.ProductId, model, cancellationToken);
+      await _store.UpsertAsync(@event.ProductId.ToString(), model, cancellationToken);
 
       _logger.LogInformation(
         "BFF inventory levels updated: Product {ProductId} restocked to {Quantity} (Reserved: {Reserved}, Available: {Available})",
@@ -158,7 +158,7 @@ public class InventoryLevelsPerspective(
         LastUpdated = @event.ReservedAt
       };
 
-      await _store.UpsertAsync(@event.ProductId, updated, cancellationToken);
+      await _store.UpsertAsync(@event.ProductId.ToString(), updated, cancellationToken);
 
       _logger.LogInformation(
         "BFF inventory levels updated: Product {ProductId} reserved {Quantity} units",
@@ -204,7 +204,7 @@ public class InventoryLevelsPerspective(
         LastUpdated = @event.ReleasedAt
       };
 
-      await _store.UpsertAsync(@event.ProductId, updated, cancellationToken);
+      await _store.UpsertAsync(@event.ProductId.ToString(), updated, cancellationToken);
 
       _logger.LogInformation(
         "BFF inventory levels updated: Product {ProductId} released {Quantity} units",
@@ -253,7 +253,7 @@ public class InventoryLevelsPerspective(
         LastUpdated = @event.AdjustedAt
       };
 
-      await _store.UpsertAsync(@event.ProductId, updated, cancellationToken);
+      await _store.UpsertAsync(@event.ProductId.ToString(), updated, cancellationToken);
 
       _logger.LogInformation(
         "BFF inventory levels updated: Product {ProductId} adjusted to {Quantity} (Reason: {Reason})",

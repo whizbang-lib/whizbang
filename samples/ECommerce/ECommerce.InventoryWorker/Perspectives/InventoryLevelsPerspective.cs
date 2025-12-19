@@ -38,7 +38,7 @@ public class InventoryLevelsPerspective(
         LastUpdated = @event.CreatedAt
       };
 
-      await _store.UpsertAsync(@event.ProductId, inventory, cancellationToken);
+      await _store.UpsertAsync(@event.ProductId.ToString(), inventory, cancellationToken);
 
       _logger.LogInformation(
         "Inventory levels initialized: Product {ProductId} created with 0 quantity",
@@ -69,7 +69,7 @@ public class InventoryLevelsPerspective(
         LastUpdated = @event.RestockedAt
       };
 
-      await _store.UpsertAsync(@event.ProductId, inventory, cancellationToken);
+      await _store.UpsertAsync(@event.ProductId.ToString(), inventory, cancellationToken);
 
       _logger.LogInformation(
         "Inventory levels updated: Product {ProductId} restocked to {Quantity}",
@@ -106,7 +106,7 @@ public class InventoryLevelsPerspective(
         LastUpdated = @event.ReservedAt
       };
 
-      await _store.UpsertAsync(@event.ProductId, updated, cancellationToken);
+      await _store.UpsertAsync(@event.ProductId.ToString(), updated, cancellationToken);
 
       _logger.LogInformation(
         "Inventory levels updated: Product {ProductId} reserved {Quantity} units",
@@ -143,7 +143,7 @@ public class InventoryLevelsPerspective(
         LastUpdated = @event.AdjustedAt
       };
 
-      await _store.UpsertAsync(@event.ProductId, updated, cancellationToken);
+      await _store.UpsertAsync(@event.ProductId.ToString(), updated, cancellationToken);
 
       _logger.LogInformation(
         "Inventory levels updated: Product {ProductId} adjusted to {Quantity} (Reason: {Reason})",

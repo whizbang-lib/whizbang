@@ -166,13 +166,19 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
   /// <summary>
   /// Creates an empty model for a new stream.
-  /// NOTE: This method will need to be customized per perspective model.
-  /// The generator should replace this with model-specific initialization.
+  /// Initializes the model with the stream ID set to the stream key property.
   /// </summary>
   private __MODEL_TYPE_NAME__ CreateEmptyModel(Guid streamId) {
-    // TODO: Generator should create model-specific initialization code
-    // For now, this is a placeholder that will be replaced
-    throw new NotImplementedException("Model initialization not yet implemented by generator");
+    // Create instance using default constructor or Activator
+    var model = System.Activator.CreateInstance<__MODEL_TYPE_NAME__>();
+
+    // Set the stream key property
+    var streamKeyProperty = typeof(__MODEL_TYPE_NAME__).GetProperty("__STREAM_KEY_PROPERTY__");
+    if (streamKeyProperty != null && streamKeyProperty.CanWrite) {
+      streamKeyProperty.SetValue(model, streamId.ToString());
+    }
+
+    return model;
   }
 
   /// <summary>

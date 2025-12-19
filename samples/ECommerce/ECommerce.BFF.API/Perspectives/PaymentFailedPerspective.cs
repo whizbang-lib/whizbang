@@ -41,7 +41,7 @@ public class PaymentFailedPerspective(
       };
 
       // 3. Write back to store
-      await _store.UpsertAsync(Guid.Parse(@event.OrderId), updated, cancellationToken);
+      await _store.UpsertAsync(Guid.Parse(@event.OrderId).ToString(), updated, cancellationToken);
 
       // 4. Push SignalR update (PaymentFailedEvent has CustomerId directly)
       await _hubContext.Clients.User(@event.CustomerId)
