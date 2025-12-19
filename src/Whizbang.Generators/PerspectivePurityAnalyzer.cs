@@ -13,14 +13,15 @@ namespace Whizbang.Generators;
 /// </summary>
 [DiagnosticAnalyzer(LanguageNames.CSharp)]
 public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
-  // Diagnostic IDs: WHIZ030-034 reserved for purity enforcement
+  // Diagnostic IDs: WHIZ100-199 reserved for purity enforcement (100s range)
+  // Similar to HTTP status codes: 100s = purity, 200s = future category, etc.
   private const string CATEGORY = "Whizbang.Purity";
 
   /// <summary>
-  /// WHIZ030: Error - Apply method returns Task (must be synchronous).
+  /// WHIZ100: Error - Apply method returns Task (must be synchronous).
   /// </summary>
   public static readonly DiagnosticDescriptor ApplyMethodIsAsync = new(
-      id: "WHIZ030",
+      id: "WHIZ100",
       title: "Apply method must be synchronous",
       messageFormat: "Apply method '{0}' returns Task but must be synchronous for purity. Change return type from 'Task<{1}>' to '{1}'.",
       category: CATEGORY,
@@ -30,10 +31,10 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   );
 
   /// <summary>
-  /// WHIZ031: Error - Apply method uses async/await keywords.
+  /// WHIZ101: Error - Apply method uses async/await keywords.
   /// </summary>
   public static readonly DiagnosticDescriptor ApplyMethodUsesAwait = new(
-      id: "WHIZ031",
+      id: "WHIZ101",
       title: "Apply method cannot use async/await",
       messageFormat: "Apply method '{0}' uses 'await' keyword but must be a pure function. Remove all async operations.",
       category: CATEGORY,
@@ -43,10 +44,10 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   );
 
   /// <summary>
-  /// WHIZ032: Error - Apply method calls database I/O operations.
+  /// WHIZ102: Error - Apply method calls database I/O operations.
   /// </summary>
   public static readonly DiagnosticDescriptor ApplyMethodCallsDatabase = new(
-      id: "WHIZ032",
+      id: "WHIZ102",
       title: "Apply method cannot call database I/O",
       messageFormat: "Apply method '{0}' calls '{1}' which performs database I/O. Apply methods must be pure functions.",
       category: CATEGORY,
@@ -56,10 +57,10 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   );
 
   /// <summary>
-  /// WHIZ033: Error - Apply method calls HTTP/network operations.
+  /// WHIZ103: Error - Apply method calls HTTP/network operations.
   /// </summary>
   public static readonly DiagnosticDescriptor ApplyMethodCallsHttp = new(
-      id: "WHIZ033",
+      id: "WHIZ103",
       title: "Apply method cannot call HTTP/network operations",
       messageFormat: "Apply method '{0}' calls '{1}' which performs HTTP/network I/O. Apply methods must be pure functions.",
       category: CATEGORY,
@@ -69,10 +70,10 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
   );
 
   /// <summary>
-  /// WHIZ034: Warning - Apply method may use non-deterministic DateTime.
+  /// WHIZ104: Warning - Apply method may use non-deterministic DateTime.
   /// </summary>
   public static readonly DiagnosticDescriptor ApplyMethodUsesDateTime = new(
-      id: "WHIZ034",
+      id: "WHIZ104",
       title: "Apply method should use event timestamps instead of DateTime.UtcNow",
       messageFormat: "Apply method '{0}' uses DateTime.UtcNow which is non-deterministic. Use event timestamps instead for purity.",
       category: CATEGORY,
