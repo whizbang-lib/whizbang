@@ -32,8 +32,8 @@ public class OrderPerspective(
 
       // Build OrderReadModel for persistence
       var orderReadModel = new OrderReadModel {
-        OrderId = @event.OrderId.Value.ToString(),
-        CustomerId = @event.CustomerId.Value.ToString(),
+        OrderId = @event.OrderId,
+        CustomerId = @event.CustomerId,
         TenantId = null,  // TODO: Add tenant_id when multi-tenancy implemented
         Status = "Created",
         TotalAmount = @event.TotalAmount,
@@ -55,9 +55,9 @@ public class OrderPerspective(
       await _store.UpsertAsync(@event.OrderId.Value, orderReadModel, cancellationToken);
 
       // Push real-time update via SignalR
-      await _hubContext.Clients.User(@event.CustomerId.Value.ToString())
+      await _hubContext.Clients.User(@event.CustomerId.ToString())
         .SendAsync("OrderStatusChanged", new OrderStatusUpdate {
-          OrderId = @event.OrderId.Value.ToString(),
+          OrderId = @event.OrderId.ToString(),
           Status = "Created",
           Timestamp = @event.CreatedAt,
           Message = $"Order created with total amount ${@event.TotalAmount:F2}"

@@ -44,12 +44,12 @@ public class AdminEndpointTests {
     private readonly List<OrderReadModel> _orders = orders;
 
     public Task<IEnumerable<OrderReadModel>> GetByCustomerIdAsync(string customerId, CancellationToken cancellationToken = default) {
-      var result = _orders.Where(o => o.CustomerId == customerId);
+      var result = _orders.Where(o => o.CustomerId.ToString() == customerId);
       return Task.FromResult(result);
     }
 
     public Task<OrderReadModel?> GetByIdAsync(string orderId, CancellationToken cancellationToken = default) {
-      return Task.FromResult(_orders.FirstOrDefault(o => o.OrderId == orderId));
+      return Task.FromResult(_orders.FirstOrDefault(o => o.OrderId.ToString() == orderId));
     }
 
     public Task<IEnumerable<OrderReadModel>> GetByTenantIdAsync(string tenantId, CancellationToken cancellationToken = default) {

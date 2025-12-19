@@ -1,4 +1,5 @@
 using ECommerce.BFF.API.Lenses;
+using ECommerce.Contracts.Commands;
 
 namespace ECommerce.BFF.API.Tests;
 
@@ -14,8 +15,8 @@ public class OrderReadModelTests {
 
     // Act
     var order = new OrderReadModel {
-      OrderId = "ORD-001",
-      CustomerId = "CUST-001",
+      OrderId = OrderId.Parse("01234567-89ab-7def-0123-456789abcdef"),
+      CustomerId = CustomerId.Parse("fedcba98-7654-7210-fedc-ba9876543210"),
       TenantId = "TENANT-001",
       Status = "Pending",
       TotalAmount = 150.00m,
@@ -42,8 +43,8 @@ public class OrderReadModelTests {
     };
 
     // Assert
-    await Assert.That(order.OrderId).IsEqualTo("ORD-001");
-    await Assert.That(order.CustomerId).IsEqualTo("CUST-001");
+    await Assert.That(order.OrderId).IsEqualTo(OrderId.Parse("01234567-89ab-7def-0123-456789abcdef"));
+    await Assert.That(order.CustomerId).IsEqualTo(CustomerId.Parse("fedcba98-7654-7210-fedc-ba9876543210"));
     await Assert.That(order.TenantId).IsEqualTo("TENANT-001");
     await Assert.That(order.Status).IsEqualTo("Pending");
     await Assert.That(order.TotalAmount).IsEqualTo(150.00m);
@@ -60,8 +61,8 @@ public class OrderReadModelTests {
   public async Task OrderReadModel_WithNullOptionalFields_HandlesCorrectlyAsync() {
     // Arrange & Act
     var order = new OrderReadModel {
-      OrderId = "ORD-002",
-      CustomerId = "CUST-002",
+      OrderId = OrderId.Parse("11111111-2222-7333-4444-555555555555"),
+      CustomerId = CustomerId.Parse("66666666-7777-7888-9999-aaaaaaaaaaaa"),
       TenantId = null,
       Status = "Created",
       TotalAmount = 50.00m,
@@ -161,8 +162,8 @@ public class OrderReadModelTests {
     // Arrange
     var createdAt = DateTime.UtcNow;
     var order1 = new OrderReadModel {
-      OrderId = "ORD-001",
-      CustomerId = "CUST-001",
+      OrderId = OrderId.Parse("aaaaaaaa-bbbb-7ccc-dddd-eeeeeeeeeeee"),
+      CustomerId = CustomerId.Parse("11111111-2222-7333-4444-555555555555"),
       TenantId = "TENANT-001",
       Status = "Pending",
       TotalAmount = 100.00m,
@@ -173,8 +174,8 @@ public class OrderReadModelTests {
     };
 
     var order2 = new OrderReadModel {
-      OrderId = "ORD-002",
-      CustomerId = "CUST-002",
+      OrderId = OrderId.Parse("ffffffff-eeee-7ddd-cccc-bbbbbbbbbbbb"),
+      CustomerId = CustomerId.Parse("99999999-8888-7777-6666-555555555555"),
       TenantId = "TENANT-001",
       Status = "Completed",
       TotalAmount = 200.00m,

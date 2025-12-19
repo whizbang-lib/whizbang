@@ -12,7 +12,7 @@ namespace ECommerce.BFF.API.Perspectives;
 /// Updates order read model when inventory is reserved.
 /// Uses IPerspectiveStore for zero-reflection, AOT-compatible updates with record 'with' expressions.
 /// </summary>
-public class InventoryPerspective(
+public partial class InventoryPerspective(
   IPerspectiveStore<OrderReadModel> store,
   ILensQuery<OrderReadModel> query,
   IHubContext<OrderStatusHub> hubContext,
@@ -43,7 +43,7 @@ public class InventoryPerspective(
       await _store.UpsertAsync(Guid.Parse(@event.OrderId), updated, cancellationToken);
 
       // 4. Push SignalR update using existing CustomerId
-      await _hubContext.Clients.User(existing.CustomerId)
+      await _hubContext.Clients.User(existing.CustomerId.ToString())
         .SendAsync("OrderStatusChanged", new OrderStatusUpdate {
           OrderId = @event.OrderId,
           Status = "InventoryReserved",

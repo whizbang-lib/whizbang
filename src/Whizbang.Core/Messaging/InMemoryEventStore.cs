@@ -74,6 +74,27 @@ public class InMemoryEventStore(
   }
 
   /// <inheritdoc />
+  public async IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
+    Guid streamId,
+    Guid? fromEventId,
+    [EnumeratorCancellation] CancellationToken cancellationToken = default
+  ) {
+    if (!_streams.TryGetValue(streamId, out var stream)) {
+      yield break;
+    }
+
+    foreach (var envelope in stream.ReadByEventId(fromEventId)) {
+      cancellationToken.ThrowIfCancellationRequested();
+      // Cast to strongly-typed envelope
+      if (envelope is MessageEnvelope<TMessage> typedEnvelope) {
+        yield return typedEnvelope;
+      }
+    }
+
+    await Task.CompletedTask;
+  }
+
+  /// <inheritdoc />
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:GetLastSequenceAsync_EmptyStream_ShouldReturnMinusOneAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:GetLastSequenceAsync_AfterAppends_ShouldReturnCorrectSequenceAsync</tests>
   public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) {
@@ -95,7 +116,7 @@ public class InMemoryEventStore(
     public void Append(IMessageEnvelope envelope) {
       lock (_lock) {
         _currentSequence++;
-        _events.Add(new EventRecord(_currentSequence, envelope));
+        _events.Add(new EventRecord(_currentSequence, envelope.MessageId.Value, envelope));
       }
     }
 
@@ -108,6 +129,21 @@ public class InMemoryEventStore(
       }
     }
 
+    public IEnumerable<IMessageEnvelope> ReadByEventId(Guid? fromEventId) {
+      lock (_lock) {
+        if (fromEventId == null) {
+          return [.. _events
+            .OrderBy(e => e.EventId)
+            .Select(e => e.Envelope)];
+        }
+
+        return [.. _events
+          .Where(e => e.EventId.CompareTo(fromEventId.Value) > 0)
+          .OrderBy(e => e.EventId)
+          .Select(e => e.Envelope)];
+      }
+    }
+
     public long GetLastSequence() {
       lock (_lock) {
         return _currentSequence;
@@ -115,5 +151,5 @@ public class InMemoryEventStore(
     }
   }
 
-  private record EventRecord(long Sequence, IMessageEnvelope Envelope);
+  private record EventRecord(long Sequence, Guid EventId, IMessageEnvelope Envelope);
 }

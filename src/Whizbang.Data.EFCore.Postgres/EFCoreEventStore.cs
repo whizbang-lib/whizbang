@@ -151,6 +151,57 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
   }
 
   /// <summary>
+  /// Reads events from a stream with strong typing starting after a specific event ID.
+  /// Returns events in UUIDv7 order (time-ordered) - no sequence numbers needed.
+  /// Supports perspective checkpoint processing where last processed event ID is tracked.
+  /// Uses IAsyncEnumerable for efficient streaming of large event sequences.
+  /// </summary>
+  public async IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
+      Guid streamId,
+      Guid? fromEventId,
+      [EnumeratorCancellation] CancellationToken cancellationToken = default) {
+
+    // Query events from the specified event ID onwards
+    // UUIDv7 is time-ordered, so we can order by Id directly
+    var query = fromEventId == null
+      ? _context.Set<EventStoreRecord>()
+          .Where(e => e.StreamId == streamId)
+          .OrderBy(e => e.Id)
+          .AsAsyncEnumerable()
+      : _context.Set<EventStoreRecord>()
+          .Where(e => e.StreamId == streamId && e.Id.CompareTo(fromEventId.Value) > 0)
+          .OrderBy(e => e.Id)
+          .AsAsyncEnumerable();
+
+    await foreach (var record in query.WithCancellation(cancellationToken)) {
+      // Deserialize the event payload using JsonTypeInfo for AOT compatibility
+      var eventDataJson = record.EventData.RootElement.GetRawText();
+      var typeInfo = (JsonTypeInfo<TMessage>)_jsonOptions.GetTypeInfo(typeof(TMessage));
+      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo);
+      if (eventData == null) {
+        throw new InvalidOperationException($"Failed to deserialize event ID {record.Id}");
+      }
+
+      // Deserialize metadata (MessageId + Hops) directly - no DTO mapping
+      var metadataJson = record.Metadata.RootElement.GetRawText();
+      var metadataTypeInfo = (JsonTypeInfo<EnvelopeMetadata>)_jsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
+      var metadata = JsonSerializer.Deserialize(metadataJson, metadataTypeInfo);
+      if (metadata == null) {
+        throw new InvalidOperationException($"Failed to deserialize metadata for event ID {record.Id}");
+      }
+
+      // Reconstruct the message envelope - ServiceInstanceInfo is already in the hops
+      var envelope = new MessageEnvelope<TMessage> {
+        MessageId = metadata.MessageId,
+        Payload = eventData,
+        Hops = metadata.Hops
+      };
+
+      yield return envelope;
+    }
+  }
+
+  /// <summary>
   /// Gets the last (highest) sequence number for a stream.
   /// Returns -1 if the stream doesn't exist or is empty.
   /// </summary>

@@ -147,6 +147,56 @@ public class DapperPostgresEventStore(
   }
 
   /// <summary>
+  /// Reads events from a stream starting after a specific event ID (UUIDv7-based).
+  /// Uses UUIDv7 time ordering for natural event sequence without sequence numbers.
+  /// Reconstructs envelope from 3 JSONB columns.
+  /// </summary>
+  public override async IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
+    Guid streamId,
+    Guid? fromEventId,
+    [EnumeratorCancellation] CancellationToken cancellationToken = default) {
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+
+    var sql = fromEventId == null
+      ? @"SELECT event_type AS EventType,
+                 event_data::text AS EventData,
+                 metadata::text AS Metadata,
+                 scope::text AS Scope
+          FROM wh_event_store
+          WHERE stream_id = @StreamId
+          ORDER BY event_id"
+      : @"SELECT event_type AS EventType,
+                 event_data::text AS EventData,
+                 metadata::text AS Metadata,
+                 scope::text AS Scope
+          FROM wh_event_store
+          WHERE stream_id = @StreamId AND event_id > @FromEventId
+          ORDER BY event_id";
+
+    var rows = await Executor.QueryAsync<EventRow>(
+      connection,
+      sql,
+      new {
+        StreamId = streamId,
+        FromEventId = fromEventId
+      },
+      cancellationToken: cancellationToken);
+
+    foreach (var row in rows) {
+      var jsonb = new JsonbPersistenceModel {
+        DataJson = row.EventData,
+        MetadataJson = row.Metadata,
+        ScopeJson = row.Scope
+      };
+
+      var envelope = _adapter.FromJsonb<TMessage>(jsonb);
+      yield return envelope;
+    }
+  }
+
+  /// <summary>
   /// 
   /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.UnitTests.cs:IsUniqueConstraintViolation_WithNonPostgresException_UniqueConstraintMessage_ShouldReturnTrueAsync</tests>

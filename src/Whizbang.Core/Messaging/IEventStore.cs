@@ -58,6 +58,18 @@ public interface IEventStore {
   IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, long fromSequence, CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Reads events from a stream by stream ID (UUID) starting after a specific event ID.
+  /// Uses UUIDv7 (Medo.Uuid7) for time-based ordering - events are ordered by event ID directly.
+  /// Supports perspective checkpoint processing where last processed event ID is tracked.
+  /// </summary>
+  /// <typeparam name="TMessage">The message type to deserialize (must match stored event types)</typeparam>
+  /// <param name="streamId">The stream identifier (aggregate ID as UUID)</param>
+  /// <param name="fromEventId">The event ID to start reading after (null = from beginning). Events after this ID are returned.</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>Async enumerable of strongly-typed message envelopes ordered by event ID (UUIDv7)</returns>
+  IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default);
+
+  /// <summary>
   /// Gets the last (highest) sequence number for a stream.
   /// Returns -1 if the stream doesn't exist or is empty.
   /// </summary>

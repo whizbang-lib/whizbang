@@ -88,9 +88,40 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
         .Select(i => i.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
         .ToArray();
 
+    // Extract model type from IPerspectiveModel<TModel> if implemented (optional)
+    var modelInterface = classSymbol.AllInterfaces
+        .FirstOrDefault(i => i.OriginalDefinition.ToDisplayString() == "Whizbang.Core.IPerspectiveModel<TModel>"
+                             && i.TypeArguments.Length == 1);
+
+    string? modelTypeName = null;
+    string? streamKeyPropertyName = null;
+
+    if (modelInterface is not null) {
+      var modelType = modelInterface.TypeArguments[0];
+      modelTypeName = modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+      // Find property with [StreamKey] attribute in the model type
+      foreach (var member in modelType.GetMembers()) {
+        if (member is IPropertySymbol property) {
+          var hasStreamKeyAttribute = property.GetAttributes()
+              .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
+
+          if (hasStreamKeyAttribute) {
+            streamKeyPropertyName = property.Name;
+            break;
+          }
+        }
+      }
+    }
+
+    // NOTE: ModelTypeName and StreamKeyPropertyName are optional
+    // Perspectives may not implement IPerspectiveModel if they manage state differently
+
     return new PerspectiveInfo(
         ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        EventTypes: eventTypes
+        EventTypes: eventTypes,
+        ModelTypeName: modelTypeName,
+        StreamKeyPropertyName: streamKeyPropertyName
     );
   }
 

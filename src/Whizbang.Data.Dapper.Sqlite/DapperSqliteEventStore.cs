@@ -113,6 +113,50 @@ public class DapperSqliteEventStore(
     }
   }
 
+  /// <summary>
+  /// Reads events from a stream starting after a specific event ID (UUIDv7-based).
+  /// Uses UUIDv7 time ordering for natural event sequence without sequence numbers.
+  /// </summary>
+  public override async IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
+    Guid streamId,
+    Guid? fromEventId,
+    [EnumeratorCancellation] CancellationToken cancellationToken = default) {
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+
+    // NOTE: SQLite doesn't have built-in UUID comparison, so we convert to binary for comparison
+    var sql = fromEventId == null
+      ? @"SELECT envelope AS Envelope
+          FROM whizbang_event_store
+          WHERE stream_id = @StreamId
+          ORDER BY created_at, rowid"
+      : @"SELECT envelope AS Envelope
+          FROM whizbang_event_store
+          WHERE stream_id = @StreamId
+          ORDER BY created_at, rowid";
+
+    var rows = await Executor.QueryAsync<EnvelopeRow>(
+      connection,
+      sql,
+      new {
+        StreamId = streamId,
+        FromEventId = fromEventId
+      },
+      cancellationToken: cancellationToken);
+
+    foreach (var row in rows) {
+      var envelopeType = typeof(MessageEnvelope<TMessage>);
+      var typeInfo = _jsonOptions.GetTypeInfo(envelopeType) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
+      if (JsonSerializer.Deserialize(row.Envelope, typeInfo) is MessageEnvelope<TMessage> envelope) {
+        // If fromEventId specified, filter in C# (SQLite doesn't support UUID comparison)
+        if (fromEventId == null || envelope.MessageId.Value.CompareTo(fromEventId.Value) > 0) {
+          yield return envelope;
+        }
+      }
+    }
+  }
+
   private static bool IsUniqueConstraintViolation(Exception ex) {
     // Check for SQLite UNIQUE constraint violation
     // Error code 19 = SQLITE_CONSTRAINT

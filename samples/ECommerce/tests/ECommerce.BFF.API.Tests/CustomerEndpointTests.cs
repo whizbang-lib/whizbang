@@ -11,8 +11,8 @@ public class CustomerEndpointTests {
   private static List<OrderReadModel> CreateTestOrders() {
     return [
       new OrderReadModel {
-        OrderId = "ORD-001",
-        CustomerId = "CUST-001",
+        OrderId = OrderId.Parse("01234567-89ab-7def-0123-456789abcdef"),
+        CustomerId = CustomerId.Parse("fedcba98-7654-7210-fedc-ba9876543210"),
         TenantId = "TENANT-001",
         Status = "Pending",
         TotalAmount = 100.00m,
@@ -29,8 +29,8 @@ public class CustomerEndpointTests {
         ]
       },
       new OrderReadModel {
-        OrderId = "ORD-002",
-        CustomerId = "CUST-001",
+        OrderId = OrderId.Parse("11111111-2222-7333-4444-555555555555"),
+        CustomerId = CustomerId.Parse("fedcba98-7654-7210-fedc-ba9876543210"),
         TenantId = "TENANT-001",
         Status = "Completed",
         TotalAmount = 200.00m,
@@ -47,8 +47,8 @@ public class CustomerEndpointTests {
         ]
       },
       new OrderReadModel {
-        OrderId = "ORD-003",
-        CustomerId = "CUST-002",
+        OrderId = OrderId.Parse("aaaaaaaa-bbbb-7ccc-dddd-eeeeeeeeeeee"),
+        CustomerId = CustomerId.Parse("99999999-8888-7777-6666-555555555555"),
         TenantId = "TENANT-001",
         Status = "Pending",
         TotalAmount = 150.00m,
@@ -160,12 +160,12 @@ public class CustomerEndpointTests {
     private readonly List<OrderReadModel> _orders = orders;
 
     public Task<IEnumerable<OrderReadModel>> GetByCustomerIdAsync(string customerId, CancellationToken cancellationToken = default) {
-      var result = _orders.Where(o => o.CustomerId == customerId);
+      var result = _orders.Where(o => o.CustomerId.ToString() == customerId);
       return Task.FromResult(result);
     }
 
     public Task<OrderReadModel?> GetByIdAsync(string orderId, CancellationToken cancellationToken = default) {
-      return Task.FromResult(_orders.FirstOrDefault(o => o.OrderId == orderId));
+      return Task.FromResult(_orders.FirstOrDefault(o => o.OrderId.ToString() == orderId));
     }
 
     public Task<IEnumerable<OrderReadModel>> GetByTenantIdAsync(string tenantId, CancellationToken cancellationToken = default) {

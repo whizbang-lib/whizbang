@@ -1,4 +1,5 @@
 using ECommerce.BFF.API.Lenses;
+using ECommerce.Contracts.Commands;
 
 namespace ECommerce.BFF.API.Tests;
 
@@ -13,12 +14,12 @@ public class GetMyOrdersEndpointTests {
     private readonly List<OrderReadModel> _orders = orders;
 
     public Task<IEnumerable<OrderReadModel>> GetByCustomerIdAsync(string customerId, CancellationToken cancellationToken = default) {
-      var result = _orders.Where(o => o.CustomerId == customerId);
+      var result = _orders.Where(o => o.CustomerId.ToString() == customerId);
       return Task.FromResult(result);
     }
 
     public Task<OrderReadModel?> GetByIdAsync(string orderId, CancellationToken cancellationToken = default) {
-      return Task.FromResult(_orders.FirstOrDefault(o => o.OrderId == orderId));
+      return Task.FromResult(_orders.FirstOrDefault(o => o.OrderId.ToString() == orderId));
     }
 
     public Task<IEnumerable<OrderReadModel>> GetByTenantIdAsync(string tenantId, CancellationToken cancellationToken = default) {
@@ -46,8 +47,8 @@ public class GetMyOrdersEndpointTests {
     // Arrange
     var testOrders = new List<OrderReadModel> {
       new() {
-        OrderId = "ORD-001",
-        CustomerId = "CUST-001",
+        OrderId = OrderId.Parse("01234567-89ab-7def-0123-456789abcdef"),
+        CustomerId = CustomerId.Parse("fedcba98-7654-7210-fedc-ba9876543210"),
         TenantId = "TENANT-001",
         Status = "Pending",
         TotalAmount = 100.00m,
@@ -55,8 +56,8 @@ public class GetMyOrdersEndpointTests {
         LineItems = []
       },
       new() {
-        OrderId = "ORD-002",
-        CustomerId = "CUST-002",
+        OrderId = OrderId.Parse("11111111-2222-7333-4444-555555555555"),
+        CustomerId = CustomerId.Parse("99999999-8888-7777-6666-555555555555"),
         TenantId = "TENANT-001",
         Status = "Completed",
         TotalAmount = 200.00m,
@@ -68,13 +69,13 @@ public class GetMyOrdersEndpointTests {
     var mockLens = new MockOrderLens(testOrders);
 
     // Act
-    var result = await mockLens.GetByCustomerIdAsync("CUST-001");
+    var result = await mockLens.GetByCustomerIdAsync("fedcba98-7654-7210-fedc-ba9876543210");
 
     // Assert
     await Assert.That(result).HasCount().EqualTo(1);
     var order = result.First();
-    await Assert.That(order.OrderId).IsEqualTo("ORD-001");
-    await Assert.That(order.CustomerId).IsEqualTo("CUST-001");
+    await Assert.That(order.OrderId).IsEqualTo(OrderId.Parse("01234567-89ab-7def-0123-456789abcdef"));
+    await Assert.That(order.CustomerId).IsEqualTo(CustomerId.Parse("fedcba98-7654-7210-fedc-ba9876543210"));
   }
 
   [Test]

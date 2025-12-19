@@ -97,6 +97,14 @@ public abstract class DapperEventStoreBase : IEventStore {
     CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Reads events from a stream starting after a specific event ID (UUIDv7-based).
+  /// </summary>
+  public abstract IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
+    Guid streamId,
+    Guid? fromEventId,
+    CancellationToken cancellationToken = default);
+
+  /// <summary>
   /// Gets the last sequence number for a stream. Returns -1 if stream doesn't exist.
   /// </summary>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:GetLastSequenceAsync_EmptyStream_ShouldReturnMinusOneAsync</tests>

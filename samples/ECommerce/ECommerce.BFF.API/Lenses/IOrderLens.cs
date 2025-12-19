@@ -1,3 +1,6 @@
+using ECommerce.Contracts.Commands;
+using Whizbang.Core;
+
 namespace ECommerce.BFF.API.Lenses;
 
 /// <summary>
@@ -40,8 +43,9 @@ public interface IOrderLens {
 /// Order read model - denormalized view optimized for queries
 /// </summary>
 public record OrderReadModel {
-  public required string OrderId { get; init; }
-  public required string CustomerId { get; init; }
+  [StreamKey]
+  public required OrderId OrderId { get; init; }
+  public required CustomerId CustomerId { get; init; }
   public string? TenantId { get; init; }
   public required string Status { get; init; }
   public decimal TotalAmount { get; init; }

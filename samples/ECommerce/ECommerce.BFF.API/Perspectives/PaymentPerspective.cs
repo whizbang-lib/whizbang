@@ -44,7 +44,7 @@ public class PaymentPerspective(
       await _store.UpsertAsync(Guid.Parse(@event.OrderId), updated, cancellationToken);
 
       // 4. Push SignalR update using existing CustomerId
-      await _hubContext.Clients.User(existing.CustomerId)
+      await _hubContext.Clients.User(existing.CustomerId.ToString())
         .SendAsync("OrderStatusChanged", new OrderStatusUpdate {
           OrderId = @event.OrderId,
           Status = "PaymentProcessed",
