@@ -48,8 +48,8 @@ public class OrderPerspectiveTests : IAsyncDisposable {
     var order = await lens.GetByIdAsync(orderId.Value, CancellationToken.None);
 
     await Assert.That(order).IsNotNull();
-    await Assert.That(order!.OrderId).IsEqualTo(orderId.Value.ToString());
-    await Assert.That(order.CustomerId).IsEqualTo(customerId.Value.ToString());
+    await Assert.That(order!.OrderId).IsEqualTo(orderId);
+    await Assert.That(order.CustomerId).IsEqualTo(customerId);
     await Assert.That(order.Status).IsEqualTo("Created");
     await Assert.That(order.TotalAmount).IsEqualTo(99.99m);
     await Assert.That(order.ItemCount).IsEqualTo(1);
@@ -77,7 +77,7 @@ public class OrderPerspectiveTests : IAsyncDisposable {
     var order = await lens.GetByIdAsync(orderId.Value, CancellationToken.None);
 
     await Assert.That(order).IsNotNull();
-    await Assert.That(order!.OrderId).IsEqualTo(orderId.Value.ToString());
+    await Assert.That(order!.OrderId).IsEqualTo(orderId);
     await Assert.That(order.Status).IsEqualTo("Created");
   }
 
@@ -176,7 +176,7 @@ public class OrderPerspectiveTests : IAsyncDisposable {
     var order = await lens.GetByIdAsync(orderId.Value, CancellationToken.None);
 
     await Assert.That(order).IsNotNull();
-    await Assert.That(order!.OrderId).IsEqualTo(orderId.Value.ToString());
+    await Assert.That(order!.OrderId).IsEqualTo(orderId);
     // UpdatedAt should reflect the second event
     await Assert.That(order.UpdatedAt).IsGreaterThan(order.CreatedAt);
   }
