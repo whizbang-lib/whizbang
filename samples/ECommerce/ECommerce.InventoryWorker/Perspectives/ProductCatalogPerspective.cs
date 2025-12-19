@@ -40,7 +40,7 @@ public class ProductCatalogPerspective(
         DeletedAt = null
       };
 
-      await _store.UpsertAsync(@event.ProductId.ToString(), product, cancellationToken);
+      await _store.UpsertAsync(@event.ProductId, product, cancellationToken);
 
       _logger.LogInformation(
         "Product catalog updated: Product {ProductId} created",
@@ -80,7 +80,7 @@ public class ProductCatalogPerspective(
         DeletedAt = existing.DeletedAt
       };
 
-      await _store.UpsertAsync(@event.ProductId.ToString(), updated, cancellationToken);
+      await _store.UpsertAsync(@event.ProductId, updated, cancellationToken);
 
       _logger.LogInformation(
         "Product catalog updated: Product {ProductId} updated",
@@ -120,7 +120,7 @@ public class ProductCatalogPerspective(
         DeletedAt = @event.DeletedAt
       };
 
-      await _store.UpsertAsync(@event.ProductId.ToString(), deleted, cancellationToken);
+      await _store.UpsertAsync(@event.ProductId, deleted, cancellationToken);
 
       _logger.LogInformation(
         "Product catalog updated: Product {ProductId} soft deleted",

@@ -73,8 +73,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
 
     // Generate schema SQL at runtime from C# definitions
     var schemaConfig = new SchemaConfiguration(
-      InfrastructurePrefix: "wb_",
-      PerspectivePrefix: "wb_per_"
+      InfrastructurePrefix: "wh_",
+      PerspectivePrefix: "wh_per_"
     );
     var coreInfrastructureSchema = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(schemaConfig);
 

@@ -82,12 +82,10 @@ namespace TestNamespace {
     public string Status { get; init; } = """";
   }
 
-  public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent>, IPerspectiveModel<OrderReadModel> {
-    public Task<OrderReadModel> Update(OrderReadModel currentData, OrderCreatedEvent @event, CancellationToken cancellationToken = default) {
-      return Task.FromResult(currentData with { Status = ""Created"" });
+  public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent>, IPerspectiveFor<OrderReadModel, OrderCreatedEvent> {
+    public OrderReadModel Apply(OrderReadModel currentData, OrderCreatedEvent @event) {
+      return currentData with { Status = ""Created"" };
     }
-
-    public OrderReadModel CurrentData() => new OrderReadModel();
   }
 }";
 
@@ -128,12 +126,10 @@ namespace TestNamespace {
     public string Status { get; init; } = """";
   }
 
-  public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent>, IPerspectiveModel<OrderReadModel> {
-    public Task<OrderReadModel> Update(OrderReadModel currentData, OrderCreatedEvent @event, CancellationToken cancellationToken = default) {
-      return Task.FromResult(currentData with { Status = ""Created"" });
+  public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent>, IPerspectiveFor<OrderReadModel, OrderCreatedEvent> {
+    public OrderReadModel Apply(OrderReadModel currentData, OrderCreatedEvent @event) {
+      return currentData with { Status = ""Created"" };
     }
-
-    public OrderReadModel CurrentData() => new OrderReadModel();
   }
 }";
 
@@ -165,16 +161,14 @@ namespace TestNamespace {
     public string OrderId { get; init; } = """";
   }
 
-  public abstract class BasePerspective : IPerspectiveOf<OrderEvent>, IPerspectiveModel<OrderReadModel> {
-    public abstract Task<OrderReadModel> Update(OrderReadModel currentData, OrderEvent @event, CancellationToken cancellationToken = default);
-    public abstract OrderReadModel CurrentData();
+  public abstract class BasePerspective : IPerspectiveOf<OrderEvent>, IPerspectiveFor<OrderReadModel, OrderEvent> {
+    public abstract OrderReadModel Apply(OrderReadModel currentData, OrderEvent @event);
   }
 
   public class ConcretePerspective : BasePerspective {
-    public override Task<OrderReadModel> Update(OrderReadModel currentData, OrderEvent @event, CancellationToken cancellationToken = default) {
-      return Task.FromResult(currentData);
+    public override OrderReadModel Apply(OrderReadModel currentData, OrderEvent @event) {
+      return currentData;
     }
-    public override OrderReadModel CurrentData() => new OrderReadModel();
   }
 }";
 
@@ -211,11 +205,10 @@ namespace TestNamespace {
     public string OrderId { get; init; } = """";
   }
 
-  public class OrderPerspective : IPerspectiveOf<OrderEvent>, IPerspectiveModel<OrderReadModel> {
-    public Task<OrderReadModel> Update(OrderReadModel currentData, OrderEvent @event, CancellationToken cancellationToken = default) {
-      return Task.FromResult(currentData);
+  public class OrderPerspective : IPerspectiveOf<OrderEvent>, IPerspectiveFor<OrderReadModel, OrderEvent> {
+    public OrderReadModel Apply(OrderReadModel currentData, OrderEvent @event) {
+      return currentData;
     }
-    public OrderReadModel CurrentData() => new OrderReadModel();
   }
 }";
 
@@ -252,11 +245,10 @@ namespace TestNamespace {
     public string OrderId { get; init; } = """";
   }
 
-  public class OrderPerspective : IPerspectiveOf<OrderEvent>, IPerspectiveModel<OrderReadModel> {
-    public Task<OrderReadModel> Update(OrderReadModel currentData, OrderEvent @event, CancellationToken cancellationToken = default) {
-      return Task.FromResult(currentData);
+  public class OrderPerspective : IPerspectiveOf<OrderEvent>, IPerspectiveFor<OrderReadModel, OrderEvent> {
+    public OrderReadModel Apply(OrderReadModel currentData, OrderEvent @event) {
+      return currentData;
     }
-    public OrderReadModel CurrentData() => new OrderReadModel();
   }
 }";
 
@@ -292,11 +284,10 @@ namespace TestNamespace {
     public int Quantity { get; init; }
   }
 
-  public class InventoryPerspective : IPerspectiveOf<InventoryEvent>, IPerspectiveModel<InventoryModel> {
-    public Task<InventoryModel> Update(InventoryModel currentData, InventoryEvent @event, CancellationToken cancellationToken = default) {
-      return Task.FromResult(currentData);
+  public class InventoryPerspective : IPerspectiveOf<InventoryEvent>, IPerspectiveFor<InventoryModel, InventoryEvent> {
+    public InventoryModel Apply(InventoryModel currentData, InventoryEvent @event) {
+      return currentData;
     }
-    public InventoryModel CurrentData() => new InventoryModel();
   }
 }";
 
@@ -330,11 +321,10 @@ namespace TestNamespace {
     public string OrderId { get; init; } = """";
   }
 
-  public class OrderPerspective : IPerspectiveOf<OrderEvent>, IPerspectiveModel<OrderReadModel> {
-    public Task<OrderReadModel> Update(OrderReadModel currentData, OrderEvent @event, CancellationToken cancellationToken = default) {
-      return Task.FromResult(currentData);
+  public class OrderPerspective : IPerspectiveOf<OrderEvent>, IPerspectiveFor<OrderReadModel, OrderEvent> {
+    public OrderReadModel Apply(OrderReadModel currentData, OrderEvent @event) {
+      return currentData;
     }
-    public OrderReadModel CurrentData() => new OrderReadModel();
   }
 }";
 
@@ -378,18 +368,16 @@ namespace TestNamespace {
     public string InventoryId { get; init; } = """";
   }
 
-  public class OrderPerspective : IPerspectiveOf<OrderEvent>, IPerspectiveModel<OrderModel> {
-    public Task<OrderModel> Update(OrderModel currentData, OrderEvent @event, CancellationToken cancellationToken = default) {
-      return Task.FromResult(currentData);
+  public class OrderPerspective : IPerspectiveOf<OrderEvent>, IPerspectiveFor<OrderModel, OrderEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderEvent @event) {
+      return currentData;
     }
-    public OrderModel CurrentData() => new OrderModel();
   }
 
-  public class InventoryPerspective : IPerspectiveOf<InventoryEvent>, IPerspectiveModel<InventoryModel> {
-    public Task<InventoryModel> Update(InventoryModel currentData, InventoryEvent @event, CancellationToken cancellationToken = default) {
-      return Task.FromResult(currentData);
+  public class InventoryPerspective : IPerspectiveOf<InventoryEvent>, IPerspectiveFor<InventoryModel, InventoryEvent> {
+    public InventoryModel Apply(InventoryModel currentData, InventoryEvent @event) {
+      return currentData;
     }
-    public InventoryModel CurrentData() => new InventoryModel();
   }
 }";
 
@@ -428,11 +416,10 @@ namespace TestNamespace {
     public string OrderId { get; init; } = """";
   }
 
-  public class OrderPerspective : IPerspectiveOf<OrderEvent>, IPerspectiveModel<OrderModel> {
-    public Task<OrderModel> Update(OrderModel currentData, OrderEvent @event, CancellationToken cancellationToken = default) {
-      return Task.FromResult(currentData);
+  public class OrderPerspective : IPerspectiveOf<OrderEvent>, IPerspectiveFor<OrderModel, OrderEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderEvent @event) {
+      return currentData;
     }
-    public OrderModel CurrentData() => new OrderModel();
   }
 }";
 
@@ -467,11 +454,10 @@ namespace TestNamespace {
     public string Status { get; init; } = """";
   }
 
-  public class OrderPerspective : IPerspectiveOf<OrderEvent>, IPerspectiveModel<OrderModel> {
-    public Task<OrderModel> Update(OrderModel currentData, OrderEvent @event, CancellationToken cancellationToken = default) {
-      return Task.FromResult(currentData);
+  public class OrderPerspective : IPerspectiveOf<OrderEvent>, IPerspectiveFor<OrderModel, OrderEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderEvent @event) {
+      return currentData;
     }
-    public OrderModel CurrentData() => new OrderModel();
   }
 }";
 

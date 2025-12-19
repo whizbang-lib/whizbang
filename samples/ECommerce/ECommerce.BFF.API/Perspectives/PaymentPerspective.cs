@@ -41,7 +41,7 @@ public class PaymentPerspective(
       };
 
       // 3. Write back to store
-      await _store.UpsertAsync(Guid.Parse(@event.OrderId).ToString(), updated, cancellationToken);
+      await _store.UpsertAsync(Guid.Parse(@event.OrderId), updated, cancellationToken);
 
       // 4. Push SignalR update using existing CustomerId
       await _hubContext.Clients.User(existing.CustomerId.ToString())

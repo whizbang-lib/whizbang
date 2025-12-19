@@ -52,7 +52,7 @@ public class OrderPerspective(
       };
 
       // Store handles JSON serialization, metadata, scope, timestamps, versioning
-      await _store.UpsertAsync(@event.OrderId.Value.ToString(), orderReadModel, cancellationToken);
+      await _store.UpsertAsync(@event.OrderId.Value, orderReadModel, cancellationToken);
 
       // Push real-time update via SignalR
       await _hubContext.Clients.User(@event.CustomerId.ToString())

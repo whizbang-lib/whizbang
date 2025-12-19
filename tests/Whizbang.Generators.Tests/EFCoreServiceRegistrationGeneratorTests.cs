@@ -591,16 +591,13 @@ public class EFCoreServiceRegistrationGeneratorTests {
     // Should call ExecuteMigrationsAsync to execute all migrations
     await Assert.That(sourceText).Contains("await ExecuteMigrationsAsync(dbContext");
 
-    // Should contain key core tables in migration tuples (checking a representative subset)
-    // All tables: wh_service_instances, wh_message_deduplication, wh_outbox, wh_inbox,
-    //             wh_event_store, wh_receptor_processing, wh_perspective_checkpoints,
-    //             wh_request_response, wh_sequences, wh_partition_assignments
-    await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_service_instances");
-    await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_message_deduplication");
-    await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_event_store");
-    await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_receptor_processing");
-    await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_perspective_checkpoints");
-    await Assert.That(sourceText).Contains("CREATE TABLE IF NOT EXISTS wh_partition_assignments");
+    // Should use runtime schema generation via PostgresSchemaBuilder (AOT-compatible)
+    await Assert.That(sourceText).Contains("PostgresSchemaBuilder.Instance.BuildInfrastructureSchema");
+    await Assert.That(sourceText).Contains("ExecuteCoreInfrastructureTablesAsync");
+
+    // Should configure schema with correct prefix
+    await Assert.That(sourceText).Contains("InfrastructurePrefix: \"wh_\"");
+    await Assert.That(sourceText).Contains("PerspectivePrefix: \"wh_per_\"");
   }
 
   /// <summary>
@@ -633,14 +630,14 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
     var sourceText = schemaExtensions!.SourceText.ToString();
 
-    // Should have stream_id column
-    await Assert.That(sourceText).Contains("stream_id UUID NOT NULL");
+    // Should use runtime schema generation (schema structure defined in PostgresSchemaBuilder, not in template)
+    await Assert.That(sourceText).Contains("PostgresSchemaBuilder.Instance.BuildInfrastructureSchema");
 
-    // Should have scope column
-    await Assert.That(sourceText).Contains("scope JSONB NULL");
+    // Should have ExecuteCoreInfrastructureTablesAsync method that creates tables
+    await Assert.That(sourceText).Contains("ExecuteCoreInfrastructureTablesAsync");
 
-    // Should have unique index on stream_id + version
-    await Assert.That(sourceText).Contains("idx_event_store_stream");
+    // Schema configuration is passed at runtime
+    await Assert.That(sourceText).Contains("SchemaConfiguration");
   }
 
   /// <summary>
@@ -712,8 +709,11 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
     var sourceText = schemaExtensions!.SourceText.ToString();
 
-    // Should have composite primary key
-    await Assert.That(sourceText).Contains("PRIMARY KEY (stream_id, perspective_name)");
+    // Should use runtime schema generation (constraints defined in PostgresSchemaBuilder)
+    await Assert.That(sourceText).Contains("PostgresSchemaBuilder.Instance.BuildInfrastructureSchema");
+
+    // Should have ExecuteConstraintsAsync method for adding FKs and composite PKs
+    await Assert.That(sourceText).Contains("ExecuteConstraintsAsync");
   }
 
   /// <summary>
