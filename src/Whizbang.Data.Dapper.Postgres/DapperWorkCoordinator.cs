@@ -219,14 +219,24 @@ public class DapperWorkCoordinator(
       })
       .ToList();
 
-    _logger?.LogInformation(
-      "Work batch processed: {OutboxWork} outbox work, {InboxWork} inbox work",
-      outboxWork.Count,
-      inboxWork.Count
-    );
+    var perspectiveWork = resultList
+      .Where(r => r.source == "perspective")
+      .Select(r => new PerspectiveWork {
+        StreamId = r.stream_uuid ?? throw new InvalidOperationException($"Perspective work must have StreamId"),
+        PerspectiveName = r.destination ?? throw new InvalidOperationException($"Perspective work must have PerspectiveName in destination field"),
+        LastProcessedEventId = r.last_event_id,  // From wh_perspective_checkpoints.last_event_id
+        Status = (PerspectiveProcessingStatus)r.status,
+        PartitionNumber = r.partition_num,
+        Flags = (WorkBatchFlags)r.flags
+      })
+      .ToList();
 
-    // Stage 6: Perspective work processing (skeleton - SQL function doesn't return perspective work yet)
-    var perspectiveWork = new List<PerspectiveWork>();  // Empty until Migration 018
+    _logger?.LogInformation(
+      "Work batch processed: {OutboxWork} outbox work, {InboxWork} inbox work, {PerspectiveWork} perspective work",
+      outboxWork.Count,
+      inboxWork.Count,
+      perspectiveWork.Count
+    );
 
     return new WorkBatch {
       OutboxWork = outboxWork,
@@ -399,5 +409,6 @@ internal class WorkBatchRow {
   public required int status { get; set; }  // MessageProcessingStatus flags
   public required int flags { get; set; }  // WorkBatchFlags
   public required long sequence_order { get; set; }  // Epoch milliseconds for ordering
+  public Guid? last_event_id { get; set; }  // Last processed event ID (perspective work only)
 }
 

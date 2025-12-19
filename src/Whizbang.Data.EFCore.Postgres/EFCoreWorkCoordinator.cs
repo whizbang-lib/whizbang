@@ -253,17 +253,27 @@ public class EFCoreWorkCoordinator<TDbContext>(
       })
       .ToList();
 
+    var perspectiveWork = results
+      .Where(r => r.Source == "perspective")
+      .Select(r => new PerspectiveWork {
+        StreamId = r.StreamId ?? throw new InvalidOperationException($"Perspective work must have StreamId"),
+        PerspectiveName = r.Destination ?? throw new InvalidOperationException($"Perspective work must have PerspectiveName in destination field"),
+        LastProcessedEventId = r.LastEventId,  // From wh_perspective_checkpoints.last_event_id
+        Status = (PerspectiveProcessingStatus)r.Status,
+        PartitionNumber = r.PartitionNumber,
+        Flags = (WorkBatchFlags)r.Flags
+      })
+      .ToList();
+
     // Only log when there's actual work to report
-    if (outboxWork.Count > 0 || inboxWork.Count > 0) {
+    if (outboxWork.Count > 0 || inboxWork.Count > 0 || perspectiveWork.Count > 0) {
       _logger?.LogInformation(
-        "Work batch processed: {OutboxWork} outbox work, {InboxWork} inbox work",
+        "Work batch processed: {OutboxWork} outbox work, {InboxWork} inbox work, {PerspectiveWork} perspective work",
         outboxWork.Count,
-        inboxWork.Count
+        inboxWork.Count,
+        perspectiveWork.Count
       );
     }
-
-    // Stage 6: Perspective work processing (skeleton - SQL function doesn't return perspective work yet)
-    var perspectiveWork = new List<PerspectiveWork>();  // Empty until Migration 018
 
     return new WorkBatch {
       OutboxWork = outboxWork,
@@ -476,4 +486,7 @@ internal class WorkBatchRow {
 
   [Column("sequence_order")]
   public required long SequenceOrder { get; set; }  // Epoch milliseconds for ordering
+
+  [Column("last_event_id")]
+  public Guid? LastEventId { get; set; }  // Last processed event ID (perspective work only)
 }
