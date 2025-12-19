@@ -216,7 +216,8 @@ public class ImmediateWorkCoordinatorStrategyTests {
 
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
-        InboxWork = []
+        InboxWork = [],
+        PerspectiveWork = []
       });
     }
   }

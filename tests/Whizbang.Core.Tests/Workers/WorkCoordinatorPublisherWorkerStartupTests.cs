@@ -69,7 +69,8 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
 
       return Task.FromResult(new WorkBatch {
         OutboxWork = [.. WorkToReturn],
-        InboxWork = []
+        InboxWork = [],
+        PerspectiveWork = []
       });
     }
   }
@@ -396,7 +397,8 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
 
       return Task.FromResult(new WorkBatch {
         OutboxWork = [.. WorkToReturn],
-        InboxWork = []
+        InboxWork = [],
+        PerspectiveWork = []
       });
     }
   }

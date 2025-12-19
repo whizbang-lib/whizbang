@@ -150,6 +150,12 @@ public record WorkBatch {
   /// From the application's perspective, these are the next messages to handle.
   /// </summary>
   public required List<InboxWork> InboxWork { get; init; }
+
+  /// <summary>
+  /// Perspective checkpoints to process (catch-up processing for perspectives).
+  /// Each item represents a stream that needs perspective updates.
+  /// </summary>
+  public required List<PerspectiveWork> PerspectiveWork { get; init; }
 }
 
 /// <summary>
@@ -540,4 +546,44 @@ public record PerspectiveCheckpointFailure {
   /// Error message or exception details.
   /// </summary>
   public required string Error { get; init; }
+}
+
+/// <summary>
+/// Represents perspective checkpoint work that needs to be processed.
+/// Each item indicates a stream that has new events for a specific perspective to process.
+/// </summary>
+public record PerspectiveWork {
+  /// <summary>
+  /// Stream ID to process.
+  /// </summary>
+  public required Guid StreamId { get; init; }
+
+  /// <summary>
+  /// Name of the perspective that needs to process events from this stream.
+  /// </summary>
+  public required string PerspectiveName { get; init; }
+
+  /// <summary>
+  /// Last event ID that was successfully processed by this perspective for this stream.
+  /// NULL if perspective has never processed this stream (starting from beginning).
+  /// UUIDv7 - naturally ordered by time, doubles as sequence number.
+  /// </summary>
+  public Guid? LastProcessedEventId { get; init; }
+
+  /// <summary>
+  /// Current processing status for this checkpoint.
+  /// </summary>
+  public PerspectiveProcessingStatus Status { get; init; }
+
+  /// <summary>
+  /// Partition number (computed from stream_id via consistent hashing).
+  /// Used for load distribution and ensuring same stream goes to same instance.
+  /// </summary>
+  public int? PartitionNumber { get; init; }
+
+  /// <summary>
+  /// Work batch flags indicating metadata about this work item.
+  /// Examples: NewCheckpoint (first time processing stream), CatchingUp, Orphaned.
+  /// </summary>
+  public WorkBatchFlags Flags { get; init; }
 }

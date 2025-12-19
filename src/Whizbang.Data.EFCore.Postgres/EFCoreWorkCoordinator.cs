@@ -262,9 +262,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
       );
     }
 
+    // Stage 6: Perspective work processing (skeleton - SQL function doesn't return perspective work yet)
+    var perspectiveWork = new List<PerspectiveWork>();  // Empty until Migration 018
+
     return new WorkBatch {
       OutboxWork = outboxWork,
-      InboxWork = inboxWork
+      InboxWork = inboxWork,
+      PerspectiveWork = perspectiveWork
     };
   }
 

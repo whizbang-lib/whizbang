@@ -115,7 +115,8 @@ public class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncDis
         _queuedInboxFailures.Count == 0) {
       return new WorkBatch {
         OutboxWork = [],
-        InboxWork = []
+        InboxWork = [],
+        PerspectiveWork = []
       };
     }
 

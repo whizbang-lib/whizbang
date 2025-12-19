@@ -242,7 +242,8 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     ) {
       return Task.FromResult(new WorkBatch {
         OutboxWork = WorkToReturn,
-        InboxWork = []
+        InboxWork = [],
+        PerspectiveWork = []
       });
     }
   }

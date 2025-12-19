@@ -177,7 +177,8 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
         _logger?.LogWarning("Flush already in progress, returning empty batch");
         return new WorkBatch {
           OutboxWork = [],
-          InboxWork = []
+          InboxWork = [],
+          PerspectiveWork = []
         };
       }
       _flushing = true;
@@ -202,7 +203,8 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
           _logger?.LogTrace("Interval flush: No queued operations");
           return new WorkBatch {
             OutboxWork = [],
-            InboxWork = []
+            InboxWork = [],
+            PerspectiveWork = []
           };
         }
 

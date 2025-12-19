@@ -254,7 +254,8 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
 
       return Task.FromResult(new WorkBatch {
         OutboxWork = work,
-        InboxWork = []
+        InboxWork = [],
+        PerspectiveWork = []
       });
     }
   }

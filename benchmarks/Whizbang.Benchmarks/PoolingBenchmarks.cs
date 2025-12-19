@@ -10,13 +10,13 @@ namespace Whizbang.Benchmarks;
 /// </summary>
 [MemoryDiagnoser]
 [MarkdownExporter]
-public static class PoolingBenchmarks {
+public class PoolingBenchmarks {
   // ============================================================================
   // SINGLE OPERATION BENCHMARKS
   // ============================================================================
 
   [Benchmark(Baseline = true)]
-  public static async Task<int> NonPooled_SingleOperation() {
+  public async Task<int> NonPooled_SingleOperation() {
     // Traditional approach: new source every time (allocates)
     var source = new PooledValueTaskSource<int>();
     source.SetResult(42);
@@ -25,7 +25,7 @@ public static class PoolingBenchmarks {
   }
 
   [Benchmark]
-  public static async Task<int> Pooled_SingleOperation() {
+  public async Task<int> Pooled_SingleOperation() {
     // Pooled approach: rent and return
     var source = PooledSourcePool<int>.Rent();
     source.Reset();
@@ -42,7 +42,7 @@ public static class PoolingBenchmarks {
   // ============================================================================
 
   [Benchmark]
-  public static async Task NonPooled_100Operations() {
+  public async Task NonPooled_100Operations() {
     for (int i = 0; i < 100; i++) {
       var source = new PooledValueTaskSource<int>();
       source.SetResult(i);
@@ -52,7 +52,7 @@ public static class PoolingBenchmarks {
   }
 
   [Benchmark]
-  public static async Task Pooled_100Operations() {
+  public async Task Pooled_100Operations() {
     for (int i = 0; i < 100; i++) {
       var source = PooledSourcePool<int>.Rent();
       source.Reset();
@@ -65,7 +65,7 @@ public static class PoolingBenchmarks {
   }
 
   [Benchmark]
-  public static async Task NonPooled_1000Operations() {
+  public async Task NonPooled_1000Operations() {
     for (int i = 0; i < 1000; i++) {
       var source = new PooledValueTaskSource<int>();
       source.SetResult(i);
@@ -75,7 +75,7 @@ public static class PoolingBenchmarks {
   }
 
   [Benchmark]
-  public static async Task Pooled_1000Operations() {
+  public async Task Pooled_1000Operations() {
     for (int i = 0; i < 1000; i++) {
       var source = PooledSourcePool<int>.Rent();
       source.Reset();
@@ -92,7 +92,7 @@ public static class PoolingBenchmarks {
   // ============================================================================
 
   [Benchmark]
-  public static async Task<int> Pooled_IntType() {
+  public async Task<int> Pooled_IntType() {
     var source = PooledSourcePool<int>.Rent();
     source.Reset();
     source.SetResult(42);
@@ -104,7 +104,7 @@ public static class PoolingBenchmarks {
   }
 
   [Benchmark]
-  public static async Task<string> Pooled_StringType() {
+  public async Task<string> Pooled_StringType() {
     var source = PooledSourcePool<string>.Rent();
     source.Reset();
     source.SetResult("hello");
@@ -116,7 +116,7 @@ public static class PoolingBenchmarks {
   }
 
   [Benchmark]
-  public static async Task<LargeStruct> Pooled_LargeStructType() {
+  public async Task<LargeStruct> Pooled_LargeStructType() {
     var source = PooledSourcePool<LargeStruct>.Rent();
     source.Reset();
     source.SetResult(new LargeStruct { Value = 42 });
@@ -132,7 +132,7 @@ public static class PoolingBenchmarks {
   // ============================================================================
 
   [Benchmark]
-  public static void RentReturn_EmptyPool() {
+  public void RentReturn_EmptyPool() {
     // Worst case: pool is empty, must allocate
     var source = PooledSourcePool<int>.Rent();
     source.Reset();
@@ -140,7 +140,7 @@ public static class PoolingBenchmarks {
   }
 
   [Benchmark]
-  public static void RentReturn_WarmPool() {
+  public void RentReturn_WarmPool() {
     // Best case: pool already has instances
     // Pre-warm the pool
     var sources = new List<PooledValueTaskSource<int>>();
@@ -163,7 +163,7 @@ public static class PoolingBenchmarks {
   // ============================================================================
 
   [Benchmark]
-  public static async Task Pooled_ConcurrentAccess_10Threads() {
+  public async Task Pooled_ConcurrentAccess_10Threads() {
     var tasks = new List<Task>();
     for (int t = 0; t < 10; t++) {
       tasks.Add(Task.Run(async () => {
@@ -186,7 +186,7 @@ public static class PoolingBenchmarks {
   // ============================================================================
 
   [Benchmark]
-  public static async Task RealisticScenario_MessageProcessing_100Messages() {
+  public async Task RealisticScenario_MessageProcessing_100Messages() {
     // Simulates typical message processing with pooling
     for (int i = 0; i < 100; i++) {
       var source = PooledSourcePool<ProcessingResult>.Rent();

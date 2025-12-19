@@ -260,7 +260,8 @@ public class IntervalWorkCoordinatorStrategyTests {
 
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
-        InboxWork = []
+        InboxWork = [],
+        PerspectiveWork = []
       });
     }
   }

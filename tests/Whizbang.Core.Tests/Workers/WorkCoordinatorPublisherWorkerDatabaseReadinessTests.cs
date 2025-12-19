@@ -272,7 +272,8 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
 
       return Task.FromResult(new WorkBatch {
         OutboxWork = work,
-        InboxWork = []
+        InboxWork = [],
+        PerspectiveWork = []
       });
     }
   }

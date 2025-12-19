@@ -74,7 +74,7 @@ public class ServiceBusConsumerWorkerTests {
           SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         }
       };
-      return new WorkBatch { InboxWork = inboxWork, OutboxWork = new List<OutboxWork>() };
+      return new WorkBatch { InboxWork = inboxWork, OutboxWork = new List<OutboxWork>(), PerspectiveWork = [] };
     }));
 
     // Register test perspective invoker that verifies scope is active
@@ -148,7 +148,8 @@ public class ServiceBusConsumerWorkerTests {
       // (atomic INSERT ... ON CONFLICT DO NOTHING at database level)
       return new WorkBatch {
         InboxWork = new List<InboxWork>(),  // Empty - message was duplicate
-        OutboxWork = new List<OutboxWork>()
+        OutboxWork = new List<OutboxWork>(),
+        PerspectiveWork = []
       };
     }));
 

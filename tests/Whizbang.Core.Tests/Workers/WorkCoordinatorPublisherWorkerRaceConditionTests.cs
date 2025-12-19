@@ -108,7 +108,8 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
 
       return new WorkBatch {
         OutboxWork = unclaimedWork,
-        InboxWork = []
+        InboxWork = [],
+        PerspectiveWork = []
       };
     }
   }
