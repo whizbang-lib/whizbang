@@ -316,4 +316,12 @@ public class PerspectiveWorkerOptions {
   /// Default: 2
   /// </summary>
   public int IdleThresholdPolls { get; set; } = 2;
+
+  /// <summary>
+  /// Number of events to process in a single batch before saving model + checkpoint.
+  /// Higher values = fewer database writes but longer transactions.
+  /// Lower values = more frequent saves but higher DB overhead.
+  /// Default: 100
+  /// </summary>
+  public int PerspectiveBatchSize { get; set; } = 100;
 }
