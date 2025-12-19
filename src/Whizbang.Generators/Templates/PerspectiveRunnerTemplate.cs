@@ -186,7 +186,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
   /// <summary>
   /// Applies an event to the model using the perspective's synchronous Apply method.
-  /// Uses dynamic dispatch since we don't know event types at template time.
+  /// AOT-compatible: uses switch statement instead of reflection.
   /// Apply methods are pure functions that return new model state.
   /// </summary>
   private __MODEL_TYPE_NAME__ ApplyEvent(
@@ -194,31 +194,18 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       __MODEL_TYPE_NAME__ currentModel,
       IEvent @event) {
 
-    // Dynamic dispatch to perspective.Apply(model, event)
-    // The perspective implements IPerspectiveFor<TModel, TEvent> for each event type it handles
-    var applyMethod = perspective.GetType().GetMethod(
-        "Apply",
-        new[] { typeof(__MODEL_TYPE_NAME__), @event.GetType() }
-    );
+    // AOT-compatible switch on event type (no reflection)
+    // Generator produces one case per event type the perspective handles
+    switch (@event) {
+      #region EVENT_APPLY_CASES
+      // Generated switch cases go here
+      #endregion
 
-    if (applyMethod == null) {
-      throw new InvalidOperationException(
-          $"Perspective {perspective.GetType().Name} does not handle event type {@event.GetType().Name}"
-      );
+      default:
+        throw new InvalidOperationException(
+            $"Perspective {perspective.GetType().Name} does not handle event type {@event.GetType().Name}"
+        );
     }
-
-    var result = applyMethod.Invoke(
-        perspective,
-        new object[] { currentModel, @event }
-    );
-
-    if (result is __MODEL_TYPE_NAME__ model) {
-      return model;
-    }
-
-    throw new InvalidOperationException(
-        $"Apply method for {@event.GetType().Name} did not return {typeof(__MODEL_TYPE_NAME__).Name}"
-    );
   }
 
   /// <summary>

@@ -183,7 +183,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// Generates the C# source code for a perspective runner.
-  /// Uses template-based generation with unit-of-work pattern.
+  /// Uses template-based generation with unit-of-work pattern and AOT-compatible switch statements.
   /// </summary>
   private static string GenerateRunnerSource(Compilation compilation, PerspectiveInfo perspective) {
     var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
@@ -198,10 +198,19 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var runnerName = GetRunnerName(perspective.ClassName);
     var perspectiveSimpleName = GetSimpleName(perspective.ClassName);
 
+    // Generate AOT-compatible switch cases for event application
+    var applyCases = new StringBuilder();
+    foreach (var eventType in perspective.EventTypes) {
+      applyCases.AppendLine($"        case {eventType} typedEvent:");
+      applyCases.AppendLine($"          return perspective.Apply(currentModel, typedEvent);");
+      applyCases.AppendLine();
+    }
+
     // Replace template markers
     var result = template;
     result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName};");
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(PerspectiveRunnerGenerator).Assembly, result);
+    result = TemplateUtilities.ReplaceRegion(result, "EVENT_APPLY_CASES", applyCases.ToString());
     result = result.Replace("__RUNNER_CLASS_NAME__", runnerName);
     result = result.Replace("__PERSPECTIVE_CLASS_NAME__", perspective.ClassName);
     result = result.Replace("__MODEL_TYPE_NAME__", perspective.ModelTypeName!);
