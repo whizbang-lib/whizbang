@@ -21,7 +21,7 @@ public interface IPerspectiveStore<TModel> where TModel : class {
   /// <param name="streamId">Stream ID (aggregate ID) to retrieve model for</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>The read model, or null if not found</returns>
-  Task<TModel?> GetByStreamIdAsync(string streamId, CancellationToken cancellationToken = default);
+  Task<TModel?> GetByStreamIdAsync(Guid streamId, CancellationToken cancellationToken = default);
 
   /// <summary>
   /// Insert or update a read model.
@@ -36,5 +36,33 @@ public interface IPerspectiveStore<TModel> where TModel : class {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_WhenRecordExists_UpdatesExistingRecordAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_IncrementsVersionNumber_OnEachUpdateAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_UpdatesUpdatedAtTimestamp_OnUpdateAsync</tests>
-  Task UpsertAsync(string streamId, TModel model, CancellationToken cancellationToken = default);
+  Task UpsertAsync(Guid streamId, TModel model, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Get a read model by partition key (for multi-stream/global perspectives).
+  /// Returns null if the model doesn't exist yet.
+  /// </summary>
+  /// <param name="partitionKey">Partition key to retrieve model for</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>The read model, or null if not found</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByPartitionKeyAsync_WhenRecordExists_ReturnsModelAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByPartitionKeyAsync_WhenRecordDoesNotExist_ReturnsNullAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByPartitionKeyAsync_WithStringPartitionKey_ReturnsModelAsync</tests>
+  Task<TModel?> GetByPartitionKeyAsync<TPartitionKey>(TPartitionKey partitionKey, CancellationToken cancellationToken = default)
+    where TPartitionKey : notnull;
+
+  /// <summary>
+  /// Insert or update a read model by partition key (for multi-stream/global perspectives).
+  /// Creates new row if partition key doesn't exist, updates if it does.
+  /// Automatically increments version for optimistic concurrency.
+  /// Uses database-specific optimizations (e.g., ON CONFLICT for PostgreSQL) for single-roundtrip performance.
+  /// </summary>
+  /// <param name="partitionKey">Partition key to store model for</param>
+  /// <param name="model">The read model data to store</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertByPartitionKeyAsync_WhenRecordDoesNotExist_CreatesNewRecordAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertByPartitionKeyAsync_WhenRecordExists_UpdatesExistingRecordAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertByPartitionKeyAsync_IncrementsVersionNumber_OnEachUpdateAsync</tests>
+  Task UpsertByPartitionKeyAsync<TPartitionKey>(TPartitionKey partitionKey, TModel model, CancellationToken cancellationToken = default)
+    where TPartitionKey : notnull;
 }

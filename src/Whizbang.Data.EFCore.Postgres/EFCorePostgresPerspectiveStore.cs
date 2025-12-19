@@ -44,10 +44,16 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
   }
 
   /// <inheritdoc/>
-  public async Task<TModel?> GetByStreamIdAsync(string streamId, CancellationToken cancellationToken = default) {
-    // TODO: Implement GetByStreamIdAsync - query the perspective table by stream_id column
-    // This is a placeholder for now
-    throw new NotImplementedException("GetByStreamIdAsync not yet implemented");
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByStreamIdAsync_WhenRecordExists_ReturnsModelAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByStreamIdAsync_WhenRecordDoesNotExist_ReturnsNullAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByStreamIdAsync_WithStrongTypedId_ReturnsModelAsync</tests>
+  public async Task<TModel?> GetByStreamIdAsync(Guid streamId, CancellationToken cancellationToken = default) {
+    // Query the perspective table by Id
+    var row = await _context.Set<PerspectiveRow<TModel>>()
+        .FirstOrDefaultAsync(r => r.Id == streamId, cancellationToken);
+
+    // Return the model data, or null if not found
+    return row?.Data;
   }
 
   /// <inheritdoc/>
@@ -55,11 +61,60 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_WhenRecordExists_UpdatesExistingRecordAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_IncrementsVersionNumber_OnEachUpdateAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_UpdatesUpdatedAtTimestamp_OnUpdateAsync</tests>
-  public async Task UpsertAsync(string streamId, TModel model, CancellationToken cancellationToken = default) {
-    // Parse stream ID to Guid
-    if (!Guid.TryParse(streamId, out var id)) {
-      throw new ArgumentException($"Invalid stream ID format: {streamId}", nameof(streamId));
-    }
+  public async Task UpsertAsync(Guid streamId, TModel model, CancellationToken cancellationToken = default) {
+    // Use default metadata for generic upserts
+    var metadata = new PerspectiveMetadata {
+      EventType = "Unknown",
+      EventId = Guid.NewGuid().ToString(),
+      Timestamp = DateTime.UtcNow
+    };
+
+    var scope = new PerspectiveScope();
+
+    // Delegate to strategy for optimal database-specific implementation
+    await _upsertStrategy.UpsertPerspectiveRowAsync(
+        _context,
+        _tableName,
+        streamId,
+        model,
+        metadata,
+        scope,
+        cancellationToken);
+  }
+
+  /// <inheritdoc/>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByPartitionKeyAsync_WhenRecordExists_ReturnsModelAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByPartitionKeyAsync_WhenRecordDoesNotExist_ReturnsNullAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByPartitionKeyAsync_WithStringPartitionKey_ReturnsModelAsync</tests>
+  public async Task<TModel?> GetByPartitionKeyAsync<TPartitionKey>(
+      TPartitionKey partitionKey,
+      CancellationToken cancellationToken = default)
+      where TPartitionKey : notnull {
+
+    // Convert partition key to Guid for storage
+    // Supports Guid, string, int, etc. via conversion
+    var partitionGuid = ConvertPartitionKeyToGuid(partitionKey);
+
+    // Query the perspective table by Id (which stores the partition key)
+    var row = await _context.Set<PerspectiveRow<TModel>>()
+        .FirstOrDefaultAsync(r => r.Id == partitionGuid, cancellationToken);
+
+    // Return the model data, or null if not found
+    return row?.Data;
+  }
+
+  /// <inheritdoc/>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertByPartitionKeyAsync_WhenRecordDoesNotExist_CreatesNewRecordAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertByPartitionKeyAsync_WhenRecordExists_UpdatesExistingRecordAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertByPartitionKeyAsync_IncrementsVersionNumber_OnEachUpdateAsync</tests>
+  public async Task UpsertByPartitionKeyAsync<TPartitionKey>(
+      TPartitionKey partitionKey,
+      TModel model,
+      CancellationToken cancellationToken = default)
+      where TPartitionKey : notnull {
+
+    // Convert partition key to Guid for storage
+    var partitionGuid = ConvertPartitionKeyToGuid(partitionKey);
 
     // Use default metadata for generic upserts
     var metadata = new PerspectiveMetadata {
@@ -74,10 +129,37 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
     await _upsertStrategy.UpsertPerspectiveRowAsync(
         _context,
         _tableName,
-        id,
+        partitionGuid,
         model,
         metadata,
         scope,
         cancellationToken);
+  }
+
+  /// <summary>
+  /// Converts a partition key of any type to a Guid for storage.
+  /// Supports Guid (identity), string (deterministic hash), int, etc.
+  /// </summary>
+  private static Guid ConvertPartitionKeyToGuid<TPartitionKey>(TPartitionKey partitionKey)
+      where TPartitionKey : notnull {
+
+    // If already a Guid, return as-is
+    if (partitionKey is Guid guid) {
+      return guid;
+    }
+
+    // If string, create deterministic Guid from hash
+    if (partitionKey is string str) {
+      // Use MD5 for deterministic Guid generation (not cryptographic)
+      using var md5 = System.Security.Cryptography.MD5.Create();
+      var hash = md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes(str));
+      return new Guid(hash);
+    }
+
+    // For other types (int, long, etc.), convert to string then to Guid
+    var stringValue = partitionKey.ToString()!;
+    using var md5Other = System.Security.Cryptography.MD5.Create();
+    var hashOther = md5Other.ComputeHash(System.Text.Encoding.UTF8.GetBytes(stringValue));
+    return new Guid(hashOther);
   }
 }

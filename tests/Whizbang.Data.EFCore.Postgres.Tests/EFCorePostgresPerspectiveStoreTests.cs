@@ -143,6 +143,182 @@ public class EFCorePostgresPerspectiveStoreTests {
 
     await Assert.That(exception).IsTypeOf<ArgumentNullException>();
   }
+
+  [Test]
+  public async Task GetByStreamIdAsync_WhenRecordExists_ReturnsModelAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    var testId = _idProvider.NewGuid();
+    var model = new StoreTestModel { Name = "Alice", Value = 100 };
+
+    // Create a record first
+    await store.UpsertAsync(testId, model);
+
+    // Act
+    var result = await store.GetByStreamIdAsync(testId);
+
+    // Assert
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.Name).IsEqualTo("Alice");
+    await Assert.That(result.Value).IsEqualTo(100);
+  }
+
+  [Test]
+  public async Task GetByStreamIdAsync_WhenRecordDoesNotExist_ReturnsNullAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    var nonExistentId = _idProvider.NewGuid();
+
+    // Act
+    var result = await store.GetByStreamIdAsync(nonExistentId);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task GetByStreamIdAsync_WithStrongTypedId_ReturnsModelAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    var strongId = TestOrderId.From(_idProvider.NewGuid());
+    var model = new StoreTestModel { Name = "StrongIdTest", Value = 999 };
+
+    // Create a record using strong ID (implicit conversion to Guid)
+    await store.UpsertAsync(strongId, model);
+
+    // Act - retrieve using strong ID (implicit conversion to Guid)
+    var result = await store.GetByStreamIdAsync(strongId);
+
+    // Assert
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.Name).IsEqualTo("StrongIdTest");
+    await Assert.That(result.Value).IsEqualTo(999);
+  }
+
+  // Tests for partition key methods (multi-stream perspectives)
+
+  [Test]
+  public async Task GetByPartitionKeyAsync_WhenRecordExists_ReturnsModelAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    var partitionKey = _idProvider.NewGuid();
+    var model = new StoreTestModel { Name = "PartitionedModel", Value = 777 };
+
+    // Create a record using partition key
+    await store.UpsertByPartitionKeyAsync(partitionKey, model);
+
+    // Act
+    var result = await store.GetByPartitionKeyAsync(partitionKey);
+
+    // Assert
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.Name).IsEqualTo("PartitionedModel");
+    await Assert.That(result.Value).IsEqualTo(777);
+  }
+
+  [Test]
+  public async Task GetByPartitionKeyAsync_WhenRecordDoesNotExist_ReturnsNullAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    var nonExistentKey = _idProvider.NewGuid();
+
+    // Act
+    var result = await store.GetByPartitionKeyAsync(nonExistentKey);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task UpsertByPartitionKeyAsync_WhenRecordDoesNotExist_CreatesNewRecordAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    var partitionKey = _idProvider.NewGuid();
+    var model = new StoreTestModel { Name = "NewPartition", Value = 333 };
+
+    // Act
+    await store.UpsertByPartitionKeyAsync(partitionKey, model);
+
+    // Assert - verify record was created with partition key
+    var result = await store.GetByPartitionKeyAsync(partitionKey);
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.Name).IsEqualTo("NewPartition");
+    await Assert.That(result.Value).IsEqualTo(333);
+  }
+
+  [Test]
+  public async Task UpsertByPartitionKeyAsync_WhenRecordExists_UpdatesExistingRecordAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    var partitionKey = _idProvider.NewGuid();
+
+    // Create initial record
+    await store.UpsertByPartitionKeyAsync(partitionKey, new StoreTestModel { Name = "Initial", Value = 100 });
+
+    // Act - update the record
+    await store.UpsertByPartitionKeyAsync(partitionKey, new StoreTestModel { Name = "Updated", Value = 200 });
+
+    // Assert - verify record was updated
+    var result = await store.GetByPartitionKeyAsync(partitionKey);
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.Name).IsEqualTo("Updated");
+    await Assert.That(result.Value).IsEqualTo(200);
+  }
+
+  [Test]
+  public async Task UpsertByPartitionKeyAsync_IncrementsVersionNumber_OnEachUpdateAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    var partitionKey = _idProvider.NewGuid();
+
+    // Act - multiple updates
+    await store.UpsertByPartitionKeyAsync(partitionKey, new StoreTestModel { Name = "V1", Value = 1 });
+    await store.UpsertByPartitionKeyAsync(partitionKey, new StoreTestModel { Name = "V2", Value = 2 });
+    await store.UpsertByPartitionKeyAsync(partitionKey, new StoreTestModel { Name = "V3", Value = 3 });
+
+    // Assert - verify final state and version
+    var result = await store.GetByPartitionKeyAsync(partitionKey);
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.Name).IsEqualTo("V3");
+  }
+
+  [Test]
+  public async Task GetByPartitionKeyAsync_WithStringPartitionKey_ReturnsModelAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    var partitionKey = "tenant-123";
+    var model = new StoreTestModel { Name = "TenantData", Value = 555 };
+
+    // Create a record using string partition key
+    await store.UpsertByPartitionKeyAsync(partitionKey, model);
+
+    // Act
+    var result = await store.GetByPartitionKeyAsync(partitionKey);
+
+    // Assert
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result!.Name).IsEqualTo("TenantData");
+    await Assert.That(result.Value).IsEqualTo(555);
+  }
+
 }
 
 /// <summary>
