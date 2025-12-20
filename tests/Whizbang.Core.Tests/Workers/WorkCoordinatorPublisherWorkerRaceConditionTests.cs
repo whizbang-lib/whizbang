@@ -87,19 +87,22 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
         });
       }
 
-      // Simulate partition-based claiming (only unclaimed messages)
-      // No maxPartitionsPerInstance limit - each instance claims all partitions assigned via modulo
-      var unclaimedWork = AvailableWork
-        .Where(w => !_claimedMessages.ContainsKey(w.MessageId))
-        .ToList();
-
-      // Mark as claimed
-      foreach (var work in unclaimedWork) {
-        _claimedMessages[work.MessageId] = true;
-      }
-
-      // Remove completed messages
+      // CRITICAL: Atomically claim messages to prevent race conditions
+      // Both the query and the claim MUST happen inside the lock
+      List<OutboxWork> unclaimedWork;
       lock (_lock) {
+        // Simulate partition-based claiming (only unclaimed messages)
+        // No maxPartitionsPerInstance limit - each instance claims all partitions assigned via modulo
+        unclaimedWork = AvailableWork
+          .Where(w => !_claimedMessages.ContainsKey(w.MessageId))
+          .ToList();
+
+        // Mark as claimed (inside same lock to prevent duplicates)
+        foreach (var work in unclaimedWork) {
+          _claimedMessages[work.MessageId] = true;
+        }
+
+        // Remove completed messages
         foreach (var completion in outboxCompletions) {
           AvailableWork.RemoveAll(w => w.MessageId == completion.MessageId);
           _claimedMessages.TryRemove(completion.MessageId, out _);
