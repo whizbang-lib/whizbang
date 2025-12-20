@@ -55,16 +55,20 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Look for IPerspectiveFor<TModel, TEvent1..3> interfaces (single-stream)
+    // Look for IPerspectiveFor<TModel, TEvent1..5> interfaces (single-stream)
     // Format: Whizbang.Core.Perspectives.IPerspectiveFor<TModel, TEvent1> (2 type args)
     // Format: Whizbang.Core.Perspectives.IPerspectiveFor<TModel, TEvent1, TEvent2> (3 type args)
     // Format: Whizbang.Core.Perspectives.IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3> (4 type args)
+    // Format: Whizbang.Core.Perspectives.IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4> (5 type args)
+    // Format: Whizbang.Core.Perspectives.IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5> (6 type args)
     var singleStreamInterfaces = classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
           return (originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1>" ||
                   originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2>" ||
-                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2, TEvent3>")
+                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2, TEvent3>" ||
+                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2, TEvent3, TEvent4>" ||
+                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5>")
                  && i.TypeArguments.Length >= 2;
         })
         .ToList();

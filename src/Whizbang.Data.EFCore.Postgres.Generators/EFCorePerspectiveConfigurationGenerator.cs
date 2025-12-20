@@ -10,7 +10,7 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// <summary>
 /// Source generator that discovers Perspective implementations and generates EF Core ModelBuilder setup.
 /// Generates a ConfigureWhizbang() extension method that configures:
-/// - PerspectiveRow&lt;TModel&gt; entities (discovered from IPerspectiveOf implementations with IPerspectiveStore&lt;TModel&gt; dependencies)
+/// - PerspectiveRow&lt;TModel&gt; entities (discovered from IPerspectiveFor&lt;TModel&gt; perspectives)
 /// - InboxRecord, OutboxRecord, EventStoreRecord, ServiceInstanceRecord (fixed Whizbang entities)
 /// Uses EF Core 10 ComplexProperty().ToJson() for JSONB columns (Postgres).
 /// </summary>
@@ -22,9 +22,6 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:GeneratedDiagnostics_DeduplicatesPerspectivesAsync</tests>
 [Generator]
 public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
-  private const string IPERSPECTIVE_OF_TYPE = "Whizbang.Core.IPerspectiveOf<TEvent>";
-  private const string IPERSPECTIVE_STORE_TYPE = "Whizbang.Core.Lenses.IPerspectiveStore<TModel>";
-
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:GeneratedCode_ImplementsIDiagnosticsInterfaceAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:GeneratedDiagnostics_HasCorrectGeneratorNameAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:GeneratedDiagnostics_ReportsCorrectPerspectiveCountAsync</tests>
@@ -32,7 +29,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:GeneratedDiagnostics_WithNoPerspectives_ReportsZeroAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:GeneratedDiagnostics_DeduplicatesPerspectivesAsync</tests>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
-    // Discover classes implementing IPerspectiveOf<TEvent> that use IPerspectiveStore<TModel>
+    // Discover classes implementing IPerspectiveFor<TModel>
     var perspectiveClasses = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
         transform: static (ctx, ct) => ExtractPerspectiveInfo(ctx, ct)
@@ -61,9 +58,9 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Extracts perspective information from a class implementing IPerspectiveOf.
-  /// Discovers TModel type from IPerspectiveStore&lt;TModel&gt; constructor parameter.
-  /// Returns null if the class doesn't implement IPerspectiveOf or doesn't have IPerspectiveStore dependency.
+  /// Extracts perspective information from a class implementing IPerspectiveFor.
+  /// Discovers TModel type from IPerspectiveFor&lt;TModel&gt; base interface (first type argument).
+  /// Returns null if the class doesn't implement the interface.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:GeneratedDiagnostics_ReportsCorrectPerspectiveCountAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:LogDiscoveryDiagnostics_OutputsPerspectiveDetailsAsync</tests>
@@ -79,47 +76,24 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // DEBUG: Check all interfaces the class implements
-    var allInterfaceNames = string.Join(", ",
-        symbol.AllInterfaces.Select(i => i.OriginalDefinition.ToDisplayString()));
-
-    // Check if class implements IPerspectiveOf<TEvent>
-    // Note: IPerspectiveOf is generic with ONE type parameter (TEvent)
-    bool implementsIPerspectiveOf = symbol.AllInterfaces.Any(i => {
+    // Check if class implements IPerspectiveFor<TModel> base interface
+    var perspectiveForInterface = symbol.AllInterfaces.FirstOrDefault(i => {
       var originalDef = i.OriginalDefinition.ToDisplayString();
-      // IPerspectiveOf<TEvent> has full name "Whizbang.Core.IPerspectiveOf<TEvent>"
-      return originalDef.StartsWith("Whizbang.Core.IPerspectiveOf<");
+      return originalDef == "Whizbang.Core.Perspectives.IPerspectiveFor<TModel>";
     });
 
-    if (!implementsIPerspectiveOf) {
-      return null;
+    if (perspectiveForInterface is null) {
+      return null; // Not a perspective
     }
 
-    // Find IPerspectiveStore<TModel> in constructor parameters
-    var constructor = symbol.Constructors.FirstOrDefault();
-    if (constructor is null) {
-      return null;
-    }
+    // Perspective discovered - extract TModel from first type argument
+    var modelType = perspectiveForInterface.TypeArguments[0];
+    var tableName = "wh_per_" + ToSnakeCase(modelType.Name);
 
-    foreach (var parameter in constructor.Parameters) {
-      if (parameter.Type is INamedTypeSymbol parameterType) {
-        var originalDef = parameterType.OriginalDefinition.ToDisplayString();
-
-        // IPerspectiveStore<TModel> has full name "Whizbang.Core.Perspectives.IPerspectiveStore<TModel>"
-        if (originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveStore<")) {
-          // Get TModel from IPerspectiveStore<TModel>
-          var modelType = parameterType.TypeArguments[0];
-          var tableName = "wh_per_" + ToSnakeCase(modelType.Name);
-
-          return new PerspectiveInfo(
-              ModelTypeName: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-              TableName: tableName
-          );
-        }
-      }
-    }
-
-    return null; // No IPerspectiveStore<TModel> found in constructor
+    return new PerspectiveInfo(
+        ModelTypeName: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        TableName: tableName
+    );
   }
 
 

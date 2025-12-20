@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- Explicitly set DCP paths for Aspire 13 on .NET 10 -->
+    <DcpCliPath>$(NuGetPackageRoot)aspire.hosting.orchestration.osx-arm64/13.1.0/tools/dcp</DcpCliPath>
+    <DcpExtensionsPath>$(NuGetPackageRoot)aspire.hosting.orchestration.osx-arm64/13.1.0/tools/ext</DcpExtensionsPath>
+    <DashboardPath>$(NuGetPackageRoot)aspire.dashboard/13.1.0</DashboardPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.AppHost" />
+    <PackageReference Include="Aspire.Hosting.Azure.ServiceBus" />
+    <PackageReference Include="Aspire.Hosting.PostgreSQL" />
+  </ItemGroup>
+
+</Project>

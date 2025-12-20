@@ -223,10 +223,13 @@ public class WorkCoordinatorPublisherWorker(
   }
 
   private async Task PublisherLoopAsync(CancellationToken stoppingToken) {
+    _logger.LogWarning("DIAGNOSTIC: PublisherLoop started, waiting for work from channel...");
     await foreach (var work in _workChannelWriter.Reader.ReadAllAsync(stoppingToken)) {
+      _logger.LogWarning("DIAGNOSTIC: PublisherLoop received work from channel: MessageId={MessageId}, Destination={Destination}", work.MessageId, work.Destination);
       try {
         // Check transport readiness before attempting publish
         var isReady = await _publishStrategy.IsReadyAsync(stoppingToken);
+        _logger.LogWarning("DIAGNOSTIC: Transport readiness check: IsReady={IsReady}", isReady);
         if (!isReady) {
           // Transport not ready - renew lease to buffer message
           _leaseRenewals.Add(work.MessageId);
@@ -256,7 +259,9 @@ public class WorkCoordinatorPublisherWorker(
         Interlocked.Exchange(ref _consecutiveNotReadyChecks, 0);
 
         // Publish via strategy
+        _logger.LogWarning("DIAGNOSTIC: About to publish message {MessageId} to {Destination}", work.MessageId, work.Destination);
         var result = await _publishStrategy.PublishAsync(work, stoppingToken);
+        _logger.LogWarning("DIAGNOSTIC: Publish result for {MessageId}: Success={Success}, Status={Status}", work.MessageId, result.Success, result.CompletedStatus);
 
         // Collect results
         if (result.Success) {

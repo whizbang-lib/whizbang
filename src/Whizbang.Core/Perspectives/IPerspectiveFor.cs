@@ -57,5 +57,37 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3> : IPerspecti
   TModel Apply(TModel currentData, TEvent3 @event);
 }
 
-// TODO: Generate remaining variants (4-50 event types) via source generator or T4 template
+/// <summary>
+/// Perspective that handles four event types with pure function Apply methods.
+/// </summary>
+public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4> : IPerspectiveFor<TModel>
+  where TModel : class
+  where TEvent1 : IEvent
+  where TEvent2 : IEvent
+  where TEvent3 : IEvent
+  where TEvent4 : IEvent {
+  TModel Apply(TModel currentData, TEvent1 @event);
+  TModel Apply(TModel currentData, TEvent2 @event);
+  TModel Apply(TModel currentData, TEvent3 @event);
+  TModel Apply(TModel currentData, TEvent4 @event);
+}
+
+/// <summary>
+/// Perspective that handles five event types with pure function Apply methods.
+/// </summary>
+public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5> : IPerspectiveFor<TModel>
+  where TModel : class
+  where TEvent1 : IEvent
+  where TEvent2 : IEvent
+  where TEvent3 : IEvent
+  where TEvent4 : IEvent
+  where TEvent5 : IEvent {
+  TModel Apply(TModel currentData, TEvent1 @event);
+  TModel Apply(TModel currentData, TEvent2 @event);
+  TModel Apply(TModel currentData, TEvent3 @event);
+  TModel Apply(TModel currentData, TEvent4 @event);
+  TModel Apply(TModel currentData, TEvent5 @event);
+}
+
+// TODO: Generate remaining variants (6-50 event types) via source generator or T4 template
 // For now, we have enough to validate the pattern works

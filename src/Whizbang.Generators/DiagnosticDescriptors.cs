@@ -271,6 +271,19 @@ public static class DiagnosticDescriptors {
       description: "A perspective runner implementation was generated for a perspective implementing IPerspectiveModel<TModel>."
   );
 
+  /// <summary>
+  /// WHIZ028: Info - Perspective runner registry generated.
+  /// </summary>
+  public static readonly DiagnosticDescriptor PerspectiveRunnerRegistryGenerated = new(
+      id: "WHIZ028",
+      title: "Perspective Runner Registry Generated",
+      messageFormat: "Generated perspective runner registry with {0} runner(s) for zero-reflection lookup (AOT-compatible)",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "A static registry was generated to enable zero-reflection perspective runner lookup in PerspectiveWorker."
+  );
+
   // ========================================
   // Test Linking Diagnostics (WHIZ050-069)
   // ========================================

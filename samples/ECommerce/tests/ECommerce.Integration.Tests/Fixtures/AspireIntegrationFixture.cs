@@ -1,4 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
+using Aspire.Hosting;
+using Aspire.Hosting.Testing;
 using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Generated;
 using ECommerce.InventoryWorker.Generated;
@@ -7,10 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Testcontainers.PostgreSql;
-using Testcontainers.ServiceBus;
 using Whizbang.Core;
-using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
@@ -18,40 +17,22 @@ using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
 using Whizbang.Transports.AzureServiceBus;
-using BffInventoryLevelDto = ECommerce.BFF.API.Lenses.InventoryLevelDto;
-using InventoryWorkerInventoryLevelDto = ECommerce.InventoryWorker.Lenses.InventoryLevelDto;
 
 namespace ECommerce.Integration.Tests.Fixtures;
 
 /// <summary>
-/// Shared integration test fixture that manages PostgreSQL and Azure Service Bus Testcontainers.
-/// This fixture is shared across ALL integration tests to avoid container startup overhead.
+/// Aspire-based integration test fixture that manages PostgreSQL and Azure Service Bus via Aspire hosting.
+/// This fixture provides reliable container orchestration using Aspire's proven infrastructure.
 /// Tests are isolated using unique product IDs and database cleanup between test classes.
 /// </summary>
-public sealed class SharedIntegrationFixture : IAsyncDisposable {
-  private readonly PostgreSqlContainer _postgresContainer;
-  private readonly ServiceBusContainer _serviceBusContainer;
+public sealed class AspireIntegrationFixture : IAsyncDisposable {
+  private DistributedApplication? _app;
   private bool _isInitialized;
   private IHost? _inventoryHost;
   private IHost? _bffHost;
   private readonly Guid _sharedInstanceId = Guid.CreateVersion7(); // Shared across both services for partition claiming
-
-  public SharedIntegrationFixture() {
-    _postgresContainer = new PostgreSqlBuilder()
-      .WithImage("postgres:17-alpine")
-      .WithDatabase("whizbang_integration_test")
-      .WithUsername("whizbang_user")
-      .WithPassword("whizbang_pass")
-      .Build();
-
-    // Configure topics and subscriptions using ServiceBusBuilder's WithConfig API
-    var configPath = Path.Combine(AppContext.BaseDirectory, "servicebus-config.json");
-    _serviceBusContainer = new ServiceBusBuilder()
-      .WithImage("mcr.microsoft.com/azure-messaging/servicebus-emulator:latest")
-      .WithAcceptLicenseAgreement(true)
-      .WithConfig(configPath)  // Use Testcontainers API instead of generic WithBindMount
-      .Build();
-  }
+  private string? _postgresConnection;
+  private string? _serviceBusConnection;
 
   /// <summary>
   /// Gets the IDispatcher instance for sending commands (from InventoryWorker host).
@@ -87,7 +68,8 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Gets the PostgreSQL connection string for direct database operations.
   /// </summary>
-  public string ConnectionString => _postgresContainer.GetConnectionString();
+  public string ConnectionString => _postgresConnection
+    ?? throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
 
   /// <summary>
   /// Gets a logger instance for use in test scenarios.
@@ -98,7 +80,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   }
 
   /// <summary>
-  /// Initializes the test fixture: starts containers, initializes schemas, and starts service hosts.
+  /// Initializes the test fixture: starts Aspire app, gets connection strings, and starts service hosts.
   /// This is called ONCE for all tests in the test run.
   /// </summary>
   [RequiresDynamicCode("EF Core in tests may use dynamic code")]
@@ -108,33 +90,37 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       return;
     }
 
-    Console.WriteLine("[SharedFixture] Starting containers...");
+    Console.WriteLine("[AspireFixture] Starting Aspire test infrastructure...");
 
-    // Start containers in parallel
-    await Task.WhenAll(
-      _postgresContainer.StartAsync(cancellationToken),
-      _serviceBusContainer.StartAsync(cancellationToken)
-    );
+    // Create and start the Aspire distributed application
+    var appHost = await DistributedApplicationTestingBuilder
+      .CreateAsync<Projects.ECommerce_Integration_Tests_AppHost>(cancellationToken);
 
-    Console.WriteLine("[SharedFixture] Containers started. Creating service hosts...");
+    _app = await appHost.BuildAsync(cancellationToken);
+    await _app.StartAsync(cancellationToken);
 
-    // Get connection strings
-    var postgresConnection = _postgresContainer.GetConnectionString();
-    var serviceBusConnection = _serviceBusContainer.GetConnectionString();
+    Console.WriteLine("[AspireFixture] Aspire app started. Getting connection strings...");
 
-    Console.WriteLine($"[SharedFixture] PostgreSQL Connection: {postgresConnection}");
-    Console.WriteLine($"[SharedFixture] Service Bus Connection: {serviceBusConnection}");
+    // Get connection strings from Aspire resources
+    _postgresConnection = await _app.GetConnectionStringAsync("whizbang-integration-test", cancellationToken)
+      ?? throw new InvalidOperationException("Failed to get PostgreSQL connection string");
+
+    _serviceBusConnection = await _app.GetConnectionStringAsync("servicebus", cancellationToken)
+      ?? throw new InvalidOperationException("Failed to get Service Bus connection string");
+
+    Console.WriteLine($"[AspireFixture] PostgreSQL Connection: {_postgresConnection}");
+    Console.WriteLine($"[AspireFixture] Service Bus Connection: {_serviceBusConnection}");
 
     // Create service hosts (but don't start them yet)
-    _inventoryHost = CreateInventoryHost(postgresConnection, serviceBusConnection);
-    _bffHost = CreateBffHost(postgresConnection, serviceBusConnection);
+    _inventoryHost = CreateInventoryHost(_postgresConnection, _serviceBusConnection);
+    _bffHost = CreateBffHost(_postgresConnection, _serviceBusConnection);
 
-    Console.WriteLine("[SharedFixture] Service hosts created. Initializing schema...");
+    Console.WriteLine("[AspireFixture] Service hosts created. Initializing schema...");
 
     // Initialize PostgreSQL schema using EFCore DbContexts
     await InitializeSchemaAsync(cancellationToken);
 
-    Console.WriteLine("[SharedFixture] Schema initialized. Starting service hosts...");
+    Console.WriteLine("[AspireFixture] Schema initialized. Starting service hosts...");
 
     // Start service hosts
     await Task.WhenAll(
@@ -142,13 +128,8 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       _bffHost.StartAsync(cancellationToken)
     );
 
-    // WORKAROUND: Azure Service Bus Emulator reports ready before it can actually process messages
-    // Wait for the emulator to be truly ready by checking health endpoint and waiting 30s
-    // See: https://github.com/Azure/azure-service-bus-emulator-installer/issues/35
-    Console.WriteLine("[SharedFixture] Waiting for Azure Service Bus Emulator to be fully ready...");
-    await WaitForServiceBusEmulatorReadyAsync(cancellationToken);
-
-    Console.WriteLine("[SharedFixture] Service hosts started and ready!");
+    // Aspire manages emulator initialization, so no need for manual health checks!
+    Console.WriteLine("[AspireFixture] Service hosts started and ready!");
 
     _isInitialized = true;
   }
@@ -206,7 +187,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
       options.LeaseSeconds = 300;
       options.StaleThresholdSeconds = 600;
-      options.DebugMode = true;  // DIAGNOSTIC: Enable SQL debug logging
+      options.DebugMode = false;  // Disable diagnostic logging for cleaner test output
       options.PartitionCount = 10000;
       options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
     });
@@ -214,22 +195,17 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     // Register perspective invoker for scoped event processing (use InventoryWorker's generated invoker)
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangPerspectiveInvoker(builder.Services);
 
-    // Register perspective runners for AOT-compatible lookup (replaces reflection)
-    ECommerce.InventoryWorker.Generated.PerspectiveRunnerRegistryExtensions.AddPerspectiveRunners(builder.Services);
-
     // Register Whizbang dispatcher with outbox and transport support
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangDispatcher(builder.Services);
 
-    // NOTE: ILensQuery<T> registrations are now auto-generated by EFCoreServiceRegistrationGenerator
-    // in GeneratedModelRegistration.Initialize() for all discovered perspectives
-
     // Register lenses for querying materialized views
-    // IMPORTANT: Lenses must be Scoped (not Singleton) because they depend on ILensQuery<T> which is Scoped
-    builder.Services.AddScoped<IProductLens, ProductLens>();
-    builder.Services.AddScoped<IInventoryLens, InventoryLens>();
+    builder.Services.AddSingleton<IProductLens, ProductLens>();
+    builder.Services.AddSingleton<IInventoryLens, InventoryLens>();
 
-    // Register InventoryWorker perspectives manually (avoid ambiguity with BFF perspectives)
-    // NEW: Converted perspectives - registered by AddPerspectiveRunners, just need scoped instances for runner resolution
+    // Register perspective runners (generated by PerspectiveRunnerRegistryGenerator)
+    ECommerce.InventoryWorker.Generated.PerspectiveRunnerRegistryExtensions.AddPerspectiveRunners(builder.Services);
+
+    // Register concrete perspective types for runner resolution
     builder.Services.AddScoped<ECommerce.InventoryWorker.Perspectives.InventoryLevelsPerspective>();
     builder.Services.AddScoped<ECommerce.InventoryWorker.Perspectives.ProductCatalogPerspective>();
 
@@ -250,19 +226,8 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     // Register IWorkChannelWriter for communication between strategy and worker
     builder.Services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
 
-    // Configure PerspectiveWorker with faster polling for integration tests
-    builder.Services.Configure<PerspectiveWorkerOptions>(options => {
-      options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
-      options.LeaseSeconds = 300;
-      options.StaleThresholdSeconds = 600;
-      options.DebugMode = true;  // DIAGNOSTIC: Enable checkpoint tracking
-      options.PartitionCount = 10000;
-      options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
-    });
-
     // Register background workers
     builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
       new ServiceBusConsumerWorker(
         sp.GetRequiredService<IServiceInstanceProvider>(),
@@ -326,7 +291,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     // Register SignalR (required by BFF lenses)
     builder.Services.AddSignalR();
 
-    // Register perspective runners for AOT-compatible lookup (replaces reflection)
+    // Register perspective runners (generated by PerspectiveRunnerRegistryGenerator)
     ECommerce.BFF.API.Generated.PerspectiveRunnerRegistryExtensions.AddPerspectiveRunners(builder.Services);
 
     // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
@@ -334,7 +299,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
       options.LeaseSeconds = 300;
       options.StaleThresholdSeconds = 600;
-      options.DebugMode = true;  // DIAGNOSTIC: Enable SQL debug logging
+      options.DebugMode = false;  // Disable diagnostic logging for cleaner test output
       options.PartitionCount = 10000;
       options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
     });
@@ -342,13 +307,9 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     // NOTE: BFF.API doesn't have receptors, so no DispatcherRegistrations is generated
     // BFF only materializes perspectives - it doesn't send commands
 
-    // Register BFF perspectives manually (avoid ambiguity with InventoryWorker perspectives)
-    // NEW: Converted perspectives - registered by AddPerspectiveRunners, just need scoped instances for runner resolution
+    // Register concrete perspective types for runner resolution
     builder.Services.AddScoped<ECommerce.BFF.API.Perspectives.InventoryLevelsPerspective>();
     builder.Services.AddScoped<ECommerce.BFF.API.Perspectives.ProductCatalogPerspective>();
-
-    // NOTE: ILensQuery<T> registrations are now auto-generated by EFCoreServiceRegistrationGenerator
-    // in GeneratedModelRegistration.Initialize() for all discovered perspectives
 
     // Register lenses (readonly repositories)
     builder.Services.AddScoped<IProductCatalogLens, ProductCatalogLens>();
@@ -365,19 +326,8 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     // Register IWorkChannelWriter for communication between strategy and worker
     builder.Services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
 
-    // Configure PerspectiveWorker with faster polling for integration tests
-    builder.Services.Configure<PerspectiveWorkerOptions>(options => {
-      options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
-      options.LeaseSeconds = 300;
-      options.StaleThresholdSeconds = 600;
-      options.DebugMode = true;  // DIAGNOSTIC: Enable checkpoint tracking
-      options.PartitionCount = 10000;
-      options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
-    });
-
     // Register background workers
     builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
-    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
 
     // Register Service Bus consumer to receive events
     var consumerOptions = new ServiceBusConsumerOptions();
@@ -397,54 +347,6 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     );
 
     return builder.Build();
-  }
-
-  /// <summary>
-  /// Waits for the Azure Service Bus Emulator to be fully ready by polling the health endpoint.
-  /// The emulator reports "ready" before it can actually process messages, so we need to verify readiness.
-  /// </summary>
-  private async Task WaitForServiceBusEmulatorReadyAsync(CancellationToken cancellationToken = default) {
-    // Get the health endpoint URL with the correct dynamically mapped port
-    // The Service Bus container exposes port 5300 (health) which Testcontainers maps to a random host port
-    var healthPort = _serviceBusContainer.GetMappedPublicPort(5300);
-    var healthEndpoint = $"http://localhost:{healthPort}/health";
-    Console.WriteLine($"[SharedFixture] Checking emulator health at {healthEndpoint}");
-
-    using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
-
-    var maxAttempts = 30; // 30 seconds total
-    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        var response = await httpClient.GetAsync(healthEndpoint, cancellationToken);
-        if (response.IsSuccessStatusCode) {
-          var content = await response.Content.ReadAsStringAsync(cancellationToken);
-          if (content.Contains("healthy", StringComparison.OrdinalIgnoreCase)) {
-            Console.WriteLine($"[SharedFixture] Azure Service Bus Emulator health check passed (attempt {attempt})");
-            // WORKAROUND: The emulator's internal SQL Server needs time to start up, and the emulator
-            // has built-in retry logic (15s wait + 2-3 retries × 15s) before creating databases.
-            // Then it needs to create databases, topics, and subscriptions. Total time is ~60-90s.
-            // Even after health check passes, we must wait for:
-            // 1. SQL Server connection retries (30-45s)
-            // 2. Database creation (SbGatewayDatabase, SbMessageContainerDatabase00001)
-            // 3. Topic and subscription creation
-            // 4. "Emulator Service is Successfully Up!" message
-            // See: https://github.com/Azure/azure-service-bus-emulator-installer/issues/35
-            Console.WriteLine("[SharedFixture] Waiting 120 seconds for emulator to fully initialize (SQL Server + databases + topics/subscriptions)...");
-            await Task.Delay(120000, cancellationToken);
-            Console.WriteLine("[SharedFixture] Emulator should now be ready for message sending");
-            return;
-          }
-        }
-      } catch {
-        // Health endpoint not ready yet, continue waiting
-      }
-
-      if (attempt < maxAttempts) {
-        await Task.Delay(1000, cancellationToken);
-      }
-    }
-
-    throw new TimeoutException($"Azure Service Bus Emulator health check failed after {maxAttempts} attempts");
   }
 
   /// <summary>
@@ -468,136 +370,81 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
 
   /// <summary>
   /// Waits for both InventoryWorker and BFF work processing to become idle.
-  /// Tracks 4 workers: WorkCoordinatorPublisherWorker (outbox/inbox) + PerspectiveWorker (perspective materialization) for both services.
-  /// Uses event callbacks to efficiently detect when all event processing is complete.
+  /// Uses event callbacks from WorkCoordinatorPublisherWorker to efficiently detect when all event processing is complete.
   /// Falls back to timeout if idle state is not reached within the specified time.
   /// </summary>
   public async Task WaitForEventProcessingAsync(int timeoutMilliseconds = 30000) {
-    // Get WorkCoordinatorPublisherWorker instances (outbox/inbox processing)
-    var inventoryPublisher = _inventoryHost!.Services.GetServices<IHostedService>()
+    // Get worker instances
+    var inventoryWorker = _inventoryHost!.Services.GetServices<IHostedService>()
       .OfType<WorkCoordinatorPublisherWorker>()
       .FirstOrDefault();
 
-    var bffPublisher = _bffHost!.Services.GetServices<IHostedService>()
+    var bffWorker = _bffHost!.Services.GetServices<IHostedService>()
       .OfType<WorkCoordinatorPublisherWorker>()
       .FirstOrDefault();
 
-    // Get PerspectiveWorker instances (perspective materialization)
-    var inventoryPerspectiveWorker = _inventoryHost!.Services.GetServices<IHostedService>()
-      .OfType<PerspectiveWorker>()
-      .FirstOrDefault();
-
-    var bffPerspectiveWorker = _bffHost!.Services.GetServices<IHostedService>()
-      .OfType<PerspectiveWorker>()
-      .FirstOrDefault();
-
-    // Create TaskCompletionSources for all 4 workers
-    var inventoryPublisherTcs = new TaskCompletionSource<bool>();
-    var bffPublisherTcs = new TaskCompletionSource<bool>();
-    var inventoryPerspectiveTcs = new TaskCompletionSource<bool>();
-    var bffPerspectiveTcs = new TaskCompletionSource<bool>();
+    // Create TaskCompletionSources for this wait
+    var inventoryIdleTcs = new TaskCompletionSource<bool>();
+    var bffIdleTcs = new TaskCompletionSource<bool>();
 
     // Wire up one-time idle callbacks
-    WorkProcessingIdleHandler? inventoryPublisherHandler = null;
-    WorkProcessingIdleHandler? bffPublisherHandler = null;
-    WorkProcessingIdleHandler? inventoryPerspectiveHandler = null;
-    WorkProcessingIdleHandler? bffPerspectiveHandler = null;
+    WorkProcessingIdleHandler? inventoryHandler = null;
+    WorkProcessingIdleHandler? bffHandler = null;
 
-    inventoryPublisherHandler = () => {
-      inventoryPublisherTcs.TrySetResult(true);
-      if (inventoryPublisher != null && inventoryPublisherHandler != null) {
-        inventoryPublisher.OnWorkProcessingIdle -= inventoryPublisherHandler;
+    inventoryHandler = () => {
+      inventoryIdleTcs.TrySetResult(true);
+      if (inventoryWorker != null && inventoryHandler != null) {
+        inventoryWorker.OnWorkProcessingIdle -= inventoryHandler;
       }
     };
 
-    bffPublisherHandler = () => {
-      bffPublisherTcs.TrySetResult(true);
-      if (bffPublisher != null && bffPublisherHandler != null) {
-        bffPublisher.OnWorkProcessingIdle -= bffPublisherHandler;
+    bffHandler = () => {
+      bffIdleTcs.TrySetResult(true);
+      if (bffWorker != null && bffHandler != null) {
+        bffWorker.OnWorkProcessingIdle -= bffHandler;
       }
     };
 
-    inventoryPerspectiveHandler = () => {
-      inventoryPerspectiveTcs.TrySetResult(true);
-      if (inventoryPerspectiveWorker != null && inventoryPerspectiveHandler != null) {
-        inventoryPerspectiveWorker.OnWorkProcessingIdle -= inventoryPerspectiveHandler;
-      }
-    };
-
-    bffPerspectiveHandler = () => {
-      bffPerspectiveTcs.TrySetResult(true);
-      if (bffPerspectiveWorker != null && bffPerspectiveHandler != null) {
-        bffPerspectiveWorker.OnWorkProcessingIdle -= bffPerspectiveHandler;
-      }
-    };
-
-    // Register WorkCoordinatorPublisherWorker callbacks
-    if (inventoryPublisher != null) {
-      inventoryPublisher.OnWorkProcessingIdle += inventoryPublisherHandler;
-      if (inventoryPublisher.IsIdle) {
-        inventoryPublisherTcs.TrySetResult(true);
+    if (inventoryWorker != null) {
+      inventoryWorker.OnWorkProcessingIdle += inventoryHandler;
+      // If already idle, set result immediately
+      if (inventoryWorker.IsIdle) {
+        inventoryIdleTcs.TrySetResult(true);
       }
     } else {
-      inventoryPublisherTcs.TrySetResult(true);
+      inventoryIdleTcs.TrySetResult(true);  // No worker, consider idle
     }
 
-    if (bffPublisher != null) {
-      bffPublisher.OnWorkProcessingIdle += bffPublisherHandler;
-      if (bffPublisher.IsIdle) {
-        bffPublisherTcs.TrySetResult(true);
+    if (bffWorker != null) {
+      bffWorker.OnWorkProcessingIdle += bffHandler;
+      // If already idle, set result immediately
+      if (bffWorker.IsIdle) {
+        bffIdleTcs.TrySetResult(true);
       }
     } else {
-      bffPublisherTcs.TrySetResult(true);
+      bffIdleTcs.TrySetResult(true);  // No worker, consider idle
     }
 
-    // Register PerspectiveWorker callbacks
-    if (inventoryPerspectiveWorker != null) {
-      inventoryPerspectiveWorker.OnWorkProcessingIdle += inventoryPerspectiveHandler;
-      if (inventoryPerspectiveWorker.IsIdle) {
-        inventoryPerspectiveTcs.TrySetResult(true);
-      }
-    } else {
-      inventoryPerspectiveTcs.TrySetResult(true);
-    }
-
-    if (bffPerspectiveWorker != null) {
-      bffPerspectiveWorker.OnWorkProcessingIdle += bffPerspectiveHandler;
-      if (bffPerspectiveWorker.IsIdle) {
-        bffPerspectiveTcs.TrySetResult(true);
-      }
-    } else {
-      bffPerspectiveTcs.TrySetResult(true);
-    }
-
-    // Wait for all 4 workers to become idle (or timeout)
+    // Wait for both to become idle (or timeout)
     using var cts = new CancellationTokenSource(timeoutMilliseconds);
 
     try {
       await Task.WhenAll(
-        inventoryPublisherTcs.Task,
-        bffPublisherTcs.Task,
-        inventoryPerspectiveTcs.Task,
-        bffPerspectiveTcs.Task
+        inventoryIdleTcs.Task,
+        bffIdleTcs.Task
       ).WaitAsync(cts.Token);
 
-      Console.WriteLine("[SharedFixture] Event processing idle - all workers have no pending work (2 publishers + 2 perspective workers)");
+      Console.WriteLine("[AspireFixture] Event processing idle - all workers have no pending work");
     } catch (OperationCanceledException) {
-      Console.WriteLine($"[SharedFixture] WARNING: Event processing did not reach idle state within {timeoutMilliseconds}ms timeout");
-      Console.WriteLine($"[SharedFixture] InventoryWorker Publisher idle: {inventoryPublisher?.IsIdle ?? true}, PerspectiveWorker idle: {inventoryPerspectiveWorker?.IsIdle ?? true}");
-      Console.WriteLine($"[SharedFixture] BFF Publisher idle: {bffPublisher?.IsIdle ?? true}, PerspectiveWorker idle: {bffPerspectiveWorker?.IsIdle ?? true}");
+      Console.WriteLine($"[AspireFixture] WARNING: Event processing did not reach idle state within {timeoutMilliseconds}ms timeout");
+      Console.WriteLine($"[AspireFixture] InventoryWorker idle: {inventoryWorker?.IsIdle ?? true}, BFF idle: {bffWorker?.IsIdle ?? true}");
     } finally {
       // Clean up handlers
-      if (inventoryPublisher != null && inventoryPublisherHandler != null) {
-        inventoryPublisher.OnWorkProcessingIdle -= inventoryPublisherHandler;
+      if (inventoryWorker != null && inventoryHandler != null) {
+        inventoryWorker.OnWorkProcessingIdle -= inventoryHandler;
       }
-      if (bffPublisher != null && bffPublisherHandler != null) {
-        bffPublisher.OnWorkProcessingIdle -= bffPublisherHandler;
-      }
-      if (inventoryPerspectiveWorker != null && inventoryPerspectiveHandler != null) {
-        inventoryPerspectiveWorker.OnWorkProcessingIdle -= inventoryPerspectiveHandler;
-      }
-      if (bffPerspectiveWorker != null && bffPerspectiveHandler != null) {
-        bffPerspectiveWorker.OnWorkProcessingIdle -= bffPerspectiveHandler;
+      if (bffWorker != null && bffHandler != null) {
+        bffWorker.OnWorkProcessingIdle -= bffHandler;
       }
     }
   }
@@ -652,11 +499,11 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
         _bffHost.Dispose();
       }
 
-      // Stop and dispose containers
-      await Task.WhenAll(
-        _postgresContainer.DisposeAsync().AsTask(),
-        _serviceBusContainer.DisposeAsync().AsTask()
-      );
+      // Stop Aspire app (which will stop containers)
+      if (_app != null) {
+        await _app.StopAsync();
+        await _app.DisposeAsync();
+      }
     }
   }
 }

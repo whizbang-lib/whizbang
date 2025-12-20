@@ -1,3 +1,5 @@
+using Whizbang.Core;
+
 namespace ECommerce.BFF.API.Lenses;
 
 /// <summary>
@@ -8,6 +10,7 @@ public record InventoryLevelDto {
   /// <summary>
   /// Product identifier
   /// </summary>
+  [StreamKey]
   public Guid ProductId { get; init; }
 
   /// <summary>

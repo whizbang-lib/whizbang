@@ -30,7 +30,7 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_PerspectiveCheckpoints_HasCompositePrimaryKeyAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaExtensions_CallsExecuteMigrationsAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithValidDbContext_ProducesNoDiagnosticsAsync</tests>
-/// Source generator that discovers IPerspectiveOf&lt;TEvent&gt; implementations,
+/// Source generator that discovers perspective implementations (IPerspectiveFor&lt;TModel&gt;),
 /// extracts their TModel types, and generates:
 /// 1. DbContext partial class with DbSet&lt;PerspectiveRow&lt;TModel&gt;&gt; properties
 /// 2. EFCoreRegistrationMetadata for automatic service registration
@@ -45,10 +45,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     context.RegisterPostInitializationOutput(ctx => {
       ctx.AddSource("_EFCoreGenerator_Initialized.g.cs",
         $"// EFCoreServiceRegistrationGenerator initialized at {System.DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC\n" +
-        $"// Looking for IPerspectiveOf<TEvent> implementations with IPerspectiveStore<TModel> constructor parameters");
+        $"// Looking for: IPerspectiveFor<TModel> interfaces");
     });
 
-    // Discover all perspective classes that implement IPerspectiveOf<TEvent>
+    // Discover all perspective classes that implement IPerspectiveFor<TModel>
     var perspectives = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
         transform: static (ctx, ct) => ExtractPerspectiveInfo(ctx, ct)
@@ -216,10 +216,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Extracts perspective information from a class implementing IPerspectiveOf.
-  /// Discovers TModel type from IPerspectiveStore&lt;TModel&gt; constructor parameter.
-  /// Returns null if the class doesn't implement IPerspectiveOf or doesn't have IPerspectiveStore dependency.
-  /// COPIED FROM EFCorePerspectiveConfigurationGenerator to ensure compatibility.
+  /// Extracts perspective information from a class implementing IPerspectiveFor.
+  /// Discovers TModel type from IPerspectiveFor&lt;TModel&gt; base interface (first type argument).
+  /// Returns null if the class doesn't implement the interface.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesPartialClassAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesRegistrationMetadataAsync</tests>
@@ -234,59 +233,40 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Check if class implements IPerspectiveOf<TEvent>
-    // Note: IPerspectiveOf is generic with ONE type parameter (TEvent)
-    bool implementsIPerspectiveOf = symbol.AllInterfaces.Any(i => {
+    // Check if class implements IPerspectiveFor<TModel> base interface
+    var perspectiveForInterface = symbol.AllInterfaces.FirstOrDefault(i => {
       var originalDef = i.OriginalDefinition.ToDisplayString();
-      // IPerspectiveOf<TEvent> has full name "Whizbang.Core.IPerspectiveOf<TEvent>"
-      return originalDef.StartsWith("Whizbang.Core.IPerspectiveOf<");
+      return originalDef == "Whizbang.Core.Perspectives.IPerspectiveFor<TModel>";
     });
 
-    if (!implementsIPerspectiveOf) {
-      return null;
+    if (perspectiveForInterface is null) {
+      return null; // Not a perspective
     }
 
-    // Find IPerspectiveStore<TModel> in constructor parameters
-    var constructor = symbol.Constructors.FirstOrDefault();
-    if (constructor is null) {
-      return null;
+    // Perspective discovered - extract TModel from first type argument
+    var modelType = perspectiveForInterface.TypeArguments[0];
+    var tableName = "wh_per_" + ToSnakeCase(modelType.Name);
+
+    // Check for [WhizbangPerspective] attribute (optional)
+    var perspectiveAttribute = symbol.GetAttributes()
+        .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.Perspectives.WhizbangPerspectiveAttribute");
+
+    string[] keys;
+    if (perspectiveAttribute is not null) {
+      // Attribute present - extract keys
+      keys = ExtractKeysFromAttribute(perspectiveAttribute);
+    } else {
+      // No attribute - matches default DbContext only
+      keys = Array.Empty<string>();
     }
 
-    foreach (var parameter in constructor.Parameters) {
-      if (parameter.Type is INamedTypeSymbol parameterType) {
-        var originalDef = parameterType.OriginalDefinition.ToDisplayString();
-
-        // IPerspectiveStore<TModel> has full name "Whizbang.Core.Perspectives.IPerspectiveStore<TModel>"
-        if (originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveStore<")) {
-          // Get TModel from IPerspectiveStore<TModel>
-          var modelType = parameterType.TypeArguments[0];
-          var tableName = "wh_per_" + ToSnakeCase(modelType.Name);
-
-          // Check for [WhizbangPerspective] attribute (optional)
-          var perspectiveAttribute = symbol.GetAttributes()
-              .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.Perspectives.WhizbangPerspectiveAttribute");
-
-          string[] keys;
-          if (perspectiveAttribute is not null) {
-            // Attribute present - extract keys
-            keys = ExtractKeysFromAttribute(perspectiveAttribute);
-          } else {
-            // No attribute - matches default DbContext only
-            keys = Array.Empty<string>();
-          }
-
-          return new PerspectiveModelInfo(
-              PerspectiveClassName: symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-              ModelTypeName: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-              TableName: tableName,
-              NamespaceHint: symbol.ContainingNamespace.ToDisplayString(),
-              Keys: keys
-          );
-        }
-      }
-    }
-
-    return null; // No IPerspectiveStore<TModel> found in constructor
+    return new PerspectiveModelInfo(
+        PerspectiveClassName: symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        ModelTypeName: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        TableName: tableName,
+        NamespaceHint: symbol.ContainingNamespace.ToDisplayString(),
+        Keys: keys
+    );
   }
 
   /// <summary>

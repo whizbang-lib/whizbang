@@ -161,6 +161,15 @@ public class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncDis
     _queuedInboxCompletions.Clear();
     _queuedInboxFailures.Clear();
 
+    // DIAGNOSTIC: Check if WorkChannelWriter is available
+    if (workBatch.OutboxWork.Count > 0) {
+      _logger?.LogWarning(
+        "DIAGNOSTIC: WorkChannelWriter is {Status}, returned work count: {Count}",
+        _workChannelWriter == null ? "NULL" : "AVAILABLE",
+        workBatch.OutboxWork.Count
+      );
+    }
+
     // Write returned work to channel for immediate processing
     // This is the critical fix: work returned from process_work_batch should be
     // queued for processing immediately, not returned to the caller (Dispatcher)

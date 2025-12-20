@@ -142,7 +142,9 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
     ArgumentNullException.ThrowIfNull(destination);
 
     try {
+      _logger.LogWarning("DIAGNOSTIC [PublishAsync]: About to get sender for {Destination}", destination.Address);
       var sender = await GetOrCreateSenderAsync(destination.Address, cancellationToken);
+      _logger.LogWarning("DIAGNOSTIC [PublishAsync]: Got sender for {Destination}", destination.Address);
 
       // Get the envelope type to store as metadata for deserialization
       var envelopeType = envelope.GetType();
@@ -195,7 +197,22 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
         }
       }
 
-      await sender.SendMessageAsync(message, cancellationToken);
+      _logger.LogWarning("DIAGNOSTIC [PublishAsync]: About to send message {MessageId} to {Destination}", envelope.MessageId, destination.Address);
+
+      // WORKAROUND: Azure Service Bus Emulator sometimes hangs on first send
+      // Use a task-based timeout instead of CancellationToken (which also hangs)
+      var sendTask = sender.SendMessageAsync(message, cancellationToken);
+      var timeoutTask = Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
+
+      var completedTask = await Task.WhenAny(sendTask, timeoutTask).ConfigureAwait(false);
+
+      if (completedTask == timeoutTask) {
+        _logger.LogError("DIAGNOSTIC [PublishAsync]: SendMessageAsync timed out after 5 seconds for {MessageId} - emulator may not be ready", envelope.MessageId);
+        throw new TimeoutException($"SendMessageAsync timed out after 5 seconds for message {envelope.MessageId}. The Azure Service Bus emulator may not be ready or topics/subscriptions may not exist.");
+      }
+
+      await sendTask; // Re-await to propagate exceptions
+      _logger.LogWarning("DIAGNOSTIC [PublishAsync]: Message sent successfully {MessageId}", envelope.MessageId);
 
       _logger.LogDebug(
         "Published message {MessageId} to topic {TopicName} with subject {Subject}",
@@ -530,23 +547,30 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
 
   private async Task<ServiceBusSender> GetOrCreateSenderAsync(string topicName, CancellationToken cancellationToken) {
     if (_senders.TryGetValue(topicName, out var existingSender)) {
+      _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Using existing sender for {TopicName}", topicName);
       return existingSender;
     }
 
+    _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Waiting for semaphore for {TopicName}", topicName);
     await _senderLock.WaitAsync(cancellationToken);
+    _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Acquired semaphore for {TopicName}", topicName);
     try {
       // Double-check after acquiring lock
       if (_senders.TryGetValue(topicName, out existingSender)) {
+        _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Found existing sender after lock for {TopicName}", topicName);
         return existingSender;
       }
 
+      _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Creating sender for {TopicName}", topicName);
       var sender = _client.CreateSender(topicName);
+      _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Sender created, adding to dictionary for {TopicName}", topicName);
       _senders[topicName] = sender;
 
       _logger.LogDebug("Created sender for topic {TopicName}", topicName);
 
       return sender;
     } finally {
+      _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Releasing semaphore for {TopicName}", topicName);
       _senderLock.Release();
     }
   }

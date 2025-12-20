@@ -59,7 +59,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
     // Load current model or create new one
     var currentModel = await _perspectiveStore.GetByStreamIdAsync(
-        streamId.ToString(),
+        streamId,
         cancellationToken
     );
 
@@ -89,7 +89,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           cancellationToken)) {
 
         // Extract event from envelope
-        var @event = envelope.Message;
+        var @event = envelope.Payload;
 
         // Apply event to model using perspective's pure Apply method
         updatedModel = ApplyEvent(perspective, updatedModel, @event);
@@ -121,7 +121,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         StreamId = streamId,
         PerspectiveName = perspectiveName,
         LastEventId = lastSuccessfulEventId ?? lastProcessedEventId ?? Guid.Empty,
-        Status = eventsProcessed > 0 ? PerspectiveProcessingStatus.Completed : PerspectiveProcessingStatus.CaughtUp
+        Status = eventsProcessed > 0 ? PerspectiveProcessingStatus.Completed : PerspectiveProcessingStatus.None
       };
 
     } catch (Exception ex) {
@@ -220,7 +220,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
     // Upsert model (insert or update)
     await _perspectiveStore.UpsertAsync(
-        streamId.ToString(),
+        streamId,
         model,
         cancellationToken
     );

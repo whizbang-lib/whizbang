@@ -194,23 +194,24 @@ public class PerspectiveWorker(
         );
 
         // Resolve the generated IPerspectiveRunner for this perspective
-        // Naming convention: PerspectiveName + "Runner" (e.g., "OrderPerspectiveRunner")
-        var runnerTypeName = $"{perspectiveWork.PerspectiveName}Runner";
-        var runnerType = AppDomain.CurrentDomain.GetAssemblies()
-          .SelectMany(a => a.GetTypes())
-          .FirstOrDefault(t => typeof(IPerspectiveRunner).IsAssignableFrom(t) && t.Name == runnerTypeName);
-
-        if (runnerType == null) {
-          _logger.LogWarning(
-            "No IPerspectiveRunner found for perspective {PerspectiveName} (expected type name: {RunnerTypeName}). Skipping.",
-            perspectiveWork.PerspectiveName,
-            runnerTypeName
+        // Uses zero-reflection lookup via IPerspectiveRunnerRegistry (AOT-compatible)
+        var registry = scope.ServiceProvider.GetService<IPerspectiveRunnerRegistry>();
+        if (registry == null) {
+          _logger.LogError(
+            "IPerspectiveRunnerRegistry not registered. Call AddPerspectiveRunners() in service registration. Skipping perspective: {PerspectiveName}",
+            perspectiveWork.PerspectiveName
           );
           continue;
         }
 
-        // Get runner instance from DI
-        var runner = (IPerspectiveRunner)scope.ServiceProvider.GetRequiredService(runnerType);
+        var runner = registry.GetRunner(perspectiveWork.PerspectiveName, scope.ServiceProvider);
+        if (runner == null) {
+          _logger.LogWarning(
+            "No IPerspectiveRunner found for perspective {PerspectiveName}. Ensure perspective implements IPerspectiveFor<TModel, TEvent> and has [StreamKey] on model. Skipping.",
+            perspectiveWork.PerspectiveName
+          );
+          continue;
+        }
 
         // Invoke runner to process events
         var result = await runner.RunAsync(

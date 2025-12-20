@@ -69,11 +69,10 @@ builder.Services.AddSingleton<ITransportReadinessCheck>(sp => {
   return new Whizbang.Hosting.Azure.ServiceBus.ServiceBusReadinessCheck(transport, client, logger);
 });
 
-// Register perspectives (ProductCatalogPerspective, InventoryLevelsPerspective, OrderInventoryPerspective)
-// These materialize events into read models using EF Core
-_ = builder.Services.AddWhizbangPerspectives();
+// NOTE: No perspectives in this service (OLD OrderInventoryPerspective was removed)
+// If you add perspectives in the future, call builder.Services.AddPerspectiveRunners()
 
-// Register dispatcher for sending commands from OrderInventoryPerspective
+// Register dispatcher for sending commands
 builder.Services.AddWhizbangDispatcher();
 
 // Register lenses (readonly repositories using EF Core ILensQuery)

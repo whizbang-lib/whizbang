@@ -7,6 +7,7 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// <summary>
 /// End-to-end integration tests for the CreateProduct workflow.
 /// Tests the complete flow: Command → Receptor → Event Store → Perspectives.
+/// MIGRATED: Now uses Aspire-based test infrastructure.
 /// </summary>
 [NotInParallel]
 public class CreateProductWorkflowTests {
