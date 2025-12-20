@@ -619,13 +619,13 @@ public abstract class Dispatcher(
 
     var eventType = @event.GetType();
 
-    // If this is an IEvent, write to Event Store FIRST (which queues to IPerspectiveInvoker)
-    // Create a scope to resolve scoped services (IEventStore, IPerspectiveInvoker)
+    // If this is an IEvent, write to Event Store FIRST
+    // Create a scope to resolve scoped services (IEventStore, IAggregateIdExtractor)
+    // IPerspectiveInvoker (if registered) will be automatically invoked when scope disposes
     var scope = _scopeFactory.CreateScope();
     try {
       var eventStore = scope.ServiceProvider.GetService<IEventStore>();
       var aggregateIdExtractor = scope.ServiceProvider.GetService<IAggregateIdExtractor>();
-      var perspectiveInvoker = scope.ServiceProvider.GetService<IPerspectiveInvoker>();
 
       if (@event is IEvent && eventStore != null) {
         // Create envelope with event
@@ -654,17 +654,15 @@ public abstract class Dispatcher(
           streamId = messageId.Value;
         }
 
-        // Write to Event Store (this queues event to IPerspectiveInvoker)
+        // Write to Event Store (this queues event to IPerspectiveInvoker if registered)
         await eventStore.AppendAsync(streamId, envelope);
       }
 
-      // Manually dispose the perspective invoker to invoke perspectives
-      // Must call DisposeAsync since IPerspectiveInvoker only implements IAsyncDisposable
-      if (perspectiveInvoker != null) {
-        await perspectiveInvoker.DisposeAsync();
-      }
+      // No need to manually dispose IPerspectiveInvoker - it will be disposed
+      // when the scope is disposed (scoped services are disposed in reverse order)
     } finally {
       // Dispose scope asynchronously to properly handle services that only implement IAsyncDisposable
+      // This will automatically invoke IPerspectiveInvoker.DisposeAsync if registered
       if (scope is IAsyncDisposable asyncDisposable) {
         await asyncDisposable.DisposeAsync();
       } else {
