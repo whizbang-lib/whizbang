@@ -22,6 +22,8 @@ public abstract class IUnitOfWorkStrategyContractTests {
   public async Task QueueMessageAsync_ReturnsNonEmptyGuid() {
     // Arrange
     var strategy = CreateStrategy();
+    strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
+
     var message = new TestMessage { Value = "test" };
 
     // Act
@@ -35,6 +37,8 @@ public abstract class IUnitOfWorkStrategyContractTests {
   public async Task QueueMessageAsync_StoresMessage() {
     // Arrange
     var strategy = CreateStrategy();
+    strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
+
     var message = new TestMessage { Value = "test" };
 
     // Act
@@ -50,6 +54,8 @@ public abstract class IUnitOfWorkStrategyContractTests {
   public async Task QueueMessageAsync_WithLifecycleStage_StoresLifecycleMapping() {
     // Arrange
     var strategy = CreateStrategy();
+    strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
+
     var message = new TestMessage { Value = "test" };
 
     // Act
@@ -94,6 +100,8 @@ public abstract class IUnitOfWorkStrategyContractTests {
   public async Task CancelUnitAsync_ExistingUnit_RemovesUnit() {
     // Arrange
     var strategy = CreateStrategy();
+    strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
+
     var message = new TestMessage { Value = "test" };
     var unitId = await strategy.QueueMessageAsync(message);
 
@@ -136,8 +144,9 @@ public abstract class IUnitOfWorkStrategyContractTests {
     // Allow async operations to complete (some strategies flush immediately, others don't)
     await Task.Delay(100);
 
-    // Assert - At minimum, the callback should be wireable (actual invocation timing varies by strategy)
-    await Assert.That(strategy.OnFlushRequested).IsNotNull();
+    // Assert - Callback was successfully wired (no exception thrown)
+    // Actual invocation timing varies by strategy (Immediate invokes immediately, others don't)
+    await Assert.That(unitId).IsNotEqualTo(Guid.Empty);
   }
 
   /// <summary>
