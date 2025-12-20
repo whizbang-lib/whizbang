@@ -49,13 +49,8 @@ public class ImmediateUnitOfWorkStrategy : IUnitOfWorkStrategy {
     // Store unit (callback will read it via GetMessagesForUnit)
     _units[unitId] = unit;
 
-    try {
-      // Trigger callback immediately and await completion
-      await OnFlushRequested.Invoke(unitId, ct);
-    } finally {
-      // Clean up unit after flush
-      _units.TryRemove(unitId, out _);
-    }
+    // Trigger callback immediately and await completion
+    await OnFlushRequested.Invoke(unitId, ct);
 
     return unitId;
   }
@@ -81,5 +76,14 @@ public class ImmediateUnitOfWorkStrategy : IUnitOfWorkStrategy {
       return unit.LifecycleStages;
     }
     return new Dictionary<object, LifecycleStage>();
+  }
+
+  /// <summary>
+  /// Disposes the strategy (no-op for immediate strategy).
+  /// </summary>
+  public ValueTask DisposeAsync() {
+    // No background tasks or resources to clean up
+    _units.Clear();
+    return ValueTask.CompletedTask;
   }
 }

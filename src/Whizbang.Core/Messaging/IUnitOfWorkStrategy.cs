@@ -14,7 +14,7 @@ namespace Whizbang.Core.Messaging;
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateUnitOfWorkStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedUnitOfWorkStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalUnitOfWorkStrategyTests.cs</tests>
-public interface IUnitOfWorkStrategy {
+public interface IUnitOfWorkStrategy : IAsyncDisposable {
   /// <summary>
   /// Called by strategy when it autonomously decides to flush a unit.
   /// Dispatcher/Worker wires this to IWorkBatchCoordinator.ProcessAndDistributeAsync.
