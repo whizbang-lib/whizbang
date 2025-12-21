@@ -122,12 +122,23 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
           .Select(t => t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
           .ToArray();
 
-      // Validate StreamKey for each event type and collect errors
+      // Validate StreamKey for each event type and collect errors + StreamKey info
       var validationErrors = new List<EventValidationError>();
+      var eventStreamKeys = new List<EventStreamKeyInfo>();
+
       foreach (var eventTypeSymbol in eventTypeSymbols) {
         var error = ValidateEventStreamKey(eventTypeSymbol);
         if (error != null) {
           validationErrors.Add(error);
+        } else {
+          // Extract StreamKey property name (only if valid)
+          var streamKeyProp = ExtractStreamKeyProperty(eventTypeSymbol);
+          if (streamKeyProp != null) {
+            eventStreamKeys.Add(new EventStreamKeyInfo(
+                EventTypeName: eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                StreamKeyPropertyName: streamKeyProp
+            ));
+          }
         }
       }
 
@@ -136,6 +147,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
           InterfaceTypeArguments: typeArguments,
           EventTypes: eventTypes,
           StreamKeyPropertyName: streamKeyPropertyName,
+          EventStreamKeys: eventStreamKeys.Count > 0 ? eventStreamKeys.ToArray() : null,
           EventValidationErrors: validationErrors.Count > 0 ? validationErrors.ToArray() : null
       ));
     }
@@ -175,6 +187,32 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       return new EventValidationError(simpleEventName, StreamKeyErrorType.MissingStreamKey);
     } else if (streamKeyProperties.Count > 1) {
       return new EventValidationError(simpleEventName, StreamKeyErrorType.MultipleStreamKeys);
+    }
+
+    return null;
+  }
+
+  /// <summary>
+  /// Extracts the StreamKey property name from an event type.
+  /// Returns the property name if exactly one [StreamKey] is found, null otherwise.
+  /// Handles array types by extracting from the element type.
+  /// </summary>
+  private static string? ExtractStreamKeyProperty(ITypeSymbol eventTypeSymbol) {
+    // If this is an array type, extract from the element type instead
+    var typeToExtract = eventTypeSymbol;
+    if (eventTypeSymbol is IArrayTypeSymbol arrayType) {
+      typeToExtract = arrayType.ElementType;
+    }
+
+    foreach (var member in typeToExtract.GetMembers()) {
+      if (member is IPropertySymbol property) {
+        var hasStreamKeyAttribute = property.GetAttributes()
+            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
+
+        if (hasStreamKeyAttribute) {
+          return property.Name;
+        }
+      }
     }
 
     return null;

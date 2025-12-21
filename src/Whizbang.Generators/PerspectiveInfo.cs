@@ -8,7 +8,8 @@ namespace Whizbang.Generators;
 /// <param name="ClassName">Fully qualified class name implementing IPerspectiveFor</param>
 /// <param name="InterfaceTypeArguments">All type arguments from IPerspectiveFor interface (TModel, TEvent1, TEvent2, ...) as fully qualified names</param>
 /// <param name="EventTypes">Array of fully qualified event type names (extracted from InterfaceTypeArguments for diagnostics)</param>
-/// <param name="StreamKeyPropertyName">Property name marked with [StreamKey] attribute (null if not found)</param>
+/// <param name="StreamKeyPropertyName">Property name marked with [StreamKey] attribute on the model (null if not found)</param>
+/// <param name="EventStreamKeys">Map of event type name to its StreamKey property name</param>
 /// <param name="EventValidationErrors">Array of validation errors for event types (event name, error type)</param>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveDiscoveryGeneratorTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs</tests>
@@ -17,7 +18,18 @@ internal sealed record PerspectiveInfo(
     string[] InterfaceTypeArguments,
     string[] EventTypes,
     string? StreamKeyPropertyName = null,
+    EventStreamKeyInfo[]? EventStreamKeys = null,
     EventValidationError[]? EventValidationErrors = null
+);
+
+/// <summary>
+/// Maps an event type to its StreamKey property for stream ID extraction.
+/// </summary>
+/// <param name="EventTypeName">Fully qualified event type name</param>
+/// <param name="StreamKeyPropertyName">Name of the property marked with [StreamKey]</param>
+internal sealed record EventStreamKeyInfo(
+    string EventTypeName,
+    string StreamKeyPropertyName
 );
 
 /// <summary>
