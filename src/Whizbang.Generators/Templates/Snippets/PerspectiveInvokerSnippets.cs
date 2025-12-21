@@ -14,23 +14,25 @@ internal static class PerspectiveInvokerSnippets {
   private static async Task ExampleRoutingMethod(IServiceProvider serviceProvider, IEvent @event, System.Type eventType) {
     #region PERSPECTIVE_ROUTING_SNIPPET
     if (eventType == typeof(__EVENT_TYPE__)) {
-      // TODO: Implement PerspectiveRunner architecture for pure function perspectives
-      // The current IPerspectiveInvoker was designed for orchestration (IPerspectiveOf) pattern.
-      // Pure functions (IPerspectiveFor<TModel, TEvent>) need a different approach:
-      //   1. Resolve IPerspectiveStore<TModel> from DI
-      //   2. Load current model: var current = await store.GetByIdAsync(streamId)
-      //   3. Resolve perspective: var perspective = sp.GetService<IPerspectiveFor<TModel, TEvent>>()
-      //   4. Apply event: var updated = perspective.Apply(current, typedEvt)
-      //   5. Save model: await store.UpsertAsync(streamId, updated)
+      // ✅ IMPLEMENTED: PerspectiveRunner architecture for pure function perspectives
       //
-      // This requires knowing both TModel and TEvent at compile time, which needs a
-      // generated runner per perspective, not a single invoker for all perspectives.
+      // The PerspectiveRunner architecture is now complete:
+      //   - PerspectiveRunnerGenerator generates IPerspectiveRunner per perspective
+      //   - Each runner implements unit-of-work pattern with pure Apply() methods
+      //   - IPerspectiveRunnerRegistry provides zero-reflection lookup (AOT-compatible)
+      //   - PerspectiveWorker calls runners via registry for event replay
       //
-      // For now, perspectives are discovered and registered in DI, but not invoked.
-      // See docs/pure-function-perspectives.md section "The Runner is Generated"
+      // See:
+      //   - src/Whizbang.Generators/PerspectiveRunnerGenerator.cs
+      //   - src/Whizbang.Generators/PerspectiveRunnerRegistryGenerator.cs
+      //   - src/Whizbang.Core/Workers/PerspectiveWorker.cs
+      //   - docs/pure-function-perspectives.md
+      //
+      // This snippet (PERSPECTIVE_ROUTING_SNIPPET) is no longer used by the runner
+      // architecture. It remains for backward compatibility with older invoker pattern.
 
       async Task PublishToPerspectives(IEvent evt) {
-        // Temporarily disabled - needs runner architecture
+        // Invoker pattern replaced by runner architecture (see PerspectiveWorker.cs)
         await Task.CompletedTask;
       }
 
