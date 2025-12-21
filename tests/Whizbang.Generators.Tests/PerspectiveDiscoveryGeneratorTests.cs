@@ -585,6 +585,47 @@ namespace TestNamespace {
     await Assert.That(whiz007!.GetMessage()).Contains("OrderEvent[]");
   }
 
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_EventWithStreamKey_ExtractsStreamKeyPropertyAsync() {
+    // Arrange
+    var source = @"
+using System;
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record ProductCreatedEvent : IEvent {
+    [StreamKey]
+    public Guid ProductId { get; init; }
+    public string ProductName { get; init; } = """";
+  }
+
+  public record ProductModel {
+    public Guid ProductId { get; set; }
+    public string ProductName { get; set; } = """";
+  }
+
+  public class ProductPerspective : IPerspectiveFor<ProductModel, ProductCreatedEvent> {
+    public ProductModel Apply(ProductModel currentData, ProductCreatedEvent @event) {
+      return currentData;
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    // Assert
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource!).Contains("ProductPerspective");
+
+    // Should not have any errors about missing StreamKey
+    var errors = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToArray();
+    await Assert.That(errors).IsEmpty();
+  }
+
   /// <summary>
   /// Helper method to count occurrences of a substring in a string.
   /// </summary>
