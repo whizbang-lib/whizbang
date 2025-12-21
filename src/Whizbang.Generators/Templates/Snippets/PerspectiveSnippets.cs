@@ -12,7 +12,7 @@ internal static class PerspectiveSnippets {
   // Example method showing snippet structure (for IDE support only)
   private static void ExampleMethod(IServiceCollection services) {
     #region PERSPECTIVE_REGISTRATION_SNIPPET
-    services.AddScoped<__PERSPECTIVE_INTERFACE__<__EVENT_TYPE__>, __PERSPECTIVE_CLASS__>();
+    services.AddScoped<__PERSPECTIVE_INTERFACE__<__TYPE_ARGUMENTS__>, __PERSPECTIVE_CLASS__>();
     #endregion
   }
 }

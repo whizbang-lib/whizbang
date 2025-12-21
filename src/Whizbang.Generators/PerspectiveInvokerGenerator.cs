@@ -75,24 +75,26 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Extract all event types this perspective listens to
-    // For IPerspectiveFor<TModel, TEvent1, TEvent2, ...>, event types start at index 1
-    // Index 0 is always TModel (the read model type)
+    // Get the actual IPerspectiveFor<TModel, TEvent...> interface (not the marker base)
     // Skip the base marker interface (has only 1 type argument - just TModel)
-    var eventTypes = perspectiveInterfaces
-        .Where(i => i.TypeArguments.Length > 1) // Only event-handling variants, not base marker
-        .SelectMany(i => i.TypeArguments.Skip(1)) // Skip TModel, take all event types
-        .Select(t => t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
-        .Distinct()
-        .ToArray();
+    var perspectiveInterface = perspectiveInterfaces.FirstOrDefault(i => i.TypeArguments.Length > 1);
 
-    // Perspectives must handle at least one event - skip marker-only implementations
-    if (eventTypes.Length == 0) {
+    if (perspectiveInterface is null) {
+      // Only implements marker interface - skip
       return null;
     }
 
+    // Extract all type arguments: [TModel, TEvent1, TEvent2, ...]
+    var typeArguments = perspectiveInterface.TypeArguments
+        .Select(t => t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+        .ToArray();
+
+    // Extract event types (all except TModel at index 0) for diagnostics
+    var eventTypes = typeArguments.Skip(1).ToArray();
+
     return new PerspectiveInfo(
         ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        InterfaceTypeArguments: typeArguments,
         EventTypes: eventTypes
     );
   }

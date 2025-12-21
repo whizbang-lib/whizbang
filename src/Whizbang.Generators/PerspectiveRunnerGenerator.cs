@@ -149,10 +149,13 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       return null;
     }
 
+    // Build full interface type arguments for registration
+    var typeArguments = new[] { modelTypeName }.Concat(eventTypes).ToArray();
+
     return new PerspectiveInfo(
         ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        InterfaceTypeArguments: typeArguments,
         EventTypes: eventTypes.ToArray(),
-        ModelTypeName: modelTypeName,
         StreamKeyPropertyName: streamKeyPropertyName
     );
   }
@@ -215,9 +218,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName};");
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(PerspectiveRunnerGenerator).Assembly, result);
     result = TemplateUtilities.ReplaceRegion(result, "EVENT_APPLY_CASES", applyCases.ToString());
+    // Model type is always the first type argument
+    var modelTypeName = perspective.InterfaceTypeArguments[0];
+
     result = result.Replace("__RUNNER_CLASS_NAME__", runnerName);
     result = result.Replace("__PERSPECTIVE_CLASS_NAME__", perspective.ClassName);
-    result = result.Replace("__MODEL_TYPE_NAME__", perspective.ModelTypeName!);
+    result = result.Replace("__MODEL_TYPE_NAME__", modelTypeName);
     result = result.Replace("__STREAM_KEY_PROPERTY__", perspective.StreamKeyPropertyName!);
     result = result.Replace("__PERSPECTIVE_SIMPLE_NAME__", perspectiveSimpleName);
 

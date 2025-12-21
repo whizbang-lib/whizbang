@@ -87,55 +87,44 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Extract all event types this perspective listens to
-    // For IPerspectiveFor<TModel, TEvent1, TEvent2, ...>, event types start at index 1
-    // Index 0 is always TModel (the read model type)
+    // Get the actual IPerspectiveFor<TModel, TEvent...> interface (not the marker base)
     // Skip the base marker interface (has only 1 type argument - just TModel)
-    var eventTypes = perspectiveInterfaces
-        .Where(i => i.TypeArguments.Length > 1) // Only event-handling variants, not base marker
-        .SelectMany(i => i.TypeArguments.Skip(1)) // Skip TModel, take all event types
-        .Select(t => t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
-        .Distinct()
-        .ToArray();
+    var perspectiveInterface = perspectiveInterfaces.FirstOrDefault(i => i.TypeArguments.Length > 1);
 
-    // Perspectives must handle at least one event - skip marker-only implementations
-    if (eventTypes.Length == 0) {
+    if (perspectiveInterface is null) {
+      // Only implements marker interface - skip
       return null;
     }
 
-    // Extract model type from IPerspectiveModel<TModel> if implemented (optional)
-    var modelInterface = classSymbol.AllInterfaces
-        .FirstOrDefault(i => i.OriginalDefinition.ToDisplayString() == "Whizbang.Core.IPerspectiveModel<TModel>"
-                             && i.TypeArguments.Length == 1);
+    // Extract all type arguments: [TModel, TEvent1, TEvent2, ...]
+    var typeArguments = perspectiveInterface.TypeArguments
+        .Select(t => t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+        .ToArray();
 
-    string? modelTypeName = null;
+    // Extract event types (all except TModel at index 0) for diagnostics
+    var eventTypes = typeArguments.Skip(1).ToArray();
+
+    // TModel is at index 0
+    var modelType = perspectiveInterface.TypeArguments[0];
+
+    // Find property with [StreamKey] attribute in the model type (optional)
     string? streamKeyPropertyName = null;
+    foreach (var member in modelType.GetMembers()) {
+      if (member is IPropertySymbol property) {
+        var hasStreamKeyAttribute = property.GetAttributes()
+            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
 
-    if (modelInterface is not null) {
-      var modelType = modelInterface.TypeArguments[0];
-      modelTypeName = modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-
-      // Find property with [StreamKey] attribute in the model type
-      foreach (var member in modelType.GetMembers()) {
-        if (member is IPropertySymbol property) {
-          var hasStreamKeyAttribute = property.GetAttributes()
-              .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
-
-          if (hasStreamKeyAttribute) {
-            streamKeyPropertyName = property.Name;
-            break;
-          }
+        if (hasStreamKeyAttribute) {
+          streamKeyPropertyName = property.Name;
+          break;
         }
       }
     }
 
-    // NOTE: ModelTypeName and StreamKeyPropertyName are optional
-    // Perspectives may not implement IPerspectiveModel if they manage state differently
-
     return new PerspectiveInfo(
         ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        InterfaceTypeArguments: typeArguments,
         EventTypes: eventTypes,
-        ModelTypeName: modelTypeName,
         StreamKeyPropertyName: streamKeyPropertyName
     );
   }
@@ -194,20 +183,21 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
         "PERSPECTIVE_REGISTRATION_SNIPPET"
     );
 
-    // Generate registration calls for each perspective/event combination
+    // Generate registration calls - one per perspective
     var registrations = new StringBuilder();
     int totalRegistrations = 0;
 
     foreach (var perspective in perspectives) {
-      foreach (var eventType in perspective.EventTypes) {
-        var generatedCode = registrationSnippet
-            .Replace("__PERSPECTIVE_INTERFACE__", PERSPECTIVE_INTERFACE_NAME)
-            .Replace("__EVENT_TYPE__", eventType)
-            .Replace("__PERSPECTIVE_CLASS__", perspective.ClassName);
+      // Build type arguments string: "TModel, TEvent1, TEvent2, ..."
+      var typeArgs = string.Join(", ", perspective.InterfaceTypeArguments);
 
-        registrations.AppendLine(TemplateUtilities.IndentCode(generatedCode, "            "));
-        totalRegistrations++;
-      }
+      var generatedCode = registrationSnippet
+          .Replace("__PERSPECTIVE_INTERFACE__", PERSPECTIVE_INTERFACE_NAME)
+          .Replace("__TYPE_ARGUMENTS__", typeArgs)
+          .Replace("__PERSPECTIVE_CLASS__", perspective.ClassName);
+
+      registrations.AppendLine(TemplateUtilities.IndentCode(generatedCode, "            "));
+      totalRegistrations++;
     }
 
     // Replace template markers

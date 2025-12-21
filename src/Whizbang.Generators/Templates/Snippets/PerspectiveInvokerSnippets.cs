@@ -14,13 +14,24 @@ internal static class PerspectiveInvokerSnippets {
   private static async Task ExampleRoutingMethod(IServiceProvider serviceProvider, IEvent @event, System.Type eventType) {
     #region PERSPECTIVE_ROUTING_SNIPPET
     if (eventType == typeof(__EVENT_TYPE__)) {
-      var perspectives = _serviceProvider.GetServices<__PERSPECTIVE_INTERFACE__<__EVENT_TYPE__>>();
+      // TODO: Implement PerspectiveRunner architecture for pure function perspectives
+      // The current IPerspectiveInvoker was designed for orchestration (IPerspectiveOf) pattern.
+      // Pure functions (IPerspectiveFor<TModel, TEvent>) need a different approach:
+      //   1. Resolve IPerspectiveStore<TModel> from DI
+      //   2. Load current model: var current = await store.GetByIdAsync(streamId)
+      //   3. Resolve perspective: var perspective = sp.GetService<IPerspectiveFor<TModel, TEvent>>()
+      //   4. Apply event: var updated = perspective.Apply(current, typedEvt)
+      //   5. Save model: await store.UpsertAsync(streamId, updated)
+      //
+      // This requires knowing both TModel and TEvent at compile time, which needs a
+      // generated runner per perspective, not a single invoker for all perspectives.
+      //
+      // For now, perspectives are discovered and registered in DI, but not invoked.
+      // See docs/pure-function-perspectives.md section "The Runner is Generated"
 
       async Task PublishToPerspectives(IEvent evt) {
-        var typedEvt = (__EVENT_TYPE__)evt;
-        foreach (var perspective in perspectives) {
-          await perspective.Update(typedEvt);
-        }
+        // Temporarily disabled - needs runner architecture
+        await Task.CompletedTask;
       }
 
       return PublishToPerspectives;
