@@ -69,8 +69,13 @@ builder.Services.AddSingleton<ITransportReadinessCheck>(sp => {
   return new Whizbang.Hosting.Azure.ServiceBus.ServiceBusReadinessCheck(transport, client, logger);
 });
 
-// NOTE: No perspectives in this service (OLD OrderInventoryPerspective was removed)
-// If you add perspectives in the future, call builder.Services.AddPerspectiveRunners()
+// Register generated perspective runners (ProductCatalogPerspective, InventoryLevelsPerspective)
+// This registers IPerspectiveRunnerRegistry + all discovered IPerspectiveRunner implementations
+builder.Services.AddPerspectiveRunners();
+
+// Register perspective instances (needed by runners)
+builder.Services.AddScoped<ECommerce.InventoryWorker.Perspectives.ProductCatalogPerspective>();
+builder.Services.AddScoped<ECommerce.InventoryWorker.Perspectives.InventoryLevelsPerspective>();
 
 // Register dispatcher for sending commands
 builder.Services.AddWhizbangDispatcher();
@@ -116,6 +121,12 @@ builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
 builder.Services.AddOptions<WorkCoordinatorPublisherOptions>()
   .Bind(builder.Configuration.GetSection("WorkCoordinatorPublisher"));
 builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
+
+// Perspective worker - processes perspective checkpoints using IPerspectiveRunner instances
+// Options configured via appsettings.json "PerspectiveWorker" section
+builder.Services.AddOptions<PerspectiveWorkerOptions>()
+  .Bind(builder.Configuration.GetSection("PerspectiveWorker"));
+builder.Services.AddHostedService<PerspectiveWorker>();
 
 builder.Services.AddHostedService<Worker>();
 
