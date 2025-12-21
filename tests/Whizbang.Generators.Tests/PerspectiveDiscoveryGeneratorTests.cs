@@ -665,6 +665,126 @@ namespace TestNamespace {
     await Assert.That(whiz030.GetMessage()).Contains("StreamKey");
   }
 
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_EventWithMultipleStreamKeys_ReportsWHIZ031DiagnosticAsync() {
+    // Arrange
+    var source = @"
+using System;
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    [StreamKey]
+    public Guid OrderId { get; init; }  // First StreamKey
+
+    [StreamKey]
+    public Guid CustomerId { get; init; }  // Second StreamKey - ERROR!
+
+    public string CustomerName { get; init; } = """";
+  }
+
+  public record OrderModel {
+    public Guid OrderId { get; set; }
+    public string CustomerName { get; set; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData;
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    // Assert - Should report WHIZ031 error
+    var whiz031 = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ031");
+    await Assert.That(whiz031).IsNotNull();
+    await Assert.That(whiz031!.Severity).IsEqualTo(DiagnosticSeverity.Error);
+    await Assert.That(whiz031.GetMessage()).Contains("OrderCreatedEvent");
+    await Assert.That(whiz031.GetMessage()).Contains("multiple");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_ArrayEventTypeWithStreamKey_ValidatesElementTypeAsync() {
+    // Arrange - Tests that array events validate the element type, not the array itself
+    var source = @"
+using System;
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record OrderEvent : IEvent {
+    [StreamKey]
+    public Guid OrderId { get; init; }  // StreamKey on element type
+    public string CustomerName { get; init; } = """";
+  }
+
+  public record OrderBatchModel {
+    public Guid[] OrderIds { get; set; } = Array.Empty<Guid>();
+  }
+
+  // Perspective uses OrderEvent[] (array type)
+  public class OrderBatchPerspective : IPerspectiveFor<OrderBatchModel, OrderEvent[]> {
+    public OrderBatchModel Apply(OrderBatchModel currentData, OrderEvent[] @event) {
+      return currentData;
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    // Assert - Should not report WHIZ030 error (array element type has StreamKey)
+    var errors = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToArray();
+    await Assert.That(errors).IsEmpty();
+
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_ArrayEventTypeMissingStreamKey_ReportsWHIZ030Async() {
+    // Arrange - Tests that array events validate element type for missing StreamKey
+    var source = @"
+using System;
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record OrderEvent : IEvent {
+    public Guid OrderId { get; init; }  // NO StreamKey on element type
+    public string CustomerName { get; init; } = """";
+  }
+
+  public record OrderBatchModel {
+    public Guid[] OrderIds { get; set; } = Array.Empty<Guid>();
+  }
+
+  // Perspective uses OrderEvent[] (array type)
+  public class OrderBatchPerspective : IPerspectiveFor<OrderBatchModel, OrderEvent[]> {
+    public OrderBatchModel Apply(OrderBatchModel currentData, OrderEvent[] @event) {
+      return currentData;
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    // Assert - Should report WHIZ030 error for element type
+    var whiz030 = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ030");
+    await Assert.That(whiz030).IsNotNull();
+    await Assert.That(whiz030!.Severity).IsEqualTo(DiagnosticSeverity.Error);
+    // Should reference simplified event name (without global:: prefix)
+    await Assert.That(whiz030.GetMessage()).Contains("OrderEvent");
+  }
+
   /// <summary>
   /// Helper method to count occurrences of a substring in a string.
   /// </summary>
