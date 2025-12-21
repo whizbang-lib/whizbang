@@ -23,7 +23,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
     }
 
     // Test perspective (requires IPerspectiveStore<TModel> in constructor)
-    public class TestPerspective : IPerspectiveOf<TestEvent> {
+    public class TestPerspective {
       private readonly IPerspectiveStore<TestModel> _store;
 
       public TestPerspective(IPerspectiveStore<TestModel> store) {
@@ -149,7 +149,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
       // Perspective with matching key
       [WhizbangPerspective("catalog")]
-      public class TestPerspective : IPerspectiveOf<TestEvent> {
+      public class TestPerspective {
         private readonly IPerspectiveStore<TestModel> _store;
         public TestPerspective(IPerspectiveStore<TestModel> store) => _store = store;
         public Task Update(TestEvent @event, CancellationToken ct = default) => Task.CompletedTask;
@@ -192,7 +192,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
       // Perspective with matching key (matches "catalog" key)
       [WhizbangPerspective("catalog")]
-      public class TestPerspective : IPerspectiveOf<TestEvent> {
+      public class TestPerspective {
         private readonly IPerspectiveStore<TestModel> _store;
         public TestPerspective(IPerspectiveStore<TestModel> store) => _store = store;
         public Task Update(TestEvent @event, CancellationToken ct = default) => Task.CompletedTask;
@@ -508,7 +508,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
       // Perspective for catalog key
       [WhizbangPerspective("catalog")]
-      public class CatalogPerspective : IPerspectiveOf<TestEvent> {
+      public class CatalogPerspective {
         private readonly IPerspectiveStore<TestModel> _store;
         public CatalogPerspective(IPerspectiveStore<TestModel> store) => _store = store;
         public Task Update(TestEvent @event, CancellationToken ct = default) => Task.CompletedTask;
@@ -516,7 +516,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
       // Perspective for orders key
       [WhizbangPerspective("orders")]
-      public class OrdersPerspective : IPerspectiveOf<TestEvent> {
+      public class OrdersPerspective {
         private readonly IPerspectiveStore<TestModel> _store;
         public OrdersPerspective(IPerspectiveStore<TestModel> store) => _store = store;
         public Task Update(TestEvent @event, CancellationToken ct = default) => Task.CompletedTask;

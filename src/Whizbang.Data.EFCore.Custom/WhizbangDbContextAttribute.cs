@@ -36,11 +36,11 @@ namespace Whizbang.Data.EFCore.Custom;
 /// public partial class OrdersDbContext : DbContext { }
 ///
 /// [WhizbangPerspective("products")]
-/// public class ProductPerspective : IPerspectiveOf&lt;ProductEvent&gt; { }
+/// public class ProductPerspective : IPerspectiveFor&lt;ProductModel, ProductEvent&gt; { }
 /// // ↑ Included in BOTH CatalogDbContext AND OrdersDbContext
 ///
 /// [WhizbangPerspective("catalog")]
-/// public class CatalogOnlyPerspective : IPerspectiveOf&lt;CatalogEvent&gt; { }
+/// public class CatalogOnlyPerspective : IPerspectiveFor&lt;CatalogModel, CatalogEvent&gt; { }
 /// // ↑ Only in CatalogDbContext
 /// </code>
 /// </remarks>

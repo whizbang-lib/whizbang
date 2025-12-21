@@ -46,7 +46,7 @@ namespace TestNamespace {
     public string OrderId { get; init; } = """";
   }
 
-  public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent> {
+  public class OrderPerspective {
     public Task Update(OrderCreatedEvent @event, CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
@@ -82,7 +82,7 @@ namespace TestNamespace {
     public string Status { get; init; } = """";
   }
 
-  public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent>, IPerspectiveFor<OrderReadModel, OrderCreatedEvent> {
+  public class OrderPerspective : IPerspectiveFor<OrderReadModel, OrderCreatedEvent> {
     public OrderReadModel Apply(OrderReadModel currentData, OrderCreatedEvent @event) {
       return currentData with { Status = ""Created"" };
     }
@@ -126,7 +126,7 @@ namespace TestNamespace {
     public string Status { get; init; } = """";
   }
 
-  public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent>, IPerspectiveFor<OrderReadModel, OrderCreatedEvent> {
+  public class OrderPerspective : IPerspectiveFor<OrderReadModel, OrderCreatedEvent> {
     public OrderReadModel Apply(OrderReadModel currentData, OrderCreatedEvent @event) {
       return currentData with { Status = ""Created"" };
     }
@@ -161,7 +161,7 @@ namespace TestNamespace {
     public string OrderId { get; init; } = """";
   }
 
-  public abstract class BasePerspective : IPerspectiveOf<OrderEvent>, IPerspectiveFor<OrderReadModel, OrderEvent> {
+  public abstract class BasePerspective : IPerspectiveFor<OrderReadModel, OrderEvent> {
     public abstract OrderReadModel Apply(OrderReadModel currentData, OrderEvent @event);
   }
 
@@ -205,7 +205,7 @@ namespace TestNamespace {
     public string OrderId { get; init; } = """";
   }
 
-  public class OrderPerspective : IPerspectiveOf<OrderEvent>, IPerspectiveFor<OrderReadModel, OrderEvent> {
+  public class OrderPerspective : IPerspectiveFor<OrderReadModel, OrderEvent> {
     public OrderReadModel Apply(OrderReadModel currentData, OrderEvent @event) {
       return currentData;
     }
@@ -245,7 +245,7 @@ namespace TestNamespace {
     public string OrderId { get; init; } = """";
   }
 
-  public class OrderPerspective : IPerspectiveOf<OrderEvent>, IPerspectiveFor<OrderReadModel, OrderEvent> {
+  public class OrderPerspective : IPerspectiveFor<OrderReadModel, OrderEvent> {
     public OrderReadModel Apply(OrderReadModel currentData, OrderEvent @event) {
       return currentData;
     }
@@ -284,7 +284,7 @@ namespace TestNamespace {
     public int Quantity { get; init; }
   }
 
-  public class InventoryPerspective : IPerspectiveOf<InventoryEvent>, IPerspectiveFor<InventoryModel, InventoryEvent> {
+  public class InventoryPerspective : IPerspectiveFor<InventoryModel, InventoryEvent> {
     public InventoryModel Apply(InventoryModel currentData, InventoryEvent @event) {
       return currentData;
     }
@@ -321,7 +321,7 @@ namespace TestNamespace {
     public string OrderId { get; init; } = """";
   }
 
-  public class OrderPerspective : IPerspectiveOf<OrderEvent>, IPerspectiveFor<OrderReadModel, OrderEvent> {
+  public class OrderPerspective : IPerspectiveFor<OrderReadModel, OrderEvent> {
     public OrderReadModel Apply(OrderReadModel currentData, OrderEvent @event) {
       return currentData;
     }
@@ -368,13 +368,13 @@ namespace TestNamespace {
     public string InventoryId { get; init; } = """";
   }
 
-  public class OrderPerspective : IPerspectiveOf<OrderEvent>, IPerspectiveFor<OrderModel, OrderEvent> {
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderEvent> {
     public OrderModel Apply(OrderModel currentData, OrderEvent @event) {
       return currentData;
     }
   }
 
-  public class InventoryPerspective : IPerspectiveOf<InventoryEvent>, IPerspectiveFor<InventoryModel, InventoryEvent> {
+  public class InventoryPerspective : IPerspectiveFor<InventoryModel, InventoryEvent> {
     public InventoryModel Apply(InventoryModel currentData, InventoryEvent @event) {
       return currentData;
     }
@@ -416,7 +416,7 @@ namespace TestNamespace {
     public string OrderId { get; init; } = """";
   }
 
-  public class OrderPerspective : IPerspectiveOf<OrderEvent>, IPerspectiveFor<OrderModel, OrderEvent> {
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderEvent> {
     public OrderModel Apply(OrderModel currentData, OrderEvent @event) {
       return currentData;
     }
@@ -454,7 +454,7 @@ namespace TestNamespace {
     public string Status { get; init; } = """";
   }
 
-  public class OrderPerspective : IPerspectiveOf<OrderEvent>, IPerspectiveFor<OrderModel, OrderEvent> {
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderEvent> {
     public OrderModel Apply(OrderModel currentData, OrderEvent @event) {
       return currentData;
     }

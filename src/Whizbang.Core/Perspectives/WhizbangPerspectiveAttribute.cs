@@ -41,26 +41,26 @@ namespace Whizbang.Core.Perspectives;
 /// <para><strong>Single DbContext (no attribute needed):</strong></para>
 /// <code>
 /// // No attribute = matches default DbContext
-/// public class ProductCatalogPerspective : IPerspectiveOf&lt;ProductCreatedEvent&gt; {
+/// public class ProductCatalogPerspective : IPerspectiveFor&lt;ProductCatalogModel, ProductCreatedEvent&gt; {
 ///   // Will be included in the default DbContext
 /// }
 /// </code>
 /// <para><strong>Multi-DbContext with distinct perspectives:</strong></para>
 /// <code>
 /// [WhizbangPerspective("catalog")]
-/// public class ProductPerspective : IPerspectiveOf&lt;ProductEvent&gt; {
+/// public class ProductPerspective : IPerspectiveFor&lt;ProductModel, ProductEvent&gt; {
 ///   // Only included in DbContexts with "catalog" key
 /// }
 ///
 /// [WhizbangPerspective("orders")]
-/// public class OrderPerspective : IPerspectiveOf&lt;OrderEvent&gt; {
+/// public class OrderPerspective : IPerspectiveFor&lt;OrderModel, OrderEvent&gt; {
 ///   // Only included in DbContexts with "orders" key
 /// }
 /// </code>
 /// <para><strong>Shared perspective across multiple contexts:</strong></para>
 /// <code>
 /// [WhizbangPerspective("catalog", "orders")]
-/// public class CustomerPerspective : IPerspectiveOf&lt;CustomerEvent&gt; {
+/// public class CustomerPerspective : IPerspectiveFor&lt;CustomerModel, CustomerEvent&gt; {
 ///   // Included in both "catalog" AND "orders" DbContexts
 /// }
 /// </code>
@@ -75,7 +75,7 @@ namespace Whizbang.Core.Perspectives;
 ///
 /// // Perspective
 /// [WhizbangPerspective("products")]
-/// public class ProductInventoryPerspective : IPerspectiveOf&lt;InventoryEvent&gt; {
+/// public class ProductInventoryPerspective : IPerspectiveFor&lt;InventoryModel, InventoryEvent&gt; {
 ///   // Included in BOTH CatalogDbContext AND WarehouseDbContext
 ///   // (both have "products" in their keys)
 /// }
@@ -114,7 +114,7 @@ public sealed class WhizbangPerspectiveAttribute : Attribute {
   /// <example>
   /// <code>
   /// [WhizbangPerspective]  // Matches default DbContext only
-  /// public class SomePerspective : IPerspectiveOf&lt;SomeEvent&gt; { }
+  /// public class SomePerspective : IPerspectiveFor&lt;SomeModel, SomeEvent&gt; { }
   /// </code>
   /// </example>
   /// <tests>tests/Whizbang.Generators.Tests/Models/PerspectiveInfoTests.cs</tests>
@@ -145,12 +145,12 @@ public sealed class WhizbangPerspectiveAttribute : Attribute {
   /// <para><strong>Single key:</strong></para>
   /// <code>
   /// [WhizbangPerspective("catalog")]
-  /// public class ProductPerspective : IPerspectiveOf&lt;ProductEvent&gt; { }
+  /// public class ProductPerspective : IPerspectiveFor&lt;ProductModel, ProductEvent&gt; { }
   /// </code>
   /// <para><strong>Multiple keys:</strong></para>
   /// <code>
   /// [WhizbangPerspective("catalog", "warehouse", "reporting")]
-  /// public class InventoryPerspective : IPerspectiveOf&lt;InventoryEvent&gt; { }
+  /// public class InventoryPerspective : IPerspectiveFor&lt;InventoryModel, InventoryEvent&gt; { }
   /// </code>
   /// </example>
   /// <tests>tests/Whizbang.Generators.Tests/Models/PerspectiveInfoTests.cs</tests>

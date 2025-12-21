@@ -56,7 +56,7 @@ CREATE INDEX IF NOT EXISTS idx_product_catalog_created_at ON bff.product_catalog
 
 **Implementation**: Nearly identical to ProductInventoryService's ProductCatalogPerspective, just using `bff` schema instead of `inventoryworker` schema.
 
-**Interface**: `IPerspectiveOf<ProductCreatedEvent>, IPerspectiveOf<ProductUpdatedEvent>, IPerspectiveOf<ProductDeletedEvent>`
+**Interface**: `IPerspectiveFor<ProductCreatedEvent>, IPerspectiveFor<ProductUpdatedEvent>, IPerspectiveFor<ProductDeletedEvent>`
 
 ### 2. InventoryLevelsPerspective (BFF)
 
@@ -83,7 +83,7 @@ CREATE INDEX IF NOT EXISTS idx_inventory_levels_available ON bff.inventory_level
 
 **Implementation**: Nearly identical to ProductInventoryService's InventoryLevelsPerspective, just using `bff` schema instead of `inventoryworker` schema.
 
-**Interface**: `IPerspectiveOf<InventoryRestockedEvent>, IPerspectiveOf<InventoryReservedEvent>, IPerspectiveOf<InventoryReleasedEvent>, IPerspectiveOf<InventoryAdjustedEvent>`
+**Interface**: `IPerspectiveFor<InventoryRestockedEvent>, IPerspectiveFor<InventoryReservedEvent>, IPerspectiveFor<InventoryReleasedEvent>, IPerspectiveFor<InventoryAdjustedEvent>`
 
 ## Design Principles
 
@@ -146,9 +146,9 @@ namespace ECommerce.BFF.API.Perspectives;
 /// Materializes product catalog events into bff.product_catalog table.
 /// </summary>
 public class ProductCatalogPerspective :
-  IPerspectiveOf<ProductCreatedEvent>,
-  IPerspectiveOf<ProductUpdatedEvent>,
-  IPerspectiveOf<ProductDeletedEvent> {
+  IPerspectiveFor<ProductCreatedEvent>,
+  IPerspectiveFor<ProductUpdatedEvent>,
+  IPerspectiveFor<ProductDeletedEvent> {
 
   private readonly IDbConnectionFactory _connectionFactory;
   private readonly ILogger<ProductCatalogPerspective> _logger;
