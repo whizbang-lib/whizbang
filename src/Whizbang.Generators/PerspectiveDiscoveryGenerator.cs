@@ -116,18 +116,68 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
           .Select(t => t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
           .ToArray();
 
-      // Extract event types (all except TModel at index 0) for diagnostics
-      var eventTypes = typeArguments.Skip(1).ToArray();
+      // Extract event types (all except TModel at index 0) for validation and diagnostics
+      var eventTypeSymbols = perspectiveInterface.TypeArguments.Skip(1).ToArray();
+      var eventTypes = eventTypeSymbols
+          .Select(t => t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+          .ToArray();
+
+      // Validate StreamKey for each event type and collect errors
+      var validationErrors = new List<EventValidationError>();
+      foreach (var eventTypeSymbol in eventTypeSymbols) {
+        var error = ValidateEventStreamKey(eventTypeSymbol);
+        if (error != null) {
+          validationErrors.Add(error);
+        }
+      }
 
       results.Add(new PerspectiveInfo(
           ClassName: className,
           InterfaceTypeArguments: typeArguments,
           EventTypes: eventTypes,
-          StreamKeyPropertyName: streamKeyPropertyName
+          StreamKeyPropertyName: streamKeyPropertyName,
+          EventValidationErrors: validationErrors.Count > 0 ? validationErrors.ToArray() : null
       ));
     }
 
     return results.ToArray();
+  }
+
+  /// <summary>
+  /// Validates that an event type has exactly one property marked with [StreamKey].
+  /// Returns validation error if found, null if valid.
+  /// Handles array types by validating the element type.
+  /// </summary>
+  private static EventValidationError? ValidateEventStreamKey(ITypeSymbol eventTypeSymbol) {
+    // If this is an array type, validate the element type instead
+    var typeToValidate = eventTypeSymbol;
+    if (eventTypeSymbol is IArrayTypeSymbol arrayType) {
+      typeToValidate = arrayType.ElementType;
+    }
+
+    var streamKeyProperties = new List<string>();
+
+    foreach (var member in typeToValidate.GetMembers()) {
+      if (member is IPropertySymbol property) {
+        var hasStreamKeyAttribute = property.GetAttributes()
+            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
+
+        if (hasStreamKeyAttribute) {
+          streamKeyProperties.Add(property.Name);
+        }
+      }
+    }
+
+    var eventTypeName = typeToValidate.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var simpleEventName = GetSimpleName(eventTypeName);
+
+    if (streamKeyProperties.Count == 0) {
+      return new EventValidationError(simpleEventName, StreamKeyErrorType.MissingStreamKey);
+    } else if (streamKeyProperties.Count > 1) {
+      return new EventValidationError(simpleEventName, StreamKeyErrorType.MultipleStreamKeys);
+    }
+
+    return null;
   }
 
   /// <summary>
@@ -145,7 +195,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       return;
     }
 
-    // Report each discovered perspective
+    // Report each discovered perspective and any validation errors
     foreach (var perspective in perspectives) {
       var eventNames = string.Join(", ", perspective.EventTypes.Select(GetSimpleName));
       context.ReportDiagnostic(Diagnostic.Create(
@@ -154,6 +204,28 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
           GetSimpleName(perspective.ClassName),
           eventNames
       ));
+
+      // Report validation errors for this perspective
+      if (perspective.EventValidationErrors != null) {
+        foreach (var error in perspective.EventValidationErrors) {
+          var simplePerspectiveName = GetSimpleName(perspective.ClassName);
+
+          if (error.ErrorType == StreamKeyErrorType.MissingStreamKey) {
+            context.ReportDiagnostic(Diagnostic.Create(
+                DiagnosticDescriptors.PerspectiveEventMissingStreamKey,
+                Location.None,
+                error.EventTypeName,
+                simplePerspectiveName
+            ));
+          } else if (error.ErrorType == StreamKeyErrorType.MultipleStreamKeys) {
+            context.ReportDiagnostic(Diagnostic.Create(
+                DiagnosticDescriptors.PerspectiveEventMultipleStreamKeys,
+                Location.None,
+                error.EventTypeName
+            ));
+          }
+        }
+      }
     }
 
     var registrationSource = GenerateRegistrationSource(compilation, perspectives);

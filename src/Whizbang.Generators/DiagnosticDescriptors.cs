@@ -284,6 +284,32 @@ public static class DiagnosticDescriptors {
       description: "A static registry was generated to enable zero-reflection perspective runner lookup in PerspectiveWorker."
   );
 
+  /// <summary>
+  /// WHIZ030: Error - Event type used in perspective is missing [StreamKey] attribute.
+  /// </summary>
+  public static readonly DiagnosticDescriptor PerspectiveEventMissingStreamKey = new(
+      id: "WHIZ030",
+      title: "Perspective Event Missing StreamKey",
+      messageFormat: "Event type '{0}' used in perspective '{1}' must have exactly one property marked with [StreamKey] attribute",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "Events used in perspectives must have a property marked with [StreamKey] to identify the stream/aggregate for ordered processing."
+  );
+
+  /// <summary>
+  /// WHIZ031: Error - Event type has multiple [StreamKey] attributes.
+  /// </summary>
+  public static readonly DiagnosticDescriptor PerspectiveEventMultipleStreamKeys = new(
+      id: "WHIZ031",
+      title: "Multiple StreamKey Attributes",
+      messageFormat: "Event type '{0}' has multiple properties marked with [StreamKey]. Only one property can be the stream key.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "Each event type can only have one property marked with [StreamKey] attribute."
+  );
+
   // ========================================
   // Test Linking Diagnostics (WHIZ050-069)
   // ========================================

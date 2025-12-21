@@ -553,6 +553,7 @@ using Whizbang.Core.Perspectives;
 
 namespace TestNamespace {
   public record OrderEvent : IEvent {
+    [StreamKey]
     public string OrderId { get; init; } = """";
   }
 
@@ -596,7 +597,7 @@ using Whizbang.Core.Perspectives;
 
 namespace TestNamespace {
   public record ProductCreatedEvent : IEvent {
-    [StreamKey]
+    [StreamKey]  // Using Whizbang.Core.StreamKeyAttribute
     public Guid ProductId { get; init; }
     public string ProductName { get; init; } = """";
   }
@@ -624,6 +625,44 @@ namespace TestNamespace {
     // Should not have any errors about missing StreamKey
     var errors = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToArray();
     await Assert.That(errors).IsEmpty();
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_EventMissingStreamKey_ReportsWHIZ030DiagnosticAsync() {
+    // Arrange
+    var source = @"
+using System;
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    public Guid OrderId { get; init; }  // No [StreamKey] attribute!
+    public string CustomerName { get; init; } = """";
+  }
+
+  public record OrderModel {
+    public Guid OrderId { get; set; }
+    public string CustomerName { get; set; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData;
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    // Assert - Should report WHIZ030 error
+    var whiz030 = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ030");
+    await Assert.That(whiz030).IsNotNull();
+    await Assert.That(whiz030!.Severity).IsEqualTo(DiagnosticSeverity.Error);
+    await Assert.That(whiz030.GetMessage()).Contains("OrderCreatedEvent");
+    await Assert.That(whiz030.GetMessage()).Contains("StreamKey");
   }
 
   /// <summary>
