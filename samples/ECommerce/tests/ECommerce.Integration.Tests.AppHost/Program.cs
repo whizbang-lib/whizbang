@@ -1,15 +1,15 @@
 var builder = DistributedApplication.CreateBuilder(args);
 
 // PostgreSQL for Whizbang (shared by both services)
+// Use Session lifetime for tests to get clean state on every test run
 var postgres = builder.AddPostgres("postgres")
-  .WithLifetime(ContainerLifetime.Persistent)
-  .WithDataVolume()
+  .WithLifetime(ContainerLifetime.Session)
   .AddDatabase("whizbang-integration-test");
 
-// Azure Service Bus Emulator (persistent for fast test runs)
+// Azure Service Bus Emulator (use Session lifetime to get clean state)
 var serviceBus = builder.AddAzureServiceBus("servicebus")
   .RunAsEmulator(configureContainer => configureContainer
-    .WithLifetime(ContainerLifetime.Persistent));
+    .WithLifetime(ContainerLifetime.Session));
 
 // Configure topics and subscriptions for integration tests
 // Note: AddServiceBusSubscription(name, subscriptionName) where:

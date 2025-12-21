@@ -33,6 +33,8 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   private readonly Guid _sharedInstanceId = Guid.CreateVersion7(); // Shared across both services for partition claiming
   private string? _postgresConnection;
   private string? _serviceBusConnection;
+  private IServiceScope? _inventoryScope;  // Long-lived scope for lens access
+  private IServiceScope? _bffScope;  // Long-lived scope for lens access
 
   /// <summary>
   /// Gets the IDispatcher instance for sending commands (from InventoryWorker host).
@@ -43,26 +45,30 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
 
   /// <summary>
   /// Gets the IProductLens instance for querying product catalog (from InventoryWorker host).
+  /// Resolves from a long-lived scope that persists for the lifetime of the fixture.
   /// </summary>
-  public IProductLens InventoryProductLens => _inventoryHost?.Services.GetRequiredService<IProductLens>()
+  public IProductLens InventoryProductLens => _inventoryScope?.ServiceProvider.GetRequiredService<IProductLens>()
     ?? throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
 
   /// <summary>
   /// Gets the IInventoryLens instance for querying inventory levels (from InventoryWorker host).
+  /// Resolves from a long-lived scope that persists for the lifetime of the fixture.
   /// </summary>
-  public IInventoryLens InventoryLens => _inventoryHost?.Services.GetRequiredService<IInventoryLens>()
+  public IInventoryLens InventoryLens => _inventoryScope?.ServiceProvider.GetRequiredService<IInventoryLens>()
     ?? throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
 
   /// <summary>
   /// Gets the IProductCatalogLens instance for querying product catalog (from BFF host).
+  /// Resolves from a long-lived scope that persists for the lifetime of the fixture.
   /// </summary>
-  public IProductCatalogLens BffProductLens => _bffHost?.Services.GetRequiredService<IProductCatalogLens>()
+  public IProductCatalogLens BffProductLens => _bffScope?.ServiceProvider.GetRequiredService<IProductCatalogLens>()
     ?? throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
 
   /// <summary>
   /// Gets the IInventoryLevelsLens instance for querying inventory levels (from BFF host).
+  /// Resolves from a long-lived scope that persists for the lifetime of the fixture.
   /// </summary>
-  public IInventoryLevelsLens BffInventoryLens => _bffHost?.Services.GetRequiredService<IInventoryLevelsLens>()
+  public IInventoryLevelsLens BffInventoryLens => _bffScope?.ServiceProvider.GetRequiredService<IInventoryLevelsLens>()
     ?? throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
 
   /// <summary>
@@ -111,6 +117,11 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     Console.WriteLine($"[AspireFixture] PostgreSQL Connection: {_postgresConnection}");
     Console.WriteLine($"[AspireFixture] Service Bus Connection: {_serviceBusConnection}");
 
+    // Wait for PostgreSQL to be ready before proceeding
+    // Aspire starts containers but doesn't guarantee they're accepting connections
+    Console.WriteLine("[AspireFixture] Waiting for PostgreSQL to be ready...");
+    await WaitForPostgresReadyAsync(cancellationToken);
+
     // Create service hosts (but don't start them yet)
     _inventoryHost = CreateInventoryHost(_postgresConnection, _serviceBusConnection);
     _bffHost = CreateBffHost(_postgresConnection, _serviceBusConnection);
@@ -128,7 +139,17 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       _bffHost.StartAsync(cancellationToken)
     );
 
-    // Aspire manages emulator initialization, so no need for manual health checks!
+    // Create long-lived scopes for lens access
+    // These scopes persist for the lifetime of the fixture to allow scoped lens services
+    _inventoryScope = _inventoryHost.Services.CreateScope();
+    _bffScope = _bffHost.Services.CreateScope();
+
+    // WORKAROUND: Azure Service Bus Emulator reports ready before it can actually process messages
+    // Wait for the emulator to be truly ready by checking health endpoint and waiting for full initialization
+    // See: https://github.com/Azure/azure-service-bus-emulator-installer/issues/35
+    Console.WriteLine("[AspireFixture] Waiting for Azure Service Bus Emulator to be fully ready...");
+    await WaitForServiceBusEmulatorReadyAsync(cancellationToken);
+
     Console.WriteLine("[AspireFixture] Service hosts started and ready!");
 
     _isInitialized = true;
@@ -199,8 +220,9 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangDispatcher(builder.Services);
 
     // Register lenses for querying materialized views
-    builder.Services.AddSingleton<IProductLens, ProductLens>();
-    builder.Services.AddSingleton<IInventoryLens, InventoryLens>();
+    // IMPORTANT: Lenses must be Scoped (not Singleton) because they depend on ILensQuery<T> which is Scoped
+    builder.Services.AddScoped<IProductLens, ProductLens>();
+    builder.Services.AddScoped<IInventoryLens, InventoryLens>();
 
     // Register perspective runners (generated by PerspectiveRunnerRegistryGenerator)
     ECommerce.InventoryWorker.Generated.PerspectiveRunnerRegistryExtensions.AddPerspectiveRunners(builder.Services);
@@ -391,6 +413,91 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   }
 
   /// <summary>
+  /// Waits for PostgreSQL to be ready by attempting to connect until successful.
+  /// Aspire starts containers but doesn't guarantee they're accepting connections.
+  /// </summary>
+  private async Task WaitForPostgresReadyAsync(CancellationToken cancellationToken = default) {
+    var maxAttempts = 30; // 30 seconds total
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        using var dataSource = new Npgsql.NpgsqlDataSourceBuilder(_postgresConnection!).Build();
+        using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        Console.WriteLine($"[AspireFixture] PostgreSQL connection successful (attempt {attempt})");
+        return;
+      } catch (Exception ex) when (attempt < maxAttempts) {
+        // PostgreSQL not ready yet, wait and retry
+        Console.WriteLine($"[AspireFixture] PostgreSQL not ready (attempt {attempt}): {ex.Message}");
+        await Task.Delay(1000, cancellationToken);
+      }
+    }
+
+    throw new TimeoutException($"PostgreSQL failed to accept connections after {maxAttempts} attempts");
+  }
+
+  /// <summary>
+  /// Waits for the Azure Service Bus Emulator to be fully ready by polling the health endpoint.
+  /// The emulator reports "ready" before it can actually process messages, so we need to verify readiness.
+  /// </summary>
+  private async Task WaitForServiceBusEmulatorReadyAsync(CancellationToken cancellationToken = default) {
+    // Get the Aspire-exposed Service Bus resource to find the health endpoint
+    // For Aspire, the Service Bus emulator exposes a health check endpoint on port 5300
+    // We need to check this endpoint and then wait for full initialization
+    using var httpClient = new HttpClient { Timeout = TimeSpan.FromSeconds(2) };
+
+    // Try to extract the port from the connection string
+    // Connection string format: Endpoint=sb://localhost:PORT/;SharedAccessKeyName=...
+    var match = System.Text.RegularExpressions.Regex.Match(_serviceBusConnection!, @"localhost:(\d+)");
+    if (!match.Success) {
+      Console.WriteLine("[AspireFixture] WARNING: Could not parse Service Bus port from connection string. Skipping health check.");
+      Console.WriteLine("[AspireFixture] Waiting 60 seconds for emulator to initialize (fallback)...");
+      await Task.Delay(60000, cancellationToken);
+      return;
+    }
+
+    // The health endpoint is typically 5300, but we'll use the base port from the connection string + 5000
+    // For example: if connection is localhost:5672, health is localhost:5300
+    var serviceBusPort = int.Parse(match.Groups[1].Value);
+    var healthPort = 5300; // Standard Service Bus Emulator health port
+
+    var healthEndpoint = $"http://localhost:{healthPort}/health";
+    Console.WriteLine($"[AspireFixture] Checking emulator health at {healthEndpoint}");
+
+    var maxAttempts = 30; // 30 seconds total
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        var response = await httpClient.GetAsync(healthEndpoint, cancellationToken);
+        if (response.IsSuccessStatusCode) {
+          var content = await response.Content.ReadAsStringAsync(cancellationToken);
+          if (content.Contains("healthy", StringComparison.OrdinalIgnoreCase)) {
+            Console.WriteLine($"[AspireFixture] Azure Service Bus Emulator health check passed (attempt {attempt})");
+            // WORKAROUND: The emulator's internal SQL Server needs time to start up, and the emulator
+            // has built-in retry logic (15s wait + 2-3 retries × 15s) before creating databases.
+            // Then it needs to create databases, topics, and subscriptions. Total time is ~60-90s.
+            // Even after health check passes, we must wait for:
+            // 1. SQL Server connection retries (30-45s)
+            // 2. Database creation (SbGatewayDatabase, SbMessageContainerDatabase00001)
+            // 3. Topic and subscription creation
+            // 4. "Emulator Service is Successfully Up!" message
+            // See: https://github.com/Azure/azure-service-bus-emulator-installer/issues/35
+            Console.WriteLine("[AspireFixture] Waiting 120 seconds for emulator to fully initialize (SQL Server + databases + topics/subscriptions)...");
+            await Task.Delay(120000, cancellationToken);
+            Console.WriteLine("[AspireFixture] Emulator should now be ready for message sending");
+            return;
+          }
+        }
+      } catch {
+        // Health endpoint not ready yet, continue waiting
+      }
+
+      if (attempt < maxAttempts) {
+        await Task.Delay(1000, cancellationToken);
+      }
+    }
+
+    throw new TimeoutException($"Azure Service Bus Emulator health check failed after {maxAttempts} attempts");
+  }
+
+  /// <summary>
   /// Waits for both InventoryWorker and BFF work processing to become idle.
   /// Tracks 4 workers: WorkCoordinatorPublisherWorker (outbox/inbox) + PerspectiveWorker (perspective materialization) for both services.
   /// Uses event callbacks to efficiently detect when all event processing is complete.
@@ -565,6 +672,10 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
 
   public async ValueTask DisposeAsync() {
     if (_isInitialized) {
+      // Dispose scopes first (before stopping hosts)
+      _inventoryScope?.Dispose();
+      _bffScope?.Dispose();
+
       // Stop hosts
       if (_inventoryHost != null) {
         await _inventoryHost.StopAsync();
