@@ -469,4 +469,132 @@ namespace TestNamespace {
     await Assert.That(runnerSource).IsNotNull();
     await Assert.That(runnerSource!).Contains("CustomOrderIdentifier");
   }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_GeneratesExtractStreamIdMethod_UsingEventStreamKeyAsync() {
+    // Arrange - Test that runner generates ExtractStreamId method using event's [StreamKey]
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace TestNamespace {
+  public record ProductCreatedEvent : IEvent {
+    [StreamKey]
+    public Guid ProductId { get; init; }  // Event's stream key
+    public string ProductName { get; init; } = """";
+  }
+
+  public record ProductModel {
+    [StreamKey]
+    public Guid ProductId { get; init; }  // Model's stream key (same property)
+    public string ProductName { get; init; } = """";
+  }
+
+  public class ProductPerspective : IPerspectiveFor<ProductModel, ProductCreatedEvent> {
+    public ProductModel Apply(ProductModel currentData, ProductCreatedEvent @event) {
+      return currentData with { ProductName = @event.ProductName };
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Should generate ExtractStreamId method
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+
+    // DEBUG: Print generated source
+    Console.WriteLine("=== GENERATED SOURCE ===");
+    Console.WriteLine(runnerSource);
+    Console.WriteLine("=== END GENERATED SOURCE ===");
+
+    // Should have ExtractStreamId method
+    await Assert.That(runnerSource!).Contains("ExtractStreamId");
+
+    // Should access event's ProductId property (the [StreamKey] property)
+    await Assert.That(runnerSource!).Contains("@event.ProductId");
+
+    // Should return the stream ID as string
+    await Assert.That(runnerSource!).Contains("private static string ExtractStreamId");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_MultipleEvents_GeneratesExtractStreamIdForEachAsync() {
+    // Arrange - Perspective with multiple events should generate ExtractStreamId for each
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    [StreamKey]
+    public Guid OrderId { get; init; }
+    public string CustomerName { get; init; } = """";
+  }
+
+  public record OrderShippedEvent : IEvent {
+    [StreamKey]
+    public Guid OrderId { get; init; }  // Same property name, different event
+    public string TrackingNumber { get; init; } = """";
+  }
+
+  public record OrderModel {
+    [StreamKey]
+    public Guid OrderId { get; init; }
+    public string Status { get; init; } = """";
+  }
+
+  public class OrderPerspective :
+    IPerspectiveFor<OrderModel, OrderCreatedEvent>,
+    IPerspectiveFor<OrderModel, OrderShippedEvent> {
+
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData with { Status = ""Created"" };
+    }
+
+    public OrderModel Apply(OrderModel currentData, OrderShippedEvent @event) {
+      return currentData with { Status = ""Shipped"" };
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Should have multiple ExtractStreamId overloads (one per event type)
+    var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
+    await Assert.That(runnerSource).IsNotNull();
+
+    // Should have ExtractStreamId for OrderCreatedEvent
+    await Assert.That(runnerSource!).Contains("ExtractStreamId(global::TestNamespace.OrderCreatedEvent @event)");
+
+    // Should have ExtractStreamId for OrderShippedEvent
+    await Assert.That(runnerSource!).Contains("ExtractStreamId(global::TestNamespace.OrderShippedEvent @event)");
+
+    // Both should access OrderId property
+    var orderIdCount = CountOccurrences(runnerSource!, "@event.OrderId");
+    await Assert.That(orderIdCount).IsGreaterThanOrEqualTo(2); // At least one for each event type
+  }
+
+  /// <summary>
+  /// Helper method to count occurrences of a substring in a string.
+  /// </summary>
+  private static int CountOccurrences(string text, string substring) {
+    int count = 0;
+    int index = 0;
+    while ((index = text.IndexOf(substring, index, StringComparison.Ordinal)) != -1) {
+      count++;
+      index += substring.Length;
+    }
+    return count;
+  }
 }

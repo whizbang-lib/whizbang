@@ -103,15 +103,18 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
     var modelTypeName = modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
-    // Extract event types from all interfaces
+    // Extract event types from all interfaces and collect event symbols
     var eventTypes = new List<string>();
+    var eventTypeSymbols = new List<ITypeSymbol>();
 
     // Extract from single-stream: skip TModel (index 0), all others are events
     foreach (var iface in singleStreamInterfaces) {
       for (int i = 1; i < iface.TypeArguments.Length; i++) {
-        var eventType = iface.TypeArguments[i].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        var eventTypeSymbol = iface.TypeArguments[i];
+        var eventType = eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
         if (!eventTypes.Contains(eventType)) {
           eventTypes.Add(eventType);
+          eventTypeSymbols.Add(eventTypeSymbol);
         }
       }
     }
@@ -119,9 +122,11 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Extract from global: skip TModel (index 0) and TPartitionKey (index 1), rest are events
     foreach (var iface in globalInterfaces) {
       for (int i = 2; i < iface.TypeArguments.Length; i++) {
-        var eventType = iface.TypeArguments[i].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        var eventTypeSymbol = iface.TypeArguments[i];
+        var eventType = eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
         if (!eventTypes.Contains(eventType)) {
           eventTypes.Add(eventType);
+          eventTypeSymbols.Add(eventTypeSymbol);
         }
       }
     }
@@ -149,6 +154,22 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       return null;
     }
 
+    // Extract StreamKey property from each event type (for StreamId extraction)
+    var eventStreamKeys = new List<EventStreamKeyInfo>();
+    for (int i = 0; i < eventTypes.Count; i++) {
+      var eventTypeName = eventTypes[i];
+      var eventTypeSymbol = eventTypeSymbols[i];
+
+      // Extract StreamKey property name from event
+      var eventStreamKeyProp = ExtractStreamKeyProperty(eventTypeSymbol);
+      if (eventStreamKeyProp != null) {
+        eventStreamKeys.Add(new EventStreamKeyInfo(
+            EventTypeName: eventTypeName,
+            StreamKeyPropertyName: eventStreamKeyProp
+        ));
+      }
+    }
+
     // Build full interface type arguments for registration
     var typeArguments = new[] { modelTypeName }.Concat(eventTypes).ToArray();
 
@@ -156,8 +177,28 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
         InterfaceTypeArguments: typeArguments,
         EventTypes: eventTypes.ToArray(),
-        StreamKeyPropertyName: streamKeyPropertyName
+        StreamKeyPropertyName: streamKeyPropertyName,
+        EventStreamKeys: eventStreamKeys.Count > 0 ? eventStreamKeys.ToArray() : null
     );
+  }
+
+  /// <summary>
+  /// Extracts the StreamKey property name from an event type.
+  /// Returns the property name if exactly one [StreamKey] is found, null otherwise.
+  /// </summary>
+  private static string? ExtractStreamKeyProperty(ITypeSymbol eventTypeSymbol) {
+    foreach (var member in eventTypeSymbol.GetMembers()) {
+      if (member is IPropertySymbol property) {
+        var hasStreamKeyAttribute = property.GetAttributes()
+            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
+
+        if (hasStreamKeyAttribute) {
+          return property.Name;
+        }
+      }
+    }
+
+    return null;
   }
 
   /// <summary>
@@ -213,11 +254,27 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       applyCases.AppendLine();
     }
 
+    // Generate ExtractStreamId methods (one per event type with StreamKey)
+    var extractStreamIdMethods = new StringBuilder();
+    if (perspective.EventStreamKeys != null) {
+      foreach (var eventStreamKey in perspective.EventStreamKeys) {
+        extractStreamIdMethods.AppendLine($"  /// <summary>");
+        extractStreamIdMethods.AppendLine($"  /// Extracts the stream ID from {GetSimpleName(eventStreamKey.EventTypeName)} event.");
+        extractStreamIdMethods.AppendLine($"  /// </summary>");
+        extractStreamIdMethods.AppendLine($"  private static string ExtractStreamId({eventStreamKey.EventTypeName} @event) {{");
+        extractStreamIdMethods.AppendLine($"    return @event.{eventStreamKey.StreamKeyPropertyName}.ToString();");
+        extractStreamIdMethods.AppendLine($"  }}");
+        extractStreamIdMethods.AppendLine();
+      }
+    }
+
     // Replace template markers
     var result = template;
     result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName};");
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(PerspectiveRunnerGenerator).Assembly, result);
     result = TemplateUtilities.ReplaceRegion(result, "EVENT_APPLY_CASES", applyCases.ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "EXTRACT_STREAM_ID_METHODS", extractStreamIdMethods.ToString());
+
     // Model type is always the first type argument
     var modelTypeName = perspective.InterfaceTypeArguments[0];
 
