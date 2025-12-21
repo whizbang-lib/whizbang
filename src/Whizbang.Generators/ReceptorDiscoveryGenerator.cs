@@ -35,7 +35,7 @@ namespace Whizbang.Generators;
 [Generator]
 public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private const string RECEPTOR_INTERFACE_NAME = "Whizbang.Core.IReceptor";
-  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.IPerspectiveFor";
+  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Pipeline 1: Discover IReceptor implementations
@@ -116,9 +116,11 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Checks if a class implements IPerspectiveFor&lt;TEvent&gt;.
+  /// Checks if a class implements IPerspectiveFor&lt;TModel, TEvent1, ...&gt;.
   /// Returns true if the class implements the perspective interface, false otherwise.
   /// Used for WHIZ002 diagnostic - only warn if BOTH IReceptor and IPerspectiveFor are absent.
+  /// Supports both variadic interface pattern (IPerspectiveFor&lt;TModel, TEvent1, TEvent2&gt;)
+  /// and multiple separate interfaces (IPerspectiveFor&lt;TModel, TEvent1&gt;, IPerspectiveFor&lt;TModel, TEvent2&gt;).
   /// </summary>
   private static bool HasPerspectiveInterface(
       GeneratorSyntaxContext context,
@@ -131,9 +133,12 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // See RoslynGuards.cs for rationale - no branch created, eliminates coverage gap
     var classSymbol = RoslynGuards.GetClassSymbolOrThrow(classDeclaration, semanticModel, cancellationToken);
 
-    // Look for IPerspectiveFor<TEvent> interface
-    var hasPerspective = classSymbol.AllInterfaces.Any(i =>
-        i.OriginalDefinition.ToDisplayString() == PERSPECTIVE_INTERFACE_NAME + "<TEvent>");
+    // Look for IPerspectiveFor<TModel, TEvent, ...> interface (any variant with 2+ type args)
+    var hasPerspective = classSymbol.AllInterfaces.Any(i => {
+      var originalDef = i.OriginalDefinition.ToDisplayString();
+      // Check if it starts with our perspective interface name and has at least 2 type arguments (model + events)
+      return originalDef.StartsWith(PERSPECTIVE_INTERFACE_NAME + "<") && i.TypeArguments.Length >= 2;
+    });
 
     return hasPerspective;
   }

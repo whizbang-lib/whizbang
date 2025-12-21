@@ -117,7 +117,7 @@ namespace TestNamespace {
     await Assert.That(generatedSource!).Contains("OrderPerspective");
     await Assert.That(generatedSource!).Contains("OrderCreatedEvent");
     await Assert.That(generatedSource!).Contains("PaymentProcessedEvent");
-    await Assert.That(generatedSource!).Contains("1 discovered perspective(s)");
+    await Assert.That(generatedSource!).Contains("2 discovered perspective(s)");
     await Assert.That(generatedSource!).Contains("2 event handler(s)");
 
     // Verify both registrations exist

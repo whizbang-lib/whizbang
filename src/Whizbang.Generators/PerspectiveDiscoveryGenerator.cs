@@ -35,8 +35,9 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     // Filter for classes that have a base list (potential interface implementations)
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => ExtractPerspectiveInfo(ctx, ct)
-    ).Where(static info => info is not null);
+        transform: static (ctx, ct) => ExtractPerspectiveInfos(ctx, ct)
+    ).Where(static infos => infos is not null && infos.Length > 0)
+     .SelectMany(static (infos, _) => infos!.ToImmutableArray());
 
     // Collect all perspectives and generate registration code
     // Combine compilation with discovered perspectives to get assembly name for namespace
@@ -47,17 +48,19 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
         static (ctx, data) => {
           var compilation = data.Left;
           var perspectives = data.Right;
-          GeneratePerspectiveRegistrations(ctx, compilation, perspectives!);
+          GeneratePerspectiveRegistrations(ctx, compilation, perspectives);
         }
     );
   }
 
   /// <summary>
   /// Extracts perspective information from a class declaration.
-  /// Returns null if the class doesn't implement IPerspectiveFor.
-  /// A class can implement multiple IPerspectiveFor&lt;TModel, TEvent&gt; interfaces.
+  /// Returns array of PerspectiveInfo (one per implemented interface).
+  /// Supports both patterns:
+  /// - Single variadic: IPerspectiveFor&lt;TModel, TEvent1, TEvent2, ...&gt;
+  /// - Multiple separate: IPerspectiveFor&lt;TModel, TEvent1&gt;, IPerspectiveFor&lt;TModel, TEvent2&gt;
   /// </summary>
-  private static PerspectiveInfo? ExtractPerspectiveInfo(
+  private static PerspectiveInfo[]? ExtractPerspectiveInfos(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
 
@@ -75,11 +78,11 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
 
     // Look for all IPerspectiveFor<TModel, TEvent1, ...> interfaces (all variants)
     // Check if interface name contains "IPerspectiveFor" (case-sensitive)
+    // Skip the marker base interface (has only 1 type argument)
     var perspectiveInterfaces = classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
-          // Simple contains check first to see if this is a perspective interface at all
-          return originalDef.Contains("IPerspectiveFor");
+          return originalDef.Contains("IPerspectiveFor") && i.TypeArguments.Length > 1;
         })
         .ToList();
 
@@ -87,27 +90,9 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Get the actual IPerspectiveFor<TModel, TEvent...> interface (not the marker base)
-    // Skip the base marker interface (has only 1 type argument - just TModel)
-    var perspectiveInterface = perspectiveInterfaces.FirstOrDefault(i => i.TypeArguments.Length > 1);
+    // Get model type and StreamKey property (same across all interfaces for this class)
+    var modelType = perspectiveInterfaces.First().TypeArguments[0];
 
-    if (perspectiveInterface is null) {
-      // Only implements marker interface - skip
-      return null;
-    }
-
-    // Extract all type arguments: [TModel, TEvent1, TEvent2, ...]
-    var typeArguments = perspectiveInterface.TypeArguments
-        .Select(t => t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
-        .ToArray();
-
-    // Extract event types (all except TModel at index 0) for diagnostics
-    var eventTypes = typeArguments.Skip(1).ToArray();
-
-    // TModel is at index 0
-    var modelType = perspectiveInterface.TypeArguments[0];
-
-    // Find property with [StreamKey] attribute in the model type (optional)
     string? streamKeyPropertyName = null;
     foreach (var member in modelType.GetMembers()) {
       if (member is IPropertySymbol property) {
@@ -121,12 +106,28 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       }
     }
 
-    return new PerspectiveInfo(
-        ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        InterfaceTypeArguments: typeArguments,
-        EventTypes: eventTypes,
-        StreamKeyPropertyName: streamKeyPropertyName
-    );
+    var className = classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var results = new List<PerspectiveInfo>();
+
+    // Generate one PerspectiveInfo per implemented interface
+    foreach (var perspectiveInterface in perspectiveInterfaces) {
+      // Extract all type arguments: [TModel, TEvent1, TEvent2, ...]
+      var typeArguments = perspectiveInterface.TypeArguments
+          .Select(t => t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+          .ToArray();
+
+      // Extract event types (all except TModel at index 0) for diagnostics
+      var eventTypes = typeArguments.Skip(1).ToArray();
+
+      results.Add(new PerspectiveInfo(
+          ClassName: className,
+          InterfaceTypeArguments: typeArguments,
+          EventTypes: eventTypes,
+          StreamKeyPropertyName: streamKeyPropertyName
+      ));
+    }
+
+    return results.ToArray();
   }
 
   /// <summary>
