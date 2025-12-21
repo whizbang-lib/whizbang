@@ -122,7 +122,8 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       "003_CreateCompleteReceptorProcessingFunction.sql",
       "004_CreateAcquirePerspectiveCheckpointFunction.sql",
       "005_CreateCompletePerspectiveCheckpointFunction.sql",
-      "006_CreateProcessWorkBatchFunction.sql"  // Table moved to C# schema
+      "006_CreateProcessWorkBatchFunction.sql",  // Table moved to C# schema
+      "007_CreateMessageAssociationRegistry.sql"
     };
 
     foreach (var functionFile in functionFiles) {
@@ -131,7 +132,13 @@ public abstract class PostgresTestBase : IAsyncDisposable {
 
       using var functionCommand = (NpgsqlCommand)connection.CreateCommand();
       functionCommand.CommandText = functionSql;
-      await functionCommand.ExecuteNonQueryAsync();
+      try {
+        await functionCommand.ExecuteNonQueryAsync();
+      } catch (Exception ex) {
+        Console.WriteLine($"MIGRATION ERROR in {functionFile}: {ex.Message}");
+        Console.WriteLine($"ERROR DETAIL: {ex.ToString()}");
+        throw;
+      }
     }
   }
 }

@@ -17,13 +17,20 @@ namespace Whizbang.Data.Schema;
 /// <param name="Name">Table name (without prefix - prefix added by schema builder)</param>
 /// <param name="Columns">Column definitions</param>
 /// <param name="Indexes">Index definitions (default: empty array)</param>
+/// <param name="UniqueConstraints">Unique constraint definitions (default: empty array)</param>
 public sealed record TableDefinition(
   string Name,
   ImmutableArray<ColumnDefinition> Columns,
-  ImmutableArray<IndexDefinition> Indexes = default
+  ImmutableArray<IndexDefinition> Indexes = default,
+  ImmutableArray<UniqueConstraintDefinition> UniqueConstraints = default
 ) {
   /// <summary>
   /// Indexes with default value coalescing to empty array.
   /// </summary>
   public ImmutableArray<IndexDefinition> Indexes { get; init; } = Indexes.IsDefault ? [] : Indexes;
+
+  /// <summary>
+  /// Unique constraints with default value coalescing to empty array.
+  /// </summary>
+  public ImmutableArray<UniqueConstraintDefinition> UniqueConstraints { get; init; } = UniqueConstraints.IsDefault ? [] : UniqueConstraints;
 }

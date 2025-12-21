@@ -67,6 +67,15 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
       sb.AppendLine($"  CONSTRAINT pk_{table.Name} PRIMARY KEY ({pkColumns})");
     }
 
+    // Add unique constraints after columns
+    if (table.UniqueConstraints.Length > 0) {
+      foreach (var constraint in table.UniqueConstraints) {
+        var columns = string.Join(", ", constraint.Columns);
+        sb.AppendLine($",");
+        sb.AppendLine($"  CONSTRAINT {constraint.Name} UNIQUE ({columns})");
+      }
+    }
+
     sb.AppendLine(");");
 
     return sb.ToString();
@@ -168,6 +177,7 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
       (EventStoreSchema.Table, "Event Store - Event sourcing and audit trail"),
       (ReceptorProcessingSchema.Table, "Receptor Processing - Event handler tracking (log-style)"),
       (PerspectiveCheckpointsSchema.Table, "Perspective Checkpoints - Read model projection tracking (checkpoint-style)"),
+      (MessageAssociationsSchema.Table, "Message Associations - Message type to consumer mappings"),
       (RequestResponseSchema.Table, "Request/Response - Async request/response tracking"),
       (SequencesSchema.Table, "Sequences - Distributed sequence generation")
     };

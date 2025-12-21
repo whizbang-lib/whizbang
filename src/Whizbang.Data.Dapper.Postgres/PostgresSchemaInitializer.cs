@@ -48,6 +48,9 @@ public sealed class PostgresSchemaInitializer {
     command.CommandTimeout = 30; // 30 seconds should be plenty for schema creation
     await command.ExecuteNonQueryAsync(cancellationToken);
 
+    // Execute migration SQL files (PostgreSQL functions)
+    await ExecuteMigrationsAsync(connection, cancellationToken);
+
     // Execute perspective schema if provided
     if (!string.IsNullOrWhiteSpace(_perspectiveSchemaSql)) {
       await using var perspectiveCommand = connection.CreateCommand();
@@ -78,12 +81,77 @@ public sealed class PostgresSchemaInitializer {
     command.CommandTimeout = 30;
     command.ExecuteNonQuery();
 
+    // Execute migration SQL files (PostgreSQL functions)
+    ExecuteMigrations(connection);
+
     // Execute perspective schema if provided
     if (!string.IsNullOrWhiteSpace(_perspectiveSchemaSql)) {
       using var perspectiveCommand = connection.CreateCommand();
       perspectiveCommand.CommandText = _perspectiveSchemaSql;
       perspectiveCommand.CommandTimeout = 30;
       perspectiveCommand.ExecuteNonQuery();
+    }
+  }
+
+  private static async Task ExecuteMigrationsAsync(NpgsqlConnection connection, CancellationToken cancellationToken = default) {
+    var migrationPath = Path.Combine(
+      AppContext.BaseDirectory,
+      "..", "..", "..", "..", "..",
+      "src", "Whizbang.Data.Postgres", "Migrations");
+
+    var functionFiles = new[] {
+      "001_CreateComputePartitionFunction.sql",
+      "002_CreateAcquireReceptorProcessingFunction.sql",
+      "003_CreateCompleteReceptorProcessingFunction.sql",
+      "004_CreateAcquirePerspectiveCheckpointFunction.sql",
+      "005_CreateCompletePerspectiveCheckpointFunction.sql",
+      "006_CreateProcessWorkBatchFunction.sql",
+      "007_CreateMessageAssociationRegistry.sql"
+    };
+
+    foreach (var functionFile in functionFiles) {
+      var functionFilePath = Path.Combine(migrationPath, functionFile);
+      if (!File.Exists(functionFilePath)) {
+        continue; // Skip missing migration files (may not exist in deployment)
+      }
+
+      var functionSql = await File.ReadAllTextAsync(functionFilePath, cancellationToken);
+
+      await using var functionCommand = connection.CreateCommand();
+      functionCommand.CommandText = functionSql;
+      functionCommand.CommandTimeout = 30;
+      await functionCommand.ExecuteNonQueryAsync(cancellationToken);
+    }
+  }
+
+  private static void ExecuteMigrations(NpgsqlConnection connection) {
+    var migrationPath = Path.Combine(
+      AppContext.BaseDirectory,
+      "..", "..", "..", "..", "..",
+      "src", "Whizbang.Data.Postgres", "Migrations");
+
+    var functionFiles = new[] {
+      "001_CreateComputePartitionFunction.sql",
+      "002_CreateAcquireReceptorProcessingFunction.sql",
+      "003_CreateCompleteReceptorProcessingFunction.sql",
+      "004_CreateAcquirePerspectiveCheckpointFunction.sql",
+      "005_CreateCompletePerspectiveCheckpointFunction.sql",
+      "006_CreateProcessWorkBatchFunction.sql",
+      "007_CreateMessageAssociationRegistry.sql"
+    };
+
+    foreach (var functionFile in functionFiles) {
+      var functionFilePath = Path.Combine(migrationPath, functionFile);
+      if (!File.Exists(functionFilePath)) {
+        continue; // Skip missing migration files (may not exist in deployment)
+      }
+
+      var functionSql = File.ReadAllText(functionFilePath);
+
+      using var functionCommand = connection.CreateCommand();
+      functionCommand.CommandText = functionSql;
+      functionCommand.CommandTimeout = 30;
+      functionCommand.ExecuteNonQuery();
     }
   }
 }
