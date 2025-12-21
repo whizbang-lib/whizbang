@@ -75,14 +75,20 @@ public class IPerspectiveForTests {
 
 // Test implementations
 internal record TestModel {
+  [StreamKey]
+  public Guid StreamId { get; init; } = Guid.NewGuid();
   public int Value { get; init; }
 }
 
 internal record TestEvent : IEvent {
+  [StreamKey]
+  public Guid StreamId { get; init; } = Guid.NewGuid();
   public int Delta { get; init; }
 }
 
 internal record AnotherTestEvent : IEvent {
+  [StreamKey]
+  public Guid StreamId { get; init; } = Guid.NewGuid();
   public int Multiplier { get; init; }
 }
 
