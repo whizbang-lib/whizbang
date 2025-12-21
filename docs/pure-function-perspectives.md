@@ -5,11 +5,11 @@
 
 ## Overview
 
-Pure function perspectives provide a **deterministic, testable, and AOT-compatible** approach to building read models from event streams. Unlike orchestration-based perspectives, pure function perspectives enforce **compile-time purity** through synchronous signatures and runtime analysis.
+Pure function perspectives provide a **deterministic, testable, and AOT-compatible** approach to building read models from event streams. They enforce **compile-time purity** through synchronous signatures and runtime analysis via Roslyn analyzers.
 
 ## Table of Contents
 
-1. [Two Perspective Patterns](#two-perspective-patterns)
+1. [Pure Function Perspectives Overview](#pure-function-perspectives-overview)
 2. [When to Use Pure Functions](#when-to-use-pure-functions)
 3. [Getting Started](#getting-started)
 4. [API Reference](#api-reference)
@@ -18,52 +18,9 @@ Pure function perspectives provide a **deterministic, testable, and AOT-compatib
 7. [Testing Pure Perspectives](#testing-pure-perspectives)
 8. [Migration Guide](#migration-guide)
 
-## Two Perspective Patterns
+## Pure Function Perspectives Overview
 
-Whizbang supports two perspective patterns. Choose based on your requirements:
-
-### Orchestration Pattern (`IPerspectiveOf<TEvent>`)
-
-**Use for**: Complex workflows, real-time notifications, side effects
-
-```csharp{
-title: "Orchestration-Based Perspective"
-description: "Complex workflow with I/O and side effects"
-framework: "NET10"
-category: "Perspectives"
-difficulty: "INTERMEDIATE"
-tags: ["Perspectives", "Orchestration", "Side Effects"]
-}
-using Whizbang.Core.Perspectives;
-using Microsoft.AspNetCore.SignalR;
-
-namespace MyApp.Perspectives;
-
-public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent> {
-  private readonly IHubContext<OrderHub> _hubContext;
-  private readonly IPerspectiveStore<OrderReadModel> _store;
-
-  public async Task Update(OrderCreatedEvent @event, CancellationToken ct) {
-    // ✅ Side effects allowed
-    var model = new OrderReadModel { ... };
-    await _store.UpsertAsync(@event.OrderId, model, ct);
-
-    // ✅ Real-time notifications
-    await _hubContext.Clients.All.SendAsync("OrderCreated", model, ct);
-  }
-}
-```
-
-**Characteristics:**
-- ✅ Async/await supported
-- ✅ Side effects allowed (logging, I/O, notifications)
-- ✅ Complex orchestration
-- ❌ Not deterministic (can't guarantee replay)
-- ❌ Harder to test (mocks required)
-
-### Pure Function Pattern (`IPerspectiveFor<TModel, TEvent>`)
-
-**Use for**: Event sourcing, audit trails, deterministic replay
+Pure function perspectives provide a **deterministic, testable, and AOT-compatible** approach to building read models from event streams.
 
 ```csharp{
 title: "Pure Function Perspective"
@@ -92,66 +49,35 @@ public class OrderPerspective : IPerspectiveFor<OrderReadModel, OrderCreatedEven
 }
 ```
 
-**Characteristics:**
-- ✅ Synchronous (enforced by signature)
-- ✅ Deterministic (same inputs → same output)
-- ✅ Easy to test (no mocks needed)
-- ✅ AOT compatible (zero reflection)
-- ✅ Compile-time purity enforcement
-- ❌ No I/O operations allowed
-- ❌ No async/await allowed
+**Key Characteristics:**
+- ✅ **Synchronous** - Enforced by signature, no async/await
+- ✅ **Deterministic** - Same inputs always produce same output
+- ✅ **Easy to Test** - No mocks needed, simple unit tests
+- ✅ **AOT Compatible** - Zero reflection, generated code only
+- ✅ **Compile-time Purity** - Roslyn analyzer enforces rules
+- ✅ **Event Sourcing** - Perfect for rebuilding state from events
+- ✅ **Time Travel** - Replay events to any point in time
 
 ## When to Use Pure Functions
 
-### ✅ Choose Pure Functions When:
+### ✅ Ideal Use Cases:
 
-1. **Event Sourcing**: You need to rebuild state from events
-2. **Audit Trails**: Compliance requires reproducible history
-3. **Time Travel**: You want to replay events to any point in time
-4. **Testing**: You want simple, fast unit tests without mocks
-5. **Determinism**: You need guaranteed reproducibility
-6. **AOT Deployment**: You're targeting Native AOT
+1. **Event Sourcing**: Rebuild state from event streams with guaranteed reproducibility
+2. **Audit Trails**: Compliance and regulatory requirements for reproducible history
+3. **Time Travel Debugging**: Replay events to any point in time for investigation
+4. **Testing**: Simple, fast unit tests without mocks or test doubles
+5. **Determinism**: Guarantee same inputs always produce same output
+6. **AOT Deployment**: Target Native AOT with zero reflection
+7. **Performance**: Minimize allocations and maximize throughput
 
-### ❌ Stick with Orchestration When:
+### 💡 When to Consider Alternatives:
 
-1. **Real-time Updates**: You need SignalR/WebSocket notifications
-2. **Complex Workflows**: Multiple I/O operations per event
-3. **Existing Code**: You have working orchestration perspectives
-4. **External APIs**: Events trigger API calls
+If you need **side effects** (logging, notifications, external API calls), consider:
+- Handling side effects in command handlers before/after event dispatch
+- Using separate event handlers for notifications (not perspectives)
+- Building separate projection systems for real-time updates
 
-### 🤔 Hybrid Approach
-
-Use **both patterns** in the same application:
-
-```csharp{
-title: "Hybrid Approach - Pure + Orchestration"
-description: "Combining pure functions with orchestration for different concerns"
-framework: "NET10"
-category: "Perspectives"
-difficulty: "ADVANCED"
-tags: ["Perspectives", "Hybrid", "Separation of Concerns"]
-}
-using Whizbang.Core.Perspectives;
-using Microsoft.AspNetCore.SignalR;
-
-namespace MyApp.Perspectives;
-
-// Pure function for event sourcing
-public class OrderAuditPerspective : IPerspectiveFor<OrderAudit, OrderEvent> {
-  public OrderAudit Apply(OrderAudit current, OrderEvent @event) {
-    return current with { Events = current.Events.Add(@event) };
-  }
-}
-
-// Orchestration for real-time UI
-public class OrderNotificationPerspective : IPerspectiveOf<OrderEvent> {
-  private readonly IHubContext<OrderHub> _hubContext;
-
-  public async Task Update(OrderEvent @event, CancellationToken ct) {
-    await _hubContext.Clients.All.SendAsync("OrderEvent", @event, ct);
-  }
-}
-```
+**Key principle**: Perspectives are for building queryable state from events. Side effects belong elsewhere in your architecture.
 
 ## Getting Started
 
@@ -497,7 +423,7 @@ Pure `Apply` methods MUST NOT:
 - ❌ Use `DateTime.UtcNow` or `DateTimeOffset.Now`
 - ❌ Mutate shared state
 - ❌ Log (logging happens in the runner)
-- ❌ Send notifications (use separate orchestration perspective)
+- ❌ Send notifications (use separate event handler)
 
 ## Advanced Patterns
 
@@ -669,80 +595,101 @@ public async Task EventReplay_ProducesCorrectFinalStateAsync() {
 
 ## Migration Guide
 
-### From Orchestration to Pure Functions
+### Best Practices for Pure Function Perspectives
 
-**Before** (Orchestration):
+This guide covers common patterns and best practices when implementing pure function perspectives.
 
-```csharp
-public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent> {
-  private readonly IPerspectiveStore<OrderReadModel> _store;
-  private readonly ILensQuery<OrderReadModel> _lens;
-  private readonly IHubContext<OrderHub> _hubContext;
+### Pattern: Minimal Dependencies
 
-  public async Task Update(OrderCreatedEvent @event, CancellationToken ct) {
-    // ❌ Query existing (I/O)
-    var existing = await _lens.GetByIdAsync(@event.OrderId, ct);
-
-    // ❌ Build model
-    var model = new OrderReadModel {
-      OrderId = @event.OrderId,
-      CreatedAt = existing?.CreatedAt ?? @event.CreatedAt,  // Preserve
-      UpdatedAt = @event.CreatedAt
-    };
-
-    // ❌ Store (I/O)
-    await _store.UpsertAsync(@event.OrderId, model, ct);
-
-    // ❌ Notify (I/O)
-    await _hubContext.Clients.All.SendAsync("OrderCreated", model, ct);
-  }
-}
-```
-
-**After** (Pure Function):
+Pure function perspectives require **no injected dependencies**:
 
 ```csharp
+// ✅ CORRECT - No dependencies
 public class OrderPerspective : IPerspectiveFor<OrderReadModel, OrderCreatedEvent> {
-  // ✅ No dependencies injected!
-
   public OrderReadModel Apply(OrderReadModel current, OrderCreatedEvent @event) {
-    // ✅ Pure function
-    // The runner loads 'current' from store before calling Apply
-    // CreatedAt is automatically preserved if current exists
-
     return current with {
       OrderId = @event.OrderId,
       Status = "Created",
       TotalAmount = @event.TotalAmount,
       UpdatedAt = @event.CreatedAt
-      // CreatedAt preserved from 'current' automatically
     };
   }
 }
 
-// Move notifications to separate orchestration perspective
-public class OrderNotificationPerspective : IPerspectiveOf<OrderCreatedEvent> {
+// ❌ INCORRECT - Dependencies not allowed
+public class OrderPerspective : IPerspectiveFor<OrderReadModel, OrderCreatedEvent> {
+  private readonly IPerspectiveStore<OrderReadModel> _store;  // NO!
+  private readonly ILogger _logger;  // NO!
+
+  public OrderReadModel Apply(OrderReadModel current, OrderCreatedEvent @event) {
+    // ...
+  }
+}
+```
+
+### Pattern: Using Current State
+
+The runner loads the current model before calling `Apply`. Use the `current` parameter, not database queries:
+
+```csharp
+// ✅ CORRECT - Use current parameter
+public OrderReadModel Apply(OrderReadModel current, OrderCreatedEvent @event) {
+  // The runner already loaded 'current' from the store
+  // CreatedAt is automatically preserved from current
+  return current with {
+    OrderId = @event.OrderId,
+    Status = "Created",
+    UpdatedAt = @event.CreatedAt
+  };
+}
+
+// ❌ INCORRECT - Don't query the store
+public OrderReadModel Apply(OrderReadModel current, OrderCreatedEvent @event) {
+  var existing = _lens.GetByIdAsync(@event.OrderId).Result;  // NO!
+  return current with { ... };
+}
+```
+
+### Pattern: Handling Side Effects
+
+Side effects (logging, notifications, API calls) belong **outside** the perspective:
+
+```csharp
+// ✅ CORRECT - Pure function only
+public class OrderPerspective : IPerspectiveFor<OrderReadModel, OrderCreatedEvent> {
+  public OrderReadModel Apply(OrderReadModel current, OrderCreatedEvent @event) {
+    return current with {
+      OrderId = @event.OrderId,
+      Status = "Created"
+    };
+  }
+}
+
+// Handle notifications in a separate event handler
+public class OrderNotificationHandler : IEventHandler<OrderCreatedEvent> {
   private readonly IHubContext<OrderHub> _hubContext;
 
-  public async Task Update(OrderCreatedEvent @event, CancellationToken ct) {
+  public async Task HandleAsync(OrderCreatedEvent @event, CancellationToken ct) {
     await _hubContext.Clients.All.SendAsync("OrderCreated", @event, ct);
   }
 }
 ```
 
-### Migration Checklist
+### Implementation Checklist
 
-- [ ] Remove all `async`/`await` from Apply
-- [ ] Change return type from `Task<TModel>` to `TModel`
+When implementing a pure function perspective:
+
+- [ ] Use `IPerspectiveFor<TModel, TEvent>` interface
+- [ ] Keep `Apply` method synchronous (no `async`/`await`)
+- [ ] Return `TModel`, not `Task<TModel>`
 - [ ] Remove all I/O operations (database, HTTP, file system)
 - [ ] Remove injected dependencies (DI constructor parameters)
-- [ ] Use `currentData` parameter instead of lens queries
+- [ ] Use `current` parameter instead of database queries
 - [ ] Use event timestamps instead of `DateTime.UtcNow`
-- [ ] Move side effects (logging, notifications) to separate perspectives
-- [ ] Update interface from `IPerspectiveOf<TEvent>` to `IPerspectiveFor<TModel, TEvent>`
+- [ ] Move side effects to separate event handlers
 - [ ] Add `[StreamKey]` attribute to model partition key property
 - [ ] Run analyzer to verify purity (WHIZ100-104 diagnostics)
-- [ ] Update tests to remove mocks (pure functions need no mocks!)
+- [ ] Write simple unit tests (no mocks needed!)
 
 ## Best Practices
 
@@ -842,7 +789,7 @@ return current with {
 
 ## See Also
 
-- [EF Core Perspectives and Lenses](./ef-core-perspectives-and-lenses.md)
+- [EF Core Storage Implementation](./efcore-storage-implementation.md)
 - [Testing Guide](./tdd-workflow.md)
 - Source code: `src/Whizbang.Core/Perspectives/IPerspectiveFor.cs`
 - Tests: `tests/Whizbang.Core.Tests/Perspectives/IPerspectiveForTests.cs`
