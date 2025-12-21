@@ -11,7 +11,7 @@ namespace ECommerce.BFF.API;
 /// EF Core DbContext for BFF read models (perspectives).
 /// OnModelCreating is auto-generated in partial class with ConfigureWhizbang() call.
 /// Implement OnModelCreatingExtended() to add custom model configurations.
-/// DbSet properties are auto-generated from discovered IPerspectiveOf implementations.
+/// DbSet properties are auto-generated from discovered IPerspectiveFor implementations.
 /// AOT-compatible: All configuration is done via source generators, no reflection needed.
 /// </summary>
 [WhizbangDbContext]
