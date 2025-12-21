@@ -226,8 +226,19 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Register IWorkChannelWriter for communication between strategy and worker
     builder.Services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
 
+    // Configure PerspectiveWorker with faster polling for integration tests
+    builder.Services.Configure<PerspectiveWorkerOptions>(options => {
+      options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
+      options.LeaseSeconds = 300;
+      options.StaleThresholdSeconds = 600;
+      options.DebugMode = false;  // Disable diagnostic logging for cleaner test output
+      options.PartitionCount = 10000;
+      options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
+    });
+
     // Register background workers
     builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
+    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
       new ServiceBusConsumerWorker(
         sp.GetRequiredService<IServiceInstanceProvider>(),
@@ -326,8 +337,19 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Register IWorkChannelWriter for communication between strategy and worker
     builder.Services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
 
+    // Configure PerspectiveWorker with faster polling for integration tests
+    builder.Services.Configure<PerspectiveWorkerOptions>(options => {
+      options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
+      options.LeaseSeconds = 300;
+      options.StaleThresholdSeconds = 600;
+      options.DebugMode = false;  // Disable diagnostic logging for cleaner test output
+      options.PartitionCount = 10000;
+      options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
+    });
+
     // Register background workers
     builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
+    builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
 
     // Register Service Bus consumer to receive events
     var consumerOptions = new ServiceBusConsumerOptions();
@@ -370,81 +392,136 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
 
   /// <summary>
   /// Waits for both InventoryWorker and BFF work processing to become idle.
-  /// Uses event callbacks from WorkCoordinatorPublisherWorker to efficiently detect when all event processing is complete.
+  /// Tracks 4 workers: WorkCoordinatorPublisherWorker (outbox/inbox) + PerspectiveWorker (perspective materialization) for both services.
+  /// Uses event callbacks to efficiently detect when all event processing is complete.
   /// Falls back to timeout if idle state is not reached within the specified time.
   /// </summary>
   public async Task WaitForEventProcessingAsync(int timeoutMilliseconds = 30000) {
-    // Get worker instances
-    var inventoryWorker = _inventoryHost!.Services.GetServices<IHostedService>()
+    // Get WorkCoordinatorPublisherWorker instances (outbox/inbox processing)
+    var inventoryPublisher = _inventoryHost!.Services.GetServices<IHostedService>()
       .OfType<WorkCoordinatorPublisherWorker>()
       .FirstOrDefault();
 
-    var bffWorker = _bffHost!.Services.GetServices<IHostedService>()
+    var bffPublisher = _bffHost!.Services.GetServices<IHostedService>()
       .OfType<WorkCoordinatorPublisherWorker>()
       .FirstOrDefault();
 
-    // Create TaskCompletionSources for this wait
-    var inventoryIdleTcs = new TaskCompletionSource<bool>();
-    var bffIdleTcs = new TaskCompletionSource<bool>();
+    // Get PerspectiveWorker instances (perspective materialization)
+    var inventoryPerspectiveWorker = _inventoryHost!.Services.GetServices<IHostedService>()
+      .OfType<PerspectiveWorker>()
+      .FirstOrDefault();
+
+    var bffPerspectiveWorker = _bffHost!.Services.GetServices<IHostedService>()
+      .OfType<PerspectiveWorker>()
+      .FirstOrDefault();
+
+    // Create TaskCompletionSources for all 4 workers
+    var inventoryPublisherTcs = new TaskCompletionSource<bool>();
+    var bffPublisherTcs = new TaskCompletionSource<bool>();
+    var inventoryPerspectiveTcs = new TaskCompletionSource<bool>();
+    var bffPerspectiveTcs = new TaskCompletionSource<bool>();
 
     // Wire up one-time idle callbacks
-    WorkProcessingIdleHandler? inventoryHandler = null;
-    WorkProcessingIdleHandler? bffHandler = null;
+    WorkProcessingIdleHandler? inventoryPublisherHandler = null;
+    WorkProcessingIdleHandler? bffPublisherHandler = null;
+    WorkProcessingIdleHandler? inventoryPerspectiveHandler = null;
+    WorkProcessingIdleHandler? bffPerspectiveHandler = null;
 
-    inventoryHandler = () => {
-      inventoryIdleTcs.TrySetResult(true);
-      if (inventoryWorker != null && inventoryHandler != null) {
-        inventoryWorker.OnWorkProcessingIdle -= inventoryHandler;
+    inventoryPublisherHandler = () => {
+      inventoryPublisherTcs.TrySetResult(true);
+      if (inventoryPublisher != null && inventoryPublisherHandler != null) {
+        inventoryPublisher.OnWorkProcessingIdle -= inventoryPublisherHandler;
       }
     };
 
-    bffHandler = () => {
-      bffIdleTcs.TrySetResult(true);
-      if (bffWorker != null && bffHandler != null) {
-        bffWorker.OnWorkProcessingIdle -= bffHandler;
+    bffPublisherHandler = () => {
+      bffPublisherTcs.TrySetResult(true);
+      if (bffPublisher != null && bffPublisherHandler != null) {
+        bffPublisher.OnWorkProcessingIdle -= bffPublisherHandler;
       }
     };
 
-    if (inventoryWorker != null) {
-      inventoryWorker.OnWorkProcessingIdle += inventoryHandler;
-      // If already idle, set result immediately
-      if (inventoryWorker.IsIdle) {
-        inventoryIdleTcs.TrySetResult(true);
+    inventoryPerspectiveHandler = () => {
+      inventoryPerspectiveTcs.TrySetResult(true);
+      if (inventoryPerspectiveWorker != null && inventoryPerspectiveHandler != null) {
+        inventoryPerspectiveWorker.OnWorkProcessingIdle -= inventoryPerspectiveHandler;
+      }
+    };
+
+    bffPerspectiveHandler = () => {
+      bffPerspectiveTcs.TrySetResult(true);
+      if (bffPerspectiveWorker != null && bffPerspectiveHandler != null) {
+        bffPerspectiveWorker.OnWorkProcessingIdle -= bffPerspectiveHandler;
+      }
+    };
+
+    // Register WorkCoordinatorPublisherWorker callbacks
+    if (inventoryPublisher != null) {
+      inventoryPublisher.OnWorkProcessingIdle += inventoryPublisherHandler;
+      if (inventoryPublisher.IsIdle) {
+        inventoryPublisherTcs.TrySetResult(true);
       }
     } else {
-      inventoryIdleTcs.TrySetResult(true);  // No worker, consider idle
+      inventoryPublisherTcs.TrySetResult(true);
     }
 
-    if (bffWorker != null) {
-      bffWorker.OnWorkProcessingIdle += bffHandler;
-      // If already idle, set result immediately
-      if (bffWorker.IsIdle) {
-        bffIdleTcs.TrySetResult(true);
+    if (bffPublisher != null) {
+      bffPublisher.OnWorkProcessingIdle += bffPublisherHandler;
+      if (bffPublisher.IsIdle) {
+        bffPublisherTcs.TrySetResult(true);
       }
     } else {
-      bffIdleTcs.TrySetResult(true);  // No worker, consider idle
+      bffPublisherTcs.TrySetResult(true);
     }
 
-    // Wait for both to become idle (or timeout)
+    // Register PerspectiveWorker callbacks
+    if (inventoryPerspectiveWorker != null) {
+      inventoryPerspectiveWorker.OnWorkProcessingIdle += inventoryPerspectiveHandler;
+      if (inventoryPerspectiveWorker.IsIdle) {
+        inventoryPerspectiveTcs.TrySetResult(true);
+      }
+    } else {
+      inventoryPerspectiveTcs.TrySetResult(true);
+    }
+
+    if (bffPerspectiveWorker != null) {
+      bffPerspectiveWorker.OnWorkProcessingIdle += bffPerspectiveHandler;
+      if (bffPerspectiveWorker.IsIdle) {
+        bffPerspectiveTcs.TrySetResult(true);
+      }
+    } else {
+      bffPerspectiveTcs.TrySetResult(true);
+    }
+
+    // Wait for all 4 workers to become idle (or timeout)
     using var cts = new CancellationTokenSource(timeoutMilliseconds);
 
     try {
       await Task.WhenAll(
-        inventoryIdleTcs.Task,
-        bffIdleTcs.Task
+        inventoryPublisherTcs.Task,
+        bffPublisherTcs.Task,
+        inventoryPerspectiveTcs.Task,
+        bffPerspectiveTcs.Task
       ).WaitAsync(cts.Token);
 
-      Console.WriteLine("[AspireFixture] Event processing idle - all workers have no pending work");
+      Console.WriteLine("[AspireFixture] Event processing idle - all workers have no pending work (2 publishers + 2 perspective workers)");
     } catch (OperationCanceledException) {
       Console.WriteLine($"[AspireFixture] WARNING: Event processing did not reach idle state within {timeoutMilliseconds}ms timeout");
-      Console.WriteLine($"[AspireFixture] InventoryWorker idle: {inventoryWorker?.IsIdle ?? true}, BFF idle: {bffWorker?.IsIdle ?? true}");
+      Console.WriteLine($"[AspireFixture] InventoryWorker Publisher idle: {inventoryPublisher?.IsIdle ?? true}, PerspectiveWorker idle: {inventoryPerspectiveWorker?.IsIdle ?? true}");
+      Console.WriteLine($"[AspireFixture] BFF Publisher idle: {bffPublisher?.IsIdle ?? true}, PerspectiveWorker idle: {bffPerspectiveWorker?.IsIdle ?? true}");
     } finally {
       // Clean up handlers
-      if (inventoryWorker != null && inventoryHandler != null) {
-        inventoryWorker.OnWorkProcessingIdle -= inventoryHandler;
+      if (inventoryPublisher != null && inventoryPublisherHandler != null) {
+        inventoryPublisher.OnWorkProcessingIdle -= inventoryPublisherHandler;
       }
-      if (bffWorker != null && bffHandler != null) {
-        bffWorker.OnWorkProcessingIdle -= bffHandler;
+      if (bffPublisher != null && bffPublisherHandler != null) {
+        bffPublisher.OnWorkProcessingIdle -= bffPublisherHandler;
+      }
+      if (inventoryPerspectiveWorker != null && inventoryPerspectiveHandler != null) {
+        inventoryPerspectiveWorker.OnWorkProcessingIdle -= inventoryPerspectiveHandler;
+      }
+      if (bffPerspectiveWorker != null && bffPerspectiveHandler != null) {
+        bffPerspectiveWorker.OnWorkProcessingIdle -= bffPerspectiveHandler;
       }
     }
   }

@@ -11,7 +11,7 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// </summary>
 [NotInParallel]
 public class CreateProductWorkflowTests {
-  private static SharedIntegrationFixture? _fixture;
+  private static AspireIntegrationFixture? _fixture;
 
   // Test product IDs (deterministic GUIDs for reproducibility)
   private static readonly ProductId TestProd1 = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000001"));

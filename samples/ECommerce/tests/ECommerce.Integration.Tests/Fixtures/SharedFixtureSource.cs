@@ -5,19 +5,19 @@ namespace ECommerce.Integration.Tests.Fixtures;
 /// <summary>
 /// Provides a shared integration fixture for all test classes.
 /// TUnit will create this once and share it across all tests.
-/// Using Testcontainers (Aspire has .NET 10 DCP path configuration issues - see GitHub issue).
+/// Using Aspire.Hosting.Testing for reliable container orchestration.
 /// </summary>
 public static class SharedFixtureSource {
-  private static SharedIntegrationFixture? _fixture;
+  private static AspireIntegrationFixture? _fixture;
   private static readonly SemaphoreSlim _lock = new(1, 1);
 
   [RequiresUnreferencedCode("EF Core in tests may use unreferenced code")]
   [RequiresDynamicCode("EF Core in tests may use dynamic code")]
-  public static async Task<SharedIntegrationFixture> GetFixtureAsync() {
+  public static async Task<AspireIntegrationFixture> GetFixtureAsync() {
     await _lock.WaitAsync();
     try {
       if (_fixture == null) {
-        _fixture = new SharedIntegrationFixture();
+        _fixture = new AspireIntegrationFixture();
         await _fixture.InitializeAsync();
       }
       return _fixture;

@@ -10,7 +10,7 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// </summary>
 [NotInParallel]
 public class SeedProductsWorkflowTests {
-  private static SharedIntegrationFixture? _fixture;
+  private static AspireIntegrationFixture? _fixture;
 
   [Before(Test)]
   [RequiresUnreferencedCode("Test code - reflection allowed")]
