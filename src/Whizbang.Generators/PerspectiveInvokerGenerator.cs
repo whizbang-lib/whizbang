@@ -8,18 +8,18 @@ using Whizbang.Generators.Shared.Utilities;
 namespace Whizbang.Generators;
 
 /// <summary>
-/// Incremental source generator that discovers IPerspectiveOf implementations
+/// Incremental source generator that discovers IPerspectiveFor implementations
 /// and generates runtime routing logic for the GeneratedPerspectiveInvoker.
 /// Creates type-safe routing from events to perspective implementations.
 /// </summary>
 /// <tests>No tests found</tests>
 [Generator]
 public class PerspectiveInvokerGenerator : IIncrementalGenerator {
-  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.IPerspectiveOf";
+  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
 
   /// <tests>No tests found</tests>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
-    // Discover IPerspectiveOf implementations
+    // Discover IPerspectiveFor implementations
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
         transform: static (ctx, ct) => ExtractPerspectiveInfo(ctx, ct)
@@ -41,8 +41,8 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// Extracts perspective information from a class declaration.
-  /// Returns null if the class doesn't implement IPerspectiveOf.
-  /// A class can implement multiple IPerspectiveOf&lt;TEvent&gt; interfaces.
+  /// Returns null if the class doesn't implement IPerspectiveFor.
+  /// A class can implement multiple IPerspectiveFor&lt;TModel, TEvent&gt; interfaces.
   /// </summary>
   /// <tests>No tests found</tests>
   private static PerspectiveInfo? ExtractPerspectiveInfo(
@@ -61,10 +61,14 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Look for all IPerspectiveOf<TEvent> interfaces this class implements
+    // Look for all IPerspectiveFor<TModel, TEvent1, ...> interfaces (all variants)
+    // Check if interface name contains "IPerspectiveFor" (case-sensitive)
     var perspectiveInterfaces = classSymbol.AllInterfaces
-        .Where(i => i.OriginalDefinition.ToDisplayString() == PERSPECTIVE_INTERFACE_NAME + "<TEvent>"
-                    && i.TypeArguments.Length == 1)
+        .Where(i => {
+          var originalDef = i.OriginalDefinition.ToDisplayString();
+          // Simple contains check to match any perspective interface
+          return originalDef.Contains("IPerspectiveFor");
+        })
         .ToList();
 
     if (perspectiveInterfaces.Count == 0) {
@@ -72,9 +76,20 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
     }
 
     // Extract all event types this perspective listens to
+    // For IPerspectiveFor<TModel, TEvent1, TEvent2, ...>, event types start at index 1
+    // Index 0 is always TModel (the read model type)
+    // Skip the base marker interface (has only 1 type argument - just TModel)
     var eventTypes = perspectiveInterfaces
-        .Select(i => i.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+        .Where(i => i.TypeArguments.Length > 1) // Only event-handling variants, not base marker
+        .SelectMany(i => i.TypeArguments.Skip(1)) // Skip TModel, take all event types
+        .Select(t => t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+        .Distinct()
         .ToArray();
+
+    // Perspectives must handle at least one event - skip marker-only implementations
+    if (eventTypes.Length == 0) {
+      return null;
+    }
 
     return new PerspectiveInfo(
         ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),

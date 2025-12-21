@@ -76,10 +76,22 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Check if class implements IPerspectiveFor<TModel> base interface
+    // DEBUG: Log all interfaces this class implements
+    // var allInterfacesDebug = string.Join(", ", symbol.AllInterfaces.Select(i => i.OriginalDefinition.ToDisplayString()));
+    // context.ReportDiagnostic(Diagnostic.Create(
+    //     new DiagnosticDescriptor("EF DEBUG001", "Class interfaces", $"Class {symbol.Name} implements: {allInterfacesDebug}", "Debug", DiagnosticSeverity.Warning, true),
+    //     Location.None));
+
+    // Check if class implements IPerspectiveFor<TModel> base interface or any variant
+    // IPerspectiveFor has multiple overloads:
+    // - IPerspectiveFor<TModel> (base marker)
+    // - IPerspectiveFor<TModel, TEvent1>
+    // - IPerspectiveFor<TModel, TEvent1, TEvent2>
+    // ... up to IPerspectiveFor<TModel, TEvent1, ..., TEvent5>
     var perspectiveForInterface = symbol.AllInterfaces.FirstOrDefault(i => {
       var originalDef = i.OriginalDefinition.ToDisplayString();
-      return originalDef == "Whizbang.Core.Perspectives.IPerspectiveFor<TModel>";
+      return originalDef == "Whizbang.Core.Perspectives.IPerspectiveFor<TModel>" ||
+             originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<TModel,");
     });
 
     if (perspectiveForInterface is null) {

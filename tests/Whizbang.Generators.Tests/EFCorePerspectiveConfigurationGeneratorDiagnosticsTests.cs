@@ -20,20 +20,17 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
     // Arrange
     var source = @"
       using Whizbang.Core;
-
-      namespace Whizbang.Core.Perspectives {
-        public interface IPerspectiveStore<TModel> { }
-      }
+      using Whizbang.Core.Perspectives;
 
       namespace TestApp;
 
       public record ProductDto(string Name, decimal Price);
 
-      public class ProductPerspective(Whizbang.Core.Perspectives.IPerspectiveStore<ProductDto> store)
-        : IPerspectiveOf<ProductCreated> {
+      public class ProductPerspective(IPerspectiveStore<ProductDto> store)
+        : IPerspectiveFor<ProductDto, ProductCreated> {
 
-        public Task Update(ProductCreated @event, CancellationToken ct) {
-          return Task.CompletedTask;
+        public ProductDto Apply(ProductDto currentData, ProductCreated @event) {
+          return currentData;
         }
       }
 
@@ -62,18 +59,15 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
     // Arrange
     var source = @"
       using Whizbang.Core;
-
-      namespace Whizbang.Core.Perspectives {
-        public interface IPerspectiveStore<TModel> { }
-      }
+      using Whizbang.Core.Perspectives;
 
       namespace TestApp;
 
       public record ProductDto(string Name);
 
-      public class ProductPerspective(Whizbang.Core.Perspectives.IPerspectiveStore<ProductDto> store)
-        : IPerspectiveOf<ProductCreated> {
-        public Task Update(ProductCreated @event, CancellationToken ct) => Task.CompletedTask;
+      public class ProductPerspective(IPerspectiveStore<ProductDto> store)
+        : IPerspectiveFor<ProductDto, ProductCreated> {
+        public ProductDto Apply(ProductDto currentData, ProductCreated @event) => currentData;
       }
 
       public record ProductCreated : IEvent;
@@ -99,24 +93,15 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
     // Arrange
     var source = @"
       using Whizbang.Core;
-
-      namespace Whizbang.Core {
-        public interface IPerspectiveOf<in TEvent> where TEvent : IEvent {
-          Task Update(TEvent @event, CancellationToken cancellationToken = default);
-        }
-      }
-
-      namespace Whizbang.Core.Perspectives {
-        public interface IPerspectiveStore<TModel> { }
-      }
+      using Whizbang.Core.Perspectives;
 
       namespace TestApp;
 
       public record ProductDto(string Name);
 
-      public class ProductPerspective(Whizbang.Core.Perspectives.IPerspectiveStore<ProductDto> store)
-        : IPerspectiveOf<ProductCreated> {
-        public Task Update(ProductCreated @event, CancellationToken ct) => Task.CompletedTask;
+      public class ProductPerspective(IPerspectiveStore<ProductDto> store)
+        : IPerspectiveFor<ProductDto, ProductCreated> {
+        public ProductDto Apply(ProductDto currentData, ProductCreated @event) => currentData;
       }
 
       public record ProductCreated : IEvent;
@@ -146,24 +131,15 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
     // Arrange
     var source = @"
       using Whizbang.Core;
-
-      namespace Whizbang.Core {
-        public interface IPerspectiveOf<in TEvent> where TEvent : IEvent {
-          Task Update(TEvent @event, CancellationToken cancellationToken = default);
-        }
-      }
-
-      namespace Whizbang.Core.Perspectives {
-        public interface IPerspectiveStore<TModel> { }
-      }
+      using Whizbang.Core.Perspectives;
 
       namespace TestApp;
 
       public record ProductDto(string Name);
 
-      public class ProductPerspective(Whizbang.Core.Perspectives.IPerspectiveStore<ProductDto> store)
-        : IPerspectiveOf<ProductCreated> {
-        public Task Update(ProductCreated @event, CancellationToken ct) => Task.CompletedTask;
+      public class ProductPerspective(IPerspectiveStore<ProductDto> store)
+        : IPerspectiveFor<ProductDto, ProductCreated> {
+        public ProductDto Apply(ProductDto currentData, ProductCreated @event) => currentData;
       }
 
       public record ProductCreated : IEvent;
@@ -221,29 +197,20 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
     // Arrange - Two perspectives using same model type
     var source = @"
       using Whizbang.Core;
-
-      namespace Whizbang.Core {
-        public interface IPerspectiveOf<in TEvent> where TEvent : IEvent {
-          Task Update(TEvent @event, CancellationToken cancellationToken = default);
-        }
-      }
-
-      namespace Whizbang.Core.Perspectives {
-        public interface IPerspectiveStore<TModel> { }
-      }
+      using Whizbang.Core.Perspectives;
 
       namespace TestApp;
 
       public record ProductDto(string Name);
 
-      public class ProductCreatedPerspective(Whizbang.Core.Perspectives.IPerspectiveStore<ProductDto> store)
-        : IPerspectiveOf<ProductCreated> {
-        public Task Update(ProductCreated @event, CancellationToken ct) => Task.CompletedTask;
+      public class ProductCreatedPerspective(IPerspectiveStore<ProductDto> store)
+        : IPerspectiveFor<ProductDto, ProductCreated> {
+        public ProductDto Apply(ProductDto currentData, ProductCreated @event) => currentData;
       }
 
-      public class ProductUpdatedPerspective(Whizbang.Core.Perspectives.IPerspectiveStore<ProductDto> store)
-        : IPerspectiveOf<ProductUpdated> {
-        public Task Update(ProductUpdated @event, CancellationToken ct) => Task.CompletedTask;
+      public class ProductUpdatedPerspective(IPerspectiveStore<ProductDto> store)
+        : IPerspectiveFor<ProductDto, ProductUpdated> {
+        public ProductDto Apply(ProductDto currentData, ProductUpdated @event) => currentData;
       }
 
       public record ProductCreated : IEvent;

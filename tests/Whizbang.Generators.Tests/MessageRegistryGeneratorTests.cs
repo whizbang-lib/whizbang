@@ -39,6 +39,7 @@ namespace TestNamespace {
     // Arrange
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 
 namespace TestNamespace {
   public record CreateOrderCommand : ICommand {
@@ -63,6 +64,7 @@ namespace TestNamespace {
     // Arrange
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 
 namespace TestNamespace {
   public record OrderCreatedEvent : IEvent {
@@ -87,6 +89,7 @@ namespace TestNamespace {
     // Arrange
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading.Tasks;
 
 namespace TestNamespace {
@@ -125,6 +128,7 @@ namespace TestNamespace {
     // Arrange
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -165,6 +169,7 @@ namespace TestNamespace {
     // Arrange
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -173,10 +178,11 @@ namespace TestNamespace {
     public string OrderId { get; init; } = """";
   }
 
-  public class OrderListPerspective : IPerspectiveOf<OrderCreatedEvent> {
-    public async Task Update(OrderCreatedEvent @event, CancellationToken cancellationToken = default) {
-      // Update read model
-      await Task.CompletedTask;
+  public record OrderListModel(string OrderId);
+
+  public class OrderListPerspective : IPerspectiveFor<OrderListModel, OrderCreatedEvent> {
+    public OrderListModel Apply(OrderListModel currentData, OrderCreatedEvent @event) {
+      return currentData with { OrderId = @event.OrderId };
     }
   }
 }";
@@ -198,6 +204,7 @@ namespace TestNamespace {
     // Arrange
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 
 namespace TestNamespace {
   public record CreateOrderCommand : ICommand {
@@ -230,6 +237,7 @@ namespace TestNamespace {
     // Arrange
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 
 namespace TestNamespace {
   public record CreateOrderCommand : ICommand {
@@ -253,6 +261,7 @@ namespace TestNamespace {
     // Arrange
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -265,16 +274,15 @@ namespace TestNamespace {
     public string OrderId { get; init; } = """";
   }
 
-  public class OrderListPerspective :
-      IPerspectiveOf<OrderCreatedEvent>,
-      IPerspectiveOf<OrderUpdatedEvent> {
+  public record OrderListModel(string OrderId);
 
-    public async Task Update(OrderCreatedEvent @event, CancellationToken cancellationToken = default) {
-      await Task.CompletedTask;
+  public class OrderListPerspective : IPerspectiveFor<OrderListModel, OrderCreatedEvent, OrderUpdatedEvent> {
+    public OrderListModel Apply(OrderListModel currentData, OrderCreatedEvent @event) {
+      return currentData with { OrderId = @event.OrderId };
     }
 
-    public async Task Update(OrderUpdatedEvent @event, CancellationToken cancellationToken = default) {
-      await Task.CompletedTask;
+    public OrderListModel Apply(OrderListModel currentData, OrderUpdatedEvent @event) {
+      return currentData with { OrderId = @event.OrderId };
     }
   }
 }";
@@ -296,6 +304,7 @@ namespace TestNamespace {
     // Arrange
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 
 namespace TestNamespace {
   public record CreateOrderCommand : ICommand {
@@ -323,6 +332,7 @@ namespace TestNamespace {
     // Arrange
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -356,6 +366,7 @@ namespace TestNamespace {
     // Arrange
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -415,6 +426,7 @@ namespace TestNamespace {
     // Arrange
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -474,6 +486,7 @@ namespace TestNamespace {
     // Arrange
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading.Tasks;
 
 namespace TestNamespace {
@@ -512,6 +525,7 @@ namespace TestNamespace {
     // Arrange
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading.Tasks;
 
 namespace TestNamespace {
@@ -567,6 +581,7 @@ namespace TestNamespace {
     // Arrange
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading.Tasks;
 
 namespace TestNamespace {
@@ -605,6 +620,7 @@ namespace TestNamespace {
     // Arrange - Test with different variable names
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading.Tasks;
 
 namespace TestNamespace {
@@ -641,6 +657,7 @@ namespace TestNamespace {
     // Arrange - Tests ExtractMessageType with struct (default case in switch expression)
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 
 namespace TestNamespace {
   public struct CreateOrderStruct : ICommand {
@@ -686,6 +703,7 @@ namespace TestNamespace {
     // Arrange - Tests ExtractDispatcher when method name is not SendAsync/PublishAsync
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading.Tasks;
 
 namespace TestNamespace {
@@ -722,6 +740,7 @@ namespace TestNamespace {
     // Arrange - Tests ExtractDispatcher when SendAsync has no arguments
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading.Tasks;
 
 namespace TestNamespace {
@@ -756,6 +775,7 @@ namespace TestNamespace {
     // Arrange - Tests ExtractReceptor with wrong number of type arguments
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -784,6 +804,7 @@ namespace TestNamespace {
     // Message is used but not defined in this project
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -817,6 +838,7 @@ namespace Whizbang.Core {
     // Arrange - Tests GenerateMessageRegistry when only dispatcher exists (no receptor, no perspective)
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading.Tasks;
 
 namespace TestNamespace {
@@ -854,6 +876,7 @@ namespace Whizbang.Core {
     // This tests the containingClass null check
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading.Tasks;
 
 namespace TestNamespace {
@@ -885,6 +908,7 @@ namespace TestNamespace {
     // This tests the handleMethod null fallback for line number
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -919,6 +943,7 @@ namespace TestNamespace {
     // Need to pass default(TEvent) or null with explicit generic to force fallback
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading.Tasks;
 
 namespace TestNamespace {
@@ -957,6 +982,7 @@ namespace TestNamespace {
     // Line 108-110: if (symbolInfo.Symbol is not IMethodSymbol methodSymbol)
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System;
 using System.Threading.Tasks;
 
@@ -1000,6 +1026,7 @@ namespace TestNamespace {
     // The generator looks for any method named SendAsync, including non-IDispatcher ones
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading.Tasks;
 
 namespace TestNamespace {
@@ -1037,6 +1064,7 @@ namespace TestNamespace {
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 
 namespace TestNamespace;
 
@@ -1068,6 +1096,7 @@ public class TestReceptor : IReceptor<TestCommand> {
     // When a message is dispatched but not defined in this project, we infer its type
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading.Tasks;
 
 namespace TestNamespace {
@@ -1109,16 +1138,17 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 
 namespace TestNamespace;
 
 public record TestEvent : IEvent;
 
-public class TestPerspective : IPerspectiveOf<TestEvent> {
-  public Guid Id { get; set; }
+public record TestModel(Guid Id);
 
-  public Task Update(TestEvent @event, CancellationToken ct = default) {
-    return Task.CompletedTask;
+public class TestPerspective : IPerspectiveFor<TestModel, TestEvent> {
+  public TestModel Apply(TestModel currentData, TestEvent @event) {
+    return currentData;
   }
 }";
 
@@ -1159,6 +1189,7 @@ public class SomeClass {
     // Arrange - Tests ExtractDispatcher line 121: if (invocation.ArgumentList.Arguments.Count > 0)
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading.Tasks;
 
 namespace TestNamespace {
@@ -1220,6 +1251,7 @@ namespace TestNamespace {
     // Arrange - Tests ExtractDispatcher line 128-130 where TypeArguments.Length == 0
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading.Tasks;
 
 namespace TestNamespace {
@@ -1253,6 +1285,7 @@ namespace TestNamespace {
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 
 namespace TestNamespace;
 
@@ -1285,12 +1318,15 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 
 namespace TestNamespace;
 
 public record HybridMessage : ICommand, IEvent {
-  public string Data { get; init; } = """";
+  public string Data { get; init} = """";
 }
+
+public record HybridModel(Guid Id, string Data);
 
 public class HybridReceptor : IReceptor<HybridMessage, string> {
   public ValueTask<string> HandleAsync(HybridMessage message, CancellationToken ct = default) {
@@ -1298,10 +1334,9 @@ public class HybridReceptor : IReceptor<HybridMessage, string> {
   }
 }
 
-public class HybridPerspective : IPerspectiveOf<HybridMessage> {
-  public Guid Id { get; set; }
-  public Task Update(HybridMessage @event, CancellationToken ct = default) {
-    return Task.CompletedTask;
+public class HybridPerspective : IPerspectiveFor<HybridModel, HybridMessage> {
+  public HybridModel Apply(HybridModel currentData, HybridMessage @event) {
+    return currentData with { Data = @event.Data };
   }
 }";
 
@@ -1328,6 +1363,7 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 
 namespace TestNamespace;
 
@@ -1335,10 +1371,11 @@ public record PerspectiveOnlyEvent : IEvent {
   public string EventData { get; init; } = """";
 }
 
-public class EventPerspective : IPerspectiveOf<PerspectiveOnlyEvent> {
-  public Guid Id { get; set; }
-  public Task Update(PerspectiveOnlyEvent @event, CancellationToken ct = default) {
-    return Task.CompletedTask;
+public record EventModel(Guid Id, string EventData);
+
+public class EventPerspective : IPerspectiveFor<EventModel, PerspectiveOnlyEvent> {
+  public EventModel Apply(EventModel currentData, PerspectiveOnlyEvent @event) {
+    return currentData with { EventData = @event.EventData };
   }
 }";
 
@@ -1363,6 +1400,7 @@ public class EventPerspective : IPerspectiveOf<PerspectiveOnlyEvent> {
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 
 namespace TestNamespace;
 
@@ -1398,6 +1436,7 @@ public class DualReceptor : IReceptor<DualCommand, string>, IReceptor<DualComman
     // Arrange - Tests line 339: ternary for trailing comma in dispatchers array
     var source = """
             using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
             using System.Threading.Tasks;
 
             namespace MyApp {
@@ -1433,6 +1472,7 @@ public class DualReceptor : IReceptor<DualCommand, string>, IReceptor<DualComman
     // Arrange - Tests line 354: ternary for trailing comma in receptors array
     var source = """
             using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
             using System.Threading.Tasks;
 
             namespace MyApp {
@@ -1464,6 +1504,7 @@ public class DualReceptor : IReceptor<DualCommand, string>, IReceptor<DualComman
     // Arrange - Tests line 369: ternary for trailing comma in perspectives array
     var source = """
             using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
             using System;
             using System.Threading;
             using System.Threading.Tasks;
@@ -1471,14 +1512,14 @@ public class DualReceptor : IReceptor<DualCommand, string>, IReceptor<DualComman
             namespace MyApp {
               public record TestEvent : IEvent;
 
-              public class FirstPerspective : IPerspectiveOf<TestEvent> {
-                public Guid Id { get; set; }
-                public Task Update(TestEvent @event, CancellationToken ct = default) => Task.CompletedTask;
+              public record PerspectiveModel(Guid Id);
+
+              public class FirstPerspective : IPerspectiveFor<PerspectiveModel, TestEvent> {
+                public PerspectiveModel Apply(PerspectiveModel currentData, TestEvent @event) => currentData;
               }
 
-              public class SecondPerspective : IPerspectiveOf<TestEvent> {
-                public Guid Id { get; set; }
-                public Task Update(TestEvent @event, CancellationToken ct = default) => Task.CompletedTask;
+              public class SecondPerspective : IPerspectiveFor<PerspectiveModel, TestEvent> {
+                public PerspectiveModel Apply(PerspectiveModel currentData, TestEvent @event) => currentData;
               }
             }
             """;
@@ -1499,6 +1540,7 @@ public class DualReceptor : IReceptor<DualCommand, string>, IReceptor<DualComman
     // Arrange - Tests line 321: isEvent when no perspectives and no receptors but has dispatchers
     var source = """
             using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
             using System.Threading.Tasks;
 
             namespace MyApp {
@@ -1530,6 +1572,7 @@ public class DualReceptor : IReceptor<DualCommand, string>, IReceptor<DualComman
     // This scenario creates a dispatcher call in a context where the containing method might not be identified
     var source = """
             using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
             using System.Threading.Tasks;
 
             namespace MyApp {

@@ -17,7 +17,7 @@ namespace Whizbang.Core.Generated;
 /// </summary>
 public static class PerspectiveRegistrationExtensions {
   /// <summary>
-  /// Registers all discovered IPerspectiveOf implementations with the service collection.
+  /// Registers all discovered IPerspectiveFor implementations with the service collection.
   /// Each perspective is registered as Scoped to match the typical database context lifetime.
   /// Returns a WhizbangPerspectiveBuilder for fluent configuration of storage providers.
   /// </summary>

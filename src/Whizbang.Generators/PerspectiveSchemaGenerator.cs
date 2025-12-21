@@ -23,13 +23,13 @@ namespace Whizbang.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:PerspectiveSchemaGenerator_LowercaseClassName_GeneratesTableNameWithoutLeadingUnderscoreAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:PerspectiveSchemaGenerator_PerspectiveAtExactThreshold_GeneratesWarningAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs:PerspectiveSchemaGenerator_ClassWithBaseListButNotPerspective_SkipsAsync</tests>
-/// Incremental source generator that discovers IPerspectiveOf implementations
+/// Incremental source generator that discovers IPerspectiveFor implementations
 /// and generates PostgreSQL table schemas with 3-column JSONB pattern.
 /// Schemas use universal columns (id, created_at, updated_at, version) + JSONB (model_data, metadata, scope).
 /// </summary>
 [Generator]
 public class PerspectiveSchemaGenerator : IIncrementalGenerator {
-  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.IPerspectiveOf";
+  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
   private const int SIZE_WARNING_THRESHOLD = 1500; // Warn before hitting 2KB compression threshold
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
@@ -48,7 +48,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// Extracts perspective schema information from a class declaration.
-  /// Returns null if the class doesn't implement IPerspectiveOf.
+  /// Returns null if the class doesn't implement IPerspectiveFor.
   /// </summary>
   private static PerspectiveSchemaInfo? ExtractPerspectiveSchemaInfo(
       GeneratorSyntaxContext context,
@@ -66,13 +66,23 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Look for IPerspectiveOf<TEvent> interface
+    // Look for IPerspectiveFor<TModel, TEvent1, ...> interfaces (all variants)
+    // Check if interface name contains "IPerspectiveFor" (case-sensitive)
     var perspectiveInterfaces = classSymbol.AllInterfaces
-        .Where(i => i.OriginalDefinition.ToDisplayString() == PERSPECTIVE_INTERFACE_NAME + "<TEvent>"
-                    && i.TypeArguments.Length == 1)
+        .Where(i => {
+          var originalDef = i.OriginalDefinition.ToDisplayString();
+          // Simple contains check to match any perspective interface
+          return originalDef.Contains("IPerspectiveFor");
+        })
         .ToList();
 
     if (perspectiveInterfaces.Count == 0) {
+      return null;
+    }
+
+    // Verify perspective handles at least one event (not just marker interface)
+    var hasEvents = perspectiveInterfaces.Any(i => i.TypeArguments.Length > 1);
+    if (!hasEvents) {
       return null;
     }
 
@@ -80,8 +90,10 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     var className = classSymbol.Name;
     var tableName = GenerateTableName(className);
 
-    // Estimate size based on properties (rough heuristic)
-    var propertyCount = classSymbol.GetMembers()
+    // Estimate size based on properties in the MODEL type (first type argument)
+    // For IPerspectiveFor<TModel, TEvent>, TModel is at index 0
+    var modelType = perspectiveInterfaces.First().TypeArguments[0];
+    var propertyCount = modelType.GetMembers()
         .OfType<IPropertySymbol>()
         .Count(p => !p.IsStatic);
 

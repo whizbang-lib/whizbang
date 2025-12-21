@@ -153,20 +153,26 @@ public class SomeClass {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithPerspectiveButNoReceptor_DoesNotWarnAsync() {
-    // Arrange - Tests that IPerspectiveOf suppresses WHIZ002 warning
+    // Arrange - Tests that IPerspectiveFor suppresses WHIZ002 warning
     var source = @"
 using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 
 namespace MyApp.Perspectives;
 
 public record TestEvent : IEvent;
 
-public class TestPerspective : IPerspectiveOf<TestEvent> {
+public record TestModel {
   public Guid Id { get; set; }
-  public Task Update(TestEvent @event, CancellationToken ct = default) => Task.CompletedTask;
+}
+
+public class TestPerspective : IPerspectiveFor<TestModel, TestEvent> {
+  public TestModel Apply(TestModel currentData, TestEvent @event) {
+    return currentData;
+  }
 }
 ";
 
@@ -581,14 +587,20 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 
 namespace MyApp.Perspectives;
 
 public record ProductCreatedEvent : IEvent;
 
-public class ProductCatalogPerspective : IPerspectiveOf<ProductCreatedEvent> {
+public record ProductModel {
   public Guid Id { get; set; }
-  public Task Update(ProductCreatedEvent @event, CancellationToken ct = default) => Task.CompletedTask;
+}
+
+public class ProductCatalogPerspective : IPerspectiveFor<ProductModel, ProductCreatedEvent> {
+  public ProductModel Apply(ProductModel currentData, ProductCreatedEvent @event) {
+    return currentData;
+  }
 }
 ";
 
@@ -613,14 +625,20 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 
 namespace MyApp.Perspectives;
 
 public record ProductCreatedEvent : IEvent;
 
-public class ProductCatalogPerspective : IPerspectiveOf<ProductCreatedEvent> {
+public record ProductModel {
   public Guid Id { get; set; }
-  public Task Update(ProductCreatedEvent @event, CancellationToken ct = default) => Task.CompletedTask;
+}
+
+public class ProductCatalogPerspective : IPerspectiveFor<ProductModel, ProductCreatedEvent> {
+  public ProductModel Apply(ProductModel currentData, ProductCreatedEvent @event) {
+    return currentData;
+  }
 }
 ";
 
@@ -645,14 +663,20 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 
 namespace MyApp.Perspectives;
 
 public record ProductCreatedEvent : IEvent;
 
-public class ProductCatalogPerspective : IPerspectiveOf<ProductCreatedEvent> {
+public record ProductModel {
   public Guid Id { get; set; }
-  public Task Update(ProductCreatedEvent @event, CancellationToken ct = default) => Task.CompletedTask;
+}
+
+public class ProductCatalogPerspective : IPerspectiveFor<ProductModel, ProductCreatedEvent> {
+  public ProductModel Apply(ProductModel currentData, ProductCreatedEvent @event) {
+    return currentData;
+  }
 }
 ";
 

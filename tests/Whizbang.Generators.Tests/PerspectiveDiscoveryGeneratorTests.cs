@@ -39,6 +39,7 @@ namespace TestNamespace {
     // Arrange
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -47,9 +48,13 @@ namespace TestNamespace {
     public string OrderId { get; init; } = """";
   }
 
-  public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent> {
-    public Task Update(OrderCreatedEvent @event, CancellationToken cancellationToken = default) {
-      return Task.CompletedTask;
+  public record OrderModel {
+    public string OrderId { get; set; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData;
     }
   }
 }";
@@ -74,6 +79,7 @@ namespace TestNamespace {
     // Arrange
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -86,13 +92,18 @@ namespace TestNamespace {
     public string PaymentId { get; init; } = """";
   }
 
-  public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent>, IPerspectiveOf<PaymentProcessedEvent> {
-    public Task Update(OrderCreatedEvent @event, CancellationToken cancellationToken = default) {
-      return Task.CompletedTask;
+  public record OrderModel {
+    public string OrderId { get; set; } = """";
+    public string PaymentId { get; set; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent>, IPerspectiveFor<OrderModel, PaymentProcessedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData;
     }
 
-    public Task Update(PaymentProcessedEvent @event, CancellationToken cancellationToken = default) {
-      return Task.CompletedTask;
+    public OrderModel Apply(OrderModel currentData, PaymentProcessedEvent @event) {
+      return currentData;
     }
   }
 }";
@@ -122,6 +133,7 @@ namespace TestNamespace {
     // Arrange
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -134,15 +146,23 @@ namespace TestNamespace {
     public string ReservationId { get; init; } = """";
   }
 
-  public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent> {
-    public Task Update(OrderCreatedEvent @event, CancellationToken cancellationToken = default) {
-      return Task.CompletedTask;
+  public record OrderModel {
+    public string OrderId { get; set; } = """";
+  }
+
+  public record InventoryModel {
+    public string ReservationId { get; set; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData;
     }
   }
 
-  public class InventoryPerspective : IPerspectiveOf<InventoryReservedEvent> {
-    public Task Update(InventoryReservedEvent @event, CancellationToken cancellationToken = default) {
-      return Task.CompletedTask;
+  public class InventoryPerspective : IPerspectiveFor<InventoryModel, InventoryReservedEvent> {
+    public InventoryModel Apply(InventoryModel currentData, InventoryReservedEvent @event) {
+      return currentData;
     }
   }
 }";
@@ -167,6 +187,7 @@ namespace TestNamespace {
     // Arrange
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -175,13 +196,17 @@ namespace TestNamespace {
     public string OrderId { get; init; } = """";
   }
 
-  public abstract class BasePerspective : IPerspectiveOf<OrderCreatedEvent> {
-    public abstract Task Update(OrderCreatedEvent @event, CancellationToken cancellationToken = default);
+  public record OrderModel {
+    public string OrderId { get; set; } = """";
+  }
+
+  public abstract class BasePerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public abstract OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event);
   }
 
   public class ConcretePerspective : BasePerspective {
-    public override Task Update(OrderCreatedEvent @event, CancellationToken cancellationToken = default) {
-      return Task.CompletedTask;
+    public override OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData;
     }
   }
 }";
@@ -205,6 +230,7 @@ namespace TestNamespace {
     // Arrange
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -213,9 +239,13 @@ namespace TestNamespace {
     public string OrderId { get; init; } = """";
   }
 
-  public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent> {
-    public Task Update(OrderCreatedEvent @event, CancellationToken cancellationToken = default) {
-      return Task.CompletedTask;
+  public record OrderModel {
+    public string OrderId { get; set; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData;
     }
   }
 }";
@@ -238,15 +268,20 @@ namespace TestNamespace {
     // Arrange
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace TestNamespace {
   public record OrderCreatedEvent : IEvent { }
 
-  public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent> {
-    public Task Update(OrderCreatedEvent @event, CancellationToken cancellationToken = default) {
-      return Task.CompletedTask;
+  public record OrderModel {
+    public string OrderId { get; set; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData;
     }
   }
 }";
@@ -268,15 +303,20 @@ namespace TestNamespace {
     // Arrange
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace TestNamespace {
   public record OrderCreatedEvent : IEvent { }
 
-  public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent> {
-    public Task Update(OrderCreatedEvent @event, CancellationToken cancellationToken = default) {
-      return Task.CompletedTask;
+  public record OrderModel {
+    public string OrderId { get; set; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData;
     }
   }
 }";
@@ -299,15 +339,20 @@ namespace TestNamespace {
     // Arrange
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace TestNamespace {
   public record OrderCreatedEvent : IEvent { }
 
-  public class OrderPerspective : IPerspectiveOf<OrderCreatedEvent> {
-    public Task Update(OrderCreatedEvent @event, CancellationToken cancellationToken = default) {
-      return Task.CompletedTask;
+  public record OrderModel {
+    public string OrderId { get; set; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData;
     }
   }
 }";
@@ -325,7 +370,7 @@ namespace TestNamespace {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task PerspectiveDiscoveryGenerator_ClassWithoutIPerspectiveOf_SkipsAsync() {
-    // Arrange - Tests ExtractPerspectiveInfo when class doesn't implement IPerspectiveOf
+    // Arrange - Tests ExtractPerspectiveInfo when class doesn't implement IPerspectiveFor
     var source = @"
 using System;
 using System.Threading;
@@ -351,6 +396,7 @@ namespace TestNamespace {
     // Arrange - Tests GetSimpleName with array type (fullyQualifiedName.EndsWith("[]"))
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -360,9 +406,13 @@ namespace TestNamespace {
     public string[] OrderIds { get; init; } = Array.Empty<string>();
   }
 
-  public class OrderBatchPerspective : IPerspectiveOf<OrderBatchEvent> {
-    public Task Update(OrderBatchEvent @event, CancellationToken cancellationToken = default) {
-      return Task.CompletedTask;
+  public record OrderBatchModel {
+    public string[] OrderIds { get; set; } = Array.Empty<string>();
+  }
+
+  public class OrderBatchPerspective : IPerspectiveFor<OrderBatchModel, OrderBatchEvent> {
+    public OrderBatchModel Apply(OrderBatchModel currentData, OrderBatchEvent @event) {
+      return currentData;
     }
   }
 }";
@@ -383,6 +433,7 @@ namespace TestNamespace {
     // Arrange - Tests GetSimpleName when type has no dots (lastDot < 0)
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -390,9 +441,13 @@ public record GlobalEvent : IEvent {
   public string Id { get; init; } = """";
 }
 
-public class GlobalPerspective : IPerspectiveOf<GlobalEvent> {
-  public Task Update(GlobalEvent @event, CancellationToken cancellationToken = default) {
-    return Task.CompletedTask;
+public record GlobalModel {
+  public string Id { get; set; } = """";
+}
+
+public class GlobalPerspective : IPerspectiveFor<GlobalModel, GlobalEvent> {
+  public GlobalModel Apply(GlobalModel currentData, GlobalEvent @event) {
+    return currentData;
   }
 }";
 
@@ -412,6 +467,7 @@ public class GlobalPerspective : IPerspectiveOf<GlobalEvent> {
     // Arrange - Tests perspective discovery with nested classes
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -420,10 +476,14 @@ namespace TestNamespace {
     public string OrderId { get; init; } = """";
   }
 
+  public record OrderModel {
+    public string OrderId { get; set; } = """";
+  }
+
   public class Perspectives {
-    public class OrderPerspective : IPerspectiveOf<OrderEvent> {
-      public Task Update(OrderEvent @event, CancellationToken cancellationToken = default) {
-        return Task.CompletedTask;
+    public class OrderPerspective : IPerspectiveFor<OrderModel, OrderEvent> {
+      public OrderModel Apply(OrderModel currentData, OrderEvent @event) {
+        return currentData;
       }
     }
   }
@@ -445,6 +505,7 @@ namespace TestNamespace {
     // Arrange - Tests that interfaces are skipped (can't instantiate)
     var source = @"
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -453,13 +514,17 @@ namespace TestNamespace {
     public string OrderId { get; init; } = """";
   }
 
-  public interface IOrderPerspective : IPerspectiveOf<OrderEvent> {
+  public record OrderModel {
+    public string OrderId { get; set; } = """";
+  }
+
+  public interface IOrderPerspective : IPerspectiveFor<OrderModel, OrderEvent> {
     // Interface can't be instantiated
   }
 
   public class ConcreteOrderPerspective : IOrderPerspective {
-    public Task Update(OrderEvent @event, CancellationToken cancellationToken = default) {
-      return Task.CompletedTask;
+    public OrderModel Apply(OrderModel currentData, OrderEvent @event) {
+      return currentData;
     }
   }
 }";
@@ -484,17 +549,20 @@ using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
+using Whizbang.Core.Perspectives;
 
 namespace TestNamespace {
   public record OrderEvent : IEvent {
     public string OrderId { get; init; } = """";
   }
 
-  public class OrderBatchPerspective : IPerspectiveOf<OrderEvent[]> {
+  public record OrderBatchModel {
     public Guid Id { get; set; }
+  }
 
-    public Task Update(OrderEvent[] @event, CancellationToken cancellationToken = default) {
-      return Task.CompletedTask;
+  public class OrderBatchPerspective : IPerspectiveFor<OrderBatchModel, OrderEvent[]> {
+    public OrderBatchModel Apply(OrderBatchModel currentData, OrderEvent[] @event) {
+      return currentData;
     }
   }
 }";

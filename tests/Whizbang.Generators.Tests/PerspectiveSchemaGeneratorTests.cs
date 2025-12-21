@@ -16,14 +16,20 @@ public class PerspectiveSchemaGeneratorTests {
             using System.Threading;
             using System.Threading.Tasks;
             using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
 
             namespace MyApp.Perspectives;
 
-            public class OrderPerspective : IPerspectiveOf<OrderCreated> {
+            public record OrderModel {
               public Guid Id { get; set; }
               public string CustomerName { get; set; } = string.Empty;
               public decimal TotalAmount { get; set; }
-              public Task Update(OrderCreated @event, CancellationToken ct = default) => Task.CompletedTask;
+            }
+
+            public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreated> {
+              public OrderModel Apply(OrderModel currentData, OrderCreated @event) {
+                return currentData;
+              }
             }
 
             public record OrderCreated : IEvent;
@@ -48,12 +54,16 @@ public class PerspectiveSchemaGeneratorTests {
             using System.Threading;
             using System.Threading.Tasks;
             using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
 
             namespace MyApp.Perspectives;
 
-            public abstract class BaseOrderPerspective : IPerspectiveOf<OrderCreated> {
+            public record OrderModel {
               public Guid Id { get; set; }
-              public abstract Task Update(OrderCreated @event, CancellationToken ct = default);
+            }
+
+            public abstract class BaseOrderPerspective : IPerspectiveFor<OrderModel, OrderCreated> {
+              public abstract OrderModel Apply(OrderModel currentData, OrderCreated @event);
             }
 
             public record OrderCreated : IEvent;
@@ -76,20 +86,31 @@ public class PerspectiveSchemaGeneratorTests {
             using System.Threading;
             using System.Threading.Tasks;
             using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
 
             namespace MyApp.Perspectives;
 
-            public class OrderPerspective : IPerspectiveOf<OrderCreated> {
+            public record OrderModel {
               public Guid Id { get; set; }
               public string CustomerName { get; set; } = string.Empty;
-              public Task Update(OrderCreated @event, CancellationToken ct = default) => Task.CompletedTask;
             }
 
-            public class CustomerPerspective : IPerspectiveOf<CustomerCreated> {
+            public record CustomerModel {
               public Guid Id { get; set; }
               public string Name { get; set; } = string.Empty;
               public string Email { get; set; } = string.Empty;
-              public Task Update(CustomerCreated @event, CancellationToken ct = default) => Task.CompletedTask;
+            }
+
+            public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreated> {
+              public OrderModel Apply(OrderModel currentData, OrderCreated @event) {
+                return currentData;
+              }
+            }
+
+            public class CustomerPerspective : IPerspectiveFor<CustomerModel, CustomerCreated> {
+              public CustomerModel Apply(CustomerModel currentData, CustomerCreated @event) {
+                return currentData;
+              }
             }
 
             public record OrderCreated : IEvent;
@@ -120,13 +141,19 @@ public class PerspectiveSchemaGeneratorTests {
             using System.Threading;
             using System.Threading.Tasks;
             using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
 
             namespace MyApp.Perspectives;
 
-            public class LargeOrderPerspective : IPerspectiveOf<OrderCreated> {
+            public record LargeOrderModel {
               public Guid Id { get; set; }
             {{properties}}
-              public Task Update(OrderCreated @event, CancellationToken ct = default) => Task.CompletedTask;
+            }
+
+            public class LargeOrderPerspective : IPerspectiveFor<LargeOrderModel, OrderCreated> {
+              public LargeOrderModel Apply(LargeOrderModel currentData, OrderCreated @event) {
+                return currentData;
+              }
             }
 
             public record OrderCreated : IEvent;
@@ -148,7 +175,7 @@ public class PerspectiveSchemaGeneratorTests {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithNoPerspectives_GeneratesNoOutputAsync() {
-    // Arrange - No IPerspectiveOf implementations
+    // Arrange - No IPerspectiveFor implementations
     var source = """
             using System;
             using Whizbang.Core;
@@ -179,12 +206,18 @@ public class PerspectiveSchemaGeneratorTests {
             using System.Threading;
             using System.Threading.Tasks;
             using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
 
             namespace MyApp.Perspectives;
 
-            public class OrderPerspective : IPerspectiveOf<OrderCreated> {
+            public record OrderModel {
               public Guid Id { get; set; }
-              public Task Update(OrderCreated @event, CancellationToken ct = default) => Task.CompletedTask;
+            }
+
+            public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreated> {
+              public OrderModel Apply(OrderModel currentData, OrderCreated @event) {
+                return currentData;
+              }
             }
 
             public record OrderCreated : IEvent;
@@ -211,12 +244,18 @@ public class PerspectiveSchemaGeneratorTests {
             using System.Threading;
             using System.Threading.Tasks;
             using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
 
             namespace MyApp.Perspectives;
 
-            public class OrderPerspective : IPerspectiveOf<OrderCreated> {
+            public record OrderModel {
               public Guid Id { get; set; }
-              public Task Update(OrderCreated @event, CancellationToken ct = default) => Task.CompletedTask;
+            }
+
+            public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreated> {
+              public OrderModel Apply(OrderModel currentData, OrderCreated @event) {
+                return currentData;
+              }
             }
 
             public record OrderCreated : IEvent;
@@ -243,12 +282,18 @@ public class PerspectiveSchemaGeneratorTests {
             using System.Threading;
             using System.Threading.Tasks;
             using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
 
             namespace MyApp.Perspectives;
 
-            public class CustomerOrderPerspective : IPerspectiveOf<OrderCreated> {
+            public record CustomerOrderModel {
               public Guid Id { get; set; }
-              public Task Update(OrderCreated @event, CancellationToken ct = default) => Task.CompletedTask;
+            }
+
+            public class CustomerOrderPerspective : IPerspectiveFor<CustomerOrderModel, OrderCreated> {
+              public CustomerOrderModel Apply(CustomerOrderModel currentData, OrderCreated @event) {
+                return currentData;
+              }
             }
 
             public record OrderCreated : IEvent;
@@ -295,15 +340,21 @@ public class PerspectiveSchemaGeneratorTests {
             using System.Threading;
             using System.Threading.Tasks;
             using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
 
             namespace MyApp.Perspectives;
 
-            public class MixedPerspective : IPerspectiveOf<TestEvent> {
+            public record MixedModel {
               public Guid Id { get; set; }
               public string InstanceProperty { get; set; } = string.Empty;
+            }
+
+            public class MixedPerspective : IPerspectiveFor<MixedModel, TestEvent> {
               public static string StaticProperty { get; set; } = string.Empty;
               public static int StaticCounter { get; set; }
-              public Task Update(TestEvent @event, CancellationToken ct = default) => Task.CompletedTask;
+              public MixedModel Apply(MixedModel currentData, TestEvent @event) {
+                return currentData;
+              }
             }
 
             public record TestEvent : IEvent;
@@ -328,13 +379,19 @@ public class PerspectiveSchemaGeneratorTests {
             using System.Threading;
             using System.Threading.Tasks;
             using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
 
             namespace MyApp.Perspectives;
 
-            public class StaticOnlyPerspective : IPerspectiveOf<TestEvent> {
+            public record StaticOnlyModel {
+            }
+
+            public class StaticOnlyPerspective : IPerspectiveFor<StaticOnlyModel, TestEvent> {
               public static string StaticProperty { get; set; } = string.Empty;
               public static int StaticCounter { get; set; }
-              public Task Update(TestEvent @event, CancellationToken ct = default) => Task.CompletedTask;
+              public StaticOnlyModel Apply(StaticOnlyModel currentData, TestEvent @event) {
+                return currentData;
+              }
             }
 
             public record TestEvent : IEvent;
@@ -353,20 +410,28 @@ public class PerspectiveSchemaGeneratorTests {
   [Test]
   [RequiresAssemblyFiles()]
   public async Task Generator_WithMultipleIPerspectiveInterfaces_GeneratesSchemaAsync() {
-    // Arrange - Class implementing multiple IPerspectiveOf interfaces
+    // Arrange - Class implementing multiple IPerspectiveFor interfaces
     var source = """
             using System;
             using System.Threading;
             using System.Threading.Tasks;
             using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
 
             namespace MyApp.Perspectives;
 
-            public class MultiPerspective : IPerspectiveOf<EventA>, IPerspectiveOf<EventB> {
+            public record MultiModel {
               public Guid Id { get; set; }
               public string Data { get; set; } = string.Empty;
-              public Task Update(EventA @event, CancellationToken ct = default) => Task.CompletedTask;
-              public Task Update(EventB @event, CancellationToken ct = default) => Task.CompletedTask;
+            }
+
+            public class MultiPerspective : IPerspectiveFor<MultiModel, EventA>, IPerspectiveFor<MultiModel, EventB> {
+              public MultiModel Apply(MultiModel currentData, EventA @event) {
+                return currentData;
+              }
+              public MultiModel Apply(MultiModel currentData, EventB @event) {
+                return currentData;
+              }
             }
 
             public record EventA : IEvent;
@@ -392,16 +457,19 @@ public class PerspectiveSchemaGeneratorTests {
             using System.Threading;
             using System.Threading.Tasks;
             using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
 
             namespace TestNamespace {
               public record TestEvent : IEvent;
 
-              public class orderPerspective : IPerspectiveOf<TestEvent> {
+              public record orderModel {
                 public Guid Id { get; set; }
                 public int PropertyCount { get; set; }
+              }
 
-                public Task Update(TestEvent @event, CancellationToken ct = default) {
-                  return Task.CompletedTask;
+              public class orderPerspective : IPerspectiveFor<orderModel, TestEvent> {
+                public orderModel Apply(orderModel currentData, TestEvent @event) {
+                  return currentData;
                 }
               }
             }
@@ -435,15 +503,19 @@ public class PerspectiveSchemaGeneratorTests {
             using System.Threading;
             using System.Threading.Tasks;
             using Whizbang.Core;
+            using Whizbang.Core.Perspectives;
 
             namespace TestNamespace {
               public record TestEvent : IEvent;
 
-              public class ThresholdPerspective : IPerspectiveOf<TestEvent> {
+              public record ThresholdModel {
                 public Guid Id { get; set; }
             {{properties.ToString().TrimEnd()}}
-                public Task Update(TestEvent @event, CancellationToken ct = default) {
-                  return Task.CompletedTask;
+              }
+
+              public class ThresholdPerspective : IPerspectiveFor<ThresholdModel, TestEvent> {
+                public ThresholdModel Apply(ThresholdModel currentData, TestEvent @event) {
+                  return currentData;
                 }
               }
             }
@@ -468,7 +540,7 @@ public class PerspectiveSchemaGeneratorTests {
             namespace TestNamespace {
               public record TestEvent : IEvent;
 
-              // Has base list (IDisposable) but doesn't implement IPerspectiveOf
+              // Has base list (IDisposable) but doesn't implement IPerspectiveFor
               public class NotAPerspective : IDisposable {
                 public Guid Id { get; set; }
                 public void Dispose() { }
@@ -479,7 +551,7 @@ public class PerspectiveSchemaGeneratorTests {
     // Act
     var result = GeneratorTestHelper.RunGenerator<PerspectiveSchemaGenerator>(source);
 
-    // Assert - Should skip class that doesn't implement IPerspectiveOf
+    // Assert - Should skip class that doesn't implement IPerspectiveFor
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveSchemas.g.sql.cs");
     await Assert.That(generatedSource).IsNull();
   }

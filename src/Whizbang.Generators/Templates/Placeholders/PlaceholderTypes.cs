@@ -49,7 +49,7 @@ public class __RECEPTOR_CLASS__ { }
 
 /// <summary>
 /// Placeholder for perspective interface in template snippets.
-/// Gets replaced with fully-qualified IPerspectiveOf interface name during generation.
+/// Gets replaced with fully-qualified IPerspectiveFor interface name during generation.
 /// </summary>
 [CompilerGenerated]
 [EditorBrowsable(EditorBrowsableState.Never)]

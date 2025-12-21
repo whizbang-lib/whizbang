@@ -30,12 +30,12 @@ namespace Whizbang.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:Generator_ZeroReceptors_WithPerspective_GeneratedCodeCompilesAsync</tests>
 /// Incremental source generator that discovers IReceptor implementations
 /// and generates dispatcher registration code.
-/// Also checks for IPerspectiveOf implementations to avoid false WHIZ002 warnings.
+/// Also checks for IPerspectiveFor implementations to avoid false WHIZ002 warnings.
 /// </summary>
 [Generator]
 public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private const string RECEPTOR_INTERFACE_NAME = "Whizbang.Core.IReceptor";
-  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.IPerspectiveOf";
+  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.IPerspectiveFor";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Pipeline 1: Discover IReceptor implementations
@@ -44,7 +44,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         transform: static (ctx, ct) => ExtractReceptorInfo(ctx, ct)
     ).Where(static info => info is not null);
 
-    // Pipeline 2: Check for IPerspectiveOf implementations (for WHIZ002 diagnostic)
+    // Pipeline 2: Check for IPerspectiveFor implementations (for WHIZ002 diagnostic)
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
         transform: static (ctx, ct) => HasPerspectiveInterface(ctx, ct)
@@ -116,9 +116,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Checks if a class implements IPerspectiveOf&lt;TEvent&gt;.
+  /// Checks if a class implements IPerspectiveFor&lt;TEvent&gt;.
   /// Returns true if the class implements the perspective interface, false otherwise.
-  /// Used for WHIZ002 diagnostic - only warn if BOTH IReceptor and IPerspectiveOf are absent.
+  /// Used for WHIZ002 diagnostic - only warn if BOTH IReceptor and IPerspectiveFor are absent.
   /// </summary>
   private static bool HasPerspectiveInterface(
       GeneratorSyntaxContext context,
@@ -131,7 +131,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // See RoslynGuards.cs for rationale - no branch created, eliminates coverage gap
     var classSymbol = RoslynGuards.GetClassSymbolOrThrow(classDeclaration, semanticModel, cancellationToken);
 
-    // Look for IPerspectiveOf<TEvent> interface
+    // Look for IPerspectiveFor<TEvent> interface
     var hasPerspective = classSymbol.AllInterfaces.Any(i =>
         i.OriginalDefinition.ToDisplayString() == PERSPECTIVE_INTERFACE_NAME + "<TEvent>");
 
@@ -149,8 +149,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       ImmutableArray<ReceptorInfo> receptors,
       ImmutableArray<bool> hasPerspectives) {
 
-    // Only warn and skip generation if BOTH IReceptor and IPerspectiveOf implementations are missing
-    // Example: BFF with 5 IPerspectiveOf but no IReceptor should NOT warn
+    // Only warn and skip generation if BOTH IReceptor and IPerspectiveFor implementations are missing
+    // Example: BFF with 5 IPerspectiveFor but no IReceptor should NOT warn
     // Example: Whizbang.Core with 0 receptors and 0 perspectives should skip generation
     if (receptors.IsEmpty && hasPerspectives.IsEmpty) {
       context.ReportDiagnostic(Diagnostic.Create(

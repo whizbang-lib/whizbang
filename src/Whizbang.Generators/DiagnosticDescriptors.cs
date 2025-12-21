@@ -24,17 +24,17 @@ public static class DiagnosticDescriptors {
 
   /// <summary>
   /// WHIZ002: Info - No receptors or perspectives found in the compilation.
-  /// Only shows if BOTH IReceptor AND IPerspectiveOf are absent.
-  /// Example: BFF with 5 IPerspectiveOf implementations but no IReceptor should NOT warn.
+  /// Only shows if BOTH IReceptor AND IPerspectiveFor are absent.
+  /// Example: BFF with 5 IPerspectiveFor implementations but no IReceptor should NOT warn.
   /// </summary>
   public static readonly DiagnosticDescriptor NoReceptorsFound = new(
       id: "WHIZ002",
       title: "No Message Handlers Found",
-      messageFormat: "No IReceptor or IPerspectiveOf implementations were found in the compilation",
+      messageFormat: "No IReceptor or IPerspectiveFor implementations were found in the compilation",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
-      description: "The source generator did not find any classes implementing IReceptor<TMessage, TResponse> or IPerspectiveOf<TEvent>."
+      description: "The source generator did not find any classes implementing IReceptor<TMessage, TResponse> or IPerspectiveFor<TEvent>."
   );
 
   /// <summary>

@@ -65,7 +65,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   private const string I_COMMAND = "Whizbang.Core.ICommand";
   private const string I_EVENT = "Whizbang.Core.IEvent";
   private const string I_RECEPTOR = "Whizbang.Core.IReceptor";
-  private const string I_PERSPECTIVE_OF = "Whizbang.Core.IPerspectiveOf";
+  private const string I_PERSPECTIVE_FOR = "Whizbang.Core.Perspectives.IPerspectiveFor";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover message types (ICommand, IEvent)
@@ -90,7 +90,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
         transform: static (ctx, ct) => ExtractReceptor(ctx, ct)
     ).Where(static info => info is not null);
 
-    // Discover perspectives (IPerspectiveOf<TEvent> implementations)
+    // Discover perspectives (IPerspectiveFor<TEvent> implementations)
     var perspectives = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
         transform: static (ctx, ct) => ExtractPerspective(ctx, ct)
@@ -270,9 +270,16 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     // See RoslynGuards.cs for rationale - no branch created, eliminates coverage gap
     var classSymbol = RoslynGuards.GetClassSymbolOrThrow(classDeclaration, semanticModel, cancellationToken);
 
-    // Look for IPerspectiveOf<TEvent> interfaces
+    // Look for IPerspectiveFor<TModel, TEvent1, ...> interfaces (all variants)
+    // Must match the base marker interface or any event-handling variant
     var perspectiveInterfaces = classSymbol.AllInterfaces
-        .Where(i => i.OriginalDefinition.ToDisplayString() == I_PERSPECTIVE_OF + "<TEvent>")
+        .Where(i => {
+          var originalDef = i.OriginalDefinition.ToDisplayString();
+          // Check for base marker or event-handling variants (with or without space after comma)
+          return originalDef == I_PERSPECTIVE_FOR + "<TModel>" ||
+                 originalDef.StartsWith(I_PERSPECTIVE_FOR + "<TModel,") ||
+                 originalDef.StartsWith(I_PERSPECTIVE_FOR + "<TModel, ");
+        })
         .ToList();
 
     if (!perspectiveInterfaces.Any()) {
@@ -283,9 +290,20 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     var lineSpan = location.GetLineSpan();
 
     // A perspective can handle multiple events
+    // For IPerspectiveFor<TModel, TEvent1, TEvent2, ...>, event types start at index 1
+    // Index 0 is always TModel (the read model type)
+    // Skip the base marker interface (has only 1 type argument - just TModel)
     var events = perspectiveInterfaces
-        .Select(i => i.TypeArguments[0].ToDisplayString())
+        .Where(i => i.TypeArguments.Length > 1) // Only event-handling variants, not base marker
+        .SelectMany(i => i.TypeArguments.Skip(1)) // Skip TModel, take all event types
+        .Select(t => t.ToDisplayString())
+        .Distinct()
         .ToArray();
+
+    // Perspectives must handle at least one event - skip marker-only implementations
+    if (events.Length == 0) {
+      return null;
+    }
 
     return new PerspectiveLocationInfo(
         ClassName: classSymbol.ToDisplayString(),

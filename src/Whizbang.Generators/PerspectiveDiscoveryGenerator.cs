@@ -23,13 +23,13 @@ namespace Whizbang.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveDiscoveryGeneratorTests.cs:PerspectiveDiscoveryGenerator_NestedClass_DiscoversCorrectlyAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveDiscoveryGeneratorTests.cs:PerspectiveDiscoveryGenerator_InterfaceWithPerspectiveOf_SkipsAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveDiscoveryGeneratorTests.cs:Generator_WithArrayEventType_SimplifiesInDiagnosticAsync</tests>
-/// Incremental source generator that discovers IPerspectiveOf implementations
+/// Incremental source generator that discovers IPerspectiveFor implementations
 /// and generates DI registration code.
 /// Perspectives are registered as Scoped services and updated via Event Store.
 /// </summary>
 [Generator]
 public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
-  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.IPerspectiveOf";
+  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Filter for classes that have a base list (potential interface implementations)
@@ -54,8 +54,8 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// Extracts perspective information from a class declaration.
-  /// Returns null if the class doesn't implement IPerspectiveOf.
-  /// A class can implement multiple IPerspectiveOf&lt;TEvent&gt; interfaces.
+  /// Returns null if the class doesn't implement IPerspectiveFor.
+  /// A class can implement multiple IPerspectiveFor&lt;TModel, TEvent&gt; interfaces.
   /// </summary>
   private static PerspectiveInfo? ExtractPerspectiveInfo(
       GeneratorSyntaxContext context,
@@ -73,10 +73,14 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Look for all IPerspectiveOf<TEvent> interfaces this class implements
+    // Look for all IPerspectiveFor<TModel, TEvent1, ...> interfaces (all variants)
+    // Check if interface name contains "IPerspectiveFor" (case-sensitive)
     var perspectiveInterfaces = classSymbol.AllInterfaces
-        .Where(i => i.OriginalDefinition.ToDisplayString() == PERSPECTIVE_INTERFACE_NAME + "<TEvent>"
-                    && i.TypeArguments.Length == 1)
+        .Where(i => {
+          var originalDef = i.OriginalDefinition.ToDisplayString();
+          // Simple contains check first to see if this is a perspective interface at all
+          return originalDef.Contains("IPerspectiveFor");
+        })
         .ToList();
 
     if (perspectiveInterfaces.Count == 0) {
@@ -84,9 +88,20 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     }
 
     // Extract all event types this perspective listens to
+    // For IPerspectiveFor<TModel, TEvent1, TEvent2, ...>, event types start at index 1
+    // Index 0 is always TModel (the read model type)
+    // Skip the base marker interface (has only 1 type argument - just TModel)
     var eventTypes = perspectiveInterfaces
-        .Select(i => i.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+        .Where(i => i.TypeArguments.Length > 1) // Only event-handling variants, not base marker
+        .SelectMany(i => i.TypeArguments.Skip(1)) // Skip TModel, take all event types
+        .Select(t => t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+        .Distinct()
         .ToArray();
+
+    // Perspectives must handle at least one event - skip marker-only implementations
+    if (eventTypes.Length == 0) {
+      return null;
+    }
 
     // Extract model type from IPerspectiveModel<TModel> if implemented (optional)
     var modelInterface = classSymbol.AllInterfaces
@@ -158,7 +173,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates the C# source code for the registration extension method.
   /// Uses template-based generation for IDE support.
-  /// Handles perspectives that implement multiple IPerspectiveOf&lt;TEvent&gt; interfaces.
+  /// Handles perspectives that implement multiple IPerspectiveFor&lt;TModel, TEvent&gt; interfaces.
   /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
   private static string GenerateRegistrationSource(Compilation compilation, ImmutableArray<PerspectiveInfo> perspectives) {
