@@ -702,6 +702,17 @@ BEGIN
   -- Uses INSERT...ON CONFLICT DO NOTHING for idempotency (won't duplicate existing checkpoints).
   --
   -- Checkpoints start with last_event_id = NULL (no events processed yet) and status = 0.
+  --
+  -- Fuzzy Type Name Matching Logic:
+  -- Supports matching between different .NET type name formats:
+  -- 1. Short form: "TypeName, AssemblyName" (e.g., "ProductCreatedEvent, ECommerce.Domain")
+  -- 2. AssemblyQualifiedName: "TypeName, AssemblyName, Version=X, Culture=Y, PublicKeyToken=Z"
+  --
+  -- Matching Strategy:
+  -- - Extract "TypeName, AssemblyName" portion from both event_type and message_type
+  -- - Match if this core identifier is the same
+  -- - Ignore Version, Culture, PublicKeyToken differences
+  -- - Require BOTH TypeName AND AssemblyName to match (TypeName alone is insufficient)
   INSERT INTO wh_perspective_checkpoints (
     stream_id,
     perspective_name,
@@ -715,7 +726,37 @@ BEGIN
     0                -- status = 0 (PerspectiveProcessingStatus.None)
   FROM wh_event_store es
   INNER JOIN wh_message_associations ma
-    ON es.event_type = ma.message_type
+    ON (
+      -- Strategy 1: Exact match (fastest, try first)
+      es.event_type = ma.message_type
+      OR
+      -- Strategy 2: Fuzzy match on "TypeName, AssemblyName" portion
+      -- Extract everything up to first ", Version=" or ", Culture=" or ", PublicKeyToken="
+      -- If no Version/Culture/PublicKeyToken found, use the whole string
+      (
+        -- Extract core identifier from event_type (up to first ", Version=" if present)
+        CASE
+          WHEN POSITION(', Version=' IN es.event_type) > 0
+            THEN SUBSTRING(es.event_type FROM 1 FOR POSITION(', Version=' IN es.event_type) - 1)
+          WHEN POSITION(', Culture=' IN es.event_type) > 0
+            THEN SUBSTRING(es.event_type FROM 1 FOR POSITION(', Culture=' IN es.event_type) - 1)
+          WHEN POSITION(', PublicKeyToken=' IN es.event_type) > 0
+            THEN SUBSTRING(es.event_type FROM 1 FOR POSITION(', PublicKeyToken=' IN es.event_type) - 1)
+          ELSE es.event_type
+        END
+        =
+        -- Extract core identifier from message_type
+        CASE
+          WHEN POSITION(', Version=' IN ma.message_type) > 0
+            THEN SUBSTRING(ma.message_type FROM 1 FOR POSITION(', Version=' IN ma.message_type) - 1)
+          WHEN POSITION(', Culture=' IN ma.message_type) > 0
+            THEN SUBSTRING(ma.message_type FROM 1 FOR POSITION(', Culture=' IN ma.message_type) - 1)
+          WHEN POSITION(', PublicKeyToken=' IN ma.message_type) > 0
+            THEN SUBSTRING(ma.message_type FROM 1 FOR POSITION(', PublicKeyToken=' IN ma.message_type) - 1)
+          ELSE ma.message_type
+        END
+      )
+    )
     AND ma.association_type = 'perspective'
   WHERE NOT EXISTS (
     SELECT 1 FROM wh_perspective_checkpoints pc

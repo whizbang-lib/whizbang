@@ -214,6 +214,193 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       .Because("Receptor associations should not trigger checkpoint creation");
   }
 
+  // Flexible Type Matching Tests (fuzzy matching)
+
+  [Test]
+  public async Task ProcessWorkBatch_WithAssemblyQualifiedNameEvent_MatchesShortFormAssociationAsync() {
+    // Arrange - Association has short form "TypeName, AssemblyName"
+    await RegisterMessageAssociationAsync(
+      messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      associationType: "perspective",
+      targetName: "ProductListPerspective",
+      serviceName: "ECommerce.ReadModels");
+
+    var streamId = _idProvider.NewGuid();
+    var eventId = _idProvider.NewGuid();
+
+    // Act - Event has FULL AssemblyQualifiedName with Version/Culture/PublicKeyToken
+    await InsertEventStoreRecordAsync(
+      streamId: streamId,
+      eventId: eventId,
+      eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}",
+      version: 1);
+
+    // Call process_work_batch
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345
+      )",
+      new { instanceId = _idProvider.NewGuid() });
+
+    // Assert - Checkpoint SHOULD be created despite format difference
+    var checkpoint = await GetPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
+    await Assert.That(checkpoint).IsNotNull()
+      .Because("Fuzzy matching should match on TypeName + AssemblyName, ignoring Version/Culture/PublicKeyToken");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_WithShortFormEvent_MatchesAssemblyQualifiedAssociationAsync() {
+    // Arrange - Association has FULL AssemblyQualifiedName
+    await RegisterMessageAssociationAsync(
+      messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+      associationType: "perspective",
+      targetName: "ProductListPerspective",
+      serviceName: "ECommerce.ReadModels");
+
+    var streamId = _idProvider.NewGuid();
+    var eventId = _idProvider.NewGuid();
+
+    // Act - Event has short form "TypeName, AssemblyName"
+    await InsertEventStoreRecordAsync(
+      streamId: streamId,
+      eventId: eventId,
+      eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}",
+      version: 1);
+
+    // Call process_work_batch
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345
+      )",
+      new { instanceId = _idProvider.NewGuid() });
+
+    // Assert - Checkpoint SHOULD be created despite format difference
+    var checkpoint = await GetPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
+    await Assert.That(checkpoint).IsNotNull()
+      .Because("Fuzzy matching should match on TypeName + AssemblyName, ignoring Version/Culture/PublicKeyToken");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_WithDifferentVersions_StillMatchesAsync() {
+    // Arrange - Association registered with version 1.0.0.0
+    await RegisterMessageAssociationAsync(
+      messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
+      associationType: "perspective",
+      targetName: "ProductListPerspective",
+      serviceName: "ECommerce.ReadModels");
+
+    var streamId = _idProvider.NewGuid();
+    var eventId = _idProvider.NewGuid();
+
+    // Act - Event has version 2.0.0.0 (different!)
+    await InsertEventStoreRecordAsync(
+      streamId: streamId,
+      eventId: eventId,
+      eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain, Version=2.0.0.0, Culture=neutral, PublicKeyToken=abc123",
+      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}",
+      version: 1);
+
+    // Call process_work_batch
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345
+      )",
+      new { instanceId = _idProvider.NewGuid() });
+
+    // Assert - Checkpoint SHOULD be created despite version difference
+    var checkpoint = await GetPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
+    await Assert.That(checkpoint).IsNotNull()
+      .Because("Fuzzy matching should ignore version numbers and match on TypeName + AssemblyName");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_WithOnlyTypeNameEvent_DoesNotMatchAsync() {
+    // Arrange - Association has "TypeName, AssemblyName"
+    await RegisterMessageAssociationAsync(
+      messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      associationType: "perspective",
+      targetName: "ProductListPerspective",
+      serviceName: "ECommerce.ReadModels");
+
+    var streamId = _idProvider.NewGuid();
+    var eventId = _idProvider.NewGuid();
+
+    // Act - Event has ONLY TypeName (no assembly - this is too loose!)
+    await InsertEventStoreRecordAsync(
+      streamId: streamId,
+      eventId: eventId,
+      eventType: "ECommerce.Domain.Events.ProductCreatedEvent",
+      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}",
+      version: 1);
+
+    // Call process_work_batch
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345
+      )",
+      new { instanceId = _idProvider.NewGuid() });
+
+    // Assert - NO checkpoint should be created (TypeName alone is not enough)
+    var checkpoints = await GetAllPerspectiveCheckpointsAsync(streamId);
+    await Assert.That(checkpoints).HasCount().EqualTo(0)
+      .Because("TypeName alone is insufficient - we need at least TypeName + AssemblyName for safe matching");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_WithDifferentAssemblyNames_DoesNotMatchAsync() {
+    // Arrange - Association for "ECommerce.Domain" assembly
+    await RegisterMessageAssociationAsync(
+      messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      associationType: "perspective",
+      targetName: "ProductListPerspective",
+      serviceName: "ECommerce.ReadModels");
+
+    var streamId = _idProvider.NewGuid();
+    var eventId = _idProvider.NewGuid();
+
+    // Act - Event from DIFFERENT assembly "ECommerce.Domain.V2"
+    await InsertEventStoreRecordAsync(
+      streamId: streamId,
+      eventId: eventId,
+      eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain.V2",
+      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}",
+      version: 1);
+
+    // Call process_work_batch
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345
+      )",
+      new { instanceId = _idProvider.NewGuid() });
+
+    // Assert - NO checkpoint (different assemblies = different types)
+    var checkpoints = await GetAllPerspectiveCheckpointsAsync(streamId);
+    await Assert.That(checkpoints).HasCount().EqualTo(0)
+      .Because("AssemblyName mismatch means different types - no match");
+  }
+
   // Helper methods
 
   private async Task RegisterMessageAssociationAsync(
