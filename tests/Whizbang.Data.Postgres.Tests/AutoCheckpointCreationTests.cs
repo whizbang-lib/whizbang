@@ -247,15 +247,15 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
   private async Task InsertPerspectiveCheckpointAsync(Guid streamId, string perspectiveName) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_perspective_checkpoints (stream_id, perspective_name, last_event_id, status, last_processed_at, created_at, updated_at)
-      VALUES (@streamId, @perspectiveName, NULL, 0, NULL, NOW(), NOW())",
+      INSERT INTO wh_perspective_checkpoints (stream_id, perspective_name, last_event_id, status)
+      VALUES (@streamId, @perspectiveName, NULL, 0)",
       new { streamId, perspectiveName });
   }
 
   private async Task<PerspectiveCheckpoint?> GetPerspectiveCheckpointAsync(Guid streamId, string perspectiveName) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     return await connection.QueryFirstOrDefaultAsync<PerspectiveCheckpoint>(@"
-      SELECT stream_id AS StreamId, perspective_name AS PerspectiveName, last_event_id AS LastEventId, status AS Status
+      SELECT stream_id, perspective_name, last_event_id, status
       FROM wh_perspective_checkpoints
       WHERE stream_id = @streamId AND perspective_name = @perspectiveName",
       new { streamId, perspectiveName });
@@ -264,14 +264,14 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
   private async Task<List<PerspectiveCheckpoint>> GetAllPerspectiveCheckpointsAsync(Guid streamId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     var results = await connection.QueryAsync<PerspectiveCheckpoint>(@"
-      SELECT stream_id AS StreamId, perspective_name AS PerspectiveName, last_event_id AS LastEventId, status AS Status
+      SELECT stream_id, perspective_name, last_event_id, status
       FROM wh_perspective_checkpoints
       WHERE stream_id = @streamId",
       new { streamId });
     return results.ToList();
   }
 
-  // Use lowercase column names to match PostgreSQL convention (Dapper is case-sensitive)
+  // Lowercase properties match PostgreSQL column names (Dapper maps case-insensitively to record constructor parameters)
   private record PerspectiveCheckpoint(
     Guid stream_id,
     string perspective_name,

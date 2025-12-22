@@ -287,6 +287,7 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ030: Error - Event type used in perspective is missing [StreamKey] attribute.
   /// </summary>
+  /// <docs>diagnostics/whiz030</docs>
   public static readonly DiagnosticDescriptor PerspectiveEventMissingStreamKey = new(
       id: "WHIZ030",
       title: "Perspective Event Missing StreamKey",
@@ -300,6 +301,7 @@ public static class DiagnosticDescriptors {
   /// <summary>
   /// WHIZ031: Error - Event type has multiple [StreamKey] attributes.
   /// </summary>
+  /// <docs>diagnostics/whiz031</docs>
   public static readonly DiagnosticDescriptor PerspectiveEventMultipleStreamKeys = new(
       id: "WHIZ031",
       title: "Multiple StreamKey Attributes",

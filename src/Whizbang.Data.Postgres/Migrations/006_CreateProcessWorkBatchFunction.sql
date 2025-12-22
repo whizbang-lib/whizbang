@@ -696,6 +696,34 @@ BEGIN
   FROM base_versions bv
   ON CONFLICT (stream_id, version) DO NOTHING;
 
+  -- 7.6. Auto-create perspective checkpoints for streams with events
+  -- When process_work_batch runs, automatically create checkpoint rows for any streams
+  -- that have events matching perspective associations but don't have checkpoints yet.
+  -- Uses INSERT...ON CONFLICT DO NOTHING for idempotency (won't duplicate existing checkpoints).
+  --
+  -- Checkpoints start with last_event_id = NULL (no events processed yet) and status = 0.
+  INSERT INTO wh_perspective_checkpoints (
+    stream_id,
+    perspective_name,
+    last_event_id,
+    status
+  )
+  SELECT DISTINCT
+    es.stream_id,
+    ma.target_name,  -- perspective_name
+    NULL::uuid,      -- last_event_id = NULL (not processed yet)
+    0                -- status = 0 (PerspectiveProcessingStatus.None)
+  FROM wh_event_store es
+  INNER JOIN wh_message_associations ma
+    ON es.event_type = ma.message_type
+    AND ma.association_type = 'perspective'
+  WHERE NOT EXISTS (
+    SELECT 1 FROM wh_perspective_checkpoints pc
+    WHERE pc.stream_id = es.stream_id
+      AND pc.perspective_name = ma.target_name
+  )
+  ON CONFLICT (stream_id, perspective_name) DO NOTHING;  -- Idempotency: don't duplicate
+
   -- 7.75. Claim unleased messages in owned partitions (with stream ownership check)
   IF v_debug_mode THEN
     RAISE NOTICE '=== SECTION 7.75: CLAIM ORPHANED MESSAGES (WITH STREAM OWNERSHIP CHECK) ===';

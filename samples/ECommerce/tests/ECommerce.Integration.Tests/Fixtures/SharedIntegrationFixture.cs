@@ -1,4 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
+using DotNet.Testcontainers.Builders;
+using DotNet.Testcontainers.Networks;
 using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Generated;
 using ECommerce.InventoryWorker.Generated;
@@ -7,6 +9,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Testcontainers.MsSql;
 using Testcontainers.PostgreSql;
 using Testcontainers.ServiceBus;
 using Whizbang.Core;
@@ -30,6 +33,8 @@ namespace ECommerce.Integration.Tests.Fixtures;
 /// </summary>
 public sealed class SharedIntegrationFixture : IAsyncDisposable {
   private readonly PostgreSqlContainer _postgresContainer;
+  private readonly INetwork _network;  // Network for Service Bus + SQL Server
+  private readonly MsSqlContainer _mssqlContainer;  // SQL Server for Service Bus emulator
   private readonly ServiceBusContainer _serviceBusContainer;
   private bool _isInitialized;
   private IHost? _inventoryHost;
@@ -44,12 +49,26 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       .WithPassword("whizbang_pass")
       .Build();
 
+    // Create network for Service Bus emulator and SQL Server
+    _network = new NetworkBuilder().Build();
+
+    // Create SQL Server container with increased memory for Service Bus emulator
+    // The Service Bus emulator requires SQL Server and can run out of memory on ARM64
+    // 6GB is required for SQL Server 2022 on ARM64 to handle the Service Bus emulator workload
+    _mssqlContainer = new MsSqlBuilder()
+      .WithImage("mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04")
+      .WithNetwork(_network)
+      .WithNetworkAliases("database-container")  // Network alias for Service Bus emulator to find SQL Server
+      .WithCreateParameterModifier(x => x.HostConfig.Memory = 6L * 1024 * 1024 * 1024)  // 6GB memory limit for ARM64
+      .Build();
+
     // Configure topics and subscriptions using ServiceBusBuilder's WithConfig API
     var configPath = Path.Combine(AppContext.BaseDirectory, "servicebus-config.json");
     _serviceBusContainer = new ServiceBusBuilder()
       .WithImage("mcr.microsoft.com/azure-messaging/servicebus-emulator:latest")
       .WithAcceptLicenseAgreement(true)
       .WithConfig(configPath)  // Use Testcontainers API instead of generic WithBindMount
+      .WithMsSqlContainer(_network, _mssqlContainer, "database-container")  // Use our SQL Server container with increased memory
       .Build();
   }
 
@@ -110,20 +129,38 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
 
     Console.WriteLine("[SharedFixture] Starting containers...");
 
+    // Start network first
+    await _network.CreateAsync(cancellationToken);
+
     // Start containers in parallel
+    // SQL Server must start before Service Bus emulator (dependency)
     await Task.WhenAll(
       _postgresContainer.StartAsync(cancellationToken),
-      _serviceBusContainer.StartAsync(cancellationToken)
+      _mssqlContainer.StartAsync(cancellationToken)
     );
 
-    Console.WriteLine("[SharedFixture] Containers started. Creating service hosts...");
+    await _serviceBusContainer.StartAsync(cancellationToken);
+
+    Console.WriteLine("[SharedFixture] Containers started. Waiting for PostgreSQL to be ready...");
 
     // Get connection strings
     var postgresConnection = _postgresContainer.GetConnectionString();
-    var serviceBusConnection = _serviceBusContainer.GetConnectionString();
+    var serviceBusConnectionRaw = _serviceBusContainer.GetConnectionString();
+
+    // CRITICAL: Convert Testcontainers AMQP connection string to Service Bus format
+    // Testcontainers generates: Endpoint=amqp://127.0.0.1:PORT/;SharedAccessKeyName=...
+    // Azure Service Bus client expects: Endpoint=sb://localhost:PORT;SharedAccessKeyName=...;UseDevelopmentEmulator=true
+    // See: https://github.com/Azure/azure-service-bus-emulator-installer/issues/51
+    var serviceBusConnection = ConvertToServiceBusConnectionString(serviceBusConnectionRaw);
 
     Console.WriteLine($"[SharedFixture] PostgreSQL Connection: {postgresConnection}");
-    Console.WriteLine($"[SharedFixture] Service Bus Connection: {serviceBusConnection}");
+    Console.WriteLine($"[SharedFixture] Service Bus Connection (raw): {serviceBusConnectionRaw}");
+    Console.WriteLine($"[SharedFixture] Service Bus Connection (converted): {serviceBusConnection}");
+
+    // Wait for PostgreSQL to be ready to accept connections
+    await WaitForPostgresReadyAsync(postgresConnection, cancellationToken);
+
+    Console.WriteLine("[SharedFixture] PostgreSQL ready. Creating service hosts...");
 
     // Create service hosts (but don't start them yet)
     _inventoryHost = CreateInventoryHost(postgresConnection, serviceBusConnection);
@@ -400,6 +437,47 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   }
 
   /// <summary>
+  /// Converts Testcontainers AMQP connection string to Azure Service Bus format.
+  /// Testcontainers generates: Endpoint=amqp://127.0.0.1:PORT/;SharedAccessKeyName=...;SharedAccessKey=...;UseDevelopmentEmulator=true
+  /// Azure Service Bus client expects: Endpoint=sb://localhost:PORT;SharedAccessKeyName=...;SharedAccessKey=...;UseDevelopmentEmulator=true
+  /// CRITICAL: The trailing slash after PORT must be removed, or the client fails silently.
+  /// </summary>
+  private static string ConvertToServiceBusConnectionString(string amqpConnectionString) {
+    // Replace amqp:// with sb://
+    var result = amqpConnectionString.Replace("amqp://", "sb://");
+
+    // Replace 127.0.0.1 with localhost (Azure Service Bus client prefers localhost)
+    result = result.Replace("127.0.0.1", "localhost");
+
+    // CRITICAL: Remove trailing slash from endpoint (sb://localhost:PORT/; → sb://localhost:PORT;)
+    // The Azure Service Bus client silently fails to receive messages if the trailing slash is present
+    result = System.Text.RegularExpressions.Regex.Replace(result, @":\d+/;", m => m.Value.Replace("/;", ";"));
+
+    return result;
+  }
+
+  /// <summary>
+  /// Waits for PostgreSQL to be ready to accept connections by attempting to open a connection.
+  /// Polls up to 30 times (30 seconds total) with 1 second delay between attempts.
+  /// </summary>
+  private async Task WaitForPostgresReadyAsync(string connectionString, CancellationToken cancellationToken = default) {
+    var maxAttempts = 30; // 30 seconds total
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        using var dataSource = new Npgsql.NpgsqlDataSourceBuilder(connectionString).Build();
+        using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        Console.WriteLine($"[SharedFixture] PostgreSQL connection successful (attempt {attempt})");
+        return;
+      } catch (Exception ex) when (attempt < maxAttempts) {
+        Console.WriteLine($"[SharedFixture] PostgreSQL not ready (attempt {attempt}): {ex.Message}");
+        await Task.Delay(1000, cancellationToken);
+      }
+    }
+
+    throw new TimeoutException($"PostgreSQL failed to accept connections after {maxAttempts} attempts");
+  }
+
+  /// <summary>
   /// Waits for the Azure Service Bus Emulator to be fully ready by polling the health endpoint.
   /// The emulator reports "ready" before it can actually process messages, so we need to verify readiness.
   /// </summary>
@@ -422,15 +500,15 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
             Console.WriteLine($"[SharedFixture] Azure Service Bus Emulator health check passed (attempt {attempt})");
             // WORKAROUND: The emulator's internal SQL Server needs time to start up, and the emulator
             // has built-in retry logic (15s wait + 2-3 retries × 15s) before creating databases.
-            // Then it needs to create databases, topics, and subscriptions. Total time is ~60-90s.
+            // Then it needs to create databases, topics, and subscriptions. Total time is ~150-180s.
             // Even after health check passes, we must wait for:
             // 1. SQL Server connection retries (30-45s)
             // 2. Database creation (SbGatewayDatabase, SbMessageContainerDatabase00001)
             // 3. Topic and subscription creation
             // 4. "Emulator Service is Successfully Up!" message
             // See: https://github.com/Azure/azure-service-bus-emulator-installer/issues/35
-            Console.WriteLine("[SharedFixture] Waiting 120 seconds for emulator to fully initialize (SQL Server + databases + topics/subscriptions)...");
-            await Task.Delay(120000, cancellationToken);
+            Console.WriteLine("[SharedFixture] Waiting 180 seconds for emulator to fully initialize (SQL Server + databases + topics/subscriptions)...");
+            await Task.Delay(180000, cancellationToken);
             Console.WriteLine("[SharedFixture] Emulator should now be ready for message sending");
             return;
           }
@@ -655,7 +733,9 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       // Stop and dispose containers
       await Task.WhenAll(
         _postgresContainer.DisposeAsync().AsTask(),
-        _serviceBusContainer.DisposeAsync().AsTask()
+        _mssqlContainer.DisposeAsync().AsTask(),
+        _serviceBusContainer.DisposeAsync().AsTask(),
+        _network.DisposeAsync().AsTask()
       );
     }
   }

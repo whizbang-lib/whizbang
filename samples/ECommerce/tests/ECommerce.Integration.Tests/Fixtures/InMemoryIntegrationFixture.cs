@@ -1,6 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
-using Aspire.Hosting;
-using Aspire.Hosting.Testing;
+using System.Text.Json;
 using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Generated;
 using ECommerce.InventoryWorker.Generated;
@@ -9,32 +8,42 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Testcontainers.PostgreSql;
 using Whizbang.Core;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
-using Whizbang.Transports.AzureServiceBus;
 
 namespace ECommerce.Integration.Tests.Fixtures;
 
 /// <summary>
-/// Aspire-based integration test fixture that manages PostgreSQL and Azure Service Bus via Aspire hosting.
-/// This fixture provides reliable container orchestration using Aspire's proven infrastructure.
-/// Tests are isolated using unique product IDs and database cleanup between test classes.
+/// In-memory integration test fixture using InProcessTransport for fast, deterministic testing.
+/// Uses PostgreSQL (Testcontainers) for real database but InProcessTransport for synchronous message delivery.
+/// This isolates business logic testing from Azure Service Bus infrastructure concerns.
 /// </summary>
-public sealed class AspireIntegrationFixture : IAsyncDisposable {
-  private DistributedApplication? _app;
+public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
+  private readonly PostgreSqlContainer _postgresContainer;
+  private readonly InProcessTransport _transport;  // Shared singleton across both hosts
   private bool _isInitialized;
   private IHost? _inventoryHost;
   private IHost? _bffHost;
   private readonly Guid _sharedInstanceId = Guid.CreateVersion7(); // Shared across both services for partition claiming
-  private string? _postgresConnection;
-  private string? _serviceBusConnection;
-  private IServiceScope? _inventoryScope;  // Long-lived scope for lens access
-  private IServiceScope? _bffScope;  // Long-lived scope for lens access
+
+  public InMemoryIntegrationFixture() {
+    _postgresContainer = new PostgreSqlBuilder()
+      .WithImage("postgres:17-alpine")
+      .WithDatabase("whizbang_integration_test")
+      .WithUsername("whizbang_user")
+      .WithPassword("whizbang_pass")
+      .Build();
+
+    // Create shared InProcessTransport (both hosts will use this same instance)
+    _transport = new InProcessTransport();
+  }
 
   /// <summary>
   /// Gets the IDispatcher instance for sending commands (from InventoryWorker host).
@@ -45,37 +54,32 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
 
   /// <summary>
   /// Gets the IProductLens instance for querying product catalog (from InventoryWorker host).
-  /// Resolves from a long-lived scope that persists for the lifetime of the fixture.
   /// </summary>
-  public IProductLens InventoryProductLens => _inventoryScope?.ServiceProvider.GetRequiredService<IProductLens>()
+  public IProductLens InventoryProductLens => _inventoryHost?.Services.GetRequiredService<IProductLens>()
     ?? throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
 
   /// <summary>
   /// Gets the IInventoryLens instance for querying inventory levels (from InventoryWorker host).
-  /// Resolves from a long-lived scope that persists for the lifetime of the fixture.
   /// </summary>
-  public IInventoryLens InventoryLens => _inventoryScope?.ServiceProvider.GetRequiredService<IInventoryLens>()
+  public IInventoryLens InventoryLens => _inventoryHost?.Services.GetRequiredService<IInventoryLens>()
     ?? throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
 
   /// <summary>
   /// Gets the IProductCatalogLens instance for querying product catalog (from BFF host).
-  /// Resolves from a long-lived scope that persists for the lifetime of the fixture.
   /// </summary>
-  public IProductCatalogLens BffProductLens => _bffScope?.ServiceProvider.GetRequiredService<IProductCatalogLens>()
+  public IProductCatalogLens BffProductLens => _bffHost?.Services.GetRequiredService<IProductCatalogLens>()
     ?? throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
 
   /// <summary>
   /// Gets the IInventoryLevelsLens instance for querying inventory levels (from BFF host).
-  /// Resolves from a long-lived scope that persists for the lifetime of the fixture.
   /// </summary>
-  public IInventoryLevelsLens BffInventoryLens => _bffScope?.ServiceProvider.GetRequiredService<IInventoryLevelsLens>()
+  public IInventoryLevelsLens BffInventoryLens => _bffHost?.Services.GetRequiredService<IInventoryLevelsLens>()
     ?? throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
 
   /// <summary>
   /// Gets the PostgreSQL connection string for direct database operations.
   /// </summary>
-  public string ConnectionString => _postgresConnection
-    ?? throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
+  public string ConnectionString => _postgresContainer.GetConnectionString();
 
   /// <summary>
   /// Gets a logger instance for use in test scenarios.
@@ -86,8 +90,8 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   }
 
   /// <summary>
-  /// Initializes the test fixture: starts Aspire app, gets connection strings, and starts service hosts.
-  /// This is called ONCE for all tests in the test run.
+  /// Initializes the test fixture: starts PostgreSQL, initializes transport, and starts service hosts.
+  /// Much faster than Service Bus fixtures (~10s vs ~150s) due to synchronous in-memory transport.
   /// </summary>
   [RequiresDynamicCode("EF Core in tests may use dynamic code")]
   [RequiresUnreferencedCode("EF Core in tests may use unreferenced code")]
@@ -96,91 +100,68 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       return;
     }
 
-    Console.WriteLine("[AspireFixture] Starting Aspire test infrastructure...");
+    Console.WriteLine("[InMemoryFixture] Starting PostgreSQL container...");
 
-    // Create and start the Aspire distributed application
-    // IMPORTANT: Service Bus emulator takes 60-90 seconds to start on ARM64 (see GitHub issue #8818)
-    // We need to give Aspire enough time to start the emulator before timing out
-    var appHost = await DistributedApplicationTestingBuilder
-      .CreateAsync<Projects.ECommerce_Integration_Tests_AppHost>(cancellationToken);
+    // Start PostgreSQL container
+    await _postgresContainer.StartAsync(cancellationToken);
 
-    _app = await appHost.BuildAsync(cancellationToken);
+    Console.WriteLine("[InMemoryFixture] PostgreSQL started. Waiting for readiness...");
 
-    // Use a 3-minute timeout for starting containers (default is much shorter)
-    // Service Bus emulator needs ~60-90s to initialize SQL Server + create databases + provision topics
-    using var startupCts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
-    await _app.StartAsync(startupCts.Token);
+    // Get connection string
+    var postgresConnection = _postgresContainer.GetConnectionString();
 
-    Console.WriteLine("[AspireFixture] Aspire app started. Getting connection strings...");
+    // Wait for PostgreSQL to be ready to accept connections
+    await WaitForPostgresReadyAsync(postgresConnection, cancellationToken);
 
-    // Get connection strings from Aspire resources
-    _postgresConnection = await _app.GetConnectionStringAsync("whizbang-integration-test", cancellationToken)
-      ?? throw new InvalidOperationException("Failed to get PostgreSQL connection string");
+    Console.WriteLine("[InMemoryFixture] PostgreSQL ready. Initializing InProcessTransport...");
 
-    _serviceBusConnection = await _app.GetConnectionStringAsync("servicebus", cancellationToken)
-      ?? throw new InvalidOperationException("Failed to get Service Bus connection string");
+    // Initialize transport (instant for in-process)
+    await _transport.InitializeAsync(cancellationToken);
 
-    Console.WriteLine($"[AspireFixture] PostgreSQL Connection: {_postgresConnection}");
-    Console.WriteLine($"[AspireFixture] Service Bus Connection: {_serviceBusConnection}");
-
-    // Wait for PostgreSQL to be ready before proceeding
-    // Aspire starts containers but doesn't guarantee they're accepting connections
-    Console.WriteLine("[AspireFixture] Waiting for PostgreSQL to be ready...");
-    await WaitForPostgresReadyAsync(cancellationToken);
+    Console.WriteLine("[InMemoryFixture] Transport initialized. Creating service hosts...");
 
     // Create service hosts (but don't start them yet)
-    _inventoryHost = CreateInventoryHost(_postgresConnection, _serviceBusConnection);
-    _bffHost = CreateBffHost(_postgresConnection, _serviceBusConnection);
+    _inventoryHost = CreateInventoryHost(postgresConnection);
+    _bffHost = CreateBffHost(postgresConnection);
 
-    Console.WriteLine("[AspireFixture] Service hosts created. Initializing schema...");
+    Console.WriteLine("[InMemoryFixture] Service hosts created. Initializing schema...");
 
     // Initialize PostgreSQL schema using EFCore DbContexts
     await InitializeSchemaAsync(cancellationToken);
 
-    Console.WriteLine("[AspireFixture] Schema initialized.");
+    Console.WriteLine("[InMemoryFixture] Schema initialized. Starting service hosts...");
 
-    // WORKAROUND: Azure Service Bus Emulator reports ready before it can actually process messages
-    // Wait for the emulator to be truly ready BEFORE starting service hosts
-    // If we start hosts first, ServiceBusConsumerWorker will try to connect immediately and fail
-    // See: https://github.com/Azure/azure-service-bus-emulator-installer/issues/35
-    //
-    // NOTE: The config file with $Default TrueFilter rules is mounted via Aspire at container startup
-    // (see ECommerce.Integration.Tests.AppHost/Program.cs), so we don't need to modify config here.
-    Console.WriteLine("[AspireFixture] Waiting for Azure Service Bus Emulator to be fully ready...");
-    await WaitForServiceBusEmulatorReadyAsync(cancellationToken);
-
-    Console.WriteLine("[AspireFixture] Starting service hosts...");
-
-    // Start service hosts (ServiceBusConsumerWorker can now connect successfully)
+    // Start service hosts
     await Task.WhenAll(
       _inventoryHost.StartAsync(cancellationToken),
       _bffHost.StartAsync(cancellationToken)
     );
 
-    // Create long-lived scopes for lens access
-    // These scopes persist for the lifetime of the fixture to allow scoped lens services
-    _inventoryScope = _inventoryHost.Services.CreateScope();
-    _bffScope = _bffHost.Services.CreateScope();
+    Console.WriteLine("[InMemoryFixture] Service hosts started. Setting up transport subscriptions...");
 
-    Console.WriteLine("[AspireFixture] Service hosts started and ready!");
+    // CRITICAL FIX: Subscribe to transport topics to write incoming messages to inbox
+    // Without this, published messages vanish and perspectives never materialize
+    await SetupTransportSubscriptionsAsync(cancellationToken);
+
+    Console.WriteLine("[InMemoryFixture] Transport subscriptions ready. Fixture initialized!");
 
     _isInitialized = true;
   }
 
   /// <summary>
   /// Creates the IHost for InventoryWorker with all required services and background workers.
+  /// Uses InProcessTransport instead of AzureServiceBusTransport for in-memory message delivery.
   /// </summary>
   [RequiresUnreferencedCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
   [RequiresDynamicCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
-  private IHost CreateInventoryHost(string postgresConnection, string serviceBusConnection) {
+  private IHost CreateInventoryHost(string postgresConnection) {
     var builder = Host.CreateApplicationBuilder();
 
     // Register service instance provider (uses shared instance ID for partition claiming compatibility)
     builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(_sharedInstanceId, "InventoryWorker"));
 
-    // Register Azure Service Bus transport
-    var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
-    builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
+    // Register SHARED InProcessTransport (same instance used by both hosts)
+    builder.Services.AddSingleton<ITransport>(_transport);
 
     // Add trace store for observability
     builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
@@ -189,6 +170,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton<OrderedStreamProcessor>();
 
     // Register JsonSerializerOptions for Npgsql JSONB serialization
+    var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
     builder.Services.AddSingleton(jsonOptions);
 
     // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
@@ -220,7 +202,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
       options.LeaseSeconds = 300;
       options.StaleThresholdSeconds = 600;
-      options.DebugMode = false;  // Disable diagnostic logging for cleaner test output
+      options.DebugMode = true;  // DIAGNOSTIC: Enable SQL debug logging
       options.PartitionCount = 10000;
       options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
     });
@@ -228,26 +210,24 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Register perspective invoker for scoped event processing (use InventoryWorker's generated invoker)
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangPerspectiveInvoker(builder.Services);
 
+    // Register perspective runners for AOT-compatible lookup (replaces reflection)
+    ECommerce.InventoryWorker.Generated.PerspectiveRunnerRegistryExtensions.AddPerspectiveRunners(builder.Services);
+
     // Register Whizbang dispatcher with outbox and transport support
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangDispatcher(builder.Services);
+
+    // NOTE: ILensQuery<T> registrations are now auto-generated by EFCoreServiceRegistrationGenerator
+    // in GeneratedModelRegistration.Initialize() for all discovered perspectives
 
     // Register lenses for querying materialized views
     // IMPORTANT: Lenses must be Scoped (not Singleton) because they depend on ILensQuery<T> which is Scoped
     builder.Services.AddScoped<IProductLens, ProductLens>();
     builder.Services.AddScoped<IInventoryLens, InventoryLens>();
 
-    // Register perspective runners (generated by PerspectiveRunnerRegistryGenerator)
-    ECommerce.InventoryWorker.Generated.PerspectiveRunnerRegistryExtensions.AddPerspectiveRunners(builder.Services);
-
-    // Register concrete perspective types for runner resolution
+    // Register InventoryWorker perspectives manually (avoid ambiguity with BFF perspectives)
+    // NEW: Converted perspectives - registered by AddPerspectiveRunners, just need scoped instances for runner resolution
     builder.Services.AddScoped<ECommerce.InventoryWorker.Perspectives.InventoryLevelsPerspective>();
     builder.Services.AddScoped<ECommerce.InventoryWorker.Perspectives.ProductCatalogPerspective>();
-
-    // Register Service Bus consumer subscriptions for InventoryWorker's own perspectives
-    var consumerOptions = new ServiceBusConsumerOptions();
-    consumerOptions.Subscriptions.Add(new TopicSubscription("products", "inventory-worker"));
-    consumerOptions.Subscriptions.Add(new TopicSubscription("inventory", "inventory-worker"));
-    builder.Services.AddSingleton(consumerOptions);
 
     // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
@@ -265,7 +245,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
       options.LeaseSeconds = 300;
       options.StaleThresholdSeconds = 600;
-      options.DebugMode = false;  // Disable diagnostic logging for cleaner test output
+      options.DebugMode = true;  // DIAGNOSTIC: Enable checkpoint tracking
       options.PartitionCount = 10000;
       options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
     });
@@ -273,27 +253,19 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Register background workers
     builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
-    builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
-      new ServiceBusConsumerWorker(
-        sp.GetRequiredService<IServiceInstanceProvider>(),
-        sp.GetRequiredService<ITransport>(),
-        sp.GetRequiredService<IServiceScopeFactory>(),
-        jsonOptions,  // Pass JSON options for event deserialization
-        sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
-        sp.GetRequiredService<OrderedStreamProcessor>(),
-        consumerOptions
-      )
-    );
+
+    // NOTE: No ServiceBusConsumerWorker needed - InProcessTransport delivers messages synchronously via subscriptions
 
     return builder.Build();
   }
 
   /// <summary>
   /// Creates the IHost for BFF with all required services and background workers.
+  /// Uses InProcessTransport instead of AzureServiceBusTransport for in-memory message delivery.
   /// </summary>
   [RequiresUnreferencedCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
   [RequiresDynamicCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
-  private IHost CreateBffHost(string postgresConnection, string serviceBusConnection) {
+  private IHost CreateBffHost(string postgresConnection) {
     var builder = Host.CreateApplicationBuilder();
 
     // Register service instance provider (uses shared instance ID for partition claiming compatibility)
@@ -301,8 +273,8 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
 
     var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
 
-    // Register Azure Service Bus transport
-    builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
+    // Register SHARED InProcessTransport (same instance used by both hosts)
+    builder.Services.AddSingleton<ITransport>(_transport);
 
     // Add trace store for observability
     builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
@@ -336,7 +308,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Register SignalR (required by BFF lenses)
     builder.Services.AddSignalR();
 
-    // Register perspective runners (generated by PerspectiveRunnerRegistryGenerator)
+    // Register perspective runners for AOT-compatible lookup (replaces reflection)
     ECommerce.BFF.API.Generated.PerspectiveRunnerRegistryExtensions.AddPerspectiveRunners(builder.Services);
 
     // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
@@ -344,7 +316,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
       options.LeaseSeconds = 300;
       options.StaleThresholdSeconds = 600;
-      options.DebugMode = false;  // Disable diagnostic logging for cleaner test output
+      options.DebugMode = true;  // DIAGNOSTIC: Enable SQL debug logging
       options.PartitionCount = 10000;
       options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
     });
@@ -352,9 +324,13 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // NOTE: BFF.API doesn't have receptors, so no DispatcherRegistrations is generated
     // BFF only materializes perspectives - it doesn't send commands
 
-    // Register concrete perspective types for runner resolution
+    // Register BFF perspectives manually (avoid ambiguity with InventoryWorker perspectives)
+    // NEW: Converted perspectives - registered by AddPerspectiveRunners, just need scoped instances for runner resolution
     builder.Services.AddScoped<ECommerce.BFF.API.Perspectives.InventoryLevelsPerspective>();
     builder.Services.AddScoped<ECommerce.BFF.API.Perspectives.ProductCatalogPerspective>();
+
+    // NOTE: ILensQuery<T> registrations are now auto-generated by EFCoreServiceRegistrationGenerator
+    // in GeneratedModelRegistration.Initialize() for all discovered perspectives
 
     // Register lenses (readonly repositories)
     builder.Services.AddScoped<IProductCatalogLens, ProductCatalogLens>();
@@ -376,7 +352,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
       options.LeaseSeconds = 300;
       options.StaleThresholdSeconds = 600;
-      options.DebugMode = false;  // Disable diagnostic logging for cleaner test output
+      options.DebugMode = true;  // DIAGNOSTIC: Enable checkpoint tracking
       options.PartitionCount = 10000;
       options.IdleThresholdPolls = 2;  // Require 2 empty polls to consider idle
     });
@@ -385,24 +361,30 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
 
-    // Register Service Bus consumer to receive events
-    var consumerOptions = new ServiceBusConsumerOptions();
-    consumerOptions.Subscriptions.Add(new TopicSubscription("products", "bff-service"));
-    consumerOptions.Subscriptions.Add(new TopicSubscription("inventory", "bff-service"));
-    builder.Services.AddSingleton(consumerOptions);
-    builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
-      new ServiceBusConsumerWorker(
-        sp.GetRequiredService<IServiceInstanceProvider>(),
-        sp.GetRequiredService<ITransport>(),
-        sp.GetRequiredService<IServiceScopeFactory>(),
-        jsonOptions,  // Pass JSON options for event deserialization
-        sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
-        sp.GetRequiredService<OrderedStreamProcessor>(),
-        consumerOptions
-      )
-    );
+    // NOTE: No ServiceBusConsumerWorker needed - InProcessTransport delivers messages synchronously via subscriptions
 
     return builder.Build();
+  }
+
+  /// <summary>
+  /// Waits for PostgreSQL to be ready to accept connections by attempting to open a connection.
+  /// Polls up to 30 times (30 seconds total) with 1 second delay between attempts.
+  /// </summary>
+  private async Task WaitForPostgresReadyAsync(string connectionString, CancellationToken cancellationToken = default) {
+    var maxAttempts = 30; // 30 seconds total
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        using var dataSource = new Npgsql.NpgsqlDataSourceBuilder(connectionString).Build();
+        using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
+        Console.WriteLine($"[InMemoryFixture] PostgreSQL connection successful (attempt {attempt})");
+        return;
+      } catch (Exception ex) when (attempt < maxAttempts) {
+        Console.WriteLine($"[InMemoryFixture] PostgreSQL not ready (attempt {attempt}): {ex.Message}");
+        await Task.Delay(1000, cancellationToken);
+      }
+    }
+
+    throw new TimeoutException($"PostgreSQL failed to accept connections after {maxAttempts} attempts");
   }
 
   /// <summary>
@@ -422,136 +404,6 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       var bffDbContext = scope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
       await ECommerce.BFF.API.Generated.BffDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(bffDbContext, logger: null, cancellationToken);
     }
-  }
-
-  /// <summary>
-  /// Waits for PostgreSQL to be ready by attempting to connect until successful.
-  /// Aspire starts containers but doesn't guarantee they're accepting connections.
-  /// </summary>
-  private async Task WaitForPostgresReadyAsync(CancellationToken cancellationToken = default) {
-    var maxAttempts = 30; // 30 seconds total
-    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
-      try {
-        using var dataSource = new Npgsql.NpgsqlDataSourceBuilder(_postgresConnection!).Build();
-        using var connection = await dataSource.OpenConnectionAsync(cancellationToken);
-        Console.WriteLine($"[AspireFixture] PostgreSQL connection successful (attempt {attempt})");
-        return;
-      } catch (Exception ex) when (attempt < maxAttempts) {
-        // PostgreSQL not ready yet, wait and retry
-        Console.WriteLine($"[AspireFixture] PostgreSQL not ready (attempt {attempt}): {ex.Message}");
-        await Task.Delay(1000, cancellationToken);
-      }
-    }
-
-    throw new TimeoutException($"PostgreSQL failed to accept connections after {maxAttempts} attempts");
-  }
-
-  /// <summary>
-  /// Waits for the Azure Service Bus Emulator to be fully ready.
-  /// The emulator takes 60-90 seconds to initialize on ARM64 (start SQL Server, create databases, provision topics).
-  /// The pre-configured Config.json with $Default TrueFilter rules is mounted at container startup via Aspire.
-  /// </summary>
-  private async Task WaitForServiceBusEmulatorReadyAsync(CancellationToken cancellationToken = default) {
-    // WORKAROUND: Azure Service Bus Emulator takes significant time to initialize:
-    // 1. Start SQL Server (15s initial wait + retries)
-    // 2. Create databases (SbGatewayDatabase, SbMessageContainerDatabase00001)
-    // 3. Provision topics and subscriptions (using our pre-configured Config.json)
-    // 4. Report "Emulator Service is Successfully Up!"
-    //
-    // Total time: 60-90 seconds on ARM64, potentially longer under load
-    // User observed: "even with the sample app, aspire shows the services bus and all of it topics
-    // and subscriptions as unhealthy for 30-60 seconds on startup"
-    //
-    // See: https://github.com/Azure/azure-service-bus-emulator-installer/issues/35
-    // See: https://github.com/dotnet/aspire/issues/8818
-    Console.WriteLine("[AspireFixture] Waiting 120 seconds for Azure Service Bus Emulator to fully initialize...");
-    Console.WriteLine("[AspireFixture] (Emulator needs to: start SQL Server, create databases, provision topics/subscriptions from config file)");
-    await Task.Delay(120000, cancellationToken);
-    Console.WriteLine("[AspireFixture] Emulator should now be initialized with $Default TrueFilter rules from mounted config");
-  }
-
-  /// <summary>
-  /// Adds $Default TrueFilter rules to all Service Bus subscriptions by modifying the emulator's config file.
-  /// Uses Docker cp + Python script to modify JSON since ServiceBusAdministrationClient isn't supported by emulator.
-  /// </summary>
-  private async Task AddServiceBusSubscriptionRulesAsync(CancellationToken cancellationToken = default) {
-    // Find the Service Bus emulator container
-    var findContainerCmd = "docker ps --filter \"ancestor=mcr.microsoft.com/azure-messaging/servicebus-emulator\" --format \"{{.ID}}\"";
-    var findResult = await RunBashCommandAsync(findContainerCmd, cancellationToken);
-    var containerId = findResult.Trim();
-
-    if (string.IsNullOrEmpty(containerId)) {
-      throw new InvalidOperationException("Could not find Service Bus emulator container");
-    }
-
-    Console.WriteLine($"[AspireFixture] Found Service Bus emulator container: {containerId}");
-
-    try {
-      // Create temp files
-      var tempConfigPath = Path.GetTempFileName();
-      var tempModifiedPath = Path.GetTempFileName();
-
-      // Copy config file from container to host
-      var copyFromCmd = $"docker cp {containerId}:/ServiceBus_Emulator/ConfigFiles/Config.json {tempConfigPath}";
-      await RunBashCommandAsync(copyFromCmd, cancellationToken);
-      Console.WriteLine("[AspireFixture] Copied config from container");
-
-      // Run Python script to add rules
-      var scriptPath = Path.Combine(AppContext.BaseDirectory, "add-servicebus-rules.py");
-      var modifyConfigCmd = $"/usr/bin/python3 {scriptPath} < {tempConfigPath} > {tempModifiedPath} 2>&1";
-      var pythonOutput = await RunBashCommandAsync(modifyConfigCmd, cancellationToken);
-      Console.WriteLine($"[AspireFixture] Python script output: {pythonOutput}");
-
-      // Copy modified config back to container
-      var copyToCmd = $"docker cp {tempModifiedPath} {containerId}:/ServiceBus_Emulator/ConfigFiles/Config.json";
-      await RunBashCommandAsync(copyToCmd, cancellationToken);
-      Console.WriteLine("[AspireFixture] Copied modified config back to container");
-
-      // Clean up temp files
-      File.Delete(tempConfigPath);
-      File.Delete(tempModifiedPath);
-
-      Console.WriteLine("[AspireFixture] Successfully added $Default TrueFilter rules to all subscriptions");
-
-      // Verify the rules were added (read config again)
-      var readConfigCmd = $"docker exec {containerId} cat /ServiceBus_Emulator/ConfigFiles/Config.json";
-      var updatedConfig = await RunBashCommandAsync(readConfigCmd, cancellationToken);
-      if (updatedConfig.Contains("\"Name\":\"$Default\"")) {
-        Console.WriteLine("[AspireFixture] Verified: $Default rules present in config");
-      } else {
-        Console.WriteLine("[AspireFixture] WARNING: $Default rules not found in updated config!");
-      }
-    } catch (Exception ex) {
-      Console.WriteLine($"[AspireFixture] ERROR adding subscription rules: {ex.Message}");
-      throw;
-    }
-  }
-
-  private async Task<string> RunBashCommandAsync(string command, CancellationToken cancellationToken = default) {
-    var processInfo = new System.Diagnostics.ProcessStartInfo {
-      FileName = "/bin/bash",
-      Arguments = $"-c \"{command}\"",
-      RedirectStandardOutput = true,
-      RedirectStandardError = true,
-      UseShellExecute = false,
-      CreateNoWindow = true
-    };
-
-    using var process = System.Diagnostics.Process.Start(processInfo);
-    if (process == null) {
-      throw new InvalidOperationException($"Failed to start process for command: {command}");
-    }
-
-    var output = await process.StandardOutput.ReadToEndAsync(cancellationToken);
-    var error = await process.StandardError.ReadToEndAsync(cancellationToken);
-
-    await process.WaitForExitAsync(cancellationToken);
-
-    if (process.ExitCode != 0) {
-      throw new InvalidOperationException($"Command failed with exit code {process.ExitCode}: {error}");
-    }
-
-    return output;
   }
 
   /// <summary>
@@ -668,11 +520,11 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
         bffPerspectiveTcs.Task
       ).WaitAsync(cts.Token);
 
-      Console.WriteLine("[AspireFixture] Event processing idle - all workers have no pending work (2 publishers + 2 perspective workers)");
+      Console.WriteLine("[InMemoryFixture] Event processing idle - all workers have no pending work (2 publishers + 2 perspective workers)");
     } catch (OperationCanceledException) {
-      Console.WriteLine($"[AspireFixture] WARNING: Event processing did not reach idle state within {timeoutMilliseconds}ms timeout");
-      Console.WriteLine($"[AspireFixture] InventoryWorker Publisher idle: {inventoryPublisher?.IsIdle ?? true}, PerspectiveWorker idle: {inventoryPerspectiveWorker?.IsIdle ?? true}");
-      Console.WriteLine($"[AspireFixture] BFF Publisher idle: {bffPublisher?.IsIdle ?? true}, PerspectiveWorker idle: {bffPerspectiveWorker?.IsIdle ?? true}");
+      Console.WriteLine($"[InMemoryFixture] WARNING: Event processing did not reach idle state within {timeoutMilliseconds}ms timeout");
+      Console.WriteLine($"[InMemoryFixture] InventoryWorker Publisher idle: {inventoryPublisher?.IsIdle ?? true}, PerspectiveWorker idle: {inventoryPerspectiveWorker?.IsIdle ?? true}");
+      Console.WriteLine($"[InMemoryFixture] BFF Publisher idle: {bffPublisher?.IsIdle ?? true}, PerspectiveWorker idle: {bffPerspectiveWorker?.IsIdle ?? true}");
     } finally {
       // Clean up handlers
       if (inventoryPublisher != null && inventoryPublisherHandler != null) {
@@ -727,12 +579,138 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     }
   }
 
+  /// <summary>
+  /// Sets up transport subscriptions to write incoming messages to inbox tables.
+  /// This replaces ServiceBusConsumerWorker for InProcessTransport scenarios.
+  /// Without subscriptions, published messages are delivered to nobody and perspectives never materialize.
+  /// </summary>
+  private async Task SetupTransportSubscriptionsAsync(CancellationToken cancellationToken) {
+    // Subscribe InventoryWorker to "products" and "inventory" topics
+    await _transport.SubscribeAsync(
+      async (envelope, ct) => await HandleMessageForHostAsync(_inventoryHost!, envelope, ct),
+      new TransportDestination("products", "inventory-worker"),
+      cancellationToken
+    );
+
+    await _transport.SubscribeAsync(
+      async (envelope, ct) => await HandleMessageForHostAsync(_inventoryHost!, envelope, ct),
+      new TransportDestination("inventory", "inventory-worker"),
+      cancellationToken
+    );
+
+    Console.WriteLine("[InMemoryFixture] InventoryWorker subscribed to 'products' and 'inventory' topics");
+
+    // Subscribe BFF to "products" and "inventory" topics
+    await _transport.SubscribeAsync(
+      async (envelope, ct) => await HandleMessageForHostAsync(_bffHost!, envelope, ct),
+      new TransportDestination("products", "bff-service"),
+      cancellationToken
+    );
+
+    await _transport.SubscribeAsync(
+      async (envelope, ct) => await HandleMessageForHostAsync(_bffHost!, envelope, ct),
+      new TransportDestination("inventory", "bff-service"),
+      cancellationToken
+    );
+
+    Console.WriteLine("[InMemoryFixture] BFF subscribed to 'products' and 'inventory' topics");
+  }
+
+  /// <summary>
+  /// Handles incoming messages from transport and writes them to inbox (simplified for InProcessTransport).
+  /// Just writes to inbox table and lets PerspectiveWorker poll and process naturally.
+  /// </summary>
+  private async Task HandleMessageForHostAsync(IHost host, IMessageEnvelope envelope, CancellationToken ct) {
+    try {
+      // Create scope to resolve scoped services
+      await using var scope = host.Services.CreateAsyncScope();
+      var strategy = scope.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
+      var jsonOptions = scope.ServiceProvider.GetRequiredService<JsonSerializerOptions>();
+
+      // 1. Serialize envelope to InboxMessage
+      var newInboxMessage = SerializeToNewInboxMessage(envelope, jsonOptions);
+
+      // 2. Queue for atomic deduplication via process_work_batch
+      strategy.QueueInboxMessage(newInboxMessage);
+
+      // 3. Flush - calls process_work_batch with atomic INSERT ... ON CONFLICT DO NOTHING
+      // This writes the message to inbox table, and PerspectiveWorker will poll and process it
+      await strategy.FlushAsync(WorkBatchFlags.None, ct);
+
+      Console.WriteLine($"[InMemoryFixture] Message {envelope.MessageId} written to inbox for {host.Services.GetRequiredService<IServiceInstanceProvider>().ServiceName}");
+    } catch (Exception ex) {
+      Console.WriteLine($"[InMemoryFixture] Error processing message {envelope.MessageId}: {ex.Message}");
+      throw;
+    }
+  }
+
+  /// <summary>
+  /// Serializes IMessageEnvelope to InboxMessage (same logic as ServiceBusConsumerWorker._serializeToNewInboxMessage).
+  /// </summary>
+  private static InboxMessage SerializeToNewInboxMessage(IMessageEnvelope envelope, JsonSerializerOptions jsonOptions) {
+    var payload = envelope.Payload;
+    var payloadType = payload.GetType();
+    var handlerName = payloadType.Name + "Handler";
+    var streamId = ExtractStreamId(envelope);
+
+    var messageTypeName = payloadType.AssemblyQualifiedName
+      ?? throw new InvalidOperationException($"Message type {payloadType.Name} must have an assembly-qualified name");
+
+    var envelopeTypeName = envelope.GetType().AssemblyQualifiedName
+      ?? throw new InvalidOperationException($"Envelope type {envelope.GetType().Name} must have an assembly-qualified name");
+
+    // Serialize envelope to JSON and deserialize as MessageEnvelope<JsonElement>
+    var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
+    var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)
+      ?? throw new InvalidOperationException($"Failed to deserialize envelope as MessageEnvelope<JsonElement> for message {envelope.MessageId}");
+
+    return new InboxMessage {
+      MessageId = envelope.MessageId.Value,
+      HandlerName = handlerName,
+      Envelope = jsonEnvelope,
+      EnvelopeType = envelopeTypeName,
+      StreamId = streamId,
+      IsEvent = payload is IEvent,
+      MessageType = messageTypeName
+    };
+  }
+
+  /// <summary>
+  /// Deserializes event payload from InboxWork (same logic as ServiceBusConsumerWorker._deserializeEvent).
+  /// </summary>
+  private static object? DeserializeEvent(InboxWork work, JsonSerializerOptions jsonOptions) {
+    try {
+      var jsonElement = work.Envelope.Payload;
+      var messageType = Type.GetType(work.MessageType);
+      if (messageType == null) {
+        return null;
+      }
+
+      return JsonSerializer.Deserialize(jsonElement, messageType, jsonOptions);
+    } catch {
+      return null;
+    }
+  }
+
+  /// <summary>
+  /// Extracts stream_id from envelope for stream-based ordering (same logic as ServiceBusConsumerWorker._extractStreamId).
+  /// </summary>
+  private static Guid ExtractStreamId(IMessageEnvelope envelope) {
+    var firstHop = envelope.Hops.FirstOrDefault();
+    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var aggregateIdElem)) {
+      if (aggregateIdElem.ValueKind == JsonValueKind.String) {
+        var aggregateIdStr = aggregateIdElem.GetString();
+        if (aggregateIdStr != null && Guid.TryParse(aggregateIdStr, out var parsedAggregateId)) {
+          return parsedAggregateId;
+        }
+      }
+    }
+
+    return envelope.MessageId.Value;
+  }
+
   public async ValueTask DisposeAsync() {
     if (_isInitialized) {
-      // Dispose scopes first (before stopping hosts)
-      _inventoryScope?.Dispose();
-      _bffScope?.Dispose();
-
       // Stop hosts
       if (_inventoryHost != null) {
         await _inventoryHost.StopAsync();
@@ -744,11 +722,8 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
         _bffHost.Dispose();
       }
 
-      // Stop Aspire app (which will stop containers)
-      if (_app != null) {
-        await _app.StopAsync();
-        await _app.DisposeAsync();
-      }
+      // Stop and dispose PostgreSQL container
+      await _postgresContainer.DisposeAsync();
     }
   }
 }

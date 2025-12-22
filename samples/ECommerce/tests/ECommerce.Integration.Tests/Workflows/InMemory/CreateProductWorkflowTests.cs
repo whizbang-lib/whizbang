@@ -2,30 +2,31 @@ using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
 using ECommerce.Integration.Tests.Fixtures;
 
-namespace ECommerce.Integration.Tests.Workflows;
+namespace ECommerce.Integration.Tests.Workflows.InMemory;
 
 /// <summary>
-/// End-to-end integration tests for the CreateProduct workflow.
+/// End-to-end integration tests for the CreateProduct workflow using InProcessTransport.
 /// Tests the complete flow: Command → Receptor → Event Store → Perspectives.
-/// MIGRATED: Now uses Testcontainers-based test infrastructure.
+/// Uses in-memory transport for fast, deterministic testing without Service Bus infrastructure.
+/// This isolates business logic testing from Azure Service Bus concerns.
 /// </summary>
 [NotInParallel]
 public class CreateProductWorkflowTests {
-  private static AspireIntegrationFixture? _fixture;
+  private static InMemoryIntegrationFixture? _fixture;
 
   // Test product IDs (deterministic GUIDs for reproducibility)
-  private static readonly ProductId TestProd1 = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000001"));
-  private static readonly ProductId TestProdMulti1 = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000011"));
-  private static readonly ProductId TestProdMulti2 = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000012"));
-  private static readonly ProductId TestProdMulti3 = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000013"));
-  private static readonly ProductId TestProdZeroStock = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000020"));
-  private static readonly ProductId TestProdNoImage = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000030"));
+  private static readonly ProductId TestProd1 = ProductId.From(Guid.Parse("10000000-0000-0000-0000-000000000001"));
+  private static readonly ProductId TestProdMulti1 = ProductId.From(Guid.Parse("10000000-0000-0000-0000-000000000011"));
+  private static readonly ProductId TestProdMulti2 = ProductId.From(Guid.Parse("10000000-0000-0000-0000-000000000012"));
+  private static readonly ProductId TestProdMulti3 = ProductId.From(Guid.Parse("10000000-0000-0000-0000-000000000013"));
+  private static readonly ProductId TestProdZeroStock = ProductId.From(Guid.Parse("10000000-0000-0000-0000-000000000020"));
+  private static readonly ProductId TestProdNoImage = ProductId.From(Guid.Parse("10000000-0000-0000-0000-000000000030"));
 
   [Before(Test)]
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
-    _fixture = await SharedFixtureSource.GetFixtureAsync();
+    _fixture = await SharedInMemoryFixtureSource.GetFixtureAsync();
   }
 
   [After(Class)]
@@ -59,7 +60,7 @@ public class CreateProductWorkflowTests {
     // Act
     await fixture.Dispatcher.SendAsync(command);
 
-    // Process events through perspectives (simulates Service Bus event processing)
+    // Process events through perspectives (synchronous with InProcessTransport)
     await fixture.WaitForEventProcessingAsync();
 
     // Assert - Verify in InventoryWorker perspective

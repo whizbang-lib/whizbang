@@ -44,7 +44,7 @@ public static class PerspectiveCheckpointsSchema {
       new ColumnDefinition(
         Name: "last_event_id",
         DataType: WhizbangDataType.Uuid,
-        Nullable: false
+        Nullable: true  // Nullable - checkpoints start with no processed events
       ),
       new ColumnDefinition(
         Name: "status",

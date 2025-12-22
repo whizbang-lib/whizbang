@@ -3,21 +3,21 @@ using System.Diagnostics.CodeAnalysis;
 namespace ECommerce.Integration.Tests.Fixtures;
 
 /// <summary>
-/// Provides a shared integration fixture for all test classes.
-/// TUnit will create this once and share it across all tests.
-/// Using Aspire for reliable Service Bus emulator configuration on ARM64.
+/// Provides a shared InMemoryIntegrationFixture for all in-memory integration test classes.
+/// TUnit will create this once and share it across all in-memory tests.
+/// Uses InProcessTransport for fast, deterministic testing without Service Bus infrastructure.
 /// </summary>
-public static class SharedFixtureSource {
-  private static AspireIntegrationFixture? _fixture;
+public static class SharedInMemoryFixtureSource {
+  private static InMemoryIntegrationFixture? _fixture;
   private static readonly SemaphoreSlim _lock = new(1, 1);
 
   [RequiresUnreferencedCode("EF Core in tests may use unreferenced code")]
   [RequiresDynamicCode("EF Core in tests may use dynamic code")]
-  public static async Task<AspireIntegrationFixture> GetFixtureAsync() {
+  public static async Task<InMemoryIntegrationFixture> GetFixtureAsync() {
     await _lock.WaitAsync();
     try {
       if (_fixture == null) {
-        _fixture = new AspireIntegrationFixture();
+        _fixture = new InMemoryIntegrationFixture();
         await _fixture.InitializeAsync();
       }
       return _fixture;

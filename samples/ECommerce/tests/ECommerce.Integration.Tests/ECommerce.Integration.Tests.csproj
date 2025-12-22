@@ -30,6 +30,7 @@
 
   <ItemGroup>
     <None Include="servicebus-config.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="add-servicebus-rules.py" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
