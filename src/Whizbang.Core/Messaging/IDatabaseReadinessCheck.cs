@@ -15,6 +15,7 @@ namespace Whizbang.Core.Messaging;
 /// - Cassandra: Check if keyspace exists and is reachable
 /// - MongoDB: Check if connection is established and collections exist
 /// </remarks>
+/// <docs>workers/database-readiness</docs>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresDatabaseReadinessCheckTests.cs:IsReadyAsync_WithRunningDatabaseAndSchema_ReturnsTrueAsync</tests>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresDatabaseReadinessCheckTests.cs:IsReadyAsync_WithInvalidConnectionString_ReturnsFalseAsync</tests>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/PostgresDatabaseReadinessCheckTests.cs:IsReadyAsync_WithMissingTables_ReturnsFalseAsync</tests>

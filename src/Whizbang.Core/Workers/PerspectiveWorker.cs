@@ -17,6 +17,7 @@ namespace Whizbang.Core.Workers;
 /// invokes perspectives, and tracks checkpoint progress per stream.
 /// Uses lease-based coordination for reliable perspective processing across instances.
 /// </summary>
+/// <docs>workers/perspective-worker</docs>
 public class PerspectiveWorker(
   IServiceInstanceProvider instanceProvider,
   IServiceScopeFactory scopeFactory,

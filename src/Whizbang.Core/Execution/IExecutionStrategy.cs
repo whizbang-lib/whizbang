@@ -8,6 +8,7 @@ namespace Whizbang.Core.Execution;
 /// Implementations control ordering, concurrency, and lifecycle.
 /// </summary>
 /// <docs>components/dispatcher</docs>
+/// <docs>workers/execution-lifecycle</docs>
 /// <tests>tests/Whizbang.Execution.Tests/ExecutionStrategyContractTests.cs</tests>
 public interface IExecutionStrategy {
   /// <summary>
