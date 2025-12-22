@@ -16,15 +16,13 @@ CREATE OR REPLACE FUNCTION complete_perspective_checkpoint_work(
 ) RETURNS VOID AS $$
 BEGIN
   -- Update checkpoint with results from perspective runner
+  -- Includes error message for failed runs, clears error for successful runs
   UPDATE wh_perspective_checkpoints
   SET last_event_id = p_last_event_id,
-      status = p_status
+      status = p_status,
+      error = p_error_message
   WHERE stream_id = p_stream_id
     AND perspective_name = p_perspective_name;
-
-  -- Note: Error tracking (p_error_message) will be implemented when we add
-  -- error tracking infrastructure to wh_perspective_checkpoints table.
-  -- For now, we just track status and last_event_id.
 END;
 $$ LANGUAGE plpgsql;
 

@@ -536,11 +536,12 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         failures = System.Text.Json.JsonSerializer.Serialize(perspectiveFailures)
       });
 
-    // Assert - Checkpoint should be updated with failed status
+    // Assert - Checkpoint should be updated with failed status AND error message
     var checkpoint = await GetPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
     await Assert.That(checkpoint!.status).IsEqualTo((short)2)  // Failed
       .Because("Checkpoint should reflect the failure status");
-    // Note: The actual error message storage will be implemented when we add error tracking infrastructure
+    await Assert.That(checkpoint.error).IsEqualTo("Database connection timeout")
+      .Because("Error message should be persisted to help diagnose failures");
   }
 
   [Test]
@@ -610,7 +611,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
   private async Task<PerspectiveCheckpoint?> GetPerspectiveCheckpointAsync(Guid streamId, string perspectiveName) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     return await connection.QueryFirstOrDefaultAsync<PerspectiveCheckpoint>(@"
-      SELECT stream_id, perspective_name, last_event_id, status
+      SELECT stream_id, perspective_name, last_event_id, status, error
       FROM wh_perspective_checkpoints
       WHERE stream_id = @streamId AND perspective_name = @perspectiveName",
       new { streamId, perspectiveName });
@@ -619,7 +620,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
   private async Task<List<PerspectiveCheckpoint>> GetAllPerspectiveCheckpointsAsync(Guid streamId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     var results = await connection.QueryAsync<PerspectiveCheckpoint>(@"
-      SELECT stream_id, perspective_name, last_event_id, status
+      SELECT stream_id, perspective_name, last_event_id, status, error
       FROM wh_perspective_checkpoints
       WHERE stream_id = @streamId",
       new { streamId });
@@ -631,5 +632,6 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     Guid stream_id,
     string perspective_name,
     Guid? last_event_id,
-    short status);
+    short status,
+    string? error);
 }
