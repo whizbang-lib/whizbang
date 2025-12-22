@@ -84,7 +84,9 @@ public class DapperPostgresEventStore(
             AggregateType = typeof(TMessage).Name,
             SequenceNumber = nextSequence,
             Version = (int)nextSequence, // version tracks stream-specific sequence
-            EventType = typeof(TMessage).FullName,
+            // Use short form: "TypeName, AssemblyName" (NOT AssemblyQualifiedName which includes Version/Culture/PublicKeyToken)
+            // This matches the format expected by wh_message_associations and used in process_work_batch SQL JOIN
+            EventType = $"{typeof(TMessage).FullName}, {typeof(TMessage).Assembly.GetName().Name}",
             EventData = jsonb.DataJson,
             Metadata = jsonb.MetadataJson,
             Scope = jsonb.ScopeJson,

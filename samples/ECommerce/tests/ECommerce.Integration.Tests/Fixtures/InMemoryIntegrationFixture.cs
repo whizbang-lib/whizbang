@@ -129,7 +129,12 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     // Initialize PostgreSQL schema using EFCore DbContexts
     await InitializeSchemaAsync(cancellationToken);
 
-    Console.WriteLine("[InMemoryFixture] Schema initialized. Starting service hosts...");
+    Console.WriteLine("[InMemoryFixture] Schema initialized. Seeding message associations...");
+
+    // Seed message associations for perspective auto-checkpoint creation
+    await SeedMessageAssociationsAsync(cancellationToken);
+
+    Console.WriteLine("[InMemoryFixture] Message associations seeded. Starting service hosts...");
 
     // Start service hosts
     await Task.WhenAll(
@@ -407,6 +412,127 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   }
 
   /// <summary>
+  /// Seeds message associations for perspective auto-checkpoint creation.
+  /// Maps event types to perspectives so process_work_batch can auto-create checkpoint rows.
+  /// PHASE 3 (Option A): Manual seeding - will be replaced by generator automation in Phase 3 (Option B).
+  /// </summary>
+  private async Task SeedMessageAssociationsAsync(CancellationToken cancellationToken = default) {
+    using var scope = _inventoryHost!.Services.CreateScope();
+    var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+
+    // Seed associations for InventoryWorker.ProductCatalogPerspective
+    // Handles: ProductCreatedEvent, ProductUpdatedEvent, ProductDeletedEvent
+    await dbContext.Database.ExecuteSqlRawAsync(@"
+      INSERT INTO wh_message_associations (message_type, association_type, target_name, service_name, created_at, updated_at)
+      VALUES
+        ('ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts', 'perspective', 'ProductCatalogPerspective', 'ECommerce.InventoryWorker', NOW(), NOW()),
+        ('ECommerce.Contracts.Events.ProductUpdatedEvent, ECommerce.Contracts', 'perspective', 'ProductCatalogPerspective', 'ECommerce.InventoryWorker', NOW(), NOW()),
+        ('ECommerce.Contracts.Events.ProductDeletedEvent, ECommerce.Contracts', 'perspective', 'ProductCatalogPerspective', 'ECommerce.InventoryWorker', NOW(), NOW())
+      ON CONFLICT (message_type, association_type, target_name, service_name) DO NOTHING
+    ", cancellationToken);
+
+    // Seed associations for InventoryWorker.InventoryLevelsPerspective
+    // Handles: ProductCreatedEvent (initial), InventoryRestockedEvent, InventoryReservedEvent, InventoryAdjustedEvent
+    await dbContext.Database.ExecuteSqlRawAsync(@"
+      INSERT INTO wh_message_associations (message_type, association_type, target_name, service_name, created_at, updated_at)
+      VALUES
+        ('ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.InventoryWorker', NOW(), NOW()),
+        ('ECommerce.Contracts.Events.InventoryRestockedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.InventoryWorker', NOW(), NOW()),
+        ('ECommerce.Contracts.Events.InventoryReservedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.InventoryWorker', NOW(), NOW()),
+        ('ECommerce.Contracts.Events.InventoryAdjustedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.InventoryWorker', NOW(), NOW())
+      ON CONFLICT (message_type, association_type, target_name, service_name) DO NOTHING
+    ", cancellationToken);
+
+    // Seed associations for BFF.ProductCatalogPerspective
+    // Handles: ProductCreatedEvent, ProductUpdatedEvent, ProductDeletedEvent
+    await dbContext.Database.ExecuteSqlRawAsync(@"
+      INSERT INTO wh_message_associations (message_type, association_type, target_name, service_name, created_at, updated_at)
+      VALUES
+        ('ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts', 'perspective', 'ProductCatalogPerspective', 'ECommerce.BFF.API', NOW(), NOW()),
+        ('ECommerce.Contracts.Events.ProductUpdatedEvent, ECommerce.Contracts', 'perspective', 'ProductCatalogPerspective', 'ECommerce.BFF.API', NOW(), NOW()),
+        ('ECommerce.Contracts.Events.ProductDeletedEvent, ECommerce.Contracts', 'perspective', 'ProductCatalogPerspective', 'ECommerce.BFF.API', NOW(), NOW())
+      ON CONFLICT (message_type, association_type, target_name, service_name) DO NOTHING
+    ", cancellationToken);
+
+    // Seed associations for BFF.InventoryLevelsPerspective
+    // Handles: ProductCreatedEvent (initial), InventoryRestockedEvent, InventoryReservedEvent, InventoryAdjustedEvent
+    await dbContext.Database.ExecuteSqlRawAsync(@"
+      INSERT INTO wh_message_associations (message_type, association_type, target_name, service_name, created_at, updated_at)
+      VALUES
+        ('ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.BFF.API', NOW(), NOW()),
+        ('ECommerce.Contracts.Events.InventoryRestockedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.BFF.API', NOW(), NOW()),
+        ('ECommerce.Contracts.Events.InventoryReservedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.BFF.API', NOW(), NOW()),
+        ('ECommerce.Contracts.Events.InventoryAdjustedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.BFF.API', NOW(), NOW())
+      ON CONFLICT (message_type, association_type, target_name, service_name) DO NOTHING
+    ", cancellationToken);
+
+    // DIAGNOSTIC: Query actual event types in event store to verify naming
+    var eventTypes = await dbContext.Database.SqlQueryRaw<string>(@"
+      SELECT DISTINCT event_type FROM wh_event_store LIMIT 10
+    ").ToListAsync(cancellationToken);
+
+    Console.WriteLine($"[InMemoryFixture] DIAGNOSTIC: Found {eventTypes.Count} distinct event types in wh_event_store:");
+    foreach (var eventType in eventTypes) {
+      Console.WriteLine($"[InMemoryFixture]   - '{eventType}'");
+    }
+
+    // DIAGNOSTIC: Query message associations to verify what we seeded
+    var associations = await dbContext.Database.SqlQueryRaw<string>(@"
+      SELECT DISTINCT message_type FROM wh_message_associations WHERE association_type = 'perspective' LIMIT 20
+    ").ToListAsync(cancellationToken);
+
+    Console.WriteLine($"[InMemoryFixture] DIAGNOSTIC: Found {associations.Count} message_type values in wh_message_associations:");
+    foreach (var assoc in associations) {
+      Console.WriteLine($"[InMemoryFixture]   - '{assoc}'");
+    }
+
+    Console.WriteLine("[InMemoryFixture] Message associations seeded successfully");
+  }
+
+  /// <summary>
+  /// DIAGNOSTIC: Query event types and message associations after events are written.
+  /// Helps identify naming mismatches between event_type and message_type columns.
+  /// </summary>
+  public async Task DumpEventTypesAndAssociationsAsync(CancellationToken cancellationToken = default) {
+    using var scope = _inventoryHost!.Services.GetRequiredService<IServiceScopeFactory>().CreateScope();
+    var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+
+    // Query actual event types in event store
+    var eventTypes = await dbContext.Database.SqlQueryRaw<string>(@"
+      SELECT DISTINCT event_type FROM wh_event_store ORDER BY event_type LIMIT 20
+    ").ToListAsync(cancellationToken);
+
+    var output = new System.Text.StringBuilder();
+    output.AppendLine($"[DIAGNOSTIC] Found {eventTypes.Count} distinct event types in wh_event_store:");
+    foreach (var eventType in eventTypes) {
+      output.AppendLine($"[DIAGNOSTIC]   event_type: '{eventType}'");
+      Console.WriteLine($"[DIAGNOSTIC]   event_type: '{eventType}'");
+    }
+
+    // Query message associations
+    var associations = await dbContext.Database.SqlQueryRaw<string>(@"
+      SELECT DISTINCT message_type FROM wh_message_associations WHERE association_type = 'perspective' ORDER BY message_type LIMIT 20
+    ").ToListAsync(cancellationToken);
+
+    output.AppendLine($"[DIAGNOSTIC] Found {associations.Count} message_type values in wh_message_associations:");
+    foreach (var assoc in associations) {
+      output.AppendLine($"[DIAGNOSTIC]   message_type: '{assoc}'");
+      Console.WriteLine($"[DIAGNOSTIC]   message_type: '{assoc}'");
+    }
+
+    // Query perspective checkpoints created
+    var checkpointCount = await dbContext.Database.SqlQueryRaw<int>(@"
+      SELECT COUNT(*)::int FROM wh_perspective_checkpoints
+    ").FirstOrDefaultAsync(cancellationToken);
+
+    output.AppendLine($"[DIAGNOSTIC] Found {checkpointCount} perspective checkpoints in wh_perspective_checkpoints");
+    Console.WriteLine($"[DIAGNOSTIC] Found {checkpointCount} perspective checkpoints in wh_perspective_checkpoints");
+
+    // Write to file for examination
+    await System.IO.File.WriteAllTextAsync("/tmp/event-type-diagnostic.log", output.ToString(), cancellationToken);
+  }
+
+  /// <summary>
   /// Waits for both InventoryWorker and BFF work processing to become idle.
   /// Tracks 4 workers: WorkCoordinatorPublisherWorker (outbox/inbox) + PerspectiveWorker (perspective materialization) for both services.
   /// Uses event callbacks to efficiently detect when all event processing is complete.
@@ -653,8 +779,9 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     var handlerName = payloadType.Name + "Handler";
     var streamId = ExtractStreamId(envelope);
 
-    var messageTypeName = payloadType.AssemblyQualifiedName
-      ?? throw new InvalidOperationException($"Message type {payloadType.Name} must have an assembly-qualified name");
+    // Use short form: "TypeName, AssemblyName" (NOT AssemblyQualifiedName which includes Version/Culture/PublicKeyToken)
+    // This matches the format expected by wh_message_associations and used in process_work_batch SQL JOIN
+    var messageTypeName = $"{payloadType.FullName}, {payloadType.Assembly.GetName().Name}";
 
     var envelopeTypeName = envelope.GetType().AssemblyQualifiedName
       ?? throw new InvalidOperationException($"Envelope type {envelope.GetType().Name} must have an assembly-qualified name");
