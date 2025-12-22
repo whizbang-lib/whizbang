@@ -3,9 +3,9 @@
 -- Description: Creates process_work_batch function with stream management, active streams coordination,
 --              and perspective checkpoint processing. This migration consolidates migrations 014-018
 --              into a single clean migration for the v0.1.0 release.
--- Dependencies: 001-005 (compute_partition, receptor processing, perspectives)
+-- Dependencies: 001-005a (compute_partition, receptor processing, perspectives, complete_perspective_checkpoint_work)
 -- Note: wh_active_streams table is created from C# schema (ActiveStreamsSchema.cs), not SQL migrations.
---
+
 -- ======================================================================================
 -- process_work_batch Function with Stream Management and Perspective Support
 -- ======================================================================================
@@ -358,10 +358,10 @@ BEGIN
   IF jsonb_array_length(p_perspective_completions) > 0 THEN
     FOR v_completion IN
       SELECT
-        (elem->>'StreamId')::UUID as stream_id,
-        elem->>'PerspectiveName' as perspective_name,
-        (elem->>'LastEventId')::UUID as last_event_id,
-        (elem->>'Status')::SMALLINT as status
+        (elem->>'stream_id')::UUID as stream_id,
+        elem->>'perspective_name' as perspective_name,
+        (elem->>'last_event_id')::UUID as last_event_id,
+        (elem->>'status')::SMALLINT as status
       FROM jsonb_array_elements(p_perspective_completions) as elem
     LOOP
       PERFORM complete_perspective_checkpoint_work(
@@ -378,11 +378,11 @@ BEGIN
   IF jsonb_array_length(p_perspective_failures) > 0 THEN
     FOR v_failure IN
       SELECT
-        (elem->>'StreamId')::UUID as stream_id,
-        elem->>'PerspectiveName' as perspective_name,
-        (elem->>'LastEventId')::UUID as last_event_id,
-        (elem->>'Status')::SMALLINT as status,
-        elem->>'Error' as error_message
+        (elem->>'stream_id')::UUID as stream_id,
+        elem->>'perspective_name' as perspective_name,
+        (elem->>'last_event_id')::UUID as last_event_id,
+        (elem->>'status')::SMALLINT as status,
+        elem->>'error' as error_message
       FROM jsonb_array_elements(p_perspective_failures) as elem
     LOOP
       PERFORM complete_perspective_checkpoint_work(

@@ -401,6 +401,174 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       .Because("AssemblyName mismatch means different types - no match");
   }
 
+  // Checkpoint Update Tests (Phase 3 - verifies that checkpoints are updated when perspective processing completes)
+
+  [Test]
+  public async Task ProcessWorkBatch_WithPerspectiveCompletion_UpdatesCheckpointAsync() {
+    // Arrange - Create a checkpoint that needs updating
+    var streamId = _idProvider.NewGuid();
+    var eventId1 = _idProvider.NewGuid();
+    var eventId2 = _idProvider.NewGuid();
+    var eventId3 = _idProvider.NewGuid();
+
+    await InsertPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
+
+    // Insert some events
+    await InsertEventStoreRecordAsync(streamId, eventId1, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 1);
+    await InsertEventStoreRecordAsync(streamId, eventId2, "ECommerce.Domain.Events.ProductUpdatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 2);
+    await InsertEventStoreRecordAsync(streamId, eventId3, "ECommerce.Domain.Events.ProductUpdatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 3);
+
+    // Act - Report perspective completion (processed up to eventId2)
+    var perspectiveCompletions = new[] {
+      new {
+        stream_id = streamId,
+        perspective_name = "ProductListPerspective",
+        last_event_id = eventId2,
+        status = (short)1  // PerspectiveProcessingStatus.Completed
+      }
+    };
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_perspective_completions := @completions::jsonb
+      )",
+      new {
+        instanceId = _idProvider.NewGuid(),
+        completions = System.Text.Json.JsonSerializer.Serialize(perspectiveCompletions)
+      });
+
+    // Assert - Checkpoint should be updated with eventId2
+    var checkpoint = await GetPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
+    await Assert.That(checkpoint).IsNotNull();
+    await Assert.That(checkpoint!.last_event_id).IsEqualTo(eventId2)
+      .Because("Checkpoint should be updated to reflect last processed event from perspective completion");
+    await Assert.That(checkpoint.status).IsEqualTo((short)1)  // Completed
+      .Because("Status should reflect the completion");
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_WithMultiplePerspectiveCompletions_UpdatesAllCheckpointsAsync() {
+    // Arrange - Create TWO checkpoints for different perspectives on same stream
+    var streamId = _idProvider.NewGuid();
+    var eventId1 = _idProvider.NewGuid();
+    var eventId2 = _idProvider.NewGuid();
+
+    await InsertPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
+    await InsertPerspectiveCheckpointAsync(streamId, "ProductDetailsPerspective");
+
+    await InsertEventStoreRecordAsync(streamId, eventId1, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 1);
+    await InsertEventStoreRecordAsync(streamId, eventId2, "ECommerce.Domain.Events.ProductUpdatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 2);
+
+    // Act - Report completions for BOTH perspectives (but at different points)
+    var perspectiveCompletions = new[] {
+      new {
+        stream_id = streamId,
+        perspective_name = "ProductListPerspective",
+        last_event_id = eventId2,  // Processed both events
+        status = (short)1
+      },
+      new {
+        stream_id = streamId,
+        perspective_name = "ProductDetailsPerspective",
+        last_event_id = eventId1,  // Only processed first event
+        status = (short)1
+      }
+    };
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_perspective_completions := @completions::jsonb
+      )",
+      new {
+        instanceId = _idProvider.NewGuid(),
+        completions = System.Text.Json.JsonSerializer.Serialize(perspectiveCompletions)
+      });
+
+    // Assert - Both checkpoints should be updated independently
+    var checkpoint1 = await GetPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
+    var checkpoint2 = await GetPerspectiveCheckpointAsync(streamId, "ProductDetailsPerspective");
+
+    await Assert.That(checkpoint1!.last_event_id).IsEqualTo(eventId2);
+    await Assert.That(checkpoint2!.last_event_id).IsEqualTo(eventId1);
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_WithPerspectiveFailure_UpdatesCheckpointWithErrorAsync() {
+    // Arrange
+    var streamId = _idProvider.NewGuid();
+    var eventId = _idProvider.NewGuid();
+
+    await InsertPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
+    await InsertEventStoreRecordAsync(streamId, eventId, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 1);
+
+    // Act - Report perspective FAILURE
+    var perspectiveFailures = new[] {
+      new {
+        stream_id = streamId,
+        perspective_name = "ProductListPerspective",
+        last_event_id = eventId,
+        status = (short)2,  // PerspectiveProcessingStatus.Failed
+        error = "Database connection timeout"
+      }
+    };
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_perspective_failures := @failures::jsonb
+      )",
+      new {
+        instanceId = _idProvider.NewGuid(),
+        failures = System.Text.Json.JsonSerializer.Serialize(perspectiveFailures)
+      });
+
+    // Assert - Checkpoint should be updated with failed status
+    var checkpoint = await GetPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
+    await Assert.That(checkpoint!.status).IsEqualTo((short)2)  // Failed
+      .Because("Checkpoint should reflect the failure status");
+    // Note: The actual error message storage will be implemented when we add error tracking infrastructure
+  }
+
+  [Test]
+  public async Task ProcessWorkBatch_WithNoCompletions_DoesNotUpdateCheckpointAsync() {
+    // Arrange
+    var streamId = _idProvider.NewGuid();
+    var eventId = _idProvider.NewGuid();
+
+    await InsertPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
+    await InsertEventStoreRecordAsync(streamId, eventId, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 1);
+
+    // Act - Call process_work_batch with NO completions/failures
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    await connection.ExecuteAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345
+      )",
+      new { instanceId = _idProvider.NewGuid() });
+
+    // Assert - Checkpoint should remain unchanged (still NULL last_event_id)
+    var checkpoint = await GetPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
+    await Assert.That(checkpoint!.last_event_id).IsNull()
+      .Because("Without completion report, checkpoint should not be updated");
+  }
+
   // Helper methods
 
   private async Task RegisterMessageAssociationAsync(
