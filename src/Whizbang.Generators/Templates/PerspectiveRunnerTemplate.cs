@@ -214,8 +214,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   #endregion
 
   /// <summary>
-  /// Saves the model and checkpoint atomically.
+  /// Saves the model atomically.
   /// This is the ONLY place where database writes occur (unit of work pattern).
+  /// Checkpoint persistence happens through the return value of RunAsync - the
+  /// PerspectiveWorker collects checkpoint completions and reports them to
+  /// ProcessWorkBatchAsync, which persists them via complete_perspective_checkpoint_work SQL function.
   /// </summary>
   private async Task SaveModelAndCheckpointAsync(
       Guid streamId,
@@ -224,14 +227,11 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       CancellationToken cancellationToken) {
 
     // Upsert model (insert or update)
+    // Checkpoint is persisted through RunAsync return value -> PerspectiveWorker -> ProcessWorkBatchAsync
     await _perspectiveStore.UpsertAsync(
         streamId,
         model,
         cancellationToken
     );
-
-    // TODO: Save checkpoint
-    // This will be implemented when we add checkpoint infrastructure
-    // For now, the model save is atomic
   }
 }
