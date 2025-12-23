@@ -13,12 +13,12 @@ public class UpdateProductWorkflowTests {
   private static AspireIntegrationFixture? _fixture;
 
   // Test product IDs (deterministic GUIDs for reproducibility)
-  private static readonly ProductId TestProdUpdateName = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000201"));
-  private static readonly ProductId TestProdUpdateAll = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000202"));
-  private static readonly ProductId TestProdUpdatePrice = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000203"));
-  private static readonly ProductId TestProdUpdateDescImg = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000204"));
-  private static readonly ProductId TestProdMultiUpdate = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000205"));
-  private static readonly ProductId TestProdUpdateNoInventory = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000206"));
+  private static readonly ProductId _testProdUpdateName = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000201"));
+  private static readonly ProductId _testProdUpdateAll = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000202"));
+  private static readonly ProductId _testProdUpdatePrice = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000203"));
+  private static readonly ProductId _testProdUpdateDescImg = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000204"));
+  private static readonly ProductId _testProdMultiUpdate = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000205"));
+  private static readonly ProductId _testProdUpdateNoInventory = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000206"));
 
   [Before(Test)]
   [RequiresUnreferencedCode("Test code - reflection allowed")]
@@ -53,7 +53,7 @@ public class UpdateProductWorkflowTests {
 
     // Create initial product
     var createCommand = new CreateProductCommand {
-      ProductId = TestProdUpdateName,
+      ProductId = _testProdUpdateName,
       Name = "Original Name",
       Description = "Original description",
       Price = 50.00m,
@@ -65,7 +65,7 @@ public class UpdateProductWorkflowTests {
 
     // Act - Update product name
     var updateCommand = new UpdateProductCommand {
-      ProductId = TestProdUpdateName,
+      ProductId = _testProdUpdateName,
       Name = "Updated Name",
       Description = null,
       Price = null,
@@ -99,7 +99,7 @@ public class UpdateProductWorkflowTests {
 
     // Create initial product
     var createCommand = new CreateProductCommand {
-      ProductId = TestProdUpdateAll,
+      ProductId = _testProdUpdateAll,
       Name = "Original Product",
       Description = "Original description",
       Price = 100.00m,
@@ -111,7 +111,7 @@ public class UpdateProductWorkflowTests {
 
     // Act - Update all fields
     var updateCommand = new UpdateProductCommand {
-      ProductId = TestProdUpdateAll,
+      ProductId = _testProdUpdateAll,
       Name = "Completely Updated Product",
       Description = "Brand new description",
       Price = 149.99m,
@@ -148,7 +148,7 @@ public class UpdateProductWorkflowTests {
 
     // Create initial product
     var createCommand = new CreateProductCommand {
-      ProductId = TestProdUpdatePrice,
+      ProductId = _testProdUpdatePrice,
       Name = "Price Test Product",
       Description = "Testing price updates",
       Price = 25.00m,
@@ -160,7 +160,7 @@ public class UpdateProductWorkflowTests {
 
     // Act - Update only price
     var updateCommand = new UpdateProductCommand {
-      ProductId = TestProdUpdatePrice,
+      ProductId = _testProdUpdatePrice,
       Name = null,
       Description = null,
       Price = 35.00m,
@@ -193,7 +193,7 @@ public class UpdateProductWorkflowTests {
 
     // Create initial product
     var createCommand = new CreateProductCommand {
-      ProductId = TestProdUpdateDescImg,
+      ProductId = _testProdUpdateDescImg,
       Name = "Descriptive Product",
       Description = "Old description",
       Price = 60.00m,
@@ -205,7 +205,7 @@ public class UpdateProductWorkflowTests {
 
     // Act - Update description and image
     var updateCommand = new UpdateProductCommand {
-      ProductId = TestProdUpdateDescImg,
+      ProductId = _testProdUpdateDescImg,
       Name = null,
       Description = "Completely new and improved description",
       Price = null,
@@ -239,7 +239,7 @@ public class UpdateProductWorkflowTests {
 
     // Create initial product
     var createCommand = new CreateProductCommand {
-      ProductId = TestProdMultiUpdate,
+      ProductId = _testProdMultiUpdate,
       Name = "Multi-Update Product",
       Description = "Original",
       Price = 10.00m,
@@ -251,7 +251,7 @@ public class UpdateProductWorkflowTests {
 
     // Act - Update name
     var update1 = new UpdateProductCommand {
-      ProductId = TestProdMultiUpdate,
+      ProductId = _testProdMultiUpdate,
       Name = "Updated Name",
       Description = null,
       Price = null,
@@ -262,7 +262,7 @@ public class UpdateProductWorkflowTests {
 
     // Act - Update price
     var update2 = new UpdateProductCommand {
-      ProductId = TestProdMultiUpdate,
+      ProductId = _testProdMultiUpdate,
       Name = null,
       Description = null,
       Price = 20.00m,
@@ -273,7 +273,7 @@ public class UpdateProductWorkflowTests {
 
     // Act - Update description and image
     var update3 = new UpdateProductCommand {
-      ProductId = TestProdMultiUpdate,
+      ProductId = _testProdMultiUpdate,
       Name = null,
       Description = "Final description",
       Price = null,
@@ -309,7 +309,7 @@ public class UpdateProductWorkflowTests {
 
     // Create product with initial stock
     var createCommand = new CreateProductCommand {
-      ProductId = TestProdUpdateNoInventory,
+      ProductId = _testProdUpdateNoInventory,
       Name = "Inventory Isolation Test",
       Description = "Testing inventory isolation",
       Price = 40.00m,
@@ -326,7 +326,7 @@ public class UpdateProductWorkflowTests {
 
     // Act - Update product (all fields)
     var updateCommand = new UpdateProductCommand {
-      ProductId = TestProdUpdateNoInventory,
+      ProductId = _testProdUpdateNoInventory,
       Name = "Updated Product Name",
       Description = "Updated description",
       Price = 50.00m,

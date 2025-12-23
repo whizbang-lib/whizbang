@@ -111,7 +111,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     var postgresConnection = _postgresContainer.GetConnectionString();
 
     // Wait for PostgreSQL to be ready to accept connections
-    await WaitForPostgresReadyAsync(postgresConnection, cancellationToken);
+    await _waitForPostgresReadyAsync(postgresConnection, cancellationToken);
 
     Console.WriteLine("[InMemoryFixture] PostgreSQL ready. Initializing InProcessTransport...");
 
@@ -121,18 +121,18 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     Console.WriteLine("[InMemoryFixture] Transport initialized. Creating service hosts...");
 
     // Create service hosts (but don't start them yet)
-    _inventoryHost = CreateInventoryHost(postgresConnection);
-    _bffHost = CreateBffHost(postgresConnection);
+    _inventoryHost = _createInventoryHost(postgresConnection);
+    _bffHost = _createBffHost(postgresConnection);
 
     Console.WriteLine("[InMemoryFixture] Service hosts created. Initializing schema...");
 
     // Initialize PostgreSQL schema using EFCore DbContexts
-    await InitializeSchemaAsync(cancellationToken);
+    await _initializeSchemaAsync(cancellationToken);
 
     Console.WriteLine("[InMemoryFixture] Schema initialized. Seeding message associations...");
 
     // Seed message associations for perspective auto-checkpoint creation
-    await SeedMessageAssociationsAsync(cancellationToken);
+    await _seedMessageAssociationsAsync(cancellationToken);
 
     Console.WriteLine("[InMemoryFixture] Message associations seeded. Starting service hosts...");
 
@@ -146,7 +146,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
 
     // CRITICAL FIX: Subscribe to transport topics to write incoming messages to inbox
     // Without this, published messages vanish and perspectives never materialize
-    await SetupTransportSubscriptionsAsync(cancellationToken);
+    await _setupTransportSubscriptionsAsync(cancellationToken);
 
     Console.WriteLine("[InMemoryFixture] Transport subscriptions ready. Fixture initialized!");
 
@@ -159,7 +159,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   /// </summary>
   [RequiresUnreferencedCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
   [RequiresDynamicCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
-  private IHost CreateInventoryHost(string postgresConnection) {
+  private IHost _createInventoryHost(string postgresConnection) {
     var builder = Host.CreateApplicationBuilder();
 
     // Register service instance provider (uses shared instance ID for partition claiming compatibility)
@@ -270,7 +270,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   /// </summary>
   [RequiresUnreferencedCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
   [RequiresDynamicCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
-  private IHost CreateBffHost(string postgresConnection) {
+  private IHost _createBffHost(string postgresConnection) {
     var builder = Host.CreateApplicationBuilder();
 
     // Register service instance provider (uses shared instance ID for partition claiming compatibility)
@@ -375,7 +375,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   /// Waits for PostgreSQL to be ready to accept connections by attempting to open a connection.
   /// Polls up to 30 times (30 seconds total) with 1 second delay between attempts.
   /// </summary>
-  private async Task WaitForPostgresReadyAsync(string connectionString, CancellationToken cancellationToken = default) {
+  private async Task _waitForPostgresReadyAsync(string connectionString, CancellationToken cancellationToken = default) {
     var maxAttempts = 30; // 30 seconds total
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
@@ -395,7 +395,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Initializes the PostgreSQL schema: Whizbang core tables + InventoryWorker schema + BFF schema.
   /// </summary>
-  private async Task InitializeSchemaAsync(CancellationToken cancellationToken = default) {
+  private async Task _initializeSchemaAsync(CancellationToken cancellationToken = default) {
     // Initialize InventoryWorker schema using EFCore
     // Creates Inbox/Outbox/EventStore + PostgreSQL functions + perspective tables for InventoryWorker
     using (var scope = _inventoryHost!.Services.CreateScope()) {
@@ -416,7 +416,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   /// Maps event types to perspectives so process_work_batch can auto-create checkpoint rows.
   /// PHASE 3 (Option A): Manual seeding - will be replaced by generator automation in Phase 3 (Option B).
   /// </summary>
-  private async Task SeedMessageAssociationsAsync(CancellationToken cancellationToken = default) {
+  private async Task _seedMessageAssociationsAsync(CancellationToken cancellationToken = default) {
     using var scope = _inventoryHost!.Services.CreateScope();
     var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
@@ -710,16 +710,16 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   /// This replaces ServiceBusConsumerWorker for InProcessTransport scenarios.
   /// Without subscriptions, published messages are delivered to nobody and perspectives never materialize.
   /// </summary>
-  private async Task SetupTransportSubscriptionsAsync(CancellationToken cancellationToken) {
+  private async Task _setupTransportSubscriptionsAsync(CancellationToken cancellationToken) {
     // Subscribe InventoryWorker to "products" and "inventory" topics
     await _transport.SubscribeAsync(
-      async (envelope, ct) => await HandleMessageForHostAsync(_inventoryHost!, envelope, ct),
+      async (envelope, ct) => await _handleMessageForHostAsync(_inventoryHost!, envelope, ct),
       new TransportDestination("products", "inventory-worker"),
       cancellationToken
     );
 
     await _transport.SubscribeAsync(
-      async (envelope, ct) => await HandleMessageForHostAsync(_inventoryHost!, envelope, ct),
+      async (envelope, ct) => await _handleMessageForHostAsync(_inventoryHost!, envelope, ct),
       new TransportDestination("inventory", "inventory-worker"),
       cancellationToken
     );
@@ -728,13 +728,13 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
 
     // Subscribe BFF to "products" and "inventory" topics
     await _transport.SubscribeAsync(
-      async (envelope, ct) => await HandleMessageForHostAsync(_bffHost!, envelope, ct),
+      async (envelope, ct) => await _handleMessageForHostAsync(_bffHost!, envelope, ct),
       new TransportDestination("products", "bff-service"),
       cancellationToken
     );
 
     await _transport.SubscribeAsync(
-      async (envelope, ct) => await HandleMessageForHostAsync(_bffHost!, envelope, ct),
+      async (envelope, ct) => await _handleMessageForHostAsync(_bffHost!, envelope, ct),
       new TransportDestination("inventory", "bff-service"),
       cancellationToken
     );
@@ -746,7 +746,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   /// Handles incoming messages from transport and writes them to inbox (simplified for InProcessTransport).
   /// Just writes to inbox table and lets PerspectiveWorker poll and process naturally.
   /// </summary>
-  private async Task HandleMessageForHostAsync(IHost host, IMessageEnvelope envelope, CancellationToken ct) {
+  private async Task _handleMessageForHostAsync(IHost host, IMessageEnvelope envelope, CancellationToken ct) {
     try {
       // Create scope to resolve scoped services
       await using var scope = host.Services.CreateAsyncScope();
@@ -754,7 +754,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       var jsonOptions = scope.ServiceProvider.GetRequiredService<JsonSerializerOptions>();
 
       // 1. Serialize envelope to InboxMessage
-      var newInboxMessage = SerializeToNewInboxMessage(envelope, jsonOptions);
+      var newInboxMessage = _serializeToNewInboxMessage(envelope, jsonOptions);
 
       // 2. Queue for atomic deduplication via process_work_batch
       strategy.QueueInboxMessage(newInboxMessage);
@@ -773,11 +773,11 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Serializes IMessageEnvelope to InboxMessage (same logic as ServiceBusConsumerWorker._serializeToNewInboxMessage).
   /// </summary>
-  private static InboxMessage SerializeToNewInboxMessage(IMessageEnvelope envelope, JsonSerializerOptions jsonOptions) {
+  private static InboxMessage _serializeToNewInboxMessage(IMessageEnvelope envelope, JsonSerializerOptions jsonOptions) {
     var payload = envelope.Payload;
     var payloadType = payload.GetType();
     var handlerName = payloadType.Name + "Handler";
-    var streamId = ExtractStreamId(envelope);
+    var streamId = _extractStreamId(envelope);
 
     // Use short form: "TypeName, AssemblyName" (NOT AssemblyQualifiedName which includes Version/Culture/PublicKeyToken)
     // This matches the format expected by wh_message_associations and used in process_work_batch SQL JOIN
@@ -805,7 +805,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Deserializes event payload from InboxWork (same logic as ServiceBusConsumerWorker._deserializeEvent).
   /// </summary>
-  private static object? DeserializeEvent(InboxWork work, JsonSerializerOptions jsonOptions) {
+  private static object? _deserializeEvent(InboxWork work, JsonSerializerOptions jsonOptions) {
     try {
       var jsonElement = work.Envelope.Payload;
       var messageType = Type.GetType(work.MessageType);
@@ -822,7 +822,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Extracts stream_id from envelope for stream-based ordering (same logic as ServiceBusConsumerWorker._extractStreamId).
   /// </summary>
-  private static Guid ExtractStreamId(IMessageEnvelope envelope) {
+  private static Guid _extractStreamId(IMessageEnvelope envelope) {
     var firstHop = envelope.Hops.FirstOrDefault();
     if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var aggregateIdElem)) {
       if (aggregateIdElem.ValueKind == JsonValueKind.String) {

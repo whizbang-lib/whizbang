@@ -8,7 +8,7 @@ namespace ECommerce.BFF.API.Tests;
 /// Unit tests for customer-facing endpoints
 /// </summary>
 public class CustomerEndpointTests {
-  private static List<OrderReadModel> CreateTestOrders() {
+  private static List<OrderReadModel> _createTestOrders() {
     return [
       new OrderReadModel {
         OrderId = OrderId.Parse("01234567-89ab-7def-0123-456789abcdef"),
@@ -101,6 +101,7 @@ public class CustomerEndpointTests {
   }
 
   [Test]
+  [Obsolete]
   public async Task CreateOrderRequest_WithValidData_CreatesValidRequestAsync() {
     // Arrange & Act
     var request = new CreateOrderRequest {

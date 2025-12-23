@@ -44,9 +44,7 @@ public static class WhizbangIdProviderRegistry {
   /// <exception cref="ArgumentNullException">Thrown when factory is null</exception>
   public static void RegisterFactory<TId>(Func<IWhizbangIdProvider, IWhizbangIdProvider<TId>> factory)
     where TId : struct {
-    if (factory == null) {
-      throw new ArgumentNullException(nameof(factory));
-    }
+    ArgumentNullException.ThrowIfNull(factory);
 
     lock (_lock) {
       _factories[typeof(TId)] = baseProvider => factory(baseProvider);
@@ -60,9 +58,7 @@ public static class WhizbangIdProviderRegistry {
   /// <param name="callback">Callback that registers providers with a service collection</param>
   /// <exception cref="ArgumentNullException">Thrown when callback is null</exception>
   public static void RegisterDICallback(Action<IServiceCollection, IWhizbangIdProvider> callback) {
-    if (callback == null) {
-      throw new ArgumentNullException(nameof(callback));
-    }
+    ArgumentNullException.ThrowIfNull(callback);
 
     lock (_lock) {
       _diRegistrations.Add(callback);
@@ -83,9 +79,7 @@ public static class WhizbangIdProviderRegistry {
   /// </remarks>
   public static IWhizbangIdProvider<TId> CreateProvider<TId>(IWhizbangIdProvider baseProvider)
     where TId : struct {
-    if (baseProvider == null) {
-      throw new ArgumentNullException(nameof(baseProvider));
-    }
+    ArgumentNullException.ThrowIfNull(baseProvider);
 
     lock (_lock) {
       if (!_factories.TryGetValue(typeof(TId), out var factory)) {
@@ -107,12 +101,8 @@ public static class WhizbangIdProviderRegistry {
   /// <param name="baseProvider">The base provider to use for all typed providers</param>
   /// <exception cref="ArgumentNullException">Thrown when services or baseProvider is null</exception>
   public static void RegisterAllWithDI(IServiceCollection services, IWhizbangIdProvider baseProvider) {
-    if (services == null) {
-      throw new ArgumentNullException(nameof(services));
-    }
-    if (baseProvider == null) {
-      throw new ArgumentNullException(nameof(baseProvider));
-    }
+    ArgumentNullException.ThrowIfNull(services);
+    ArgumentNullException.ThrowIfNull(baseProvider);
 
     lock (_lock) {
       foreach (var registration in _diRegistrations) {

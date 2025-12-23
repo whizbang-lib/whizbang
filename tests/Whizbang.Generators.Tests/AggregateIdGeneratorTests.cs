@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using Microsoft.CodeAnalysis;
 
 namespace Whizbang.Generators.Tests;
@@ -258,8 +259,8 @@ public class AggregateIdGeneratorTests {
     var info = diagnostics.FirstOrDefault(d => d.Id == "WHIZ004");
     await Assert.That(info).IsNotNull();
     await Assert.That(info!.Severity).IsEqualTo(DiagnosticSeverity.Info);
-    await Assert.That(info.GetMessage()).Contains("CreateOrder");
-    await Assert.That(info.GetMessage()).Contains("OrderId");
+    await Assert.That(info.GetMessage(CultureInfo.InvariantCulture)).Contains("CreateOrder");
+    await Assert.That(info.GetMessage(CultureInfo.InvariantCulture)).Contains("OrderId");
   }
 
   [Test]
@@ -470,10 +471,10 @@ public class AggregateIdGeneratorTests {
 
     // Assert - Should report invalid type diagnostic
     var diagnostics = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToArray();
-    await Assert.That(diagnostics).HasCount().GreaterThanOrEqualTo(1);
+    await Assert.That(diagnostics).Count().IsGreaterThanOrEqualTo(1);
     var invalidTypeDiagnostic = diagnostics.FirstOrDefault(d => d.Id == "WHIZ005");
     await Assert.That(invalidTypeDiagnostic).IsNotNull();
-    await Assert.That(invalidTypeDiagnostic!.GetMessage()).Contains("must be of type Guid or Guid?");
+    await Assert.That(invalidTypeDiagnostic!.GetMessage(CultureInfo.InvariantCulture)).Contains("must be of type Guid or Guid?");
   }
 
   [Test]
@@ -497,7 +498,7 @@ public class AggregateIdGeneratorTests {
 
     // Assert - Should report invalid type diagnostic
     var diagnostics = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Error).ToArray();
-    await Assert.That(diagnostics).HasCount().GreaterThanOrEqualTo(1);
+    await Assert.That(diagnostics).Count().IsGreaterThanOrEqualTo(1);
     var invalidTypeDiagnostic = diagnostics.FirstOrDefault(d => d.Id == "WHIZ005");
     await Assert.That(invalidTypeDiagnostic).IsNotNull();
   }
@@ -532,7 +533,7 @@ public class AggregateIdGeneratorTests {
 
     // Should find Id property via inheritance chain traversal, terminating at System.Object
     var diagnostics = result.Diagnostics.Where(d => d.Id == "WHIZ004").ToArray();
-    await Assert.That(diagnostics).HasCount().EqualTo(2); // Both BaseOrder and ChildOrder
+    await Assert.That(diagnostics).Count().IsEqualTo(2); // Both BaseOrder and ChildOrder
   }
 
   [Test]
@@ -564,7 +565,7 @@ public class AggregateIdGeneratorTests {
 
     // Assert - Should report warning for multiple [AggregateId] attributes
     var diagnostics = result.Diagnostics.Where(d => d.Id == "WHIZ006").ToArray();
-    await Assert.That(diagnostics).HasCount().GreaterThanOrEqualTo(2); // Parent and Child both have 2 aggregate IDs
+    await Assert.That(diagnostics).Count().IsGreaterThanOrEqualTo(2); // Parent and Child both have 2 aggregate IDs
   }
 
   [Test]
@@ -594,7 +595,7 @@ public class AggregateIdGeneratorTests {
 
     // Should report as discovered
     var diagnostics = result.Diagnostics.Where(d => d.Id == "WHIZ004").ToArray();
-    await Assert.That(diagnostics).HasCount().EqualTo(1);
+    await Assert.That(diagnostics).Count().IsEqualTo(1);
   }
 
   [Test]
@@ -622,6 +623,6 @@ public class AggregateIdGeneratorTests {
 
     // Should report as discovered
     var diagnostics = result.Diagnostics.Where(d => d.Id == "WHIZ004").ToArray();
-    await Assert.That(diagnostics).HasCount().EqualTo(1);
+    await Assert.That(diagnostics).Count().IsEqualTo(1);
   }
 }

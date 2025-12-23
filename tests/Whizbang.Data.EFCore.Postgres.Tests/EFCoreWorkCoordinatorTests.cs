@@ -18,7 +18,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
   private EFCoreWorkCoordinator<WorkCoordinationDbContext> _sut = null!;
   private Guid _instanceId;
-  private readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
+  private readonly Uuid7IdProvider _idProvider = new Uuid7IdProvider();
 
   [Before(Test)]
   public async Task TestSetupAsync() {
@@ -56,8 +56,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       leaseSeconds: 300);
 
     // Assert
-    await Assert.That(result.OutboxWork).HasCount().EqualTo(0);
-    await Assert.That(result.InboxWork).HasCount().EqualTo(0);
+    await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
+    await Assert.That(result.InboxWork).Count().IsEqualTo(0);
 
     // Verify heartbeat was updated
     var heartbeat = await GetInstanceHeartbeatAsync(_instanceId);
@@ -134,7 +134,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       flags: WorkBatchFlags.DebugMode);  // Enable debug mode to keep completed messages
 
     // Assert
-    await Assert.That(result.OutboxWork).HasCount().EqualTo(0)
+    await Assert.That(result.OutboxWork).Count().IsEqualTo(0)
       .Because("Completed messages should NOT be re-claimed (bug fix prevents reclaiming)");
 
     // Verify messages marked as Published (using bitwise AND to check if bit is set)
@@ -181,7 +181,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       renewInboxLeaseIds: []);
 
     // Assert
-    await Assert.That(result.OutboxWork).HasCount().EqualTo(0);
+    await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
 
     // Verify message has error recorded (failures are marked by Error field being non-null)
     var status = await GetOutboxStatusFlagsAsync(messageId);
@@ -227,7 +227,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       renewInboxLeaseIds: []);
 
     // Assert - Should not throw, error should be recorded
-    await Assert.That(result.OutboxWork).HasCount().EqualTo(0);
+    await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
     var status = await GetOutboxStatusFlagsAsync(messageId);
     await Assert.That((status.Value & MessageProcessingStatus.Failed) == MessageProcessingStatus.Failed).IsTrue()
       .Because("Failed messages should have the Failed flag set");
@@ -267,7 +267,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       renewInboxLeaseIds: []);
 
     // Assert
-    await Assert.That(result.InboxWork).HasCount().EqualTo(0);
+    await Assert.That(result.InboxWork).Count().IsEqualTo(0);
 
     // Verify messages deleted (FullyCompleted messages are deleted in non-debug mode)
     var status1 = await GetInboxStatusFlagsAsync(messageId1);
@@ -313,7 +313,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       renewInboxLeaseIds: []);
 
     // Assert
-    await Assert.That(result.InboxWork).HasCount().EqualTo(0);
+    await Assert.That(result.InboxWork).Count().IsEqualTo(0);
 
     // Verify message has error recorded (failures are marked by Error field being non-null)
     var status = await GetInboxStatusFlagsAsync(messageId);
@@ -379,8 +379,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       renewInboxLeaseIds: []);
 
     // Assert - Should return 2 work items, not the active one
-    await Assert.That(result.OutboxWork).HasCount().EqualTo(2);
-    await Assert.That(result.InboxWork).HasCount().EqualTo(0);
+    await Assert.That(result.OutboxWork).Count().IsEqualTo(2);
+    await Assert.That(result.InboxWork).Count().IsEqualTo(0);
 
     var work1 = result.OutboxWork.First(m => m.MessageId == orphanedId1);
     var work2 = result.OutboxWork.First(m => m.MessageId == orphanedId2);
@@ -443,8 +443,8 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       renewInboxLeaseIds: []);
 
     // Assert
-    await Assert.That(result.OutboxWork).HasCount().EqualTo(0);
-    await Assert.That(result.InboxWork).HasCount().EqualTo(2);
+    await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
+    await Assert.That(result.InboxWork).Count().IsEqualTo(2);
 
     var work1 = result.InboxWork.First(m => m.MessageId == orphanedId1);
     var work2 = result.InboxWork.First(m => m.MessageId == orphanedId2);
@@ -529,9 +529,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       flags: WorkBatchFlags.DebugMode);  // Enable debug mode to keep completed messages
 
     // Assert
-    await Assert.That(result.OutboxWork).HasCount().EqualTo(1)
+    await Assert.That(result.OutboxWork).Count().IsEqualTo(1)
       .Because("Only orphaned message returned (completed message NOT re-claimed after bug fix)");
-    await Assert.That(result.InboxWork).HasCount().EqualTo(1)
+    await Assert.That(result.InboxWork).Count().IsEqualTo(1)
       .Because("Only orphaned message returned (completed message kept in debug mode)");
 
     // Verify completed (using bitwise AND to check if bit is set)
@@ -594,7 +594,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       renewInboxLeaseIds: []);
 
     // Assert - All fields should be populated correctly (not null/default)
-    await Assert.That(result.OutboxWork).HasCount().EqualTo(1);
+    await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
     var work = result.OutboxWork[0];
 
     await Assert.That(work.MessageId).IsEqualTo(messageId);
@@ -640,7 +640,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       renewInboxLeaseIds: []);
 
     // Assert - JSON should be returned as text strings
-    await Assert.That(result.OutboxWork).HasCount().EqualTo(1);
+    await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
     var work = result.OutboxWork[0];
 
     // Envelope contains the complete message data and metadata
@@ -926,7 +926,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     var claimedByInstance2 = result2.OutboxWork.Select(w => w.MessageId).ToHashSet();
 
     // No overlap - each instance claims different messages
-    await Assert.That(claimedByInstance1.Intersect(claimedByInstance2)).HasCount().EqualTo(0)
+    await Assert.That(claimedByInstance1.Intersect(claimedByInstance2)).Count().IsEqualTo(0)
       .Because("Each instance should claim different partitions");
 
     // Total claimed should equal total messages
@@ -1049,9 +1049,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     var claimedByInstance3 = result3.OutboxWork.Select(w => w.MessageId).ToHashSet();
 
     // No overlap between any instances
-    await Assert.That(claimedByInstance1.Intersect(claimedByInstance2)).HasCount().EqualTo(0);
-    await Assert.That(claimedByInstance1.Intersect(claimedByInstance3)).HasCount().EqualTo(0);
-    await Assert.That(claimedByInstance2.Intersect(claimedByInstance3)).HasCount().EqualTo(0);
+    await Assert.That(claimedByInstance1.Intersect(claimedByInstance2)).Count().IsEqualTo(0);
+    await Assert.That(claimedByInstance1.Intersect(claimedByInstance3)).Count().IsEqualTo(0);
+    await Assert.That(claimedByInstance2.Intersect(claimedByInstance3)).Count().IsEqualTo(0);
 
     // Total claimed should equal total messages
     await Assert.That(claimedByInstance1.Count + claimedByInstance2.Count + claimedByInstance3.Count).IsEqualTo(15);
@@ -1643,7 +1643,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       renewInboxLeaseIds: []);
 
     // Assert - Messages should be reclaimed by recovery instance
-    await Assert.That(result.OutboxWork).HasCount().EqualTo(2)
+    await Assert.That(result.OutboxWork).Count().IsEqualTo(2)
       .Because("Orphaned messages should be reclaimed");
 
     var claimedIds = result.OutboxWork.Select(w => w.MessageId).ToHashSet();
@@ -1715,9 +1715,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     var claimed3 = result3.OutboxWork.Select(w => w.MessageId).ToHashSet();
 
     // No overlap between instances
-    await Assert.That(claimed1.Intersect(claimed2)).HasCount().EqualTo(0);
-    await Assert.That(claimed1.Intersect(claimed3)).HasCount().EqualTo(0);
-    await Assert.That(claimed2.Intersect(claimed3)).HasCount().EqualTo(0);
+    await Assert.That(claimed1.Intersect(claimed2)).Count().IsEqualTo(0);
+    await Assert.That(claimed1.Intersect(claimed3)).Count().IsEqualTo(0);
+    await Assert.That(claimed2.Intersect(claimed3)).Count().IsEqualTo(0);
 
     // All messages claimed
     var totalClaimed = claimed1.Count + claimed2.Count + claimed3.Count;
@@ -1989,7 +1989,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     // Assert - Both messages should be claimable now
     var claimedIds = result.OutboxWork.Select(w => w.MessageId).ToHashSet();
-    await Assert.That(result.OutboxWork).HasCount().EqualTo(2)
+    await Assert.That(result.OutboxWork).Count().IsEqualTo(2)
       .Because("Both M1 and M2 should be claimable once scheduled_for time passes");
     await Assert.That(claimedIds.Contains(message1Id)).IsTrue()
       .Because("M1's scheduled retry time has passed");
@@ -2042,7 +2042,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
 
     // Assert - Duplicate should be rejected (no work returned for duplicate)
-    await Assert.That(result.InboxWork).HasCount().EqualTo(0)
+    await Assert.That(result.InboxWork).Count().IsEqualTo(0)
       .Because("Duplicate inbox messages should be rejected via wh_message_deduplication ON CONFLICT DO NOTHING");
 
     // Verify message NOT in inbox (deduplication prevented insert)
@@ -2263,7 +2263,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       newOutboxMessages: [], newInboxMessages: [], renewOutboxLeaseIds: [], renewInboxLeaseIds: []);
 
     // All messages should be blocked (M1 scheduled, M2/M3 still have active leases)
-    await Assert.That(result2.OutboxWork).HasCount().EqualTo(0)
+    await Assert.That(result2.OutboxWork).Count().IsEqualTo(0)
       .Because("Stream is blocked - M1 scheduled for retry, M2/M3 still have active leases");
   }
 
@@ -2328,7 +2328,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
         .ToListAsync();
 
       // Assert - Poison message should be detected
-      await Assert.That(poisonCandidates).HasCount().EqualTo(1)
+      await Assert.That(poisonCandidates).Count().IsEqualTo(1)
         .Because("Application should be able to detect poison message candidates via attempts count");
 
       var poison = poisonCandidates[0];

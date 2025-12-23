@@ -14,13 +14,15 @@ namespace Whizbang.Hosting.Azure.ServiceBus;
 /// Leverages transport initialization state for accurate readiness tracking.
 /// Implements caching to avoid excessive health checks.
 /// </summary>
-public class ServiceBusReadinessCheck : ITransportReadinessCheck {
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Simple health check logging - LoggerMessage delegates would be overkill for infrequent health checks")]
+public class ServiceBusReadinessCheck : ITransportReadinessCheck, IDisposable {
   private readonly ITransport _transport;
   private readonly ServiceBusClient _client;
   private readonly ILogger<ServiceBusReadinessCheck> _logger;
   private readonly TimeSpan _cacheDuration;
   private DateTimeOffset? _lastSuccessfulCheck;
   private readonly SemaphoreSlim _lock = new(1, 1);
+  private bool _disposed;
 
   public ServiceBusReadinessCheck(
     ITransport transport,
@@ -77,5 +79,15 @@ public class ServiceBusReadinessCheck : ITransportReadinessCheck {
     } finally {
       _lock.Release();
     }
+  }
+
+  public void Dispose() {
+    if (_disposed) {
+      return;
+    }
+
+    _lock.Dispose();
+    _disposed = true;
+    GC.SuppressFinalize(this);
   }
 }

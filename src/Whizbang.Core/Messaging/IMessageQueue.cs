@@ -11,6 +11,7 @@ namespace Whizbang.Core.Messaging;
 /// If processing fails, lease expires and another instance can retry.
 /// </summary>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IMessageQueueTests.cs</tests>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1711:Identifiers should not have incorrect suffix", Justification = "Queue is the correct semantic name for this message queue interface")]
 public interface IMessageQueue {
   /// <summary>
   /// Atomically enqueues and leases a message for this instance.

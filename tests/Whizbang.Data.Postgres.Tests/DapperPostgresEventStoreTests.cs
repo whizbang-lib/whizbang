@@ -4,7 +4,6 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.Tests.Generated;
-using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.Tests.Messaging;
 using Whizbang.Data.Dapper.Custom;
 using Whizbang.Data.Dapper.Postgres;
@@ -17,7 +16,7 @@ namespace Whizbang.Data.Postgres.Tests;
 /// Each test gets its own isolated PostgreSQL container for parallel execution.
 /// </summary>
 [InheritsTests]
-public class DapperPostgresEventStoreTests : EventStoreContractTests {
+public class DapperPostgresEventStoreTests : EventStoreContractTests, IDisposable {
   private PostgresTestBase _testBase = null!;
 
   [Before(Test)]
@@ -31,6 +30,11 @@ public class DapperPostgresEventStoreTests : EventStoreContractTests {
     if (_testBase != null) {
       await _testBase.DisposeAsync();
     }
+  }
+
+  public void Dispose() {
+    _testBase?.DisposeAsync().AsTask().Wait();
+    GC.SuppressFinalize(this);
   }
 
   protected override Task<IEventStore> CreateEventStoreAsync() {
@@ -53,5 +57,5 @@ public class DapperPostgresEventStoreTests : EventStoreContractTests {
     return Task.FromResult<IEventStore>(eventStore);
   }
 
-  private class TestFixture : PostgresTestBase { }
+  private sealed class TestFixture : PostgresTestBase { }
 }

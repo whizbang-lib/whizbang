@@ -34,19 +34,19 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     // Phase 2.1: Type-based discovery - [WhizbangId] on struct declarations
     var typeBasedIds = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is StructDeclarationSyntax { AttributeLists.Count: > 0 },
-        transform: static (ctx, ct) => ExtractTypeBasedId(ctx, ct)
+        transform: static (ctx, ct) => _extractTypeBasedId(ctx, ct)
     ).Where(static info => info is not null);
 
     // Phase 2.2: Property-based discovery - [WhizbangId] on property types
     var propertyBasedIds = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is PropertyDeclarationSyntax { AttributeLists.Count: > 0 },
-        transform: static (ctx, ct) => ExtractPropertyBasedId(ctx, ct)
+        transform: static (ctx, ct) => _extractPropertyBasedId(ctx, ct)
     ).Where(static info => info is not null);
 
     // Phase 2.3: Parameter-based discovery - [WhizbangId] on primary constructor parameters
     var parameterBasedIds = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ParameterSyntax { AttributeLists.Count: > 0 },
-        transform: static (ctx, ct) => ExtractParameterBasedId(ctx, ct)
+        transform: static (ctx, ct) => _extractParameterBasedId(ctx, ct)
     ).Where(static info => info is not null);
 
     // Combine all discovery sources
@@ -68,7 +68,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
           builder.AddRange(propertyIds);
           builder.AddRange(parameterIds);
 
-          GenerateWhizbangIds(ctx, builder.ToImmutable());
+          _generateWhizbangIds(ctx, builder.ToImmutable());
         }
     );
 
@@ -92,7 +92,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
           builder.AddRange(propertyIds);
           builder.AddRange(parameterIds);
 
-          GenerateWhizbangIdJsonContext(ctx, compilation, builder.ToImmutable());
+          _generateWhizbangIdJsonContext(ctx, compilation, builder.ToImmutable());
         }
     );
   }
@@ -101,7 +101,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   /// Extracts WhizbangIdInfo from a struct declaration with [WhizbangId] attribute.
   /// Returns a tuple of (WhizbangIdInfo, DiagnosticInfo) where DiagnosticInfo can be null or an error.
   /// </summary>
-  private static (WhizbangIdInfo?, Location?, string?)? ExtractTypeBasedId(
+  private static (WhizbangIdInfo?, Location?, string?)? _extractTypeBasedId(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
 
@@ -130,7 +130,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     }
 
     // Extract namespace - either from attribute or containing namespace
-    var targetNamespace = structSymbol.ContainingNamespace?.ToDisplayString() ?? "Global";
+    string targetNamespace = structSymbol.ContainingNamespace?.ToDisplayString() ?? "Global";
 
     // Check for Namespace property in attribute
     var namespaceArg = whizbangIdAttr.NamedArguments.FirstOrDefault(kvp => kvp.Key == "Namespace");
@@ -140,8 +140,8 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
 
     // Check for constructor argument with namespace
     if (whizbangIdAttr.ConstructorArguments.Length > 0) {
-      var constructorNamespace = whizbangIdAttr.ConstructorArguments[0].Value as string;
-      if (!string.IsNullOrWhiteSpace(constructorNamespace)) {
+      if (whizbangIdAttr.ConstructorArguments[0].Value is string constructorNamespace &&
+          !string.IsNullOrWhiteSpace(constructorNamespace)) {
         targetNamespace = constructorNamespace;
       }
     }
@@ -167,7 +167,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   /// Extracts WhizbangIdInfo from a property with [WhizbangId] attribute.
   /// The type of the property becomes the generated ID type.
   /// </summary>
-  private static (WhizbangIdInfo?, Location?, string?)? ExtractPropertyBasedId(
+  private static (WhizbangIdInfo?, Location?, string?)? _extractPropertyBasedId(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
     var propertyDecl = (PropertyDeclarationSyntax)context.Node;
@@ -192,7 +192,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
 
     // Extract namespace - either from attribute or containing type's namespace
     var containingType = propertySymbol.ContainingType;
-    var targetNamespace = containingType?.ContainingNamespace?.ToDisplayString() ?? "Global";
+    string targetNamespace = containingType?.ContainingNamespace?.ToDisplayString() ?? "Global";
 
     // Check for Namespace property in attribute
     var namespaceArg = whizbangIdAttr.NamedArguments.FirstOrDefault(kvp => kvp.Key == "Namespace");
@@ -202,8 +202,8 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
 
     // Check for constructor argument with namespace
     if (whizbangIdAttr.ConstructorArguments.Length > 0) {
-      var constructorNamespace = whizbangIdAttr.ConstructorArguments[0].Value as string;
-      if (!string.IsNullOrWhiteSpace(constructorNamespace)) {
+      if (whizbangIdAttr.ConstructorArguments[0].Value is string constructorNamespace &&
+          !string.IsNullOrWhiteSpace(constructorNamespace)) {
         targetNamespace = constructorNamespace;
       }
     }
@@ -229,7 +229,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   /// Extracts WhizbangIdInfo from a parameter with [WhizbangId] attribute.
   /// The type of the parameter becomes the generated ID type.
   /// </summary>
-  private static (WhizbangIdInfo?, Location?, string?)? ExtractParameterBasedId(
+  private static (WhizbangIdInfo?, Location?, string?)? _extractParameterBasedId(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
     var parameterDecl = (ParameterSyntax)context.Node;
@@ -255,7 +255,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     // Extract namespace - either from attribute or containing type's namespace
     var containingMethod = parameterSymbol.ContainingSymbol as IMethodSymbol;
     var containingType = containingMethod?.ContainingType;
-    var targetNamespace = containingType?.ContainingNamespace?.ToDisplayString() ?? "Global";
+    string targetNamespace = containingType?.ContainingNamespace?.ToDisplayString() ?? "Global";
 
     // Check for Namespace property in attribute
     var namespaceArg = whizbangIdAttr.NamedArguments.FirstOrDefault(kvp => kvp.Key == "Namespace");
@@ -265,8 +265,8 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
 
     // Check for constructor argument with namespace
     if (whizbangIdAttr.ConstructorArguments.Length > 0) {
-      var constructorNamespace = whizbangIdAttr.ConstructorArguments[0].Value as string;
-      if (!string.IsNullOrWhiteSpace(constructorNamespace)) {
+      if (whizbangIdAttr.ConstructorArguments[0].Value is string constructorNamespace &&
+          !string.IsNullOrWhiteSpace(constructorNamespace)) {
         targetNamespace = constructorNamespace;
       }
     }
@@ -292,7 +292,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   /// Generates value object code for all discovered WhizbangIds and emits diagnostics.
   /// Handles deduplication and collision detection.
   /// </summary>
-  private static void GenerateWhizbangIds(
+  private static void _generateWhizbangIds(
       SourceProductionContext context,
       ImmutableArray<(WhizbangIdInfo?, Location?, string?)?> results) {
 
@@ -380,32 +380,32 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
           : "";
 
       // Generate value object
-      var valueObjectCode = GenerateValueObject(id);
+      var valueObjectCode = _generateValueObject(id);
       context.AddSource($"{hintNamePrefix}{id.TypeName}.g.cs", valueObjectCode);
 
       // Generate JSON converter
-      var converterCode = GenerateJsonConverter(id);
+      var converterCode = _generateJsonConverter(id);
       context.AddSource($"{hintNamePrefix}{id.TypeName}JsonConverter.g.cs", converterCode);
 
       // Generate factory for DI scenarios
-      var factoryCode = GenerateFactory(id);
+      var factoryCode = _generateFactory(id);
       context.AddSource($"{hintNamePrefix}{id.TypeName}Factory.g.cs", factoryCode);
 
       // Generate provider class
-      var providerCode = GenerateProvider(id);
+      var providerCode = _generateProvider(id);
       context.AddSource($"{hintNamePrefix}{id.TypeName}Provider.g.cs", providerCode);
     }
 
     // Generate registration class (one per assembly)
     if (deduplicated.Count > 0) {
-      GenerateProviderRegistration(context, deduplicated);
+      _generateProviderRegistration(context, deduplicated);
     }
   }
 
   /// <summary>
   /// Generates the complete value object implementation for a WhizbangId.
   /// </summary>
-  private static string GenerateValueObject(WhizbangIdInfo id) {
+  private static string _generateValueObject(WhizbangIdInfo id) {
     var sb = new StringBuilder();
 
     // Header
@@ -475,6 +475,22 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine($"  public static bool operator !=({id.TypeName} left, {id.TypeName} right) => !left.Equals(right);");
     sb.AppendLine();
 
+    sb.AppendLine("  /// <summary>Less than operator.</summary>");
+    sb.AppendLine($"  public static bool operator <({id.TypeName} left, {id.TypeName} right) => left.CompareTo(right) < 0;");
+    sb.AppendLine();
+
+    sb.AppendLine("  /// <summary>Less than or equal operator.</summary>");
+    sb.AppendLine($"  public static bool operator <=({id.TypeName} left, {id.TypeName} right) => left.CompareTo(right) <= 0;");
+    sb.AppendLine();
+
+    sb.AppendLine("  /// <summary>Greater than operator.</summary>");
+    sb.AppendLine($"  public static bool operator >({id.TypeName} left, {id.TypeName} right) => left.CompareTo(right) > 0;");
+    sb.AppendLine();
+
+    sb.AppendLine("  /// <summary>Greater than or equal operator.</summary>");
+    sb.AppendLine($"  public static bool operator >=({id.TypeName} left, {id.TypeName} right) => left.CompareTo(right) >= 0;");
+    sb.AppendLine();
+
     // ToString
     sb.AppendLine("  /// <summary>Returns the string representation of the underlying Guid.</summary>");
     sb.AppendLine("  public override string ToString() => _value.ToString();");
@@ -513,7 +529,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates a System.Text.Json converter for the WhizbangId.
   /// </summary>
-  private static string GenerateJsonConverter(WhizbangIdInfo id) {
+  private static string _generateJsonConverter(WhizbangIdInfo id) {
     var sb = new StringBuilder();
 
     // Header
@@ -561,7 +577,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates a factory class for creating WhizbangId instances through dependency injection.
   /// </summary>
-  private static string GenerateFactory(WhizbangIdInfo id) {
+  private static string _generateFactory(WhizbangIdInfo id) {
     var sb = new StringBuilder();
 
     // Header
@@ -596,7 +612,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates a strongly-typed provider for the WhizbangId.
   /// </summary>
-  private static string GenerateProvider(WhizbangIdInfo id) {
+  private static string _generateProvider(WhizbangIdInfo id) {
     var assembly = typeof(WhizbangIdGenerator).Assembly;
     var template = TemplateUtilities.GetEmbeddedTemplate(assembly, "WhizbangIdProviderTemplate.cs");
 
@@ -615,7 +631,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates WhizbangIdProviderRegistration class for the assembly.
   /// </summary>
-  private static void GenerateProviderRegistration(
+  private static void _generateProviderRegistration(
       SourceProductionContext context,
       List<WhizbangIdInfo> ids) {
 
@@ -669,7 +685,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// Generates BOTH non-nullable AND nullable type resolvers for each WhizbangId.
   /// </summary>
-  private static void GenerateWhizbangIdJsonContext(
+  private static void _generateWhizbangIdJsonContext(
       SourceProductionContext context,
       Compilation compilation,
       ImmutableArray<(WhizbangIdInfo?, Location?, string?)?> results) {
@@ -747,7 +763,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
 
     // Generate module initializer to register JSON converters
     if (deduplicated.Count > 0) {
-      GenerateWhizbangIdConverterInitializer(context, namespaceName, deduplicated);
+      _generateWhizbangIdConverterInitializer(context, namespaceName, deduplicated);
     }
   }
 
@@ -755,7 +771,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
   /// Generates module initializer that registers WhizbangId JSON converters with JsonContextRegistry.
   /// Module initializers run before Main() to ensure converters are available for serialization.
   /// </summary>
-  private static void GenerateWhizbangIdConverterInitializer(
+  private static void _generateWhizbangIdConverterInitializer(
       SourceProductionContext context,
       string namespaceName,
       List<WhizbangIdInfo> ids) {

@@ -13,10 +13,10 @@ namespace Whizbang.Core.Tests.Messaging;
 /// Tests for ImmediateWorkCoordinatorStrategy - verifies immediate flush behavior.
 /// </summary>
 public class ImmediateWorkCoordinatorStrategyTests {
-  private readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
+  private readonly Uuid7IdProvider _idProvider = new Uuid7IdProvider();
 
   // Simple test message for envelope creation
-  public record _testEvent(string Data) : IEvent;
+  public record _testEvent([StreamKey] string Data) : IEvent;
 
   // ========================================
   // Priority 3 Tests: Immediate Strategy
@@ -70,7 +70,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
     // Assert - FlushAsync should immediately call ProcessWorkBatchAsync
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
       .Because("Immediate strategy should call ProcessWorkBatchAsync on FlushAsync");
-    await Assert.That(fakeCoordinator.LastNewOutboxMessages).HasCount().EqualTo(1);
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
     await Assert.That(fakeCoordinator.LastNewOutboxMessages[0].MessageId).IsEqualTo(messageId);
   }
 
@@ -121,7 +121,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
     var result = await sut.FlushAsync(WorkBatchFlags.None);
 
     // Assert - Message should be passed to coordinator
-    await Assert.That(fakeCoordinator.LastNewOutboxMessages).HasCount().EqualTo(1);
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
     await Assert.That(fakeCoordinator.LastNewOutboxMessages[0].MessageId).IsEqualTo(messageId);
     await Assert.That(fakeCoordinator.LastNewOutboxMessages[0].Destination).IsEqualTo("test-topic");
   }
@@ -173,7 +173,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
     var result = await sut.FlushAsync(WorkBatchFlags.None);
 
     // Assert - Message should be passed to coordinator
-    await Assert.That(fakeCoordinator.LastNewInboxMessages).HasCount().EqualTo(1);
+    await Assert.That(fakeCoordinator.LastNewInboxMessages).Count().IsEqualTo(1);
     await Assert.That(fakeCoordinator.LastNewInboxMessages[0].MessageId).IsEqualTo(messageId);
     await Assert.That(fakeCoordinator.LastNewInboxMessages[0].HandlerName).IsEqualTo("TestHandler");
   }
@@ -182,7 +182,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
   // Test Fakes
   // ========================================
 
-  private class FakeWorkCoordinator : IWorkCoordinator {
+  private sealed class FakeWorkCoordinator : IWorkCoordinator {
     public int ProcessWorkBatchCallCount { get; private set; }
     public OutboxMessage[] LastNewOutboxMessages { get; private set; } = [];
     public InboxMessage[] LastNewInboxMessages { get; private set; } = [];
@@ -222,7 +222,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
     }
   }
 
-  private class FakeServiceInstanceProvider : IServiceInstanceProvider {
+  private sealed class FakeServiceInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = Guid.NewGuid();
     public string ServiceName { get; } = "TestService";
     public string HostName { get; } = "test-host";

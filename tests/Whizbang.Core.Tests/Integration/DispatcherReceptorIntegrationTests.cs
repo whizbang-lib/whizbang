@@ -473,12 +473,12 @@ public class DispatcherReceptorIntegrationTests {
 
     // Assert - Verify envelope was created and stored
     var envelopes = await traceStore.GetByCorrelationAsync(context.CorrelationId);
-    await Assert.That(envelopes).HasCount().EqualTo(1);
+    await Assert.That(envelopes).Count().IsEqualTo(1);
 
     var envelope = envelopes[0];
     await Assert.That(envelope.MessageId).IsNotEqualTo(Whizbang.Core.ValueObjects.MessageId.New());
     await Assert.That(envelope.GetCorrelationId()).IsEqualTo(context.CorrelationId);
-    await Assert.That(envelope.Hops).HasCount().EqualTo(1);
+    await Assert.That(envelope.Hops).Count().IsEqualTo(1);
 
     var hop = envelope.Hops[0];
     await Assert.That(hop.Type).IsEqualTo(Whizbang.Core.Observability.HopType.Current);
@@ -513,7 +513,7 @@ public class DispatcherReceptorIntegrationTests {
 
     // Assert
     var envelopes = await traceStore.GetByCorrelationAsync(context.CorrelationId);
-    await Assert.That(envelopes).HasCount().EqualTo(1);
+    await Assert.That(envelopes).Count().IsEqualTo(1);
 
     var hop = envelopes[0].Hops[0];
     await Assert.That(hop.CallerMemberName).IsNotEqualTo(string.Empty);
@@ -554,7 +554,7 @@ public class DispatcherReceptorIntegrationTests {
 
     // Assert - Both messages created separate envelopes
     var envelopes = await traceStore.GetByCorrelationAsync(context.CorrelationId);
-    await Assert.That(envelopes).HasCount().EqualTo(2);
+    await Assert.That(envelopes).Count().IsEqualTo(2);
 
     // Verify MessageIds are different
     await Assert.That(envelopes[0].MessageId).IsNotEqualTo(envelopes[1].MessageId);
@@ -601,7 +601,7 @@ public class DispatcherReceptorIntegrationTests {
 
     // Assert - Verify causation chain
     var envelopes = await traceStore.GetByCorrelationAsync(correlationId);
-    await Assert.That(envelopes).HasCount().EqualTo(2);
+    await Assert.That(envelopes).Count().IsEqualTo(2);
 
     // Second envelope should have causation pointing to first
     var shipOrderEnvelope = envelopes[1];
@@ -639,8 +639,8 @@ public class DispatcherReceptorIntegrationTests {
 
     // Assert - Verify envelope was created (security context will be added in future)
     var envelopes = await traceStore.GetByCorrelationAsync(context.CorrelationId);
-    await Assert.That(envelopes).HasCount().EqualTo(1);
-    await Assert.That(envelopes[0].Hops).HasCount().EqualTo(1);
+    await Assert.That(envelopes).Count().IsEqualTo(1);
+    await Assert.That(envelopes[0].Hops).Count().IsEqualTo(1);
 
     // Security context is null for now, but the structure supports it
     // In the future, we'll populate this automatically from ambient context

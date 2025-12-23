@@ -9,27 +9,27 @@ namespace Whizbang.Data.Schema.Schemas;
 /// Based on gold standard SQL: src/Whizbang.Data.EFCore.Postgres.Generators/Templates/Migrations/003_CreateServiceInstancesTable.sql
 /// </summary>
 public static class PartitionAssignmentsSchema {
-  public const string TableName = "partition_assignments";
+  public const string TABLE_NAME = "partition_assignments";
 
   // Column names as constants
-  public const string PartitionNumber = "partition_number";
-  public const string InstanceId = "instance_id";
-  public const string AssignedAt = "assigned_at";
-  public const string LastHeartbeat = "last_heartbeat";
+  public const string PARTITION_NUMBER = "partition_number";
+  public const string INSTANCE_ID = "instance_id";
+  public const string ASSIGNED_AT = "assigned_at";
+  public const string LAST_HEARTBEAT = "last_heartbeat";
 
   // Index names
-  public const string IdxInstance = "idx_partition_assignments_instance";
+  public const string IDX_INSTANCE = "idx_partition_assignments_instance";
 
   /// <summary>
   /// Complete table definition for partition assignments.
   /// </summary>
   public static readonly TableDefinition Table = new(
-    Name: TableName,
+    Name: TABLE_NAME,
     Columns: [
       // partition_number INTEGER NOT NULL PRIMARY KEY
       new ColumnDefinition(
-        Name: PartitionNumber,
-        DataType: WhizbangDataType.Integer,
+        Name: PARTITION_NUMBER,
+        DataType: WhizbangDataType.INTEGER,
         Nullable: false,
         PrimaryKey: true,
         MaxLength: null,
@@ -38,8 +38,8 @@ public static class PartitionAssignmentsSchema {
 
       // instance_id UUID NOT NULL
       new ColumnDefinition(
-        Name: InstanceId,
-        DataType: WhizbangDataType.Uuid,
+        Name: INSTANCE_ID,
+        DataType: WhizbangDataType.UUID,
         Nullable: false,
         PrimaryKey: false,
         MaxLength: null,
@@ -48,29 +48,29 @@ public static class PartitionAssignmentsSchema {
 
       // assigned_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       new ColumnDefinition(
-        Name: AssignedAt,
-        DataType: WhizbangDataType.TimestampTz,
+        Name: ASSIGNED_AT,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
         PrimaryKey: false,
         MaxLength: null,
-        DefaultValue: DefaultValue.Function(DefaultValueFunction.DateTime_Now)
+        DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       ),
 
       // last_heartbeat TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
       new ColumnDefinition(
-        Name: LastHeartbeat,
-        DataType: WhizbangDataType.TimestampTz,
+        Name: LAST_HEARTBEAT,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
         PrimaryKey: false,
         MaxLength: null,
-        DefaultValue: DefaultValue.Function(DefaultValueFunction.DateTime_Now)
+        DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       )
     ],
     Indexes: [
       // idx_partition_assignments_instance ON (instance_id, last_heartbeat)
       new IndexDefinition(
-        Name: IdxInstance,
-        Columns: ImmutableArray.Create(InstanceId, LastHeartbeat),
+        Name: IDX_INSTANCE,
+        Columns: ImmutableArray.Create(INSTANCE_ID, LAST_HEARTBEAT),
         Unique: false,
         WhereClause: null
       )

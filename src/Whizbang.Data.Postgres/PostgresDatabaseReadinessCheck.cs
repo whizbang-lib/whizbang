@@ -1,3 +1,4 @@
+using System.Globalization;
 using Microsoft.Extensions.Logging;
 using Npgsql;
 using Whizbang.Core.Messaging;
@@ -14,6 +15,7 @@ namespace Whizbang.Data.Postgres;
 /// PostgreSQL database readiness check implementation.
 /// Verifies database connectivity and presence of required Whizbang tables (inbox, outbox, eventstore).
 /// </summary>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Health check logging - infrequent calls during startup and health checks")]
 public class PostgresDatabaseReadinessCheck : IDatabaseReadinessCheck {
   private readonly string _connectionString;
   private readonly ILogger<PostgresDatabaseReadinessCheck> _logger;
@@ -59,7 +61,7 @@ public class PostgresDatabaseReadinessCheck : IDatabaseReadinessCheck {
           AND table_name IN ('wh_inbox', 'wh_outbox', 'wh_event_store')";
 
       await using var command = new NpgsqlCommand(checkTablesSql, connection);
-      var tableCount = Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken));
+      var tableCount = Convert.ToInt32(await command.ExecuteScalarAsync(cancellationToken), CultureInfo.InvariantCulture);
 
       if (tableCount < 3) {
         _logger.LogWarning(

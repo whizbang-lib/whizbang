@@ -102,7 +102,7 @@ public class TransportLifecycleTests {
 /// <summary>
 /// Test transport implementation for lifecycle testing.
 /// </summary>
-internal class TestTransport : ITransport {
+internal sealed class TestTransport : ITransport {
   private bool _isInitialized;
   private int _initializationCount;
 
@@ -144,8 +144,10 @@ internal class TestTransport : ITransport {
 /// <summary>
 /// Test transport that fails during initialization.
 /// </summary>
-internal class FailingInitializationTransport : ITransport {
-  private bool _isInitialized;
+internal sealed class FailingInitializationTransport : ITransport {
+#pragma warning disable CS0649 // Field is never assigned to, and will always have its default value - intentional for test
+  private bool _isInitialized; // Intentionally never set - initialization always fails
+#pragma warning restore CS0649
 
   public bool IsInitialized => _isInitialized;
   public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
@@ -172,7 +174,7 @@ internal class FailingInitializationTransport : ITransport {
 /// <summary>
 /// Test transport that can fail and then succeed on retry.
 /// </summary>
-internal class RetryableInitializationTransport : ITransport {
+internal sealed class RetryableInitializationTransport : ITransport {
   private bool _isInitialized;
 
   public bool IsInitialized => _isInitialized;

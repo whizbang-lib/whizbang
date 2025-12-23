@@ -37,5 +37,5 @@ public class ServiceBusInfrastructureOptions {
   /// <summary>
   /// Fail startup if topics/subscriptions cannot be created in production.
   /// </summary>
-  public bool FailOnProvisioningError { get; set; } = false;
+  public bool FailOnProvisioningError { get; set; }
 }

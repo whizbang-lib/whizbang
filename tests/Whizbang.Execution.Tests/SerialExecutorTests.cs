@@ -94,8 +94,8 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
     )).Throws<InvalidOperationException>();
   }
 
-  public static IEnumerable<(Func<SerialExecutor, Task> operation, string description, bool shouldSucceed)> GetIdempotentOperations() {
-    yield return (
+  public static IEnumerable<Func<(Func<SerialExecutor, Task> operation, string description, bool shouldSucceed)>> GetIdempotentOperations() {
+    yield return () => (
       async executor => {
         await executor.StartAsync();
         await executor.StartAsync(); // Idempotent call
@@ -104,7 +104,7 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
       true
     );
 
-    yield return (
+    yield return () => (
       async executor => {
         await executor.StartAsync();
         await executor.StopAsync();
@@ -114,7 +114,7 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
       true
     );
 
-    yield return (
+    yield return () => (
       async executor => {
         await executor.StopAsync(); // Stop before start
       },
@@ -303,7 +303,7 @@ public class SerialExecutorTests : ExecutionStrategyContractTests {
 
     // Assert - Execution order should be 0, 1, 2, 3, 4, 5, 6, 7, 8, 9
     var expected = Enumerable.Range(0, 10).ToList();
-    await Assert.That(executionOrder).HasCount().EqualTo(expected.Count);
+    await Assert.That(executionOrder).Count().IsEqualTo(expected.Count);
     for (int i = 0; i < executionOrder.Count; i++) {
       await Assert.That(executionOrder[i]).IsEqualTo(expected[i]);
     }

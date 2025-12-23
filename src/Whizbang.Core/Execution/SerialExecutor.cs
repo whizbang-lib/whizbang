@@ -26,7 +26,7 @@ namespace Whizbang.Core.Execution;
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:DrainAsync_WithWorkerCancellation_HandlesOperationCanceledExceptionAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ProcessWorkItemsAsync_ExceptionInHandler_CaughtAndRecordedAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/SerialExecutorTests.cs:ExecuteAsync_BoundedChannel_HandlesBackpressureAsync</tests>
-public class SerialExecutor : IExecutionStrategy {
+public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
   private enum State { NotStarted, Running, Stopped }
 
   private readonly Channel<WorkItem> _channel;
@@ -34,7 +34,8 @@ public class SerialExecutor : IExecutionStrategy {
   private Task? _workerTask;
   private CancellationTokenSource? _workerCts;
   private readonly Lock _stateLock = new();
-  private bool _channelCompleted = false;
+  private bool _channelCompleted;
+  private bool _disposed;
 
   /// <summary>
   /// Creates a new SerialExecutor with an unbounded channel.
@@ -96,7 +97,7 @@ public class SerialExecutor : IExecutionStrategy {
     var workItem = new WorkItem(
       envelope: envelope,
       context: context,
-      executeAsync: ExecuteWithPooledStateAsync<TResult>,
+      executeAsync: _executeWithPooledStateAsync<TResult>,
       state: state,
       cancellationToken: ct
     );
@@ -117,7 +118,7 @@ public class SerialExecutor : IExecutionStrategy {
 
       _state = State.Running;
       _workerCts = new CancellationTokenSource();
-      _workerTask = Task.Run(() => ProcessWorkItemsAsync(_workerCts.Token), _workerCts.Token);
+      _workerTask = Task.Run(() => _processWorkItemsAsync(_workerCts.Token), _workerCts.Token);
     }
 
     return Task.CompletedTask;
@@ -184,7 +185,7 @@ public class SerialExecutor : IExecutionStrategy {
     }
   }
 
-  private async Task ProcessWorkItemsAsync(CancellationToken ct) {
+  private async Task _processWorkItemsAsync(CancellationToken ct) {
     using var activity = WhizbangActivitySource.Execution.StartActivity("SerialExecutor.ProcessWorkItems");
 
     await foreach (var workItem in _channel.Reader.ReadAllAsync(ct)) {
@@ -217,7 +218,7 @@ public class SerialExecutor : IExecutionStrategy {
   /// Static delegate method that executes handler with pooled state.
   /// Eliminates lambda closure allocations.
   /// </summary>
-  private static async ValueTask ExecuteWithPooledStateAsync<TResult>(object? stateObj) {
+  private static async ValueTask _executeWithPooledStateAsync<TResult>(object? stateObj) {
     var state = (ExecutionState<TResult>)stateObj!;
     try {
       var result = await state.Handler(state.Envelope, state.Context);
@@ -244,5 +245,20 @@ public class SerialExecutor : IExecutionStrategy {
     public readonly Func<object?, ValueTask> ExecuteAsync = executeAsync;
     public readonly object? State = state;
     public readonly CancellationToken CancellationToken = cancellationToken;
+  }
+
+  public async ValueTask DisposeAsync() {
+    if (_disposed) {
+      return;
+    }
+
+    // Stop the executor if running
+    await StopAsync();
+
+    // Dispose the cancellation token source
+    _workerCts?.Dispose();
+
+    _disposed = true;
+    GC.SuppressFinalize(this);
   }
 }

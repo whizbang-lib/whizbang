@@ -1,4 +1,5 @@
 using System;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -30,6 +31,8 @@ namespace Whizbang.Generators.Shared.Utilities;
 /// Used by all Whizbang generators to ensure consistent template handling.
 /// </summary>
 public static class TemplateUtilities {
+  // CA1861: Prefer static readonly over constant array arguments for better performance
+  private static readonly string[] _lineSeparators = { "\r\n", "\r", "\n" };
   /// <summary>
   /// Replaces a #region block with generated code, preserving indentation.
   /// Regex pattern matches: #region NAME ... #endregion with any content/whitespace between.
@@ -90,7 +93,7 @@ public static class TemplateUtilities {
       return code;
     }
 
-    var lines = code.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+    var lines = code.Split(_lineSeparators, StringSplitOptions.None);
     var indentedLines = lines.Select(line =>
         string.IsNullOrWhiteSpace(line) ? line : indentation + line
     );
@@ -130,25 +133,25 @@ public static class TemplateUtilities {
     var indentation = rawIndentation.Replace("\r", "").Replace("\n", "");
 
     // Remove the base indentation from all lines
-    return RemoveIndentation(content, indentation);
+    return _removeIndentation(content, indentation);
   }
 
   /// <summary>
   /// Removes a specific indentation prefix from each line of code.
   /// Used when extracting snippets to normalize indentation.
   /// </summary>
-  private static string RemoveIndentation(string code, string indentationToRemove) {
+  private static string _removeIndentation(string code, string indentationToRemove) {
     if (string.IsNullOrEmpty(code) || string.IsNullOrEmpty(indentationToRemove)) {
       return code;
     }
 
-    var lines = code.Split(new[] { "\r\n", "\r", "\n" }, StringSplitOptions.None);
+    var lines = code.Split(_lineSeparators, StringSplitOptions.None);
     var result = lines.Select(line => {
       if (string.IsNullOrWhiteSpace(line)) {
         return line;
       }
 
-      if (line.StartsWith(indentationToRemove)) {
+      if (line.StartsWith(indentationToRemove, StringComparison.Ordinal)) {
         return line.Substring(indentationToRemove.Length);
       }
       return line;
@@ -189,7 +192,7 @@ public static class TemplateUtilities {
   /// <param name="template">The template content with a HEADER region</param>
   /// <returns>Template with HEADER region replaced with timestamped header</returns>
   public static string ReplaceHeaderRegion(Assembly assembly, string template) {
-    var timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss UTC");
+    var timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss UTC", CultureInfo.InvariantCulture);
 
     // Load header snippet
     var headerSnippet = ExtractSnippet(

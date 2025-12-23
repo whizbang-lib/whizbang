@@ -13,7 +13,7 @@ public class PostgresHealthCheck(IDbConnectionFactory connectionFactory) : IHeal
   private readonly IDbConnectionFactory _connectionFactory = connectionFactory ?? throw new ArgumentNullException(nameof(connectionFactory));
 
   /// <summary>
-  /// 
+  /// Checks the health of the PostgreSQL database by verifying connectivity and executing a simple query.
   /// </summary>
   /// <tests>No tests found</tests>
   public async Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default) {

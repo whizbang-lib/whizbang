@@ -11,7 +11,7 @@ namespace Whizbang.Data.Tests;
 /// Inherits all contract tests from EventStoreContractTests.
 /// </summary>
 [InheritsTests]
-public class DapperEventStoreTests : EventStoreContractTests {
+public class DapperEventStoreTests : EventStoreContractTests, IDisposable {
   private DapperTestBase _testBase = null!;
 
   [Before(Test)]
@@ -32,5 +32,10 @@ public class DapperEventStoreTests : EventStoreContractTests {
     return Task.FromResult<IEventStore>(eventStore);
   }
 
-  private class TestFixture : DapperTestBase { }
+  public void Dispose() {
+    _testBase?.DisposeAsync().AsTask().Wait();
+    GC.SuppressFinalize(this);
+  }
+
+  private sealed class TestFixture : DapperTestBase { }
 }

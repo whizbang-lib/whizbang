@@ -45,14 +45,12 @@ var angularUrl = builder.Configuration["services:ui:http:0"]
     ?? builder.Configuration.GetConnectionString("ui")
     ?? "http://localhost:4200";  // Fallback for local development without Aspire
 
-// IMPORTANT: Force Contracts assembly to load BEFORE creating JsonSerializerOptions
-// This ensures ECommerce.Contracts.Generated.MessageJsonContext ModuleInitializer runs
-// and registers its WhizbangId converters (OrderId, ProductId, CustomerId) with JsonContextRegistry
-// BEFORE AddAzureServiceBusTransport() calls JsonContextRegistry.CreateCombinedOptions()
-_ = typeof(ECommerce.Contracts.Commands.CreateProductCommand).Assembly;
+// Register ECommerce message types with JsonContextRegistry
+// This must be done before creating JsonSerializerOptions (below)
+ECommerce.Contracts.ECommerceJsonContext.Register();
 
 // Register combined JsonSerializerOptions in DI container for ServiceBusConsumerWorker
-// Must be registered AFTER forcing Contracts assembly to load (above)
+// Must be registered AFTER registering ECommerceJsonContext (above)
 builder.Services.AddSingleton(Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 
 // Register Azure Service Bus transport

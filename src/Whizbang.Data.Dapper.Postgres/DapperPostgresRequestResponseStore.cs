@@ -20,7 +20,7 @@ public class DapperPostgresRequestResponseStore(
   IDbExecutor executor,
   JsonSerializerOptions jsonOptions) : DapperRequestResponseStoreBase(connectionFactory, executor, jsonOptions) {
   /// <summary>
-  /// 
+  /// Returns the PostgreSQL-specific SQL for saving a request record with UPSERT logic.
   /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresRequestResponseStoreTests.cs:SaveRequestAsync_ShouldStoreRequestAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresRequestResponseStoreTests.cs:SaveResponseAsync_BeforeSaveRequest_ShouldNotCauseProblemAsync</tests>
@@ -31,7 +31,7 @@ public class DapperPostgresRequestResponseStore(
     DO UPDATE SET request_id = @RequestId, expires_at = @ExpiresAt, status = 'Pending'";
 
   /// <summary>
-  /// 
+  /// Returns the PostgreSQL-specific SQL for querying a response by correlation ID.
   /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresRequestResponseStoreTests.cs:WaitForResponseAsync_WithoutResponse_ShouldTimeoutAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresRequestResponseStoreTests.cs:SaveResponseAsync_ShouldCompleteWaitingRequestAsync</tests>
@@ -43,7 +43,7 @@ public class DapperPostgresRequestResponseStore(
     WHERE correlation_id = @CorrelationId";
 
   /// <summary>
-  /// 
+  /// Returns the PostgreSQL-specific SQL for saving a response with UPSERT logic.
   /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresRequestResponseStoreTests.cs:SaveResponseAsync_ShouldCompleteWaitingRequestAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresRequestResponseStoreTests.cs:SaveResponseAsync_WithNullResponse_ShouldThrowAsync</tests>
@@ -59,7 +59,7 @@ public class DapperPostgresRequestResponseStore(
       completed_at = NOW()";
 
   /// <summary>
-  /// 
+  /// Returns the PostgreSQL-specific SQL for deleting expired request-response records.
   /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresRequestResponseStoreTests.cs:CleanupExpiredAsync_ShouldNotThrowAsync</tests>
   protected override string GetCleanupExpiredSql() => @"

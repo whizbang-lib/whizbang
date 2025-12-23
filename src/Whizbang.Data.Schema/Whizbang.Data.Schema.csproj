@@ -5,6 +5,12 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
+
+    <!-- Suppress code analysis rules for database schema generation code -->
+    <!-- CA1707: Database schema constants intentionally use underscores to match PostgreSQL naming conventions (TABLE_NAME, STREAM_ID, etc.) -->
+    <!-- CA1720: Database type names (STRING, INTEGER) intentionally match SQL type names -->
+    <!-- CA1305: SQL generation doesn't require locale-specific formatting (StringBuilder.AppendLine with interpolation) -->
+    <NoWarn>$(NoWarn);CA1707;CA1720;CA1305</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

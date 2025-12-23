@@ -39,8 +39,6 @@ public sealed class PooledValueTaskSource<T> : IValueTaskSource<T> {
   private ValueTaskSourceStatus _status;
   private Action<object?>? _continuation;
   private object? _continuationState;
-  private ExecutionContext? _executionContext;
-  private object? _scheduler;
 
   /// <summary>
   /// Gets the current version token for this source.
@@ -64,8 +62,6 @@ public sealed class PooledValueTaskSource<T> : IValueTaskSource<T> {
     _status = ValueTaskSourceStatus.Pending;
     _continuation = null;
     _continuationState = null;
-    _executionContext = null;
-    _scheduler = null;
   }
 
   /// <summary>
@@ -82,7 +78,7 @@ public sealed class PooledValueTaskSource<T> : IValueTaskSource<T> {
 
     _result = result;
     _status = ValueTaskSourceStatus.Succeeded;
-    SignalCompletion();
+    _signalCompletion();
   }
 
   /// <summary>
@@ -97,7 +93,7 @@ public sealed class PooledValueTaskSource<T> : IValueTaskSource<T> {
 
     _exception = exception ?? throw new ArgumentNullException(nameof(exception));
     _status = ValueTaskSourceStatus.Faulted;
-    SignalCompletion();
+    _signalCompletion();
   }
 
   /// <summary>
@@ -107,7 +103,7 @@ public sealed class PooledValueTaskSource<T> : IValueTaskSource<T> {
   /// <tests>tests/Whizbang.Execution.Tests/PooledValueTaskSourceTests.cs:PooledValueTaskSource_GetStatus_AfterSetResult_ReturnsSucceededAsync</tests>
   /// <tests>tests/Whizbang.Execution.Tests/PooledValueTaskSourceTests.cs:PooledValueTaskSource_GetStatus_AfterSetException_ReturnsFaultedAsync</tests>
   public ValueTaskSourceStatus GetStatus(short token) {
-    ValidateToken(token);
+    _validateToken(token);
     return _status;
   }
 
@@ -117,7 +113,7 @@ public sealed class PooledValueTaskSource<T> : IValueTaskSource<T> {
   /// <tests>tests/Whizbang.Execution.Tests/PooledValueTaskSourceTests.cs:PooledValueTaskSource_SetResult_CompletesValueTaskAsync</tests>
   /// <tests>tests/Whizbang.Execution.Tests/PooledValueTaskSourceTests.cs:PooledValueTaskSource_GetResult_WithStaleToken_ThrowsAsync</tests>
   public T GetResult(short token) {
-    ValidateToken(token);
+    _validateToken(token);
 
     if (_status == ValueTaskSourceStatus.Succeeded) {
       return _result!;
@@ -134,7 +130,7 @@ public sealed class PooledValueTaskSource<T> : IValueTaskSource<T> {
   /// Registers a continuation callback (required by IValueTaskSource).
   /// </summary>
   public void OnCompleted(Action<object?> continuation, object? state, short token, ValueTaskSourceOnCompletedFlags flags) {
-    ValidateToken(token);
+    _validateToken(token);
 
     if (_continuation != null) {
       throw new InvalidOperationException("OnCompleted already called");
@@ -145,23 +141,23 @@ public sealed class PooledValueTaskSource<T> : IValueTaskSource<T> {
 
     // If already completed, invoke immediately
     if (_status != ValueTaskSourceStatus.Pending) {
-      InvokeContinuation();
+      _invokeContinuation();
     }
   }
 
-  private void ValidateToken(short token) {
+  private void _validateToken(short token) {
     if (token != _token) {
       throw new InvalidOperationException($"Invalid token: expected {_token}, got {token}");
     }
   }
 
-  private void SignalCompletion() {
+  private void _signalCompletion() {
     if (_continuation != null) {
-      InvokeContinuation();
+      _invokeContinuation();
     }
   }
 
-  private void InvokeContinuation() {
+  private void _invokeContinuation() {
     var continuation = _continuation;
     var state = _continuationState;
 

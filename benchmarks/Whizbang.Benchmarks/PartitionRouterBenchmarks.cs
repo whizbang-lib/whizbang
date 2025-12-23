@@ -15,11 +15,11 @@ namespace Whizbang.Benchmarks;
 [MemoryDiagnoser]
 [MarkdownExporter]
 public class PartitionRouterBenchmarks {
-  private record TestCommand(string OrderId);
+  private sealed record TestCommand(string OrderId);
 
-  private IPartitionRouter _router = null!;
+  private HashPartitionRouter _router = null!;
   private PolicyContext _context = null!;
-  private const int PartitionCount = 16;
+  private const int PARTITION_COUNT = 16;
 
   [GlobalSetup]
   public void Setup() {
@@ -56,13 +56,13 @@ public class PartitionRouterBenchmarks {
 
   [Benchmark(Baseline = true)]
   public int SinglePartitionAssignment() {
-    return _router.SelectPartition("order-12345", PartitionCount, _context);
+    return _router.SelectPartition("order-12345", PARTITION_COUNT, _context);
   }
 
   [Benchmark]
   public void Assign1000Keys() {
     for (int i = 0; i < 1000; i++) {
-      _router.SelectPartition($"order-{i}", PartitionCount, _context);
+      _router.SelectPartition($"order-{i}", PARTITION_COUNT, _context);
     }
   }
 
@@ -75,19 +75,19 @@ public class PartitionRouterBenchmarks {
         1 => $"user-{i / 10}",
         _ => $"tenant-{i / 100}-order-{i}"
       };
-      _router.SelectPartition(key, PartitionCount, _context);
+      _router.SelectPartition(key, PARTITION_COUNT, _context);
     }
   }
 
   [Benchmark]
   public void ParallelAssignment_10000Keys() {
     Parallel.For(0, 10000, i => {
-      _router.SelectPartition($"order-{i}", PartitionCount, _context);
+      _router.SelectPartition($"order-{i}", PARTITION_COUNT, _context);
     });
   }
 
   [Benchmark]
-  public void DifferentPartitionCounts() {
+  public void DifferentPARTITION_COUNTs() {
     // Test with varying partition counts
     var counts = new[] { 4, 8, 16, 32, 64 };
     foreach (var count in counts) {

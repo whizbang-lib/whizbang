@@ -33,7 +33,7 @@ public class CatalogQueries {
   /// <summary>
   /// Get a single product by ID.
   /// </summary>
-  public async Task<ProductDto?> GetProduct(
+  public async Task<ProductDto?> GetProductAsync(
     Guid productId,
     [Service] IProductCatalogLens productLens,
     CancellationToken cancellationToken) {
@@ -60,7 +60,7 @@ public class CatalogQueries {
   /// <summary>
   /// Get inventory level for a specific product.
   /// </summary>
-  public async Task<InventoryLevelDto?> GetProductInventory(
+  public async Task<InventoryLevelDto?> GetProductInventoryAsync(
     Guid productId,
     [Service] IInventoryLevelsLens inventoryLens,
     CancellationToken cancellationToken) {

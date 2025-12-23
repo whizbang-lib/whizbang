@@ -19,7 +19,7 @@ public interface IPerspectiveInvoker : IAsyncDisposable {
   /// Thread-safe for concurrent queueing within a scope.
   /// </summary>
   /// <tests>No tests found</tests>
-  void QueueEvent(IEvent @event);
+  void QueueEvent(IEvent eventData);
 
   /// <summary>
   /// Invokes perspectives for all queued events.

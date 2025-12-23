@@ -18,46 +18,46 @@ public static class MessageAssociationsSchema {
     Columns: ImmutableArray.Create(
       new ColumnDefinition(
         Name: "id",
-        DataType: WhizbangDataType.Uuid,
+        DataType: WhizbangDataType.UUID,
         PrimaryKey: true,
         Nullable: false,
-        DefaultValue: DefaultValue.Function(DefaultValueFunction.Uuid_Generate)
+        DefaultValue: DefaultValue.Function(DefaultValueFunction.UUID__GENERATE)
       ),
       new ColumnDefinition(
         Name: "message_type",
-        DataType: WhizbangDataType.String,
+        DataType: WhizbangDataType.STRING,
         MaxLength: 500,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "association_type",
-        DataType: WhizbangDataType.String,
+        DataType: WhizbangDataType.STRING,
         MaxLength: 50,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "target_name",
-        DataType: WhizbangDataType.String,
+        DataType: WhizbangDataType.STRING,
         MaxLength: 500,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "service_name",
-        DataType: WhizbangDataType.String,
+        DataType: WhizbangDataType.STRING,
         MaxLength: 500,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "created_at",
-        DataType: WhizbangDataType.TimestampTz,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
-        DefaultValue: DefaultValue.Function(DefaultValueFunction.DateTime_Now)
+        DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       ),
       new ColumnDefinition(
         Name: "updated_at",
-        DataType: WhizbangDataType.TimestampTz,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
-        DefaultValue: DefaultValue.Function(DefaultValueFunction.DateTime_Now)
+        DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       )
     ),
     Indexes: ImmutableArray.Create(
@@ -94,12 +94,12 @@ public static class MessageAssociationsSchema {
   /// Column name constants for type-safe access.
   /// </summary>
   public static class Columns {
-    public const string Id = "id";
-    public const string MessageType = "message_type";
-    public const string AssociationType = "association_type";
-    public const string TargetName = "target_name";
-    public const string ServiceName = "service_name";
-    public const string CreatedAt = "created_at";
-    public const string UpdatedAt = "updated_at";
+    public const string ID = "id";
+    public const string MESSAGE_TYPE = "message_type";
+    public const string ASSOCIATION_TYPE = "association_type";
+    public const string TARGET_NAME = "target_name";
+    public const string SERVICE_NAME = "service_name";
+    public const string CREATED_AT = "created_at";
+    public const string UPDATED_AT = "updated_at";
   }
 }

@@ -29,7 +29,7 @@ public class MessageDeduplicationSchemaTests {
     var columns = MessageDeduplicationSchema.Table.Columns;
 
     // Assert - Verify column count
-    await Assert.That(columns).HasCount().EqualTo(2);
+    await Assert.That(columns).Count().IsEqualTo(2);
 
     // Verify message_id column
     var messageId = columns[0];
@@ -54,7 +54,7 @@ public class MessageDeduplicationSchemaTests {
       .ToList();
 
     // Assert
-    await Assert.That(primaryKeyColumns).HasCount().EqualTo(1);
+    await Assert.That(primaryKeyColumns).Count().IsEqualTo(1);
     await Assert.That(primaryKeyColumns[0].Name).IsEqualTo("message_id");
   }
 
@@ -65,12 +65,12 @@ public class MessageDeduplicationSchemaTests {
     var indexes = MessageDeduplicationSchema.Table.Indexes;
 
     // Assert - Verify index count
-    await Assert.That(indexes).HasCount().EqualTo(1);
+    await Assert.That(indexes).Count().IsEqualTo(1);
 
     // Verify first_seen_at index
     var firstSeenIndex = indexes[0];
     await Assert.That(firstSeenIndex.Name).IsEqualTo("idx_message_dedup_first_seen");
-    await Assert.That(firstSeenIndex.Columns).HasCount().EqualTo(1);
+    await Assert.That(firstSeenIndex.Columns).Count().IsEqualTo(1);
     await Assert.That(firstSeenIndex.Columns[0]).IsEqualTo("first_seen_at");
   }
 
@@ -83,7 +83,7 @@ public class MessageDeduplicationSchemaTests {
 
     // Assert
     await Assert.That(firstSeenIndex).IsNotNull();
-    await Assert.That(firstSeenIndex!.Columns).HasCount().EqualTo(1);
+    await Assert.That(firstSeenIndex!.Columns).Count().IsEqualTo(1);
     await Assert.That(firstSeenIndex.Columns[0]).IsEqualTo("first_seen_at");
   }
 

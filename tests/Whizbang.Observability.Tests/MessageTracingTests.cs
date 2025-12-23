@@ -12,8 +12,8 @@ namespace Whizbang.Observability.Tests;
 /// </summary>
 public class MessageTracingTests {
   // Test message types
-  private record TestMessage(string Value);
-  private record CreateOrder(Guid OrderId, string ProductName);
+  private sealed record TestMessage(string Value);
+  private sealed record CreateOrder(Guid OrderId, string ProductName);
 
   #region MessageEnvelope Tests
 
@@ -56,7 +56,7 @@ public class MessageTracingTests {
     await Assert.That(envelope.Payload).IsEqualTo(payload);
     await Assert.That(envelope.GetMessageTimestamp()).IsEqualTo(timestamp);
     var allMetadata = envelope.GetAllMetadata();
-    await Assert.That(allMetadata).HasCount().EqualTo(metadata.Count);
+    await Assert.That(allMetadata).Count().IsEqualTo(metadata.Count);
     foreach (var kvp in metadata) {
       await Assert.That(allMetadata.ContainsKey(kvp.Key)).IsTrue();
       await Assert.That(allMetadata[kvp.Key]).IsEqualTo(kvp.Value);
@@ -105,7 +105,7 @@ public class MessageTracingTests {
     };
 
     // Assert
-    await Assert.That(envelope.Hops).HasCount().EqualTo(1);
+    await Assert.That(envelope.Hops).Count().IsEqualTo(1);
     await Assert.That(envelope.Hops[0]).IsEqualTo(firstHop);
   }
 
@@ -142,7 +142,7 @@ public class MessageTracingTests {
     envelope.AddHop(hop);
 
     // Assert
-    await Assert.That(envelope.Hops).HasCount().EqualTo(2);
+    await Assert.That(envelope.Hops).Count().IsEqualTo(2);
     await Assert.That(envelope.Hops[1]).IsEqualTo(hop);
   }
 
@@ -192,7 +192,7 @@ public class MessageTracingTests {
     envelope.AddHop(hop2);
 
     // Assert
-    await Assert.That(envelope.Hops).HasCount().EqualTo(3);
+    await Assert.That(envelope.Hops).Count().IsEqualTo(3);
     await Assert.That(envelope.Hops[0].ServiceInstance.ServiceName).IsEqualTo("Origin");
     await Assert.That(envelope.Hops[1].ServiceInstance.ServiceName).IsEqualTo("Service1");
     await Assert.That(envelope.Hops[2].ServiceInstance.ServiceName).IsEqualTo("Service2");
@@ -747,7 +747,7 @@ public class MessageTracingTests {
     var result = envelope.GetAllMetadata();
 
     // Assert
-    await Assert.That(result).HasCount().EqualTo(3);
+    await Assert.That(result).Count().IsEqualTo(3);
     await Assert.That(result["priority"].GetInt32()).IsEqualTo(10); // Later hop wins
     await Assert.That(result["tenant"].GetString()).IsEqualTo("acme"); // From first hop
     await Assert.That(result["enriched"].GetBoolean()).IsEqualTo(true); // From second hop
@@ -805,7 +805,7 @@ public class MessageTracingTests {
     var decisions = envelope.GetAllPolicyDecisions();
 
     // Assert
-    await Assert.That(decisions).HasCount().EqualTo(1);
+    await Assert.That(decisions).Count().IsEqualTo(1);
     await Assert.That(decisions[0].PolicyName).IsEqualTo("StreamSelection");
     await Assert.That(decisions[0].Matched).IsTrue();
   }
@@ -865,7 +865,7 @@ public class MessageTracingTests {
     var decisions = envelope.GetAllPolicyDecisions();
 
     // Assert
-    await Assert.That(decisions).HasCount().EqualTo(3);
+    await Assert.That(decisions).Count().IsEqualTo(3);
     await Assert.That(decisions[0].PolicyName).IsEqualTo("StreamSelection");
     await Assert.That(decisions[1].PolicyName).IsEqualTo("ExecutionStrategy");
     await Assert.That(decisions[2].PolicyName).IsEqualTo("PartitionStrategy");
@@ -917,7 +917,7 @@ public class MessageTracingTests {
     var decisions = envelope.GetAllPolicyDecisions();
 
     // Assert
-    await Assert.That(decisions).HasCount().EqualTo(3);
+    await Assert.That(decisions).Count().IsEqualTo(3);
     await Assert.That(decisions[0].Reason).IsEqualTo("First decision");
     await Assert.That(decisions[1].Reason).IsEqualTo("Second decision");
     await Assert.That(decisions[2].Reason).IsEqualTo("Third decision");
@@ -979,7 +979,7 @@ public class MessageTracingTests {
     var decisions = envelope.GetAllPolicyDecisions();
 
     // Assert
-    await Assert.That(decisions).HasCount().EqualTo(2);
+    await Assert.That(decisions).Count().IsEqualTo(2);
     await Assert.That(decisions[0].Reason).IsEqualTo("First decision");
     await Assert.That(decisions[1].Reason).IsEqualTo("Third decision");
   }
@@ -1133,7 +1133,7 @@ public class MessageTracingTests {
 
     // Assert
     await Assert.That(hop.Trail).IsEqualTo(trail);
-    await Assert.That(hop.Trail!.Decisions).HasCount().EqualTo(1);
+    await Assert.That(hop.Trail!.Decisions).Count().IsEqualTo(1);
     await Assert.That(hop.Trail!.Decisions[0].PolicyName).IsEqualTo("TestPolicy");
   }
 
@@ -1308,7 +1308,7 @@ public class MessageTracingTests {
     var causationHops = envelope.GetCausationHops();
 
     // Assert
-    await Assert.That(causationHops).HasCount().EqualTo(2);
+    await Assert.That(causationHops).Count().IsEqualTo(2);
     await Assert.That(causationHops[0].ServiceInstance.ServiceName).IsEqualTo("CausationHop1");
     await Assert.That(causationHops[0].CausationId).IsEqualTo(causationId1);
     await Assert.That(causationHops[0].CausationType).IsEqualTo("OrderCreated");
@@ -1383,7 +1383,7 @@ public class MessageTracingTests {
     var currentHops = envelope.GetCurrentHops();
 
     // Assert
-    await Assert.That(currentHops).HasCount().EqualTo(2);
+    await Assert.That(currentHops).Count().IsEqualTo(2);
     await Assert.That(currentHops[0].ServiceInstance.ServiceName).IsEqualTo("CurrentHop1");
     await Assert.That(currentHops[1].ServiceInstance.ServiceName).IsEqualTo("CurrentHop2");
   }
@@ -1682,7 +1682,7 @@ public class MessageTracingTests {
     var metadata = envelope.GetAllMetadata();
 
     // Assert
-    await Assert.That(metadata).HasCount().EqualTo(1);
+    await Assert.That(metadata).Count().IsEqualTo(1);
     await Assert.That(metadata.ContainsKey("current-key")).IsTrue();
     await Assert.That(metadata.ContainsKey("old-key")).IsFalse();
   }
@@ -1733,7 +1733,7 @@ public class MessageTracingTests {
     var decisions = envelope.GetAllPolicyDecisions();
 
     // Assert
-    await Assert.That(decisions).HasCount().EqualTo(1);
+    await Assert.That(decisions).Count().IsEqualTo(1);
     await Assert.That(decisions[0].PolicyName).IsEqualTo("CurrentPolicy");
   }
 
@@ -1744,16 +1744,16 @@ public class MessageTracingTests {
   [Test]
   public async Task RecordHop_CapturesCallerMemberName_AutomaticallyAsync() {
     // Arrange & Act
-    var hop = TestMethod_ThatRecordsHop();
+    var hop = _testMethod_ThatRecordsHop();
 
     // Assert
-    await Assert.That(hop.CallerMemberName).IsEqualTo(nameof(TestMethod_ThatRecordsHop));
+    await Assert.That(hop.CallerMemberName).IsEqualTo(nameof(_testMethod_ThatRecordsHop));
   }
 
   [Test]
   public async Task RecordHop_CapturesCallerFilePath_AutomaticallyAsync() {
     // Arrange & Act
-    var hop = TestMethod_ThatRecordsHop();
+    var hop = _testMethod_ThatRecordsHop();
 
     // Assert
     await Assert.That(hop.CallerFilePath).IsNotNull();
@@ -1763,7 +1763,7 @@ public class MessageTracingTests {
   [Test]
   public async Task RecordHop_CapturesCallerLineNumber_AutomaticallyAsync() {
     // Arrange & Act
-    var hop = TestMethod_ThatRecordsHop();
+    var hop = _testMethod_ThatRecordsHop();
 
     // Assert
     await Assert.That(hop.CallerLineNumber).IsNotNull();
@@ -1847,12 +1847,12 @@ public class MessageTracingTests {
   [Test]
   public async Task RecordHop_FromDifferentMethods_CapturesDifferentCallerInfoAsync() {
     // Arrange & Act
-    var hop1 = TestMethod_ThatRecordsHop();
-    var hop2 = AnotherTestMethod_ThatRecordsHop();
+    var hop1 = _testMethod_ThatRecordsHop();
+    var hop2 = _anotherTestMethod_ThatRecordsHop();
 
     // Assert
-    await Assert.That(hop1.CallerMemberName).IsEqualTo(nameof(TestMethod_ThatRecordsHop));
-    await Assert.That(hop2.CallerMemberName).IsEqualTo(nameof(AnotherTestMethod_ThatRecordsHop));
+    await Assert.That(hop1.CallerMemberName).IsEqualTo(nameof(_testMethod_ThatRecordsHop));
+    await Assert.That(hop2.CallerMemberName).IsEqualTo(nameof(_anotherTestMethod_ThatRecordsHop));
     await Assert.That(hop1.CallerLineNumber).IsNotEqualTo(hop2.CallerLineNumber);
   }
 
@@ -1957,7 +1957,7 @@ public class MessageTracingTests {
     trace.AddHop(hop);
 
     // Assert
-    await Assert.That(trace.Hops).HasCount().EqualTo(1);
+    await Assert.That(trace.Hops).Count().IsEqualTo(1);
     await Assert.That(trace.Hops[0]).IsEqualTo(hop);
   }
 
@@ -1972,7 +1972,7 @@ public class MessageTracingTests {
     trace.AddPolicyTrail(trail);
 
     // Assert
-    await Assert.That(trace.PolicyTrails).HasCount().EqualTo(1);
+    await Assert.That(trace.PolicyTrails).Count().IsEqualTo(1);
     await Assert.That(trace.PolicyTrails[0]).IsEqualTo(trail);
   }
 
@@ -2000,7 +2000,7 @@ public class MessageTracingTests {
     trace.RecordTiming("handler-execution", TimeSpan.FromMilliseconds(100));
 
     // Assert
-    await Assert.That(trace.Timings).HasCount().EqualTo(2);
+    await Assert.That(trace.Timings).Count().IsEqualTo(2);
     await Assert.That(trace.Timings["policy-evaluation"]).IsEqualTo(TimeSpan.FromMilliseconds(10));
     await Assert.That(trace.Timings["handler-execution"]).IsEqualTo(TimeSpan.FromMilliseconds(100));
   }
@@ -2039,7 +2039,7 @@ public class MessageTracingTests {
   #endregion
 
   // Helper methods for testing caller info capture
-  private static MessageHop TestMethod_ThatRecordsHop() {
+  private static MessageHop _testMethod_ThatRecordsHop() {
     var serviceInstance = new ServiceInstanceInfo {
       ServiceName = "TestService",
       InstanceId = Guid.NewGuid(),
@@ -2049,7 +2049,7 @@ public class MessageTracingTests {
     return MessageTracing.RecordHop(serviceInstance, "test-topic", "test-stream", "TestExecutor");
   }
 
-  private static MessageHop AnotherTestMethod_ThatRecordsHop() {
+  private static MessageHop _anotherTestMethod_ThatRecordsHop() {
     var serviceInstance = new ServiceInstanceInfo {
       ServiceName = "TestService",
       InstanceId = Guid.NewGuid(),

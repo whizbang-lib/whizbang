@@ -18,7 +18,7 @@ namespace Whizbang.Core.Workers;
 /// Uses lease-based coordination for reliable perspective processing across instances.
 /// </summary>
 /// <docs>workers/perspective-worker</docs>
-public class PerspectiveWorker(
+public partial class PerspectiveWorker(
   IServiceInstanceProvider instanceProvider,
   IServiceScopeFactory scopeFactory,
   IOptions<PerspectiveWorkerOptions> options,
@@ -71,27 +71,20 @@ public class PerspectiveWorker(
   public event WorkProcessingIdleHandler? OnWorkProcessingIdle;
 
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-    _logger.LogInformation(
-      "Perspective worker starting: Instance {InstanceId} ({ServiceName}@{HostName}:{ProcessId}), interval: {Interval}ms",
-      _instanceProvider.InstanceId,
-      _instanceProvider.ServiceName,
-      _instanceProvider.HostName,
-      _instanceProvider.ProcessId,
-      _options.PollingIntervalMilliseconds
-    );
+    LogWorkerStarting(_logger, _instanceProvider.InstanceId, _instanceProvider.ServiceName, _instanceProvider.HostName, _instanceProvider.ProcessId, _options.PollingIntervalMilliseconds);
 
     // Process any pending perspective checkpoints IMMEDIATELY on startup (before first polling delay)
     try {
-      _logger.LogDebug("Checking for pending perspective checkpoints on startup...");
+      LogCheckingPendingCheckpoints(_logger);
       var isDatabaseReady = await _databaseReadinessCheck.IsReadyAsync(stoppingToken);
       if (isDatabaseReady) {
-        await ProcessWorkBatchAsync(stoppingToken);
-        _logger.LogDebug("Initial perspective checkpoint processing complete");
+        await _processWorkBatchAsync(stoppingToken);
+        LogInitialCheckpointProcessingComplete(_logger);
       } else {
-        _logger.LogWarning("Database not ready on startup - skipping initial perspective checkpoint processing");
+        LogDatabaseNotReadyOnStartup(_logger);
       }
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      _logger.LogError(ex, "Error processing initial perspective checkpoints on startup");
+      LogErrorProcessingInitialCheckpoints(_logger, ex);
     }
 
     while (!stoppingToken.IsCancellationRequested) {
@@ -103,17 +96,11 @@ public class PerspectiveWorker(
           Interlocked.Increment(ref _consecutiveDatabaseNotReadyChecks);
 
           // Log at Information level (important operational event)
-          _logger.LogInformation(
-            "Database not ready, skipping perspective checkpoint processing (consecutive checks: {ConsecutiveCount})",
-            _consecutiveDatabaseNotReadyChecks
-          );
+          LogDatabaseNotReady(_logger, _consecutiveDatabaseNotReadyChecks);
 
           // Warn if database has been continuously unavailable
           if (_consecutiveDatabaseNotReadyChecks > 10) {
-            _logger.LogWarning(
-              "Database not ready for {ConsecutiveCount} consecutive polling cycles. Perspective worker is paused.",
-              _consecutiveDatabaseNotReadyChecks
-            );
+            LogDatabaseNotReadyWarning(_logger, _consecutiveDatabaseNotReadyChecks);
           }
 
           // Wait before retry
@@ -124,9 +111,9 @@ public class PerspectiveWorker(
         // Database is ready - reset consecutive counter
         Interlocked.Exchange(ref _consecutiveDatabaseNotReadyChecks, 0);
 
-        await ProcessWorkBatchAsync(stoppingToken);
+        await _processWorkBatchAsync(stoppingToken);
       } catch (Exception ex) when (ex is not OperationCanceledException) {
-        _logger.LogError(ex, "Error processing perspective checkpoints");
+        LogErrorProcessingCheckpoints(_logger, ex);
       }
 
       // Wait before next poll (unless cancelled)
@@ -138,10 +125,10 @@ public class PerspectiveWorker(
       }
     }
 
-    _logger.LogInformation("Perspective worker stopping");
+    LogWorkerStopping(_logger);
   }
 
-  private async Task ProcessWorkBatchAsync(CancellationToken cancellationToken) {
+  private async Task _processWorkBatchAsync(CancellationToken cancellationToken) {
     // Create a scope to resolve scoped IWorkCoordinator
     using var scope = _scopeFactory.CreateScope();
     var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
@@ -153,12 +140,6 @@ public class PerspectiveWorker(
     _failures.Clear();
 
     // Get work batch (heartbeat, claim perspective work, return for processing)
-    // Each call:
-    // - Reports previous perspective processing results (if any)
-    // - Registers/updates instance + heartbeat
-    // - Cleans up stale instances
-    // - Claims perspective checkpoint work via modulo-based partition distribution
-    // - Returns perspective checkpoint work for this instance to process
     var workBatch = await workCoordinator.ProcessWorkBatchAsync(
       _instanceProvider.InstanceId,
       _instanceProvider.ServiceName,
@@ -187,30 +168,18 @@ public class PerspectiveWorker(
     // Process perspective work using IPerspectiveRunner
     foreach (var perspectiveWork in workBatch.PerspectiveWork) {
       try {
-        _logger.LogInformation(
-          "Processing perspective checkpoint: {PerspectiveName} for stream {StreamId}, last processed event: {LastProcessedEventId}",
-          perspectiveWork.PerspectiveName,
-          perspectiveWork.StreamId,
-          perspectiveWork.LastProcessedEventId?.ToString() ?? "null (never processed)"
-        );
+        LogProcessingPerspectiveCheckpoint(_logger, perspectiveWork.PerspectiveName, perspectiveWork.StreamId, perspectiveWork.LastProcessedEventId?.ToString() ?? "null (never processed)");
 
         // Resolve the generated IPerspectiveRunner for this perspective
-        // Uses zero-reflection lookup via IPerspectiveRunnerRegistry (AOT-compatible)
         var registry = scope.ServiceProvider.GetService<IPerspectiveRunnerRegistry>();
         if (registry == null) {
-          _logger.LogError(
-            "IPerspectiveRunnerRegistry not registered. Call AddPerspectiveRunners() in service registration. Skipping perspective: {PerspectiveName}",
-            perspectiveWork.PerspectiveName
-          );
+          LogPerspectiveRunnerRegistryNotRegistered(_logger, perspectiveWork.PerspectiveName);
           continue;
         }
 
         var runner = registry.GetRunner(perspectiveWork.PerspectiveName, scope.ServiceProvider);
         if (runner == null) {
-          _logger.LogWarning(
-            "No IPerspectiveRunner found for perspective {PerspectiveName}. Ensure perspective implements IPerspectiveFor<TModel, TEvent> and has [StreamKey] on model. Skipping.",
-            perspectiveWork.PerspectiveName
-          );
+          LogNoPerspectiveRunnerFound(_logger, perspectiveWork.PerspectiveName);
           continue;
         }
 
@@ -225,19 +194,9 @@ public class PerspectiveWorker(
         // Collect completion
         _completions.Add(result);
 
-        _logger.LogDebug(
-          "Perspective checkpoint completed: {PerspectiveName} for stream {StreamId}, last event: {LastEventId}",
-          perspectiveWork.PerspectiveName,
-          perspectiveWork.StreamId,
-          result.LastEventId
-        );
+        LogPerspectiveCheckpointCompleted(_logger, perspectiveWork.PerspectiveName, perspectiveWork.StreamId, result.LastEventId);
       } catch (Exception ex) {
-        _logger.LogError(
-          ex,
-          "Error processing perspective checkpoint: {PerspectiveName} for stream {StreamId}",
-          perspectiveWork.PerspectiveName,
-          perspectiveWork.StreamId
-        );
+        LogErrorProcessingPerspectiveCheckpoint(_logger, ex, perspectiveWork.PerspectiveName, perspectiveWork.StreamId);
 
         _failures.Add(new PerspectiveCheckpointFailure {
           StreamId = perspectiveWork.StreamId,
@@ -252,14 +211,9 @@ public class PerspectiveWorker(
     // Log a summary of perspective processing activity
     int totalActivity = perspectiveCompletions.Length + perspectiveFailures.Length + workBatch.PerspectiveWork.Count;
     if (totalActivity > 0) {
-      _logger.LogInformation(
-        "Perspective batch: Claimed={Claimed}, completed={Completed}, failed={Failed}",
-        workBatch.PerspectiveWork.Count,
-        perspectiveCompletions.Length,
-        perspectiveFailures.Length
-      );
+      LogPerspectiveBatchSummary(_logger, workBatch.PerspectiveWork.Count, perspectiveCompletions.Length, perspectiveFailures.Length);
     } else {
-      _logger.LogDebug("Perspective checkpoint processing: no work claimed");
+      LogNoWorkClaimed(_logger);
     }
 
     // Track work state transitions for OnWorkProcessingStarted / OnWorkProcessingIdle callbacks
@@ -273,7 +227,7 @@ public class PerspectiveWorker(
       if (_isIdle) {
         _isIdle = false;
         OnWorkProcessingStarted?.Invoke();
-        _logger.LogDebug("Perspective processing started (idle → active)");
+        LogPerspectiveProcessingStarted(_logger);
       }
     } else {
       // Increment empty poll counter
@@ -283,10 +237,137 @@ public class PerspectiveWorker(
       if (!_isIdle && _consecutiveEmptyPolls >= _options.IdleThresholdPolls) {
         _isIdle = true;
         OnWorkProcessingIdle?.Invoke();
-        _logger.LogDebug("Perspective processing idle (active → idle) after {EmptyPolls} empty polls", _consecutiveEmptyPolls);
+        LogPerspectiveProcessingIdle(_logger, _consecutiveEmptyPolls);
       }
     }
   }
+
+  // LoggerMessage definitions
+  [LoggerMessage(
+    EventId = 1,
+    Level = LogLevel.Information,
+    Message = "Perspective worker starting: Instance {InstanceId} ({ServiceName}@{HostName}:{ProcessId}), interval: {Interval}ms"
+  )]
+  static partial void LogWorkerStarting(ILogger logger, Guid instanceId, string serviceName, string hostName, int processId, int interval);
+
+  [LoggerMessage(
+    EventId = 2,
+    Level = LogLevel.Debug,
+    Message = "Checking for pending perspective checkpoints on startup..."
+  )]
+  static partial void LogCheckingPendingCheckpoints(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 3,
+    Level = LogLevel.Debug,
+    Message = "Initial perspective checkpoint processing complete"
+  )]
+  static partial void LogInitialCheckpointProcessingComplete(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 4,
+    Level = LogLevel.Warning,
+    Message = "Database not ready on startup - skipping initial perspective checkpoint processing"
+  )]
+  static partial void LogDatabaseNotReadyOnStartup(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 5,
+    Level = LogLevel.Error,
+    Message = "Error processing initial perspective checkpoints on startup"
+  )]
+  static partial void LogErrorProcessingInitialCheckpoints(ILogger logger, Exception ex);
+
+  [LoggerMessage(
+    EventId = 6,
+    Level = LogLevel.Information,
+    Message = "Database not ready, skipping perspective checkpoint processing (consecutive checks: {ConsecutiveCount})"
+  )]
+  static partial void LogDatabaseNotReady(ILogger logger, int consecutiveCount);
+
+  [LoggerMessage(
+    EventId = 7,
+    Level = LogLevel.Warning,
+    Message = "Database not ready for {ConsecutiveCount} consecutive polling cycles. Perspective worker is paused."
+  )]
+  static partial void LogDatabaseNotReadyWarning(ILogger logger, int consecutiveCount);
+
+  [LoggerMessage(
+    EventId = 8,
+    Level = LogLevel.Error,
+    Message = "Error processing perspective checkpoints"
+  )]
+  static partial void LogErrorProcessingCheckpoints(ILogger logger, Exception ex);
+
+  [LoggerMessage(
+    EventId = 9,
+    Level = LogLevel.Information,
+    Message = "Perspective worker stopping"
+  )]
+  static partial void LogWorkerStopping(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 10,
+    Level = LogLevel.Information,
+    Message = "Processing perspective checkpoint: {PerspectiveName} for stream {StreamId}, last processed event: {LastProcessedEventId}"
+  )]
+  static partial void LogProcessingPerspectiveCheckpoint(ILogger logger, string perspectiveName, Guid streamId, string lastProcessedEventId);
+
+  [LoggerMessage(
+    EventId = 11,
+    Level = LogLevel.Error,
+    Message = "IPerspectiveRunnerRegistry not registered. Call AddPerspectiveRunners() in service registration. Skipping perspective: {PerspectiveName}"
+  )]
+  static partial void LogPerspectiveRunnerRegistryNotRegistered(ILogger logger, string perspectiveName);
+
+  [LoggerMessage(
+    EventId = 12,
+    Level = LogLevel.Warning,
+    Message = "No IPerspectiveRunner found for perspective {PerspectiveName}. Ensure perspective implements IPerspectiveFor<TModel, TEvent> and has [StreamKey] on model. Skipping."
+  )]
+  static partial void LogNoPerspectiveRunnerFound(ILogger logger, string perspectiveName);
+
+  [LoggerMessage(
+    EventId = 13,
+    Level = LogLevel.Debug,
+    Message = "Perspective checkpoint completed: {PerspectiveName} for stream {StreamId}, last event: {LastEventId}"
+  )]
+  static partial void LogPerspectiveCheckpointCompleted(ILogger logger, string perspectiveName, Guid streamId, Guid lastEventId);
+
+  [LoggerMessage(
+    EventId = 14,
+    Level = LogLevel.Error,
+    Message = "Error processing perspective checkpoint: {PerspectiveName} for stream {StreamId}"
+  )]
+  static partial void LogErrorProcessingPerspectiveCheckpoint(ILogger logger, Exception ex, string perspectiveName, Guid streamId);
+
+  [LoggerMessage(
+    EventId = 15,
+    Level = LogLevel.Information,
+    Message = "Perspective batch: Claimed={Claimed}, completed={Completed}, failed={Failed}"
+  )]
+  static partial void LogPerspectiveBatchSummary(ILogger logger, int claimed, int completed, int failed);
+
+  [LoggerMessage(
+    EventId = 16,
+    Level = LogLevel.Debug,
+    Message = "Perspective checkpoint processing: no work claimed"
+  )]
+  static partial void LogNoWorkClaimed(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 17,
+    Level = LogLevel.Debug,
+    Message = "Perspective processing started (idle → active)"
+  )]
+  static partial void LogPerspectiveProcessingStarted(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 18,
+    Level = LogLevel.Debug,
+    Message = "Perspective processing idle (active → idle) after {EmptyPolls} empty polls"
+  )]
+  static partial void LogPerspectiveProcessingIdle(ILogger logger, int emptyPolls);
 }
 
 /// <summary>
@@ -324,7 +405,7 @@ public class PerspectiveWorkerOptions {
   /// Keep completed checkpoints for debugging (default: false).
   /// When enabled, completed checkpoints are preserved instead of deleted.
   /// </summary>
-  public bool DebugMode { get; set; } = false;
+  public bool DebugMode { get; set; }
 
   /// <summary>
   /// Number of partitions for work distribution.

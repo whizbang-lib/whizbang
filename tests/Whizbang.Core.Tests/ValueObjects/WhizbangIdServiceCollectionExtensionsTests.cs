@@ -165,15 +165,15 @@ public class WhizbangIdServiceCollectionExtensionsTests {
 
   // Test factory for testing
   private interface ITestId { }
-  private class TestId : ITestId { }
-  private class TestIdFactory : IWhizbangIdFactory<ITestId> {
+  private sealed class TestId : ITestId { }
+  private sealed class TestIdFactory : IWhizbangIdFactory<ITestId> {
     public ITestId Create() => new TestId();
   }
 
   // Second test factory for multiple factory registration test
   private interface ISecondTestId { }
-  private class SecondTestId : ISecondTestId { }
-  private class SecondTestIdFactory : IWhizbangIdFactory<ISecondTestId> {
+  private sealed class SecondTestId : ISecondTestId { }
+  private sealed class SecondTestIdFactory : IWhizbangIdFactory<ISecondTestId> {
     public ISecondTestId Create() => new SecondTestId();
   }
 
@@ -257,7 +257,7 @@ public class WhizbangIdServiceCollectionExtensionsTests {
   }
 
   // Test service that uses typed provider
-  private class TestService {
+  private sealed class TestService {
     private readonly IWhizbangIdProvider<RegistryTestId1> _provider;
 
     public TestService(IWhizbangIdProvider<RegistryTestId1> provider) {
@@ -268,7 +268,7 @@ public class WhizbangIdServiceCollectionExtensionsTests {
   }
 
   // Custom test provider for testing
-  private class TestIdProvider : IWhizbangIdProvider {
+  private sealed class TestIdProvider : IWhizbangIdProvider {
     private readonly Guid _fixedGuid;
 
     public TestIdProvider(Guid fixedGuid) {

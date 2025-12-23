@@ -168,7 +168,7 @@ public class DeliveryReceiptTests {
     var causationId = MessageId.New();
 
     // Act
-    IDeliveryReceipt receipt = DeliveryReceipt.Accepted(messageId, destination, correlationId, causationId);
+    DeliveryReceipt receipt = DeliveryReceipt.Accepted(messageId, destination, correlationId, causationId);
 
     // Assert - Verify all properties are accessible through interface
     await Assert.That(receipt.MessageId).IsEqualTo(messageId);

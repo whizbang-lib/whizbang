@@ -161,7 +161,7 @@ public class TransportAutoDiscoveryTests {
     discovery.SubscribeToNamespace("MyApp.Orders.*");
 
     // Assert
-    await Assert.That(discovery.GetNamespacePatterns()).HasCount().EqualTo(1);
+    await Assert.That(discovery.GetNamespacePatterns()).Count().IsEqualTo(1);
   }
 
   [Test]
@@ -173,7 +173,7 @@ public class TransportAutoDiscoveryTests {
     discovery.Subscribe<MyApp.Orders.OrderCreated>();
 
     // Assert
-    await Assert.That(discovery.GetExplicitTypes()).HasCount().EqualTo(1);
+    await Assert.That(discovery.GetExplicitTypes()).Count().IsEqualTo(1);
     await Assert.That(discovery.GetExplicitTypes()[0]).IsEqualTo(typeof(MyApp.Orders.OrderCreated));
   }
 
@@ -269,7 +269,7 @@ public class TransportAutoDiscoveryTests {
     var types = discovery.GetMessageTypesToSubscribe();
 
     // Assert
-    await Assert.That(types).HasCount().EqualTo(2);
+    await Assert.That(types).Count().IsEqualTo(2);
     await Assert.That(types).Contains(typeof(MyApp.Orders.OrderCreated));
     await Assert.That(types).Contains(typeof(MyApp.Payments.PaymentProcessed));
   }

@@ -11,7 +11,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// </summary>
 public class WorkBatchCoordinatorTests {
 
-  private static IMessageEnvelope<JsonElement> CreateTestEnvelope(Guid messageId) {
+  private static MessageEnvelope<JsonElement> _createTestEnvelope(Guid messageId) {
     return new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
@@ -19,7 +19,7 @@ public class WorkBatchCoordinatorTests {
     };
   }
 
-  private class TestWorkCoordinator : IWorkCoordinator {
+  private sealed class TestWorkCoordinator : IWorkCoordinator {
     public WorkBatch? WorkBatchToReturn { get; set; }
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
@@ -42,7 +42,7 @@ public class WorkBatchCoordinatorTests {
     }
   }
 
-  private class TestServiceInstanceProvider : IServiceInstanceProvider {
+  private sealed class TestServiceInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; init; }
     public string ServiceName { get; init; } = "TestService";
     public string HostName { get; init; } = "localhost";
@@ -66,7 +66,7 @@ public class WorkBatchCoordinatorTests {
     var outboxWork = new OutboxWork {
       MessageId = messageId,
       Destination = "test-topic",
-      Envelope = CreateTestEnvelope(messageId),
+      Envelope = _createTestEnvelope(messageId),
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
       Flags = WorkBatchFlags.None,
@@ -156,7 +156,7 @@ public class WorkBatchCoordinatorTests {
     var outboxWork = new OutboxWork {
       MessageId = messageId,
       Destination = "test-topic",
-      Envelope = CreateTestEnvelope(messageId),
+      Envelope = _createTestEnvelope(messageId),
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
       Flags = WorkBatchFlags.None,

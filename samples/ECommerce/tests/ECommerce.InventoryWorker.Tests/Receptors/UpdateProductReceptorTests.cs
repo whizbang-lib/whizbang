@@ -96,6 +96,7 @@ public class UpdateProductReceptorTests {
   }
 
   [Test]
+  [Obsolete]
   public async Task HandleAsync_PublishesProductUpdatedEventAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
@@ -154,6 +155,7 @@ public class UpdateProductReceptorTests {
   }
 
   [Test]
+  [Obsolete]
   public async Task HandleAsync_LogsInformation_AboutProductUpdateAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();

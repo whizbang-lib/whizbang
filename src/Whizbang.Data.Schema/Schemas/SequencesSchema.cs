@@ -24,28 +24,28 @@ public static class SequencesSchema {
     Columns: ImmutableArray.Create(
       new ColumnDefinition(
         Name: "sequence_name",
-        DataType: WhizbangDataType.String,
+        DataType: WhizbangDataType.STRING,
         MaxLength: 200,
         PrimaryKey: true,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "current_value",
-        DataType: WhizbangDataType.BigInt,
+        DataType: WhizbangDataType.BIG_INT,
         Nullable: false,
         DefaultValue: DefaultValue.Integer(0)
       ),
       new ColumnDefinition(
         Name: "increment_by",
-        DataType: WhizbangDataType.Integer,
+        DataType: WhizbangDataType.INTEGER,
         Nullable: false,
         DefaultValue: DefaultValue.Integer(1)
       ),
       new ColumnDefinition(
         Name: "last_updated_at",
-        DataType: WhizbangDataType.TimestampTz,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
-        DefaultValue: DefaultValue.Function(DefaultValueFunction.DateTime_Now)
+        DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       )
     ),
     Indexes: ImmutableArray.Create<IndexDefinition>() // Primary key only, no additional indexes
@@ -56,9 +56,9 @@ public static class SequencesSchema {
   /// </summary>
   /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/SequencesSchemaTests.cs:Columns_HasAllConstantsAsync</tests>
   public static class Columns {
-    public const string SequenceName = "sequence_name";
-    public const string CurrentValue = "current_value";
-    public const string IncrementBy = "increment_by";
-    public const string LastUpdatedAt = "last_updated_at";
+    public const string SEQUENCE_NAME = "sequence_name";
+    public const string CURRENT_VALUE = "current_value";
+    public const string INCREMENT_BY = "increment_by";
+    public const string LAST_UPDATED_AT = "last_updated_at";
   }
 }

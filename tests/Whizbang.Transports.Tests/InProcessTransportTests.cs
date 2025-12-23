@@ -14,7 +14,7 @@ namespace Whizbang.Transports.Tests;
 /// </summary>
 [Category("Transport")]
 public class InProcessTransportTests {
-  private static MessageEnvelope<TestMessage> CreateTestEnvelope(string content) {
+  private static MessageEnvelope<TestMessage> _createTestEnvelope(string content) {
     var message = new TestMessage { Content = content };
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
@@ -34,11 +34,11 @@ public class InProcessTransportTests {
   }
 
   // Test message types
-  private record TestMessage {
+  private sealed record TestMessage {
     public string Content { get; init; } = string.Empty;
   }
 
-  private record TestResponse {
+  private sealed record TestResponse {
     public string Result { get; init; } = string.Empty;
   }
 
@@ -69,7 +69,7 @@ public class InProcessTransportTests {
   public async Task PublishAsync_WithNoSubscribers_CompletesSuccessfullyAsync() {
     // Arrange
     var transport = new InProcessTransport();
-    var envelope = CreateTestEnvelope("test-message");
+    var envelope = _createTestEnvelope("test-message");
     var destination = new TransportDestination("test-topic");
 
     // Act & Assert - Should not throw
@@ -80,7 +80,7 @@ public class InProcessTransportTests {
   public async Task PublishAsync_WithSingleSubscriber_InvokesHandlerAsync() {
     // Arrange
     var transport = new InProcessTransport();
-    var envelope = CreateTestEnvelope("test-message");
+    var envelope = _createTestEnvelope("test-message");
     var destination = new TransportDestination("test-topic");
 
     IMessageEnvelope? receivedEnvelope = null;
@@ -107,7 +107,7 @@ public class InProcessTransportTests {
   public async Task PublishAsync_WithMultipleSubscribers_InvokesAllHandlersAsync(int subscriberCount) {
     // Arrange
     var transport = new InProcessTransport();
-    var envelope = CreateTestEnvelope($"test-{subscriberCount}");
+    var envelope = _createTestEnvelope($"test-{subscriberCount}");
     var destination = new TransportDestination("test-topic");
 
     var invocations = new ConcurrentBag<int>();
@@ -134,7 +134,7 @@ public class InProcessTransportTests {
   public async Task PublishAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var transport = new InProcessTransport();
-    var envelope = CreateTestEnvelope("test");
+    var envelope = _createTestEnvelope("test");
     var destination = new TransportDestination("test-topic");
     var cts = new CancellationTokenSource();
     cts.Cancel();
@@ -148,8 +148,8 @@ public class InProcessTransportTests {
   public async Task PublishAsync_ToDifferentTopics_OnlyInvokesMatchingSubscribersAsync() {
     // Arrange
     var transport = new InProcessTransport();
-    var envelope1 = CreateTestEnvelope("message-1");
-    var envelope2 = CreateTestEnvelope("message-2");
+    var envelope1 = _createTestEnvelope("message-1");
+    var envelope2 = _createTestEnvelope("message-2");
     var destination1 = new TransportDestination("topic-1");
     var destination2 = new TransportDestination("topic-2");
 
@@ -210,7 +210,7 @@ public class InProcessTransportTests {
     cts.Cancel();
 
     // Act & Assert
-    await Assert.That(() => transport.SubscribeAsync(
+    await Assert.That(async () => await transport.SubscribeAsync(
       handler: (env, ct) => Task.CompletedTask,
       destination: destination,
       cancellationToken: cts.Token
@@ -240,7 +240,7 @@ public class InProcessTransportTests {
     bool shouldInvokeHandler) {
     // Arrange
     var transport = new InProcessTransport();
-    var envelope = CreateTestEnvelope("test");
+    var envelope = _createTestEnvelope("test");
     var destination = new TransportDestination("test-topic");
 
     var handlerInvoked = false;
@@ -309,7 +309,7 @@ public class InProcessTransportTests {
   public async Task Subscription_Dispose_RemovesHandlerFromTransportAsync() {
     // Arrange
     var transport = new InProcessTransport();
-    var envelope = CreateTestEnvelope("test");
+    var envelope = _createTestEnvelope("test");
     var destination = new TransportDestination("test-topic");
 
     var handlerInvoked = false;
@@ -356,8 +356,8 @@ public class InProcessTransportTests {
   public async Task SendAsync_WithResponder_ReturnsResponseEnvelopeAsync() {
     // Arrange
     var transport = new InProcessTransport();
-    var requestEnvelope = CreateTestEnvelope("request");
-    var responseEnvelope = CreateTestEnvelope("response");
+    var requestEnvelope = _createTestEnvelope("request");
+    var responseEnvelope = _createTestEnvelope("response");
     var destination = new TransportDestination("test-topic");
 
     // Setup responder
@@ -382,13 +382,13 @@ public class InProcessTransportTests {
   public async Task SendAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
     // Arrange
     var transport = new InProcessTransport();
-    var envelope = CreateTestEnvelope("test");
+    var envelope = _createTestEnvelope("test");
     var destination = new TransportDestination("test-topic");
     var cts = new CancellationTokenSource();
     cts.Cancel();
 
     // Act & Assert
-    await Assert.That(() => transport.SendAsync<TestMessage, TestMessage>(envelope, destination, cts.Token))
+    await Assert.That(async () => await transport.SendAsync<TestMessage, TestMessage>(envelope, destination, cts.Token))
       .Throws<OperationCanceledException>();
   }
 
@@ -399,14 +399,14 @@ public class InProcessTransportTests {
   public async Task SendAsync_WithTimeout_ThrowsTimeoutExceptionAsync(int timeoutMs) {
     // Arrange
     var transport = new InProcessTransport();
-    var envelope = CreateTestEnvelope("test");
+    var envelope = _createTestEnvelope("test");
     var destination = new TransportDestination("test-topic");
     var cts = new CancellationTokenSource(timeoutMs);
 
     // No responder setup - will timeout
 
     // Act & Assert
-    await Assert.That(() => transport.SendAsync<TestMessage, TestMessage>(envelope, destination, cts.Token))
+    await Assert.That(async () => await transport.SendAsync<TestMessage, TestMessage>(envelope, destination, cts.Token))
       .Throws<OperationCanceledException>();
   }
 
@@ -435,7 +435,7 @@ public class InProcessTransportTests {
     // Act - Publish concurrently
     var tasks = Enumerable.Range(0, concurrentPublishes)
       .Select(_ => {
-        var envelope = CreateTestEnvelope($"message-{Guid.NewGuid()}");
+        var envelope = _createTestEnvelope($"message-{Guid.NewGuid()}");
         return transport.PublishAsync(envelope, destination);
       })
       .ToArray();
@@ -452,7 +452,7 @@ public class InProcessTransportTests {
   public async Task SubscribeAsync_ConcurrentSubscriptions_AllRegisteredAsync(int concurrentSubscriptions) {
     // Arrange
     var transport = new InProcessTransport();
-    var envelope = CreateTestEnvelope("test");
+    var envelope = _createTestEnvelope("test");
     var destination = new TransportDestination("test-topic");
     var invocations = new ConcurrentBag<int>();
 
@@ -480,7 +480,7 @@ public class InProcessTransportTests {
   public async Task SubscribeAndDispose_Concurrent_ThreadSafeAsync() {
     // Arrange
     var transport = new InProcessTransport();
-    var envelope = CreateTestEnvelope("test");
+    var envelope = _createTestEnvelope("test");
     var destination = new TransportDestination("test-topic");
     var subscriptions = new ConcurrentBag<ISubscription>();
 
@@ -515,11 +515,10 @@ public class InProcessTransportTests {
   public async Task PublishAsync_HandlerThrowsException_ContinuesWithOtherHandlersAsync() {
     // Arrange
     var transport = new InProcessTransport();
-    var envelope = CreateTestEnvelope("test");
+    var envelope = _createTestEnvelope("test");
     var destination = new TransportDestination("test-topic");
 
     var handler1Invoked = false;
-    var handler2Invoked = false;
 
     await transport.SubscribeAsync(
       handler: (env, ct) => {
@@ -531,7 +530,6 @@ public class InProcessTransportTests {
 
     await transport.SubscribeAsync(
       handler: (env, ct) => {
-        handler2Invoked = true;
         return Task.CompletedTask;
       },
       destination: destination
@@ -550,7 +548,7 @@ public class InProcessTransportTests {
   public async Task SendAsync_WithCancellationDuringPublish_ExecutesFinallyBlockAsync() {
     // Arrange
     var transport = new InProcessTransport();
-    var envelope = CreateTestEnvelope("test");
+    var envelope = _createTestEnvelope("test");
     var destination = new TransportDestination("test-service");
     var cts = new CancellationTokenSource();
 
@@ -576,7 +574,7 @@ public class InProcessTransportTests {
   public async Task PublishAsync_WithRoutingKey_DeliversToCorrectDestinationAsync() {
     // Arrange
     var transport = new InProcessTransport();
-    var envelope = CreateTestEnvelope("test");
+    var envelope = _createTestEnvelope("test");
     var destination1 = new TransportDestination("topic", RoutingKey: "orders.created");
     var destination2 = new TransportDestination("topic", RoutingKey: "orders.updated");
 

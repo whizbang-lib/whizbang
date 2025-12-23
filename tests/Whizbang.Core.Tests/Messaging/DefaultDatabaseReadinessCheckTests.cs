@@ -75,7 +75,7 @@ public class DefaultDatabaseReadinessCheckTests {
   [Test]
   public async Task IsReadyAsync_ImplementsInterface_IDatabaseReadinessCheckAsync() {
     // Arrange
-    IDatabaseReadinessCheck readinessCheck = new DefaultDatabaseReadinessCheck();
+    DefaultDatabaseReadinessCheck readinessCheck = new DefaultDatabaseReadinessCheck();
 
     // Act
     var isReady = await readinessCheck.IsReadyAsync();

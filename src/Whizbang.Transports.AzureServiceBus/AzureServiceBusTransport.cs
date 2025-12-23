@@ -13,6 +13,7 @@ namespace Whizbang.Transports.AzureServiceBus;
 /// Provides reliable, ordered message delivery using Azure Service Bus topics and subscriptions.
 /// </summary>
 /// <tests>No tests found</tests>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Transport implementation with diagnostic logging - I/O bound operations where LoggerMessage overhead isn't justified")]
 public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
   private readonly ServiceBusClient _client;
   private readonly ServiceBusAdministrationClient? _adminClient;
@@ -143,7 +144,7 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
 
     try {
       _logger.LogWarning("DIAGNOSTIC [PublishAsync]: About to get sender for {Destination}", destination.Address);
-      var sender = await GetOrCreateSenderAsync(destination.Address, cancellationToken);
+      var sender = await _getOrCreateSenderAsync(destination.Address, cancellationToken);
       _logger.LogWarning("DIAGNOSTIC [PublishAsync]: Got sender for {Destination}", destination.Address);
 
       // Get the envelope type to store as metadata for deserialization
@@ -257,7 +258,7 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
 
           if (_adminClient != null) {
             try {
-              await ApplyCorrelationFilterAsync(topicName, subscriptionName, destinationFilter, cancellationToken);
+              await _applyCorrelationFilterAsync(topicName, subscriptionName, destinationFilter, cancellationToken);
             } catch (Exception ex) {
               _logger.LogWarning(
                 ex,
@@ -465,7 +466,7 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
   /// Applies a CorrelationFilter to a subscription by replacing the default rule.
   /// Filters messages based on the Destination application property.
   /// </summary>
-  private async Task ApplyCorrelationFilterAsync(
+  private async Task _applyCorrelationFilterAsync(
     string topicName,
     string subscriptionName,
     string destination,
@@ -545,7 +546,7 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
     }
   }
 
-  private async Task<ServiceBusSender> GetOrCreateSenderAsync(string topicName, CancellationToken cancellationToken) {
+  private async Task<ServiceBusSender> _getOrCreateSenderAsync(string topicName, CancellationToken cancellationToken) {
     if (_senders.TryGetValue(topicName, out var existingSender)) {
       _logger.LogWarning("DIAGNOSTIC [GetOrCreateSender]: Using existing sender for {TopicName}", topicName);
       return existingSender;
@@ -594,5 +595,7 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
     _senderLock.Dispose();
 
     _logger.LogInformation("Azure Service Bus transport disposed");
+
+    GC.SuppressFinalize(this);
   }
 }

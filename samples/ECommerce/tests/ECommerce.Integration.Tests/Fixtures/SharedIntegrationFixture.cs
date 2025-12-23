@@ -151,25 +151,25 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     // Testcontainers generates: Endpoint=amqp://127.0.0.1:PORT/;SharedAccessKeyName=...
     // Azure Service Bus client expects: Endpoint=sb://localhost:PORT;SharedAccessKeyName=...;UseDevelopmentEmulator=true
     // See: https://github.com/Azure/azure-service-bus-emulator-installer/issues/51
-    var serviceBusConnection = ConvertToServiceBusConnectionString(serviceBusConnectionRaw);
+    var serviceBusConnection = _convertToServiceBusConnectionString(serviceBusConnectionRaw);
 
     Console.WriteLine($"[SharedFixture] PostgreSQL Connection: {postgresConnection}");
     Console.WriteLine($"[SharedFixture] Service Bus Connection (raw): {serviceBusConnectionRaw}");
     Console.WriteLine($"[SharedFixture] Service Bus Connection (converted): {serviceBusConnection}");
 
     // Wait for PostgreSQL to be ready to accept connections
-    await WaitForPostgresReadyAsync(postgresConnection, cancellationToken);
+    await _waitForPostgresReadyAsync(postgresConnection, cancellationToken);
 
     Console.WriteLine("[SharedFixture] PostgreSQL ready. Creating service hosts...");
 
     // Create service hosts (but don't start them yet)
-    _inventoryHost = CreateInventoryHost(postgresConnection, serviceBusConnection);
-    _bffHost = CreateBffHost(postgresConnection, serviceBusConnection);
+    _inventoryHost = _createInventoryHost(postgresConnection, serviceBusConnection);
+    _bffHost = _createBffHost(postgresConnection, serviceBusConnection);
 
     Console.WriteLine("[SharedFixture] Service hosts created. Initializing schema...");
 
     // Initialize PostgreSQL schema using EFCore DbContexts
-    await InitializeSchemaAsync(cancellationToken);
+    await _initializeSchemaAsync(cancellationToken);
 
     Console.WriteLine("[SharedFixture] Schema initialized. Starting service hosts...");
 
@@ -183,7 +183,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     // Wait for the emulator to be truly ready by checking health endpoint and waiting 30s
     // See: https://github.com/Azure/azure-service-bus-emulator-installer/issues/35
     Console.WriteLine("[SharedFixture] Waiting for Azure Service Bus Emulator to be fully ready...");
-    await WaitForServiceBusEmulatorReadyAsync(cancellationToken);
+    await _waitForServiceBusEmulatorReadyAsync(cancellationToken);
 
     Console.WriteLine("[SharedFixture] Service hosts started and ready!");
 
@@ -195,7 +195,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   /// </summary>
   [RequiresUnreferencedCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
   [RequiresDynamicCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
-  private IHost CreateInventoryHost(string postgresConnection, string serviceBusConnection) {
+  private IHost _createInventoryHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
 
     // Register service instance provider (uses shared instance ID for partition claiming compatibility)
@@ -320,7 +320,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   /// </summary>
   [RequiresUnreferencedCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
   [RequiresDynamicCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
-  private IHost CreateBffHost(string postgresConnection, string serviceBusConnection) {
+  private IHost _createBffHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
 
     // Register service instance provider (uses shared instance ID for partition claiming compatibility)
@@ -442,7 +442,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   /// Azure Service Bus client expects: Endpoint=sb://localhost:PORT;SharedAccessKeyName=...;SharedAccessKey=...;UseDevelopmentEmulator=true
   /// CRITICAL: The trailing slash after PORT must be removed, or the client fails silently.
   /// </summary>
-  private static string ConvertToServiceBusConnectionString(string amqpConnectionString) {
+  private static string _convertToServiceBusConnectionString(string amqpConnectionString) {
     // Replace amqp:// with sb://
     var result = amqpConnectionString.Replace("amqp://", "sb://");
 
@@ -460,7 +460,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   /// Waits for PostgreSQL to be ready to accept connections by attempting to open a connection.
   /// Polls up to 30 times (30 seconds total) with 1 second delay between attempts.
   /// </summary>
-  private async Task WaitForPostgresReadyAsync(string connectionString, CancellationToken cancellationToken = default) {
+  private async Task _waitForPostgresReadyAsync(string connectionString, CancellationToken cancellationToken = default) {
     var maxAttempts = 30; // 30 seconds total
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
@@ -481,7 +481,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   /// Waits for the Azure Service Bus Emulator to be fully ready by polling the health endpoint.
   /// The emulator reports "ready" before it can actually process messages, so we need to verify readiness.
   /// </summary>
-  private async Task WaitForServiceBusEmulatorReadyAsync(CancellationToken cancellationToken = default) {
+  private async Task _waitForServiceBusEmulatorReadyAsync(CancellationToken cancellationToken = default) {
     // Get the health endpoint URL with the correct dynamically mapped port
     // The Service Bus container exposes port 5300 (health) which Testcontainers maps to a random host port
     var healthPort = _serviceBusContainer.GetMappedPublicPort(5300);
@@ -528,7 +528,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Initializes the PostgreSQL schema: Whizbang core tables + InventoryWorker schema + BFF schema.
   /// </summary>
-  private async Task InitializeSchemaAsync(CancellationToken cancellationToken = default) {
+  private async Task _initializeSchemaAsync(CancellationToken cancellationToken = default) {
     // Initialize InventoryWorker schema using EFCore
     // Creates Inbox/Outbox/EventStore + PostgreSQL functions + perspective tables for InventoryWorker
     using (var scope = _inventoryHost!.Services.CreateScope()) {

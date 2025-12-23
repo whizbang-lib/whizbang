@@ -29,7 +29,7 @@ public class RequestResponseSchemaTests {
     var columns = RequestResponseSchema.Table.Columns;
 
     // Assert - Verify column count
-    await Assert.That(columns).HasCount().EqualTo(10);
+    await Assert.That(columns).Count().IsEqualTo(10);
 
     // Verify each column definition
     var requestId = columns[0];
@@ -96,7 +96,7 @@ public class RequestResponseSchemaTests {
       .ToList();
 
     // Assert
-    await Assert.That(primaryKeyColumns).HasCount().EqualTo(1);
+    await Assert.That(primaryKeyColumns).Count().IsEqualTo(1);
     await Assert.That(primaryKeyColumns[0].Name).IsEqualTo("request_id");
   }
 
@@ -107,25 +107,25 @@ public class RequestResponseSchemaTests {
     var indexes = RequestResponseSchema.Table.Indexes;
 
     // Assert - Verify index count
-    await Assert.That(indexes).HasCount().EqualTo(3);
+    await Assert.That(indexes).Count().IsEqualTo(3);
 
     // Verify correlation index
     var correlationIndex = indexes[0];
     await Assert.That(correlationIndex.Name).IsEqualTo("idx_request_response_correlation");
-    await Assert.That(correlationIndex.Columns).HasCount().EqualTo(1);
+    await Assert.That(correlationIndex.Columns).Count().IsEqualTo(1);
     await Assert.That(correlationIndex.Columns[0]).IsEqualTo("correlation_id");
 
     // Verify status/created_at composite index
     var statusCreatedIndex = indexes[1];
     await Assert.That(statusCreatedIndex.Name).IsEqualTo("idx_request_response_status_created");
-    await Assert.That(statusCreatedIndex.Columns).HasCount().EqualTo(2);
+    await Assert.That(statusCreatedIndex.Columns).Count().IsEqualTo(2);
     await Assert.That(statusCreatedIndex.Columns[0]).IsEqualTo("status");
     await Assert.That(statusCreatedIndex.Columns[1]).IsEqualTo("created_at");
 
     // Verify expires_at index
     var expiresIndex = indexes[2];
     await Assert.That(expiresIndex.Name).IsEqualTo("idx_request_response_expires");
-    await Assert.That(expiresIndex.Columns).HasCount().EqualTo(1);
+    await Assert.That(expiresIndex.Columns).Count().IsEqualTo(1);
     await Assert.That(expiresIndex.Columns[0]).IsEqualTo("expires_at");
   }
 
@@ -138,7 +138,7 @@ public class RequestResponseSchemaTests {
 
     // Assert
     await Assert.That(correlationIndex).IsNotNull();
-    await Assert.That(correlationIndex!.Columns).HasCount().EqualTo(1);
+    await Assert.That(correlationIndex!.Columns).Count().IsEqualTo(1);
     await Assert.That(correlationIndex.Columns[0]).IsEqualTo("correlation_id");
   }
 
@@ -151,7 +151,7 @@ public class RequestResponseSchemaTests {
 
     // Assert
     await Assert.That(statusIndex).IsNotNull();
-    await Assert.That(statusIndex!.Columns).HasCount().EqualTo(2);
+    await Assert.That(statusIndex!.Columns).Count().IsEqualTo(2);
     await Assert.That(statusIndex.Columns[0]).IsEqualTo("status");
     await Assert.That(statusIndex.Columns[1]).IsEqualTo("created_at");
   }
@@ -165,7 +165,7 @@ public class RequestResponseSchemaTests {
 
     // Assert
     await Assert.That(expiresIndex).IsNotNull();
-    await Assert.That(expiresIndex!.Columns).HasCount().EqualTo(1);
+    await Assert.That(expiresIndex!.Columns).Count().IsEqualTo(1);
     await Assert.That(expiresIndex.Columns[0]).IsEqualTo("expires_at");
   }
 

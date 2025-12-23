@@ -15,13 +15,13 @@ namespace Whizbang.Benchmarks;
 [MemoryDiagnoser]
 [MinColumn, MaxColumn]
 public class SerializationThroughputBenchmarks {
-  private IMessageSerializer _serializer = null!;
+  private JsonMessageSerializer _serializer = null!;
 
   // Test message types
-  private record TinyMessage(int Value);
-  private record SmallMessage(string Id, int Value, string Name);
-  private record MediumMessage(string Id, int Value, string Name, string Description, DateTime Timestamp);
-  private record LargeMessage(string Id, int Value, string Name, string Description, DateTime Timestamp, string Payload);
+  private sealed record TinyMessage(int Value);
+  private sealed record SmallMessage(string Id, int Value, string Name);
+  private sealed record MediumMessage(string Id, int Value, string Name, string Description, DateTime Timestamp);
+  private sealed record LargeMessage(string Id, int Value, string Name, string Description, DateTime Timestamp, string Payload);
 
   private List<IMessageEnvelope> _tinyEnvelopes = null!;
   private List<IMessageEnvelope> _smallEnvelopes = null!;
@@ -292,7 +292,7 @@ public class SerializationThroughputBenchmarks {
     await Task.WhenAll(tasks);
   }
 
-  private static IMessageEnvelope _createEnvelope<T>(T payload) {
+  private static MessageEnvelope<T> _createEnvelope<T>(T payload) {
     var envelope = new MessageEnvelope<T> {
       MessageId = MessageId.New(),
       Payload = payload,
@@ -315,7 +315,7 @@ public class SerializationThroughputBenchmarks {
     return envelope;
   }
 
-  private static IMessageEnvelope _createEnvelopeWithMultipleHops<T>(T payload) {
+  private static MessageEnvelope<T> _createEnvelopeWithMultipleHops<T>(T payload) {
     var envelope = new MessageEnvelope<T> {
       MessageId = MessageId.New(),
       Payload = payload,

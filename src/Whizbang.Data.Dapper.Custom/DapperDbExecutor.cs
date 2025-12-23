@@ -12,6 +12,9 @@ namespace Whizbang.Data.Dapper.Custom;
 /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs</tests>
 /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs</tests>
 public class DapperDbExecutor : IDbExecutor {
+  /// <summary>
+  /// Executes a SQL query and returns a list of results.
+  /// </summary>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_FromEmptyStream_ShouldReturnEmptyAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_FromMiddle_ShouldReturnSubsetAsync</tests>
@@ -34,6 +37,9 @@ public class DapperDbExecutor : IDbExecutor {
     return [.. results];
   }
 
+  /// <summary>
+  /// Executes a SQL query and returns a single result or default if none found.
+  /// </summary>
   /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:WaitForResponseAsync_WithoutResponse_ShouldTimeoutAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveResponseAsync_ShouldCompleteWaitingRequestAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:WaitForResponseAsync_WithCancellation_ShouldRespectCancellationAsync</tests>
@@ -56,6 +62,9 @@ public class DapperDbExecutor : IDbExecutor {
     return await DapperExtensions.SqlMapper.QuerySingleOrDefaultAsync<T>(connection, commandDefinition);
   }
 
+  /// <summary>
+  /// Executes a SQL command and returns the number of affected rows.
+  /// </summary>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ConcurrentAppends_ShouldBeThreadSafeAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveRequestAsync_ShouldStoreRequestAsync</tests>
@@ -83,6 +92,9 @@ public class DapperDbExecutor : IDbExecutor {
     return await DapperExtensions.SqlMapper.ExecuteAsync(connection, commandDefinition);
   }
 
+  /// <summary>
+  /// Executes a SQL command and returns a single scalar value.
+  /// </summary>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:GetLastSequenceAsync_EmptyStream_ShouldReturnMinusOneAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:GetLastSequenceAsync_AfterAppends_ShouldReturnCorrectSequenceAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs:GetNextAsync_FirstCall_ShouldReturnZeroAsync</tests>

@@ -69,27 +69,27 @@ public class DispatcherBenchmarks {
   // ========================================
 
   [Benchmark(Baseline = true)]
-  public async Task<LightweightResult> LocalInvoke_Lightweight_NoTracing() {
+  public async Task<LightweightResult> LocalInvoke_Lightweight_NoTracingAsync() {
     return await _dispatcher.LocalInvokeAsync<LightweightResult>(_lightCommand);
   }
 
   [Benchmark]
-  public async Task<LightweightResult> LocalInvoke_Lightweight_WithTracing() {
+  public async Task<LightweightResult> LocalInvoke_Lightweight_WithTracingAsync() {
     return await _dispatcherWithTracing.LocalInvokeAsync<LightweightResult>(_lightCommand);
   }
 
   [Benchmark]
-  public async Task<LightweightResult> LocalInvoke_Lightweight_WithContext() {
+  public async Task<LightweightResult> LocalInvoke_Lightweight_WithContextAsync() {
     return await _dispatcher.LocalInvokeAsync<LightweightResult>(_lightCommand, _context);
   }
 
   [Benchmark]
-  public async Task<HeavyweightResult> LocalInvoke_Heavyweight_NoTracing() {
+  public async Task<HeavyweightResult> LocalInvoke_Heavyweight_NoTracingAsync() {
     return await _dispatcher.LocalInvokeAsync<HeavyweightResult>(_heavyCommand);
   }
 
   [Benchmark]
-  public async Task<HeavyweightResult> LocalInvoke_Heavyweight_WithTracing() {
+  public async Task<HeavyweightResult> LocalInvoke_Heavyweight_WithTracingAsync() {
     return await _dispatcherWithTracing.LocalInvokeAsync<HeavyweightResult>(_heavyCommand);
   }
 
@@ -98,17 +98,17 @@ public class DispatcherBenchmarks {
   // ========================================
 
   [Benchmark]
-  public async Task<IDeliveryReceipt> Send_Lightweight_NoTracing() {
+  public async Task<IDeliveryReceipt> Send_Lightweight_NoTracingAsync() {
     return await _dispatcher.SendAsync(_lightCommand);
   }
 
   [Benchmark]
-  public async Task<IDeliveryReceipt> Send_Lightweight_WithTracing() {
+  public async Task<IDeliveryReceipt> Send_Lightweight_WithTracingAsync() {
     return await _dispatcherWithTracing.SendAsync(_lightCommand);
   }
 
   [Benchmark]
-  public async Task<IDeliveryReceipt> Send_Lightweight_WithContext() {
+  public async Task<IDeliveryReceipt> Send_Lightweight_WithContextAsync() {
     return await _dispatcher.SendAsync(_lightCommand, _context);
   }
 
@@ -117,7 +117,7 @@ public class DispatcherBenchmarks {
   // ========================================
 
   [Benchmark]
-  public async Task LocalInvoke_100Commands_NoTracing() {
+  public async Task LocalInvoke_100Commands_NoTracingAsync() {
     const int count = 100;
     var tasks = new Task<LightweightResult>[count];
     for (int i = 0; i < count; i++) {
@@ -128,7 +128,7 @@ public class DispatcherBenchmarks {
   }
 
   [Benchmark]
-  public async Task LocalInvoke_100Commands_WithTracing() {
+  public async Task LocalInvoke_100Commands_WithTracingAsync() {
     const int count = 100;
     var tasks = new Task<LightweightResult>[count];
     for (int i = 0; i < count; i++) {
@@ -139,7 +139,7 @@ public class DispatcherBenchmarks {
   }
 
   [Benchmark]
-  public async Task LocalInvokeMany_100Commands() {
+  public async Task LocalInvokeMany_100CommandsAsync() {
     var commands = Enumerable.Range(0, 100)
         .Select(i => (object)new LightweightCommand(i))
         .ToList();
@@ -147,7 +147,7 @@ public class DispatcherBenchmarks {
   }
 
   [Benchmark]
-  public async Task Send_100Commands_NoTracing() {
+  public async Task Send_100Commands_NoTracingAsync() {
     const int count = 100;
     var tasks = new Task<IDeliveryReceipt>[count];
     for (int i = 0; i < count; i++) {
@@ -158,7 +158,7 @@ public class DispatcherBenchmarks {
   }
 
   [Benchmark]
-  public async Task SendMany_100Commands() {
+  public async Task SendMany_100CommandsAsync() {
     var commands = Enumerable.Range(0, 100)
         .Select(i => (object)new LightweightCommand(i))
         .ToList();
@@ -170,7 +170,7 @@ public class DispatcherBenchmarks {
   // ========================================
 
   [Benchmark]
-  public static async Task ColdStart_FirstLocalInvoke() {
+  public static async Task ColdStart_FirstLocalInvokeAsync() {
     // Simulate cold start by creating fresh dispatcher
     var services = new ServiceCollection();
     services.AddReceptors();
@@ -183,7 +183,7 @@ public class DispatcherBenchmarks {
   }
 
   [Benchmark]
-  public async Task HotPath_RepeatedLocalInvoke() {
+  public async Task HotPath_RepeatedLocalInvokeAsync() {
     // Use pre-warmed dispatcher
     var cmd = new LightweightCommand(1);
     await _dispatcher.LocalInvokeAsync<LightweightResult>(cmd);
@@ -194,7 +194,7 @@ public class DispatcherBenchmarks {
   // ========================================
 
   [Benchmark]
-  public async Task RealisticScenario_OrderProcessing_LocalInvoke() {
+  public async Task RealisticScenario_OrderProcessing_LocalInvokeAsync() {
     var orderCommand = new ProcessOrderCommand(
       OrderId: Guid.NewGuid(),
       CustomerId: Guid.NewGuid(),
@@ -206,7 +206,7 @@ public class DispatcherBenchmarks {
   }
 
   [Benchmark]
-  public async Task RealisticScenario_OrderProcessing_Send() {
+  public async Task RealisticScenario_OrderProcessing_SendAsync() {
     var orderCommand = new ProcessOrderCommand(
       OrderId: Guid.NewGuid(),
       CustomerId: Guid.NewGuid(),
@@ -218,7 +218,7 @@ public class DispatcherBenchmarks {
   }
 
   [Benchmark]
-  public async Task RealisticScenario_EventSourcing_LocalInvoke() {
+  public async Task RealisticScenario_EventSourcing_LocalInvokeAsync() {
     var eventCommand = new RecordEventCommand(
       StreamId: Guid.NewGuid().ToString(),
       EventType: "OrderPlaced",
@@ -326,7 +326,7 @@ public class DispatcherBenchmarks {
   }
 
   // Simple in-memory trace store for benchmarking
-  private class InMemoryTraceStore : ITraceStore {
+  private sealed class InMemoryTraceStore : ITraceStore {
     public Task StoreAsync(IMessageEnvelope envelope, CancellationToken cancellationToken = default) {
       // No-op storage for benchmarking
       return Task.CompletedTask;

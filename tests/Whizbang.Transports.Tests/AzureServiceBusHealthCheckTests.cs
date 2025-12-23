@@ -121,7 +121,7 @@ public class AzureServiceBusHealthCheckTests {
 /// Test implementation of AzureServiceBusTransport for health check tests.
 /// Uses minimal valid constructor parameters for type-checking.
 /// </summary>
-internal class TestAzureServiceBusTransport : AzureServiceBusTransport {
+internal sealed class TestAzureServiceBusTransport : AzureServiceBusTransport {
   public TestAzureServiceBusTransport()
     : base(
         connectionString: "Endpoint=sb://test.servicebus.windows.net/;SharedAccessKeyName=test;SharedAccessKey=dGVzdA==",
@@ -133,7 +133,7 @@ internal class TestAzureServiceBusTransport : AzureServiceBusTransport {
 /// <summary>
 /// Fake transport implementation (not AzureServiceBusTransport) for testing Degraded status.
 /// </summary>
-internal class FakeTransport : ITransport {
+internal sealed class FakeTransport : ITransport {
   public bool IsInitialized => true;
   public TransportCapabilities Capabilities => TransportCapabilities.PublishSubscribe;
 
@@ -158,7 +158,7 @@ internal class FakeTransport : ITransport {
 /// Test helper class that simulates an exception during health check.
 /// Mimics AzureServiceBusHealthCheck's try-catch behavior.
 /// </summary>
-internal class ThrowingHealthCheck(ITransport transport) : IHealthCheck {
+internal sealed class ThrowingHealthCheck(ITransport transport) : IHealthCheck {
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
 
   public Task<HealthCheckResult> CheckHealthAsync(HealthCheckContext context, CancellationToken cancellationToken = default) {

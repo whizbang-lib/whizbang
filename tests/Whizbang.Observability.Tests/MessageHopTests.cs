@@ -226,7 +226,7 @@ public class MessageHopTests {
 
     // Assert
     await Assert.That(hop.Trail).IsNotNull();
-    await Assert.That(hop.Trail!.Decisions).HasCount().EqualTo(1);
+    await Assert.That(hop.Trail!.Decisions).Count().IsEqualTo(1);
     await Assert.That(hop.Trail.Decisions[0].PolicyName).IsEqualTo("TestPolicy");
   }
 

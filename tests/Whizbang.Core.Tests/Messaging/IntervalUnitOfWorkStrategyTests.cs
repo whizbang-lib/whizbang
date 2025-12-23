@@ -13,7 +13,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// NOTE: Contract tests manually copied instead of using [InheritsTests] due to TUnit issue with background tasks.
 /// </summary>
 public class IntervalUnitOfWorkStrategyTests {
-  private IUnitOfWorkStrategy CreateStrategy() {
+  private IntervalUnitOfWorkStrategy _createStrategy() {
     // Use VERY long interval for contract tests (30 seconds) to prevent timer ticks during tests
     // Interval-specific tests use shorter intervals and explicit Task.Delay for timing
     return new IntervalUnitOfWorkStrategy(TimeSpan.FromSeconds(30));
@@ -24,9 +24,9 @@ public class IntervalUnitOfWorkStrategyTests {
   // ========================================
 
   [Test]
-  public async Task QueueMessageAsync_ReturnsNonEmptyGuid() {
+  public async Task QueueMessageAsync_ReturnsNonEmptyGuidAsync() {
     // Arrange
-    await using var strategy = CreateStrategy();
+    await using var strategy = _createStrategy();
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
 
     var message = new TestMessage { Value = "test" };
@@ -39,9 +39,9 @@ public class IntervalUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task QueueMessageAsync_StoresMessage() {
+  public async Task QueueMessageAsync_StoresMessageAsync() {
     // Arrange
-    await using var strategy = CreateStrategy();
+    await using var strategy = _createStrategy();
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
 
     var message = new TestMessage { Value = "test" };
@@ -56,9 +56,9 @@ public class IntervalUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task QueueMessageAsync_WithLifecycleStage_StoresLifecycleMapping() {
+  public async Task QueueMessageAsync_WithLifecycleStage_StoresLifecycleMappingAsync() {
     // Arrange
-    await using var strategy = CreateStrategy();
+    await using var strategy = _createStrategy();
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
 
     var message = new TestMessage { Value = "test" };
@@ -76,9 +76,9 @@ public class IntervalUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task GetMessagesForUnit_NonExistentUnit_ReturnsEmpty() {
+  public async Task GetMessagesForUnit_NonExistentUnit_ReturnsEmptyAsync() {
     // Arrange
-    await using var strategy = CreateStrategy();
+    await using var strategy = _createStrategy();
     var nonExistentUnitId = Guid.NewGuid();
 
     // Act
@@ -89,9 +89,9 @@ public class IntervalUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task GetLifecycleStagesForUnit_NonExistentUnit_ReturnsEmpty() {
+  public async Task GetLifecycleStagesForUnit_NonExistentUnit_ReturnsEmptyAsync() {
     // Arrange
-    await using var strategy = CreateStrategy();
+    await using var strategy = _createStrategy();
     var nonExistentUnitId = Guid.NewGuid();
 
     // Act
@@ -102,9 +102,9 @@ public class IntervalUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task CancelUnitAsync_ExistingUnit_RemovesUnit() {
+  public async Task CancelUnitAsync_ExistingUnit_RemovesUnitAsync() {
     // Arrange
-    await using var strategy = CreateStrategy();
+    await using var strategy = _createStrategy();
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
 
     var message = new TestMessage { Value = "test" };
@@ -119,9 +119,9 @@ public class IntervalUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task CancelUnitAsync_NonExistentUnit_DoesNotThrow() {
+  public async Task CancelUnitAsync_NonExistentUnit_DoesNotThrowAsync() {
     // Arrange
-    await using var strategy = CreateStrategy();
+    await using var strategy = _createStrategy();
     var nonExistentUnitId = Guid.NewGuid();
 
     // Act & Assert (should not throw)
@@ -129,14 +129,12 @@ public class IntervalUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task OnFlushRequested_CanBeWired() {
+  public async Task OnFlushRequested_CanBeWiredAsync() {
     // Arrange
-    await using var strategy = CreateStrategy();
-    var callbackInvoked = false;
+    await using var strategy = _createStrategy();
     Guid? callbackUnitId = null;
 
     strategy.OnFlushRequested += async (unitId, ct) => {
-      callbackInvoked = true;
       callbackUnitId = unitId;
       await Task.CompletedTask;
     };
@@ -159,7 +157,7 @@ public class IntervalUnitOfWorkStrategyTests {
   // ========================================
 
   [Test]
-  public async Task Constructor_StartsPeriodicTimer() {
+  public async Task Constructor_StartsPeriodicTimerAsync() {
     // Arrange & Act
     await using var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(100));
     var callbackInvoked = false;
@@ -180,7 +178,7 @@ public class IntervalUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task QueueMessageAsync_GeneratesUuid7UnitId_OnFirstMessage() {
+  public async Task QueueMessageAsync_GeneratesUuid7UnitId_OnFirstMessageAsync() {
     // Arrange
     await using var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(100));
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
@@ -199,7 +197,7 @@ public class IntervalUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task QueueMessageAsync_AccumulatesMessages_InCurrentUnit() {
+  public async Task QueueMessageAsync_AccumulatesMessages_InCurrentUnitAsync() {
     // Arrange
     await using var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(500));
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
@@ -223,14 +221,14 @@ public class IntervalUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task QueueMessageAsync_ReturnsImmediately() {
+  public async Task QueueMessageAsync_ReturnsImmediatelyAsync() {
     // Arrange
     await using var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(100));
     var callbackStarted = false;
 
     strategy.OnFlushRequested += async (unitId, ct) => {
       callbackStarted = true;
-      await Task.Delay(50);
+      await Task.Delay(50, ct);
     };
 
     var message = new TestMessage { Value = "test" };
@@ -243,7 +241,7 @@ public class IntervalUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task PeriodicTimer_TriggersOnFlushRequested() {
+  public async Task PeriodicTimer_TriggersOnFlushRequestedAsync() {
     // Arrange
     await using var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(50));
     var callbackCount = 0;
@@ -267,7 +265,7 @@ public class IntervalUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task PeriodicTimer_CreatesNewUnit_AfterFlush() {
+  public async Task PeriodicTimer_CreatesNewUnit_AfterFlushAsync() {
     // Arrange
     await using var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(50));
     var flushedUnitIds = new List<Guid>();
@@ -293,7 +291,7 @@ public class IntervalUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task DisposeAsync_StopsTimer_FlushesRemainingUnits() {
+  public async Task DisposeAsync_StopsTimer_FlushesRemainingUnitsAsync() {
     // Arrange
     var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(500)); // Long interval
     var callbackInvoked = false;
@@ -317,7 +315,7 @@ public class IntervalUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task DisposeAsync_WithNoMessages_DoesNotTriggerCallback() {
+  public async Task DisposeAsync_WithNoMessages_DoesNotTriggerCallbackAsync() {
     // Arrange
     var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(100));
     var callbackInvoked = false;
@@ -335,7 +333,7 @@ public class IntervalUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task MultipleUnits_FlushedInOrder() {
+  public async Task MultipleUnits_FlushedInOrderAsync() {
     // Arrange
     await using var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(50));
     var flushedUnitIds = new List<Guid>();
@@ -366,7 +364,7 @@ public class IntervalUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task GetLifecycleStagesForUnit_DuringCallback_ReturnsLifecycleStages() {
+  public async Task GetLifecycleStagesForUnit_DuringCallback_ReturnsLifecycleStagesAsync() {
     // Arrange
     await using var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(50));
     IReadOnlyDictionary<object, LifecycleStage>? lifecycleStagesInCallback = null;
@@ -392,7 +390,7 @@ public class IntervalUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task QueueMessageAsync_WithoutCallback_DoesNotThrow() {
+  public async Task QueueMessageAsync_WithoutCallback_DoesNotThrowAsync() {
     // Arrange
     await using var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(100));
     var message = new TestMessage { Value = "test" };
@@ -405,7 +403,7 @@ public class IntervalUnitOfWorkStrategyTests {
   /// <summary>
   /// Test message class.
   /// </summary>
-  private class TestMessage {
+  private sealed class TestMessage {
     public string Value { get; set; } = string.Empty;
   }
 }

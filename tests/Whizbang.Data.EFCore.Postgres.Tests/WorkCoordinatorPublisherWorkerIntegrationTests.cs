@@ -59,7 +59,7 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
     );
 
     // The function should return the newly stored message as work
-    await Assert.That(workBatch.OutboxWork).HasCount().EqualTo(1)
+    await Assert.That(workBatch.OutboxWork).Count().IsEqualTo(1)
       .Because("Newly stored message should be returned as work");
 
     var outboxWork = workBatch.OutboxWork.First();
@@ -70,7 +70,7 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
     await testTransport.PublishAsync(outboxWork.Envelope, new TransportDestination(outboxWork.Destination, null, null), default);
 
     // Assert - Message was published
-    await Assert.That(testTransport.PublishedMessages).HasCount().EqualTo(1)
+    await Assert.That(testTransport.PublishedMessages).Count().IsEqualTo(1)
       .Because("Message should have been published");
 
     var published = testTransport.PublishedMessages.First();
@@ -156,7 +156,7 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
     );
 
     // All 3 messages should be returned as work
-    await Assert.That(workBatch.OutboxWork).HasCount().EqualTo(3);
+    await Assert.That(workBatch.OutboxWork).Count().IsEqualTo(3);
 
     // Publish them in order
     foreach (var work in workBatch.OutboxWork.OrderBy(w => w.MessageId)) {
@@ -165,7 +165,7 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
     }
 
     // Assert - All 3 messages published in order
-    await Assert.That(testTransport.PublishedMessages).HasCount().EqualTo(3);
+    await Assert.That(testTransport.PublishedMessages).Count().IsEqualTo(3);
 
     var msg1 = testTransport.PublishedMessages.FirstOrDefault(m => m.MessageId == messageId1.Value);
     var msg2 = testTransport.PublishedMessages.FirstOrDefault(m => m.MessageId == messageId2.Value);
@@ -217,7 +217,7 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
     );
 
     // First message should be returned
-    await Assert.That(workBatch1.OutboxWork).HasCount().EqualTo(1);
+    await Assert.That(workBatch1.OutboxWork).Count().IsEqualTo(1);
     await Assert.That(workBatch1.OutboxWork[0].MessageId).IsEqualTo(messageId1.Value);
 
     // Now report completion AND store a second message in the same call
@@ -252,7 +252,7 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
     );
 
     // Second message should be returned (because it was just stored)
-    await Assert.That(workBatch2.OutboxWork).HasCount().EqualTo(1)
+    await Assert.That(workBatch2.OutboxWork).Count().IsEqualTo(1)
       .Because("Newly stored message should be returned when reporting completions");
     await Assert.That(workBatch2.OutboxWork[0].MessageId).IsEqualTo(messageId2.Value);
   }
@@ -292,7 +292,7 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
       renewInboxLeaseIds: []
     );
 
-    await Assert.That(workBatch1.OutboxWork).HasCount().EqualTo(1);
+    await Assert.That(workBatch1.OutboxWork).Count().IsEqualTo(1);
 
     // Iteration 2: Report first as complete AND store second message
     var workBatch2 = await workCoordinator.ProcessWorkBatchAsync(
@@ -322,7 +322,7 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
       renewInboxLeaseIds: []
     );
 
-    await Assert.That(workBatch2.OutboxWork).HasCount().EqualTo(1);
+    await Assert.That(workBatch2.OutboxWork).Count().IsEqualTo(1);
 
     // Iteration 3: Report second as complete AND store third message
     var workBatch3 = await workCoordinator.ProcessWorkBatchAsync(
@@ -352,7 +352,7 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
       renewInboxLeaseIds: []
     );
 
-    await Assert.That(workBatch3.OutboxWork).HasCount().EqualTo(1);
+    await Assert.That(workBatch3.OutboxWork).Count().IsEqualTo(1);
 
     // Iteration 4: Report third as complete with NO new messages
     var workBatch4 = await workCoordinator.ProcessWorkBatchAsync(
@@ -381,7 +381,7 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
     );
 
     // No more work should be returned
-    await Assert.That(workBatch4.OutboxWork).HasCount().EqualTo(0)
+    await Assert.That(workBatch4.OutboxWork).Count().IsEqualTo(0)
       .Because("Loop should terminate when no new work is available");
   }
 
@@ -412,8 +412,8 @@ public class WorkCoordinatorPublisherWorkerIntegrationTests : EFCoreTestBase {
       renewInboxLeaseIds: []
     );
 
-    await Assert.That(workBatch.OutboxWork).HasCount().EqualTo(0);
-    await Assert.That(workBatch.InboxWork).HasCount().EqualTo(0);
+    await Assert.That(workBatch.OutboxWork).Count().IsEqualTo(0);
+    await Assert.That(workBatch.InboxWork).Count().IsEqualTo(0);
   }
 }
 

@@ -49,7 +49,7 @@ public class DapperSqliteEventStore(
 
         // Serialize envelope (AOT-compatible via WhizbangJsonContext in resolver chain)
         var envelopeType = typeof(MessageEnvelope<TMessage>);
-        var typeInfo = _jsonOptions.GetTypeInfo(envelopeType) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
+        var typeInfo = JsonOptions.GetTypeInfo(envelopeType) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
         var json = JsonSerializer.Serialize(envelope, typeInfo);
 
         // Try to insert with sequence number
@@ -66,7 +66,7 @@ public class DapperSqliteEventStore(
 
         // Success - exit retry loop
         return;
-      } catch (Exception ex) when (IsUniqueConstraintViolation(ex)) {
+      } catch (Exception ex) when (_isUniqueConstraintViolation(ex)) {
         // UNIQUE constraint violation - another thread inserted the same sequence
         // Retry with next sequence number
         lastException = ex;
@@ -106,7 +106,7 @@ public class DapperSqliteEventStore(
     foreach (var row in rows) {
       // Deserialize with concrete message type (AOT-compatible)
       var envelopeType = typeof(MessageEnvelope<TMessage>);
-      var typeInfo = _jsonOptions.GetTypeInfo(envelopeType) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
+      var typeInfo = JsonOptions.GetTypeInfo(envelopeType) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
       if (JsonSerializer.Deserialize(row.Envelope, typeInfo) is MessageEnvelope<TMessage> envelope) {
         yield return envelope;
       }
@@ -147,7 +147,7 @@ public class DapperSqliteEventStore(
 
     foreach (var row in rows) {
       var envelopeType = typeof(MessageEnvelope<TMessage>);
-      var typeInfo = _jsonOptions.GetTypeInfo(envelopeType) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
+      var typeInfo = JsonOptions.GetTypeInfo(envelopeType) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
       if (JsonSerializer.Deserialize(row.Envelope, typeInfo) is MessageEnvelope<TMessage> envelope) {
         // If fromEventId specified, filter in C# (SQLite doesn't support UUID comparison)
         if (fromEventId == null || envelope.MessageId.Value.CompareTo(fromEventId.Value) > 0) {
@@ -157,7 +157,7 @@ public class DapperSqliteEventStore(
     }
   }
 
-  private static bool IsUniqueConstraintViolation(Exception ex) {
+  private static bool _isUniqueConstraintViolation(Exception ex) {
     // Check for SQLite UNIQUE constraint violation
     // Error code 19 = SQLITE_CONSTRAINT
     if (ex is Microsoft.Data.Sqlite.SqliteException sqliteEx) {
@@ -168,12 +168,18 @@ public class DapperSqliteEventStore(
            ex.Message.Contains("Error 19", StringComparison.OrdinalIgnoreCase);
   }
 
+  /// <summary>
+  /// Returns the SQLite-specific SQL for appending an event to the event store.
+  /// </summary>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ConcurrentAppends_ShouldBeThreadSafeAsync</tests>
   protected override string GetAppendSql() => @"
     INSERT INTO whizbang_event_store (stream_id, sequence_number, envelope, created_at)
     VALUES (@StreamId, @SequenceNumber, @Envelope, @CreatedAt)";
 
+  /// <summary>
+  /// Returns the SQLite-specific SQL for reading events from a stream by sequence number.
+  /// </summary>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_FromEmptyStream_ShouldReturnEmptyAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_FromMiddle_ShouldReturnSubsetAsync</tests>
@@ -183,6 +189,9 @@ public class DapperSqliteEventStore(
     WHERE stream_id = @StreamId AND sequence_number >= @FromSequence
     ORDER BY sequence_number";
 
+  /// <summary>
+  /// Returns the SQLite-specific SQL for retrieving the last sequence number in a stream.
+  /// </summary>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:GetLastSequenceAsync_EmptyStream_ShouldReturnMinusOneAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:GetLastSequenceAsync_AfterAppends_ShouldReturnCorrectSequenceAsync</tests>
   protected override string GetLastSequenceSql() => @"
@@ -193,7 +202,7 @@ public class DapperSqliteEventStore(
   /// <summary>
   /// Internal row structure for Dapper mapping.
   /// </summary>
-  private class EnvelopeRow {
+  private sealed class EnvelopeRow {
     public string Envelope { get; set; } = string.Empty;
   }
 }

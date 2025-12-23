@@ -127,19 +127,19 @@ public class WhizbangIdProviderTests {
 
     // Assert
     // All tasks completed without exception
-    await Assert.That(results).HasCount().EqualTo(taskCount);
+    await Assert.That(results).Count().IsEqualTo(taskCount);
 
     // All GUIDs are unique
     var allGuids = results.SelectMany(g => g).ToList();
-    await Assert.That(allGuids).HasCount().EqualTo(taskCount * iterationsPerTask);
-    await Assert.That(allGuids.Distinct()).HasCount().EqualTo(taskCount * iterationsPerTask);
+    await Assert.That(allGuids).Count().IsEqualTo(taskCount * iterationsPerTask);
+    await Assert.That(allGuids.Distinct()).Count().IsEqualTo(taskCount * iterationsPerTask);
 
     // All GUIDs are non-empty
     await Assert.That(allGuids).DoesNotContain(Guid.Empty);
   }
 
   // Custom test provider for testing
-  private class TestIdProvider : IWhizbangIdProvider {
+  private sealed class TestIdProvider : IWhizbangIdProvider {
     private readonly Guid _fixedGuid;
 
     public TestIdProvider(Guid fixedGuid) {

@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using Microsoft.CodeAnalysis;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -281,7 +282,7 @@ public record CreateOrder(string OrderId) : ICommand;
     var jsonDiagnostic = infos.FirstOrDefault(d => d.Id == "WHIZ011");
 
     await Assert.That(jsonDiagnostic).IsNotNull();
-    await Assert.That(jsonDiagnostic!.GetMessage()).Contains("CreateOrder");
+    await Assert.That(jsonDiagnostic!.GetMessage(CultureInfo.InvariantCulture)).Contains("CreateOrder");
   }
 
   [Test]
@@ -416,7 +417,7 @@ public record HybridMessage : ICommand, IEvent {
     // Check diagnostic reports it as command (not event) when both interfaces present
     var diagnostic = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ011");
     await Assert.That(diagnostic).IsNotNull();
-    await Assert.That(diagnostic!.GetMessage()).Contains("command");
+    await Assert.That(diagnostic!.GetMessage(CultureInfo.InvariantCulture)).Contains("command");
   }
 
   [Test]
@@ -444,7 +445,7 @@ public class LegacyCommand : ICommand {
     // Check diagnostic reports it as command
     var diagnostic = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ011");
     await Assert.That(diagnostic).IsNotNull();
-    await Assert.That(diagnostic!.GetMessage()).Contains("command");
+    await Assert.That(diagnostic!.GetMessage(CultureInfo.InvariantCulture)).Contains("command");
   }
 
   [Test]
@@ -473,7 +474,7 @@ public class RegularClass {
     // Should report diagnostic with 0 message types (WHIZ099 is the generator invocation diagnostic)
     var diagnostic = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ099");
     await Assert.That(diagnostic).IsNotNull();
-    await Assert.That(diagnostic!.GetMessage()).Contains("with 0 message type(s)");
+    await Assert.That(diagnostic!.GetMessage(CultureInfo.InvariantCulture)).Contains("with 0 message type(s)");
   }
 
   [Test]

@@ -16,7 +16,7 @@ namespace Whizbang.Core.Messaging;
 /// Provides lowest database load with higher latency.
 /// Best for: Background workers with high throughput, batch processing.
 /// </summary>
-public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncDisposable {
+public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncDisposable {
   private readonly IWorkCoordinator _coordinator;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly WorkCoordinatorOptions _options;
@@ -32,8 +32,8 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
   private readonly List<MessageFailure> _queuedInboxFailures = [];
 
   private readonly object _lock = new object();
-  private bool _disposed = false;
-  private bool _flushing = false;
+  private bool _disposed;
+  private bool _flushing;
 
   /// <summary>
   /// Constructs an interval-based work coordinator strategy with periodic flushing.
@@ -55,16 +55,15 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
 
     // Start the timer for periodic flushing
     _flushTimer = new Timer(
-      FlushTimerCallback,
+      _flushTimerCallback,
       state: null,
       dueTime: TimeSpan.FromMilliseconds(_options.IntervalMilliseconds),
       period: TimeSpan.FromMilliseconds(_options.IntervalMilliseconds)
     );
 
-    _logger?.LogInformation(
-      "Interval work coordinator strategy started with {Interval}ms flush interval",
-      _options.IntervalMilliseconds
-    );
+    if (_logger != null) {
+      LogStrategyStarted(_logger, _options.IntervalMilliseconds);
+    }
   }
 
   /// <summary>
@@ -81,7 +80,9 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
       _queuedOutboxMessages.Add(message);
     }
 
-    _logger?.LogTrace("Queued outbox message {MessageId} for {Destination}", message.MessageId, message.Destination);
+    if (_logger != null) {
+      LogQueuedOutboxMessage(_logger, message.MessageId, message.Destination);
+    }
   }
 
   /// <summary>
@@ -94,7 +95,9 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
       _queuedInboxMessages.Add(message);
     }
 
-    _logger?.LogTrace("Queued inbox message {MessageId} for handler {HandlerName}", message.MessageId, message.HandlerName);
+    if (_logger != null) {
+      LogQueuedInboxMessage(_logger, message.MessageId, message.HandlerName);
+    }
   }
 
   /// <summary>
@@ -110,7 +113,9 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
       });
     }
 
-    _logger?.LogTrace("Queued outbox completion for {MessageId} with status {Status}", messageId, completedStatus);
+    if (_logger != null) {
+      LogQueuedOutboxCompletion(_logger, messageId, completedStatus);
+    }
   }
 
   /// <summary>
@@ -126,41 +131,47 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
       });
     }
 
-    _logger?.LogTrace("Queued inbox completion for {MessageId} with status {Status}", messageId, completedStatus);
+    if (_logger != null) {
+      LogQueuedInboxCompletion(_logger, messageId, completedStatus);
+    }
   }
 
   /// <summary>
   /// Queues an outbox message failure for batch processing.
   /// </summary>
-  public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string error) {
+  public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
     lock (_lock) {
       _queuedOutboxFailures.Add(new MessageFailure {
         MessageId = messageId,
         CompletedStatus = completedStatus,
-        Error = error
+        Error = errorMessage
       });
     }
 
-    _logger?.LogTrace("Queued outbox failure for {MessageId}: {Error}", messageId, error);
+    if (_logger != null) {
+      LogQueuedOutboxFailure(_logger, messageId, errorMessage);
+    }
   }
 
   /// <summary>
   /// Queues an inbox message failure for batch processing.
   /// </summary>
-  public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string error) {
+  public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
     lock (_lock) {
       _queuedInboxFailures.Add(new MessageFailure {
         MessageId = messageId,
         CompletedStatus = completedStatus,
-        Error = error
+        Error = errorMessage
       });
     }
 
-    _logger?.LogTrace("Queued inbox failure for {MessageId}: {Error}", messageId, error);
+    if (_logger != null) {
+      LogQueuedInboxFailure(_logger, messageId, errorMessage);
+    }
   }
 
   /// <summary>
@@ -174,7 +185,9 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
     // Prevent concurrent flushes
     lock (_lock) {
       if (_flushing) {
-        _logger?.LogWarning("Flush already in progress, returning empty batch");
+        if (_logger != null) {
+          LogFlushAlreadyInProgress(_logger);
+        }
         return new WorkBatch {
           OutboxWork = [],
           InboxWork = [],
@@ -200,7 +213,9 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
             _queuedOutboxFailures.Count == 0 &&
             _queuedInboxCompletions.Count == 0 &&
             _queuedInboxFailures.Count == 0) {
-          _logger?.LogTrace("Interval flush: No queued operations");
+          if (_logger != null) {
+            LogNoQueuedOperations(_logger);
+          }
           return new WorkBatch {
             OutboxWork = [],
             InboxWork = [],
@@ -224,15 +239,9 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
         _queuedInboxFailures.Clear();
       }
 
-      _logger?.LogDebug(
-        "Interval flush: {OutboxMsg} outbox messages, {InboxMsg} inbox messages, {OutboxComp} outbox completions, {OutboxFail} outbox failures, {InboxComp} inbox completions, {InboxFail} inbox failures",
-        outboxMessages.Length,
-        inboxMessages.Length,
-        outboxCompletions.Length,
-        outboxFailures.Length,
-        inboxCompletions.Length,
-        inboxFailures.Length
-      );
+      if (_logger != null) {
+        LogIntervalFlush(_logger, outboxMessages.Length, inboxMessages.Length, outboxCompletions.Length, outboxFailures.Length, inboxCompletions.Length, inboxFailures.Length);
+      }
 
       // Call process_work_batch with snapshot
       var workBatch = await _coordinator.ProcessWorkBatchAsync(
@@ -260,11 +269,9 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
         cancellationToken: ct
       );
 
-      _logger?.LogInformation(
-        "Interval flush completed: {OutboxWork} outbox work, {InboxWork} inbox work returned",
-        workBatch.OutboxWork.Count,
-        workBatch.InboxWork.Count
-      );
+      if (_logger != null) {
+        LogIntervalFlushCompleted(_logger, workBatch.OutboxWork.Count, workBatch.InboxWork.Count);
+      }
 
       return workBatch;
     } finally {
@@ -279,7 +286,7 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:BackgroundTimer_FlushesEveryIntervalAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/IntervalWorkCoordinatorStrategyTests.cs:QueuedMessages_BatchedUntilTimerAsync</tests>
-  private void FlushTimerCallback(object? state) {
+  private void _flushTimerCallback(object? state) {
     if (_disposed) {
       return;
     }
@@ -289,7 +296,9 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
       try {
         await FlushAsync(WorkBatchFlags.None);
       } catch (Exception ex) {
-        _logger?.LogError(ex, "Error during interval flush");
+        if (_logger != null) {
+          LogErrorDuringIntervalFlush(_logger, ex);
+        }
       }
     });
   }
@@ -303,7 +312,9 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
       return;
     }
 
-    _logger?.LogInformation("Interval work coordinator strategy disposing");
+    if (_logger != null) {
+      LogStrategyDisposing(_logger);
+    }
 
     // Stop the timer first
     await _flushTimer.DisposeAsync();
@@ -316,23 +327,144 @@ public class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncD
           _queuedOutboxFailures.Count > 0 ||
           _queuedInboxCompletions.Count > 0 ||
           _queuedInboxFailures.Count > 0) {
-        _logger?.LogWarning(
-          "Interval strategy disposing with unflushed operations: {OutboxMsg} outbox messages, {InboxMsg} inbox messages, {Completions} completions, {Failures} failures",
-          _queuedOutboxMessages.Count,
-          _queuedInboxMessages.Count,
-          _queuedOutboxCompletions.Count + _queuedInboxCompletions.Count,
-          _queuedOutboxFailures.Count + _queuedInboxFailures.Count
-        );
+        if (_logger != null) {
+          LogDisposingWithUnflushedOperations(
+            _logger,
+            _queuedOutboxMessages.Count,
+            _queuedInboxMessages.Count,
+            _queuedOutboxCompletions.Count + _queuedInboxCompletions.Count,
+            _queuedOutboxFailures.Count + _queuedInboxFailures.Count
+          );
+        }
       }
     }
 
     try {
       await FlushAsync(WorkBatchFlags.None);
     } catch (Exception ex) {
-      _logger?.LogError(ex, "Error flushing interval strategy on disposal");
+      if (_logger != null) {
+        LogErrorFlushingOnDisposal(_logger, ex);
+      }
     }
 
     _disposed = true;
-    _logger?.LogInformation("Interval work coordinator strategy disposed");
+    GC.SuppressFinalize(this);
+
+    if (_logger != null) {
+      LogStrategyDisposed(_logger);
+    }
   }
+
+  // LoggerMessage definitions
+  [LoggerMessage(
+    EventId = 1,
+    Level = LogLevel.Information,
+    Message = "Interval work coordinator strategy started with {Interval}ms flush interval"
+  )]
+  static partial void LogStrategyStarted(ILogger logger, int interval);
+
+  [LoggerMessage(
+    EventId = 2,
+    Level = LogLevel.Trace,
+    Message = "Queued outbox message {MessageId} for {Destination}"
+  )]
+  static partial void LogQueuedOutboxMessage(ILogger logger, Guid messageId, string destination);
+
+  [LoggerMessage(
+    EventId = 3,
+    Level = LogLevel.Trace,
+    Message = "Queued inbox message {MessageId} for handler {HandlerName}"
+  )]
+  static partial void LogQueuedInboxMessage(ILogger logger, Guid messageId, string handlerName);
+
+  [LoggerMessage(
+    EventId = 4,
+    Level = LogLevel.Trace,
+    Message = "Queued outbox completion for {MessageId} with status {Status}"
+  )]
+  static partial void LogQueuedOutboxCompletion(ILogger logger, Guid messageId, MessageProcessingStatus status);
+
+  [LoggerMessage(
+    EventId = 5,
+    Level = LogLevel.Trace,
+    Message = "Queued inbox completion for {MessageId} with status {Status}"
+  )]
+  static partial void LogQueuedInboxCompletion(ILogger logger, Guid messageId, MessageProcessingStatus status);
+
+  [LoggerMessage(
+    EventId = 6,
+    Level = LogLevel.Trace,
+    Message = "Queued outbox failure for {MessageId}: {Error}"
+  )]
+  static partial void LogQueuedOutboxFailure(ILogger logger, Guid messageId, string error);
+
+  [LoggerMessage(
+    EventId = 7,
+    Level = LogLevel.Trace,
+    Message = "Queued inbox failure for {MessageId}: {Error}"
+  )]
+  static partial void LogQueuedInboxFailure(ILogger logger, Guid messageId, string error);
+
+  [LoggerMessage(
+    EventId = 8,
+    Level = LogLevel.Warning,
+    Message = "Flush already in progress, returning empty batch"
+  )]
+  static partial void LogFlushAlreadyInProgress(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 9,
+    Level = LogLevel.Trace,
+    Message = "Interval flush: No queued operations"
+  )]
+  static partial void LogNoQueuedOperations(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 10,
+    Level = LogLevel.Debug,
+    Message = "Interval flush: {OutboxMsg} outbox messages, {InboxMsg} inbox messages, {OutboxComp} outbox completions, {OutboxFail} outbox failures, {InboxComp} inbox completions, {InboxFail} inbox failures"
+  )]
+  static partial void LogIntervalFlush(ILogger logger, int outboxMsg, int inboxMsg, int outboxComp, int outboxFail, int inboxComp, int inboxFail);
+
+  [LoggerMessage(
+    EventId = 11,
+    Level = LogLevel.Information,
+    Message = "Interval flush completed: {OutboxWork} outbox work, {InboxWork} inbox work returned"
+  )]
+  static partial void LogIntervalFlushCompleted(ILogger logger, int outboxWork, int inboxWork);
+
+  [LoggerMessage(
+    EventId = 12,
+    Level = LogLevel.Error,
+    Message = "Error during interval flush"
+  )]
+  static partial void LogErrorDuringIntervalFlush(ILogger logger, Exception ex);
+
+  [LoggerMessage(
+    EventId = 13,
+    Level = LogLevel.Information,
+    Message = "Interval work coordinator strategy disposing"
+  )]
+  static partial void LogStrategyDisposing(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 14,
+    Level = LogLevel.Warning,
+    Message = "Interval strategy disposing with unflushed operations: {OutboxMsg} outbox messages, {InboxMsg} inbox messages, {Completions} completions, {Failures} failures"
+  )]
+  static partial void LogDisposingWithUnflushedOperations(ILogger logger, int outboxMsg, int inboxMsg, int completions, int failures);
+
+  [LoggerMessage(
+    EventId = 15,
+    Level = LogLevel.Error,
+    Message = "Error flushing interval strategy on disposal"
+  )]
+  static partial void LogErrorFlushingOnDisposal(ILogger logger, Exception ex);
+
+  [LoggerMessage(
+    EventId = 16,
+    Level = LogLevel.Information,
+    Message = "Interval work coordinator strategy disposed"
+  )]
+  static partial void LogStrategyDisposed(ILogger logger);
 }

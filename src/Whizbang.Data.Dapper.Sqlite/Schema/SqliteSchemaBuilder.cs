@@ -30,6 +30,7 @@ namespace Whizbang.Data.Dapper.Sqlite.Schema;
 /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteSchemaBuilderTests.cs:BuildInfrastructureSchema_OutboxTable_HasCorrectDefaultsAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteSchemaBuilderTests.cs:BuildInfrastructureSchema_EventStoreTable_HasUniqueConstraintAsync</tests>
 /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteSchemaBuilderTests.cs:BuildInfrastructureSchema_CustomPrefix_UsesCustomPrefixAsync</tests>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Globalization", "CA1305:Specify IFormatProvider", Justification = "SQL DDL generation - string interpolation doesn't require culture-specific formatting")]
 public class SqliteSchemaBuilder : ISchemaBuilder {
   /// <inheritdoc />
   public string DatabaseEngine => "SQLite";
@@ -57,7 +58,7 @@ public class SqliteSchemaBuilder : ISchemaBuilder {
 
     var columnDefinitions = new List<string>();
     foreach (var column in table.Columns) {
-      columnDefinitions.Add(BuildColumnDefinition(column));
+      columnDefinitions.Add(_buildColumnDefinition(column));
     }
 
     sb.AppendLine(string.Join(",\n", columnDefinitions.Select(c => $"  {c}")));
@@ -69,7 +70,7 @@ public class SqliteSchemaBuilder : ISchemaBuilder {
   /// <summary>
   /// Builds a single column definition line.
   /// </summary>
-  private static string BuildColumnDefinition(ColumnDefinition column) {
+  private static string _buildColumnDefinition(ColumnDefinition column) {
     var parts = new List<string>();
 
     // Column name and type

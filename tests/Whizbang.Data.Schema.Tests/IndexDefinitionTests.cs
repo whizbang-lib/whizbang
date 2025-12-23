@@ -22,7 +22,7 @@ public class IndexDefinitionTests {
     // Assert
     await Assert.That(index).IsNotNull();
     await Assert.That(index.Name).IsEqualTo("idx_created_at");
-    await Assert.That(index.Columns).HasCount().EqualTo(1);
+    await Assert.That(index.Columns).Count().IsEqualTo(1);
     await Assert.That(index.Columns[0]).IsEqualTo("created_at");
   }
 
@@ -47,7 +47,7 @@ public class IndexDefinitionTests {
     );
 
     // Assert
-    await Assert.That(index.Columns).HasCount().EqualTo(3);
+    await Assert.That(index.Columns).Count().IsEqualTo(3);
     await Assert.That(index.Columns[0]).IsEqualTo("tenant_id");
     await Assert.That(index.Columns[1]).IsEqualTo("user_id");
     await Assert.That(index.Columns[2]).IsEqualTo("created_at");

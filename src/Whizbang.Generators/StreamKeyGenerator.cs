@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Immutable;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
@@ -36,14 +37,14 @@ public class StreamKeyGenerator : IIncrementalGenerator {
     var eventsWithStreamKey = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 }
                                     || node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => ExtractStreamKeyInfo(ctx, ct)
+        transform: static (ctx, ct) => _extractStreamKeyInfo(ctx, ct)
     ).Where(static info => info is not null);
 
     // Discover IEvent types WITHOUT [StreamKey] for diagnostics
     var eventsWithoutStreamKey = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 }
                                     || node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => FindEventWithoutStreamKey(ctx, ct)
+        transform: static (ctx, ct) => _findEventWithoutStreamKey(ctx, ct)
     ).Where(static info => info is not null);
 
     // Generate extractor methods from collected events
@@ -58,12 +59,12 @@ public class StreamKeyGenerator : IIncrementalGenerator {
           var compilation = data.Left.Left;
           var withStreamKey = data.Left.Right;
           var withoutStreamKey = data.Right;
-          GenerateStreamKeyExtractors(ctx, compilation, withStreamKey!, withoutStreamKey!);
+          _generateStreamKeyExtractors(ctx, compilation, withStreamKey!, withoutStreamKey!);
         }
     );
   }
 
-  private static StreamKeyInfo? ExtractStreamKeyInfo(
+  private static StreamKeyInfo? _extractStreamKeyInfo(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
 
@@ -134,7 +135,7 @@ public class StreamKeyGenerator : IIncrementalGenerator {
     return null;
   }
 
-  private static string? FindEventWithoutStreamKey(
+  private static EventWithoutStreamKeyInfo? _findEventWithoutStreamKey(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
 
@@ -181,18 +182,21 @@ public class StreamKeyGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // IEvent without [StreamKey]
-    return typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    // IEvent without [StreamKey] - return type name and location
+    return new EventWithoutStreamKeyInfo(
+        EventType: typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        Location: context.Node.GetLocation()
+    );
   }
 
   /// <summary>
   /// Generates stream key extractors with assembly-specific namespace to avoid conflicts.
   /// </summary>
-  private static void GenerateStreamKeyExtractors(
+  private static void _generateStreamKeyExtractors(
       SourceProductionContext context,
       Compilation compilation,
       ImmutableArray<StreamKeyInfo> eventsWithStreamKey,
-      ImmutableArray<string> eventsWithoutStreamKey) {
+      ImmutableArray<EventWithoutStreamKeyInfo> eventsWithoutStreamKey) {
 
     // Determine namespace from assembly name
     var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
@@ -210,11 +214,11 @@ public class StreamKeyGenerator : IIncrementalGenerator {
     }
 
     // Report diagnostics for events without stream keys
-    foreach (var eventType in eventsWithoutStreamKey) {
-      var simpleName = eventType.Split('.').Last().Replace("global::", "");
+    foreach (var info in eventsWithoutStreamKey) {
+      var simpleName = info.EventType.Split('.').Last().Replace("global::", "");
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.MissingStreamKeyAttribute,
-          Location.None,
+          info.Location,  // Use actual location for proper suppression support
           simpleName
       ));
     }
@@ -245,7 +249,7 @@ public class StreamKeyGenerator : IIncrementalGenerator {
         var info = eventsWithStreamKey[i];
         var caseCode = dispatchSnippet
             .Replace("__EVENT_TYPE__", info.EventType)
-            .Replace("__INDEX__", i.ToString());
+            .Replace("__INDEX__", i.ToString(CultureInfo.InvariantCulture));
 
         dispatchCode.AppendLine(caseCode);
       }
@@ -260,7 +264,7 @@ public class StreamKeyGenerator : IIncrementalGenerator {
         var propertyTypeName = info.PropertyType;
 
         // Check if property type is nullable (ends with ? or is a reference type)
-        var isNullable = propertyTypeName.EndsWith("?") ||
+        var isNullable = propertyTypeName.EndsWith("?", StringComparison.Ordinal) ||
                         propertyTypeName.Contains("string") ||
                         propertyTypeName.Contains("String");
 

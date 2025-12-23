@@ -29,7 +29,7 @@ public class SeedMutations {
   /// Dispatches CreateProductCommand to InventoryWorker via Service Bus.
   /// </summary>
   /// <returns>Number of products seeded</returns>
-  public async Task<int> SeedProducts(CancellationToken cancellationToken = default) {
+  public async Task<int> SeedProductsAsync(CancellationToken cancellationToken = default) {
     _logger.LogInformation("SeedProducts mutation called - checking if seeding is needed...");
 
     // Check if any products already exist (idempotency check)

@@ -12,6 +12,9 @@ namespace Whizbang.Data.Dapper.Sqlite;
 /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
 /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs</tests>
 public class SqliteGuidHandler : SqlMapper.TypeHandler<Guid> {
+  /// <summary>
+  /// Parses a database value to a Guid, handling both string and Guid types.
+  /// </summary>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs</tests>
   public override Guid Parse(object value) {
@@ -24,6 +27,9 @@ public class SqliteGuidHandler : SqlMapper.TypeHandler<Guid> {
     throw new InvalidCastException($"Cannot convert {value?.GetType()} to Guid");
   }
 
+  /// <summary>
+  /// Sets a Guid value on a database parameter, converting it to a string for SQLite storage.
+  /// </summary>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs</tests>
   public override void SetValue(IDbDataParameter parameter, Guid value) {

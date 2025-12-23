@@ -9,11 +9,11 @@ namespace ECommerce.Contracts.Tests.Events;
 /// Tests for ProductUpdatedEvent
 /// </summary>
 public class ProductUpdatedEventTests {
-  private static readonly IWhizbangIdProvider IdProvider = new Uuid7IdProvider();
+  private static readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
   [Test]
   public async Task ProductUpdatedEvent_WithAllPropertiesUpdated_InitializesSuccessfullyAsync() {
     // Arrange & Act
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var updatedAt = DateTime.UtcNow;
     var evt = new ProductUpdatedEvent {
       ProductId = productId,
@@ -36,7 +36,7 @@ public class ProductUpdatedEventTests {
   [Test]
   public async Task ProductUpdatedEvent_WithOnlyNameUpdated_InitializesSuccessfullyAsync() {
     // Arrange & Act
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var evt = new ProductUpdatedEvent {
       ProductId = productId,
       Name = "New Name",
@@ -58,7 +58,7 @@ public class ProductUpdatedEventTests {
   public async Task ProductUpdatedEvent_WithAllPropertiesNull_InitializesSuccessfullyAsync() {
     // Arrange & Act
     var evt = new ProductUpdatedEvent {
-      ProductId = IdProvider.NewGuid(),
+      ProductId = _idProvider.NewGuid(),
       Name = null,
       Description = null,
       Price = null,
@@ -76,7 +76,7 @@ public class ProductUpdatedEventTests {
   [Test]
   public async Task ProductUpdatedEvent_RecordEquality_WorksCorrectlyAsync() {
     // Arrange
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var updatedAt = DateTime.UtcNow;
     var evt1 = new ProductUpdatedEvent {
       ProductId = productId,
@@ -103,7 +103,7 @@ public class ProductUpdatedEventTests {
   [Test]
   public async Task ProductUpdatedEvent_ToString_ReturnsReadableRepresentationAsync() {
     // Arrange & Act
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var evt = new ProductUpdatedEvent {
       ProductId = productId,
       Name = "ToString Test",

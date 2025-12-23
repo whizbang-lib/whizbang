@@ -217,9 +217,9 @@ public interface IDispatcher {
   /// No return value - handlers execute independently.
   /// </summary>
   /// <typeparam name="TEvent">The event type</typeparam>
-  /// <param name="event">The event to publish</param>
+  /// <param name="eventData">The event to publish</param>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Publish_WithEvent_ShouldNotifyAllHandlersAsync</tests>
-  Task PublishAsync<TEvent>(TEvent @event);
+  Task PublishAsync<TEvent>(TEvent eventData);
 
   // ========================================
   // BATCH OPERATIONS

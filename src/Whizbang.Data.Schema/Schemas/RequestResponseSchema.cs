@@ -26,58 +26,58 @@ public static class RequestResponseSchema {
     Columns: ImmutableArray.Create(
       new ColumnDefinition(
         Name: "request_id",
-        DataType: WhizbangDataType.Uuid,
+        DataType: WhizbangDataType.UUID,
         PrimaryKey: true,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "correlation_id",
-        DataType: WhizbangDataType.Uuid,
+        DataType: WhizbangDataType.UUID,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "request_type",
-        DataType: WhizbangDataType.String,
+        DataType: WhizbangDataType.STRING,
         MaxLength: 500,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "request_data",
-        DataType: WhizbangDataType.Json,
+        DataType: WhizbangDataType.JSON,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "response_type",
-        DataType: WhizbangDataType.String,
+        DataType: WhizbangDataType.STRING,
         MaxLength: 500,
         Nullable: true
       ),
       new ColumnDefinition(
         Name: "response_data",
-        DataType: WhizbangDataType.Json,
+        DataType: WhizbangDataType.JSON,
         Nullable: true
       ),
       new ColumnDefinition(
         Name: "status",
-        DataType: WhizbangDataType.String,
+        DataType: WhizbangDataType.STRING,
         MaxLength: 50,
         Nullable: false,
         DefaultValue: DefaultValue.String("Pending")
       ),
       new ColumnDefinition(
         Name: "created_at",
-        DataType: WhizbangDataType.TimestampTz,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
-        DefaultValue: DefaultValue.Function(DefaultValueFunction.DateTime_Now)
+        DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       ),
       new ColumnDefinition(
         Name: "completed_at",
-        DataType: WhizbangDataType.TimestampTz,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: true
       ),
       new ColumnDefinition(
         Name: "expires_at",
-        DataType: WhizbangDataType.TimestampTz,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: true
       )
     ),
@@ -103,15 +103,15 @@ public static class RequestResponseSchema {
   /// </summary>
   /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/RequestResponseSchemaTests.cs:Columns_ShouldProvideTypeConstantsAsync</tests>
   public static class Columns {
-    public const string RequestId = "request_id";
-    public const string CorrelationId = "correlation_id";
-    public const string RequestType = "request_type";
-    public const string RequestData = "request_data";
-    public const string ResponseType = "response_type";
-    public const string ResponseData = "response_data";
-    public const string Status = "status";
-    public const string CreatedAt = "created_at";
-    public const string CompletedAt = "completed_at";
-    public const string ExpiresAt = "expires_at";
+    public const string REQUEST_ID = "request_id";
+    public const string CORRELATION_ID = "correlation_id";
+    public const string REQUEST_TYPE = "request_type";
+    public const string REQUEST_DATA = "request_data";
+    public const string RESPONSE_TYPE = "response_type";
+    public const string RESPONSE_DATA = "response_data";
+    public const string STATUS = "status";
+    public const string CREATED_AT = "created_at";
+    public const string COMPLETED_AT = "completed_at";
+    public const string EXPIRES_AT = "expires_at";
   }
 }

@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using Microsoft.CodeAnalysis;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -121,8 +122,8 @@ namespace TestNamespace {
     await Assert.That(generatedSource!).Contains("2 event handler(s)");
 
     // Verify both registrations exist
-    var orderCreatedCount = CountOccurrences(generatedSource!, "OrderCreatedEvent");
-    var paymentProcessedCount = CountOccurrences(generatedSource!, "PaymentProcessedEvent");
+    var orderCreatedCount = _countOccurrences(generatedSource!, "OrderCreatedEvent");
+    var paymentProcessedCount = _countOccurrences(generatedSource!, "PaymentProcessedEvent");
     await Assert.That(orderCreatedCount).IsGreaterThanOrEqualTo(1);
     await Assert.That(paymentProcessedCount).IsGreaterThanOrEqualTo(1);
   }
@@ -258,8 +259,8 @@ namespace TestNamespace {
     var whiz007 = diagnostics.FirstOrDefault(d => d.Id == "WHIZ007");
     await Assert.That(whiz007).IsNotNull();
     await Assert.That(whiz007!.Severity).IsEqualTo(DiagnosticSeverity.Info);
-    await Assert.That(whiz007.GetMessage()).Contains("OrderPerspective");
-    await Assert.That(whiz007.GetMessage()).Contains("OrderCreatedEvent");
+    await Assert.That(whiz007.GetMessage(CultureInfo.InvariantCulture)).Contains("OrderPerspective");
+    await Assert.That(whiz007.GetMessage(CultureInfo.InvariantCulture)).Contains("OrderCreatedEvent");
   }
 
   [Test]
@@ -583,7 +584,7 @@ namespace TestNamespace {
     var whiz007 = infoDiagnostics.FirstOrDefault(d => d.Id == "WHIZ007");
     await Assert.That(whiz007).IsNotNull();
     // GetSimpleName should simplify "global::TestNamespace.OrderEvent[]" to "OrderEvent[]"
-    await Assert.That(whiz007!.GetMessage()).Contains("OrderEvent[]");
+    await Assert.That(whiz007!.GetMessage(CultureInfo.InvariantCulture)).Contains("OrderEvent[]");
   }
 
   [Test]
@@ -661,8 +662,8 @@ namespace TestNamespace {
     var whiz030 = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ030");
     await Assert.That(whiz030).IsNotNull();
     await Assert.That(whiz030!.Severity).IsEqualTo(DiagnosticSeverity.Error);
-    await Assert.That(whiz030.GetMessage()).Contains("OrderCreatedEvent");
-    await Assert.That(whiz030.GetMessage()).Contains("StreamKey");
+    await Assert.That(whiz030.GetMessage(CultureInfo.InvariantCulture)).Contains("OrderCreatedEvent");
+    await Assert.That(whiz030.GetMessage(CultureInfo.InvariantCulture)).Contains("StreamKey");
   }
 
   [Test]
@@ -704,8 +705,8 @@ namespace TestNamespace {
     var whiz031 = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ031");
     await Assert.That(whiz031).IsNotNull();
     await Assert.That(whiz031!.Severity).IsEqualTo(DiagnosticSeverity.Error);
-    await Assert.That(whiz031.GetMessage()).Contains("OrderCreatedEvent");
-    await Assert.That(whiz031.GetMessage()).Contains("multiple");
+    await Assert.That(whiz031.GetMessage(CultureInfo.InvariantCulture)).Contains("OrderCreatedEvent");
+    await Assert.That(whiz031.GetMessage(CultureInfo.InvariantCulture)).Contains("multiple");
   }
 
   [Test]
@@ -782,15 +783,15 @@ namespace TestNamespace {
     await Assert.That(whiz030).IsNotNull();
     await Assert.That(whiz030!.Severity).IsEqualTo(DiagnosticSeverity.Error);
     // Should reference simplified event name (without global:: prefix)
-    await Assert.That(whiz030.GetMessage()).Contains("OrderEvent");
+    await Assert.That(whiz030.GetMessage(CultureInfo.InvariantCulture)).Contains("OrderEvent");
   }
 
   /// <summary>
   /// Helper method to count occurrences of a substring in a string.
   /// </summary>
-  private static int CountOccurrences(string text, string substring) {
-    int count = 0;
-    int index = 0;
+  private static int _countOccurrences(string text, string substring) {
+    var count = 0;
+    var index = 0;
     while ((index = text.IndexOf(substring, index, StringComparison.Ordinal)) != -1) {
       count++;
       index += substring.Length;

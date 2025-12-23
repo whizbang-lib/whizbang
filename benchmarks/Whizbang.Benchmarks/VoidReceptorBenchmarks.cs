@@ -20,8 +20,8 @@ namespace Whizbang.Benchmarks;
 [MemoryDiagnoser]
 [MarkdownExporter]
 public class VoidReceptorBenchmarks {
-  private IDispatcher _dispatcherWithTracing = null!;
-  private IDispatcher _dispatcherNoTracing = null!;
+  private Benchmarks.Generated.GeneratedDispatcher _dispatcherWithTracing = null!;
+  private Benchmarks.Generated.GeneratedDispatcher _dispatcherNoTracing = null!;
 
   // Pre-allocated commands (framework-only measurement)
   private ProcessCommand _processCommand = null!;
@@ -132,7 +132,7 @@ public class VoidReceptorBenchmarks {
   /// Command allocation excluded via GlobalSetup.
   /// </summary>
   [Benchmark(Baseline = true)]
-  public async Task<OrderCreatedEvent> RegularReceptor_SyncHandler_NoTracing() {
+  public async Task<OrderCreatedEvent> RegularReceptor_SyncHandler_NoTracingAsync() {
     return await _dispatcherNoTracing.LocalInvokeAsync<OrderCreatedEvent>(_orderCommand);
   }
 
@@ -140,7 +140,7 @@ public class VoidReceptorBenchmarks {
   /// Measures framework overhead WITH tracing enabled using pre-allocated command.
   /// </summary>
   [Benchmark]
-  public async Task<OrderCreatedEvent> RegularReceptor_SyncHandler_WithTracing() {
+  public async Task<OrderCreatedEvent> RegularReceptor_SyncHandler_WithTracingAsync() {
     return await _dispatcherWithTracing.LocalInvokeAsync<OrderCreatedEvent>(_orderCommand);
   }
 
@@ -148,7 +148,7 @@ public class VoidReceptorBenchmarks {
   /// Measures framework overhead with async handler using pre-allocated command.
   /// </summary>
   [Benchmark]
-  public async Task<OrderCreatedEvent> RegularReceptor_AsyncHandler_NoTracing() {
+  public async Task<OrderCreatedEvent> RegularReceptor_AsyncHandler_NoTracingAsync() {
     return await _dispatcherNoTracing.LocalInvokeAsync<OrderCreatedEvent>(_orderCommand);
   }
 
@@ -156,7 +156,7 @@ public class VoidReceptorBenchmarks {
   /// Measures framework overhead with async handler AND tracing using pre-allocated command.
   /// </summary>
   [Benchmark]
-  public async Task<OrderCreatedEvent> RegularReceptor_AsyncHandler_WithTracing() {
+  public async Task<OrderCreatedEvent> RegularReceptor_AsyncHandler_WithTracingAsync() {
     return await _dispatcherWithTracing.LocalInvokeAsync<OrderCreatedEvent>(_orderCommand);
   }
 
@@ -169,7 +169,7 @@ public class VoidReceptorBenchmarks {
   /// TARGET: Minimize framework-only allocation.
   /// </summary>
   [Benchmark]
-  public async Task VoidReceptor_SyncHandler_NoTracing() {
+  public async Task VoidReceptor_SyncHandler_NoTracingAsync() {
     await _dispatcherNoTracing.LocalInvokeAsync(_processCommand);
   }
 
@@ -177,7 +177,7 @@ public class VoidReceptorBenchmarks {
   /// Measures framework overhead for void receptors WITH tracing.
   /// </summary>
   [Benchmark]
-  public async Task VoidReceptor_SyncHandler_WithTracing() {
+  public async Task VoidReceptor_SyncHandler_WithTracingAsync() {
     await _dispatcherWithTracing.LocalInvokeAsync(_processCommand);
   }
 
@@ -185,7 +185,7 @@ public class VoidReceptorBenchmarks {
   /// Measures framework overhead for void receptors with async handler.
   /// </summary>
   [Benchmark]
-  public async Task VoidReceptor_AsyncHandler_NoTracing() {
+  public async Task VoidReceptor_AsyncHandler_NoTracingAsync() {
     await _dispatcherNoTracing.LocalInvokeAsync(_processCommand);
   }
 
@@ -193,7 +193,7 @@ public class VoidReceptorBenchmarks {
   /// Measures framework overhead for void receptors with async handler AND tracing.
   /// </summary>
   [Benchmark]
-  public async Task VoidReceptor_AsyncHandler_WithTracing() {
+  public async Task VoidReceptor_AsyncHandler_WithTracingAsync() {
     await _dispatcherWithTracing.LocalInvokeAsync(_processCommand);
   }
 
@@ -206,7 +206,7 @@ public class VoidReceptorBenchmarks {
   /// Commands allocated in GlobalSetup - measures ONLY framework dispatch overhead.
   /// </summary>
   [Benchmark]
-  public async Task VoidReceptor_Batch100_SyncHandler_NoTracing() {
+  public async Task VoidReceptor_Batch100_SyncHandler_NoTracingAsync() {
     var tasks = new Task[100];
     for (int i = 0; i < 100; i++) {
       tasks[i] = _dispatcherNoTracing.LocalInvokeAsync(_batchProcessCommands[i]).AsTask();
@@ -219,7 +219,7 @@ public class VoidReceptorBenchmarks {
   /// Commands allocated in GlobalSetup - measures ONLY framework dispatch overhead.
   /// </summary>
   [Benchmark]
-  public async Task RegularReceptor_Batch100_SyncHandler_NoTracing() {
+  public async Task RegularReceptor_Batch100_SyncHandler_NoTracingAsync() {
     var tasks = new Task<OrderCreatedEvent>[100];
     for (int i = 0; i < 100; i++) {
       tasks[i] = _dispatcherNoTracing.LocalInvokeAsync<OrderCreatedEvent>(_batchOrderCommands[i]).AsTask();
@@ -231,7 +231,7 @@ public class VoidReceptorBenchmarks {
   // HELPER: Simple in-memory trace store for benchmarking
   // ============================================================================
 
-  private class InMemoryTraceStore : ITraceStore {
+  private sealed class InMemoryTraceStore : ITraceStore {
     private readonly List<IMessageEnvelope> _traces = [];
 
     public Task StoreAsync(IMessageEnvelope envelope, CancellationToken ct = default) {

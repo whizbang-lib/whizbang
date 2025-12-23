@@ -1,3 +1,4 @@
+using System.Globalization;
 using Whizbang.Data.Dapper.Sqlite.Schema;
 using Whizbang.Data.Postgres.Schema;
 using Whizbang.Data.Schema;
@@ -6,7 +7,7 @@ const string version = "0.1.0";
 
 // Parse command-line arguments
 if (args.Length == 0 || args[0] == "--help" || args[0] == "-h") {
-  ShowHelp();
+  _showHelp();
   return 0;
 }
 
@@ -17,8 +18,8 @@ if (args[0] == "--version" || args[0] == "-v") {
 
 // Route to command handlers
 try {
-  return args[0].ToLower() switch {
-    "schema" => await HandleSchemaCommandAsync(args),
+  return args[0].ToLower(CultureInfo.InvariantCulture) switch {
+    "schema" => await _handleSchemaCommandAsync(args),
     _ => throw new InvalidOperationException($"Unknown command: {args[0]}")
   };
 } catch (Exception ex) {
@@ -28,22 +29,22 @@ try {
   return 1;
 }
 
-async Task<int> HandleSchemaCommandAsync(string[] commandArgs) {
+async Task<int> _handleSchemaCommandAsync(string[] commandArgs) {
   if (commandArgs.Length < 2) {
     Console.WriteLine("❌ Error: Missing schema subcommand");
     Console.WriteLine();
-    ShowSchemaHelp();
+    _showSchemaHelp();
     return 1;
   }
 
-  return commandArgs[1].ToLower() switch {
-    "generate" => await GenerateSchemaAsync(commandArgs),
-    "validate" => await ValidateSchemaAsync(commandArgs),
+  return commandArgs[1].ToLower(CultureInfo.InvariantCulture) switch {
+    "generate" => await _generateSchemaAsync(commandArgs),
+    "validate" => await _validateSchemaAsync(commandArgs),
     _ => throw new InvalidOperationException($"Unknown schema subcommand: {commandArgs[1]}")
   };
 }
 
-async Task<int> GenerateSchemaAsync(string[] commandArgs) {
+async Task<int> _generateSchemaAsync(string[] commandArgs) {
   // Usage: whizbang schema generate <database> [--output <path>] [--prefix <prefix>]
   if (commandArgs.Length < 3) {
     Console.WriteLine("❌ Error: Missing database type");
@@ -56,7 +57,7 @@ async Task<int> GenerateSchemaAsync(string[] commandArgs) {
     return 1;
   }
 
-  var database = commandArgs[2].ToLower();
+  var database = commandArgs[2].ToLower(CultureInfo.InvariantCulture);
   if (database != "postgres" && database != "sqlite") {
     Console.WriteLine($"❌ Error: Unknown database type '{database}'");
     Console.WriteLine("   Supported databases: postgres, sqlite");
@@ -89,7 +90,7 @@ async Task<int> GenerateSchemaAsync(string[] commandArgs) {
   Console.WriteLine("Whizbang Schema Generator");
   Console.WriteLine("=========================");
   Console.WriteLine();
-  Console.WriteLine($"Database: {database.ToUpper()}");
+  Console.WriteLine($"Database: {database.ToUpper(CultureInfo.InvariantCulture)}");
   Console.WriteLine($"Output: {outputPath}");
   Console.WriteLine($"Infrastructure Prefix: {config.InfrastructurePrefix}");
   Console.WriteLine($"Perspective Prefix: {config.PerspectivePrefix}");
@@ -124,7 +125,7 @@ async Task<int> GenerateSchemaAsync(string[] commandArgs) {
   return 0;
 }
 
-async Task<int> ValidateSchemaAsync(string[] commandArgs) {
+async Task<int> _validateSchemaAsync(string[] commandArgs) {
   // Usage: whizbang schema validate <file>
   if (commandArgs.Length < 3) {
     Console.WriteLine("❌ Error: Missing schema file path");
@@ -181,7 +182,7 @@ async Task<int> ValidateSchemaAsync(string[] commandArgs) {
   return 0;
 }
 
-void ShowHelp() {
+void _showHelp() {
   Console.WriteLine("Whizbang CLI - Command-line tool for Whizbang");
   Console.WriteLine($"Version {version}");
   Console.WriteLine();
@@ -197,7 +198,7 @@ void ShowHelp() {
   Console.WriteLine("Run 'whizbang schema --help' for more information on schema commands.");
 }
 
-void ShowSchemaHelp() {
+void _showSchemaHelp() {
   Console.WriteLine("Schema Management Commands");
   Console.WriteLine();
   Console.WriteLine("Usage: whizbang schema <subcommand> [options]");

@@ -21,9 +21,9 @@ namespace Whizbang.Core.Tests.Workers;
 /// Verifies immediate processing of pending outbox messages on startup.
 /// </summary>
 public class WorkCoordinatorPublisherWorkerStartupTests {
-  private record _testMessage { }
+  private sealed record _testMessage { }
 
-  private static IMessageEnvelope<JsonElement> _createTestEnvelope(Guid messageId) {
+  private static MessageEnvelope<JsonElement> _createTestEnvelope(Guid messageId) {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
@@ -32,7 +32,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     return envelope;
   }
 
-  private class TestWorkCoordinator : IWorkCoordinator {
+  private sealed class TestWorkCoordinator : IWorkCoordinator {
     public List<OutboxWork> WorkToReturn { get; set; } = [];
     public int ProcessWorkBatchCallCount { get; private set; }
     public List<_processWorkBatchCall> Calls { get; } = [];
@@ -75,7 +75,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     }
   }
 
-  private class TestPublishStrategy : IMessagePublishStrategy {
+  private sealed class TestPublishStrategy : IMessagePublishStrategy {
     public List<OutboxWork> PublishedWork { get; } = [];
 
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
@@ -94,7 +94,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     }
   }
 
-  private class TestDatabaseReadinessCheck : IDatabaseReadinessCheck {
+  private sealed class TestDatabaseReadinessCheck : IDatabaseReadinessCheck {
     public bool IsReady { get; set; } = true;
 
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
@@ -102,7 +102,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     }
   }
 
-  private record _processWorkBatchCall {
+  private sealed record _processWorkBatchCall {
     public required int CallNumber { get; init; }
     public required DateTimeOffset Timestamp { get; init; }
   }
@@ -159,7 +159,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     }
 
     // Verify messages were published from initial processing
-    await Assert.That(publishStrategy.PublishedWork).HasCount().GreaterThanOrEqualTo(3);
+    await Assert.That(publishStrategy.PublishedWork).Count().IsGreaterThanOrEqualTo(3);
   }
 
   [Test]
@@ -197,7 +197,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
 
     // Assert - ProcessWorkBatchAsync should NOT be called when database not ready
     await Assert.That(workCoordinator.ProcessWorkBatchCallCount).IsEqualTo(0);
-    await Assert.That(publishStrategy.PublishedWork).HasCount().EqualTo(0);
+    await Assert.That(publishStrategy.PublishedWork).Count().IsEqualTo(0);
   }
 
   [Test]
@@ -274,7 +274,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
 
     // Assert - ProcessWorkBatchAsync was called but returned no work
     await Assert.That(workCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
-    await Assert.That(publishStrategy.PublishedWork).HasCount().EqualTo(0);
+    await Assert.That(publishStrategy.PublishedWork).Count().IsEqualTo(0);
   }
 
   [Test]
@@ -314,7 +314,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     }
 
     // Assert - 12 messages should be published immediately
-    await Assert.That(publishStrategy.PublishedWork).HasCount().GreaterThanOrEqualTo(12);
+    await Assert.That(publishStrategy.PublishedWork).Count().IsGreaterThanOrEqualTo(12);
 
     // Verify ProcessWorkBatchAsync was called at least once
     await Assert.That(workCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(1);
@@ -334,7 +334,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     };
   }
 
-  private static IServiceInstanceProvider _createTestInstanceProvider() {
+  private static ServiceInstanceProvider _createTestInstanceProvider() {
     return new ServiceInstanceProvider(
       Guid.NewGuid(),
       "TestService",
@@ -343,7 +343,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     );
   }
 
-  private static IServiceCollection _createServiceCollection(
+  private static ServiceCollection _createServiceCollection(
     IWorkCoordinator workCoordinator,
     IMessagePublishStrategy publishStrategy,
     IDatabaseReadinessCheck databaseReadiness,
@@ -358,7 +358,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     return services;
   }
 
-  private class ThrowingWorkCoordinator : IWorkCoordinator {
+  private sealed class ThrowingWorkCoordinator : IWorkCoordinator {
     public bool ThrowOnFirstCall { get; set; }
     public List<OutboxWork> WorkToReturn { get; set; } = [];
     public int ProcessWorkBatchCallCount { get; private set; }
@@ -404,7 +404,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
   }
 
   // Test helper - Mock work channel writer
-  private class TestWorkChannelWriter : IWorkChannelWriter {
+  private sealed class TestWorkChannelWriter : IWorkChannelWriter {
     private readonly System.Threading.Channels.Channel<OutboxWork> _channel;
     public List<OutboxWork> WrittenWork { get; } = [];
 

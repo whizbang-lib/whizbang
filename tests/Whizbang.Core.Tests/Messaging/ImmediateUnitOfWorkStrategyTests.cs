@@ -13,7 +13,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// NOTE: Contract tests manually copied instead of using [InheritsTests] due to TUnit issue with background tasks.
 /// </summary>
 public class ImmediateUnitOfWorkStrategyTests {
-  private IUnitOfWorkStrategy CreateStrategy() {
+  private ImmediateUnitOfWorkStrategy _createStrategy() {
     return new ImmediateUnitOfWorkStrategy();
   }
 
@@ -22,9 +22,9 @@ public class ImmediateUnitOfWorkStrategyTests {
   // ========================================
 
   [Test]
-  public async Task QueueMessageAsync_ReturnsNonEmptyGuid() {
+  public async Task QueueMessageAsync_ReturnsNonEmptyGuidAsync() {
     // Arrange
-    await using var strategy = CreateStrategy();
+    await using var strategy = _createStrategy();
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
 
     var message = new TestMessage { Value = "test" };
@@ -37,9 +37,9 @@ public class ImmediateUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task QueueMessageAsync_StoresMessage() {
+  public async Task QueueMessageAsync_StoresMessageAsync() {
     // Arrange
-    await using var strategy = CreateStrategy();
+    await using var strategy = _createStrategy();
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
 
     var message = new TestMessage { Value = "test" };
@@ -54,9 +54,9 @@ public class ImmediateUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task QueueMessageAsync_WithLifecycleStage_StoresLifecycleMapping() {
+  public async Task QueueMessageAsync_WithLifecycleStage_StoresLifecycleMappingAsync() {
     // Arrange
-    await using var strategy = CreateStrategy();
+    await using var strategy = _createStrategy();
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
 
     var message = new TestMessage { Value = "test" };
@@ -74,9 +74,9 @@ public class ImmediateUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task GetMessagesForUnit_NonExistentUnit_ReturnsEmpty() {
+  public async Task GetMessagesForUnit_NonExistentUnit_ReturnsEmptyAsync() {
     // Arrange
-    await using var strategy = CreateStrategy();
+    await using var strategy = _createStrategy();
     var nonExistentUnitId = Guid.NewGuid();
 
     // Act
@@ -87,9 +87,9 @@ public class ImmediateUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task GetLifecycleStagesForUnit_NonExistentUnit_ReturnsEmpty() {
+  public async Task GetLifecycleStagesForUnit_NonExistentUnit_ReturnsEmptyAsync() {
     // Arrange
-    await using var strategy = CreateStrategy();
+    await using var strategy = _createStrategy();
     var nonExistentUnitId = Guid.NewGuid();
 
     // Act
@@ -100,9 +100,9 @@ public class ImmediateUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task CancelUnitAsync_ExistingUnit_RemovesUnit() {
+  public async Task CancelUnitAsync_ExistingUnit_RemovesUnitAsync() {
     // Arrange
-    await using var strategy = CreateStrategy();
+    await using var strategy = _createStrategy();
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
 
     var message = new TestMessage { Value = "test" };
@@ -117,9 +117,9 @@ public class ImmediateUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task CancelUnitAsync_NonExistentUnit_DoesNotThrow() {
+  public async Task CancelUnitAsync_NonExistentUnit_DoesNotThrowAsync() {
     // Arrange
-    await using var strategy = CreateStrategy();
+    await using var strategy = _createStrategy();
     var nonExistentUnitId = Guid.NewGuid();
 
     // Act & Assert (should not throw)
@@ -127,14 +127,12 @@ public class ImmediateUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task OnFlushRequested_CanBeWired() {
+  public async Task OnFlushRequested_CanBeWiredAsync() {
     // Arrange
-    await using var strategy = CreateStrategy();
-    var callbackInvoked = false;
+    await using var strategy = _createStrategy();
     Guid? callbackUnitId = null;
 
     strategy.OnFlushRequested += async (unitId, ct) => {
-      callbackInvoked = true;
       callbackUnitId = unitId;
       await Task.CompletedTask;
     };
@@ -145,7 +143,7 @@ public class ImmediateUnitOfWorkStrategyTests {
     var unitId = await strategy.QueueMessageAsync(message);
 
     // Allow async operations to complete (some strategies flush immediately, others don't)
-    await Task.Delay(100);
+    await Task.Delay(100, CancellationToken.None);
 
     // Assert - Callback was successfully wired (no exception thrown)
     // Actual invocation timing varies by strategy (Immediate invokes immediately, others don't)
@@ -157,9 +155,9 @@ public class ImmediateUnitOfWorkStrategyTests {
   // ========================================
 
   [Test]
-  public async Task QueueMessageAsync_GeneratesUuid7UnitId() {
+  public async Task QueueMessageAsync_GeneratesUuid7UnitIdAsync() {
     // Arrange
-    var strategy = CreateStrategy();
+    var strategy = _createStrategy();
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
 
     var message1 = new TestMessage { Value = "test1" };
@@ -168,7 +166,7 @@ public class ImmediateUnitOfWorkStrategyTests {
     // Act
     var unitId1 = await strategy.QueueMessageAsync(message1);
     // Small delay to ensure time ordering
-    await Task.Delay(10);
+    await Task.Delay(10, CancellationToken.None);
     var unitId2 = await strategy.QueueMessageAsync(message2);
 
     // Assert - Uuid7 should be time-ordered
@@ -176,9 +174,9 @@ public class ImmediateUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task QueueMessageAsync_ImmediatelyTriggersOnFlushRequested() {
+  public async Task QueueMessageAsync_ImmediatelyTriggersOnFlushRequestedAsync() {
     // Arrange
-    var strategy = CreateStrategy();
+    var strategy = _createStrategy();
     var callbackInvoked = false;
     Guid? callbackUnitId = null;
 
@@ -199,15 +197,15 @@ public class ImmediateUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task QueueMessageAsync_AwaitsCallbackCompletion() {
+  public async Task QueueMessageAsync_AwaitsCallbackCompletionAsync() {
     // Arrange
-    var strategy = CreateStrategy();
+    var strategy = _createStrategy();
     var callbackStarted = false;
     var callbackCompleted = false;
 
     strategy.OnFlushRequested += async (unitId, ct) => {
       callbackStarted = true;
-      await Task.Delay(50); // Simulate async work
+      await Task.Delay(50, ct); // Simulate async work
       callbackCompleted = true;
     };
 
@@ -222,9 +220,9 @@ public class ImmediateUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task QueueMessageAsync_PassesCorrectUnitIdToCallback() {
+  public async Task QueueMessageAsync_PassesCorrectUnitIdToCallbackAsync() {
     // Arrange
-    var strategy = CreateStrategy();
+    var strategy = _createStrategy();
     Guid? receivedUnitId = null;
 
     strategy.OnFlushRequested += async (unitId, ct) => {
@@ -242,9 +240,9 @@ public class ImmediateUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task GetMessagesForUnit_AfterCallback_ReturnsQueuedMessage() {
+  public async Task GetMessagesForUnit_AfterCallback_ReturnsQueuedMessageAsync() {
     // Arrange
-    var strategy = CreateStrategy();
+    var strategy = _createStrategy();
     IReadOnlyList<object>? messagesInCallback = null;
 
     strategy.OnFlushRequested += async (unitId, ct) => {
@@ -264,9 +262,9 @@ public class ImmediateUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task QueueMessageAsync_WithoutCallback_ThrowsInvalidOperationException() {
+  public async Task QueueMessageAsync_WithoutCallback_ThrowsInvalidOperationExceptionAsync() {
     // Arrange
-    var strategy = CreateStrategy();
+    var strategy = _createStrategy();
     var message = new TestMessage { Value = "test" };
 
     // Act & Assert
@@ -275,9 +273,9 @@ public class ImmediateUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task QueueMessageAsync_CreatesSeparateUnitPerMessage() {
+  public async Task QueueMessageAsync_CreatesSeparateUnitPerMessageAsync() {
     // Arrange
-    var strategy = CreateStrategy();
+    var strategy = _createStrategy();
     var unitIds = new List<Guid>();
 
     strategy.OnFlushRequested += async (unitId, ct) => {
@@ -300,9 +298,9 @@ public class ImmediateUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task GetLifecycleStagesForUnit_DuringCallback_ReturnsLifecycleStage() {
+  public async Task GetLifecycleStagesForUnit_DuringCallback_ReturnsLifecycleStageAsync() {
     // Arrange
-    var strategy = CreateStrategy();
+    var strategy = _createStrategy();
     IReadOnlyDictionary<object, LifecycleStage>? lifecycleStagesInCallback = null;
 
     strategy.OnFlushRequested += async (unitId, ct) => {
@@ -322,9 +320,9 @@ public class ImmediateUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task CancelUnitAsync_AfterFlush_IsNoOp() {
+  public async Task CancelUnitAsync_AfterFlush_IsNoOpAsync() {
     // Arrange
-    var strategy = CreateStrategy();
+    var strategy = _createStrategy();
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
 
     var message = new TestMessage { Value = "test" };
@@ -337,7 +335,7 @@ public class ImmediateUnitOfWorkStrategyTests {
   /// <summary>
   /// Test message class.
   /// </summary>
-  private class TestMessage {
+  private sealed class TestMessage {
     public string Value { get; set; } = string.Empty;
   }
 }

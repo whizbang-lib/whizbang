@@ -10,12 +10,12 @@ public class PartitionAssignmentsSchemaTests {
 
   [Test]
   public async Task Table_ShouldHaveFourColumnsAsync() {
-    await Assert.That(PartitionAssignmentsSchema.Table.Columns).HasCount().EqualTo(4);
+    await Assert.That(PartitionAssignmentsSchema.Table.Columns).Count().IsEqualTo(4);
   }
 
   [Test]
   public async Task Table_ShouldHaveOneIndexAsync() {
-    await Assert.That(PartitionAssignmentsSchema.Table.Indexes).HasCount().EqualTo(1);
+    await Assert.That(PartitionAssignmentsSchema.Table.Indexes).Count().IsEqualTo(1);
   }
 
   [Test]
@@ -70,7 +70,7 @@ public class PartitionAssignmentsSchemaTests {
   public async Task Index_ShouldCoverInstanceAndHeartbeatAsync() {
     var index = PartitionAssignmentsSchema.Indexes[0];
     await Assert.That(index.Name).IsEqualTo(PartitionAssignmentsSchema.IdxInstance);
-    await Assert.That(index.Columns).HasCount().EqualTo(2);
+    await Assert.That(index.Columns).Count().IsEqualTo(2);
     await Assert.That(index.Columns[0]).IsEqualTo(PartitionAssignmentsSchema.InstanceId);
     await Assert.That(index.Columns[1]).IsEqualTo(PartitionAssignmentsSchema.LastHeartbeat);
     await Assert.That(index.Unique).IsFalse();

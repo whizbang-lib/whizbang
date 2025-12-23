@@ -12,7 +12,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// Tests for IntervalWorkCoordinatorStrategy - verifies timer-based batching behavior.
 /// </summary>
 public class IntervalWorkCoordinatorStrategyTests {
-  private readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
+  private readonly Uuid7IdProvider _idProvider = new Uuid7IdProvider();
 
   // Helper method to create test envelope
   private static TestMessageEnvelope _createTestEnvelope(Guid messageId) {
@@ -165,7 +165,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     // Assert - Disposal should flush queued message immediately
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
       .Because("DisposeAsync should flush queued messages immediately");
-    await Assert.That(fakeCoordinator.LastNewOutboxMessages).HasCount().EqualTo(1);
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
     await Assert.That(fakeCoordinator.LastNewOutboxMessages[0].MessageId).IsEqualTo(messageId);
 
     var callCountBeforeDelay = fakeCoordinator.ProcessWorkBatchCallCount;
@@ -215,7 +215,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     // Assert - Manual flush should work immediately (not wait for timer)
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
       .Because("Manual FlushAsync should flush immediately without waiting for timer");
-    await Assert.That(fakeCoordinator.LastNewOutboxMessages).HasCount().EqualTo(1);
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
     await Assert.That(fakeCoordinator.LastNewOutboxMessages[0].MessageId).IsEqualTo(messageId);
 
     // Cleanup
@@ -226,7 +226,7 @@ public class IntervalWorkCoordinatorStrategyTests {
   // Test Fakes
   // ========================================
 
-  private class FakeWorkCoordinator : IWorkCoordinator {
+  private sealed class FakeWorkCoordinator : IWorkCoordinator {
     public int ProcessWorkBatchCallCount { get; private set; }
     public OutboxMessage[] LastNewOutboxMessages { get; private set; } = [];
     public InboxMessage[] LastNewInboxMessages { get; private set; } = [];
@@ -266,7 +266,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     }
   }
 
-  private class FakeServiceInstanceProvider : IServiceInstanceProvider {
+  private sealed class FakeServiceInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = Guid.NewGuid();
     public string ServiceName { get; } = "TestService";
     public string HostName { get; } = "test-host";
@@ -283,7 +283,7 @@ public class IntervalWorkCoordinatorStrategyTests {
   }
 
   // Test envelope implementation
-  private class TestMessageEnvelope : IMessageEnvelope<JsonElement> {
+  private sealed class TestMessageEnvelope : IMessageEnvelope<JsonElement> {
     public required MessageId MessageId { get; init; }
     public required List<MessageHop> Hops { get; init; }
     public JsonElement Payload { get; init; } = JsonDocument.Parse("{}").RootElement;  // Test payload
@@ -308,7 +308,7 @@ public class IntervalWorkCoordinatorStrategyTests {
     public JsonElement? GetMetadata(string key) {
       for (var i = Hops.Count - 1; i >= 0; i--) {
         if (Hops[i].Type == HopType.Current && Hops[i].Metadata?.ContainsKey(key) == true) {
-          return Hops[i].Metadata[key];
+          return Hops[i].Metadata![key];
         }
       }
       return null;

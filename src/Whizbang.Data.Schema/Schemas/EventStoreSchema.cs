@@ -27,62 +27,62 @@ public static class EventStoreSchema {
     Columns: ImmutableArray.Create(
       new ColumnDefinition(
         Name: "event_id",
-        DataType: WhizbangDataType.Uuid,
+        DataType: WhizbangDataType.UUID,
         PrimaryKey: true,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "stream_id",
-        DataType: WhizbangDataType.Uuid,
+        DataType: WhizbangDataType.UUID,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "aggregate_id",
-        DataType: WhizbangDataType.Uuid,
+        DataType: WhizbangDataType.UUID,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "aggregate_type",
-        DataType: WhizbangDataType.String,
+        DataType: WhizbangDataType.STRING,
         MaxLength: 500,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "event_type",
-        DataType: WhizbangDataType.String,
+        DataType: WhizbangDataType.STRING,
         MaxLength: 500,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "event_data",
-        DataType: WhizbangDataType.Json,
+        DataType: WhizbangDataType.JSON,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "metadata",
-        DataType: WhizbangDataType.Json,
+        DataType: WhizbangDataType.JSON,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "scope",
-        DataType: WhizbangDataType.Json,
+        DataType: WhizbangDataType.JSON,
         Nullable: true
       ),
       new ColumnDefinition(
         Name: "sequence_number",
-        DataType: WhizbangDataType.BigInt,
+        DataType: WhizbangDataType.BIG_INT,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "version",
-        DataType: WhizbangDataType.Integer,
+        DataType: WhizbangDataType.INTEGER,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "created_at",
-        DataType: WhizbangDataType.TimestampTz,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
-        DefaultValue: DefaultValue.Function(DefaultValueFunction.DateTime_Now)
+        DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       )
     ),
     Indexes: ImmutableArray.Create(
@@ -112,16 +112,16 @@ public static class EventStoreSchema {
   /// </summary>
   /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/EventStoreSchemaTests.cs:Columns_ShouldProvideAllConstantsAsync</tests>
   public static class Columns {
-    public const string EventId = "event_id";
-    public const string StreamId = "stream_id";
-    public const string AggregateId = "aggregate_id";
-    public const string AggregateType = "aggregate_type";
-    public const string EventType = "event_type";
-    public const string EventData = "event_data";
-    public const string Metadata = "metadata";
-    public const string Scope = "scope";
-    public const string SequenceNumber = "sequence_number";
-    public const string Version = "version";
-    public const string CreatedAt = "created_at";
+    public const string EVENT_ID = "event_id";
+    public const string STREAM_ID = "stream_id";
+    public const string AGGREGATE_ID = "aggregate_id";
+    public const string AGGREGATE_TYPE = "aggregate_type";
+    public const string EVENT_TYPE = "event_type";
+    public const string EVENT_DATA = "event_data";
+    public const string METADATA = "metadata";
+    public const string SCOPE = "scope";
+    public const string SEQUENCE_NUMBER = "sequence_number";
+    public const string VERSION = "version";
+    public const string CREATED_AT = "created_at";
   }
 }

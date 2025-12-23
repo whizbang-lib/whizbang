@@ -67,7 +67,7 @@ public class IdentityValueObjectTests {
 
     // Assert - IDs should already be in ascending order (time-ordered)
     var sortedIds = ids.OrderBy(g => g).ToList();
-    await Assert.That(ids).HasCount().EqualTo(sortedIds.Count);
+    await Assert.That(ids).Count().IsEqualTo(sortedIds.Count);
     for (int i = 0; i < ids.Count; i++) {
       await Assert.That(ids[i]).IsEqualTo(sortedIds[i]);
     }
@@ -92,7 +92,7 @@ public class IdentityValueObjectTests {
 
     // Should not throw - UUIDv7 are comparable
     var sorted = guids.OrderBy(g => g).ToArray();
-    await Assert.That(sorted).HasCount().EqualTo(3);
+    await Assert.That(sorted).Count().IsEqualTo(3);
   }
 
   #endregion

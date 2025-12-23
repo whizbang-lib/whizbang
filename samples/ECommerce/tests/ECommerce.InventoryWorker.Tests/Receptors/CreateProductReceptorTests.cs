@@ -43,6 +43,7 @@ public class CreateProductReceptorTests {
   }
 
   [Test]
+  [Obsolete]
   public async Task HandleAsync_WithValidCommand_PublishesProductCreatedEventAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
@@ -73,6 +74,7 @@ public class CreateProductReceptorTests {
   }
 
   [Test]
+  [Obsolete]
   public async Task HandleAsync_WithZeroInitialStock_PublishesOnlyProductCreatedEventAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
@@ -99,6 +101,7 @@ public class CreateProductReceptorTests {
   }
 
   [Test]
+  [Obsolete]
   public async Task HandleAsync_WithPositiveInitialStock_PublishesBothEventsAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
@@ -186,6 +189,7 @@ public class CreateProductReceptorTests {
   }
 
   [Test]
+  [Obsolete]
   public async Task HandleAsync_LogsInformation_AboutProductCreationAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();

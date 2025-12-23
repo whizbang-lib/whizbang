@@ -419,7 +419,7 @@ public class DispatcherTests {
     var exception = await Assert.That(async () => await dispatcher.LocalInvokeAsync<CreateOrder, OrderCreated>(command, null!))
       .ThrowsExactly<ArgumentNullException>();
 
-    await Assert.That(exception.ParamName).IsEqualTo("context");
+    await Assert.That(exception!.ParamName).IsEqualTo("context");
   }
 
   [Test]
@@ -432,7 +432,7 @@ public class DispatcherTests {
     var exception = await Assert.That(async () => await dispatcher.LocalInvokeAsync<LogCommand>(command, null!))
       .ThrowsExactly<ArgumentNullException>();
 
-    await Assert.That(exception.ParamName).IsEqualTo("context");
+    await Assert.That(exception!.ParamName).IsEqualTo("context");
   }
 
   // ========================================
@@ -470,7 +470,7 @@ public class DispatcherTests {
       DateTimeOffset.UtcNow.AddMinutes(-1),
       DateTimeOffset.UtcNow.AddMinutes(1)
     );
-    await Assert.That(traces).HasCount().GreaterThanOrEqualTo(1);
+    await Assert.That(traces).Count().IsGreaterThanOrEqualTo(1);
   }
 
   // ========================================
@@ -515,7 +515,7 @@ public class DispatcherTests {
       DateTimeOffset.UtcNow.AddMinutes(-1),
       DateTimeOffset.UtcNow.AddMinutes(1)
     );
-    await Assert.That(traces).HasCount().GreaterThanOrEqualTo(1);
+    await Assert.That(traces).Count().IsGreaterThanOrEqualTo(1);
 
     // Verify the envelope has the correct generic type parameter
     var envelope = traces.First();
@@ -527,7 +527,7 @@ public class DispatcherTests {
 
     // Critical: Verify it's MessageEnvelope<CreateOrder>, NOT MessageEnvelope<object>
     var typeArguments = envelopeType.GetGenericArguments();
-    await Assert.That(typeArguments).HasCount().EqualTo(1);
+    await Assert.That(typeArguments).Count().IsEqualTo(1);
     await Assert.That(typeArguments[0]).IsEqualTo(typeof(CreateOrder))
       .Because("Type parameter should be CreateOrder, not object - required for AOT serialization");
   }
@@ -556,14 +556,14 @@ public class DispatcherTests {
     var receipts = await dispatcher.SendManyAsync<CreateOrder>(commands);
 
     // Assert - Verify all receipts returned
-    await Assert.That(receipts).HasCount().EqualTo(3);
+    await Assert.That(receipts).Count().IsEqualTo(3);
 
     // Assert - Verify all envelopes have correct type
     var traces = await traceStore.GetByTimeRangeAsync(
       DateTimeOffset.UtcNow.AddMinutes(-1),
       DateTimeOffset.UtcNow.AddMinutes(1)
     );
-    await Assert.That(traces.Count()).IsGreaterThanOrEqualTo(3);
+    await Assert.That(traces.Count).IsGreaterThanOrEqualTo(3);
 
     // Verify each envelope preserves the CreateOrder type
     foreach (var envelope in traces) {
@@ -609,7 +609,7 @@ public class DispatcherTests {
       DateTimeOffset.UtcNow.AddMinutes(-1),
       DateTimeOffset.UtcNow.AddMinutes(1)
     );
-    await Assert.That(traces).HasCount().GreaterThanOrEqualTo(1);
+    await Assert.That(traces).Count().IsGreaterThanOrEqualTo(1);
 
     // Note: The envelope type may be MessageEnvelope<object> for LocalInvoke, and that's OK
     // because LocalInvoke never serializes. The receptor is invoked directly with zero reflection.
@@ -635,8 +635,8 @@ public class DispatcherTests {
     var nonGenericReceipts = await dispatcher.SendManyAsync(commands.Cast<object>());
 
     // Assert - Both should work, but generic version is AOT-compatible
-    await Assert.That(genericReceipts).HasCount().EqualTo(2);
-    await Assert.That(nonGenericReceipts).HasCount().EqualTo(2);
+    await Assert.That(genericReceipts).Count().IsEqualTo(2);
+    await Assert.That(nonGenericReceipts).Count().IsEqualTo(2);
 
     // Note: The key difference is internal - generic version creates MessageEnvelope<CreateOrder>
     // while non-generic creates MessageEnvelope<object>. Both work at runtime but only

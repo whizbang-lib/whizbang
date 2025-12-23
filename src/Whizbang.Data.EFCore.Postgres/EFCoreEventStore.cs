@@ -92,7 +92,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
 
     try {
       await _context.SaveChangesAsync(cancellationToken);
-    } catch (DbUpdateException ex) when (IsDuplicateKeyException(ex)) {
+    } catch (DbUpdateException ex) when (_isDuplicateKeyException(ex)) {
       // Concurrent append detected - optimistic concurrency failure
       throw new InvalidOperationException(
         $"Concurrent modification detected for stream {streamId} at sequence {nextSequence}. " +
@@ -222,7 +222,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
   /// Checks if the exception is due to a duplicate key constraint violation.
   /// PostgreSQL uses error code 23505 for unique constraint violations.
   /// </summary>
-  private static bool IsDuplicateKeyException(DbUpdateException ex) {
+  private static bool _isDuplicateKeyException(DbUpdateException ex) {
     // Check for PostgreSQL unique constraint violation
     // The error message typically contains "23505" or "duplicate key"
     return ex.InnerException?.Message.Contains("23505") == true ||

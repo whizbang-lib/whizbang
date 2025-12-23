@@ -50,17 +50,17 @@ public interface IWorkCoordinatorStrategy {
   /// </summary>
   /// <param name="messageId">Message ID that failed</param>
   /// <param name="completedStatus">Which stages succeeded before failure</param>
-  /// <param name="error">Error message or exception details</param>
-  void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string error);
+  /// <param name="errorMessage">Error message or exception details</param>
+  void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage);
 
   /// <summary>
   /// Queues an inbox message failure with partial completion tracking.
   /// </summary>
   /// <param name="messageId">Message ID that failed</param>
   /// <param name="completedStatus">Which stages succeeded before failure</param>
-  /// <param name="error">Error message or exception details</param>
+  /// <param name="errorMessage">Error message or exception details</param>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyTests.cs:MultipleQueues_FlushedTogetherOnDisposalAsync</tests>
-  void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string error);
+  void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage);
 
   /// <summary>
   /// Flushes all queued operations by calling process_work_batch.
@@ -116,7 +116,7 @@ public class WorkCoordinatorOptions {
   /// When true: Stream A and Stream B can be processed concurrently.
   /// When false: Streams processed sequentially (safer, simpler debugging).
   /// </summary>
-  public bool ParallelizeStreams { get; set; } = false;
+  public bool ParallelizeStreams { get; set; }
 
   /// <summary>
   /// Strategy for flushing work (Immediate, Scoped, Interval).
@@ -131,7 +131,7 @@ public class WorkCoordinatorOptions {
   /// <summary>
   /// Keep completed messages for debugging (default: Development mode only).
   /// </summary>
-  public bool DebugMode { get; set; } = false;
+  public bool DebugMode { get; set; }
 
   /// <summary>
   /// Lease duration in seconds (default 300 = 5 minutes).

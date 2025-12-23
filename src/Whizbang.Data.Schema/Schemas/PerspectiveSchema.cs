@@ -46,7 +46,7 @@ public static class PerspectiveSchema {
 
     var idColumn = new ColumnDefinition(
       Name: "id",
-      DataType: WhizbangDataType.Uuid,
+      DataType: WhizbangDataType.UUID,
       PrimaryKey: true,
       Nullable: false
     );
@@ -71,7 +71,7 @@ public static class PerspectiveSchema {
     /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveSchemaTests.cs:CommonColumns_Id_HasCorrectDefinitionAsync</tests>
     public static readonly ColumnDefinition Id = new(
       Name: "id",
-      DataType: WhizbangDataType.Uuid,
+      DataType: WhizbangDataType.UUID,
       PrimaryKey: true,
       Nullable: false
     );
@@ -82,9 +82,9 @@ public static class PerspectiveSchema {
     /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveSchemaTests.cs:CommonColumns_CreatedAt_HasCorrectDefinitionAsync</tests>
     public static readonly ColumnDefinition CreatedAt = new(
       Name: "created_at",
-      DataType: WhizbangDataType.TimestampTz,
+      DataType: WhizbangDataType.TIMESTAMP_TZ,
       Nullable: false,
-      DefaultValue: DefaultValue.Function(DefaultValueFunction.DateTime_Now)
+      DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
     );
 
     /// <summary>
@@ -93,7 +93,7 @@ public static class PerspectiveSchema {
     /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveSchemaTests.cs:CommonColumns_UpdatedAt_HasCorrectDefinitionAsync</tests>
     public static readonly ColumnDefinition UpdatedAt = new(
       Name: "updated_at",
-      DataType: WhizbangDataType.TimestampTz,
+      DataType: WhizbangDataType.TIMESTAMP_TZ,
       Nullable: true
     );
 
@@ -103,7 +103,7 @@ public static class PerspectiveSchema {
     /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveSchemaTests.cs:CommonColumns_Version_HasCorrectDefinitionAsync</tests>
     public static readonly ColumnDefinition Version = new(
       Name: "version",
-      DataType: WhizbangDataType.Integer,
+      DataType: WhizbangDataType.INTEGER,
       Nullable: false,
       DefaultValue: DefaultValue.Integer(1)
     );
@@ -114,7 +114,7 @@ public static class PerspectiveSchema {
     /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveSchemaTests.cs:CommonColumns_DeletedAt_HasCorrectDefinitionAsync</tests>
     public static readonly ColumnDefinition DeletedAt = new(
       Name: "deleted_at",
-      DataType: WhizbangDataType.TimestampTz,
+      DataType: WhizbangDataType.TIMESTAMP_TZ,
       Nullable: true
     );
   }

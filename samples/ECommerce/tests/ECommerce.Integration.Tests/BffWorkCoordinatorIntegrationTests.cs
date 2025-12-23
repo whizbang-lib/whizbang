@@ -31,7 +31,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
 
   private record TestEvent { }
 
-  private static IMessageEnvelope<JsonElement> CreateTestEnvelope(Guid messageId) {
+  private static IMessageEnvelope<JsonElement> _createTestEnvelope(Guid messageId) {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
@@ -146,6 +146,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
   }
 
   [Test]
+  [Obsolete]
   public async Task BffApplication_WorkerProcessesStoredMessages_EndToEndAsync() {
     // This test verifies the EXACT bug scenario from the user's CSV:
     // 1. Dispatcher (or direct DB insert) stores messages in outbox
@@ -178,7 +179,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
           new OutboxMessage {
             MessageId = messageId.Value,
             Destination = "products",
-            Envelope = CreateTestEnvelope(messageId.Value),
+            Envelope = _createTestEnvelope(messageId.Value),
             EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
             IsEvent = true,
             StreamId = streamId,
@@ -232,6 +233,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
   }
 
   [Test]
+  [Obsolete]
   public async Task BffApplication_WorkerRunsAutomatically_OnStartupAsync() {
     // This test verifies the worker is actually registered as a hosted service
 
@@ -247,6 +249,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
   }
 
   [Test]
+  [Obsolete]
   public async Task BffApplication_MultipleMessages_ProcessedInOrderAsync() {
     // Verify UUIDv7 ordering works in the application
 
@@ -280,7 +283,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
           new OutboxMessage {
             MessageId = messageId1.Value,
             Destination = "products",
-            Envelope = CreateTestEnvelope(messageId1.Value),
+            Envelope = _createTestEnvelope(messageId1.Value),
             EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
             IsEvent = true,
             StreamId = streamId,
@@ -289,7 +292,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
           new OutboxMessage {
             MessageId = messageId2.Value,
             Destination = "products",
-            Envelope = CreateTestEnvelope(messageId2.Value),
+            Envelope = _createTestEnvelope(messageId2.Value),
             EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
             IsEvent = true,
             StreamId = streamId,
@@ -298,7 +301,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
           new OutboxMessage {
             MessageId = messageId3.Value,
             Destination = "products",
-            Envelope = CreateTestEnvelope(messageId3.Value),
+            Envelope = _createTestEnvelope(messageId3.Value),
             EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
             IsEvent = true,
             StreamId = streamId,
@@ -346,6 +349,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
   }
 
   [Test]
+  [Obsolete]
   public async Task BffApplication_ExpiredLeaseMessages_AreReclaimedAsync() {
     // Verify that messages with expired leases (like those in user's CSV) get reclaimed
 
@@ -374,7 +378,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
           new OutboxMessage {
             MessageId = messageId.Value,
             Destination = "products",
-            Envelope = CreateTestEnvelope(messageId.Value),
+            Envelope = _createTestEnvelope(messageId.Value),
             EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
             IsEvent = true,
             StreamId = streamId,

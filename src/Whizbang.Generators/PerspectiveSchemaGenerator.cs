@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Immutable;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
@@ -36,13 +38,13 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     // Filter for classes that have a base list (potential interface implementations)
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => ExtractPerspectiveSchemaInfo(ctx, ct)
+        transform: static (ctx, ct) => _extractPerspectiveSchemaInfo(ctx, ct)
     ).Where(static info => info is not null);
 
     // Collect all perspectives and generate schemas
     context.RegisterSourceOutput(
         perspectiveCandidates.Collect(),
-        static (ctx, perspectives) => GeneratePerspectiveSchemas(ctx, perspectives!)
+        static (ctx, perspectives) => _generatePerspectiveSchemas(ctx, perspectives!)
     );
   }
 
@@ -50,7 +52,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   /// Extracts perspective schema information from a class declaration.
   /// Returns null if the class doesn't implement IPerspectiveFor.
   /// </summary>
-  private static PerspectiveSchemaInfo? ExtractPerspectiveSchemaInfo(
+  private static PerspectiveSchemaInfo? _extractPerspectiveSchemaInfo(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
 
@@ -88,7 +90,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
 
     // Extract class name and generate table name
     var className = classSymbol.Name;
-    var tableName = GenerateTableName(className);
+    var tableName = _generateTableName(className);
 
     // Estimate size based on properties in the MODEL type (first type argument)
     // For IPerspectiveFor<TModel, TEvent>, TModel is at index 0
@@ -97,7 +99,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
         .OfType<IPropertySymbol>()
         .Count(p => !p.IsStatic);
 
-    var estimatedSize = EstimateJsonSize(propertyCount);
+    var estimatedSize = _estimateJsonSize(propertyCount);
 
     return new PerspectiveSchemaInfo(
         ClassName: className,
@@ -111,7 +113,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates PostgreSQL schema CREATE TABLE statements for all discovered perspectives.
   /// </summary>
-  private static void GeneratePerspectiveSchemas(
+  private static void _generatePerspectiveSchemas(
       SourceProductionContext context,
       ImmutableArray<PerspectiveSchemaInfo> perspectives) {
 
@@ -150,7 +152,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
       // Generate CREATE TABLE from snippet
       var tableCode = createTableSnippet
           .Replace("__CLASS_NAME__", perspective.ClassName)
-          .Replace("__ESTIMATED_SIZE__", perspective.EstimatedSizeBytes.ToString())
+          .Replace("__ESTIMATED_SIZE__", perspective.EstimatedSizeBytes.ToString(CultureInfo.InvariantCulture))
           .Replace("__TABLE_NAME__", perspective.TableName);
 
       sqlBuilder.AppendLine(tableCode);
@@ -191,7 +193,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
     context.ReportDiagnostic(Diagnostic.Create(
         DiagnosticDescriptors.PerspectiveDiscovered,
         Location.None,
-        perspectives.Length.ToString(),
+        perspectives.Length.ToString(CultureInfo.InvariantCulture),
         string.Join(", ", perspectives.Select(p => p.ClassName))
     ));
   }
@@ -200,7 +202,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   /// Generates a snake_case table name from a PascalCase class name.
   /// Example: "OrderSummaryPerspective" -> "order_summary_perspective"
   /// </summary>
-  private static string GenerateTableName(string className) {
+  private static string _generateTableName(string className) {
     var sb = new StringBuilder();
     for (int i = 0; i < className.Length; i++) {
       var c = className[i];
@@ -216,7 +218,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
   /// Estimates JSON size based on property count (rough heuristic).
   /// Assumes average property: {"propertyName": "averageValue"} ~= 40 bytes
   /// </summary>
-  private static int EstimateJsonSize(int propertyCount) {
+  private static int _estimateJsonSize(int propertyCount) {
     const int BYTES_PER_PROPERTY = 40; // Rough average
     const int BASE_OVERHEAD = 20; // JSON object overhead
     return BASE_OVERHEAD + (propertyCount * BYTES_PER_PROPERTY);

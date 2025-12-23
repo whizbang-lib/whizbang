@@ -110,9 +110,9 @@ public static class VoidReceptorExamples {
         CancellationToken cancellationToken = default) {
       // Update cache
       if (message.Expiration.HasValue) {
-        _cache.Set(message.Key, message.Value, message.Expiration.Value);
+        _cache.SetValue(message.Key, message.Value, message.Expiration.Value);
       } else {
-        _cache.Set(message.Key, message.Value);
+        _cache.SetValue(message.Key, message.Value);
       }
 
       // Update metrics
@@ -149,11 +149,11 @@ public static class VoidReceptorExamples {
         CancellationToken cancellationToken = default) {
       // Validation - throw for errors
       if (message.Amount <= 0) {
-        throw new ArgumentException("Payment amount must be positive", nameof(message.Amount));
+        throw new ArgumentException("Payment amount must be positive", nameof(message));
       }
 
       if (string.IsNullOrWhiteSpace(message.PaymentMethod)) {
-        throw new ArgumentException("Payment method is required", nameof(message.PaymentMethod));
+        throw new ArgumentException("Payment method is required", nameof(message));
       }
 
       // Process payment
@@ -319,8 +319,8 @@ public static class VoidReceptorExamples {
   }
 
   public interface ICache {
-    void Set(string key, object value);
-    void Set(string key, object value, TimeSpan expiration);
+    void SetValue(string key, object value);
+    void SetValue(string key, object value, TimeSpan expiration);
   }
 
   public interface IMetrics {

@@ -32,7 +32,7 @@ public class WhizbangBuilderTests {
     var exception = await Assert.That(() => new WhizbangBuilder(services!))
         .Throws<ArgumentNullException>();
 
-    await Assert.That(exception.ParamName).IsEqualTo("services");
+    await Assert.That(exception!.ParamName).IsEqualTo("services");
   }
 
   [Test]

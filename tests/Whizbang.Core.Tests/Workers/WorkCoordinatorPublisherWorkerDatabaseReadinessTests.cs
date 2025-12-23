@@ -20,9 +20,9 @@ namespace Whizbang.Core.Tests.Workers;
 /// Phase 3B: Verifies that database readiness checks prevent work coordinator calls until database is available.
 /// </summary>
 public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
-  private record _testMessage { }
+  private sealed record _testMessage { }
 
-  private static IMessageEnvelope<JsonElement> _createTestEnvelope(Guid messageId) {
+  private static MessageEnvelope<JsonElement> _createTestEnvelope(Guid messageId) {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
@@ -238,7 +238,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
   }
 
   // Test helper classes
-  private class TestWorkCoordinator : IWorkCoordinator {
+  private sealed class TestWorkCoordinator : IWorkCoordinator {
     public List<OutboxWork> WorkToReturn { get; set; } = [];
     public int CallCount { get; private set; }
 
@@ -278,7 +278,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     }
   }
 
-  private class TestDatabaseReadinessCheck : IDatabaseReadinessCheck {
+  private sealed class TestDatabaseReadinessCheck : IDatabaseReadinessCheck {
     public bool IsReadyResult { get; set; } = true;
 
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
@@ -286,7 +286,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     }
   }
 
-  private class TestPublishStrategy : IMessagePublishStrategy {
+  private sealed class TestPublishStrategy : IMessagePublishStrategy {
     public List<OutboxWork> PublishedWork { get; } = [];
 
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
@@ -303,7 +303,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     }
   }
 
-  private class TestLogger<T> : ILogger<T> {
+  private sealed class TestLogger<T> : ILogger<T> {
     private readonly List<LogEntry> _logs = [];
 
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
@@ -324,7 +324,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     public List<LogEntry> GetLogsAtLevel(LogLevel level) =>
       _logs.FindAll(l => l.LogLevel == level);
 
-    public class LogEntry {
+    public sealed class LogEntry {
       public LogLevel LogLevel { get; init; }
       public string Message { get; init; } = "";
       public Exception? Exception { get; init; }
@@ -345,7 +345,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     };
   }
 
-  private static IServiceInstanceProvider _createTestInstanceProvider() {
+  private static ServiceInstanceProvider _createTestInstanceProvider() {
     return new ServiceInstanceProvider(
       Guid.NewGuid(),
       "TestService",
@@ -354,7 +354,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     );
   }
 
-  private static IServiceProvider _createServiceCollection(
+  private static ServiceProvider _createServiceCollection(
     IWorkCoordinator workCoordinator,
     IMessagePublishStrategy publishStrategy,
     IServiceInstanceProvider instanceProvider,
@@ -382,7 +382,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
   }
 
   // Test helper - Mock work channel writer
-  private class TestWorkChannelWriter : IWorkChannelWriter {
+  private sealed class TestWorkChannelWriter : IWorkChannelWriter {
     private readonly System.Threading.Channels.Channel<OutboxWork> _channel;
     public List<OutboxWork> WrittenWork { get; } = [];
 

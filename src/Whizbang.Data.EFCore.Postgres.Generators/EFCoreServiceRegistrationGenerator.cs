@@ -51,13 +51,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Discover all perspective classes that implement IPerspectiveFor<TModel>
     var perspectives = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => ExtractPerspectiveInfo(ctx, ct)
+        transform: static (ctx, ct) => _extractPerspectiveInfo(ctx, ct)
     ).Where(static info => info is not null);
 
     // Discover DbContext classes
     var dbContextClasses = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => ExtractDbContextInfo(ctx, ct)
+        transform: static (ctx, ct) => _extractDbContextInfo(ctx, ct)
     ).Where(static info => info is not null);
 
     // Combine perspectives with DbContext info and compilation
@@ -74,6 +74,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           var compilation = data.Right;
 
           try {
+            // Filter nulls to ensure type safety - OfType<> both filters and changes type to non-nullable
+            var validPerspectives = perspectives.OfType<PerspectiveModelInfo>().ToImmutableArray();
+            var validDbContexts = dbContexts.OfType<DbContextInfo>().ToImmutableArray();
+
             // Always report count, even if zero (for debugging)
             var descriptor = new DiagnosticDescriptor(
                 id: "EFCORE104",
@@ -82,10 +86,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
                 category: "Whizbang.Generator",
                 defaultSeverity: DiagnosticSeverity.Info,
                 isEnabledByDefault: true);
-            ctx.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, perspectives.Length));
+            ctx.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, validPerspectives.Length));
 
             // Report each discovered perspective
-            foreach (var perspective in perspectives) {
+            foreach (var perspective in validPerspectives) {
               var modelDescriptor = new DiagnosticDescriptor(
                   id: "EFCORE105",
                   title: "Perspective Model Discovered",
@@ -99,7 +103,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
                   perspective.TableName));
             }
 
-            GenerateDbContextPartial(ctx, perspectives!, dbContexts!);
+            _generateDbContextPartial(ctx, validPerspectives, validDbContexts);
           } catch (Exception ex) {
             var descriptor = new DiagnosticDescriptor(
                 id: "EFCORE997",
@@ -121,7 +125,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           var dbContexts = data.Left.Right;
 
           try {
-            GenerateRegistrationMetadata(ctx, perspectives!, dbContexts!);
+            // Filter nulls to ensure type safety - OfType<> both filters and changes type to non-nullable
+            var validPerspectives = perspectives.OfType<PerspectiveModelInfo>().ToImmutableArray();
+            var validDbContexts = dbContexts.OfType<DbContextInfo>().ToImmutableArray();
+
+            _generateRegistrationMetadata(ctx, validPerspectives, validDbContexts);
           } catch (Exception ex) {
             var descriptor = new DiagnosticDescriptor(
                 id: "EFCORE996",
@@ -143,7 +151,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           var dbContexts = data.Left.Right;
 
           try {
-            GenerateSchemaExtensions(ctx, perspectives!, dbContexts!);
+            // Filter nulls to ensure type safety - OfType<> both filters and changes type to non-nullable
+            var validPerspectives = perspectives.OfType<PerspectiveModelInfo>().ToImmutableArray();
+            var validDbContexts = dbContexts.OfType<DbContextInfo>().ToImmutableArray();
+
+            _generateSchemaExtensions(ctx, validPerspectives, validDbContexts);
           } catch (Exception ex) {
             var descriptor = new DiagnosticDescriptor(
                 id: "EFCORE995",
@@ -167,7 +179,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDefaultKey_UsesEmptyStringKeyAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithSingleKey_DiscoversDbContextWithKeyAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultipleKeys_DiscoversDbContextWithAllKeysAsync</tests>
-  private static DbContextInfo? ExtractDbContextInfo(
+  private static DbContextInfo? _extractDbContextInfo(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
 
@@ -202,7 +214,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     }
 
     // Extract keys from attribute
-    var keys = ExtractKeysFromAttribute(attribute);
+    var keys = _extractKeysFromAttribute(attribute);
     if (keys.Length == 0) {
       keys = new[] { "" };  // Default to unnamed key
     }
@@ -222,7 +234,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesPartialClassAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesRegistrationMetadataAsync</tests>
-  private static PerspectiveModelInfo? ExtractPerspectiveInfo(
+  private static PerspectiveModelInfo? _extractPerspectiveInfo(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
 
@@ -245,7 +257,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Perspective discovered - extract TModel from first type argument
     var modelType = perspectiveForInterface.TypeArguments[0];
-    var tableName = "wh_per_" + ToSnakeCase(modelType.Name);
+    var tableName = "wh_per_" + _toSnakeCase(modelType.Name);
 
     // Check for [WhizbangPerspective] attribute (optional)
     var perspectiveAttribute = symbol.GetAttributes()
@@ -254,7 +266,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     string[] keys;
     if (perspectiveAttribute is not null) {
       // Attribute present - extract keys
-      keys = ExtractKeysFromAttribute(perspectiveAttribute);
+      keys = _extractKeysFromAttribute(perspectiveAttribute);
     } else {
       // No attribute - matches default DbContext only
       keys = Array.Empty<string>();
@@ -273,7 +285,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// Converts PascalCase to snake_case.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesPartialClassAsync</tests>
-  private static string ToSnakeCase(string input) {
+  private static string _toSnakeCase(string input) {
     if (string.IsNullOrEmpty(input)) {
       return input;
     }
@@ -303,7 +315,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDefaultKey_UsesEmptyStringKeyAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithSingleKey_DiscoversDbContextWithKeyAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultipleKeys_DiscoversDbContextWithAllKeysAsync</tests>
-  private static string[] ExtractKeysFromAttribute(AttributeData attribute) {
+  private static string[] _extractKeysFromAttribute(AttributeData attribute) {
     if (attribute.ConstructorArguments.Length == 0) {
       return Array.Empty<string>();
     }
@@ -334,7 +346,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// </remarks>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithSingleKey_DiscoversDbContextWithKeyAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultipleKeys_DiscoversDbContextWithAllKeysAsync</tests>
-  private static bool MatchesDbContext(PerspectiveModelInfo perspective, DbContextInfo dbContext) {
+  private static bool _matchesDbContext(PerspectiveModelInfo perspective, DbContextInfo dbContext) {
     // Perspective with no keys = matches default DbContext only
     if (perspective.Keys.Length == 0) {
       return dbContext.Keys.Contains("");
@@ -354,7 +366,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_IncludesRequiredUsingDirectivesAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_OnModelCreating_IncludesXmlDocumentationAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithMultipleDbContexts_GeneratesOnModelCreatingForEachAsync</tests>
-  private static void GenerateDbContextPartial(
+  private static void _generateDbContextPartial(
       SourceProductionContext context,
       ImmutableArray<PerspectiveModelInfo> perspectives,
       ImmutableArray<DbContextInfo> dbContexts) {
@@ -363,13 +375,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Each DbContext needs OnModelCreating() that calls ConfigureWhizbang() for Inbox/Outbox/EventStore
 
     if (dbContexts.IsEmpty) {
-      // Report error - no DbContext found
+      // Report info - no DbContext found (expected in library projects)
       var noDbContextDescriptor = new DiagnosticDescriptor(
-          id: "EFCORE998",
+          id: "WHIZ703",
           title: "No DbContext Found",
           messageFormat: "Could not find any DbContext classes with [WhizbangDbContext] attribute. Partial class generation requires explicit opt-in.",
           category: "Whizbang.Generator",
-          defaultSeverity: DiagnosticSeverity.Warning,
+          defaultSeverity: DiagnosticSeverity.Info,
           isEnabledByDefault: true);
       context.ReportDiagnostic(Diagnostic.Create(noDbContextDescriptor, Location.None));
       return;
@@ -379,7 +391,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     foreach (var dbContext in dbContexts) {
       // Filter perspectives that match this DbContext's keys
       var matchingPerspectives = perspectives
-          .Where(p => MatchesDbContext(p, dbContext))
+          .Where(p => _matchesDbContext(p, dbContext))
           .ToList();
 
       // Report diagnostic if there are no matching perspectives (but still generate partial class for core entities)
@@ -428,7 +440,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine($"public partial class {dbContext.ClassName} {{");
 
       foreach (var model in uniqueModels) {
-        var modelName = ExtractSimpleName(model.ModelTypeName);
+        var modelName = _extractSimpleName(model.ModelTypeName);
         var propertyName = $"{modelName}s";  // Pluralize
 
         sb.AppendLine($"  /// <summary>");
@@ -483,7 +495,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// Always generates infrastructure registration (Inbox/Outbox/EventStore) even when there are no perspectives.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesRegistrationMetadataAsync</tests>
-  private static void GenerateRegistrationMetadata(
+  private static void _generateRegistrationMetadata(
       SourceProductionContext context,
       ImmutableArray<PerspectiveModelInfo> perspectives,
       ImmutableArray<DbContextInfo> dbContexts) {
@@ -507,7 +519,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       var matchingPerspectives = perspectives.IsEmpty
           ? new List<PerspectiveModelInfo>()
           : perspectives
-              .Where(p => MatchesDbContext(p, dbContext))
+              .Where(p => _matchesDbContext(p, dbContext))
               .GroupBy(p => p.ModelTypeName)
               .Select(g => g.First())
               .ToList();
@@ -642,7 +654,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesSchemaExtensionsAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaExtensions_CallsExecuteMigrationsAsync</tests>
-  private static void GenerateSchemaExtensions(
+  private static void _generateSchemaExtensions(
       SourceProductionContext context,
       ImmutableArray<PerspectiveModelInfo> perspectives,
       ImmutableArray<DbContextInfo> dbContexts) {
@@ -661,7 +673,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Load migration files (once for all DbContexts)
     // Note: Core infrastructure schema is now generated at runtime by PostgresSchemaBuilder
-    string migrationsCode = GenerateMigrationsCode(context);
+    string migrationsCode = _generateMigrationsCode(context);
 
     // Loop through each DbContext and generate extension method
     foreach (var dbContext in dbContexts) {
@@ -669,11 +681,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       var matchingPerspectives = perspectives.IsEmpty
           ? new List<PerspectiveModelInfo>()
           : perspectives
-              .Where(p => MatchesDbContext(p, dbContext))
+              .Where(p => _matchesDbContext(p, dbContext))
               .ToList();
 
       // Generate perspective tables schema SQL (specific to this DbContext)
-      string perspectiveTablesSchema = GeneratePerspectiveTablesSchema(context, matchingPerspectives);
+      string perspectiveTablesSchema = _generatePerspectiveTablesSchema(context, matchingPerspectives);
 
       var template = templateBase;
 
@@ -726,7 +738,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// NOTE: Templates/Migrations must be kept in sync with Whizbang.Data.Postgres/Migrations manually.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_SchemaExtensions_CallsExecuteMigrationsAsync</tests>
-  private static string GenerateMigrationsCode(SourceProductionContext context) {
+  private static string _generateMigrationsCode(SourceProductionContext context) {
     var sb = new StringBuilder();
 
     // Load migrations from generator's own embedded resources (Templates/Migrations)
@@ -735,17 +747,17 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Get all embedded SQL migration files
     var migrationResources = assembly.GetManifestResourceNames()
-        .Where(name => name.StartsWith(resourcePrefix) && name.EndsWith(".sql"))
+        .Where(name => name.StartsWith(resourcePrefix, StringComparison.Ordinal) && name.EndsWith(".sql", StringComparison.Ordinal))
         .OrderBy(name => name)
         .ToArray();
 
-    // DIAGNOSTIC: Report what we found (WARNING level to ensure it's visible)
+    // DIAGNOSTIC: Report what we found (informational level)
     var diagnosticDescriptor = new DiagnosticDescriptor(
-        id: "EFCORE301",
-        title: "Migration Files Discovery",
+        id: "WHIZ702",
+        title: "EF Core Migration Files Discovery",
         messageFormat: "Found {0} migration files in {1} (prefix: {2}): {3}",
         category: "Whizbang.Generator",
-        defaultSeverity: DiagnosticSeverity.Warning,
+        defaultSeverity: DiagnosticSeverity.Info,
         isEnabledByDefault: true);
     var resourceList = string.Join(", ", migrationResources.Take(5).Select(r => r.Substring(resourcePrefix.Length)));
     if (migrationResources.Length > 5) {
@@ -798,7 +810,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// Extracts simple type name from fully qualified name.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesPartialClassAsync</tests>
-  private static string ExtractSimpleName(string fullyQualifiedName) {
+  private static string _extractSimpleName(string fullyQualifiedName) {
     var withoutGlobal = fullyQualifiedName.Replace("global::", "");
     var lastDot = withoutGlobal.LastIndexOf('.');
     return lastDot >= 0 ? withoutGlobal.Substring(lastDot + 1) : withoutGlobal;
@@ -812,7 +824,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// Returns escaped SQL string ready to embed in C# verbatim string literal.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesSchemaExtensionsAsync</tests>
-  private static string GeneratePerspectiveTablesSchema(
+  private static string _generatePerspectiveTablesSchema(
     SourceProductionContext context,
     List<PerspectiveModelInfo> perspectives
   ) {
@@ -834,7 +846,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     foreach (var perspective in uniqueTables) {
       // PerspectiveRow<TModel> has fixed schema defined in Whizbang.Core
-      sb.AppendLine($"-- {perspective.TableName} (model: {ExtractSimpleName(perspective.ModelTypeName)})");
+      sb.AppendLine($"-- {perspective.TableName} (model: {_extractSimpleName(perspective.ModelTypeName)})");
       sb.AppendLine($"CREATE TABLE IF NOT EXISTS {perspective.TableName} (");
       sb.AppendLine($"  id UUID NOT NULL PRIMARY KEY,");
       sb.AppendLine($"  data JSONB NOT NULL,");

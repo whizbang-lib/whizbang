@@ -42,8 +42,8 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
 
     // Assert - All values should be unique and in range [0, taskCount-1]
     var sortedResults = results.OrderBy(x => x).ToArray();
-    await Assert.That(sortedResults).HasCount().EqualTo(taskCount);
-    await Assert.That(sortedResults.Distinct()).HasCount().EqualTo(taskCount);
+    await Assert.That(sortedResults).Count().IsEqualTo(taskCount);
+    await Assert.That(sortedResults.Distinct()).Count().IsEqualTo(taskCount);
 
     // Verify no gaps in sequence (first and last values)
     await Assert.That(sortedResults[0]).IsEqualTo(0);
@@ -73,7 +73,7 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
     var results = await Task.WhenAll(getTasks);
 
     // Assert - All values should be unique (no duplicates despite reset)
-    await Assert.That(results.Distinct()).HasCount().EqualTo(getNextCount);
+    await Assert.That(results.Distinct()).Count().IsEqualTo(getNextCount);
 
     // Some values should be in [0, 24] range, others in [1000+] range
     var lowValues = results.Where(x => x < 100).ToArray();
@@ -115,8 +115,8 @@ public class InMemorySequenceProviderTests : SequenceProviderContractTests {
           .OrderBy(v => v)
           .ToArray();
 
-      await Assert.That(streamResults).HasCount().EqualTo(callsPerStream);
-      await Assert.That(streamResults.Distinct()).HasCount().EqualTo(callsPerStream);
+      await Assert.That(streamResults).Count().IsEqualTo(callsPerStream);
+      await Assert.That(streamResults.Distinct()).Count().IsEqualTo(callsPerStream);
       await Assert.That(streamResults.Min()).IsEqualTo(0);
       await Assert.That(streamResults.Max()).IsEqualTo(callsPerStream - 1);
     }

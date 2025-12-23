@@ -56,7 +56,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
 
     // Assert
     var events = context.Set<EventStoreRecord>().ToList();
-    await Assert.That(events).HasCount().EqualTo(1);
+    await Assert.That(events).Count().IsEqualTo(1);
     await Assert.That(events[0].StreamId).IsEqualTo(streamId);
   }
 
@@ -98,7 +98,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
       .OrderBy(e => e.Sequence)
       .ToList();
 
-    await Assert.That(events).HasCount().EqualTo(3);
+    await Assert.That(events).Count().IsEqualTo(3);
     await Assert.That(events[0].Sequence).IsEqualTo(0);
     await Assert.That(events[1].Sequence).IsEqualTo(1);
     await Assert.That(events[2].Sequence).IsEqualTo(2);
@@ -143,7 +143,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     }
 
     // Assert
-    await Assert.That(events).HasCount().EqualTo(3);
+    await Assert.That(events).Count().IsEqualTo(3);
     await Assert.That(events[0].Payload.CustomerName).IsEqualTo("Customer 0");
     await Assert.That(events[1].Payload.CustomerName).IsEqualTo("Customer 1");
     await Assert.That(events[2].Payload.CustomerName).IsEqualTo("Customer 2");

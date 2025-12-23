@@ -28,7 +28,7 @@ public class TableDefinitionTests {
     // Assert
     await Assert.That(table).IsNotNull();
     await Assert.That(table.Name).IsEqualTo("users");
-    await Assert.That(table.Columns).HasCount().EqualTo(2);
+    await Assert.That(table.Columns).Count().IsEqualTo(2);
   }
 
   [Test]
@@ -43,7 +43,7 @@ public class TableDefinitionTests {
 
     // Assert - Default empty indexes array
     await Assert.That(table.Indexes).IsNotNull();
-    await Assert.That(table.Indexes).HasCount().EqualTo(0);
+    await Assert.That(table.Indexes).Count().IsEqualTo(0);
   }
 
   [Test]
@@ -68,7 +68,7 @@ public class TableDefinitionTests {
     );
 
     // Assert
-    await Assert.That(table.Indexes).HasCount().EqualTo(2);
+    await Assert.That(table.Indexes).Count().IsEqualTo(2);
     await Assert.That(table.Indexes[0].Name).IsEqualTo("idx_email");
     await Assert.That(table.Indexes[1].Name).IsEqualTo("idx_created_at");
   }

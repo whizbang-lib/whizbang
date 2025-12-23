@@ -22,105 +22,105 @@ public static class OutboxSchema {
     Columns: ImmutableArray.Create(
       new ColumnDefinition(
         Name: "message_id",
-        DataType: WhizbangDataType.Uuid,
+        DataType: WhizbangDataType.UUID,
         PrimaryKey: true,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "destination",
-        DataType: WhizbangDataType.String,
+        DataType: WhizbangDataType.STRING,
         MaxLength: 500,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "event_type",
-        DataType: WhizbangDataType.String,
+        DataType: WhizbangDataType.STRING,
         MaxLength: 500,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "event_data",
-        DataType: WhizbangDataType.Json,
+        DataType: WhizbangDataType.JSON,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "metadata",
-        DataType: WhizbangDataType.Json,
+        DataType: WhizbangDataType.JSON,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "scope",
-        DataType: WhizbangDataType.Json,
+        DataType: WhizbangDataType.JSON,
         Nullable: true
       ),
       new ColumnDefinition(
         Name: "stream_id",
-        DataType: WhizbangDataType.Uuid,
+        DataType: WhizbangDataType.UUID,
         Nullable: true
       ),
       new ColumnDefinition(
         Name: "partition_number",
-        DataType: WhizbangDataType.Integer,
+        DataType: WhizbangDataType.INTEGER,
         Nullable: true
       ),
       new ColumnDefinition(
         Name: "is_event",
-        DataType: WhizbangDataType.Boolean,
+        DataType: WhizbangDataType.BOOLEAN,
         Nullable: false,
         DefaultValue: DefaultValue.Boolean(false)
       ),
       new ColumnDefinition(
         Name: "status",
-        DataType: WhizbangDataType.Integer,
+        DataType: WhizbangDataType.INTEGER,
         Nullable: false,
         DefaultValue: DefaultValue.Integer(1)
       ),
       new ColumnDefinition(
         Name: "attempts",
-        DataType: WhizbangDataType.Integer,
+        DataType: WhizbangDataType.INTEGER,
         Nullable: false,
         DefaultValue: DefaultValue.Integer(0)
       ),
       new ColumnDefinition(
         Name: "error",
-        DataType: WhizbangDataType.String,
+        DataType: WhizbangDataType.STRING,
         Nullable: true
       ),
       new ColumnDefinition(
         Name: "instance_id",
-        DataType: WhizbangDataType.Uuid,
+        DataType: WhizbangDataType.UUID,
         Nullable: true
       ),
       new ColumnDefinition(
         Name: "lease_expiry",
-        DataType: WhizbangDataType.TimestampTz,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: true
       ),
       new ColumnDefinition(
         Name: "failure_reason",
-        DataType: WhizbangDataType.Integer,
+        DataType: WhizbangDataType.INTEGER,
         Nullable: false,
         DefaultValue: DefaultValue.Integer(99)
       ),
       new ColumnDefinition(
         Name: "scheduled_for",
-        DataType: WhizbangDataType.TimestampTz,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: true
       ),
       new ColumnDefinition(
         Name: "created_at",
-        DataType: WhizbangDataType.TimestampTz,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
-        DefaultValue: DefaultValue.Function(DefaultValueFunction.DateTime_Now)
+        DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       ),
       new ColumnDefinition(
         Name: "published_at",
-        DataType: WhizbangDataType.TimestampTz,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: true
       ),
       new ColumnDefinition(
         Name: "processed_at",
-        DataType: WhizbangDataType.TimestampTz,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: true
       )
     ),
@@ -161,24 +161,24 @@ public static class OutboxSchema {
   /// </summary>
   /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/OutboxSchemaTests.cs:Columns_ShouldProvideAllConstantsAsync</tests>
   public static class Columns {
-    public const string MessageId = "message_id";
-    public const string Destination = "destination";
-    public const string EventType = "event_type";
-    public const string EventData = "event_data";
-    public const string Metadata = "metadata";
-    public const string Scope = "scope";
-    public const string StreamId = "stream_id";
-    public const string PartitionNumber = "partition_number";
-    public const string IsEvent = "is_event";
-    public const string Status = "status";
-    public const string Attempts = "attempts";
-    public const string Error = "error";
-    public const string InstanceId = "instance_id";
-    public const string LeaseExpiry = "lease_expiry";
-    public const string FailureReason = "failure_reason";
-    public const string ScheduledFor = "scheduled_for";
-    public const string CreatedAt = "created_at";
-    public const string PublishedAt = "published_at";
-    public const string ProcessedAt = "processed_at";
+    public const string MESSAGE_ID = "message_id";
+    public const string DESTINATION = "destination";
+    public const string EVENT_TYPE = "event_type";
+    public const string EVENT_DATA = "event_data";
+    public const string METADATA = "metadata";
+    public const string SCOPE = "scope";
+    public const string STREAM_ID = "stream_id";
+    public const string PARTITION_NUMBER = "partition_number";
+    public const string IS_EVENT = "is_event";
+    public const string STATUS = "status";
+    public const string ATTEMPTS = "attempts";
+    public const string ERROR = "error";
+    public const string INSTANCE_ID = "instance_id";
+    public const string LEASE_EXPIRY = "lease_expiry";
+    public const string FAILURE_REASON = "failure_reason";
+    public const string SCHEDULED_FOR = "scheduled_for";
+    public const string CREATED_AT = "created_at";
+    public const string PUBLISHED_AT = "published_at";
+    public const string PROCESSED_AT = "processed_at";
   }
 }

@@ -10,8 +10,8 @@ namespace Whizbang.Data.Dapper.Custom;
 /// </summary>
 /// <tests>tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs</tests>
 public abstract class DapperSequenceProviderBase : ISequenceProvider {
-  protected readonly IDbConnectionFactory _connectionFactory;
-  protected readonly IDbExecutor _executor;
+  private readonly IDbConnectionFactory _connectionFactory;
+  private readonly IDbExecutor _executor;
 
   protected DapperSequenceProviderBase(IDbConnectionFactory connectionFactory, IDbExecutor executor) {
     ArgumentNullException.ThrowIfNull(connectionFactory);
@@ -20,6 +20,9 @@ public abstract class DapperSequenceProviderBase : ISequenceProvider {
     _connectionFactory = connectionFactory;
     _executor = executor;
   }
+
+  protected IDbConnectionFactory ConnectionFactory => _connectionFactory;
+  protected IDbExecutor Executor => _executor;
 
   /// <summary>
   /// Ensures the connection is open. Handles both pre-opened and closed connections.
@@ -82,7 +85,7 @@ public abstract class DapperSequenceProviderBase : ISequenceProvider {
     ArgumentNullException.ThrowIfNull(streamKey);
 
     try {
-      using var connection = await _connectionFactory.CreateConnectionAsync(ct);
+      using var connection = await ConnectionFactory.CreateConnectionAsync(ct);
       EnsureConnectionOpen(connection);
 
       using var transaction = connection.BeginTransaction();
@@ -91,7 +94,7 @@ public abstract class DapperSequenceProviderBase : ISequenceProvider {
         // Try to increment existing sequence
         var updateSql = GetUpdateSequenceSql();
 
-        var updatedValue = await _executor.ExecuteScalarAsync<long?>(
+        var updatedValue = await Executor.ExecuteScalarAsync<long?>(
           connection,
           updateSql,
           new {
@@ -109,7 +112,7 @@ public abstract class DapperSequenceProviderBase : ISequenceProvider {
         // Sequence doesn't exist, insert new one starting at 0
         var insertSql = GetInsertOrUpdateSequenceSql();
 
-        var newValue = await _executor.ExecuteScalarAsync<long>(
+        var newValue = await Executor.ExecuteScalarAsync<long>(
           connection,
           insertSql,
           new {
@@ -142,12 +145,12 @@ public abstract class DapperSequenceProviderBase : ISequenceProvider {
     ArgumentNullException.ThrowIfNull(streamKey);
 
     try {
-      using var connection = await _connectionFactory.CreateConnectionAsync(ct);
+      using var connection = await ConnectionFactory.CreateConnectionAsync(ct);
       EnsureConnectionOpen(connection);
 
       var sql = GetCurrentSequenceSql();
 
-      var currentValue = await _executor.ExecuteScalarAsync<long?>(
+      var currentValue = await Executor.ExecuteScalarAsync<long?>(
         connection,
         sql,
         new { SequenceKey = streamKey },
@@ -171,12 +174,12 @@ public abstract class DapperSequenceProviderBase : ISequenceProvider {
     ArgumentNullException.ThrowIfNull(streamKey);
 
     try {
-      using var connection = await _connectionFactory.CreateConnectionAsync(ct);
+      using var connection = await ConnectionFactory.CreateConnectionAsync(ct);
       EnsureConnectionOpen(connection);
 
       var sql = GetResetSequenceSql();
 
-      await _executor.ExecuteAsync(
+      await Executor.ExecuteAsync(
         connection,
         sql,
         new {

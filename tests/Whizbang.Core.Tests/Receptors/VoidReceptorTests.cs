@@ -14,7 +14,7 @@ namespace Whizbang.Core.Tests.Receptors;
 /// </summary>
 [Category("Receptors")]
 public class VoidReceptorTests : DiagnosticTestBase {
-  protected override DiagnosticCategory _diagnosticCategories => DiagnosticCategory.ReceptorDiscovery;
+  protected override DiagnosticCategory DiagnosticCategories => DiagnosticCategory.ReceptorDiscovery;
 
   // Test Messages for void pattern
   public record ProcessPaymentCommand(Guid OrderId, decimal Amount, string PaymentMethod);
@@ -127,7 +127,7 @@ public class VoidReceptorTests : DiagnosticTestBase {
     await receptor.HandleAsync(command2);
 
     // Assert
-    await Assert.That(receptor.LoggedEvents).HasCount().EqualTo(2);
+    await Assert.That(receptor.LoggedEvents).Count().IsEqualTo(2);
     await Assert.That(receptor.LoggedEvents[0]).Contains("OrderPlaced");
     await Assert.That(receptor.LoggedEvents[1]).Contains("PaymentProcessed");
   }

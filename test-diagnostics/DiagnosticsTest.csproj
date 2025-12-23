@@ -4,10 +4,12 @@
     <OutputType>Exe</OutputType>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- Suppress CS7022: Auto-generated Microsoft.Testing.Platform entry point conflicts with Program.cs -->
+    <NoWarn>$(NoWarn);CS7022</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
-    <ProjectReference Include="../tests/Whizbang.Core.Tests/Whizbang.Core.Tests.csproj" />
+    <ProjectReference Include="../src/Whizbang.Core/Whizbang.Core.csproj" />
   </ItemGroup>
 
 </Project>

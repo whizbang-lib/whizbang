@@ -8,6 +8,7 @@ namespace ECommerce.BFF.API.Tests;
 /// </summary>
 public class OrderReadModelTests {
   [Test]
+  [Obsolete]
   public async Task OrderReadModel_WithValidData_CreatesCorrectlyAsync() {
     // Arrange
     var createdAt = DateTime.UtcNow;

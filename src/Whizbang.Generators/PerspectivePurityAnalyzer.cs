@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp;
@@ -95,10 +96,10 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     context.EnableConcurrentExecution();
 
     // Register for method declarations
-    context.RegisterSyntaxNodeAction(AnalyzeMethod, SyntaxKind.MethodDeclaration);
+    context.RegisterSyntaxNodeAction(_analyzeMethod, SyntaxKind.MethodDeclaration);
   }
 
-  private static void AnalyzeMethod(SyntaxNodeAnalysisContext context) {
+  private static void _analyzeMethod(SyntaxNodeAnalysisContext context) {
     var methodDeclaration = (MethodDeclarationSyntax)context.Node;
     var methodSymbol = context.SemanticModel.GetDeclaredSymbol(methodDeclaration);
 
@@ -113,14 +114,14 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
 
     // Check if method is in a type implementing IPerspectiveFor or IGlobalPerspectiveFor
     var containingType = methodSymbol.ContainingType;
-    if (!ImplementsPerspectiveInterface(containingType)) {
+    if (!_implementsPerspectiveInterface(containingType)) {
       return;
     }
 
     // Check 1: Apply method must not return Task
-    if (ReturnsTask(methodSymbol)) {
+    if (_returnsTask(methodSymbol)) {
       var returnType = methodSymbol.ReturnType.ToDisplayString();
-      var modelType = ExtractModelTypeFromTask(methodSymbol.ReturnType);
+      var modelType = _extractModelTypeFromTask(methodSymbol.ReturnType);
 
       var diagnostic = Diagnostic.Create(
           ApplyMethodIsAsync,
@@ -132,7 +133,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     }
 
     // Check 2: Apply method must not use await
-    if (UsesAwait(methodDeclaration)) {
+    if (_usesAwait(methodDeclaration)) {
       var diagnostic = Diagnostic.Create(
           ApplyMethodUsesAwait,
           methodDeclaration.Identifier.GetLocation(),
@@ -142,7 +143,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     }
 
     // Check 3: Apply method must not call database I/O
-    var dbCalls = FindDatabaseCalls(methodDeclaration, context.SemanticModel);
+    var dbCalls = _findDatabaseCalls(methodDeclaration, context.SemanticModel);
     foreach (var (call, methodName) in dbCalls) {
       var diagnostic = Diagnostic.Create(
           ApplyMethodCallsDatabase,
@@ -154,7 +155,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     }
 
     // Check 4: Apply method must not call HTTP operations
-    var httpCalls = FindHttpCalls(methodDeclaration, context.SemanticModel);
+    var httpCalls = _findHttpCalls(methodDeclaration, context.SemanticModel);
     foreach (var (call, methodName) in httpCalls) {
       var diagnostic = Diagnostic.Create(
           ApplyMethodCallsHttp,
@@ -166,7 +167,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     }
 
     // Check 5: Warn about DateTime.UtcNow usage
-    var dateTimeCalls = FindDateTimeNowCalls(methodDeclaration);
+    var dateTimeCalls = _findDateTimeNowCalls(methodDeclaration);
     foreach (var call in dateTimeCalls) {
       var diagnostic = Diagnostic.Create(
           ApplyMethodUsesDateTime,
@@ -177,19 +178,19 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     }
   }
 
-  private static bool ImplementsPerspectiveInterface(INamedTypeSymbol typeSymbol) {
+  private static bool _implementsPerspectiveInterface(INamedTypeSymbol typeSymbol) {
     // Check if type implements IPerspectiveFor<TModel, TEvent...> or IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent...>
     foreach (var iface in typeSymbol.AllInterfaces) {
       var interfaceName = iface.ToDisplayString();
-      if (interfaceName.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<") ||
-          interfaceName.StartsWith("Whizbang.Core.Perspectives.IGlobalPerspectiveFor<")) {
+      if (interfaceName.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<", StringComparison.Ordinal) ||
+          interfaceName.StartsWith("Whizbang.Core.Perspectives.IGlobalPerspectiveFor<", StringComparison.Ordinal)) {
         return true;
       }
     }
     return false;
   }
 
-  private static bool ReturnsTask(IMethodSymbol methodSymbol) {
+  private static bool _returnsTask(IMethodSymbol methodSymbol) {
     var returnType = methodSymbol.ReturnType;
     if (returnType is INamedTypeSymbol namedType) {
       var fullName = namedType.ConstructedFrom.ToDisplayString();
@@ -201,7 +202,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     return false;
   }
 
-  private static string? ExtractModelTypeFromTask(ITypeSymbol returnType) {
+  private static string? _extractModelTypeFromTask(ITypeSymbol returnType) {
     if (returnType is INamedTypeSymbol namedType && namedType.IsGenericType) {
       var typeArgs = namedType.TypeArguments;
       if (typeArgs.Length > 0) {
@@ -211,13 +212,13 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     return null;
   }
 
-  private static bool UsesAwait(MethodDeclarationSyntax methodDeclaration) {
+  private static bool _usesAwait(MethodDeclarationSyntax methodDeclaration) {
     return methodDeclaration.DescendantNodes()
         .OfType<AwaitExpressionSyntax>()
         .Any();
   }
 
-  private static IEnumerable<(InvocationExpressionSyntax, string)> FindDatabaseCalls(
+  private static IEnumerable<(InvocationExpressionSyntax, string)> _findDatabaseCalls(
       MethodDeclarationSyntax methodDeclaration,
       SemanticModel semanticModel) {
 
@@ -234,7 +235,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
             containingType.Contains("DbSet") ||
             containingType.Contains("IPerspectiveStore") ||
             containingType.Contains("ILensQuery") ||
-            methodName.EndsWith("Async") && (
+            methodName.EndsWith("Async", StringComparison.Ordinal) && (
                 methodName.Contains("Save") ||
                 methodName.Contains("Insert") ||
                 methodName.Contains("Update") ||
@@ -250,7 +251,7 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
     }
   }
 
-  private static IEnumerable<(InvocationExpressionSyntax, string)> FindHttpCalls(
+  private static IEnumerable<(InvocationExpressionSyntax, string)> _findHttpCalls(
       MethodDeclarationSyntax methodDeclaration,
       SemanticModel semanticModel) {
 
@@ -265,17 +266,17 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
         // Check for HTTP operation patterns
         if (containingType.Contains("HttpClient") ||
             containingType.Contains("HttpMessageInvoker") ||
-            methodName.StartsWith("Get") && containingType.Contains("Http") ||
-            methodName.StartsWith("Post") && containingType.Contains("Http") ||
-            methodName.StartsWith("Put") && containingType.Contains("Http") ||
-            methodName.StartsWith("Delete") && containingType.Contains("Http")) {
+            methodName.StartsWith("Get", StringComparison.Ordinal) && containingType.Contains("Http") ||
+            methodName.StartsWith("Post", StringComparison.Ordinal) && containingType.Contains("Http") ||
+            methodName.StartsWith("Put", StringComparison.Ordinal) && containingType.Contains("Http") ||
+            methodName.StartsWith("Delete", StringComparison.Ordinal) && containingType.Contains("Http")) {
           yield return (invocation, $"{containingType}.{methodName}");
         }
       }
     }
   }
 
-  private static IEnumerable<MemberAccessExpressionSyntax> FindDateTimeNowCalls(
+  private static IEnumerable<MemberAccessExpressionSyntax> _findDateTimeNowCalls(
       MethodDeclarationSyntax methodDeclaration) {
 
     return methodDeclaration.DescendantNodes()

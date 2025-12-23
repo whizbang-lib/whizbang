@@ -97,5 +97,6 @@ public class ScopedUnitOfWorkStrategy : IUnitOfWorkStrategy, IAsyncDisposable {
     }
 
     _disposed = true;
+    GC.SuppressFinalize(this);
   }
 }

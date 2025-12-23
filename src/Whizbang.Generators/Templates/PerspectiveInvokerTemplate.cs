@@ -29,14 +29,14 @@ internal sealed class GeneratedPerspectiveInvoker : IPerspectiveInvoker {
     _serviceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
   }
 
-  public void QueueEvent(IEvent @event) {
-    if (@event == null) throw new ArgumentNullException(nameof(@event));
+  public void QueueEvent(IEvent eventData) {
+    if (eventData == null) throw new ArgumentNullException(nameof(eventData));
 
     lock (_lock) {
       if (_disposed) {
         throw new ObjectDisposedException(nameof(GeneratedPerspectiveInvoker));
       }
-      _queuedEvents.Add(@event);
+      _queuedEvents.Add(eventData);
     }
   }
 
@@ -50,15 +50,15 @@ internal sealed class GeneratedPerspectiveInvoker : IPerspectiveInvoker {
     }
 
     // Invoke perspectives for each queued event
-    foreach (var @event in eventsToProcess) {
-      var publisher = _getPerspectivePublisher(@event, @event.GetType());
+    foreach (var eventData in eventsToProcess) {
+      var publisher = _getPerspectivePublisher(eventData, eventData.GetType());
       if (publisher != null) {
-        await publisher(@event);
+        await publisher(eventData);
       }
     }
   }
 
-  private PerspectivePublisher? _getPerspectivePublisher(IEvent @event, Type eventType) {
+  private PerspectivePublisher? _getPerspectivePublisher(IEvent eventData, Type eventType) {
     #region PERSPECTIVE_ROUTING
     // Generated routing code inserted here
     #endregion
@@ -77,4 +77,4 @@ internal sealed class GeneratedPerspectiveInvoker : IPerspectiveInvoker {
 /// <summary>
 /// Delegate for publishing an event to perspectives.
 /// </summary>
-internal delegate Task PerspectivePublisher(IEvent @event);
+internal delegate Task PerspectivePublisher(IEvent eventData);

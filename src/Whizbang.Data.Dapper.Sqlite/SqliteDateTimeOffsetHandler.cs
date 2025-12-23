@@ -1,4 +1,5 @@
 using System.Data;
+using System.Globalization;
 using Dapper;
 
 namespace Whizbang.Data.Dapper.Sqlite;
@@ -12,11 +13,14 @@ namespace Whizbang.Data.Dapper.Sqlite;
 /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
 /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs</tests>
 public class SqliteDateTimeOffsetHandler : SqlMapper.TypeHandler<DateTimeOffset> {
+  /// <summary>
+  /// Parses a database value to a DateTimeOffset, handling both string and DateTimeOffset types.
+  /// </summary>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs</tests>
   public override DateTimeOffset Parse(object value) {
     if (value is string str) {
-      return DateTimeOffset.Parse(str);
+      return DateTimeOffset.Parse(str, CultureInfo.InvariantCulture);
     }
     if (value is DateTimeOffset dto) {
       return dto;
@@ -24,6 +28,9 @@ public class SqliteDateTimeOffsetHandler : SqlMapper.TypeHandler<DateTimeOffset>
     throw new InvalidCastException($"Cannot convert {value?.GetType()} to DateTimeOffset");
   }
 
+  /// <summary>
+  /// Sets a DateTimeOffset value on a database parameter, converting it to ISO 8601 format for SQLite storage.
+  /// </summary>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs</tests>
   public override void SetValue(IDbDataParameter parameter, DateTimeOffset value) {

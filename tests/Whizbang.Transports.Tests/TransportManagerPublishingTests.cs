@@ -45,7 +45,7 @@ public class TransportManagerPublishingTests {
     await Task.Delay(50); // Allow async processing
 
     // Assert
-    await Assert.That(publishedEnvelopes).HasCount().EqualTo(1);
+    await Assert.That(publishedEnvelopes).Count().IsEqualTo(1);
     var envelope = publishedEnvelopes[0] as MessageEnvelope<TestMessage>;
     await Assert.That(envelope).IsNotNull();
     await Assert.That(envelope!.Payload.Content).IsEqualTo("test");
@@ -100,8 +100,8 @@ public class TransportManagerPublishingTests {
     await Task.Delay(50); // Allow async processing
 
     // Assert
-    await Assert.That(publishedToDest1).HasCount().EqualTo(1);
-    await Assert.That(publishedToDest2).HasCount().EqualTo(1);
+    await Assert.That(publishedToDest1).Count().IsEqualTo(1);
+    await Assert.That(publishedToDest2).Count().IsEqualTo(1);
   }
 
   [Test]
@@ -176,7 +176,7 @@ public class TransportManagerPublishingTests {
     await Task.Delay(50);
 
     // Assert
-    await Assert.That(publishedEnvelopes).HasCount().EqualTo(1);
+    await Assert.That(publishedEnvelopes).Count().IsEqualTo(1);
     await Assert.That(publishedEnvelopes[0].MessageId).IsEqualTo(customMessageId);
   }
 
@@ -211,10 +211,10 @@ public class TransportManagerPublishingTests {
     await Task.Delay(50);
 
     // Assert
-    await Assert.That(publishedEnvelopes).HasCount().EqualTo(1);
+    await Assert.That(publishedEnvelopes).Count().IsEqualTo(1);
     var envelope = publishedEnvelopes[0] as MessageEnvelope<TestMessage>;
     await Assert.That(envelope).IsNotNull();
-    await Assert.That(envelope!.Hops).HasCount().EqualTo(1);
+    await Assert.That(envelope!.Hops).Count().IsEqualTo(1);
     await Assert.That(envelope.Hops[0].Type).IsEqualTo(HopType.Current);
     await Assert.That(envelope.Hops[0].ServiceInstance.ServiceName).IsEqualTo("Unknown");  // No instance provider configured
     await Assert.That(envelope.Hops[0].ServiceInstance.InstanceId).IsEqualTo(Guid.Empty);

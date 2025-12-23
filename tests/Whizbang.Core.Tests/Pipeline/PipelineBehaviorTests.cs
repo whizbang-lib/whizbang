@@ -20,7 +20,7 @@ public class PipelineBehaviorTests {
     }
 
     // Act
-    var result = await behavior.Handle("request", next);
+    var result = await behavior.HandleAsync("request", next);
 
     // Assert
     await Assert.That(nextCalled).IsTrue();
@@ -38,10 +38,10 @@ public class PipelineBehaviorTests {
     }
 
     // Act
-    await behavior.Handle("request", next);
+    await behavior.HandleAsync("request", next);
 
     // Assert
-    await Assert.That(behavior.Log).HasCount().EqualTo(2);
+    await Assert.That(behavior.Log).Count().IsEqualTo(2);
     await Assert.That(behavior.Log[0]).IsEqualTo("pre-process");
     await Assert.That(behavior.Log[1]).IsEqualTo("handler");
   }
@@ -56,7 +56,7 @@ public class PipelineBehaviorTests {
     }
 
     // Act
-    var result = await behavior.Handle("request", next);
+    var result = await behavior.HandleAsync("request", next);
 
     // Assert
     await Assert.That(result).IsEqualTo("original-modified");
@@ -74,7 +74,7 @@ public class PipelineBehaviorTests {
     }
 
     // Act
-    var result = await behavior.Handle("request", next);
+    var result = await behavior.HandleAsync("request", next);
 
     // Assert
     await Assert.That(nextCalled).IsFalse();
@@ -83,8 +83,8 @@ public class PipelineBehaviorTests {
 
   // Test behaviors
 
-  private class TestPipelineBehavior : PipelineBehavior<string, string> {
-    public override async Task<string> Handle(
+  private sealed class TestPipelineBehavior : PipelineBehavior<string, string> {
+    public override async Task<string> HandleAsync(
       string request,
       Func<Task<string>> next,
       CancellationToken cancellationToken = default
@@ -94,12 +94,12 @@ public class PipelineBehaviorTests {
     }
   }
 
-  private class PreProcessingBehavior : PipelineBehavior<string, string> {
+  private sealed class PreProcessingBehavior : PipelineBehavior<string, string> {
     private readonly List<string> _log = [];
 
     public List<string> Log => _log;
 
-    public override async Task<string> Handle(
+    public override async Task<string> HandleAsync(
       string request,
       Func<Task<string>> next,
       CancellationToken cancellationToken = default
@@ -109,8 +109,8 @@ public class PipelineBehaviorTests {
     }
   }
 
-  private class PostProcessingBehavior : PipelineBehavior<string, string> {
-    public override async Task<string> Handle(
+  private sealed class PostProcessingBehavior : PipelineBehavior<string, string> {
+    public override async Task<string> HandleAsync(
       string request,
       Func<Task<string>> next,
       CancellationToken cancellationToken = default
@@ -120,8 +120,8 @@ public class PipelineBehaviorTests {
     }
   }
 
-  private class ShortCircuitBehavior : PipelineBehavior<string, string> {
-    public override Task<string> Handle(
+  private sealed class ShortCircuitBehavior : PipelineBehavior<string, string> {
+    public override Task<string> HandleAsync(
       string request,
       Func<Task<string>> next,
       CancellationToken cancellationToken = default

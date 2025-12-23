@@ -7,7 +7,6 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Transports.Tests.Generated;
-using Whizbang.Transports.Tests.Generated;
 
 namespace Whizbang.Transports.Tests;
 
@@ -30,7 +29,7 @@ public class DispatcherTransportBridgeTests {
     var transport = new InProcessTransport();
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
-    var dispatcher = CreateTestDispatcher();
+    var dispatcher = _createTestDispatcher();
     var instanceProvider = new TestServiceInstanceProvider();
     var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer, instanceProvider);
     var destination = new TransportDestination("remote-service");
@@ -70,7 +69,7 @@ public class DispatcherTransportBridgeTests {
     var transport = new InProcessTransport();
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
-    var dispatcher = CreateTestDispatcher();
+    var dispatcher = _createTestDispatcher();
     var instanceProvider = new TestServiceInstanceProvider();
     var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer, instanceProvider);
     var destination = new TransportDestination("remote-service");
@@ -103,7 +102,7 @@ public class DispatcherTransportBridgeTests {
     var transport = new InProcessTransport();
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
-    var dispatcher = CreateTestDispatcher();
+    var dispatcher = _createTestDispatcher();
     var instanceProvider = new TestServiceInstanceProvider();
     var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer, instanceProvider);
     var destination = new TransportDestination("remote-calculator");
@@ -154,7 +153,7 @@ public class DispatcherTransportBridgeTests {
     var transport = new InProcessTransport();
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
-    var dispatcher = CreateTestDispatcher();
+    var dispatcher = _createTestDispatcher();
     var instanceProvider = new TestServiceInstanceProvider();
     var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer, instanceProvider);
     var destination = new TransportDestination("local-commands");
@@ -209,7 +208,7 @@ public class DispatcherTransportBridgeTests {
     var transport = new InProcessTransport();
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
-    var dispatcher = CreateTestDispatcher();
+    var dispatcher = _createTestDispatcher();
     var instanceProvider = new TestServiceInstanceProvider();
     var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer, instanceProvider);
     var destination = new TransportDestination("local-commands");
@@ -266,7 +265,7 @@ public class DispatcherTransportBridgeTests {
     var transport = new InProcessTransport();
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
-    var dispatcher = CreateTestDispatcher();
+    var dispatcher = _createTestDispatcher();
     var instanceProvider = new TestServiceInstanceProvider();
     var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer, instanceProvider);
     var destination = new TransportDestination("remote-service");
@@ -303,7 +302,7 @@ public class DispatcherTransportBridgeTests {
     var transport = new InProcessTransport();
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
-    var dispatcher = CreateTestDispatcher();
+    var dispatcher = _createTestDispatcher();
     var instanceProvider = new TestServiceInstanceProvider();
     var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer, instanceProvider);
     var destination = new TransportDestination("remote-service");
@@ -325,7 +324,7 @@ public class DispatcherTransportBridgeTests {
     // Assert - Envelope has at least one hop
     await Assert.That(receivedEnvelope).IsNotNull();
     if (receivedEnvelope != null) {
-      await Assert.That(receivedEnvelope.Hops).HasCount().GreaterThanOrEqualTo(1);
+      await Assert.That(receivedEnvelope.Hops).Count().IsGreaterThanOrEqualTo(1);
       await Assert.That(receivedEnvelope.Hops[0].ServiceInstance.ServiceName).IsNotNull();
     }
   }
@@ -336,7 +335,7 @@ public class DispatcherTransportBridgeTests {
     var transport = new InProcessTransport();
     var options = WhizbangJsonContext.CreateOptions();
     var serializer = new JsonMessageSerializer(options);
-    var dispatcher = CreateTestDispatcher();
+    var dispatcher = _createTestDispatcher();
     var instanceProvider = new TestServiceInstanceProvider();
     var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer, instanceProvider);
     var destination = new TransportDestination("remote-calculator");
@@ -394,7 +393,7 @@ public class DispatcherTransportBridgeTests {
   }
 
   // Helper methods
-  private static TestDispatcher CreateTestDispatcher() {
+  private static TestDispatcher _createTestDispatcher() {
     var serviceProvider = new TestServiceProvider();
     var instanceProvider = new TestServiceInstanceProvider();
     return new TestDispatcher(serviceProvider, instanceProvider);
@@ -411,14 +410,15 @@ public class DispatcherTransportBridgeTests {
   }
 
   public record TestResult : IEvent {
+    [StreamKey]
     public int Result { get; init; }
   }
 
   // Test dispatcher with hooks for verification
-  private class TestDispatcher(IServiceProvider serviceProvider, IServiceInstanceProvider instanceProvider) : Dispatcher(serviceProvider, instanceProvider) {
+  private sealed class TestDispatcher(IServiceProvider serviceProvider, IServiceInstanceProvider instanceProvider) : Dispatcher(serviceProvider, instanceProvider) {
     public Func<object, Task<IDeliveryReceipt>>? OnSendAsync { get; set; }
 
-    protected override ReceptorInvoker<TResult>? _getReceptorInvoker<TResult>(object message, Type messageType) {
+    protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
       // For testing, we can hook into the receptor invocation
       // SendAsync calls this method to get the invoker
       if (OnSendAsync != null && typeof(TResult) == typeof(object)) {
@@ -430,7 +430,7 @@ public class DispatcherTransportBridgeTests {
       return null;
     }
 
-    protected override VoidReceptorInvoker? _getVoidReceptorInvoker(object message, Type messageType) {
+    protected override VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType) {
       // For testing, track that void receptor was called
       if (OnSendAsync != null) {
         return (msg) => {
@@ -441,12 +441,12 @@ public class DispatcherTransportBridgeTests {
       return null;
     }
 
-    protected override ReceptorPublisher<TEvent> _getReceptorPublisher<TEvent>(TEvent @event, Type eventType) {
+    protected override ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent @event, Type eventType) {
       return async (evt) => { await Task.CompletedTask; };
     }
   }
 
-  private class TestServiceProvider : IServiceProvider {
+  private sealed class TestServiceProvider : IServiceProvider {
     private readonly TestServiceScopeFactory _scopeFactory = new();
 
     public object? GetService(Type serviceType) {
@@ -457,13 +457,13 @@ public class DispatcherTransportBridgeTests {
     }
   }
 
-  private class TestServiceScopeFactory : IServiceScopeFactory {
+  private sealed class TestServiceScopeFactory : IServiceScopeFactory {
     public IServiceScope CreateScope() {
       return new TestServiceScope(new TestServiceProvider());
     }
   }
 
-  private class TestServiceScope(IServiceProvider serviceProvider) : IServiceScope {
+  private sealed class TestServiceScope(IServiceProvider serviceProvider) : IServiceScope {
     public IServiceProvider ServiceProvider { get; } = serviceProvider;
 
     public void Dispose() {
@@ -471,7 +471,7 @@ public class DispatcherTransportBridgeTests {
     }
   }
 
-  private class TestServiceInstanceProvider : IServiceInstanceProvider {
+  private sealed class TestServiceInstanceProvider : IServiceInstanceProvider {
     private readonly Guid _instanceId = Guid.NewGuid();
 
     public Guid InstanceId => _instanceId;

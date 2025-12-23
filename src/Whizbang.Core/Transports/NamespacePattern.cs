@@ -27,7 +27,7 @@ namespace Whizbang.Core.Transports;
 /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:NamespacePattern_Constructor_WithNullPattern_ShouldThrowAsync</tests>
 public class NamespacePattern(string pattern) {
   private readonly string _pattern = pattern ?? throw new ArgumentNullException(nameof(pattern));
-  private readonly Regex _regex = PatternToRegex(pattern);
+  private readonly Regex _regex = _patternToRegex(pattern);
 
   /// <summary>
   /// Checks if a message type matches this pattern.
@@ -55,7 +55,7 @@ public class NamespacePattern(string pattern) {
   /// <summary>
   /// Converts a pattern with wildcards to a regex.
   /// </summary>
-  private static Regex PatternToRegex(string pattern) {
+  private static Regex _patternToRegex(string pattern) {
     // Escape special regex characters except *
     var escaped = Regex.Escape(pattern);
 

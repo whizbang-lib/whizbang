@@ -49,7 +49,7 @@ public sealed class PostgresSchemaInitializer {
     await command.ExecuteNonQueryAsync(cancellationToken);
 
     // Execute migration SQL files (PostgreSQL functions)
-    await ExecuteMigrationsAsync(connection, cancellationToken);
+    await _executeMigrationsAsync(connection, cancellationToken);
 
     // Execute perspective schema if provided
     if (!string.IsNullOrWhiteSpace(_perspectiveSchemaSql)) {
@@ -82,7 +82,7 @@ public sealed class PostgresSchemaInitializer {
     command.ExecuteNonQuery();
 
     // Execute migration SQL files (PostgreSQL functions)
-    ExecuteMigrations(connection);
+    _executeMigrations(connection);
 
     // Execute perspective schema if provided
     if (!string.IsNullOrWhiteSpace(_perspectiveSchemaSql)) {
@@ -93,7 +93,7 @@ public sealed class PostgresSchemaInitializer {
     }
   }
 
-  private static async Task ExecuteMigrationsAsync(NpgsqlConnection connection, CancellationToken cancellationToken = default) {
+  private static async Task _executeMigrationsAsync(NpgsqlConnection connection, CancellationToken cancellationToken = default) {
     var migrationPath = Path.Combine(
       AppContext.BaseDirectory,
       "..", "..", "..", "..", "..",
@@ -124,7 +124,7 @@ public sealed class PostgresSchemaInitializer {
     }
   }
 
-  private static void ExecuteMigrations(NpgsqlConnection connection) {
+  private static void _executeMigrations(NpgsqlConnection connection) {
     var migrationPath = Path.Combine(
       AppContext.BaseDirectory,
       "..", "..", "..", "..", "..",

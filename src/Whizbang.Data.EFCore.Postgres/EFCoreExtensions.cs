@@ -14,6 +14,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// Uses C# 14 extension blocks for clean syntax without 'this' keyword.
 /// Provides extensions for both WhizbangBuilder (unified API) and WhizbangPerspectiveBuilder (legacy).
 /// </summary>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1708:Identifiers should differ by more than case", Justification = "Extension blocks are implicitly named by their target type - cannot be explicitly renamed")]
 public static class EFCoreExtensions {
   /// <summary>
   /// Extension block for WhizbangBuilder (unified API).

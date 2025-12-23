@@ -50,7 +50,7 @@ public class SeedProductsWorkflowTests {
       fixture.GetLogger<SeedMutations>());
 
     // Act - Call seed mutation
-    var seededCount = await seedMutations.SeedProducts();
+    var seededCount = await seedMutations.SeedProductsAsync();
 
     // Wait for event processing
     await fixture.WaitForEventProcessingAsync();
@@ -98,10 +98,10 @@ public class SeedProductsWorkflowTests {
       fixture.GetLogger<SeedMutations>());
 
     // Act - Call seed mutation TWICE
-    var firstSeedCount = await seedMutations.SeedProducts();
+    var firstSeedCount = await seedMutations.SeedProductsAsync();
     await fixture.WaitForEventProcessingAsync();
 
-    var secondSeedCount = await seedMutations.SeedProducts();
+    var secondSeedCount = await seedMutations.SeedProductsAsync();
     await fixture.WaitForEventProcessingAsync();
 
     // Assert - First call should seed 12 products
@@ -143,7 +143,7 @@ public class SeedProductsWorkflowTests {
       fixture.GetLogger<SeedMutations>());
 
     // Act
-    await seedMutations.SeedProducts();
+    await seedMutations.SeedProductsAsync();
     await fixture.WaitForEventProcessingAsync();
 
     // Assert - Verify specific product stock levels
@@ -188,7 +188,7 @@ public class SeedProductsWorkflowTests {
       fixture.GetLogger<SeedMutations>());
 
     // Act
-    await seedMutations.SeedProducts();
+    await seedMutations.SeedProductsAsync();
     await fixture.WaitForEventProcessingAsync();
 
     // Assert - Get all products from both perspectives

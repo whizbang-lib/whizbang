@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Linq;
 
 namespace Whizbang.Core.Generated;
@@ -60,18 +61,18 @@ public static class WhizbangDiagnostics {
     output.AppendLine("═══════════════════════════════════════════════════════════════");
     output.AppendLine("Whizbang Source Generators - Build Diagnostics");
     if (categories != DiagnosticCategory.All) {
-      output.AppendLine($"Categories: {categories}");
+      output.AppendLine(CultureInfo.InvariantCulture, $"Categories: {categories}");
     }
     output.AppendLine("═══════════════════════════════════════════════════════════════");
-    output.AppendLine($"Total Generators: {filteredEntries.Count}");
+    output.AppendLine(CultureInfo.InvariantCulture, $"Total Generators: {filteredEntries.Count}");
     output.AppendLine("───────────────────────────────────────────────────────────────");
     output.AppendLine();
 
     foreach (var entry in filteredEntries) {
-      output.AppendLine($"[{entry.GeneratorName}]");
-      output.AppendLine($"  Timestamp: {entry.Timestamp}");
-      output.AppendLine($"  Category:  {entry.Category}");
-      output.AppendLine($"  {entry.Message}");
+      output.AppendLine(CultureInfo.InvariantCulture, $"[{entry.GeneratorName}]");
+      output.AppendLine(CultureInfo.InvariantCulture, $"  Timestamp: {entry.Timestamp}");
+      output.AppendLine(CultureInfo.InvariantCulture, $"  Category:  {entry.Category}");
+      output.AppendLine(CultureInfo.InvariantCulture, $"  {entry.Message}");
       output.AppendLine();
     }
 

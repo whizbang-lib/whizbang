@@ -88,7 +88,7 @@ public class SerializationTests {
     var deserialized = JsonSerializer.Deserialize(json, typeInfo) as MessageEnvelope<TestMessage>;
 
     // Assert
-    await Assert.That(deserialized!.Hops).HasCount().EqualTo(2);
+    await Assert.That(deserialized!.Hops).Count().IsEqualTo(2);
     await Assert.That(deserialized!.Hops[0].ServiceInstance.ServiceName).IsEqualTo("Service1");
     await Assert.That(deserialized!.Hops[1].ServiceInstance.ServiceName).IsEqualTo("Service2");
   }
@@ -133,7 +133,7 @@ public class SerializationTests {
 
     // Assert
     var deserializedCausationHops = deserialized!.GetCausationHops();
-    await Assert.That(deserializedCausationHops).HasCount().EqualTo(1);
+    await Assert.That(deserializedCausationHops).Count().IsEqualTo(1);
     await Assert.That(deserializedCausationHops[0].ServiceInstance.ServiceName).IsEqualTo("ParentService");
   }
 
@@ -260,7 +260,7 @@ public class SerializationTests {
     await Assert.That(hop.Topic).IsEqualTo("orders");
     await Assert.That(hop.PartitionIndex).IsEqualTo(5);
     await Assert.That(hop.SecurityContext!.UserId).IsEqualTo("user-1");
-    await Assert.That(hop.Trail!.Decisions).HasCount().EqualTo(1);
+    await Assert.That(hop.Trail!.Decisions).Count().IsEqualTo(1);
   }
 
   #endregion

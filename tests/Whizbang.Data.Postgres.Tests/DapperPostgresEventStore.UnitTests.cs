@@ -13,7 +13,7 @@ public class DapperPostgresEventStoreUnitTests {
   [Test]
   public async Task IsUniqueConstraintViolation_WithNonPostgresException_UniqueConstraintMessage_ShouldReturnTrueAsync() {
     // Arrange
-    var ex = new Exception("Error: unique constraint violation occurred");
+    var ex = new InvalidOperationException("Error: unique constraint violation occurred");
 
     // Act
     var result = DapperPostgresEventStore.IsUniqueConstraintViolation(ex);
@@ -25,7 +25,7 @@ public class DapperPostgresEventStoreUnitTests {
   [Test]
   public async Task IsUniqueConstraintViolation_WithNonPostgresException_DuplicateKeyMessage_ShouldReturnTrueAsync() {
     // Arrange
-    var ex = new Exception("Error: duplicate key value violates constraint");
+    var ex = new InvalidOperationException("Error: duplicate key value violates constraint");
 
     // Act
     var result = DapperPostgresEventStore.IsUniqueConstraintViolation(ex);
@@ -37,7 +37,7 @@ public class DapperPostgresEventStoreUnitTests {
   [Test]
   public async Task IsUniqueConstraintViolation_WithNonPostgresException_CaseInsensitive_ShouldReturnTrueAsync() {
     // Arrange
-    var ex = new Exception("ERROR: UNIQUE CONSTRAINT VIOLATION");
+    var ex = new InvalidOperationException("ERROR: UNIQUE CONSTRAINT VIOLATION");
 
     // Act
     var result = DapperPostgresEventStore.IsUniqueConstraintViolation(ex);
@@ -49,7 +49,7 @@ public class DapperPostgresEventStoreUnitTests {
   [Test]
   public async Task IsUniqueConstraintViolation_WithNonPostgresException_DifferentMessage_ShouldReturnFalseAsync() {
     // Arrange
-    var ex = new Exception("Some other database error");
+    var ex = new InvalidOperationException("Some other database error");
 
     // Act
     var result = DapperPostgresEventStore.IsUniqueConstraintViolation(ex);

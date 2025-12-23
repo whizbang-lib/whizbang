@@ -79,7 +79,7 @@ private JsonPropertyInfo CreateProperty<TProperty>(
     JsonSerializerOptions options,
     string propertyName,
     Func<object, TProperty> getter,
-    Action<object, TProperty>? setter,
+    Action<object, TProperty?>? setter,
     JsonTypeInfo<TProperty> propertyTypeInfo) {
 
   var propertyInfo = new JsonPropertyInfoValues<TProperty> {

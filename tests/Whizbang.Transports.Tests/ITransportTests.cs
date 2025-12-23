@@ -16,7 +16,7 @@ public class ITransportTests {
   [Test]
   public async Task ITransport_Capabilities_ReturnsTransportCapabilitiesAsync() {
     // Arrange
-    var transport = CreateTestTransport();
+    var transport = _createTestTransport();
 
     // Act
     var capabilities = transport.Capabilities;
@@ -28,8 +28,8 @@ public class ITransportTests {
   [Test]
   public async Task ITransport_PublishAsync_WithValidMessage_CompletesSuccessfullyAsync() {
     // Arrange
-    var transport = CreateTestTransport();
-    var envelope = CreateTestEnvelope();
+    var transport = _createTestTransport();
+    var envelope = _createTestEnvelope();
     var destination = new TransportDestination("test-topic");
 
     // Act & Assert - Should not throw
@@ -39,8 +39,8 @@ public class ITransportTests {
   [Test]
   public async Task ITransport_PublishAsync_WithCancellation_ThrowsOperationCanceledAsync() {
     // Arrange
-    var transport = CreateTestTransport();
-    var envelope = CreateTestEnvelope();
+    var transport = _createTestTransport();
+    var envelope = _createTestEnvelope();
     var destination = new TransportDestination("test-topic");
     var cts = new CancellationTokenSource();
     cts.Cancel();
@@ -54,11 +54,9 @@ public class ITransportTests {
   [Test]
   public async Task ITransport_SubscribeAsync_RegistersHandler_ReturnsSubscriptionAsync() {
     // Arrange
-    var transport = CreateTestTransport();
+    var transport = _createTestTransport();
     var destination = new TransportDestination("test-topic");
-    var handlerCalled = false;
     Task handler(IMessageEnvelope env, CancellationToken ct) {
-      handlerCalled = true;
       return Task.CompletedTask;
     }
 
@@ -73,8 +71,8 @@ public class ITransportTests {
   [Skip("Comprehensive request-response test exists in InProcessTransportTests")]
   public async Task ITransport_SendAsync_WithRequestResponse_ReturnsResponseEnvelopeAsync() {
     // Arrange
-    var transport = CreateTestTransport();
-    var requestEnvelope = CreateTestEnvelope();
+    var transport = _createTestTransport();
+    var requestEnvelope = _createTestEnvelope();
     var destination = new TransportDestination("test-service");
 
     // Setup responder
@@ -118,8 +116,8 @@ public class ITransportTests {
   [Test]
   public async Task ITransport_SendAsync_WithTimeout_ThrowsTimeoutExceptionAsync() {
     // Arrange
-    var transport = CreateTestTransport();
-    var requestEnvelope = CreateTestEnvelope();
+    var transport = _createTestTransport();
+    var requestEnvelope = _createTestEnvelope();
     var destination = new TransportDestination("test-service");
     var cts = new CancellationTokenSource(TimeSpan.FromMilliseconds(1));
 
@@ -134,13 +132,13 @@ public class ITransportTests {
   }
 
   // Helper methods
-  private static ITransport CreateTestTransport() {
+  private static InProcessTransport _createTestTransport() {
     // This will use InProcessTransport once implemented
     // For now, this will fail compilation - that's expected in RED phase
     return new InProcessTransport();
   }
 
-  private static MessageEnvelope<TestMessage> CreateTestEnvelope() {
+  private static MessageEnvelope<TestMessage> _createTestEnvelope() {
     var message = new TestMessage { Content = "Test" };
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
@@ -160,11 +158,11 @@ public class ITransportTests {
   }
 
   // Test message types
-  private record TestMessage {
+  private sealed record TestMessage {
     public string Content { get; init; } = string.Empty;
   }
 
-  private record TestResponse {
+  private sealed record TestResponse {
     public string Result { get; init; } = string.Empty;
   }
 }

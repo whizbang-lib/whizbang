@@ -131,7 +131,7 @@ public class PerspectiveChannelWriterTests {
     var results = await Task.WhenAll(reader1Task, reader2Task);
 
     // Assert - both works should be read
-    await Assert.That(results).HasCount().EqualTo(2);
+    await Assert.That(results).Count().IsEqualTo(2);
     await Assert.That(results).Contains(work1);
     await Assert.That(results).Contains(work2);
   }

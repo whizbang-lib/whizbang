@@ -10,7 +10,7 @@ namespace Whizbang.Data.Tests;
 /// Inherits all contract tests from RequestResponseStoreContractTests.
 /// </summary>
 [InheritsTests]
-public class DapperRequestResponseStoreTests : RequestResponseStoreContractTests {
+public class DapperRequestResponseStoreTests : RequestResponseStoreContractTests, IDisposable {
   private DapperTestBase _testBase = null!;
 
   [Before(Test)]
@@ -30,5 +30,10 @@ public class DapperRequestResponseStoreTests : RequestResponseStoreContractTests
     return Task.FromResult<IRequestResponseStore>(store);
   }
 
-  private class TestFixture : DapperTestBase { }
+  public void Dispose() {
+    _testBase?.DisposeAsync().AsTask().Wait();
+    GC.SuppressFinalize(this);
+  }
+
+  private sealed class TestFixture : DapperTestBase { }
 }

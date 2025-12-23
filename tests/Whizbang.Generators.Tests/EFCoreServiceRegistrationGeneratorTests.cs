@@ -10,7 +10,7 @@ namespace Whizbang.Generators.Tests;
 public class EFCoreServiceRegistrationGeneratorTests {
 
   // Perspective boilerplate required for generator to produce output
-  private const string PerspectiveBoilerplate = """
+  private const string PERSPECTIVE_BOILERPLATE = """
     using Whizbang.Core;
     using Whizbang.Core.Perspectives;
 
@@ -52,7 +52,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
       namespace TestApp;
 
-      {{PerspectiveBoilerplate}}
+      {{PERSPECTIVE_BOILERPLATE}}
 
       [WhizbangDbContext]
       public class TestDbContext : DbContext {
@@ -110,7 +110,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
       namespace TestApp;
 
-      {{PerspectiveBoilerplate}}
+      {{PERSPECTIVE_BOILERPLATE}}
 
       [WhizbangDbContext]  // No args = default key ""
       public class TestDbContext : DbContext {
@@ -232,7 +232,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
       namespace TestApp;
 
-      {{PerspectiveBoilerplate}}
+      {{PERSPECTIVE_BOILERPLATE}}
 
       [WhizbangDbContext]
       public partial class TestDbContext : DbContext {
@@ -272,7 +272,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
       namespace TestApp;
 
-      {{PerspectiveBoilerplate}}
+      {{PERSPECTIVE_BOILERPLATE}}
 
       [WhizbangDbContext]
       public class TestDbContext : DbContext {
@@ -312,7 +312,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
       namespace TestApp;
 
-      {{PerspectiveBoilerplate}}
+      {{PERSPECTIVE_BOILERPLATE}}
 
       [WhizbangDbContext]
       public class TestDbContext : DbContext {
@@ -350,7 +350,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
       namespace TestApp;
 
-      {{PerspectiveBoilerplate}}
+      {{PERSPECTIVE_BOILERPLATE}}
 
       [WhizbangDbContext]
       public partial class TestDbContext : DbContext {
@@ -390,7 +390,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
       namespace TestApp;
 
-      {{PerspectiveBoilerplate}}
+      {{PERSPECTIVE_BOILERPLATE}}
 
       [WhizbangDbContext]
       public partial class TestDbContext : DbContext {
@@ -424,7 +424,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
       namespace TestApp;
 
-      {{PerspectiveBoilerplate}}
+      {{PERSPECTIVE_BOILERPLATE}}
 
       [WhizbangDbContext]
       public partial class TestDbContext : DbContext {
@@ -460,7 +460,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
       namespace TestApp;
 
-      {{PerspectiveBoilerplate}}
+      {{PERSPECTIVE_BOILERPLATE}}
 
       [WhizbangDbContext]
       public partial class TestDbContext : DbContext {
@@ -571,7 +571,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
       namespace TestApp;
 
-      {{PerspectiveBoilerplate}}
+      {{PERSPECTIVE_BOILERPLATE}}
 
       [WhizbangDbContext]
       public class TestDbContext : DbContext {
@@ -613,7 +613,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
       namespace TestApp;
 
-      {{PerspectiveBoilerplate}}
+      {{PERSPECTIVE_BOILERPLATE}}
 
       [WhizbangDbContext]
       public class TestDbContext : DbContext {
@@ -654,7 +654,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
       namespace TestApp;
 
-      {{PerspectiveBoilerplate}}
+      {{PERSPECTIVE_BOILERPLATE}}
 
       [WhizbangDbContext]
       public class TestDbContext : DbContext {
@@ -692,7 +692,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
       namespace TestApp;
 
-      {{PerspectiveBoilerplate}}
+      {{PERSPECTIVE_BOILERPLATE}}
 
       [WhizbangDbContext]
       public class TestDbContext : DbContext {
@@ -729,7 +729,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
       namespace TestApp;
 
-      {{PerspectiveBoilerplate}}
+      {{PERSPECTIVE_BOILERPLATE}}
 
       [WhizbangDbContext]
       public class TestDbContext : DbContext {
@@ -770,7 +770,7 @@ public class EFCoreServiceRegistrationGeneratorTests {
 
       namespace TestApp;
 
-      {{PerspectiveBoilerplate}}
+      {{PERSPECTIVE_BOILERPLATE}}
 
       [WhizbangDbContext]
       public class TestDbContext : DbContext {

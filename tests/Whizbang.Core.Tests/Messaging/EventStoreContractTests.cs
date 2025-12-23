@@ -14,6 +14,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// Test event with AggregateId for stream ID inference.
 /// </summary>
 public record TestEvent : IEvent {
+  [StreamKey]
   [AggregateId]
   public required Guid AggregateId { get; init; }
   public required string Payload { get; init; }
@@ -46,7 +47,7 @@ public abstract class EventStoreContractTests {
     await foreach (var evt in eventStore.ReadAsync<TestEvent>(streamId, fromSequence: 0)) {
       events.Add(evt);
     }
-    await Assert.That(events).HasCount().EqualTo(1);
+    await Assert.That(events).Count().IsEqualTo(1);
     await Assert.That(events[0].MessageId).IsEqualTo(envelope.MessageId);
   }
 
@@ -74,7 +75,7 @@ public abstract class EventStoreContractTests {
     }
 
     // Assert
-    await Assert.That(events).HasCount().EqualTo(0);
+    await Assert.That(events).Count().IsEqualTo(0);
   }
 
   [Test]
@@ -97,7 +98,7 @@ public abstract class EventStoreContractTests {
     }
 
     // Assert
-    await Assert.That(events).HasCount().EqualTo(3);
+    await Assert.That(events).Count().IsEqualTo(3);
     await Assert.That(events[0].MessageId).IsEqualTo(envelope1.MessageId);
     await Assert.That(events[1].MessageId).IsEqualTo(envelope2.MessageId);
     await Assert.That(events[2].MessageId).IsEqualTo(envelope3.MessageId);
@@ -120,7 +121,7 @@ public abstract class EventStoreContractTests {
     }
 
     // Assert
-    await Assert.That(events).HasCount().EqualTo(1);
+    await Assert.That(events).Count().IsEqualTo(1);
     await Assert.That(events[0].MessageId).IsEqualTo(envelope3.MessageId);
   }
 
@@ -177,8 +178,8 @@ public abstract class EventStoreContractTests {
     }
 
     // Assert
-    await Assert.That(stream1Events).HasCount().EqualTo(1);
-    await Assert.That(stream2Events).HasCount().EqualTo(1);
+    await Assert.That(stream1Events).Count().IsEqualTo(1);
+    await Assert.That(stream2Events).Count().IsEqualTo(1);
     await Assert.That(stream1Events[0].MessageId).IsEqualTo(envelope1.MessageId);
     await Assert.That(stream2Events[0].MessageId).IsEqualTo(envelope2.MessageId);
   }
@@ -200,7 +201,7 @@ public abstract class EventStoreContractTests {
     await foreach (var evt in eventStore.ReadAsync<TestEvent>(streamId, fromSequence: 0)) {
       events.Add(evt);
     }
-    await Assert.That(events).HasCount().EqualTo(10);
+    await Assert.That(events).Count().IsEqualTo(10);
   }
 
   /// <summary>

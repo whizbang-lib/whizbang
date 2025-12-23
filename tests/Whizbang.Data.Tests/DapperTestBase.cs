@@ -11,7 +11,7 @@ namespace Whizbang.Data.Tests;
 /// Sets up an in-memory SQLite database with the Whizbang schema.
 /// </summary>
 public abstract class DapperTestBase : IDisposable, IAsyncDisposable {
-  private static bool _typeHandlersRegistered = false;
+  private static bool _typeHandlersRegistered;
 
   public SqliteConnection Connection { get; private set; } = null!;
   public DapperDbExecutor Executor { get; private set; } = null!;
@@ -36,7 +36,7 @@ public abstract class DapperTestBase : IDisposable, IAsyncDisposable {
     ConnectionFactory = new SharedSqliteConnectionFactory(Connection);
 
     // Run SQL schema migration
-    await InitializeDatabaseAsync();
+    await _initializeDatabaseAsync();
   }
 
   [After(Test)]
@@ -63,7 +63,7 @@ public abstract class DapperTestBase : IDisposable, IAsyncDisposable {
     GC.SuppressFinalize(this);
   }
 
-  private async Task InitializeDatabaseAsync() {
+  private async Task _initializeDatabaseAsync() {
     // Read and execute SQLite migration script
     var schema = @"
 -- Inbox table for message ingestion staging (receives from remote outbox)

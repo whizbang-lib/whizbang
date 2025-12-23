@@ -55,7 +55,7 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
     var columnDefinitions = new List<string>();
     foreach (var column in table.Columns) {
       // Don't add inline PRIMARY KEY for composite primary keys
-      columnDefinitions.Add(BuildColumnDefinition(column, suppressInlinePrimaryKey: hasCompositePrimaryKey));
+      columnDefinitions.Add(_buildColumnDefinition(column, suppressInlinePrimaryKey: hasCompositePrimaryKey));
     }
 
     sb.AppendLine(string.Join(",\n", columnDefinitions.Select(c => $"  {c}")));
@@ -86,7 +86,7 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
   /// </summary>
   /// <param name="column">Column definition to convert to SQL</param>
   /// <param name="suppressInlinePrimaryKey">If true, don't add inline PRIMARY KEY (for composite PKs)</param>
-  private static string BuildColumnDefinition(ColumnDefinition column, bool suppressInlinePrimaryKey = false) {
+  private static string _buildColumnDefinition(ColumnDefinition column, bool suppressInlinePrimaryKey = false) {
     var parts = new List<string>();
 
     // Column name and type

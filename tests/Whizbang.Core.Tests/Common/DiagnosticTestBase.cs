@@ -26,7 +26,7 @@ public class DiagnosticTestBase {
   /// Override this property to specify which diagnostic categories to display.
   /// Default is ReceptorDiscovery.
   /// </summary>
-  protected virtual DiagnosticCategory _diagnosticCategories => DiagnosticCategory.ReceptorDiscovery;
+  protected virtual DiagnosticCategory DiagnosticCategories => DiagnosticCategory.ReceptorDiscovery;
 
   [Before(Class)]
   public static void ClassSetup() {
@@ -40,7 +40,7 @@ public class DiagnosticTestBase {
     // This ensures it's captured before the test result is published
     if (_isDiagnosticsEnabled()) {
       var diagnostics = WhizbangDiagnostics.Diagnostics(
-          _diagnosticCategories,
+          DiagnosticCategories,
           printToConsole: false
       );
 

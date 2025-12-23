@@ -57,12 +57,12 @@ public static class Extensions {
                   .AddHttpClientInstrumentation();
         });
 
-    builder.AddOpenTelemetryExporters();
+    builder._addOpenTelemetryExporters();
 
     return builder;
   }
 
-  private static IHostApplicationBuilder AddOpenTelemetryExporters(this IHostApplicationBuilder builder) {
+  private static IHostApplicationBuilder _addOpenTelemetryExporters(this IHostApplicationBuilder builder) {
     var useOtlpExporter = !string.IsNullOrWhiteSpace(builder.Configuration["OTEL_EXPORTER_OTLP_ENDPOINT"]);
 
     if (useOtlpExporter) {

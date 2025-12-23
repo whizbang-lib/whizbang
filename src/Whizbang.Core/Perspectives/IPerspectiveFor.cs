@@ -28,9 +28,9 @@ public interface IPerspectiveFor<TModel, TEvent1> : IPerspectiveFor<TModel>
   /// Use event timestamps instead of DateTime.UtcNow for time values.
   /// </summary>
   /// <param name="currentData">The current state of the read model</param>
-  /// <param name="event">The event that occurred</param>
+  /// <param name="eventData">The event that occurred</param>
   /// <returns>A new model with the event applied</returns>
-  TModel Apply(TModel currentData, TEvent1 @event);
+  TModel Apply(TModel currentData, TEvent1 eventData);
 }
 
 /// <summary>
@@ -40,8 +40,8 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2> : IPerspectiveFor<TMo
   where TModel : class
   where TEvent1 : IEvent
   where TEvent2 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 @event);
-  TModel Apply(TModel currentData, TEvent2 @event);
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  TModel Apply(TModel currentData, TEvent2 eventData);
 }
 
 /// <summary>
@@ -52,9 +52,9 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3> : IPerspecti
   where TEvent1 : IEvent
   where TEvent2 : IEvent
   where TEvent3 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 @event);
-  TModel Apply(TModel currentData, TEvent2 @event);
-  TModel Apply(TModel currentData, TEvent3 @event);
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  TModel Apply(TModel currentData, TEvent3 eventData);
 }
 
 /// <summary>
@@ -66,10 +66,10 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4> : I
   where TEvent2 : IEvent
   where TEvent3 : IEvent
   where TEvent4 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 @event);
-  TModel Apply(TModel currentData, TEvent2 @event);
-  TModel Apply(TModel currentData, TEvent3 @event);
-  TModel Apply(TModel currentData, TEvent4 @event);
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  TModel Apply(TModel currentData, TEvent4 eventData);
 }
 
 /// <summary>
@@ -82,11 +82,11 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   where TEvent3 : IEvent
   where TEvent4 : IEvent
   where TEvent5 : IEvent {
-  TModel Apply(TModel currentData, TEvent1 @event);
-  TModel Apply(TModel currentData, TEvent2 @event);
-  TModel Apply(TModel currentData, TEvent3 @event);
-  TModel Apply(TModel currentData, TEvent4 @event);
-  TModel Apply(TModel currentData, TEvent5 @event);
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  TModel Apply(TModel currentData, TEvent3 eventData);
+  TModel Apply(TModel currentData, TEvent4 eventData);
+  TModel Apply(TModel currentData, TEvent5 eventData);
 }
 
 // TODO: Generate remaining variants (6-50 event types) via source generator or T4 template

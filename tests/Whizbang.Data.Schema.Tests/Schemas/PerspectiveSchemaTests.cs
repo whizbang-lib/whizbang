@@ -37,10 +37,10 @@ public class PerspectiveSchemaTests {
 
     // Assert
     await Assert.That(table.Name).IsEqualTo("product_dto");
-    await Assert.That(table.Columns).HasCount().EqualTo(2);
+    await Assert.That(table.Columns).Count().IsEqualTo(2);
     await Assert.That(table.Columns[0].Name).IsEqualTo("name");
     await Assert.That(table.Columns[1].Name).IsEqualTo("description");
-    await Assert.That(table.Indexes).HasCount().EqualTo(0);
+    await Assert.That(table.Indexes).Count().IsEqualTo(0);
   }
 
   [Test]
@@ -73,7 +73,7 @@ public class PerspectiveSchemaTests {
 
     // Assert
     await Assert.That(table.Name).IsEqualTo("product_dto");
-    await Assert.That(table.Indexes).HasCount().EqualTo(1);
+    await Assert.That(table.Indexes).Count().IsEqualTo(1);
     await Assert.That(table.Indexes[0].Name).IsEqualTo("idx_product_status");
     await Assert.That(table.Indexes[0].Columns[0]).IsEqualTo("status");
   }
@@ -101,7 +101,7 @@ public class PerspectiveSchemaTests {
 
     // Assert
     await Assert.That(table.Name).IsEqualTo("product_dto");
-    await Assert.That(table.Columns).HasCount().EqualTo(3);
+    await Assert.That(table.Columns).Count().IsEqualTo(3);
 
     // Verify ID column is first
     var idColumn = table.Columns[0];

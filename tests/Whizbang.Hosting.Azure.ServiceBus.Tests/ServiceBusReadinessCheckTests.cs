@@ -122,7 +122,7 @@ public class ServiceBusReadinessCheckTests {
 /// <summary>
 /// Test implementation of ITransport for testing readiness checks.
 /// </summary>
-internal class TestTransport : ITransport {
+internal sealed class TestTransport : ITransport {
   private readonly bool _isInitialized;
 
   public TestTransport(bool isInitialized) {
@@ -153,7 +153,7 @@ internal class TestTransport : ITransport {
 /// <summary>
 /// Test implementation of ServiceBusClient for testing readiness checks.
 /// </summary>
-internal class TestServiceBusClient : ServiceBusClient {
+internal sealed class TestServiceBusClient : ServiceBusClient {
   private readonly bool _isHealthy;
   public int IsClosedAccessCount { get; private set; }
 

@@ -199,7 +199,7 @@ public abstract class SequenceProviderContractTests {
 
     // Assert - Should be exactly [0, 1, 2, ..., 999]
     var expected = Enumerable.Range(0, count).Select(i => (long)i).ToArray();
-    await Assert.That(sequences).HasCount().EqualTo(expected.Length);
+    await Assert.That(sequences).Count().IsEqualTo(expected.Length);
     for (int i = 0; i < sequences.Length; i++) {
       await Assert.That(sequences[i]).IsEqualTo(expected[i]);
     }

@@ -12,7 +12,10 @@ public record OrderShipped([StreamKey] string OrderId, string TrackingNumber) : 
 public record UserRegistered([StreamKey] Guid UserId, string Email) : IEvent;
 
 // Event without stream key (should fail resolution)
+// Intentionally missing StreamKey to test error handling
+#pragma warning disable WHIZ009
 public record InvalidEvent(string Data) : IEvent;
+#pragma warning restore WHIZ009
 
 /// <summary>
 /// Tests for stream key resolution from events.

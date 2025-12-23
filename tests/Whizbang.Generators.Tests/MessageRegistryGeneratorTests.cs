@@ -322,7 +322,7 @@ namespace TestNamespace {
 
     // Should generate exactly one file
     var generatedFiles = GeneratorTestHelper.GetAllGeneratedSources(result).ToList();
-    await Assert.That(generatedFiles).HasCount().EqualTo(1);
+    await Assert.That(generatedFiles).Count().IsEqualTo(1);
     await Assert.That(generatedFiles[0].FileName).IsEqualTo("MessageRegistry.g.cs");
   }
 

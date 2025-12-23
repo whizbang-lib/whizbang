@@ -9,11 +9,11 @@ namespace ECommerce.Contracts.Tests.Commands;
 /// Tests for AdjustInventoryCommand
 /// </summary>
 public class AdjustInventoryCommandTests {
-  private static readonly IWhizbangIdProvider IdProvider = new Uuid7IdProvider();
+  private static readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
   [Test]
   public async Task AdjustInventoryCommand_WithPositiveChange_InitializesSuccessfullyAsync() {
     // Arrange & Act
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var cmd = new AdjustInventoryCommand {
       ProductId = productId,
       QuantityChange = 10,
@@ -30,7 +30,7 @@ public class AdjustInventoryCommandTests {
   public async Task AdjustInventoryCommand_WithNegativeChange_InitializesSuccessfullyAsync() {
     // Arrange & Act
     var cmd = new AdjustInventoryCommand {
-      ProductId = IdProvider.NewGuid(),
+      ProductId = _idProvider.NewGuid(),
       QuantityChange = -5,
       Reason = "Damaged goods"
     };
@@ -44,7 +44,7 @@ public class AdjustInventoryCommandTests {
   public async Task AdjustInventoryCommand_WithZeroChange_InitializesSuccessfullyAsync() {
     // Arrange & Act
     var cmd = new AdjustInventoryCommand {
-      ProductId = IdProvider.NewGuid(),
+      ProductId = _idProvider.NewGuid(),
       QuantityChange = 0,
       Reason = "Audit - no discrepancies found"
     };
@@ -57,7 +57,7 @@ public class AdjustInventoryCommandTests {
   [Test]
   public async Task AdjustInventoryCommand_RecordEquality_WorksCorrectlyAsync() {
     // Arrange
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var cmd1 = new AdjustInventoryCommand {
       ProductId = productId,
       QuantityChange = -10,
@@ -77,7 +77,7 @@ public class AdjustInventoryCommandTests {
   [Test]
   public async Task AdjustInventoryCommand_ToString_ReturnsReadableRepresentationAsync() {
     // Arrange & Act
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var cmd = new AdjustInventoryCommand {
       ProductId = productId,
       QuantityChange = -15,

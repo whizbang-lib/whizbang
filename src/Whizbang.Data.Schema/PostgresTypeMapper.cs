@@ -32,14 +32,14 @@ public static class PostgresTypeMapper {
   /// <returns>Postgres SQL type string (e.g., "UUID", "VARCHAR(255)", "JSONB")</returns>
   public static string MapDataType(Whizbang.Data.Schema.WhizbangDataType dataType, int? maxLength = null) {
     return dataType switch {
-      Whizbang.Data.Schema.WhizbangDataType.Uuid => "UUID",
-      Whizbang.Data.Schema.WhizbangDataType.String => maxLength.HasValue ? $"VARCHAR({maxLength.Value})" : "TEXT",
-      Whizbang.Data.Schema.WhizbangDataType.TimestampTz => "TIMESTAMPTZ",
-      Whizbang.Data.Schema.WhizbangDataType.Json => "JSONB",
-      Whizbang.Data.Schema.WhizbangDataType.BigInt => "BIGINT",
-      Whizbang.Data.Schema.WhizbangDataType.Integer => "INTEGER",
-      Whizbang.Data.Schema.WhizbangDataType.SmallInt => "SMALLINT",
-      Whizbang.Data.Schema.WhizbangDataType.Boolean => "BOOLEAN",
+      Whizbang.Data.Schema.WhizbangDataType.UUID => "UUID",
+      Whizbang.Data.Schema.WhizbangDataType.STRING => maxLength.HasValue ? $"VARCHAR({maxLength.Value})" : "TEXT",
+      Whizbang.Data.Schema.WhizbangDataType.TIMESTAMP_TZ => "TIMESTAMPTZ",
+      Whizbang.Data.Schema.WhizbangDataType.JSON => "JSONB",
+      Whizbang.Data.Schema.WhizbangDataType.BIG_INT => "BIGINT",
+      Whizbang.Data.Schema.WhizbangDataType.INTEGER => "INTEGER",
+      Whizbang.Data.Schema.WhizbangDataType.SMALL_INT => "SMALLINT",
+      Whizbang.Data.Schema.WhizbangDataType.BOOLEAN => "BOOLEAN",
       _ => throw new ArgumentOutOfRangeException(nameof(dataType), dataType, "Unknown data type")
     };
   }
@@ -52,9 +52,9 @@ public static class PostgresTypeMapper {
   /// <returns>Postgres default expression (e.g., "CURRENT_TIMESTAMP", "'Pending'", "42")</returns>
   public static string MapDefaultValue(Whizbang.Data.Schema.DefaultValue defaultValue) {
     return defaultValue switch {
-      Whizbang.Data.Schema.FunctionDefault func => MapFunctionDefault(func.FunctionType),
+      Whizbang.Data.Schema.FunctionDefault func => _mapFunctionDefault(func.FunctionType),
       Whizbang.Data.Schema.IntegerDefault intVal => intVal.Value.ToString(),
-      Whizbang.Data.Schema.StringDefault strVal => $"'{EscapeSingleQuote(strVal.Value)}'",
+      Whizbang.Data.Schema.StringDefault strVal => $"'{_escapeSingleQuote(strVal.Value)}'",
       Whizbang.Data.Schema.BooleanDefault boolVal => boolVal.Value ? "TRUE" : "FALSE",
       Whizbang.Data.Schema.NullDefault => "NULL",
       _ => throw new ArgumentOutOfRangeException(nameof(defaultValue), defaultValue, "Unknown default value type")
@@ -64,13 +64,13 @@ public static class PostgresTypeMapper {
   /// <summary>
   /// Maps DefaultValueFunction to Postgres function expression.
   /// </summary>
-  private static string MapFunctionDefault(Whizbang.Data.Schema.DefaultValueFunction function) {
+  private static string _mapFunctionDefault(Whizbang.Data.Schema.DefaultValueFunction function) {
     return function switch {
-      Whizbang.Data.Schema.DefaultValueFunction.DateTime_Now => "CURRENT_TIMESTAMP",
-      Whizbang.Data.Schema.DefaultValueFunction.DateTime_UtcNow => "(NOW() AT TIME ZONE 'UTC')",
-      Whizbang.Data.Schema.DefaultValueFunction.Uuid_Generate => "gen_random_uuid()",
-      Whizbang.Data.Schema.DefaultValueFunction.Boolean_True => "TRUE",
-      Whizbang.Data.Schema.DefaultValueFunction.Boolean_False => "FALSE",
+      Whizbang.Data.Schema.DefaultValueFunction.DATE_TIME__NOW => "CURRENT_TIMESTAMP",
+      Whizbang.Data.Schema.DefaultValueFunction.DATE_TIME__UTC_NOW => "(NOW() AT TIME ZONE 'UTC')",
+      Whizbang.Data.Schema.DefaultValueFunction.UUID__GENERATE => "gen_random_uuid()",
+      Whizbang.Data.Schema.DefaultValueFunction.BOOLEAN__TRUE => "TRUE",
+      Whizbang.Data.Schema.DefaultValueFunction.BOOLEAN__FALSE => "FALSE",
       _ => throw new ArgumentOutOfRangeException(nameof(function), function, "Unknown function type")
     };
   }
@@ -79,7 +79,7 @@ public static class PostgresTypeMapper {
   /// Escapes single quotes in string values for Postgres string literals.
   /// In Postgres, single quotes are escaped by doubling them: ' becomes ''
   /// </summary>
-  private static string EscapeSingleQuote(string value) {
+  private static string _escapeSingleQuote(string value) {
     return value.Replace("'", "''");
   }
 }

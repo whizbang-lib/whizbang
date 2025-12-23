@@ -109,7 +109,7 @@ public class DbContextInfoTests {
     await Assert.That(info.ClassName).IsEqualTo("MyDbContext");
     await Assert.That(info.FullyQualifiedName).IsEqualTo("global::MyApp.Data.MyDbContext");
     await Assert.That(info.Namespace).IsEqualTo("MyApp.Data");
-    await Assert.That(info.ExistingPerspectives).HasCount().EqualTo(2);
+    await Assert.That(info.ExistingPerspectives).Count().IsEqualTo(2);
     await Assert.That(info.Location).IsEqualTo(location);
   }
 
@@ -127,6 +127,6 @@ public class DbContextInfoTests {
     );
 
     // Act & Assert
-    await Assert.That(info.ExistingPerspectives).HasCount().EqualTo(0);
+    await Assert.That(info.ExistingPerspectives).Count().IsEqualTo(0);
   }
 }

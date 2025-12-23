@@ -89,23 +89,23 @@ public class IGlobalPerspectiveForTests {
 
 // Test implementations
 
-internal record TestEventWithPartitionKey : IEvent {
+internal sealed record TestEventWithPartitionKey : IEvent {
   public required Guid PartitionId { get; init; }
   public int Delta { get; init; }
 }
 
-internal record AnotherTestEventWithPartitionKey : IEvent {
+internal sealed record AnotherTestEventWithPartitionKey : IEvent {
   public required Guid PartitionId { get; init; }
   public int Multiplier { get; init; }
 }
 
-internal record TestEventWithStringPartition : IEvent {
+internal sealed record TestEventWithStringPartition : IEvent {
   public required string TenantId { get; init; }
   public int Value { get; init; }
 }
 
 // Test global perspective with Guid partition key
-internal class TestGlobalPerspective : IGlobalPerspectiveFor<TestModel, Guid, TestEventWithPartitionKey> {
+internal sealed class TestGlobalPerspective : IGlobalPerspectiveFor<TestModel, Guid, TestEventWithPartitionKey> {
   public Guid GetPartitionKey(TestEventWithPartitionKey @event) {
     return @event.PartitionId;
   }
@@ -116,7 +116,7 @@ internal class TestGlobalPerspective : IGlobalPerspectiveFor<TestModel, Guid, Te
 }
 
 // Test global perspective with multiple event types
-internal class MultiEventGlobalPerspective :
+internal sealed class MultiEventGlobalPerspective :
     IGlobalPerspectiveFor<TestModel, Guid, TestEventWithPartitionKey>,
     IGlobalPerspectiveFor<TestModel, Guid, AnotherTestEventWithPartitionKey> {
 
@@ -133,7 +133,7 @@ internal class MultiEventGlobalPerspective :
 }
 
 // Test global perspective with string partition key
-internal class StringPartitionPerspective : IGlobalPerspectiveFor<TestModel, string, TestEventWithStringPartition> {
+internal sealed class StringPartitionPerspective : IGlobalPerspectiveFor<TestModel, string, TestEventWithStringPartition> {
   public string GetPartitionKey(TestEventWithStringPartition @event) {
     return @event.TenantId;
   }

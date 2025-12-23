@@ -65,9 +65,9 @@ public class ExecutionStatePoolTests {
   public async Task Initialize_ShouldSetPropertiesAsync() {
     // Arrange
     var state = new ExecutionState<int>();
-    var envelope = CreateTestEnvelope();
-    var context = CreateTestPolicyContext();
-    var handler = CreateTestHandler();
+    var envelope = _createTestEnvelope();
+    var context = _createTestPolicyContext();
+    var handler = _createTestHandler();
     var source = new PooledValueTaskSource<int>();
 
     // Act
@@ -88,9 +88,9 @@ public class ExecutionStatePoolTests {
   public async Task Reset_ShouldClearPropertiesAsync() {
     // Arrange
     var state = new ExecutionState<int>();
-    var envelope = CreateTestEnvelope();
-    var context = CreateTestPolicyContext();
-    var handler = CreateTestHandler();
+    var envelope = _createTestEnvelope();
+    var context = _createTestPolicyContext();
+    var handler = _createTestHandler();
     var source = new PooledValueTaskSource<int>();
 
     state.Initialize(envelope, context, handler, source);
@@ -113,7 +113,7 @@ public class ExecutionStatePoolTests {
   // HELPER METHODS
   // ============================================================================
 
-  private static MessageEnvelope<TestMessage> CreateTestEnvelope() {
+  private static MessageEnvelope<TestMessage> _createTestEnvelope() {
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage(),
@@ -132,15 +132,15 @@ public class ExecutionStatePoolTests {
     };
   }
 
-  private static PolicyContext CreateTestPolicyContext() {
+  private static PolicyContext _createTestPolicyContext() {
     return new PolicyContext();
   }
 
-  private static Func<IMessageEnvelope, PolicyContext, ValueTask<int>> CreateTestHandler() {
+  private static Func<IMessageEnvelope, PolicyContext, ValueTask<int>> _createTestHandler() {
     return (envelope, context) => ValueTask.FromResult(42);
   }
 
-  private class TestMessage {
+  private sealed class TestMessage {
     public string Content { get; set; } = "test";
   }
 }

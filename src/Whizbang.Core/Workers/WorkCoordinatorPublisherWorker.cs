@@ -52,7 +52,7 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:ProcessWorkBatch_ProcessesReturnedWorkFromCompletionsAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:ProcessWorkBatch_MultipleIterationsProcessAllWorkAsync</tests>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:ProcessWorkBatch_LoopTerminatesWhenNoWorkAsync</tests>
-public class WorkCoordinatorPublisherWorker(
+public partial class WorkCoordinatorPublisherWorker(
   IServiceInstanceProvider instanceProvider,
   IServiceScopeFactory scopeFactory,
   IMessagePublishStrategy publishStrategy,
@@ -139,8 +139,8 @@ public class WorkCoordinatorPublisherWorker(
   public event WorkProcessingIdleHandler? OnWorkProcessingIdle;
 
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-    _logger.LogInformation(
-      "WorkCoordinator publisher starting: Instance {InstanceId} ({ServiceName}@{HostName}:{ProcessId}), interval: {Interval}ms",
+    LogWorkerStarting(
+      _logger,
       _instanceProvider.InstanceId,
       _instanceProvider.ServiceName,
       _instanceProvider.HostName,
@@ -149,29 +149,29 @@ public class WorkCoordinatorPublisherWorker(
     );
 
     // Start both loops concurrently
-    var coordinatorTask = CoordinatorLoopAsync(stoppingToken);
-    var publisherTask = PublisherLoopAsync(stoppingToken);
+    var coordinatorTask = _coordinatorLoopAsync(stoppingToken);
+    var publisherTask = _publisherLoopAsync(stoppingToken);
 
     // Wait for both to complete
     await Task.WhenAll(coordinatorTask, publisherTask);
 
-    _logger.LogInformation("WorkCoordinator publisher stopping");
+    LogWorkerStopping(_logger);
   }
 
-  private async Task CoordinatorLoopAsync(CancellationToken stoppingToken) {
+  private async Task _coordinatorLoopAsync(CancellationToken stoppingToken) {
     // Process any pending outbox messages IMMEDIATELY on startup (before first polling delay)
     // This ensures seeded or pre-existing messages are published right away
     try {
-      _logger.LogDebug("Checking for pending outbox messages on startup...");
+      LogCheckingPendingMessages(_logger);
       var isDatabaseReady = await _databaseReadinessCheck.IsReadyAsync(stoppingToken);
       if (isDatabaseReady) {
-        await ProcessWorkBatchAsync(stoppingToken);
-        _logger.LogDebug("Initial work batch processing complete");
+        await _processWorkBatchAsync(stoppingToken);
+        LogInitialWorkBatchComplete(_logger);
       } else {
-        _logger.LogWarning("Database not ready on startup - skipping initial work batch processing");
+        LogDatabaseNotReadyOnStartup(_logger);
       }
     } catch (Exception ex) when (ex is not OperationCanceledException) {
-      _logger.LogError(ex, "Error processing initial work batch on startup");
+      LogErrorProcessingInitialWorkBatch(_logger, ex);
     }
 
     while (!stoppingToken.IsCancellationRequested) {
@@ -183,17 +183,11 @@ public class WorkCoordinatorPublisherWorker(
           Interlocked.Increment(ref _consecutiveDatabaseNotReadyChecks);
 
           // Log at Information level (important operational event)
-          _logger.LogInformation(
-            "Database not ready, skipping work batch processing (consecutive checks: {ConsecutiveCount})",
-            _consecutiveDatabaseNotReadyChecks
-          );
+          LogDatabaseNotReady(_logger, _consecutiveDatabaseNotReadyChecks);
 
           // Warn if database has been continuously unavailable
           if (_consecutiveDatabaseNotReadyChecks > 10) {
-            _logger.LogWarning(
-              "Database not ready for {ConsecutiveCount} consecutive polling cycles. Work coordinator is paused.",
-              _consecutiveDatabaseNotReadyChecks
-            );
+            LogDatabaseNotReadyWarning(_logger, _consecutiveDatabaseNotReadyChecks);
           }
 
           // Wait before retry
@@ -204,9 +198,9 @@ public class WorkCoordinatorPublisherWorker(
         // Database is ready - reset consecutive counter
         Interlocked.Exchange(ref _consecutiveDatabaseNotReadyChecks, 0);
 
-        await ProcessWorkBatchAsync(stoppingToken);
+        await _processWorkBatchAsync(stoppingToken);
       } catch (Exception ex) when (ex is not OperationCanceledException) {
-        _logger.LogError(ex, "Error processing work batch");
+        LogErrorProcessingWorkBatch(_logger, ex);
       }
 
       // Wait before next poll (unless cancelled)
@@ -222,14 +216,14 @@ public class WorkCoordinatorPublisherWorker(
     _workChannelWriter.Complete();
   }
 
-  private async Task PublisherLoopAsync(CancellationToken stoppingToken) {
-    _logger.LogWarning("DIAGNOSTIC: PublisherLoop started, waiting for work from channel...");
+  private async Task _publisherLoopAsync(CancellationToken stoppingToken) {
+    LogPublisherLoopStarted(_logger);
     await foreach (var work in _workChannelWriter.Reader.ReadAllAsync(stoppingToken)) {
-      _logger.LogWarning("DIAGNOSTIC: PublisherLoop received work from channel: MessageId={MessageId}, Destination={Destination}", work.MessageId, work.Destination);
+      LogPublisherLoopReceivedWork(_logger, work.MessageId, work.Destination);
       try {
         // Check transport readiness before attempting publish
         var isReady = await _publishStrategy.IsReadyAsync(stoppingToken);
-        _logger.LogWarning("DIAGNOSTIC: Transport readiness check: IsReady={IsReady}", isReady);
+        LogTransportReadinessCheck(_logger, isReady);
         if (!isReady) {
           // Transport not ready - renew lease to buffer message
           _leaseRenewals.Add(work.MessageId);
@@ -238,18 +232,11 @@ public class WorkCoordinatorPublisherWorker(
           Interlocked.Increment(ref _totalBufferedMessages);
 
           // Log at Information level (important operational event)
-          _logger.LogInformation(
-            "Transport not ready, buffering message {MessageId} (destination: {Destination})",
-            work.MessageId,
-            work.Destination
-          );
+          LogTransportNotReadyBuffering(_logger, work.MessageId, work.Destination);
 
           // Warn if transport has been continuously unavailable
           if (_consecutiveNotReadyChecks > 10) {
-            _logger.LogWarning(
-              "Transport not ready for {ConsecutiveCount} consecutive messages. Messages are being buffered with lease renewal.",
-              _consecutiveNotReadyChecks
-            );
+            LogTransportNotReadyWarning(_logger, _consecutiveNotReadyChecks);
           }
 
           continue;
@@ -259,9 +246,9 @@ public class WorkCoordinatorPublisherWorker(
         Interlocked.Exchange(ref _consecutiveNotReadyChecks, 0);
 
         // Publish via strategy
-        _logger.LogWarning("DIAGNOSTIC: About to publish message {MessageId} to {Destination}", work.MessageId, work.Destination);
+        LogAboutToPublishMessage(_logger, work.MessageId, work.Destination);
         var result = await _publishStrategy.PublishAsync(work, stoppingToken);
-        _logger.LogWarning("DIAGNOSTIC: Publish result for {MessageId}: Success={Success}, Status={Status}", work.MessageId, result.Success, result.CompletedStatus);
+        LogPublishResult(_logger, work.MessageId, result.Success, result.CompletedStatus);
 
         // Collect results
         if (result.Success) {
@@ -275,12 +262,7 @@ public class WorkCoordinatorPublisherWorker(
           if (result.Reason == MessageFailureReason.TransportException) {
             _leaseRenewals.Add(work.MessageId);
 
-            _logger.LogWarning(
-              "Transport failure for message {MessageId} to {Destination}: {Error}. Renewing lease for retry.",
-              work.MessageId,
-              work.Destination,
-              result.Error
-            );
+            LogTransportFailureRenewingLease(_logger, work.MessageId, work.Destination, result.Error ?? "Unknown error");
           } else {
             // Non-retryable failures (serialization, validation, etc.) - mark as failed
             _failures.Add(new MessageFailure {
@@ -290,21 +272,11 @@ public class WorkCoordinatorPublisherWorker(
               Reason = result.Reason
             });
 
-            _logger.LogError(
-              "Failed to publish outbox message {MessageId} to {Destination}: {Error} (Reason: {Reason})",
-              work.MessageId,
-              work.Destination,
-              result.Error,
-              result.Reason
-            );
+            LogFailedToPublishMessage(_logger, work.MessageId, work.Destination, result.Error ?? "Unknown error", result.Reason);
           }
         }
       } catch (Exception ex) when (ex is not OperationCanceledException) {
-        _logger.LogError(
-          ex,
-          "Unexpected error publishing outbox message {MessageId}",
-          work.MessageId
-        );
+        LogUnexpectedErrorPublishing(_logger, work.MessageId, ex);
 
         _failures.Add(new MessageFailure {
           MessageId = work.MessageId,
@@ -316,7 +288,7 @@ public class WorkCoordinatorPublisherWorker(
     }
   }
 
-  private async Task ProcessWorkBatchAsync(CancellationToken cancellationToken) {
+  private async Task _processWorkBatchAsync(CancellationToken cancellationToken) {
     // Create a scope to resolve scoped IWorkCoordinator
     using var scope = _scopeFactory.CreateScope();
     var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
@@ -365,8 +337,8 @@ public class WorkCoordinatorPublisherWorker(
     // Log a summary of message processing activity
     int totalActivity = outboxCompletions.Length + outboxFailures.Length + renewOutboxLeaseIds.Length + workBatch.OutboxWork.Count + workBatch.InboxWork.Count;
     if (totalActivity > 0) {
-      _logger.LogInformation(
-        "Message batch: Outbox published={Published}, failed={OutboxFailed}, buffered={Buffered}, claimed={Claimed} | Inbox claimed={InboxClaimed}, failed={InboxFailed}",
+      LogMessageBatchSummary(
+        _logger,
         outboxCompletions.Length,
         outboxFailures.Length,
         renewOutboxLeaseIds.Length,
@@ -375,7 +347,7 @@ public class WorkCoordinatorPublisherWorker(
         workBatch.InboxWork.Count  // All inbox currently marked as failed (not yet implemented)
       );
     } else {
-      _logger.LogDebug("Work batch processing: no work claimed (all partitions assigned to other instances or no pending messages)");
+      LogNoWorkClaimed(_logger);
     }
 
     // Write outbox work to channel for publisher loop
@@ -413,7 +385,7 @@ public class WorkCoordinatorPublisherWorker(
       if (_isIdle) {
         _isIdle = false;
         OnWorkProcessingStarted?.Invoke();
-        _logger.LogDebug("Work processing started (idle → active)");
+        LogWorkProcessingStarted(_logger);
       }
     } else {
       // Increment empty poll counter
@@ -423,11 +395,190 @@ public class WorkCoordinatorPublisherWorker(
       if (!_isIdle && _consecutiveEmptyPolls >= _options.IdleThresholdPolls) {
         _isIdle = true;
         OnWorkProcessingIdle?.Invoke();
-        _logger.LogDebug("Work processing idle (active → idle) after {EmptyPolls} empty polls", _consecutiveEmptyPolls);
+        LogWorkProcessingIdle(_logger, _consecutiveEmptyPolls);
       }
     }
   }
 
+  // ========================================
+  // High-Performance LoggerMessage Delegates
+  // ========================================
+
+  [LoggerMessage(
+    EventId = 1,
+    Level = LogLevel.Information,
+    Message = "WorkCoordinator publisher starting: Instance {InstanceId} ({ServiceName}@{HostName}:{ProcessId}), interval: {Interval}ms"
+  )]
+  static partial void LogWorkerStarting(
+    ILogger logger,
+    Guid instanceId,
+    string serviceName,
+    string hostName,
+    int processId,
+    int interval
+  );
+
+  [LoggerMessage(
+    EventId = 2,
+    Level = LogLevel.Information,
+    Message = "WorkCoordinator publisher stopping"
+  )]
+  static partial void LogWorkerStopping(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 3,
+    Level = LogLevel.Debug,
+    Message = "Checking for pending outbox messages on startup..."
+  )]
+  static partial void LogCheckingPendingMessages(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 4,
+    Level = LogLevel.Debug,
+    Message = "Initial work batch processing complete"
+  )]
+  static partial void LogInitialWorkBatchComplete(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 5,
+    Level = LogLevel.Warning,
+    Message = "Database not ready on startup - skipping initial work batch processing"
+  )]
+  static partial void LogDatabaseNotReadyOnStartup(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 6,
+    Level = LogLevel.Error,
+    Message = "Error processing initial work batch on startup"
+  )]
+  static partial void LogErrorProcessingInitialWorkBatch(ILogger logger, Exception ex);
+
+  [LoggerMessage(
+    EventId = 7,
+    Level = LogLevel.Information,
+    Message = "Database not ready, skipping work batch processing (consecutive checks: {ConsecutiveCount})"
+  )]
+  static partial void LogDatabaseNotReady(ILogger logger, int consecutiveCount);
+
+  [LoggerMessage(
+    EventId = 8,
+    Level = LogLevel.Warning,
+    Message = "Database not ready for {ConsecutiveCount} consecutive polling cycles. Work coordinator is paused."
+  )]
+  static partial void LogDatabaseNotReadyWarning(ILogger logger, int consecutiveCount);
+
+  [LoggerMessage(
+    EventId = 9,
+    Level = LogLevel.Error,
+    Message = "Error processing work batch"
+  )]
+  static partial void LogErrorProcessingWorkBatch(ILogger logger, Exception ex);
+
+  [LoggerMessage(
+    EventId = 10,
+    Level = LogLevel.Warning,
+    Message = "DIAGNOSTIC: PublisherLoop started, waiting for work from channel..."
+  )]
+  static partial void LogPublisherLoopStarted(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 11,
+    Level = LogLevel.Warning,
+    Message = "DIAGNOSTIC: PublisherLoop received work from channel: MessageId={MessageId}, Destination={Destination}"
+  )]
+  static partial void LogPublisherLoopReceivedWork(ILogger logger, Guid messageId, string destination);
+
+  [LoggerMessage(
+    EventId = 12,
+    Level = LogLevel.Warning,
+    Message = "DIAGNOSTIC: Transport readiness check: IsReady={IsReady}"
+  )]
+  static partial void LogTransportReadinessCheck(ILogger logger, bool isReady);
+
+  [LoggerMessage(
+    EventId = 13,
+    Level = LogLevel.Information,
+    Message = "Transport not ready, buffering message {MessageId} (destination: {Destination})"
+  )]
+  static partial void LogTransportNotReadyBuffering(ILogger logger, Guid messageId, string destination);
+
+  [LoggerMessage(
+    EventId = 14,
+    Level = LogLevel.Warning,
+    Message = "Transport not ready for {ConsecutiveCount} consecutive messages. Messages are being buffered with lease renewal."
+  )]
+  static partial void LogTransportNotReadyWarning(ILogger logger, int consecutiveCount);
+
+  [LoggerMessage(
+    EventId = 15,
+    Level = LogLevel.Warning,
+    Message = "DIAGNOSTIC: About to publish message {MessageId} to {Destination}"
+  )]
+  static partial void LogAboutToPublishMessage(ILogger logger, Guid messageId, string destination);
+
+  [LoggerMessage(
+    EventId = 16,
+    Level = LogLevel.Warning,
+    Message = "DIAGNOSTIC: Publish result for {MessageId}: Success={Success}, Status={Status}"
+  )]
+  static partial void LogPublishResult(ILogger logger, Guid messageId, bool success, MessageProcessingStatus status);
+
+  [LoggerMessage(
+    EventId = 17,
+    Level = LogLevel.Warning,
+    Message = "Transport failure for message {MessageId} to {Destination}: {Error}. Renewing lease for retry."
+  )]
+  static partial void LogTransportFailureRenewingLease(ILogger logger, Guid messageId, string destination, string error);
+
+  [LoggerMessage(
+    EventId = 18,
+    Level = LogLevel.Error,
+    Message = "Failed to publish outbox message {MessageId} to {Destination}: {Error} (Reason: {Reason})"
+  )]
+  static partial void LogFailedToPublishMessage(ILogger logger, Guid messageId, string destination, string error, MessageFailureReason reason);
+
+  [LoggerMessage(
+    EventId = 19,
+    Level = LogLevel.Error,
+    Message = "Unexpected error publishing outbox message {MessageId}"
+  )]
+  static partial void LogUnexpectedErrorPublishing(ILogger logger, Guid messageId, Exception ex);
+
+  [LoggerMessage(
+    EventId = 20,
+    Level = LogLevel.Information,
+    Message = "Message batch: Outbox published={Published}, failed={OutboxFailed}, buffered={Buffered}, claimed={Claimed} | Inbox claimed={InboxClaimed}, failed={InboxFailed}"
+  )]
+  static partial void LogMessageBatchSummary(
+    ILogger logger,
+    int published,
+    int outboxFailed,
+    int buffered,
+    int claimed,
+    int inboxClaimed,
+    int inboxFailed
+  );
+
+  [LoggerMessage(
+    EventId = 21,
+    Level = LogLevel.Debug,
+    Message = "Work batch processing: no work claimed (all partitions assigned to other instances or no pending messages)"
+  )]
+  static partial void LogNoWorkClaimed(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 22,
+    Level = LogLevel.Debug,
+    Message = "Work processing started (idle → active)"
+  )]
+  static partial void LogWorkProcessingStarted(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 23,
+    Level = LogLevel.Debug,
+    Message = "Work processing idle (active → idle) after {EmptyPolls} empty polls"
+  )]
+  static partial void LogWorkProcessingIdle(ILogger logger, int emptyPolls);
 }
 
 
@@ -480,7 +631,7 @@ public class WorkCoordinatorPublisherOptions {
   /// When enabled, completed messages are preserved instead of deleted.
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorPublisherWorkerIntegrationTests.cs:WorkerProcessesOutboxMessages_EndToEndAsync</tests>
-  public bool DebugMode { get; set; } = false;
+  public bool DebugMode { get; set; }
 
   /// <summary>
   /// Number of partitions for work distribution.

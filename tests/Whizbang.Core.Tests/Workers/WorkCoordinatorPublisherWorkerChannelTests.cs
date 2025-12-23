@@ -20,9 +20,9 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Tests.Workers;
 
 public class WorkCoordinatorPublisherWorkerChannelTests {
-  private record _testMessage { }
+  private sealed record _testMessage { }
 
-  private static IMessageEnvelope<JsonElement> _createTestEnvelope(Guid messageId) {
+  private static MessageEnvelope<JsonElement> _createTestEnvelope(Guid messageId) {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
@@ -31,7 +31,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
     return envelope;
   }
 
-  private class TestWorkCoordinator : IWorkCoordinator {
+  private sealed class TestWorkCoordinator : IWorkCoordinator {
     public List<OutboxWork> WorkToReturn { get; set; } = [];
     public List<MessageCompletion> ReceivedCompletions { get; } = [];
     public List<MessageFailure> ReceivedFailures { get; } = [];
@@ -73,7 +73,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
     }
   }
 
-  private class TestPublishStrategy : IMessagePublishStrategy {
+  private sealed class TestPublishStrategy : IMessagePublishStrategy {
     public ConcurrentBag<OutboxWork> PublishedWork { get; } = [];
     public Func<OutboxWork, MessagePublishResult>? PublishResultFunc { get; set; }
     public TimeSpan PublishDelay { get; set; } = TimeSpan.Zero;
@@ -132,7 +132,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
     var result = await publishStrategy.PublishAsync(workCoordinator.WorkToReturn[0], CancellationToken.None);
 
     await Assert.That(result.Success).IsTrue();
-    await Assert.That(publishStrategy.PublishedWork).HasCount().EqualTo(1);
+    await Assert.That(publishStrategy.PublishedWork).Count().IsEqualTo(1);
     await Assert.That(publishStrategy.PublishedWork.First().MessageId).IsEqualTo(messageId);
   }
 
@@ -204,12 +204,12 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
     var results = await Task.WhenAll(tasks);
 
     // Assert
-    await Assert.That(results).HasCount().EqualTo(5);
+    await Assert.That(results).Count().IsEqualTo(5);
     await Assert.That(results.All(r => r.Success)).IsTrue();
-    await Assert.That(publishStrategy.PublishedWork).HasCount().EqualTo(5);
+    await Assert.That(publishStrategy.PublishedWork).Count().IsEqualTo(5);
   }
 
-  private static IServiceInstanceProvider _createTestInstanceProvider() {
+  private static ServiceInstanceProvider _createTestInstanceProvider() {
     return new ServiceInstanceProvider(
       Guid.NewGuid(),
       "TestService",
@@ -218,7 +218,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
     );
   }
 
-  private static IServiceCollection _createServiceCollection(
+  private static ServiceCollection _createServiceCollection(
     IWorkCoordinator workCoordinator,
     IMessagePublishStrategy publishStrategy,
     IServiceInstanceProvider instanceProvider) {
@@ -233,7 +233,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
   }
 
   // Test helper - Mock work channel writer
-  private class TestWorkChannelWriter : IWorkChannelWriter {
+  private sealed class TestWorkChannelWriter : IWorkChannelWriter {
     private readonly System.Threading.Channels.Channel<OutboxWork> _channel;
     public List<OutboxWork> WrittenWork { get; } = [];
 

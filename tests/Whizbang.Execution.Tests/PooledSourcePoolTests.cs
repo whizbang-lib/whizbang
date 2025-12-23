@@ -312,12 +312,12 @@ public class PooledSourcePoolTests {
   // HELPER TYPES
   // ============================================================================
 
-  private record TestData1(int Value);
-  private record TestData2(string Text);
-  private record TestData3(double Amount);
-  private record TestData4(bool Flag);
+  private sealed record TestData1(int Value);
+  private sealed record TestData2(string Text);
+  private sealed record TestData3(double Amount);
+  private sealed record TestData4(bool Flag);
 
-  private class ReferenceEqualityComparer : IEqualityComparer<PooledValueTaskSource<int>> {
+  private sealed class ReferenceEqualityComparer : IEqualityComparer<PooledValueTaskSource<int>> {
     public bool Equals(PooledValueTaskSource<int>? x, PooledValueTaskSource<int>? y) {
       return object.ReferenceEquals(x, y);
     }

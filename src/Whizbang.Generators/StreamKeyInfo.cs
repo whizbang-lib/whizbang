@@ -1,3 +1,5 @@
+using Microsoft.CodeAnalysis;
+
 namespace Whizbang.Generators;
 
 /// <summary>
@@ -13,4 +15,16 @@ public sealed record StreamKeyInfo(
     string EventType,
     string PropertyName,
     string PropertyType
+);
+
+/// <summary>
+/// Value type containing information about a discovered event without stream key.
+/// Includes location for proper diagnostic reporting with suppression support.
+/// This record uses value equality which is critical for incremental generator performance.
+/// </summary>
+/// <param name="EventType">Fully qualified event type name</param>
+/// <param name="Location">Source location of the event type declaration for diagnostic reporting</param>
+public sealed record EventWithoutStreamKeyInfo(
+    string EventType,
+    Location Location
 );

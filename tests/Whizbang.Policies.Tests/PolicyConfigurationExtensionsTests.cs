@@ -286,12 +286,12 @@ public class PolicyConfigurationExtensionsTests {
     await Assert.That(config.PartitionRouterType).IsEqualTo(typeof(FakePartitionRouter));
     await Assert.That(config.PartitionCount).IsEqualTo(32);
     await Assert.That(config.SequenceProviderType).IsEqualTo(typeof(FakeSequenceProvider));
-    await Assert.That(config.PublishTargets).HasCount().EqualTo(1);
-    await Assert.That(config.SubscriptionTargets).HasCount().EqualTo(1);
+    await Assert.That(config.PublishTargets).Count().IsEqualTo(1);
+    await Assert.That(config.SubscriptionTargets).Count().IsEqualTo(1);
   }
 
   // Fake types for testing
-  private class FakeExecutionStrategy { }
-  private class FakePartitionRouter { }
-  private class FakeSequenceProvider { }
+  private sealed class FakeExecutionStrategy { }
+  private sealed class FakePartitionRouter { }
+  private sealed class FakeSequenceProvider { }
 }

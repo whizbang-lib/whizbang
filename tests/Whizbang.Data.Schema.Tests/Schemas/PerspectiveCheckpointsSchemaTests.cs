@@ -30,7 +30,7 @@ public class PerspectiveCheckpointsSchemaTests {
     var columns = PerspectiveCheckpointsSchema.Table.Columns;
 
     // Assert - Verify column count
-    await Assert.That(columns).HasCount().EqualTo(6);
+    await Assert.That(columns).Count().IsEqualTo(6);
 
     // Verify each column definition
     var streamId = columns[0];
@@ -154,18 +154,18 @@ public class PerspectiveCheckpointsSchemaTests {
     var indexes = PerspectiveCheckpointsSchema.Table.Indexes;
 
     // Assert - Verify index count
-    await Assert.That(indexes).HasCount().EqualTo(2);
+    await Assert.That(indexes).Count().IsEqualTo(2);
 
     // Verify index on perspective_name
     var perspectiveNameIndex = indexes[0];
     await Assert.That(perspectiveNameIndex.Name).IsEqualTo("idx_perspective_checkpoints_perspective_name");
-    await Assert.That(perspectiveNameIndex.Columns).HasCount().EqualTo(1);
+    await Assert.That(perspectiveNameIndex.Columns).Count().IsEqualTo(1);
     await Assert.That(perspectiveNameIndex.Columns[0]).IsEqualTo("perspective_name");
 
     // Verify index on last_event_id
     var lastEventIdIndex = indexes[1];
     await Assert.That(lastEventIdIndex.Name).IsEqualTo("idx_perspective_checkpoints_last_event_id");
-    await Assert.That(lastEventIdIndex.Columns).HasCount().EqualTo(1);
+    await Assert.That(lastEventIdIndex.Columns).Count().IsEqualTo(1);
     await Assert.That(lastEventIdIndex.Columns[0]).IsEqualTo("last_event_id");
   }
 

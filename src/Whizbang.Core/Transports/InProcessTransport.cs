@@ -170,7 +170,7 @@ public class InProcessTransport : ITransport {
     private bool _isDisposed;
 
     /// <summary>
-    /// 
+    /// Gets whether this subscription is actively receiving messages.
     /// </summary>
     /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_InVariousStates_BehavesCorrectlyAsync</tests>
     /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_PauseAsync_SetsIsActiveToFalseAsync</tests>
@@ -179,7 +179,7 @@ public class InProcessTransport : ITransport {
     public bool IsActive { get; private set; } = true;
 
     /// <summary>
-    /// 
+    /// Pauses the subscription, preventing message delivery.
     /// </summary>
     /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_InVariousStates_BehavesCorrectlyAsync</tests>
     /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_PauseAsync_SetsIsActiveToFalseAsync</tests>
@@ -189,7 +189,7 @@ public class InProcessTransport : ITransport {
     }
 
     /// <summary>
-    /// 
+    /// Resumes the subscription, allowing message delivery.
     /// </summary>
     /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_InVariousStates_BehavesCorrectlyAsync</tests>
     /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_ResumeAsync_SetsIsActiveToTrueAsync</tests>
@@ -199,7 +199,7 @@ public class InProcessTransport : ITransport {
     }
 
     /// <summary>
-    /// 
+    /// Disposes the subscription and removes it from the transport.
     /// </summary>
     /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_InVariousStates_BehavesCorrectlyAsync</tests>
     /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_Dispose_RemovesHandlerFromTransportAsync</tests>

@@ -14,7 +14,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// Tests for OrderedStreamProcessor - verifies stream-based ordering guarantees.
 /// </summary>
 public class OrderedStreamProcessorTests {
-  private readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
+  private readonly Uuid7IdProvider _idProvider = new Uuid7IdProvider();
 
   // ========================================
   // Priority 2 Tests: Stream Ordering (Inbox)
@@ -48,7 +48,7 @@ public class OrderedStreamProcessorTests {
     );
 
     // Assert - Should process in SequenceOrder ascending order
-    await Assert.That(processedOrder).HasCount().EqualTo(5);
+    await Assert.That(processedOrder).Count().IsEqualTo(5);
     await Assert.That(processedOrder[0]).IsEqualTo(100L);
     await Assert.That(processedOrder[1]).IsEqualTo(200L);
     await Assert.That(processedOrder[2]).IsEqualTo(300L);
@@ -105,7 +105,7 @@ public class OrderedStreamProcessorTests {
     );
 
     // Assert - All 3 streams processed
-    await Assert.That(processedStreams.Distinct()).HasCount().EqualTo(3);
+    await Assert.That(processedStreams.Distinct()).Count().IsEqualTo(3);
     await Assert.That(processedStreams).Contains(stream1);
     await Assert.That(processedStreams).Contains(stream2);
     await Assert.That(processedStreams).Contains(stream3);
@@ -167,10 +167,10 @@ public class OrderedStreamProcessorTests {
     );
 
     // Assert
-    await Assert.That(failedMessages).HasCount().EqualTo(1)
+    await Assert.That(failedMessages).Count().IsEqualTo(1)
       .Because("Only 1 message should fail");
 
-    await Assert.That(processedMessages).HasCount().EqualTo(2)
+    await Assert.That(processedMessages).Count().IsEqualTo(2)
       .Because("Stream 2 should continue processing despite stream 1 failure");
 
     // Verify stream2 messages were processed
@@ -252,7 +252,7 @@ public class OrderedStreamProcessorTests {
     );
 
     // Assert - Should process in SequenceOrder ascending order
-    await Assert.That(processedOrder).HasCount().EqualTo(5);
+    await Assert.That(processedOrder).Count().IsEqualTo(5);
     await Assert.That(processedOrder[0]).IsEqualTo(100L);
     await Assert.That(processedOrder[1]).IsEqualTo(200L);
     await Assert.That(processedOrder[2]).IsEqualTo(300L);
@@ -301,7 +301,7 @@ public class OrderedStreamProcessorTests {
   }
 
   // Test envelope implementation
-  private class TestMessageEnvelope : IMessageEnvelope<JsonElement> {
+  private sealed class TestMessageEnvelope : IMessageEnvelope<JsonElement> {
     public required MessageId MessageId { get; init; }
     public required List<MessageHop> Hops { get; init; }
     public JsonElement Payload { get; init; } = JsonDocument.Parse("{}").RootElement;  // Test payload
@@ -326,7 +326,7 @@ public class OrderedStreamProcessorTests {
     public JsonElement? GetMetadata(string key) {
       for (var i = Hops.Count - 1; i >= 0; i--) {
         if (Hops[i].Type == HopType.Current && Hops[i].Metadata?.ContainsKey(key) == true) {
-          return Hops[i].Metadata[key];
+          return Hops[i].Metadata![key];
         }
       }
       return null;

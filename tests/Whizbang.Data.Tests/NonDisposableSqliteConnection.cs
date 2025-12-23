@@ -1,5 +1,6 @@
 using System.Data;
 using System.Data.Common;
+using System.Diagnostics.CodeAnalysis;
 using Microsoft.Data.Sqlite;
 
 namespace Whizbang.Data.Tests;
@@ -17,9 +18,19 @@ public class NonDisposableSqliteConnection : IDbConnection {
   }
 
   // Delegate all members to inner connection except Dispose
+  // Explicit interface implementation to match IDbConnection's nullability contract
+  // [AllowNull] matches IDbConnection.ConnectionString's annotation
+  [AllowNull]
+  string IDbConnection.ConnectionString {
+    get => _inner.ConnectionString ?? string.Empty;
+    set => _inner.ConnectionString = value ?? string.Empty;
+  }
+
+  // Public property delegates to interface implementation
+  [AllowNull]
   public string ConnectionString {
-    get => _inner.ConnectionString;
-    set => _inner.ConnectionString = value;
+    get => ((IDbConnection)this).ConnectionString;
+    set => ((IDbConnection)this).ConnectionString = value;
   }
 
   public int ConnectionTimeout => _inner.ConnectionTimeout;
@@ -42,5 +53,6 @@ public class NonDisposableSqliteConnection : IDbConnection {
   // No-op - do NOT dispose the underlying connection
   public void Dispose() {
     // Intentionally empty - we want to keep the connection alive
+    GC.SuppressFinalize(this);
   }
 }

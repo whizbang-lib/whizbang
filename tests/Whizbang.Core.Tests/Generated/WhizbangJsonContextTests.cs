@@ -25,7 +25,7 @@ public class WhizbangJsonContextTests {
     // TypeInfoResolverChain contains all registered contexts
     // Minimum expected: WhizbangIdJsonContext (from Core) + WhizbangIdJsonContext (local) + MessageJsonContext
     await Assert.That(options.TypeInfoResolverChain).IsNotNull();
-    await Assert.That(options.TypeInfoResolverChain).HasCount().GreaterThanOrEqualTo(2);
+    await Assert.That(options.TypeInfoResolverChain).Count().IsGreaterThanOrEqualTo(2);
 
     // Verify JsonContextRegistry has contexts registered
     await Assert.That(JsonContextRegistry.RegisteredCount).IsGreaterThan(0);
@@ -64,7 +64,7 @@ public class WhizbangJsonContextTests {
     // Verify that the registry is not empty, which proves the module initializer ran
     await Assert.That(options).IsNotNull();
     await Assert.That(options.TypeInfoResolverChain).IsNotNull();
-    await Assert.That(options.TypeInfoResolverChain).HasCount().GreaterThan(0);
+    await Assert.That(options.TypeInfoResolverChain).Count().IsGreaterThan(0);
 
     // Verify JsonContextRegistry has contexts registered (proves module initializer executed)
     await Assert.That(JsonContextRegistry.RegisteredCount).IsGreaterThan(0);

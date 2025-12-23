@@ -122,7 +122,7 @@ public class InMemoryTraceStore : ITraceStore {
       .ToList();
 
     foreach (var child in children) {
-      AddChildrenRecursive(child, chain, results);
+      _addChildrenRecursive(child, chain, results);
     }
 
     // Sort by timestamp
@@ -138,7 +138,7 @@ public class InMemoryTraceStore : ITraceStore {
   /// <summary>
   /// Recursively adds child messages to the causal chain.
   /// </summary>
-  private void AddChildrenRecursive(IMessageEnvelope message, HashSet<MessageId> chain, List<IMessageEnvelope> results) {
+  private void _addChildrenRecursive(IMessageEnvelope message, HashSet<MessageId> chain, List<IMessageEnvelope> results) {
     if (chain.Contains(message.MessageId)) {
       return; // Circular reference protection
     }
@@ -158,7 +158,7 @@ public class InMemoryTraceStore : ITraceStore {
       .ToList();
 
     foreach (var child in children) {
-      AddChildrenRecursive(child, chain, results);
+      _addChildrenRecursive(child, chain, results);
     }
   }
 
@@ -170,11 +170,11 @@ public class InMemoryTraceStore : ITraceStore {
   /// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_GetByTimeRange_ShouldReturnMessagesInRangeAsync</tests>
   /// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_GetByTimeRange_ShouldReturnEmptyWhenNoMatchesAsync</tests>
   /// <tests>tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs:TraceStore_GetByTimeRange_ShouldReturnMessagesInChronologicalOrderAsync</tests>
-  public Task<List<IMessageEnvelope>> GetByTimeRangeAsync(DateTimeOffset from, DateTimeOffset to, CancellationToken ct = default) {
+  public Task<List<IMessageEnvelope>> GetByTimeRangeAsync(DateTimeOffset from, DateTimeOffset toTime, CancellationToken ct = default) {
     var results = _traces.Values
       .Where(e => {
         var timestamp = e.Hops.FirstOrDefault(h => h.Type == HopType.Current)?.Timestamp ?? DateTimeOffset.MinValue;
-        return timestamp >= from && timestamp <= to;
+        return timestamp >= from && timestamp <= toTime;
       })
       .OrderBy(e => e.Hops.FirstOrDefault(h => h.Type == HopType.Current)?.Timestamp ?? DateTimeOffset.MinValue)
       .ToList();

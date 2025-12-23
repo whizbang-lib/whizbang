@@ -15,7 +15,7 @@ namespace Whizbang.Policies.Tests;
 /// </summary>
 public class PolicyContextTests {
   // Test message types
-  private record TestMessage(string Value);
+  private sealed record TestMessage(string Value);
 
   public record CreateOrder {
     [AggregateId]
@@ -28,7 +28,7 @@ public class PolicyContextTests {
     }
   }
 
-  private record OrderCreated(Guid OrderId, DateTimeOffset CreatedAt);
+  private sealed record OrderCreated(Guid OrderId, DateTimeOffset CreatedAt);
 
   // Test types for [AggregateId] attribute tests (must be public for generator)
   public record CreateProduct {
@@ -42,7 +42,7 @@ public class PolicyContextTests {
     }
   }
 
-  public record MessageWithoutAttribute(string Value);
+  public record MessageWithoutAttributeMarker(string Value);
 
   [Test]
   public async Task Constructor_InitializesWithMessage_SetsMessageAndMessageTypeAsync() {
@@ -227,13 +227,15 @@ public class PolicyContextTests {
     await Assert.That(result).IsNull();
   }
 
+  private static readonly string[] _testTags = ["high-priority", "customer-vip", "region-us-west"];
+
   [Test]
   [RequiresDynamicCode("")]
   public async Task HasTag_ReturnsTrue_WhenTagExistsInMetadataAsync() {
     // Arrange
     var message = new TestMessage("test");
     var metadata = new Dictionary<string, JsonElement> {
-      ["tags"] = JsonSerializer.SerializeToElement(new[] { "high-priority", "customer-vip", "region-us-west" })
+      ["tags"] = JsonSerializer.SerializeToElement(_testTags)
     };
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
@@ -248,13 +250,15 @@ public class PolicyContextTests {
     await Assert.That(context.HasTag("region-us-west")).IsTrue();
   }
 
+  private static readonly string[] _singleTag = ["high-priority"];
+
   [Test]
   [RequiresDynamicCode("")]
   public async Task HasTag_ReturnsFalse_WhenTagDoesNotExistAsync() {
     // Arrange
     var message = new TestMessage("test");
     var metadata = new Dictionary<string, JsonElement> {
-      ["tags"] = JsonSerializer.SerializeToElement(new[] { "high-priority" })
+      ["tags"] = JsonSerializer.SerializeToElement(_singleTag)
     };
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
@@ -306,7 +310,7 @@ public class PolicyContextTests {
     // Arrange
     var message = new TestMessage("test");
     var metadata = new Dictionary<string, JsonElement> {
-      ["flags"] = JsonSerializer.SerializeToElement(WhizbangFlags.LoadTesting | WhizbangFlags.VerboseLogging)
+      ["flags"] = JsonSerializer.SerializeToElement(WhizbangOptions.LoadTesting | WhizbangOptions.VerboseLogging)
     };
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
@@ -316,8 +320,8 @@ public class PolicyContextTests {
     var context = new PolicyContext(message, envelope);
 
     // Act & Assert
-    await Assert.That(context.HasFlag(WhizbangFlags.LoadTesting)).IsTrue();
-    await Assert.That(context.HasFlag(WhizbangFlags.VerboseLogging)).IsTrue();
+    await Assert.That(context.HasFlag(WhizbangOptions.LoadTesting)).IsTrue();
+    await Assert.That(context.HasFlag(WhizbangOptions.VerboseLogging)).IsTrue();
   }
 
   [Test]
@@ -326,7 +330,7 @@ public class PolicyContextTests {
     // Arrange
     var message = new TestMessage("test");
     var metadata = new Dictionary<string, JsonElement> {
-      ["flags"] = JsonSerializer.SerializeToElement(WhizbangFlags.LoadTesting)
+      ["flags"] = JsonSerializer.SerializeToElement(WhizbangOptions.LoadTesting)
     };
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
@@ -336,7 +340,7 @@ public class PolicyContextTests {
     var context = new PolicyContext(message, envelope);
 
     // Act & Assert
-    await Assert.That(context.HasFlag(WhizbangFlags.DryRun)).IsFalse();
+    await Assert.That(context.HasFlag(WhizbangOptions.DryRun)).IsFalse();
   }
 
   [Test]
@@ -346,7 +350,7 @@ public class PolicyContextTests {
     var context = new PolicyContext(message);
 
     // Act & Assert
-    await Assert.That(context.HasFlag(WhizbangFlags.LoadTesting)).IsFalse();
+    await Assert.That(context.HasFlag(WhizbangOptions.LoadTesting)).IsFalse();
   }
 
   [Test]
@@ -398,14 +402,14 @@ public class PolicyContextTests {
     var services = new ServiceCollection()
         .AddWhizbangAggregateIdExtractor()
         .BuildServiceProvider();
-    var message = new MessageWithoutAttribute("test");
+    var message = new MessageWithoutAttributeMarker("test");
     var context = new PolicyContext(message, services: services);
 
     // Act & Assert
     var exception = await Assert.That(() => context.GetAggregateId())
         .Throws<InvalidOperationException>();
 
-    await Assert.That(exception.Message).Contains("does not have a property marked with [AggregateId]");
+    await Assert.That(exception!.Message).Contains("does not have a property marked with [AggregateId]");
   }
 
   [Test]
@@ -441,24 +445,24 @@ public class PolicyContextTests {
 
   // Test helper types
   private interface ITestService { }
-  private class TestService : ITestService { }
+  private sealed class TestService : ITestService { }
 
-  private class TestServiceProvider : IServiceProvider {
+  private sealed class TestServiceProvider : IServiceProvider {
     public object? GetService(Type serviceType) {
       return null; // Returns null for all services (to test "not registered" path)
     }
   }
 
   // Mock aggregate types for testing MatchesAggregate
-  private class Order { }
-  private class Customer { }
+  private sealed class Order { }
+  private sealed class Customer { }
 }
 
 /// <summary>
-/// Placeholder for WhizbangFlags enum (will be implemented separately)
+/// Placeholder for WhizbangOptions enum (will be implemented separately)
 /// </summary>
 [Flags]
-public enum WhizbangFlags {
+public enum WhizbangOptions {
   None = 0,
   LoadTesting = 1 << 0,
   DryRun = 1 << 1,

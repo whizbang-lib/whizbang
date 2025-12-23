@@ -24,10 +24,9 @@ var postgresConnection = builder.Configuration.GetConnectionString("inventorydb"
 var serviceBusConnection = builder.Configuration.GetConnectionString("servicebus")
     ?? throw new InvalidOperationException("Azure Service Bus connection string 'servicebus' not found");
 
-// IMPORTANT: Force Contracts assembly to load BEFORE creating JsonSerializerOptions
-// This ensures ECommerce.Contracts.ECommerceJsonContext ModuleInitializer runs
-// and registers all ECommerce message types with JsonContextRegistry
-_ = typeof(ECommerce.Contracts.Commands.CreateProductCommand).Assembly;
+// Register ECommerce message types with JsonContextRegistry
+// This must be done before creating JsonSerializerOptions (line 88)
+ECommerce.Contracts.ECommerceJsonContext.Register();
 
 // Register Azure Service Bus transport
 // Note: Transport uses JsonContextRegistry internally for serialization

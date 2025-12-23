@@ -7,6 +7,7 @@ namespace ECommerce.BFF.API.Tests;
 /// </summary>
 public class SignalRHubTests {
   [Test]
+  [Obsolete]
   public async Task OrderStatusUpdate_WithValidData_CreatesCorrectlyAsync() {
     // Arrange
     var timestamp = DateTime.UtcNow;
@@ -72,6 +73,7 @@ public class SignalRHubTests {
   }
 
   [Test]
+  [Obsolete]
   public async Task OrderUpdateNotification_WithValidData_CreatesCorrectlyAsync() {
     // Arrange
     var timestamp = DateTime.UtcNow;

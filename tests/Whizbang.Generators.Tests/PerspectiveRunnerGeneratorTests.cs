@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using Microsoft.CodeAnalysis;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -29,7 +30,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should not generate any runner files when no perspectives with models exist
-    await Assert.That(result.GeneratedTrees).HasCount().EqualTo(0);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(0);
   }
 
   [Test]
@@ -57,7 +58,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - No runner should be generated (perspective doesn't implement IPerspectiveModel)
-    await Assert.That(result.GeneratedTrees).HasCount().EqualTo(0);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(0);
   }
 
   [Test]
@@ -93,7 +94,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should generate OrderPerspectiveRunner
-    await Assert.That(result.GeneratedTrees).HasCount().EqualTo(1);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
 
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
@@ -137,7 +138,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should not generate runner (model missing [StreamKey])
-    await Assert.That(result.GeneratedTrees).HasCount().EqualTo(0);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(0);
   }
 
   [Test]
@@ -176,7 +177,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should only generate runner for concrete class
-    await Assert.That(result.GeneratedTrees).HasCount().EqualTo(1);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(1);
 
     var runnerSource = GeneratorTestHelper.GetGeneratedSource(result, "ConcretePerspectiveRunner.g.cs");
     await Assert.That(runnerSource).IsNotNull();
@@ -220,8 +221,8 @@ namespace TestNamespace {
     var whiz027 = diagnostics.FirstOrDefault(d => d.Id == "WHIZ027");
     await Assert.That(whiz027).IsNotNull();
     await Assert.That(whiz027!.Severity).IsEqualTo(DiagnosticSeverity.Info);
-    await Assert.That(whiz027.GetMessage()).Contains("OrderPerspective");
-    await Assert.That(whiz027.GetMessage()).Contains("OrderPerspectiveRunner");
+    await Assert.That(whiz027.GetMessage(CultureInfo.InvariantCulture)).Contains("OrderPerspective");
+    await Assert.That(whiz027.GetMessage(CultureInfo.InvariantCulture)).Contains("OrderPerspectiveRunner");
   }
 
   [Test]
@@ -385,7 +386,7 @@ namespace TestNamespace {
     var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
 
     // Assert - Should generate two runners
-    await Assert.That(result.GeneratedTrees).HasCount().EqualTo(2);
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(2);
 
     var orderRunner = GeneratorTestHelper.GetGeneratedSource(result, "OrderPerspectiveRunner.g.cs");
     var inventoryRunner = GeneratorTestHelper.GetGeneratedSource(result, "InventoryPerspectiveRunner.g.cs");
@@ -581,16 +582,16 @@ namespace TestNamespace {
     await Assert.That(runnerSource!).Contains("ExtractStreamId(global::TestNamespace.OrderShippedEvent @event)");
 
     // Both should access OrderId property
-    var orderIdCount = CountOccurrences(runnerSource!, "@event.OrderId");
+    var orderIdCount = _countOccurrences(runnerSource!, "@event.OrderId");
     await Assert.That(orderIdCount).IsGreaterThanOrEqualTo(2); // At least one for each event type
   }
 
   /// <summary>
   /// Helper method to count occurrences of a substring in a string.
   /// </summary>
-  private static int CountOccurrences(string text, string substring) {
-    int count = 0;
-    int index = 0;
+  private static int _countOccurrences(string text, string substring) {
+    var count = 0;
+    var index = 0;
     while ((index = text.IndexOf(substring, index, StringComparison.Ordinal)) != -1) {
       count++;
       index += substring.Length;

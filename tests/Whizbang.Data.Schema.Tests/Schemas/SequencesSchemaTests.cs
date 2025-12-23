@@ -28,7 +28,7 @@ public class SequencesSchemaTests {
     var columns = SequencesSchema.Table.Columns;
 
     // Assert - Verify column count
-    await Assert.That(columns).HasCount().EqualTo(4);
+    await Assert.That(columns).Count().IsEqualTo(4);
 
     // Verify sequence_name column
     var sequenceName = columns[0];
@@ -78,7 +78,7 @@ public class SequencesSchemaTests {
     var indexes = SequencesSchema.Table.Indexes;
 
     // Assert - Verify no additional indexes (primary key only)
-    await Assert.That(indexes).HasCount().EqualTo(0);
+    await Assert.That(indexes).Count().IsEqualTo(0);
   }
 
   [Test]

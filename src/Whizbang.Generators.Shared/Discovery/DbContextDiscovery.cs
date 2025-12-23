@@ -71,7 +71,7 @@ public static class DbContextDiscovery {
     }
 
     // Extract existing perspective DbSet properties
-    var existingPerspectives = ExtractExistingPerspectives(namedSymbol);
+    var existingPerspectives = _extractExistingPerspectives(namedSymbol);
 
     // Get namespace
     var ns = namedSymbol.ContainingNamespace.IsGlobalNamespace
@@ -93,7 +93,7 @@ public static class DbContextDiscovery {
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/Discovery/DbContextDiscoveryTests.cs:ExtractExistingPerspectives_WithPerspectiveDbSets_ExtractsModelTypesAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/Discovery/DbContextDiscoveryTests.cs:ExtractExistingPerspectives_WithoutPerspectives_ReturnsEmptyAsync</tests>
-  private static ImmutableArray<string> ExtractExistingPerspectives(INamedTypeSymbol dbContextSymbol) {
+  private static ImmutableArray<string> _extractExistingPerspectives(INamedTypeSymbol dbContextSymbol) {
     var builder = ImmutableArray.CreateBuilder<string>();
 
     foreach (var member in dbContextSymbol.GetMembers()) {

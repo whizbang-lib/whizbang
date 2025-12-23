@@ -17,15 +17,15 @@ namespace Whizbang.Benchmarks;
 [MemoryDiagnoser]
 [MarkdownExporter]
 public class ZeroAllocationBenchmarks {
-  private IExecutionStrategy _serialExecutor = null!;
-  private IExecutionStrategy _parallelExecutor = null!;
-  private IMessageEnvelope _lightweightEnvelope = null!;
-  private IMessageEnvelope _heavyweightEnvelope = null!;
+  private SerialExecutor _serialExecutor = null!;
+  private ParallelExecutor _parallelExecutor = null!;
+  private MessageEnvelope<LightweightCommand> _lightweightEnvelope = null!;
+  private MessageEnvelope<HeavyweightCommand> _heavyweightEnvelope = null!;
   private PolicyContext _context = null!;
 
   // Test message types
-  private record LightweightCommand(int Id, string Action);
-  private record HeavyweightCommand(
+  private sealed record LightweightCommand(int Id, string Action);
+  private sealed record HeavyweightCommand(
     int Id,
     string Action,
     Dictionary<string, string> Metadata,
@@ -34,7 +34,7 @@ public class ZeroAllocationBenchmarks {
   );
 
   [GlobalSetup]
-  public async Task Setup() {
+  public async Task SetupAsync() {
     _serialExecutor = new SerialExecutor();
     _parallelExecutor = new ParallelExecutor(maxConcurrency: 10);
 
@@ -102,7 +102,7 @@ public class ZeroAllocationBenchmarks {
   }
 
   [GlobalCleanup]
-  public async Task Cleanup() {
+  public async Task CleanupAsync() {
     await _serialExecutor.StopAsync();
     await _parallelExecutor.StopAsync();
   }
@@ -112,7 +112,7 @@ public class ZeroAllocationBenchmarks {
   // ============================================================================
 
   [Benchmark(Baseline = true)]
-  public async Task<int> Serial_LightweightCommand_SyncHandler() {
+  public async Task<int> Serial_LightweightCommand_SyncHandlerAsync() {
     return await _serialExecutor.ExecuteAsync<int>(
       _lightweightEnvelope,
       (env, ctx) => ValueTask.FromResult(((LightweightCommand)ctx.Message).Id),
@@ -121,7 +121,7 @@ public class ZeroAllocationBenchmarks {
   }
 
   [Benchmark]
-  public async Task<int> Parallel_LightweightCommand_SyncHandler() {
+  public async Task<int> Parallel_LightweightCommand_SyncHandlerAsync() {
     return await _parallelExecutor.ExecuteAsync<int>(
       _lightweightEnvelope,
       (env, ctx) => ValueTask.FromResult(((LightweightCommand)ctx.Message).Id),
@@ -130,7 +130,7 @@ public class ZeroAllocationBenchmarks {
   }
 
   [Benchmark]
-  public async Task<int> Serial_LightweightCommand_AsyncHandler() {
+  public async Task<int> Serial_LightweightCommand_AsyncHandlerAsync() {
     return await _serialExecutor.ExecuteAsync<int>(
       _lightweightEnvelope,
       async (env, ctx) => {
@@ -142,7 +142,7 @@ public class ZeroAllocationBenchmarks {
   }
 
   [Benchmark]
-  public async Task<int> Parallel_LightweightCommand_AsyncHandler() {
+  public async Task<int> Parallel_LightweightCommand_AsyncHandlerAsync() {
     return await _parallelExecutor.ExecuteAsync<int>(
       _lightweightEnvelope,
       async (env, ctx) => {
@@ -158,7 +158,7 @@ public class ZeroAllocationBenchmarks {
   // ============================================================================
 
   [Benchmark]
-  public async Task<string> Serial_HeavyweightCommand_SyncHandler() {
+  public async Task<string> Serial_HeavyweightCommand_SyncHandlerAsync() {
     return await _serialExecutor.ExecuteAsync<string>(
       _heavyweightEnvelope,
       (env, ctx) => ValueTask.FromResult(((HeavyweightCommand)ctx.Message).Action),
@@ -167,7 +167,7 @@ public class ZeroAllocationBenchmarks {
   }
 
   [Benchmark]
-  public async Task<string> Parallel_HeavyweightCommand_SyncHandler() {
+  public async Task<string> Parallel_HeavyweightCommand_SyncHandlerAsync() {
     return await _parallelExecutor.ExecuteAsync<string>(
       _heavyweightEnvelope,
       (env, ctx) => ValueTask.FromResult(((HeavyweightCommand)ctx.Message).Action),
@@ -176,7 +176,7 @@ public class ZeroAllocationBenchmarks {
   }
 
   [Benchmark]
-  public async Task<string> Serial_HeavyweightCommand_AsyncHandler() {
+  public async Task<string> Serial_HeavyweightCommand_AsyncHandlerAsync() {
     return await _serialExecutor.ExecuteAsync<string>(
       _heavyweightEnvelope,
       async (env, ctx) => {
@@ -189,7 +189,7 @@ public class ZeroAllocationBenchmarks {
   }
 
   [Benchmark]
-  public async Task<string> Parallel_HeavyweightCommand_AsyncHandler() {
+  public async Task<string> Parallel_HeavyweightCommand_AsyncHandlerAsync() {
     return await _parallelExecutor.ExecuteAsync<string>(
       _heavyweightEnvelope,
       async (env, ctx) => {
@@ -206,7 +206,7 @@ public class ZeroAllocationBenchmarks {
   // ============================================================================
 
   [Benchmark]
-  public async Task Serial_100Messages_LightweightCommands() {
+  public async Task Serial_100Messages_LightweightCommandsAsync() {
     const int count = 100;
     var tasks = ArrayPool<Task<int>>.Shared.Rent(count);
     try {
@@ -224,7 +224,7 @@ public class ZeroAllocationBenchmarks {
   }
 
   [Benchmark]
-  public async Task Parallel_100Messages_LightweightCommands() {
+  public async Task Parallel_100Messages_LightweightCommandsAsync() {
     const int count = 100;
     var tasks = ArrayPool<Task<int>>.Shared.Rent(count);
     try {
@@ -242,7 +242,7 @@ public class ZeroAllocationBenchmarks {
   }
 
   [Benchmark]
-  public async Task Serial_100Messages_HeavyweightCommands() {
+  public async Task Serial_100Messages_HeavyweightCommandsAsync() {
     const int count = 100;
     var tasks = ArrayPool<Task<string>>.Shared.Rent(count);
     try {
@@ -260,7 +260,7 @@ public class ZeroAllocationBenchmarks {
   }
 
   [Benchmark]
-  public async Task Parallel_100Messages_HeavyweightCommands() {
+  public async Task Parallel_100Messages_HeavyweightCommandsAsync() {
     const int count = 100;
     var tasks = ArrayPool<Task<string>>.Shared.Rent(count);
     try {
@@ -282,7 +282,7 @@ public class ZeroAllocationBenchmarks {
   // ============================================================================
 
   [Benchmark]
-  public async Task RealisticScenario_Serial_OrderProcessing() {
+  public async Task RealisticScenario_Serial_OrderProcessingAsync() {
     // Simulate realistic order processing with database lookups
     var tasks = new List<Task<OrderResult>>();
     for (int i = 0; i < 50; i++) {
@@ -305,7 +305,7 @@ public class ZeroAllocationBenchmarks {
   }
 
   [Benchmark]
-  public async Task RealisticScenario_Parallel_OrderProcessing() {
+  public async Task RealisticScenario_Parallel_OrderProcessingAsync() {
     // Simulate realistic order processing with database lookups
     var tasks = new List<Task<OrderResult>>();
     for (int i = 0; i < 50; i++) {
@@ -328,7 +328,7 @@ public class ZeroAllocationBenchmarks {
   }
 
   [Benchmark]
-  public async Task RealisticScenario_Serial_EventSourcing() {
+  public async Task RealisticScenario_Serial_EventSourcingAsync() {
     // Simulate event sourcing pattern with synchronous completion
     var tasks = new List<Task<EventResult>>();
     for (int i = 0; i < 100; i++) {
@@ -347,7 +347,7 @@ public class ZeroAllocationBenchmarks {
   }
 
   [Benchmark]
-  public async Task RealisticScenario_Parallel_EventSourcing() {
+  public async Task RealisticScenario_Parallel_EventSourcingAsync() {
     // Simulate event sourcing pattern with synchronous completion
     var tasks = new List<Task<EventResult>>();
     for (int i = 0; i < 100; i++) {
@@ -369,13 +369,13 @@ public class ZeroAllocationBenchmarks {
   // HELPER TYPES
   // ============================================================================
 
-  private record OrderResult {
+  private sealed record OrderResult {
     public int OrderId { get; init; }
     public string Status { get; init; } = string.Empty;
     public decimal Total { get; init; }
   }
 
-  private record EventResult {
+  private sealed record EventResult {
     public int EventId { get; init; }
     public Guid AggregateId { get; init; }
     public int Version { get; init; }

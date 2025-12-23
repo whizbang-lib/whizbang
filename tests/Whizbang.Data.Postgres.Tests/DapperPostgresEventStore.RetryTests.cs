@@ -9,7 +9,6 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
 using Whizbang.Core.Tests.Generated;
-using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Dapper.Custom;
 using Whizbang.Data.Dapper.Postgres;
@@ -22,6 +21,7 @@ namespace Whizbang.Data.Postgres.Tests;
 /// Test event with AggregateId for stream ID inference.
 /// </summary>
 public record PostgresRetryTestEvent : IEvent {
+  [StreamKey]
   [AggregateId]
   public required Guid AggregateId { get; init; }
   public required string Payload { get; init; }
@@ -32,7 +32,7 @@ public record PostgresRetryTestEvent : IEvent {
 /// These tests cover implementation-specific paths not exercised by contract tests.
 /// Each test gets its own isolated PostgreSQL container for parallel execution.
 /// </summary>
-public class DapperPostgresEventStoreRetryTests {
+public class DapperPostgresEventStoreRetryTests : IDisposable {
 
   private PostgresTestBase _testBase = null!;
   private DapperPostgresEventStore _store = null!;
@@ -65,13 +65,18 @@ public class DapperPostgresEventStoreRetryTests {
     await _testBase.DisposeAsync();
   }
 
+  public void Dispose() {
+    _testBase?.DisposeAsync().AsTask().Wait();
+    GC.SuppressFinalize(this);
+  }
+
   [Test]
   public async Task AppendAsync_WithHighConcurrency_ShouldRetryAndSucceedAsync() {
     // Arrange
     var streamId = Guid.NewGuid();
     var concurrency = 8; // Moderate concurrency to force retries but succeed
     var envelopes = Enumerable.Range(0, concurrency)
-      .Select(_ => CreateTestEnvelope(streamId))
+      .Select(_ => _createTestEnvelope(streamId))
       .ToList();
 
     // Act - Fire off many concurrent appends to the same stream
@@ -87,7 +92,7 @@ public class DapperPostgresEventStoreRetryTests {
     await foreach (var e in _store.ReadAsync<PostgresRetryTestEvent>(streamId, 0)) {
       events.Add(e);
     }
-    await Assert.That(events).HasCount().EqualTo(concurrency);
+    await Assert.That(events).Count().IsEqualTo(concurrency);
   }
 
   [Test]
@@ -96,7 +101,7 @@ public class DapperPostgresEventStoreRetryTests {
     var streamId = Guid.NewGuid();
     var concurrency = 10;
     var envelopes = Enumerable.Range(0, concurrency)
-      .Select(_ => CreateTestEnvelope(streamId))
+      .Select(_ => _createTestEnvelope(streamId))
       .ToList();
 
     // Act - Maximum concurrent pressure
@@ -118,7 +123,7 @@ public class DapperPostgresEventStoreRetryTests {
     // Act - Start 10 threads all trying to append at the same time
     var tasks = Enumerable.Range(0, 10)
       .Select(_ => Task.Run(async () => {
-        var envelope = CreateTestEnvelope(streamId);
+        var envelope = _createTestEnvelope(streamId);
         await _store.AppendAsync(streamId, envelope);
       }))
       .ToArray();
@@ -130,7 +135,7 @@ public class DapperPostgresEventStoreRetryTests {
     await foreach (var e in _store.ReadAsync<PostgresRetryTestEvent>(streamId, 0)) {
       events.Add(e);
     }
-    await Assert.That(events).HasCount().EqualTo(10);
+    await Assert.That(events).Count().IsEqualTo(10);
 
     var lastSequence = await _store.GetLastSequenceAsync(streamId);
     await Assert.That(lastSequence).IsEqualTo(9L);
@@ -145,7 +150,7 @@ public class DapperPostgresEventStoreRetryTests {
     // Act - All appends happen simultaneously to force conflicts
     await Task.WhenAll(
       Enumerable.Range(0, count).Select(_ =>
-        _store.AppendAsync(streamId, CreateTestEnvelope(streamId))));
+        _store.AppendAsync(streamId, _createTestEnvelope(streamId))));
 
     // Assert - All should succeed after retries
     var lastSequence = await _store.GetLastSequenceAsync(streamId);
@@ -159,7 +164,7 @@ public class DapperPostgresEventStoreRetryTests {
 
     // Pre-insert many events to create a starting point
     for (int i = 0; i < 50; i++) {
-      await _store.AppendAsync(streamId, CreateTestEnvelope(streamId));
+      await _store.AppendAsync(streamId, _createTestEnvelope(streamId));
     }
 
     // Act - Launch 30 concurrent appends to create maximum conflict
@@ -167,7 +172,7 @@ public class DapperPostgresEventStoreRetryTests {
     var successCount = 0;
     var tasks = Enumerable.Range(0, 30).Select(_ => Task.Run(async () => {
       try {
-        await _store.AppendAsync(streamId, CreateTestEnvelope(streamId));
+        await _store.AppendAsync(streamId, _createTestEnvelope(streamId));
         Interlocked.Increment(ref successCount);
       } catch (InvalidOperationException ex) when (ex.Message.Contains("after 10 attempts")) {
         Interlocked.Increment(ref exceptionCount);
@@ -195,7 +200,7 @@ public class DapperPostgresEventStoreRetryTests {
 
     // Act & Assert - Should throw exception (not unique violation, so no retry)
     await Assert.That(async () => {
-      await _store.AppendAsync(streamId, CreateTestEnvelope(streamId));
+      await _store.AppendAsync(streamId, _createTestEnvelope(streamId));
     }).ThrowsException();
 
     // Restore the table for other tests by regenerating schema from C#
@@ -207,7 +212,7 @@ public class DapperPostgresEventStoreRetryTests {
     await _testBase.Executor.ExecuteAsync(connection, schemaSql, new { });
   }
 
-  private static MessageEnvelope<PostgresRetryTestEvent> CreateTestEnvelope(Guid aggregateId) {
+  private static MessageEnvelope<PostgresRetryTestEvent> _createTestEnvelope(Guid aggregateId) {
     var envelope = new MessageEnvelope<PostgresRetryTestEvent> {
       MessageId = MessageId.New(),
       Payload = new PostgresRetryTestEvent {
@@ -231,5 +236,5 @@ public class DapperPostgresEventStoreRetryTests {
     return envelope;
   }
 
-  private class TestFixture : PostgresTestBase { }
+  private sealed class TestFixture : PostgresTestBase { }
 }

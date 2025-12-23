@@ -9,11 +9,11 @@ namespace ECommerce.Contracts.Tests.Events;
 /// Tests for ProductCreatedEvent
 /// </summary>
 public class ProductCreatedEventTests {
-  private static readonly IWhizbangIdProvider IdProvider = new Uuid7IdProvider();
+  private static readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
   [Test]
   public async Task ProductCreatedEvent_WithAllProperties_InitializesSuccessfullyAsync() {
     // Arrange & Act
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var createdAt = DateTime.UtcNow;
     var evt = new ProductCreatedEvent {
       ProductId = productId,
@@ -36,7 +36,7 @@ public class ProductCreatedEventTests {
   [Test]
   public async Task ProductCreatedEvent_WithNullImageUrl_InitializesSuccessfullyAsync() {
     // Arrange & Act
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var evt = new ProductCreatedEvent {
       ProductId = productId,
       Name = "Basic Widget",
@@ -54,7 +54,7 @@ public class ProductCreatedEventTests {
   [Test]
   public async Task ProductCreatedEvent_RecordEquality_WorksCorrectlyAsync() {
     // Arrange
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var createdAt = DateTime.UtcNow;
     var evt1 = new ProductCreatedEvent {
       ProductId = productId,
@@ -81,7 +81,7 @@ public class ProductCreatedEventTests {
   [Test]
   public async Task ProductCreatedEvent_ToString_ReturnsReadableRepresentationAsync() {
     // Arrange & Act
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var evt = new ProductCreatedEvent {
       ProductId = productId,
       Name = "ToString Test",
@@ -102,7 +102,7 @@ public class ProductCreatedEventTests {
   public async Task ProductCreatedEvent_WithZeroPrice_InitializesSuccessfullyAsync() {
     // Arrange & Act
     var evt = new ProductCreatedEvent {
-      ProductId = IdProvider.NewGuid(),
+      ProductId = _idProvider.NewGuid(),
       Name = "Free Product",
       Description = "No cost",
       Price = 0m,

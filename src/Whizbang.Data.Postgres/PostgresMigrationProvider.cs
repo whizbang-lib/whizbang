@@ -46,7 +46,7 @@ public class PostgresMigrationProvider {
   public List<MigrationScript> GetAllMigrations() {
     var resourceNames = _assembly
       .GetManifestResourceNames()
-      .Where(name => name.StartsWith(_resourcePrefix) && name.EndsWith(".sql"))
+      .Where(name => name.StartsWith(_resourcePrefix, StringComparison.Ordinal) && name.EndsWith(".sql", StringComparison.Ordinal))
       .OrderBy(name => name)
       .ToList();
 
@@ -57,7 +57,7 @@ public class PostgresMigrationProvider {
         .Substring(_resourcePrefix.Length)
         .Replace(".sql", string.Empty);
 
-      var sql = ReadEmbeddedResource(resourceName);
+      var sql = _readEmbeddedResource(resourceName);
 
       migrations.Add(new MigrationScript {
         Name = scriptName,
@@ -81,7 +81,7 @@ public class PostgresMigrationProvider {
       return null;
     }
 
-    var sql = ReadEmbeddedResource(resourceName);
+    var sql = _readEmbeddedResource(resourceName);
 
     return new MigrationScript {
       Name = scriptName,
@@ -122,7 +122,7 @@ public class PostgresMigrationProvider {
     }
   }
 
-  private string ReadEmbeddedResource(string resourceName) {
+  private string _readEmbeddedResource(string resourceName) {
     using var stream = _assembly.GetManifestResourceStream(resourceName)
       ?? throw new InvalidOperationException($"Embedded resource not found: {resourceName}");
 

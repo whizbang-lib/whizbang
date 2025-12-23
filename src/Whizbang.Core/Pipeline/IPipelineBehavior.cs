@@ -20,21 +20,21 @@ public interface IPipelineBehavior<in TRequest, TResponse> {
   /// Handle the request by executing behavior logic and optionally invoking the next behavior or handler.
   /// </summary>
   /// <param name="request">The message being dispatched</param>
-  /// <param name="next">Delegate to invoke the next behavior or handler in the pipeline</param>
+  /// <param name="continuation">Delegate to invoke the next behavior or handler in the pipeline</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>The response (potentially modified by this behavior)</returns>
   /// <example>
   /// <code>
   /// public async Task&lt;TResponse&gt; Handle(
   ///     TRequest request,
-  ///     Func&lt;Task&lt;TResponse&gt;&gt; next,
+  ///     Func&lt;Task&lt;TResponse&gt;&gt; continuation,
   ///     CancellationToken cancellationToken
   /// ) {
   ///     // Before: Pre-process request
   ///     _logger.LogInformation("Processing {Request}", typeof(TRequest).Name);
   ///
   ///     // Execute next behavior or handler
-  ///     var response = await next();
+  ///     var response = await continuation();
   ///
   ///     // After: Post-process response
   ///     _logger.LogInformation("Completed {Request}", typeof(TRequest).Name);
@@ -43,9 +43,9 @@ public interface IPipelineBehavior<in TRequest, TResponse> {
   /// }
   /// </code>
   /// </example>
-  Task<TResponse> Handle(
+  Task<TResponse> HandleAsync(
     TRequest request,
-    Func<Task<TResponse>> next,
+    Func<Task<TResponse>> continuation,
     CancellationToken cancellationToken = default
   );
 }
@@ -63,9 +63,9 @@ public abstract class PipelineBehavior<TRequest, TResponse> : IPipelineBehavior<
   /// <summary>
   /// Handle the request. Override this to implement custom behavior logic.
   /// </summary>
-  public abstract Task<TResponse> Handle(
+  public abstract Task<TResponse> HandleAsync(
     TRequest request,
-    Func<Task<TResponse>> next,
+    Func<Task<TResponse>> continuation,
     CancellationToken cancellationToken = default
   );
 
@@ -73,7 +73,7 @@ public abstract class PipelineBehavior<TRequest, TResponse> : IPipelineBehavior<
   /// Executes the next behavior or handler in the pipeline.
   /// Use this helper method to clearly separate pre/post processing logic.
   /// </summary>
-  protected async Task<TResponse> ExecuteNextAsync(Func<Task<TResponse>> next) {
-    return await next();
+  protected async Task<TResponse> ExecuteNextAsync(Func<Task<TResponse>> continuation) {
+    return await continuation();
   }
 }

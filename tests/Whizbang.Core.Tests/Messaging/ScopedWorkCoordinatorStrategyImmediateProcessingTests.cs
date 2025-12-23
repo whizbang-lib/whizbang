@@ -66,8 +66,8 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     var result = await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
 
     // Assert - Work should be written to channel immediately
-    await Assert.That(channelWriter.WrittenWork).HasCount().EqualTo(2);
-    await Assert.That(result.OutboxWork).HasCount().EqualTo(2);
+    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(2);
+    await Assert.That(result.OutboxWork).Count().IsEqualTo(2);
   }
 
   [Test]
@@ -97,7 +97,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
 
     // Assert - Nothing written to channel
-    await Assert.That(channelWriter.WrittenWork).HasCount().EqualTo(0);
+    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(0);
   }
 
   [Test]
@@ -148,7 +148,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
 
     // Assert - All 5 messages written to channel
-    await Assert.That(channelWriter.WrittenWork).HasCount().EqualTo(5);
+    await Assert.That(channelWriter.WrittenWork).Count().IsEqualTo(5);
   }
 
   [Test]
@@ -191,7 +191,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
   }
 
   // Test helper - Mock work channel writer
-  private class TestWorkChannelWriter : IWorkChannelWriter {
+  private sealed class TestWorkChannelWriter : IWorkChannelWriter {
     public List<OutboxWork> WrittenWork { get; } = [];
 
     public System.Threading.Channels.ChannelReader<OutboxWork> Reader =>
@@ -213,7 +213,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
   }
 
   // Test helper - Mock work coordinator
-  private class TestWorkCoordinator : IWorkCoordinator {
+  private sealed class TestWorkCoordinator : IWorkCoordinator {
     public List<OutboxWork> WorkToReturn { get; set; } = [];
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
@@ -249,7 +249,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
   }
 
   // Test helper - Mock service instance provider
-  private class TestServiceInstanceProvider : IServiceInstanceProvider {
+  private sealed class TestServiceInstanceProvider : IServiceInstanceProvider {
     public System.Guid InstanceId { get; } = System.Guid.NewGuid();
     public string ServiceName { get; } = "TestService";
     public string HostName { get; } = "test-host";
@@ -264,7 +264,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
   }
 
   // Test envelope implementation
-  private class TestMessageEnvelope : IMessageEnvelope<JsonElement> {
+  private sealed class TestMessageEnvelope : IMessageEnvelope<JsonElement> {
     public required MessageId MessageId { get; init; }
     public required List<MessageHop> Hops { get; init; }
     public JsonElement Payload { get; init; } = JsonDocument.Parse("{}").RootElement;  // Test payload
@@ -289,7 +289,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     public JsonElement? GetMetadata(string key) {
       for (var i = Hops.Count - 1; i >= 0; i--) {
         if (Hops[i].Type == HopType.Current && Hops[i].Metadata?.ContainsKey(key) == true) {
-          return Hops[i].Metadata[key];
+          return Hops[i].Metadata![key];
         }
       }
       return null;

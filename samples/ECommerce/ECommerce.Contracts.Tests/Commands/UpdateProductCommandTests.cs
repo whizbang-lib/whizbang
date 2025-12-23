@@ -9,11 +9,11 @@ namespace ECommerce.Contracts.Tests.Commands;
 /// Tests for UpdateProductCommand
 /// </summary>
 public class UpdateProductCommandTests {
-  private static readonly IWhizbangIdProvider IdProvider = new Uuid7IdProvider();
+  private static readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
   [Test]
   public async Task UpdateProductCommand_WithAllPropertiesUpdated_InitializesSuccessfullyAsync() {
     // Arrange & Act
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var cmd = new UpdateProductCommand {
       ProductId = productId,
       Name = "Updated Widget",
@@ -33,7 +33,7 @@ public class UpdateProductCommandTests {
   [Test]
   public async Task UpdateProductCommand_WithOnlyNameUpdated_InitializesSuccessfullyAsync() {
     // Arrange & Act
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var cmd = new UpdateProductCommand {
       ProductId = productId,
       Name = "New Name",
@@ -54,7 +54,7 @@ public class UpdateProductCommandTests {
   public async Task UpdateProductCommand_WithAllPropertiesNull_InitializesSuccessfullyAsync() {
     // Arrange & Act
     var cmd = new UpdateProductCommand {
-      ProductId = IdProvider.NewGuid(),
+      ProductId = _idProvider.NewGuid(),
       Name = null,
       Description = null,
       Price = null,
@@ -71,7 +71,7 @@ public class UpdateProductCommandTests {
   [Test]
   public async Task UpdateProductCommand_RecordEquality_WorksCorrectlyAsync() {
     // Arrange
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var cmd1 = new UpdateProductCommand {
       ProductId = productId,
       Name = "Name",
@@ -95,7 +95,7 @@ public class UpdateProductCommandTests {
   [Test]
   public async Task UpdateProductCommand_ToString_ReturnsReadableRepresentationAsync() {
     // Arrange & Act
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var cmd = new UpdateProductCommand {
       ProductId = productId,
       Name = "ToString Test",

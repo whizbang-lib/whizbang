@@ -1,5 +1,5 @@
+using System.Globalization;
 using Microsoft.CodeAnalysis;
-using TUnit.Core;
 
 namespace Whizbang.Generators.Tests;
 
@@ -167,7 +167,7 @@ public class DiagnosticDescriptorsTests {
 
     // Assert
     await Assert.That(descriptor.Id).IsEqualTo("WHIZ001");
-    await Assert.That(descriptor.Title.ToString()).IsEqualTo("Receptor Discovered");
+    await Assert.That(descriptor.Title.ToString(CultureInfo.InvariantCulture)).IsEqualTo("Receptor Discovered");
     await Assert.That(descriptor.DefaultSeverity).IsEqualTo(DiagnosticSeverity.Info);
   }
 

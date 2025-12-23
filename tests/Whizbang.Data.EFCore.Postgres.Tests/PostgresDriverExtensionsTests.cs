@@ -87,7 +87,7 @@ public class PostgresDriverExtensionsTests {
   /// <summary>
   /// Fake implementation of IDriverOptions for testing error handling.
   /// </summary>
-  private class FakeDriverOptions : IDriverOptions {
+  private sealed class FakeDriverOptions : IDriverOptions {
     public IServiceCollection Services { get; }
     public FakeDriverOptions(IServiceCollection services) => Services = services;
   }

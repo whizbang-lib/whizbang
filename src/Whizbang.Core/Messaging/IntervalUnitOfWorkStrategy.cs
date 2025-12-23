@@ -35,7 +35,7 @@ public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy, IAsyncDisposable 
   /// <param name="interval">Interval between flush completion and next flush</param>
   public IntervalUnitOfWorkStrategy(TimeSpan interval) {
     _interval = interval;
-    _flushTask = RunFlushLoopAsync(_disposeCts.Token);
+    _flushTask = _runFlushLoopAsync(_disposeCts.Token);
   }
 
   /// <inheritdoc />
@@ -127,14 +127,14 @@ public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy, IAsyncDisposable 
   /// Background flush loop: wait → flush → callback → cleanup → repeat.
   /// Interval starts AFTER previous flush completes (natural backpressure).
   /// </summary>
-  private async Task RunFlushLoopAsync(CancellationToken ct) {
+  private async Task _runFlushLoopAsync(CancellationToken ct) {
     try {
       while (!ct.IsCancellationRequested) {
         // Wait for interval (next flush starts AFTER previous completes)
         await Task.Delay(_interval, ct);
 
         // Flush current unit (if any)
-        await FlushCurrentUnitAsync(ct);
+        await _flushCurrentUnitAsync(ct);
       }
     } catch (OperationCanceledException) {
       // Expected on disposal - exit gracefully
@@ -145,7 +145,7 @@ public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy, IAsyncDisposable 
   /// Flushes current unit: rotate → invoke callback → cleanup.
   /// Waits for callback to complete before cleaning up.
   /// </summary>
-  private async Task FlushCurrentUnitAsync(CancellationToken ct) {
+  private async Task _flushCurrentUnitAsync(CancellationToken ct) {
     DispatchUnitOfWork? unitToFlush = null;
 
     // Rotate: capture current unit and create new one for next batch
@@ -207,5 +207,6 @@ public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy, IAsyncDisposable 
     _unitLock.Dispose();
     _allUnits.Clear();
     _disposed = true;
+    GC.SuppressFinalize(this);
   }
 }

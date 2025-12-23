@@ -74,33 +74,33 @@ public class IPerspectiveForTests {
 }
 
 // Test implementations
-internal record TestModel {
+internal sealed record TestModel {
   [StreamKey]
   public Guid StreamId { get; init; } = Guid.NewGuid();
   public int Value { get; init; }
 }
 
-internal record TestEvent : IEvent {
+internal sealed record TestEvent : IEvent {
   [StreamKey]
   public Guid StreamId { get; init; } = Guid.NewGuid();
   public int Delta { get; init; }
 }
 
-internal record AnotherTestEvent : IEvent {
+internal sealed record AnotherTestEvent : IEvent {
   [StreamKey]
   public Guid StreamId { get; init; } = Guid.NewGuid();
   public int Multiplier { get; init; }
 }
 
 // Test perspective implementing IPerspectiveFor with one event type
-internal class TestPerspective : IPerspectiveFor<TestModel, TestEvent> {
+internal sealed class TestPerspective : IPerspectiveFor<TestModel, TestEvent> {
   public TestModel Apply(TestModel currentData, TestEvent @event) {
     return currentData with { Value = currentData.Value + @event.Delta };
   }
 }
 
 // Test perspective implementing IPerspectiveFor with two event types
-internal class MultiEventPerspective :
+internal sealed class MultiEventPerspective :
     IPerspectiveFor<TestModel, TestEvent>,
     IPerspectiveFor<TestModel, AnotherTestEvent> {
 

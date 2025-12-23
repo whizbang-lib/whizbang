@@ -15,13 +15,13 @@ namespace Whizbang.Benchmarks;
 [MemoryDiagnoser]
 [MarkdownExporter]
 public class PolicyEngineBenchmarks {
-  private record OrderCommand(string OrderId, decimal Amount);
-  private record PaymentCommand(string PaymentId, decimal Amount);
-  private record NotificationCommand(string UserId, string Message);
+  private sealed record OrderCommand(string OrderId, decimal Amount);
+  private sealed record PaymentCommand(string PaymentId, decimal Amount);
+  private sealed record NotificationCommand(string UserId, string Message);
 
-  private IPolicyEngine _engine1Policy = null!;
-  private IPolicyEngine _engine5Policies = null!;
-  private IPolicyEngine _engine20Policies = null!;
+  private PolicyEngine _engine1Policy = null!;
+  private PolicyEngine _engine5Policies = null!;
+  private PolicyEngine _engine20Policies = null!;
   private PolicyContext _orderContext = null!;
   private PolicyContext _paymentContext = null!;
 
@@ -32,11 +32,11 @@ public class PolicyEngineBenchmarks {
 
     // Setup contexts
     var orderMessage = new OrderCommand("order-123", 100m);
-    var orderEnvelope = CreateEnvelope(orderMessage);
+    var orderEnvelope = _createEnvelope(orderMessage);
     _orderContext = new PolicyContext(orderMessage, orderEnvelope, serviceProvider, "benchmark");
 
     var paymentMessage = new PaymentCommand("payment-456", 200m);
-    var paymentEnvelope = CreateEnvelope(paymentMessage);
+    var paymentEnvelope = _createEnvelope(paymentMessage);
     _paymentContext = new PolicyContext(paymentMessage, paymentEnvelope, serviceProvider, "benchmark");
 
     // Engine with 1 policy
@@ -59,7 +59,7 @@ public class PolicyEngineBenchmarks {
     _engine20Policies.AddPolicy("OrderPolicy", ctx => ctx.Message is OrderCommand, cfg => cfg.UseTopic("orders"));
   }
 
-  private static IMessageEnvelope CreateEnvelope<T>(T message) {
+  private static MessageEnvelope<T> _createEnvelope<T>(T message) {
     var envelope = new MessageEnvelope<T> {
       MessageId = MessageId.New(),
       Payload = message,
@@ -81,41 +81,41 @@ public class PolicyEngineBenchmarks {
   }
 
   [Benchmark(Baseline = true)]
-  public async Task<PolicyConfiguration?> MatchPolicy_1Policy_FirstMatch() {
+  public async Task<PolicyConfiguration?> MatchPolicy_1Policy_FirstMatchAsync() {
     return await _engine1Policy.MatchAsync(_orderContext);
   }
 
   [Benchmark]
-  public async Task<PolicyConfiguration?> MatchPolicy_5Policies_LastMatch() {
+  public async Task<PolicyConfiguration?> MatchPolicy_5Policies_LastMatchAsync() {
     return await _engine5Policies.MatchAsync(_orderContext);
   }
 
   [Benchmark]
-  public async Task<PolicyConfiguration?> MatchPolicy_5Policies_MiddleMatch() {
+  public async Task<PolicyConfiguration?> MatchPolicy_5Policies_MiddleMatchAsync() {
     return await _engine5Policies.MatchAsync(_paymentContext);
   }
 
   [Benchmark]
-  public async Task<PolicyConfiguration?> MatchPolicy_20Policies_LastMatch() {
+  public async Task<PolicyConfiguration?> MatchPolicy_20Policies_LastMatchAsync() {
     return await _engine20Policies.MatchAsync(_orderContext);
   }
 
   [Benchmark]
-  public async Task MatchPolicy_100Times_1Policy() {
+  public async Task MatchPolicy_100Times_1PolicyAsync() {
     for (int i = 0; i < 100; i++) {
       await _engine1Policy.MatchAsync(_orderContext);
     }
   }
 
   [Benchmark]
-  public async Task MatchPolicy_100Times_5Policies() {
+  public async Task MatchPolicy_100Times_5PoliciesAsync() {
     for (int i = 0; i < 100; i++) {
       await _engine5Policies.MatchAsync(_orderContext);
     }
   }
 
   [Benchmark]
-  public async Task MatchPolicy_100Times_20Policies() {
+  public async Task MatchPolicy_100Times_20PoliciesAsync() {
     for (int i = 0; i < 100; i++) {
       await _engine20Policies.MatchAsync(_orderContext);
     }

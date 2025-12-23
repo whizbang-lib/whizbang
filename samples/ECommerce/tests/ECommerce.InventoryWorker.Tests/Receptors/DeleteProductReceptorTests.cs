@@ -32,6 +32,7 @@ public class DeleteProductReceptorTests {
   }
 
   [Test]
+  [Obsolete]
   public async Task HandleAsync_PublishesProductDeletedEventAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
@@ -81,6 +82,7 @@ public class DeleteProductReceptorTests {
   }
 
   [Test]
+  [Obsolete]
   public async Task HandleAsync_LogsInformation_AboutProductDeletionAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
@@ -123,6 +125,7 @@ public class DeleteProductReceptorTests {
   }
 
   [Test]
+  [Obsolete]
   public async Task HandleAsync_WithDifferentProductIds_CreatesCorrectEventsAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();

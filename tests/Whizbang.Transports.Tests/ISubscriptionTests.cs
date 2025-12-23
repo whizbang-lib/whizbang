@@ -13,7 +13,7 @@ public class ISubscriptionTests {
   [Test]
   public async Task ISubscription_Dispose_UnsubscribesAsync() {
     // Arrange
-    var subscription = CreateTestSubscription();
+    var subscription = _createTestSubscription();
     var isActive = subscription.IsActive;
 
     // Act
@@ -26,7 +26,7 @@ public class ISubscriptionTests {
   [Test]
   public async Task ISubscription_Pause_SetsIsActiveFalseAsync() {
     // Arrange
-    var subscription = CreateTestSubscription();
+    var subscription = _createTestSubscription();
 
     // Act
     await subscription.PauseAsync();
@@ -38,7 +38,7 @@ public class ISubscriptionTests {
   [Test]
   public async Task ISubscription_Resume_SetsIsActiveTrueAsync() {
     // Arrange
-    var subscription = CreateTestSubscription();
+    var subscription = _createTestSubscription();
     await subscription.PauseAsync();
 
     // Act
@@ -51,7 +51,7 @@ public class ISubscriptionTests {
   [Test]
   public async Task ISubscription_InitialState_IsActiveAsync() {
     // Arrange & Act
-    var subscription = CreateTestSubscription();
+    var subscription = _createTestSubscription();
 
     // Assert
     await Assert.That(subscription.IsActive).IsTrue();
@@ -60,7 +60,7 @@ public class ISubscriptionTests {
   [Test]
   public async Task ISubscription_DisposeMultipleTimes_DoesNotThrowAsync() {
     // Arrange
-    var subscription = CreateTestSubscription();
+    var subscription = _createTestSubscription();
 
     // Act & Assert - Should not throw
     subscription.Dispose();
@@ -71,7 +71,7 @@ public class ISubscriptionTests {
   [Test]
   public async Task ISubscription_PauseWhenPaused_DoesNotThrowAsync() {
     // Arrange
-    var subscription = CreateTestSubscription();
+    var subscription = _createTestSubscription();
     await subscription.PauseAsync();
 
     // Act & Assert - Should not throw
@@ -81,21 +81,21 @@ public class ISubscriptionTests {
   [Test]
   public async Task ISubscription_ResumeWhenActive_DoesNotThrowAsync() {
     // Arrange
-    var subscription = CreateTestSubscription();
+    var subscription = _createTestSubscription();
 
     // Act & Assert - Should not throw
     await subscription.ResumeAsync();
   }
 
   // Helper methods
-  private static ISubscription CreateTestSubscription() {
+  private static TestSubscription _createTestSubscription() {
     // This will use a test implementation once ISubscription is defined
     // For now, this will fail compilation - that's expected in RED phase
     return new TestSubscription();
   }
 
   // Test implementation
-  private class TestSubscription : ISubscription {
+  private sealed class TestSubscription : ISubscription {
     public bool IsActive { get; private set; } = true;
 
     public Task PauseAsync() {

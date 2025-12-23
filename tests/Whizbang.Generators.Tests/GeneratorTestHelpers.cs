@@ -19,7 +19,7 @@ public static class GeneratorTestHelpers {
   /// </summary>
   public static async Task<GeneratorResult> RunEFCoreGeneratorAsync(string source) {
     // Create compilation from source
-    var compilation = CreateCompilation(source);
+    var compilation = _createCompilation(source);
 
     // Create generator driver
     var generator = new EFCorePerspectiveConfigurationGenerator();
@@ -35,11 +35,11 @@ public static class GeneratorTestHelpers {
       Compilation = compilation,
       GeneratedSources = runResult.GeneratedTrees
         .Select(t => new GeneratedSource {
-          HintName = GetHintName(runResult, t),
+          HintName = _getHintName(runResult, t),
           SourceText = t.GetText()
         })
         .ToImmutableArray(),
-      Diagnostics = runResult.Diagnostics.ToImmutableArray()
+      Diagnostics = runResult.Diagnostics
     });
   }
 
@@ -50,7 +50,7 @@ public static class GeneratorTestHelpers {
   /// </summary>
   public static async Task<GeneratorResult> RunServiceRegistrationGeneratorAsync(string source) {
     // Create compilation from source with EF Core references
-    var compilation = CreateCompilationWithEFCore(source);
+    var compilation = _createCompilationWithEFCore(source);
 
     // Create generator driver
     var generator = new EFCoreServiceRegistrationGenerator();
@@ -66,18 +66,18 @@ public static class GeneratorTestHelpers {
       Compilation = compilation,
       GeneratedSources = runResult.GeneratedTrees
         .Select(t => new GeneratedSource {
-          HintName = GetHintName(runResult, t),
+          HintName = _getHintName(runResult, t),
           SourceText = t.GetText()
         })
         .ToImmutableArray(),
-      Diagnostics = runResult.Diagnostics.ToImmutableArray()
+      Diagnostics = runResult.Diagnostics
     });
   }
 
   /// <summary>
   /// Creates a CSharpCompilation from source code with necessary references.
   /// </summary>
-  private static CSharpCompilation CreateCompilation(string source) {
+  private static CSharpCompilation _createCompilation(string source) {
     var syntaxTree = CSharpSyntaxTree.ParseText(source);
 
     var references = new[] {
@@ -101,7 +101,7 @@ public static class GeneratorTestHelpers {
   /// Creates a CSharpCompilation from source code with EF Core and Whizbang.Data references.
   /// Used for testing EFCore generators that require DbContext and perspective types.
   /// </summary>
-  private static CSharpCompilation CreateCompilationWithEFCore(string source) {
+  private static CSharpCompilation _createCompilationWithEFCore(string source) {
     var syntaxTree = CSharpSyntaxTree.ParseText(source);
 
     var references = new[] {
@@ -126,7 +126,7 @@ public static class GeneratorTestHelpers {
   /// <summary>
   /// Gets the hint name for a generated syntax tree from the run result.
   /// </summary>
-  private static string GetHintName(GeneratorDriverRunResult runResult, SyntaxTree tree) {
+  private static string _getHintName(GeneratorDriverRunResult runResult, SyntaxTree tree) {
     foreach (var result in runResult.Results) {
       foreach (var generated in result.GeneratedSources) {
         if (generated.SyntaxTree == tree) {

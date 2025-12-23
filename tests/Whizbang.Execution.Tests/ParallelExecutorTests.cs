@@ -86,8 +86,8 @@ public class ParallelExecutorTests : ExecutionStrategyContractTests {
     )).Throws<InvalidOperationException>();
   }
 
-  public static IEnumerable<(Func<ParallelExecutor, Task> operation, string description, bool shouldSucceed)> GetIdempotentOperations() {
-    yield return (
+  public static IEnumerable<Func<(Func<ParallelExecutor, Task> operation, string description, bool shouldSucceed)>> GetIdempotentOperations() {
+    yield return () => (
       async executor => {
         await executor.StartAsync();
         await executor.StartAsync(); // Idempotent call
@@ -96,7 +96,7 @@ public class ParallelExecutorTests : ExecutionStrategyContractTests {
       true
     );
 
-    yield return (
+    yield return () => (
       async executor => {
         await executor.StartAsync();
         await executor.StopAsync();
@@ -106,7 +106,7 @@ public class ParallelExecutorTests : ExecutionStrategyContractTests {
       true
     );
 
-    yield return (
+    yield return () => (
       async executor => {
         await executor.StopAsync(); // Stop before start
       },

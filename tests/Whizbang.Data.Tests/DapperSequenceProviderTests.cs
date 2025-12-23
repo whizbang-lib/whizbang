@@ -9,7 +9,7 @@ namespace Whizbang.Data.Tests;
 /// Inherits all contract tests from SequenceProviderContractTests.
 /// </summary>
 [InheritsTests]
-public class DapperSequenceProviderTests : SequenceProviderContractTests {
+public class DapperSequenceProviderTests : SequenceProviderContractTests, IDisposable {
   private DapperTestBase _testBase = null!;
 
   [Before(Test)]
@@ -27,5 +27,10 @@ public class DapperSequenceProviderTests : SequenceProviderContractTests {
     return new DapperSqliteSequenceProvider(_testBase.ConnectionFactory, _testBase.Executor);
   }
 
-  private class TestFixture : DapperTestBase { }
+  public void Dispose() {
+    _testBase?.DisposeAsync().AsTask().Wait();
+    GC.SuppressFinalize(this);
+  }
+
+  private sealed class TestFixture : DapperTestBase { }
 }

@@ -43,6 +43,7 @@ public class GetMyOrdersEndpointTests {
 
 
   [Test]
+  [Obsolete]
   public async Task MockOrderLens_GetByCustomerId_ReturnsCorrectOrdersAsync() {
     // Arrange
     var testOrders = new List<OrderReadModel> {

@@ -14,50 +14,50 @@ public class DbContextDiscoveryTests {
 
   [Test]
   [RequiresAssemblyFiles]
+  [Skip("TODO: Implement test when DbContextDiscovery is used by a generator")]
   public async Task IsPotentialDbContext_ClassWithBaseList_ReturnsTrueAsync() {
-    // TODO: Implement test when DbContextDiscovery is used by a generator
-    await Assert.That(true).IsTrue();
+    await Task.CompletedTask;
   }
 
   [Test]
   [RequiresAssemblyFiles]
+  [Skip("TODO: Implement test when DbContextDiscovery is used by a generator")]
   public async Task IsPotentialDbContext_ClassWithoutBaseList_ReturnsFalseAsync() {
-    // TODO: Implement test when DbContextDiscovery is used by a generator
-    await Assert.That(true).IsTrue();
+    await Task.CompletedTask;
   }
 
   [Test]
   [RequiresAssemblyFiles]
+  [Skip("TODO: Implement test when DbContextDiscovery is used by a generator")]
   public async Task Extract_DbContextClass_ReturnsDbContextInfoAsync() {
-    // TODO: Implement test when DbContextDiscovery is used by a generator
-    await Assert.That(true).IsTrue();
+    await Task.CompletedTask;
   }
 
   [Test]
   [RequiresAssemblyFiles]
+  [Skip("TODO: Implement test when DbContextDiscovery is used by a generator")]
   public async Task Extract_NonDbContextClass_ReturnsNullAsync() {
-    // TODO: Implement test when DbContextDiscovery is used by a generator
-    await Assert.That(true).IsTrue();
+    await Task.CompletedTask;
   }
 
   [Test]
   [RequiresAssemblyFiles]
+  [Skip("TODO: Implement test when DbContextDiscovery is used by a generator")]
   public async Task Extract_DbContextWithPerspectives_ExtractsExistingPerspectivesAsync() {
-    // TODO: Implement test when DbContextDiscovery is used by a generator
-    await Assert.That(true).IsTrue();
+    await Task.CompletedTask;
   }
 
   [Test]
   [RequiresAssemblyFiles]
+  [Skip("TODO: Implement test when DbContextDiscovery is used by a generator")]
   public async Task ExtractExistingPerspectives_WithPerspectiveDbSets_ExtractsModelTypesAsync() {
-    // TODO: Implement test when DbContextDiscovery is used by a generator
-    await Assert.That(true).IsTrue();
+    await Task.CompletedTask;
   }
 
   [Test]
   [RequiresAssemblyFiles]
+  [Skip("TODO: Implement test when DbContextDiscovery is used by a generator")]
   public async Task ExtractExistingPerspectives_WithoutPerspectives_ReturnsEmptyAsync() {
-    // TODO: Implement test when DbContextDiscovery is used by a generator
-    await Assert.That(true).IsTrue();
+    await Task.CompletedTask;
   }
 }

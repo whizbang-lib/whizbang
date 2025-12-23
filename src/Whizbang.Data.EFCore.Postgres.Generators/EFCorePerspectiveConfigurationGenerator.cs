@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Immutable;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
@@ -22,6 +24,9 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:GeneratedDiagnostics_DeduplicatesPerspectivesAsync</tests>
 [Generator]
 public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
+  /// <summary>
+  /// Initializes the incremental generator by discovering perspectives and registering source generation.
+  /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:GeneratedCode_ImplementsIDiagnosticsInterfaceAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:GeneratedDiagnostics_HasCorrectGeneratorNameAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:GeneratedDiagnostics_ReportsCorrectPerspectiveCountAsync</tests>
@@ -32,7 +37,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     // Discover classes implementing IPerspectiveFor<TModel>
     var perspectiveClasses = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => ExtractPerspectiveInfo(ctx, ct)
+        transform: static (ctx, ct) => _extractPerspectiveInfo(ctx, ct)
     ).Where(static info => info is not null);
 
     //  Combine with compilation to check assembly name
@@ -52,7 +57,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
             return;
           }
 
-          GenerateModelBuilderExtension(ctx, perspectives!);
+          _generateModelBuilderExtension(ctx, perspectives!);
         }
     );
   }
@@ -65,7 +70,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:GeneratedDiagnostics_ReportsCorrectPerspectiveCountAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:LogDiscoveryDiagnostics_OutputsPerspectiveDetailsAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:GeneratedDiagnostics_DeduplicatesPerspectivesAsync</tests>
-  private static PerspectiveInfo? ExtractPerspectiveInfo(
+  private static PerspectiveInfo? _extractPerspectiveInfo(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
 
@@ -91,7 +96,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     var perspectiveForInterface = symbol.AllInterfaces.FirstOrDefault(i => {
       var originalDef = i.OriginalDefinition.ToDisplayString();
       return originalDef == "Whizbang.Core.Perspectives.IPerspectiveFor<TModel>" ||
-             originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<TModel,");
+             originalDef.StartsWith("Whizbang.Core.Perspectives.IPerspectiveFor<TModel,", StringComparison.Ordinal);
     });
 
     if (perspectiveForInterface is null) {
@@ -100,7 +105,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     // Perspective discovered - extract TModel from first type argument
     var modelType = perspectiveForInterface.TypeArguments[0];
-    var tableName = "wh_per_" + ToSnakeCase(modelType.Name);
+    var tableName = "wh_per_" + _toSnakeCase(modelType.Name);
 
     return new PerspectiveInfo(
         ModelTypeName: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
@@ -113,7 +118,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// Converts PascalCase to snake_case.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:LogDiscoveryDiagnostics_OutputsPerspectiveDetailsAsync</tests>
-  private static string ToSnakeCase(string input) {
+  private static string _toSnakeCase(string input) {
     if (string.IsNullOrEmpty(input)) {
       return input;
     }
@@ -145,17 +150,17 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:LogDiscoveryDiagnostics_OutputsPerspectiveDetailsAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:GeneratedDiagnostics_WithNoPerspectives_ReportsZeroAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:GeneratedDiagnostics_DeduplicatesPerspectivesAsync</tests>
-  private static void GenerateModelBuilderExtension(
+  private static void _generateModelBuilderExtension(
       SourceProductionContext context,
       ImmutableArray<PerspectiveInfo> perspectives) {
 
-    // DEBUG: Report that this method is running
+    // Report perspective discovery for diagnostics
     var debugDescriptor = new DiagnosticDescriptor(
-        id: "EFCORE001",
-        title: "DEBUG: GenerateModelBuilderExtension Running",
-        messageFormat: "DEBUG: GenerateModelBuilderExtension called with {0} raw perspective(s)",
+        id: "WHIZ701",
+        title: "EF Core Perspective Discovery",
+        messageFormat: "Discovered {0} perspective(s) for EF Core ModelBuilder configuration",
         category: "Whizbang.Generator",
-        defaultSeverity: DiagnosticSeverity.Warning,
+        defaultSeverity: DiagnosticSeverity.Info,
         isEnabledByDefault: true);
     context.ReportDiagnostic(Diagnostic.Create(debugDescriptor, Location.None, perspectives.Length));
 
@@ -192,7 +197,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     );
 
     // Replace __PERSPECTIVE_COUNT__ placeholder
-    template = template.Replace("__PERSPECTIVE_COUNT__", uniquePerspectives.Length.ToString());
+    template = template.Replace("__PERSPECTIVE_COUNT__", uniquePerspectives.Length.ToString(CultureInfo.InvariantCulture));
 
     // Generate perspective configurations
     var perspectiveConfigs = new StringBuilder();
@@ -244,11 +249,11 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     template = TemplateUtilities.ReplaceRegion(template, "DIAGNOSTIC_PERSPECTIVE_LIST", diagnosticList.ToString());
 
     // Replace diagnostic placeholders
-    var timestamp = System.DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss");
+    var timestamp = System.DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss", CultureInfo.InvariantCulture);
     template = template.Replace("__TIMESTAMP__", timestamp);
 
     var totalEntityCount = uniquePerspectives.Length + 4; // perspectives + inbox + outbox + eventstore + serviceinstance
-    template = template.Replace("__TOTAL_ENTITY_COUNT__", totalEntityCount.ToString());
+    template = template.Replace("__TOTAL_ENTITY_COUNT__", totalEntityCount.ToString(CultureInfo.InvariantCulture));
 
     context.AddSource("WhizbangModelBuilderExtensions.g.cs", template);
   }

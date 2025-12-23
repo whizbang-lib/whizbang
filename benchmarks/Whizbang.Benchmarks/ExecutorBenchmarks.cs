@@ -16,15 +16,15 @@ namespace Whizbang.Benchmarks;
 [MemoryDiagnoser]
 [MarkdownExporter]
 public class ExecutorBenchmarks {
-  private record TestCommand(string Id, int Value);
+  private sealed record TestCommand(string Id, int Value);
 
-  private IExecutionStrategy _serialExecutor = null!;
-  private IExecutionStrategy _parallelExecutor = null!;
-  private IMessageEnvelope _envelope = null!;
+  private SerialExecutor _serialExecutor = null!;
+  private ParallelExecutor _parallelExecutor = null!;
+  private MessageEnvelope<TestCommand> _envelope = null!;
   private PolicyContext _context = null!;
 
   [GlobalSetup]
-  public async Task Setup() {
+  public async Task SetupAsync() {
     _serialExecutor = new SerialExecutor();
     _parallelExecutor = new ParallelExecutor(maxConcurrency: 10);
 
@@ -62,13 +62,13 @@ public class ExecutorBenchmarks {
   }
 
   [GlobalCleanup]
-  public async Task Cleanup() {
+  public async Task CleanupAsync() {
     await _serialExecutor.StopAsync();
     await _parallelExecutor.StopAsync();
   }
 
   [Benchmark(Baseline = true)]
-  public async Task<int> SerialExecutor_SingleMessage() {
+  public async Task<int> SerialExecutor_SingleMessageAsync() {
     return await _serialExecutor.ExecuteAsync<int>(
       _envelope,
       (env, ctx) => ValueTask.FromResult(((TestCommand)ctx.Message).Value),
@@ -77,7 +77,7 @@ public class ExecutorBenchmarks {
   }
 
   [Benchmark]
-  public async Task<int> ParallelExecutor_SingleMessage() {
+  public async Task<int> ParallelExecutor_SingleMessageAsync() {
     return await _parallelExecutor.ExecuteAsync<int>(
       _envelope,
       (env, ctx) => ValueTask.FromResult(((TestCommand)ctx.Message).Value),
@@ -96,7 +96,7 @@ public class ExecutorBenchmarks {
   }
 
   [Benchmark]
-  public async Task SerialExecutor_100Messages() {
+  public async Task SerialExecutor_100MessagesAsync() {
     const int count = 100;
     var tasks = ArrayPool<Task<int>>.Shared.Rent(count);
     try {
@@ -114,7 +114,7 @@ public class ExecutorBenchmarks {
   }
 
   [Benchmark]
-  public async Task ParallelExecutor_100Messages() {
+  public async Task ParallelExecutor_100MessagesAsync() {
     const int count = 100;
     var tasks = ArrayPool<Task<int>>.Shared.Rent(count);
     try {

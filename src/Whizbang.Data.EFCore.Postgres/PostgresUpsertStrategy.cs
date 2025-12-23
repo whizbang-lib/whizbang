@@ -35,8 +35,8 @@ public class PostgresUpsertStrategy : IDbUpsertStrategy {
       var newRow = new PerspectiveRow<TModel> {
         Id = id,
         Data = model,
-        Metadata = CloneMetadata(metadata),
-        Scope = CloneScope(scope),
+        Metadata = _cloneMetadata(metadata),
+        Scope = _cloneScope(scope),
         CreatedAt = now,
         UpdatedAt = now,
         Version = 1
@@ -50,8 +50,8 @@ public class PostgresUpsertStrategy : IDbUpsertStrategy {
       var updatedRow = new PerspectiveRow<TModel> {
         Id = existingRow.Id,
         Data = model,
-        Metadata = CloneMetadata(metadata),
-        Scope = CloneScope(scope),
+        Metadata = _cloneMetadata(metadata),
+        Scope = _cloneScope(scope),
         CreatedAt = existingRow.CreatedAt, // Preserve creation time
         UpdatedAt = now,
         Version = existingRow.Version + 1
@@ -67,7 +67,7 @@ public class PostgresUpsertStrategy : IDbUpsertStrategy {
   /// Creates a clone of PerspectiveMetadata to avoid EF Core tracking issues.
   /// </summary>
   /// <tests>No tests found</tests>
-  private static PerspectiveMetadata CloneMetadata(PerspectiveMetadata metadata) {
+  private static PerspectiveMetadata _cloneMetadata(PerspectiveMetadata metadata) {
     return new PerspectiveMetadata {
       EventType = metadata.EventType,
       EventId = metadata.EventId,
@@ -81,7 +81,7 @@ public class PostgresUpsertStrategy : IDbUpsertStrategy {
   /// Creates a clone of PerspectiveScope to avoid EF Core tracking issues.
   /// </summary>
   /// <tests>No tests found</tests>
-  private static PerspectiveScope CloneScope(PerspectiveScope scope) {
+  private static PerspectiveScope _cloneScope(PerspectiveScope scope) {
     return new PerspectiveScope {
       TenantId = scope.TenantId,
       CustomerId = scope.CustomerId,

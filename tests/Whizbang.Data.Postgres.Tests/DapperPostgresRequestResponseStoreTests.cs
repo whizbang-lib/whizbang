@@ -1,6 +1,5 @@
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Tests.Generated;
-using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.Tests.Messaging;
 using Whizbang.Data.Dapper.Postgres;
 
@@ -12,7 +11,7 @@ namespace Whizbang.Data.Postgres.Tests;
 /// Each test gets its own isolated PostgreSQL container for parallel execution.
 /// </summary>
 [InheritsTests]
-public class DapperPostgresRequestResponseStoreTests : RequestResponseStoreContractTests {
+public class DapperPostgresRequestResponseStoreTests : RequestResponseStoreContractTests, IDisposable {
   private PostgresTestBase _testBase = null!;
 
   [Before(Test)]
@@ -28,11 +27,16 @@ public class DapperPostgresRequestResponseStoreTests : RequestResponseStoreContr
     }
   }
 
+  public void Dispose() {
+    _testBase?.DisposeAsync().AsTask().Wait();
+    GC.SuppressFinalize(this);
+  }
+
   protected override Task<IRequestResponseStore> CreateStoreAsync() {
     var jsonOptions = WhizbangJsonContext.CreateOptions();
     var store = new DapperPostgresRequestResponseStore(_testBase.ConnectionFactory, _testBase.Executor, jsonOptions);
     return Task.FromResult<IRequestResponseStore>(store);
   }
 
-  private class TestFixture : PostgresTestBase { }
+  private sealed class TestFixture : PostgresTestBase { }
 }

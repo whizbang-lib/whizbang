@@ -18,12 +18,12 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
   }
 
   // Test message types
-  private record TestCommand(string Id, string Data);
+  private sealed record TestCommand(string Id, string Data);
 
   /// <summary>
   /// Helper to create a test envelope with specified properties.
   /// </summary>
-  private static IMessageEnvelope CreateEnvelope(
+  private static MessageEnvelope<TestCommand> _createEnvelope(
     MessageId? messageId = null,
     CorrelationId? correlationId = null,
     MessageId? causationId = null,
@@ -78,10 +78,10 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
     var correlationId = CorrelationId.New();
 
     // Create envelope with matching correlation ID
-    var envelope1 = CreateEnvelope(correlationId: correlationId);
+    var envelope1 = _createEnvelope(correlationId: correlationId);
 
     // Create envelope with null correlation ID (should be filtered out)
-    var envelope2 = CreateEnvelope(correlationId: null);
+    var envelope2 = _createEnvelope(correlationId: null);
 
     await store.StoreAsync(envelope1);
     await store.StoreAsync(envelope2);
@@ -90,7 +90,7 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
     var results = await store.GetByCorrelationAsync(correlationId);
 
     // Assert - Should only return envelope1
-    await Assert.That(results).HasCount().EqualTo(1);
+    await Assert.That(results).Count().IsEqualTo(1);
     await Assert.That(results[0].MessageId).IsEqualTo(envelope1.MessageId);
   }
 
@@ -107,13 +107,13 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
     var messageId1 = MessageId.New();
     var messageId2 = MessageId.New();
 
-    var envelope1 = CreateEnvelope(
+    var envelope1 = _createEnvelope(
       messageId: messageId1,
       causationId: messageId2, // Points to message2
       timestamp: DateTimeOffset.UtcNow.AddSeconds(-2)
     );
 
-    var envelope2 = CreateEnvelope(
+    var envelope2 = _createEnvelope(
       messageId: messageId2,
       causationId: messageId1, // Points back to message1 (circular)
       timestamp: DateTimeOffset.UtcNow.AddSeconds(-1)
@@ -126,8 +126,8 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
     var chain = await store.GetCausalChainAsync(messageId1);
 
     // Assert - Should not infinite loop, should return both messages
-    await Assert.That(chain).HasCount().GreaterThanOrEqualTo(1);
-    await Assert.That(chain).HasCount().LessThanOrEqualTo(2); // Max 2 due to circular protection
+    await Assert.That(chain).Count().IsGreaterThanOrEqualTo(1);
+    await Assert.That(chain).Count().IsLessThanOrEqualTo(2); // Max 2 due to circular protection
   }
 
   [Test]
@@ -137,7 +137,7 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
     var missingParentId = MessageId.New();
 
     // Create message with causation to non-existent parent
-    var envelope = CreateEnvelope(
+    var envelope = _createEnvelope(
       causationId: missingParentId // Parent doesn't exist in store
     );
 
@@ -147,7 +147,7 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
     var chain = await store.GetCausalChainAsync(envelope.MessageId);
 
     // Assert - Should return just the message itself (parent walk stops at missing parent)
-    await Assert.That(chain).HasCount().EqualTo(1);
+    await Assert.That(chain).Count().IsEqualTo(1);
     await Assert.That(chain[0].MessageId).IsEqualTo(envelope.MessageId);
   }
 
@@ -158,14 +158,14 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
 
     // Create parent-child chain:
     // parent -> child1, child2
-    var parent = CreateEnvelope(timestamp: DateTimeOffset.UtcNow.AddSeconds(-3));
+    var parent = _createEnvelope(timestamp: DateTimeOffset.UtcNow.AddSeconds(-3));
 
-    var child1 = CreateEnvelope(
+    var child1 = _createEnvelope(
       causationId: MessageId.From(parent.MessageId.Value),
       timestamp: DateTimeOffset.UtcNow.AddSeconds(-2)
     );
 
-    var child2 = CreateEnvelope(
+    var child2 = _createEnvelope(
       causationId: MessageId.From(parent.MessageId.Value),
       timestamp: DateTimeOffset.UtcNow.AddSeconds(-1)
     );
@@ -178,7 +178,7 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
     var chain = await store.GetCausalChainAsync(parent.MessageId);
 
     // Assert - Should include parent and both children
-    await Assert.That(chain).HasCount().GreaterThanOrEqualTo(3);
+    await Assert.That(chain).Count().IsGreaterThanOrEqualTo(3);
     await Assert.That(chain.Select(e => e.MessageId)).Contains(parent.MessageId);
     await Assert.That(chain.Select(e => e.MessageId)).Contains(child1.MessageId);
     await Assert.That(chain.Select(e => e.MessageId)).Contains(child2.MessageId);
@@ -191,16 +191,16 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
 
     // Create multi-generation tree:
     // grandparent -> parent -> child -> grandchild
-    var grandparent = CreateEnvelope(timestamp: DateTimeOffset.UtcNow.AddSeconds(-4));
-    var parent = CreateEnvelope(
+    var grandparent = _createEnvelope(timestamp: DateTimeOffset.UtcNow.AddSeconds(-4));
+    var parent = _createEnvelope(
       causationId: MessageId.From(grandparent.MessageId.Value),
       timestamp: DateTimeOffset.UtcNow.AddSeconds(-3)
     );
-    var child = CreateEnvelope(
+    var child = _createEnvelope(
       causationId: MessageId.From(parent.MessageId.Value),
       timestamp: DateTimeOffset.UtcNow.AddSeconds(-2)
     );
-    var grandchild = CreateEnvelope(
+    var grandchild = _createEnvelope(
       causationId: MessageId.From(child.MessageId.Value),
       timestamp: DateTimeOffset.UtcNow.AddSeconds(-1)
     );
@@ -214,7 +214,7 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
     var chain = await store.GetCausalChainAsync(parent.MessageId);
 
     // Assert - Should include grandparent (ancestor), parent (self), child, and grandchild (descendants)
-    await Assert.That(chain).HasCount().EqualTo(4);
+    await Assert.That(chain).Count().IsEqualTo(4);
     await Assert.That(chain.Select(e => e.MessageId)).Contains(grandparent.MessageId);
     await Assert.That(chain.Select(e => e.MessageId)).Contains(parent.MessageId);
     await Assert.That(chain.Select(e => e.MessageId)).Contains(child.MessageId);
@@ -227,7 +227,7 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
     var store = new InMemoryTraceStore();
 
     // Create message with empty Guid causation (root message)
-    var envelope = CreateEnvelope(
+    var envelope = _createEnvelope(
       causationId: MessageId.From(Guid.Empty) // Empty causation ID
     );
 
@@ -237,7 +237,7 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
     var chain = await store.GetCausalChainAsync(envelope.MessageId);
 
     // Assert - Should return just the message (no parent walk with empty causation)
-    await Assert.That(chain).HasCount().EqualTo(1);
+    await Assert.That(chain).Count().IsEqualTo(1);
     await Assert.That(chain[0].MessageId).IsEqualTo(envelope.MessageId);
   }
 
@@ -248,12 +248,12 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
     var now = DateTimeOffset.UtcNow;
 
     // Create chain with varying timestamps (store out of order)
-    var message1 = CreateEnvelope(timestamp: now.AddSeconds(-10));
-    var message2 = CreateEnvelope(
+    var message1 = _createEnvelope(timestamp: now.AddSeconds(-10));
+    var message2 = _createEnvelope(
       causationId: MessageId.From(message1.MessageId.Value),
       timestamp: now.AddSeconds(-5)
     );
-    var message3 = CreateEnvelope(
+    var message3 = _createEnvelope(
       causationId: MessageId.From(message2.MessageId.Value),
       timestamp: now
     );
@@ -267,7 +267,7 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
     var chain = await store.GetCausalChainAsync(message3.MessageId);
 
     // Assert - Should return in chronological order by timestamp
-    await Assert.That(chain).HasCount().EqualTo(3);
+    await Assert.That(chain).Count().IsEqualTo(3);
     await Assert.That(chain[0].MessageId).IsEqualTo(message1.MessageId);
     await Assert.That(chain[1].MessageId).IsEqualTo(message2.MessageId);
     await Assert.That(chain[2].MessageId).IsEqualTo(message3.MessageId);
@@ -339,25 +339,25 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
 
     // Create circular reference in children tree:
     // parent -> child1 -> child2 -> child1 (circular back to child1)
-    var parent = CreateEnvelope(timestamp: DateTimeOffset.UtcNow.AddSeconds(-4));
+    var parent = _createEnvelope(timestamp: DateTimeOffset.UtcNow.AddSeconds(-4));
 
     var child1Id = MessageId.New();
     var child2Id = MessageId.New();
 
-    var child1 = CreateEnvelope(
+    var child1 = _createEnvelope(
       messageId: child1Id,
       causationId: MessageId.From(parent.MessageId.Value),
       timestamp: DateTimeOffset.UtcNow.AddSeconds(-3)
     );
 
-    var child2 = CreateEnvelope(
+    var child2 = _createEnvelope(
       messageId: child2Id,
       causationId: child1Id,
       timestamp: DateTimeOffset.UtcNow.AddSeconds(-2)
     );
 
     // Create a child that points back to child1 (circular reference)
-    var circularChild = CreateEnvelope(
+    var circularChild = _createEnvelope(
       causationId: child1Id, // Points back to child1, creating a circular reference
       timestamp: DateTimeOffset.UtcNow.AddSeconds(-1)
     );
@@ -371,7 +371,7 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
     var chain = await store.GetCausalChainAsync(parent.MessageId);
 
     // Assert - Should not infinite loop, should return all non-circular messages
-    await Assert.That(chain).HasCount().GreaterThanOrEqualTo(3);
+    await Assert.That(chain).Count().IsGreaterThanOrEqualTo(3);
     await Assert.That(chain.Select(e => e.MessageId)).Contains(parent.MessageId);
     await Assert.That(chain.Select(e => e.MessageId)).Contains(child1.MessageId);
     await Assert.That(chain.Select(e => e.MessageId)).Contains(child2.MessageId);

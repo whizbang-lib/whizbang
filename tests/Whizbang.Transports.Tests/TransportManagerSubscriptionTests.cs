@@ -37,7 +37,7 @@ public class TransportManagerSubscriptionTests {
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
 
     // Assert
-    await Assert.That(subscriptions).HasCount().EqualTo(1);
+    await Assert.That(subscriptions).Count().IsEqualTo(1);
     await Assert.That(subscriptions[0]).IsNotNull();
 
     // Verify handler works by publishing a message
@@ -78,7 +78,7 @@ public class TransportManagerSubscriptionTests {
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
 
     // Assert
-    await Assert.That(subscriptions).HasCount().EqualTo(2);
+    await Assert.That(subscriptions).Count().IsEqualTo(2);
   }
 
   [Test]
@@ -102,7 +102,7 @@ public class TransportManagerSubscriptionTests {
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
 
     // Assert
-    await Assert.That(subscriptions).HasCount().EqualTo(1);
+    await Assert.That(subscriptions).Count().IsEqualTo(1);
     // Metadata is passed to transport - subscription should be created successfully
   }
 
@@ -127,7 +127,7 @@ public class TransportManagerSubscriptionTests {
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
 
     // Assert
-    await Assert.That(subscriptions).HasCount().EqualTo(1);
+    await Assert.That(subscriptions).Count().IsEqualTo(1);
   }
 
   [Test]
@@ -152,7 +152,7 @@ public class TransportManagerSubscriptionTests {
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
 
     // Assert
-    await Assert.That(subscriptions).HasCount().EqualTo(1);
+    await Assert.That(subscriptions).Count().IsEqualTo(1);
   }
 
   [Test]
@@ -176,7 +176,7 @@ public class TransportManagerSubscriptionTests {
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
 
     // Assert
-    await Assert.That(subscriptions).HasCount().EqualTo(1);
+    await Assert.That(subscriptions).Count().IsEqualTo(1);
   }
 
   [Test]
@@ -200,7 +200,7 @@ public class TransportManagerSubscriptionTests {
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
 
     // Assert
-    await Assert.That(subscriptions).HasCount().EqualTo(1);
+    await Assert.That(subscriptions).Count().IsEqualTo(1);
   }
 
   [Test]
@@ -224,7 +224,7 @@ public class TransportManagerSubscriptionTests {
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
 
     // Assert
-    await Assert.That(subscriptions).HasCount().EqualTo(1);
+    await Assert.That(subscriptions).Count().IsEqualTo(1);
   }
 
   [Test]
@@ -250,7 +250,7 @@ public class TransportManagerSubscriptionTests {
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
 
     // Assert
-    await Assert.That(subscriptions).HasCount().EqualTo(1);
+    await Assert.That(subscriptions).Count().IsEqualTo(1);
   }
 
   [Test]
@@ -306,7 +306,7 @@ public class TransportManagerSubscriptionTests {
     static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
 
     // Act & Assert
-    await Assert.That(() => manager.SubscribeFromTargetsAsync(targets, handler))
+    await Assert.That(async () => await manager.SubscribeFromTargetsAsync(targets, handler))
       .ThrowsExactly<InvalidOperationException>();
   }
 
@@ -333,6 +333,6 @@ public class TransportManagerSubscriptionTests {
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
 
     // Assert
-    await Assert.That(subscriptions).HasCount().EqualTo(1);
+    await Assert.That(subscriptions).Count().IsEqualTo(1);
   }
 }

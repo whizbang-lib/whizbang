@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using Microsoft.CodeAnalysis;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -143,11 +144,11 @@ public class SomeClass {
 
     // Assert - Should report WHIZ002 info diagnostic (not warning anymore)
     var infos = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Info).ToArray();
-    await Assert.That(infos).HasCount().GreaterThanOrEqualTo(1);
+    await Assert.That(infos).Count().IsGreaterThanOrEqualTo(1);
 
     var whiz002 = infos.FirstOrDefault(d => d.Id == "WHIZ002");
     await Assert.That(whiz002).IsNotNull();
-    await Assert.That(whiz002!.GetMessage()).Contains("No IReceptor");
+    await Assert.That(whiz002!.GetMessage(CultureInfo.InvariantCulture)).Contains("No IReceptor");
   }
 
   [Test]
@@ -262,9 +263,9 @@ public class TestReceptor : IReceptor<TestCommand, TestResponse> {
     var infoDiagnostics = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Info).ToArray();
     var whiz001 = infoDiagnostics.FirstOrDefault(d => d.Id == "WHIZ001");
     await Assert.That(whiz001).IsNotNull();
-    await Assert.That(whiz001!.GetMessage()).Contains("TestReceptor");
-    await Assert.That(whiz001.GetMessage()).Contains("TestCommand");
-    await Assert.That(whiz001.GetMessage()).Contains("TestResponse");
+    await Assert.That(whiz001!.GetMessage(CultureInfo.InvariantCulture)).Contains("TestReceptor");
+    await Assert.That(whiz001.GetMessage(CultureInfo.InvariantCulture)).Contains("TestCommand");
+    await Assert.That(whiz001.GetMessage(CultureInfo.InvariantCulture)).Contains("TestResponse");
   }
 
   [Test]
@@ -419,7 +420,7 @@ public class LogReceptor : IReceptor<LogCommand> {
     var infoDiagnostics = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Info).ToArray();
     var whiz001 = infoDiagnostics.FirstOrDefault(d => d.Id == "WHIZ001");
     await Assert.That(whiz001).IsNotNull();
-    await Assert.That(whiz001!.GetMessage()).Contains("void");
+    await Assert.That(whiz001!.GetMessage(CultureInfo.InvariantCulture)).Contains("void");
   }
 
   [Test]
@@ -444,7 +445,7 @@ public class NotAReceptor {
 
     // Assert - Should report WHIZ002 info (no receptors found)
     var infos = result.Diagnostics.Where(d => d.Id == "WHIZ002").ToArray();
-    await Assert.That(infos).HasCount().GreaterThanOrEqualTo(1);
+    await Assert.That(infos).Count().IsGreaterThanOrEqualTo(1);
   }
 
   [Test]
@@ -492,7 +493,7 @@ public class OrderReceptor : IReceptor<GetOrderDetails, (OrderSummary, CustomerI
     var whiz001 = infoDiagnostics.FirstOrDefault(d => d.Id == "WHIZ001");
     await Assert.That(whiz001).IsNotNull();
     // GetSimpleName should simplify "(global::MyApp.Receptors.OrderSummary, global::MyApp.Receptors.CustomerInfo)" to "(OrderSummary, CustomerInfo)"
-    await Assert.That(whiz001!.GetMessage()).Contains("(OrderSummary, CustomerInfo)");
+    await Assert.That(whiz001!.GetMessage(CultureInfo.InvariantCulture)).Contains("(OrderSummary, CustomerInfo)");
   }
 
   [Test]
@@ -530,7 +531,7 @@ public class OrderReceptor : IReceptor<GetOrders, OrderCreated[]> {
     var whiz001 = infoDiagnostics.FirstOrDefault(d => d.Id == "WHIZ001");
     await Assert.That(whiz001).IsNotNull();
     // GetSimpleName should simplify "global::MyApp.Receptors.OrderCreated[]" to "OrderCreated[]"
-    await Assert.That(whiz001!.GetMessage()).Contains("OrderCreated[]");
+    await Assert.That(whiz001!.GetMessage(CultureInfo.InvariantCulture)).Contains("OrderCreated[]");
   }
 
   [Test]
@@ -570,7 +571,7 @@ public class OrderReceptor : IReceptor<GetComplexOrder, (OrderSummary, (Customer
     var whiz001 = infoDiagnostics.FirstOrDefault(d => d.Id == "WHIZ001");
     await Assert.That(whiz001).IsNotNull();
     // GetSimpleName should simplify nested tuple
-    await Assert.That(whiz001!.GetMessage()).Contains("(OrderSummary, (CustomerInfo, ShippingInfo))");
+    await Assert.That(whiz001!.GetMessage(CultureInfo.InvariantCulture)).Contains("(OrderSummary, (CustomerInfo, ShippingInfo))");
   }
 
   // ========================================

@@ -10,7 +10,7 @@ namespace Whizbang.Data.Postgres.Tests;
 /// Each test gets its own isolated PostgreSQL container for parallel execution.
 /// </summary>
 [InheritsTests]
-public class DapperPostgresSequenceProviderTests : SequenceProviderContractTests {
+public class DapperPostgresSequenceProviderTests : SequenceProviderContractTests, IDisposable {
   private PostgresTestBase _testBase = null!;
 
   [Before(Test)]
@@ -26,9 +26,14 @@ public class DapperPostgresSequenceProviderTests : SequenceProviderContractTests
     }
   }
 
+  public void Dispose() {
+    _testBase?.DisposeAsync().AsTask().Wait();
+    GC.SuppressFinalize(this);
+  }
+
   protected override ISequenceProvider CreateProvider() {
     return new DapperPostgresSequenceProvider(_testBase.ConnectionFactory, _testBase.Executor);
   }
 
-  private class TestFixture : PostgresTestBase { }
+  private sealed class TestFixture : PostgresTestBase { }
 }

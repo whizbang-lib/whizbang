@@ -27,7 +27,7 @@ public class ActiveStreamsSchemaTests {
     var columns = ActiveStreamsSchema.Table.Columns;
 
     // Assert - Verify column count
-    await Assert.That(columns).HasCount().EqualTo(6);
+    await Assert.That(columns).Count().IsEqualTo(6);
 
     // Verify each column definition
     var streamId = columns[0];
@@ -84,26 +84,26 @@ public class ActiveStreamsSchemaTests {
     var indexes = ActiveStreamsSchema.Table.Indexes;
 
     // Assert - Verify index count
-    await Assert.That(indexes).HasCount().EqualTo(3);
+    await Assert.That(indexes).Count().IsEqualTo(3);
 
     // Verify instance index
     var instanceIndex = indexes[0];
     await Assert.That(instanceIndex.Name).IsEqualTo("idx_active_streams_instance");
-    await Assert.That(instanceIndex.Columns).HasCount().EqualTo(1);
+    await Assert.That(instanceIndex.Columns).Count().IsEqualTo(1);
     await Assert.That(instanceIndex.Columns[0]).IsEqualTo("assigned_instance_id");
     await Assert.That(instanceIndex.WhereClause).IsEqualTo("assigned_instance_id IS NOT NULL");
 
     // Verify partition index
     var partitionIndex = indexes[1];
     await Assert.That(partitionIndex.Name).IsEqualTo("idx_active_streams_partition");
-    await Assert.That(partitionIndex.Columns).HasCount().EqualTo(1);
+    await Assert.That(partitionIndex.Columns).Count().IsEqualTo(1);
     await Assert.That(partitionIndex.Columns[0]).IsEqualTo("partition_number");
     await Assert.That(partitionIndex.WhereClause).IsEqualTo("assigned_instance_id IS NULL");
 
     // Verify lease expiry index
     var leaseExpiryIndex = indexes[2];
     await Assert.That(leaseExpiryIndex.Name).IsEqualTo("idx_active_streams_lease_expired");
-    await Assert.That(leaseExpiryIndex.Columns).HasCount().EqualTo(1);
+    await Assert.That(leaseExpiryIndex.Columns).Count().IsEqualTo(1);
     await Assert.That(leaseExpiryIndex.Columns[0]).IsEqualTo("lease_expiry");
     await Assert.That(leaseExpiryIndex.WhereClause).IsEqualTo("lease_expiry < NOW()");
   }

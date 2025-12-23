@@ -39,7 +39,7 @@ public class Uuid7IdProviderTests {
     }
 
     // Assert
-    await Assert.That(guids).HasCount().EqualTo(count);
+    await Assert.That(guids).Count().IsEqualTo(count);
   }
 
   [Test]
@@ -85,7 +85,7 @@ public class Uuid7IdProviderTests {
     var parsedGuid = Guid.Parse(stringRepresentation);
 
     await Assert.That(stringRepresentation).IsNotNull();
-    await Assert.That(byteArray).HasCount().EqualTo(16);
+    await Assert.That(byteArray).Count().IsEqualTo(16);
     await Assert.That(parsedGuid).IsEqualTo(result);
   }
 

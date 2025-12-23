@@ -69,7 +69,7 @@ public class DispatcherTransportBridge(
     context ??= MessageContext.New();
 
     // Create envelope with hop for observability
-    var envelope = CreateEnvelope(message, context);
+    var envelope = _createEnvelope(message, context);
 
     // Publish to transport
     await _transport.PublishAsync(envelope, destination, CancellationToken.None);
@@ -91,7 +91,7 @@ public class DispatcherTransportBridge(
     TRequest request,
     TransportDestination destination,
     IMessageContext? context = null
-  ) {
+  ) where TRequest : notnull where TResponse : notnull {
     ArgumentNullException.ThrowIfNull(request);
     ArgumentNullException.ThrowIfNull(destination);
 
@@ -99,7 +99,7 @@ public class DispatcherTransportBridge(
     context ??= MessageContext.New();
 
     // Create request envelope
-    var requestEnvelope = CreateEnvelope(request, context);
+    var requestEnvelope = _createEnvelope(request, context);
 
     // Use transport's request/response pattern
     var responseEnvelope = await _transport.SendAsync<TRequest, TResponse>(
@@ -146,7 +146,7 @@ public class DispatcherTransportBridge(
   /// <summary>
   /// Creates a MessageEnvelope with initial hop containing context information.
   /// </summary>
-  private MessageEnvelope<TMessage> CreateEnvelope<TMessage>(
+  private MessageEnvelope<TMessage> _createEnvelope<TMessage>(
     TMessage message,
     IMessageContext context
   ) {

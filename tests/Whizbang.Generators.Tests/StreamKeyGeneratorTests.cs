@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using Microsoft.CodeAnalysis;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -134,11 +135,11 @@ public record InvalidEvent(string Data) : IEvent;
 
     // Assert - Should report warning about missing [StreamKey]
     var warnings = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Warning).ToArray();
-    await Assert.That(warnings).HasCount().GreaterThanOrEqualTo(1);
+    await Assert.That(warnings).Count().IsGreaterThanOrEqualTo(1);
 
-    var streamKeyWarning = warnings.FirstOrDefault(d => d.Id.StartsWith("WHIZ"));
+    var streamKeyWarning = warnings.FirstOrDefault(d => d.Id.StartsWith("WHIZ", StringComparison.Ordinal));
     await Assert.That(streamKeyWarning).IsNotNull();
-    await Assert.That(streamKeyWarning!.GetMessage()).Contains("StreamKey");
+    await Assert.That(streamKeyWarning!.GetMessage(CultureInfo.InvariantCulture)).Contains("StreamKey");
   }
 
   [Test]

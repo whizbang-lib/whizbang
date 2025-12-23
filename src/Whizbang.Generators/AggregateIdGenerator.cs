@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Immutable;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
@@ -42,8 +43,8 @@ public class AggregateIdGenerator : IIncrementalGenerator {
     // Discover properties with [AggregateId] attribute
     // Filter for types that could have properties with attributes
     var aggregateIdProperties = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => IsTypeWithAttributes(node),
-        transform: static (ctx, ct) => ExtractAggregateIdInfo(ctx, ct)
+        predicate: static (node, _) => _isTypeWithAttributes(node),
+        transform: static (ctx, ct) => _extractAggregateIdInfo(ctx, ct)
     ).Where(static info => info is not null);
 
     // Generate extractor registry from collected properties
@@ -55,7 +56,7 @@ public class AggregateIdGenerator : IIncrementalGenerator {
         static (ctx, data) => {
           var compilation = data.Left;
           var properties = data.Right;
-          GenerateAggregateIdExtractors(ctx, compilation, properties!);
+          _generateAggregateIdExtractors(ctx, compilation, properties!);
         }
     );
   }
@@ -64,7 +65,7 @@ public class AggregateIdGenerator : IIncrementalGenerator {
   /// Syntactic predicate: checks if node is a type that could have properties with attributes.
   /// This is a fast check before expensive semantic analysis.
   /// </summary>
-  private static bool IsTypeWithAttributes(SyntaxNode node) {
+  private static bool _isTypeWithAttributes(SyntaxNode node) {
     // Check for records or classes (message types)
     if (node is RecordDeclarationSyntax record) {
       return true;
@@ -82,7 +83,7 @@ public class AggregateIdGenerator : IIncrementalGenerator {
   /// Returns null if the type doesn't have any properties marked with [AggregateId].
   /// Tracks diagnostics for reporting during generation.
   /// </summary>
-  private static AggregateIdInfo? ExtractAggregateIdInfo(
+  private static AggregateIdInfo? _extractAggregateIdInfo(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
 
@@ -93,7 +94,7 @@ public class AggregateIdGenerator : IIncrementalGenerator {
     // Find all properties with [AggregateId] attribute (including inherited)
     var aggregateIdProperties = typeSymbol.GetMembers()
         .OfType<IPropertySymbol>()
-        .Where(p => HasAggregateIdAttribute(p))
+        .Where(p => _hasAggregateIdAttribute(p))
         .ToList();
 
     // Check base types for inherited properties
@@ -101,7 +102,7 @@ public class AggregateIdGenerator : IIncrementalGenerator {
     while (baseType != null && baseType.SpecialType != SpecialType.System_Object) {
       var inheritedProperties = baseType.GetMembers()
           .OfType<IPropertySymbol>()
-          .Where(p => HasAggregateIdAttribute(p));
+          .Where(p => _hasAggregateIdAttribute(p));
       aggregateIdProperties.AddRange(inheritedProperties);
       baseType = baseType.BaseType;
     }
@@ -137,7 +138,7 @@ public class AggregateIdGenerator : IIncrementalGenerator {
   /// <summary>
   /// Checks if a property has the [AggregateId] attribute.
   /// </summary>
-  private static bool HasAggregateIdAttribute(IPropertySymbol property) {
+  private static bool _hasAggregateIdAttribute(IPropertySymbol property) {
     return property.GetAttributes().Any(a =>
         a.AttributeClass?.ToDisplayString() == AGGREGATE_ID_ATTRIBUTE);
   }
@@ -147,7 +148,7 @@ public class AggregateIdGenerator : IIncrementalGenerator {
   /// and DI wrapper class for zero-reflection PolicyContext integration.
   /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
-  private static void GenerateAggregateIdExtractors(
+  private static void _generateAggregateIdExtractors(
       SourceProductionContext context,
       Compilation compilation,
       ImmutableArray<AggregateIdInfo> properties) {
@@ -162,7 +163,7 @@ public class AggregateIdGenerator : IIncrementalGenerator {
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.AggregateIdPropertyDiscovered,
           Location.None,
-          GetSimpleName(prop.MessageType),
+          _getSimpleName(prop.MessageType),
           prop.PropertyName
       ));
 
@@ -171,7 +172,7 @@ public class AggregateIdGenerator : IIncrementalGenerator {
         context.ReportDiagnostic(Diagnostic.Create(
             DiagnosticDescriptors.MultipleAggregateIdAttributes,
             Location.None,
-            GetSimpleName(prop.MessageType),
+            _getSimpleName(prop.MessageType),
             prop.PropertyName
         ));
       }
@@ -182,15 +183,15 @@ public class AggregateIdGenerator : IIncrementalGenerator {
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.AggregateIdMustBeGuid,
           Location.None,
-          GetSimpleName(prop.MessageType),
+          _getSimpleName(prop.MessageType),
           prop.PropertyName
       ));
     }
 
     // Generate source code with DI wrapper
     var source = validProperties.IsEmpty
-        ? GenerateEmptyExtractorRegistry(compilation)
-        : GenerateExtractorRegistryWithDI(compilation, validProperties);
+        ? _generateEmptyExtractorRegistry(compilation)
+        : _generateExtractorRegistryWithDI(compilation, validProperties);
 
     context.AddSource("AggregateIdExtractors.g.cs", source);
   }
@@ -200,7 +201,7 @@ public class AggregateIdGenerator : IIncrementalGenerator {
   /// Uses templates and snippets for code generation (following project standards).
   /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
-  private static string GenerateExtractorRegistryWithDI(Compilation compilation, ImmutableArray<AggregateIdInfo> properties) {
+  private static string _generateExtractorRegistryWithDI(Compilation compilation, ImmutableArray<AggregateIdInfo> properties) {
     // Determine namespace from assembly name
     var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
@@ -248,7 +249,7 @@ public class AggregateIdGenerator : IIncrementalGenerator {
         "DI_REGISTRATION"
     );
 
-    var diCode = diSnippet.Replace("__COUNT__", properties.Length.ToString());
+    var diCode = diSnippet.Replace("__COUNT__", properties.Length.ToString(CultureInfo.InvariantCulture));
 
     template = TemplateUtilities.ReplaceRegion(template, "DI_REGISTRATION", diCode);
 
@@ -259,7 +260,7 @@ public class AggregateIdGenerator : IIncrementalGenerator {
   /// Generates empty extractor registry when no [AggregateId] attributes are found.
   /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
-  private static string GenerateEmptyExtractorRegistry(Compilation compilation) {
+  private static string _generateEmptyExtractorRegistry(Compilation compilation) {
     // Determine namespace from assembly name
     var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
@@ -293,7 +294,7 @@ public static class AggregateIdExtractors {
   /// Gets the simple name from a fully qualified type name.
   /// E.g., "global::MyApp.Commands.CreateOrder" -> "CreateOrder"
   /// </summary>
-  private static string GetSimpleName(string fullyQualifiedName) {
+  private static string _getSimpleName(string fullyQualifiedName) {
     var lastDot = fullyQualifiedName.LastIndexOf('.');
     return lastDot >= 0 ? fullyQualifiedName[(lastDot + 1)..] : fullyQualifiedName;
   }

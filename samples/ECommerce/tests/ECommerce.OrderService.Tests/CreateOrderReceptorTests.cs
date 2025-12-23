@@ -55,6 +55,7 @@ public class CreateOrderReceptorTests {
   }
 
   [Test]
+  [Obsolete]
   public async Task CreateOrderReceptor_ValidOrder_PublishesEventAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
@@ -168,6 +169,7 @@ public class CreateOrderReceptorTests {
   }
 
   [Test]
+  [Obsolete]
   public async Task CreateOrderReceptor_ValidOrder_MapsAllPropertiesCorrectlyAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();

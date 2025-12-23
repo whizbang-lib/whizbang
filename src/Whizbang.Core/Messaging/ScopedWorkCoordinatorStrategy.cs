@@ -17,7 +17,7 @@ namespace Whizbang.Core.Messaging;
 /// Provides a good balance of latency and efficiency.
 /// Best for: Web APIs, message handlers, transactional operations.
 /// </summary>
-public class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncDisposable {
+public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncDisposable {
   private readonly IWorkCoordinator _coordinator;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly IWorkChannelWriter? _workChannelWriter;
@@ -32,7 +32,7 @@ public class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncDis
   private readonly List<MessageFailure> _queuedOutboxFailures = [];
   private readonly List<MessageFailure> _queuedInboxFailures = [];
 
-  private bool _disposed = false;
+  private bool _disposed;
 
   public ScopedWorkCoordinatorStrategy(
     IWorkCoordinator coordinator,
@@ -52,14 +52,18 @@ public class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncDis
     ObjectDisposedException.ThrowIf(_disposed, this);
 
     _queuedOutboxMessages.Add(message);
-    _logger?.LogTrace("Queued outbox message {MessageId} for {Destination}", message.MessageId, message.Destination);
+    if (_logger != null) {
+      LogQueuedOutboxMessage(_logger, message.MessageId, message.Destination);
+    }
   }
 
   public void QueueInboxMessage(InboxMessage message) {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
     _queuedInboxMessages.Add(message);
-    _logger?.LogTrace("Queued inbox message {MessageId} for handler {HandlerName}", message.MessageId, message.HandlerName);
+    if (_logger != null) {
+      LogQueuedInboxMessage(_logger, message.MessageId, message.HandlerName);
+    }
   }
 
   public void QueueOutboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) {
@@ -69,7 +73,9 @@ public class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncDis
       MessageId = messageId,
       Status = completedStatus
     });
-    _logger?.LogTrace("Queued outbox completion for {MessageId} with status {Status}", messageId, completedStatus);
+    if (_logger != null) {
+      LogQueuedOutboxCompletion(_logger, messageId, completedStatus);
+    }
   }
 
   public void QueueInboxCompletion(Guid messageId, MessageProcessingStatus completedStatus) {
@@ -79,29 +85,35 @@ public class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncDis
       MessageId = messageId,
       Status = completedStatus
     });
-    _logger?.LogTrace("Queued inbox completion for {MessageId} with status {Status}", messageId, completedStatus);
+    if (_logger != null) {
+      LogQueuedInboxCompletion(_logger, messageId, completedStatus);
+    }
   }
 
-  public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string error) {
+  public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
     _queuedOutboxFailures.Add(new MessageFailure {
       MessageId = messageId,
       CompletedStatus = completedStatus,
-      Error = error
+      Error = errorMessage
     });
-    _logger?.LogTrace("Queued outbox failure for {MessageId}: {Error}", messageId, error);
+    if (_logger != null) {
+      LogQueuedOutboxFailure(_logger, messageId, errorMessage);
+    }
   }
 
-  public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string error) {
+  public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) {
     ObjectDisposedException.ThrowIf(_disposed, this);
 
     _queuedInboxFailures.Add(new MessageFailure {
       MessageId = messageId,
       CompletedStatus = completedStatus,
-      Error = error
+      Error = errorMessage
     });
-    _logger?.LogTrace("Queued inbox failure for {MessageId}: {Error}", messageId, error);
+    if (_logger != null) {
+      LogQueuedInboxFailure(_logger, messageId, errorMessage);
+    }
   }
 
   public async Task<WorkBatch> FlushAsync(WorkBatchFlags flags, CancellationToken ct = default) {
@@ -121,11 +133,9 @@ public class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncDis
     }
 
     // Log a summary of what's being flushed to the database
-    _logger?.LogInformation(
-      "Outbox flush: Queued={Queued} | Inbox flush: Queued={InboxQueued}",
-      _queuedOutboxMessages.Count,
-      _queuedInboxMessages.Count
-    );
+    if (_logger != null) {
+      LogFlushSummary(_logger, _queuedOutboxMessages.Count, _queuedInboxMessages.Count);
+    }
 
     // Call process_work_batch with all queued operations
     var workBatch = await _coordinator.ProcessWorkBatchAsync(
@@ -162,19 +172,17 @@ public class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncDis
     _queuedInboxFailures.Clear();
 
     // DIAGNOSTIC: Check if WorkChannelWriter is available
-    if (workBatch.OutboxWork.Count > 0) {
-      _logger?.LogWarning(
-        "DIAGNOSTIC: WorkChannelWriter is {Status}, returned work count: {Count}",
-        _workChannelWriter == null ? "NULL" : "AVAILABLE",
-        workBatch.OutboxWork.Count
-      );
+    if (workBatch.OutboxWork.Count > 0 && _logger != null) {
+      LogWorkChannelWriterStatus(_logger, _workChannelWriter == null ? "NULL" : "AVAILABLE", workBatch.OutboxWork.Count);
     }
 
     // Write returned work to channel for immediate processing
     // This is the critical fix: work returned from process_work_batch should be
     // queued for processing immediately, not returned to the caller (Dispatcher)
     if (_workChannelWriter != null && workBatch.OutboxWork.Count > 0) {
-      _logger?.LogDebug("Writing {Count} returned outbox messages to channel for immediate processing", workBatch.OutboxWork.Count);
+      if (_logger != null) {
+        LogWritingReturnedWork(_logger, workBatch.OutboxWork.Count);
+      }
 
       foreach (var work in workBatch.OutboxWork) {
         await _workChannelWriter.WriteAsync(work, ct);
@@ -196,21 +204,104 @@ public class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, IAsyncDis
         _queuedOutboxFailures.Count > 0 ||
         _queuedInboxCompletions.Count > 0 ||
         _queuedInboxFailures.Count > 0) {
-      _logger?.LogWarning(
-        "Scoped strategy disposing with unflushed operations: {OutboxMsg} outbox messages, {InboxMsg} inbox messages, {Completions} completions, {Failures} failures",
-        _queuedOutboxMessages.Count,
-        _queuedInboxMessages.Count,
-        _queuedOutboxCompletions.Count + _queuedInboxCompletions.Count,
-        _queuedOutboxFailures.Count + _queuedInboxFailures.Count
-      );
+      if (_logger != null) {
+        LogDisposingWithUnflushedOperations(
+          _logger,
+          _queuedOutboxMessages.Count,
+          _queuedInboxMessages.Count,
+          _queuedOutboxCompletions.Count + _queuedInboxCompletions.Count,
+          _queuedOutboxFailures.Count + _queuedInboxFailures.Count
+        );
+      }
 
       try {
         await FlushAsync(WorkBatchFlags.None);
       } catch (Exception ex) {
-        _logger?.LogError(ex, "Error flushing scoped strategy on disposal");
+        if (_logger != null) {
+          LogErrorFlushingOnDisposal(_logger, ex);
+        }
       }
     }
 
     _disposed = true;
+    GC.SuppressFinalize(this);
   }
+
+  // LoggerMessage definitions
+  [LoggerMessage(
+    EventId = 1,
+    Level = LogLevel.Trace,
+    Message = "Queued outbox message {MessageId} for {Destination}"
+  )]
+  static partial void LogQueuedOutboxMessage(ILogger logger, Guid messageId, string destination);
+
+  [LoggerMessage(
+    EventId = 2,
+    Level = LogLevel.Trace,
+    Message = "Queued inbox message {MessageId} for handler {HandlerName}"
+  )]
+  static partial void LogQueuedInboxMessage(ILogger logger, Guid messageId, string handlerName);
+
+  [LoggerMessage(
+    EventId = 3,
+    Level = LogLevel.Trace,
+    Message = "Queued outbox completion for {MessageId} with status {Status}"
+  )]
+  static partial void LogQueuedOutboxCompletion(ILogger logger, Guid messageId, MessageProcessingStatus status);
+
+  [LoggerMessage(
+    EventId = 4,
+    Level = LogLevel.Trace,
+    Message = "Queued inbox completion for {MessageId} with status {Status}"
+  )]
+  static partial void LogQueuedInboxCompletion(ILogger logger, Guid messageId, MessageProcessingStatus status);
+
+  [LoggerMessage(
+    EventId = 5,
+    Level = LogLevel.Trace,
+    Message = "Queued outbox failure for {MessageId}: {Error}"
+  )]
+  static partial void LogQueuedOutboxFailure(ILogger logger, Guid messageId, string error);
+
+  [LoggerMessage(
+    EventId = 6,
+    Level = LogLevel.Trace,
+    Message = "Queued inbox failure for {MessageId}: {Error}"
+  )]
+  static partial void LogQueuedInboxFailure(ILogger logger, Guid messageId, string error);
+
+  [LoggerMessage(
+    EventId = 7,
+    Level = LogLevel.Information,
+    Message = "Outbox flush: Queued={Queued} | Inbox flush: Queued={InboxQueued}"
+  )]
+  static partial void LogFlushSummary(ILogger logger, int queued, int inboxQueued);
+
+  [LoggerMessage(
+    EventId = 8,
+    Level = LogLevel.Warning,
+    Message = "DIAGNOSTIC: WorkChannelWriter is {Status}, returned work count: {Count}"
+  )]
+  static partial void LogWorkChannelWriterStatus(ILogger logger, string status, int count);
+
+  [LoggerMessage(
+    EventId = 9,
+    Level = LogLevel.Debug,
+    Message = "Writing {Count} returned outbox messages to channel for immediate processing"
+  )]
+  static partial void LogWritingReturnedWork(ILogger logger, int count);
+
+  [LoggerMessage(
+    EventId = 10,
+    Level = LogLevel.Warning,
+    Message = "Scoped strategy disposing with unflushed operations: {OutboxMsg} outbox messages, {InboxMsg} inbox messages, {Completions} completions, {Failures} failures"
+  )]
+  static partial void LogDisposingWithUnflushedOperations(ILogger logger, int outboxMsg, int inboxMsg, int completions, int failures);
+
+  [LoggerMessage(
+    EventId = 11,
+    Level = LogLevel.Error,
+    Message = "Error flushing scoped strategy on disposal"
+  )]
+  static partial void LogErrorFlushingOnDisposal(ILogger logger, Exception ex);
 }

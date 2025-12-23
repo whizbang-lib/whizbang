@@ -31,46 +31,46 @@ public static class ReceptorProcessingSchema {
     Columns: ImmutableArray.Create(
       new ColumnDefinition(
         Name: "id",
-        DataType: WhizbangDataType.Uuid,
+        DataType: WhizbangDataType.UUID,
         PrimaryKey: true,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "event_id",
-        DataType: WhizbangDataType.Uuid,
+        DataType: WhizbangDataType.UUID,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "receptor_name",
-        DataType: WhizbangDataType.String,
+        DataType: WhizbangDataType.STRING,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "status",
-        DataType: WhizbangDataType.SmallInt,
+        DataType: WhizbangDataType.SMALL_INT,
         Nullable: false,
         DefaultValue: DefaultValue.Integer(0)
       ),
       new ColumnDefinition(
         Name: "attempts",
-        DataType: WhizbangDataType.Integer,
+        DataType: WhizbangDataType.INTEGER,
         Nullable: false,
         DefaultValue: DefaultValue.Integer(0)
       ),
       new ColumnDefinition(
         Name: "error",
-        DataType: WhizbangDataType.String,
+        DataType: WhizbangDataType.STRING,
         Nullable: true
       ),
       new ColumnDefinition(
         Name: "started_at",
-        DataType: WhizbangDataType.TimestampTz,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
-        DefaultValue: DefaultValue.Function(DefaultValueFunction.DateTime_Now)
+        DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       ),
       new ColumnDefinition(
         Name: "processed_at",
-        DataType: WhizbangDataType.TimestampTz,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: true
       )
     ),
@@ -95,13 +95,13 @@ public static class ReceptorProcessingSchema {
   /// </summary>
   /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ReceptorProcessingSchemaTests.cs:Columns_Constants_MatchColumnNamesAsync</tests>
   public static class Columns {
-    public const string Id = "id";
-    public const string EventId = "event_id";
-    public const string ReceptorName = "receptor_name";
-    public const string Status = "status";
-    public const string Attempts = "attempts";
-    public const string Error = "error";
-    public const string StartedAt = "started_at";
-    public const string ProcessedAt = "processed_at";
+    public const string ID = "id";
+    public const string EVENT_ID = "event_id";
+    public const string RECEPTOR_NAME = "receptor_name";
+    public const string STATUS = "status";
+    public const string ATTEMPTS = "attempts";
+    public const string ERROR = "error";
+    public const string STARTED_AT = "started_at";
+    public const string PROCESSED_AT = "processed_at";
   }
 }

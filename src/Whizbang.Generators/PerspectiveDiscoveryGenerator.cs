@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Immutable;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
@@ -35,7 +37,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     // Filter for classes that have a base list (potential interface implementations)
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => ExtractPerspectiveInfos(ctx, ct)
+        transform: static (ctx, ct) => _extractPerspectiveInfos(ctx, ct)
     ).Where(static infos => infos is not null && infos.Length > 0)
      .SelectMany(static (infos, _) => infos!.ToImmutableArray());
 
@@ -48,7 +50,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
         static (ctx, data) => {
           var compilation = data.Left;
           var perspectives = data.Right;
-          GeneratePerspectiveRegistrations(ctx, compilation, perspectives);
+          _generatePerspectiveRegistrations(ctx, compilation, perspectives);
         }
     );
   }
@@ -60,7 +62,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   /// - Single variadic: IPerspectiveFor&lt;TModel, TEvent1, TEvent2, ...&gt;
   /// - Multiple separate: IPerspectiveFor&lt;TModel, TEvent1&gt;, IPerspectiveFor&lt;TModel, TEvent2&gt;
   /// </summary>
-  private static PerspectiveInfo[]? ExtractPerspectiveInfos(
+  private static PerspectiveInfo[]? _extractPerspectiveInfos(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
 
@@ -127,12 +129,12 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       var eventStreamKeys = new List<EventStreamKeyInfo>();
 
       foreach (var eventTypeSymbol in eventTypeSymbols) {
-        var error = ValidateEventStreamKey(eventTypeSymbol);
+        var error = _validateEventStreamKey(eventTypeSymbol);
         if (error != null) {
           validationErrors.Add(error);
         } else {
           // Extract StreamKey property name (only if valid)
-          var streamKeyProp = ExtractStreamKeyProperty(eventTypeSymbol);
+          var streamKeyProp = _extractStreamKeyProperty(eventTypeSymbol);
           if (streamKeyProp != null) {
             eventStreamKeys.Add(new EventStreamKeyInfo(
                 EventTypeName: eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
@@ -160,7 +162,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   /// Returns validation error if found, null if valid.
   /// Handles array types by validating the element type.
   /// </summary>
-  private static EventValidationError? ValidateEventStreamKey(ITypeSymbol eventTypeSymbol) {
+  private static EventValidationError? _validateEventStreamKey(ITypeSymbol eventTypeSymbol) {
     // If this is an array type, validate the element type instead
     var typeToValidate = eventTypeSymbol;
     if (eventTypeSymbol is IArrayTypeSymbol arrayType) {
@@ -181,7 +183,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     }
 
     var eventTypeName = typeToValidate.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-    var simpleEventName = GetSimpleName(eventTypeName);
+    var simpleEventName = _getSimpleName(eventTypeName);
 
     if (streamKeyProperties.Count == 0) {
       return new EventValidationError(simpleEventName, StreamKeyErrorType.MissingStreamKey);
@@ -197,7 +199,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   /// Returns the property name if exactly one [StreamKey] is found, null otherwise.
   /// Handles array types by extracting from the element type.
   /// </summary>
-  private static string? ExtractStreamKeyProperty(ITypeSymbol eventTypeSymbol) {
+  private static string? _extractStreamKeyProperty(ITypeSymbol eventTypeSymbol) {
     // If this is an array type, extract from the element type instead
     var typeToExtract = eventTypeSymbol;
     if (eventTypeSymbol is IArrayTypeSymbol arrayType) {
@@ -223,7 +225,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   /// Creates an AddWhizbangPerspectives extension method that registers all perspectives as Scoped services.
   /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
-  private static void GeneratePerspectiveRegistrations(
+  private static void _generatePerspectiveRegistrations(
       SourceProductionContext context,
       Compilation compilation,
       ImmutableArray<PerspectiveInfo> perspectives) {
@@ -235,18 +237,18 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
 
     // Report each discovered perspective and any validation errors
     foreach (var perspective in perspectives) {
-      var eventNames = string.Join(", ", perspective.EventTypes.Select(GetSimpleName));
+      var eventNames = string.Join(", ", perspective.EventTypes.Select(_getSimpleName));
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.PerspectiveDiscovered,
           Location.None,
-          GetSimpleName(perspective.ClassName),
+          _getSimpleName(perspective.ClassName),
           eventNames
       ));
 
       // Report validation errors for this perspective
       if (perspective.EventValidationErrors != null) {
         foreach (var error in perspective.EventValidationErrors) {
-          var simplePerspectiveName = GetSimpleName(perspective.ClassName);
+          var simplePerspectiveName = _getSimpleName(perspective.ClassName);
 
           if (error.ErrorType == StreamKeyErrorType.MissingStreamKey) {
             context.ReportDiagnostic(Diagnostic.Create(
@@ -266,7 +268,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       }
     }
 
-    var registrationSource = GenerateRegistrationSource(compilation, perspectives);
+    var registrationSource = _generateRegistrationSource(compilation, perspectives);
     context.AddSource("PerspectiveRegistrations.g.cs", registrationSource);
   }
 
@@ -276,7 +278,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   /// Handles perspectives that implement multiple IPerspectiveFor&lt;TModel, TEvent&gt; interfaces.
   /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
-  private static string GenerateRegistrationSource(Compilation compilation, ImmutableArray<PerspectiveInfo> perspectives) {
+  private static string _generateRegistrationSource(Compilation compilation, ImmutableArray<PerspectiveInfo> perspectives) {
     // Determine namespace from assembly name
     var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
@@ -315,8 +317,8 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     var result = template;
     result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName};");
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(PerspectiveDiscoveryGenerator).Assembly, result);
-    result = result.Replace("{{PERSPECTIVE_CLASS_COUNT}}", perspectives.Length.ToString());
-    result = result.Replace("{{REGISTRATION_COUNT}}", totalRegistrations.ToString());
+    result = result.Replace("{{PERSPECTIVE_CLASS_COUNT}}", perspectives.Length.ToString(CultureInfo.InvariantCulture));
+    result = result.Replace("{{REGISTRATION_COUNT}}", totalRegistrations.ToString(CultureInfo.InvariantCulture));
     result = TemplateUtilities.ReplaceRegion(result, "PERSPECTIVE_REGISTRATIONS", registrations.ToString());
 
     return result;
@@ -327,11 +329,11 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   /// Handles tuples, arrays, and nested types.
   /// E.g., "global::MyApp.Events.OrderCreatedEvent" -> "OrderCreatedEvent"
   /// </summary>
-  private static string GetSimpleName(string fullyQualifiedName) {
+  private static string _getSimpleName(string fullyQualifiedName) {
     // Handle arrays: Type[]
-    if (fullyQualifiedName.EndsWith("[]")) {
+    if (fullyQualifiedName.EndsWith("[]", StringComparison.Ordinal)) {
       var baseType = fullyQualifiedName[..^2];
-      return GetSimpleName(baseType) + "[]";
+      return _getSimpleName(baseType) + "[]";
     }
 
     // Handle simple types

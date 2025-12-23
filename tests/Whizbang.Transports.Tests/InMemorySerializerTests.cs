@@ -18,7 +18,7 @@ public class InMemorySerializerTests {
   public async Task SerializeAsync_ShouldReturnByteArrayAsync() {
     // Arrange
     var serializer = new InMemorySerializer();
-    var envelope = CreateTestEnvelope();
+    var envelope = _createTestEnvelope();
 
     // Act
     var bytes = await serializer.SerializeAsync(envelope);
@@ -32,7 +32,7 @@ public class InMemorySerializerTests {
   public async Task DeserializeAsync_ShouldRetrieveOriginalEnvelopeAsync() {
     // Arrange
     var serializer = new InMemorySerializer();
-    var originalEnvelope = CreateTestEnvelope();
+    var originalEnvelope = _createTestEnvelope();
 
     // Act - Serialize and then deserialize
     var bytes = await serializer.SerializeAsync(originalEnvelope);
@@ -80,15 +80,15 @@ public class InMemorySerializerTests {
     await Assert.That(deserializedTyped).IsNotNull();
     await Assert.That(deserializedTyped!.Payload.Content).IsEqualTo("test content");
     await Assert.That(deserializedTyped.Payload.Value).IsEqualTo(42);
-    await Assert.That(deserializedTyped.Hops).HasCount().EqualTo(1);
+    await Assert.That(deserializedTyped.Hops).Count().IsEqualTo(1);
   }
 
   [Test]
   public async Task MultipleSerialization_ShouldProduceDifferentByteArraysAsync() {
     // Arrange
     var serializer = new InMemorySerializer();
-    var envelope1 = CreateTestEnvelope();
-    var envelope2 = CreateTestEnvelope();
+    var envelope1 = _createTestEnvelope();
+    var envelope2 = _createTestEnvelope();
 
     // Act
     var bytes1 = await serializer.SerializeAsync(envelope1);
@@ -98,7 +98,7 @@ public class InMemorySerializerTests {
     await Assert.That(bytes1.SequenceEqual(bytes2)).IsFalse();
   }
 
-  private static MessageEnvelope<TestMessage> CreateTestEnvelope() {
+  private static MessageEnvelope<TestMessage> _createTestEnvelope() {
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "test", Value = 1 },

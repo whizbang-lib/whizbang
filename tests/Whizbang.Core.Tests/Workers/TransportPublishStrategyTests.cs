@@ -17,7 +17,7 @@ namespace Whizbang.Core.Tests.Workers;
 
 public class TransportPublishStrategyTests {
   // Simple test message type for envelope creation
-  public record TestMessage : IEvent { }
+  public record TestMessage([StreamKey] string Id = "test-msg") : IEvent { }
 
   // Helper to create a MessageEnvelope for testing
   private static MessageEnvelope<JsonElement> _createTestEnvelope(Guid messageId) {
@@ -28,7 +28,7 @@ public class TransportPublishStrategyTests {
     );
   }
 
-  private class TestTransport : ITransport {
+  private sealed class TestTransport : ITransport {
     private bool _isInitialized;
 
     public bool IsInitialized => _isInitialized;

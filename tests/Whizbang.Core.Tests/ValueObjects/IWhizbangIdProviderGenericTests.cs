@@ -62,7 +62,7 @@ public class IWhizbangIdProviderGenericTests {
   }
 
   // Test helper class
-  private class TestWhizbangIdProvider : IWhizbangIdProvider {
+  private sealed class TestWhizbangIdProvider : IWhizbangIdProvider {
     private readonly Guid _guid;
 
     public TestWhizbangIdProvider(Guid guid) {

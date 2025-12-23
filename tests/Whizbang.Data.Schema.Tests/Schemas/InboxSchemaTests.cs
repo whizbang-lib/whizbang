@@ -27,7 +27,7 @@ public class InboxSchemaTests {
     var columns = InboxSchema.Table.Columns;
 
     // Assert - Verify column count
-    await Assert.That(columns).HasCount().EqualTo(17);
+    await Assert.That(columns).Count().IsEqualTo(17);
 
     // Verify each column definition
     var messageId = columns[0];
@@ -80,18 +80,18 @@ public class InboxSchemaTests {
     var indexes = InboxSchema.Table.Indexes;
 
     // Assert - Verify index count
-    await Assert.That(indexes).HasCount().EqualTo(6);
+    await Assert.That(indexes).Count().IsEqualTo(6);
 
     // Verify processed_at index
     var processedAtIndex = indexes[0];
     await Assert.That(processedAtIndex.Name).IsEqualTo("idx_inbox_processed_at");
-    await Assert.That(processedAtIndex.Columns).HasCount().EqualTo(1);
+    await Assert.That(processedAtIndex.Columns).Count().IsEqualTo(1);
     await Assert.That(processedAtIndex.Columns[0]).IsEqualTo("processed_at");
 
     // Verify received_at index
     var receivedAtIndex = indexes[1];
     await Assert.That(receivedAtIndex.Name).IsEqualTo("idx_inbox_received_at");
-    await Assert.That(receivedAtIndex.Columns).HasCount().EqualTo(1);
+    await Assert.That(receivedAtIndex.Columns).Count().IsEqualTo(1);
     await Assert.That(receivedAtIndex.Columns[0]).IsEqualTo("received_at");
   }
 

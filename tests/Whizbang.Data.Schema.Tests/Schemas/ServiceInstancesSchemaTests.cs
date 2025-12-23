@@ -28,7 +28,7 @@ public class ServiceInstancesSchemaTests {
     var columns = ServiceInstancesSchema.Table.Columns;
 
     // Assert - Verify column count
-    await Assert.That(columns).HasCount().EqualTo(7);
+    await Assert.That(columns).Count().IsEqualTo(7);
 
     // Verify each column definition
     var instanceId = columns[0];
@@ -90,19 +90,19 @@ public class ServiceInstancesSchemaTests {
     var indexes = ServiceInstancesSchema.Table.Indexes;
 
     // Assert - Verify index count
-    await Assert.That(indexes).HasCount().EqualTo(2);
+    await Assert.That(indexes).Count().IsEqualTo(2);
 
     // Verify service name index
     var serviceNameIndex = indexes[0];
     await Assert.That(serviceNameIndex.Name).IsEqualTo("idx_service_instances_service_name");
-    await Assert.That(serviceNameIndex.Columns).HasCount().EqualTo(2);
+    await Assert.That(serviceNameIndex.Columns).Count().IsEqualTo(2);
     await Assert.That(serviceNameIndex.Columns[0]).IsEqualTo("service_name");
     await Assert.That(serviceNameIndex.Columns[1]).IsEqualTo("last_heartbeat_at");
 
     // Verify heartbeat index
     var heartbeatIndex = indexes[1];
     await Assert.That(heartbeatIndex.Name).IsEqualTo("idx_service_instances_heartbeat");
-    await Assert.That(heartbeatIndex.Columns).HasCount().EqualTo(1);
+    await Assert.That(heartbeatIndex.Columns).Count().IsEqualTo(1);
     await Assert.That(heartbeatIndex.Columns[0]).IsEqualTo("last_heartbeat_at");
   }
 
@@ -115,7 +115,7 @@ public class ServiceInstancesSchemaTests {
 
     // Assert
     await Assert.That(serviceNameIndex.Name).IsEqualTo("idx_service_instances_service_name");
-    await Assert.That(serviceNameIndex.Columns).HasCount().EqualTo(2);
+    await Assert.That(serviceNameIndex.Columns).Count().IsEqualTo(2);
     await Assert.That(serviceNameIndex.Columns[0]).IsEqualTo("service_name");
     await Assert.That(serviceNameIndex.Columns[1]).IsEqualTo("last_heartbeat_at");
   }
@@ -129,7 +129,7 @@ public class ServiceInstancesSchemaTests {
 
     // Assert
     await Assert.That(heartbeatIndex.Name).IsEqualTo("idx_service_instances_heartbeat");
-    await Assert.That(heartbeatIndex.Columns).HasCount().EqualTo(1);
+    await Assert.That(heartbeatIndex.Columns).Count().IsEqualTo(1);
     await Assert.That(heartbeatIndex.Columns[0]).IsEqualTo("last_heartbeat_at");
   }
 

@@ -84,6 +84,7 @@ public class ImmediateUnitOfWorkStrategy : IUnitOfWorkStrategy {
   public ValueTask DisposeAsync() {
     // No background tasks or resources to clean up
     _units.Clear();
+    GC.SuppressFinalize(this);
     return ValueTask.CompletedTask;
   }
 }

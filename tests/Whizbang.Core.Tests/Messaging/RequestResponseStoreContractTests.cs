@@ -11,7 +11,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// <summary>
 /// Test response type for request/response store tests.
 /// </summary>
-public record TestResponse(string Message) : IEvent;
+public record TestResponse([StreamKey] string Message) : IEvent;
 
 /// <summary>
 /// Contract tests for IRequestResponseStore interface.

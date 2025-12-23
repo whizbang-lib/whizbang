@@ -92,7 +92,7 @@ public class TransportReadinessCheckTests {
 /// Test implementation that always returns true.
 /// Useful for testing scenarios where transport is always ready.
 /// </summary>
-internal class AlwaysReadyCheck : ITransportReadinessCheck {
+internal sealed class AlwaysReadyCheck : ITransportReadinessCheck {
   public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
     return Task.FromResult(true);
   }
@@ -102,7 +102,7 @@ internal class AlwaysReadyCheck : ITransportReadinessCheck {
 /// Test implementation that always returns false.
 /// Useful for testing scenarios where transport is never ready.
 /// </summary>
-internal class NeverReadyCheck : ITransportReadinessCheck {
+internal sealed class NeverReadyCheck : ITransportReadinessCheck {
   public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
     return Task.FromResult(false);
   }
@@ -112,7 +112,7 @@ internal class NeverReadyCheck : ITransportReadinessCheck {
 /// Test implementation with configurable readiness state.
 /// Useful for testing dynamic readiness scenarios.
 /// </summary>
-internal class ConfigurableReadinessCheck(bool isReady) : ITransportReadinessCheck {
+internal sealed class ConfigurableReadinessCheck(bool isReady) : ITransportReadinessCheck {
   private bool _isReady = isReady;
 
   public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {

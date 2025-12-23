@@ -41,8 +41,8 @@ public class InMemoryUpsertStrategy : IDbUpsertStrategy {
       var newRow = new PerspectiveRow<TModel> {
         Id = id,
         Data = model,
-        Metadata = CloneMetadata(metadata),
-        Scope = CloneScope(scope),
+        Metadata = _cloneMetadata(metadata),
+        Scope = _cloneScope(scope),
         CreatedAt = now,
         UpdatedAt = now,
         Version = 1
@@ -56,8 +56,8 @@ public class InMemoryUpsertStrategy : IDbUpsertStrategy {
       var updatedRow = new PerspectiveRow<TModel> {
         Id = existingRow.Id,
         Data = model,
-        Metadata = CloneMetadata(metadata),
-        Scope = CloneScope(scope),
+        Metadata = _cloneMetadata(metadata),
+        Scope = _cloneScope(scope),
         CreatedAt = existingRow.CreatedAt, // Preserve creation time
         UpdatedAt = now,
         Version = existingRow.Version + 1
@@ -76,7 +76,7 @@ public class InMemoryUpsertStrategy : IDbUpsertStrategy {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_WhenRecordExists_UpdatesExistingRecordAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_IncrementsVersionNumber_OnEachUpdateAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_UpdatesUpdatedAtTimestamp_OnUpdateAsync</tests>
-  private static PerspectiveMetadata CloneMetadata(PerspectiveMetadata metadata) {
+  private static PerspectiveMetadata _cloneMetadata(PerspectiveMetadata metadata) {
     return new PerspectiveMetadata {
       EventType = metadata.EventType,
       EventId = metadata.EventId,
@@ -93,7 +93,7 @@ public class InMemoryUpsertStrategy : IDbUpsertStrategy {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_WhenRecordExists_UpdatesExistingRecordAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_IncrementsVersionNumber_OnEachUpdateAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_UpdatesUpdatedAtTimestamp_OnUpdateAsync</tests>
-  private static PerspectiveScope CloneScope(PerspectiveScope scope) {
+  private static PerspectiveScope _cloneScope(PerspectiveScope scope) {
     return new PerspectiveScope {
       TenantId = scope.TenantId,
       CustomerId = scope.CustomerId,

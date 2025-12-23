@@ -41,9 +41,7 @@ public static class JsonContextRegistry {
   /// </summary>
   /// <param name="resolver">Source-generated JsonSerializerContext to register</param>
   public static void RegisterContext(IJsonTypeInfoResolver resolver) {
-    if (resolver == null) {
-      throw new ArgumentNullException(nameof(resolver));
-    }
+    ArgumentNullException.ThrowIfNull(resolver);
 
     _resolvers.Add(resolver);
   }
@@ -58,9 +56,7 @@ public static class JsonContextRegistry {
   /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:RegisterConverter_WithNull_ThrowsArgumentNullExceptionAsync</tests>
   /// <param name="converter">The JsonConverter instance to register (instantiated at compile-time by source generators for AOT compatibility)</param>
   public static void RegisterConverter(JsonConverter converter) {
-    if (converter == null) {
-      throw new ArgumentNullException(nameof(converter));
-    }
+    ArgumentNullException.ThrowIfNull(converter);
 
     _converters.Add(converter);
   }

@@ -23,7 +23,7 @@ public class PolicyDecisionTrailTests {
     var matchedRules = trail.GetMatchedRules().ToList();
 
     // Assert
-    await Assert.That(matchedRules).HasCount().EqualTo(2);
+    await Assert.That(matchedRules).Count().IsEqualTo(2);
     await Assert.That(matchedRules[0].PolicyName).IsEqualTo("Policy1");
     await Assert.That(matchedRules[0].Matched).IsTrue();
     await Assert.That(matchedRules[1].PolicyName).IsEqualTo("Policy3");
@@ -57,7 +57,7 @@ public class PolicyDecisionTrailTests {
     var unmatchedRules = trail.GetUnmatchedRules().ToList();
 
     // Assert
-    await Assert.That(unmatchedRules).HasCount().EqualTo(2);
+    await Assert.That(unmatchedRules).Count().IsEqualTo(2);
     await Assert.That(unmatchedRules[0].PolicyName).IsEqualTo("Policy2");
     await Assert.That(unmatchedRules[0].Matched).IsFalse();
     await Assert.That(unmatchedRules[1].PolicyName).IsEqualTo("Policy4");
@@ -89,7 +89,7 @@ public class PolicyDecisionTrailTests {
     var after = DateTimeOffset.UtcNow;
 
     // Assert
-    await Assert.That(trail.Decisions).HasCount().EqualTo(1);
+    await Assert.That(trail.Decisions).Count().IsEqualTo(1);
     var decision = trail.Decisions[0];
     await Assert.That(decision.PolicyName).IsEqualTo("TestPolicy");
     await Assert.That(decision.Rule).IsEqualTo("TestRule");
@@ -124,7 +124,7 @@ public class PolicyDecisionTrailTests {
     var matchedRules = trail.GetMatchedRules().ToList();
 
     // Assert
-    await Assert.That(matchedRules).HasCount().EqualTo(3);
+    await Assert.That(matchedRules).Count().IsEqualTo(3);
     await Assert.That(matchedRules[0].Reason).IsEqualTo("First");
     await Assert.That(matchedRules[1].Reason).IsEqualTo("Second");
     await Assert.That(matchedRules[2].Reason).IsEqualTo("Third");
@@ -144,7 +144,7 @@ public class PolicyDecisionTrailTests {
     var unmatchedRules = trail.GetUnmatchedRules().ToList();
 
     // Assert
-    await Assert.That(unmatchedRules).HasCount().EqualTo(3);
+    await Assert.That(unmatchedRules).Count().IsEqualTo(3);
     await Assert.That(unmatchedRules[0].Reason).IsEqualTo("First unmatched");
     await Assert.That(unmatchedRules[1].Reason).IsEqualTo("Second unmatched");
     await Assert.That(unmatchedRules[2].Reason).IsEqualTo("Third unmatched");

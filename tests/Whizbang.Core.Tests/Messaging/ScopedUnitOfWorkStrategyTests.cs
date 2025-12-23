@@ -13,7 +13,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// NOTE: Contract tests manually copied instead of using [InheritsTests] due to TUnit issue with background tasks.
 /// </summary>
 public class ScopedUnitOfWorkStrategyTests {
-  private IUnitOfWorkStrategy CreateStrategy() {
+  private ScopedUnitOfWorkStrategy _createStrategy() {
     return new ScopedUnitOfWorkStrategy();
   }
 
@@ -22,9 +22,9 @@ public class ScopedUnitOfWorkStrategyTests {
   // ========================================
 
   [Test]
-  public async Task QueueMessageAsync_ReturnsNonEmptyGuid() {
+  public async Task QueueMessageAsync_ReturnsNonEmptyGuidAsync() {
     // Arrange
-    await using var strategy = CreateStrategy();
+    await using var strategy = _createStrategy();
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
 
     var message = new TestMessage { Value = "test" };
@@ -37,9 +37,9 @@ public class ScopedUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task QueueMessageAsync_StoresMessage() {
+  public async Task QueueMessageAsync_StoresMessageAsync() {
     // Arrange
-    await using var strategy = CreateStrategy();
+    await using var strategy = _createStrategy();
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
 
     var message = new TestMessage { Value = "test" };
@@ -54,9 +54,9 @@ public class ScopedUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task QueueMessageAsync_WithLifecycleStage_StoresLifecycleMapping() {
+  public async Task QueueMessageAsync_WithLifecycleStage_StoresLifecycleMappingAsync() {
     // Arrange
-    await using var strategy = CreateStrategy();
+    await using var strategy = _createStrategy();
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
 
     var message = new TestMessage { Value = "test" };
@@ -74,9 +74,9 @@ public class ScopedUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task GetMessagesForUnit_NonExistentUnit_ReturnsEmpty() {
+  public async Task GetMessagesForUnit_NonExistentUnit_ReturnsEmptyAsync() {
     // Arrange
-    await using var strategy = CreateStrategy();
+    await using var strategy = _createStrategy();
     var nonExistentUnitId = Guid.NewGuid();
 
     // Act
@@ -87,9 +87,9 @@ public class ScopedUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task GetLifecycleStagesForUnit_NonExistentUnit_ReturnsEmpty() {
+  public async Task GetLifecycleStagesForUnit_NonExistentUnit_ReturnsEmptyAsync() {
     // Arrange
-    await using var strategy = CreateStrategy();
+    await using var strategy = _createStrategy();
     var nonExistentUnitId = Guid.NewGuid();
 
     // Act
@@ -100,9 +100,9 @@ public class ScopedUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task CancelUnitAsync_ExistingUnit_RemovesUnit() {
+  public async Task CancelUnitAsync_ExistingUnit_RemovesUnitAsync() {
     // Arrange
-    await using var strategy = CreateStrategy();
+    await using var strategy = _createStrategy();
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
 
     var message = new TestMessage { Value = "test" };
@@ -117,9 +117,9 @@ public class ScopedUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task CancelUnitAsync_NonExistentUnit_DoesNotThrow() {
+  public async Task CancelUnitAsync_NonExistentUnit_DoesNotThrowAsync() {
     // Arrange
-    await using var strategy = CreateStrategy();
+    await using var strategy = _createStrategy();
     var nonExistentUnitId = Guid.NewGuid();
 
     // Act & Assert (should not throw)
@@ -127,14 +127,12 @@ public class ScopedUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task OnFlushRequested_CanBeWired() {
+  public async Task OnFlushRequested_CanBeWiredAsync() {
     // Arrange
-    await using var strategy = CreateStrategy();
-    var callbackInvoked = false;
+    await using var strategy = _createStrategy();
     Guid? callbackUnitId = null;
 
     strategy.OnFlushRequested += async (unitId, ct) => {
-      callbackInvoked = true;
       callbackUnitId = unitId;
       await Task.CompletedTask;
     };
@@ -157,7 +155,7 @@ public class ScopedUnitOfWorkStrategyTests {
   // ========================================
 
   [Test]
-  public async Task QueueMessageAsync_GeneratesUuid7UnitId_OnFirstMessage() {
+  public async Task QueueMessageAsync_GeneratesUuid7UnitId_OnFirstMessageAsync() {
     // Arrange
     await using var strategy = new ScopedUnitOfWorkStrategy();
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
@@ -177,7 +175,7 @@ public class ScopedUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task QueueMessageAsync_AccumulatesMessages_InSameUnit() {
+  public async Task QueueMessageAsync_AccumulatesMessages_InSameUnitAsync() {
     // Arrange
     await using var strategy = new ScopedUnitOfWorkStrategy();
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
@@ -201,7 +199,7 @@ public class ScopedUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task QueueMessageAsync_ReturnsImmediately() {
+  public async Task QueueMessageAsync_ReturnsImmediatelyAsync() {
     // Arrange
     await using var strategy = new ScopedUnitOfWorkStrategy();
     var callbackStarted = false;
@@ -209,7 +207,7 @@ public class ScopedUnitOfWorkStrategyTests {
 
     strategy.OnFlushRequested += async (unitId, ct) => {
       callbackStarted = true;
-      await Task.Delay(50); // Simulate async work
+      await Task.Delay(50, ct); // Simulate async work
       callbackCompleted = true;
     };
 
@@ -224,7 +222,7 @@ public class ScopedUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task DisposeAsync_TriggersOnFlushRequested() {
+  public async Task DisposeAsync_TriggersOnFlushRequestedAsync() {
     // Arrange
     var strategy = new ScopedUnitOfWorkStrategy();
     var callbackInvoked = false;
@@ -248,7 +246,7 @@ public class ScopedUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task DisposeAsync_WithNoMessages_DoesNotTriggerCallback() {
+  public async Task DisposeAsync_WithNoMessages_DoesNotTriggerCallbackAsync() {
     // Arrange
     var strategy = new ScopedUnitOfWorkStrategy();
     var callbackInvoked = false;
@@ -266,7 +264,7 @@ public class ScopedUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task GetMessagesForUnit_DuringCallback_ReturnsAllQueuedMessages() {
+  public async Task GetMessagesForUnit_DuringCallback_ReturnsAllQueuedMessagesAsync() {
     // Arrange
     await using var strategy = new ScopedUnitOfWorkStrategy();
     IReadOnlyList<object>? messagesInCallback = null;
@@ -296,7 +294,7 @@ public class ScopedUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task GetLifecycleStagesForUnit_ReturnsAllStages() {
+  public async Task GetLifecycleStagesForUnit_ReturnsAllStagesAsync() {
     // Arrange
     await using var strategy = new ScopedUnitOfWorkStrategy();
     IReadOnlyDictionary<object, LifecycleStage>? lifecycleStagesInCallback = null;
@@ -324,7 +322,7 @@ public class ScopedUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task MultipleMessages_DifferentLifecycleStages_ShareSameUnit() {
+  public async Task MultipleMessages_DifferentLifecycleStages_ShareSameUnitAsync() {
     // Arrange
     await using var strategy = new ScopedUnitOfWorkStrategy();
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
@@ -341,7 +339,7 @@ public class ScopedUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task DisposeAsync_ClearsUnit_AfterFlush() {
+  public async Task DisposeAsync_ClearsUnit_AfterFlushAsync() {
     // Arrange
     var strategy = new ScopedUnitOfWorkStrategy();
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
@@ -358,7 +356,7 @@ public class ScopedUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task QueueMessageAsync_WithoutCallback_DoesNotThrow() {
+  public async Task QueueMessageAsync_WithoutCallback_DoesNotThrowAsync() {
     // Arrange
     await using var strategy = new ScopedUnitOfWorkStrategy();
     var message = new TestMessage { Value = "test" };
@@ -369,7 +367,7 @@ public class ScopedUnitOfWorkStrategyTests {
   }
 
   [Test]
-  public async Task DisposeAsync_WithoutCallback_DoesNotThrow() {
+  public async Task DisposeAsync_WithoutCallback_DoesNotThrowAsync() {
     // Arrange
     var strategy = new ScopedUnitOfWorkStrategy();
     var message = new TestMessage { Value = "test" };
@@ -382,7 +380,7 @@ public class ScopedUnitOfWorkStrategyTests {
   /// <summary>
   /// Test message class.
   /// </summary>
-  private class TestMessage {
+  private sealed class TestMessage {
     public string Value { get; set; } = string.Empty;
   }
 }

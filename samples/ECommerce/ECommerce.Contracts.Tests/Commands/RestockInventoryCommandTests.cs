@@ -9,11 +9,11 @@ namespace ECommerce.Contracts.Tests.Commands;
 /// Tests for RestockInventoryCommand
 /// </summary>
 public class RestockInventoryCommandTests {
-  private static readonly IWhizbangIdProvider IdProvider = new Uuid7IdProvider();
+  private static readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
   [Test]
   public async Task RestockInventoryCommand_WithValidProperties_InitializesSuccessfullyAsync() {
     // Arrange & Act
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var cmd = new RestockInventoryCommand {
       ProductId = productId,
       QuantityToAdd = 100
@@ -28,7 +28,7 @@ public class RestockInventoryCommandTests {
   public async Task RestockInventoryCommand_WithSmallQuantity_InitializesSuccessfullyAsync() {
     // Arrange & Act
     var cmd = new RestockInventoryCommand {
-      ProductId = IdProvider.NewGuid(),
+      ProductId = _idProvider.NewGuid(),
       QuantityToAdd = 1
     };
 
@@ -40,7 +40,7 @@ public class RestockInventoryCommandTests {
   public async Task RestockInventoryCommand_WithLargeQuantity_InitializesSuccessfullyAsync() {
     // Arrange & Act
     var cmd = new RestockInventoryCommand {
-      ProductId = IdProvider.NewGuid(),
+      ProductId = _idProvider.NewGuid(),
       QuantityToAdd = 10000
     };
 
@@ -51,7 +51,7 @@ public class RestockInventoryCommandTests {
   [Test]
   public async Task RestockInventoryCommand_RecordEquality_WorksCorrectlyAsync() {
     // Arrange
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var cmd1 = new RestockInventoryCommand {
       ProductId = productId,
       QuantityToAdd = 100
@@ -69,7 +69,7 @@ public class RestockInventoryCommandTests {
   [Test]
   public async Task RestockInventoryCommand_ToString_ReturnsReadableRepresentationAsync() {
     // Arrange & Act
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var cmd = new RestockInventoryCommand {
       ProductId = productId,
       QuantityToAdd = 500

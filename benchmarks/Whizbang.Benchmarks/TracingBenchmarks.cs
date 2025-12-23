@@ -15,7 +15,7 @@ namespace Whizbang.Benchmarks;
 [MemoryDiagnoser]
 [MarkdownExporter]
 public class TracingBenchmarks {
-  private record TestCommand(string Id, int Value);
+  private sealed record TestCommand(string Id, int Value);
 
   [Benchmark(Baseline = true)]
   public static MessageId CreateMessageId() {
@@ -149,24 +149,24 @@ public class TracingBenchmarks {
 
   [Benchmark]
   public string? GetCurrentTopicFromEnvelope() {
-    var envelope = CreateTypedEnvelope();
+    var envelope = _createTypedEnvelope();
     return envelope.GetCurrentTopic();
   }
 
   [Benchmark]
   public SecurityContext? GetCurrentSecurityContextFromEnvelope() {
-    var envelope = CreateTypedEnvelope();
+    var envelope = _createTypedEnvelope();
     return envelope.GetCurrentSecurityContext();
   }
 
   [Benchmark]
   public IReadOnlyList<MessageHop> GetCausationHopsFromEnvelope() {
-    var envelope = CreateEnvelopeWith3HopsTyped();
+    var envelope = _createEnvelopeWith3HopsTyped();
     return envelope.GetCausationHops();
   }
 
   [Benchmark]
-  public async Task TraceStore_Store1000Envelopes() {
+  public async Task TraceStore_Store1000EnvelopesAsync() {
     var store = new InMemoryTraceStore();
     var tasks = new List<Task>();
 
@@ -194,7 +194,7 @@ public class TracingBenchmarks {
   }
 
   // Helper methods to return typed envelopes for method access
-  private static MessageEnvelope<TestCommand> CreateTypedEnvelope() {
+  private static MessageEnvelope<TestCommand> _createTypedEnvelope() {
     var message = new TestCommand("test-123", 42);
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
@@ -215,7 +215,7 @@ public class TracingBenchmarks {
     return envelope;
   }
 
-  private static MessageEnvelope<TestCommand> CreateEnvelopeWith3HopsTyped() {
+  private static MessageEnvelope<TestCommand> _createEnvelopeWith3HopsTyped() {
     var message = new TestCommand("test-123", 42);
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),

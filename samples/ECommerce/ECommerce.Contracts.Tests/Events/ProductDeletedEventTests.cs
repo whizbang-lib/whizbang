@@ -9,11 +9,11 @@ namespace ECommerce.Contracts.Tests.Events;
 /// Tests for ProductDeletedEvent
 /// </summary>
 public class ProductDeletedEventTests {
-  private static readonly IWhizbangIdProvider IdProvider = new Uuid7IdProvider();
+  private static readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
   [Test]
   public async Task ProductDeletedEvent_WithValidProperties_InitializesSuccessfullyAsync() {
     // Arrange & Act
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var deletedAt = DateTime.UtcNow;
     var evt = new ProductDeletedEvent {
       ProductId = productId,
@@ -28,7 +28,7 @@ public class ProductDeletedEventTests {
   [Test]
   public async Task ProductDeletedEvent_RecordEquality_WorksCorrectlyAsync() {
     // Arrange
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var deletedAt = DateTime.UtcNow;
     var evt1 = new ProductDeletedEvent {
       ProductId = productId,
@@ -47,7 +47,7 @@ public class ProductDeletedEventTests {
   [Test]
   public async Task ProductDeletedEvent_ToString_ReturnsReadableRepresentationAsync() {
     // Arrange & Act
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var evt = new ProductDeletedEvent {
       ProductId = productId,
       DeletedAt = DateTime.UtcNow
@@ -65,12 +65,12 @@ public class ProductDeletedEventTests {
     // Arrange
     var deletedAt = DateTime.UtcNow;
     var evt1 = new ProductDeletedEvent {
-      ProductId = IdProvider.NewGuid(),
+      ProductId = _idProvider.NewGuid(),
       DeletedAt = deletedAt
     };
 
     var evt2 = new ProductDeletedEvent {
-      ProductId = IdProvider.NewGuid(),
+      ProductId = _idProvider.NewGuid(),
       DeletedAt = deletedAt
     };
 

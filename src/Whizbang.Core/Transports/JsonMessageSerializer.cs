@@ -58,24 +58,24 @@ public class JsonMessageSerializer : IMessageSerializer {
     }
 
     _options = options;
-    EnsureRequiredConverters(_options);
+    _ensureRequiredConverters(_options);
   }
 
   /// <summary>
   /// Ensures required converters are present in the options.
   /// Adds converters only if they are not already present.
   /// </summary>
-  private static void EnsureRequiredConverters(JsonSerializerOptions options) {
+  private static void _ensureRequiredConverters(JsonSerializerOptions options) {
     // Check if converters are already present before adding
-    if (!HasConverter<MessageId>(options)) {
+    if (!_hasConverter<MessageId>(options)) {
       options.Converters.Add(new MessageIdConverter());
     }
 
-    if (!HasConverter<CorrelationId>(options)) {
+    if (!_hasConverter<CorrelationId>(options)) {
       options.Converters.Add(new CorrelationIdConverter());
     }
 
-    if (!HasConverter<IReadOnlyDictionary<string, JsonElement>>(options)) {
+    if (!_hasConverter<IReadOnlyDictionary<string, JsonElement>>(options)) {
       options.Converters.Add(new MetadataConverter());
     }
 
@@ -88,7 +88,7 @@ public class JsonMessageSerializer : IMessageSerializer {
   /// <summary>
   /// Checks if a converter for the specified type is already present in the options.
   /// </summary>
-  private static bool HasConverter<T>(JsonSerializerOptions options) {
+  private static bool _hasConverter<T>(JsonSerializerOptions options) {
     return options.Converters.Any(c => c.CanConvert(typeof(T)));
   }
 

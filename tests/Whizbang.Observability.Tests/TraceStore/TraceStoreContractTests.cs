@@ -13,8 +13,8 @@ namespace Whizbang.Observability.Tests.TraceStore;
 [Category("Observability")]
 public abstract class TraceStoreContractTests {
   // Test messages
-  private record OrderCommand(string OrderId, decimal Amount);
-  private record PaymentCommand(string PaymentId, decimal Amount);
+  private sealed record OrderCommand(string OrderId, decimal Amount);
+  private sealed record PaymentCommand(string PaymentId, decimal Amount);
 
   /// <summary>
   /// Factory method for creating the trace store implementation under test.
@@ -24,7 +24,7 @@ public abstract class TraceStoreContractTests {
   /// <summary>
   /// Helper to create a test envelope with specified IDs and timing.
   /// </summary>
-  private static MessageEnvelope<TMessage> CreateTestEnvelope<TMessage>(
+  private static MessageEnvelope<TMessage> _createTestEnvelope<TMessage>(
     TMessage payload,
     MessageId? messageId = null,
     CorrelationId? correlationId = null,
@@ -58,7 +58,7 @@ public abstract class TraceStoreContractTests {
     // Arrange
     var store = CreateTraceStore();
     var message = new OrderCommand("order-123", 100m);
-    var envelope = CreateTestEnvelope(message);
+    var envelope = _createTestEnvelope(message);
 
     // Act
     await store.StoreAsync(envelope);
@@ -93,9 +93,9 @@ public abstract class TraceStoreContractTests {
     var message2 = new OrderCommand("order-2", 200m);
     var message3 = new OrderCommand("order-3", 300m);
 
-    var envelope1 = CreateTestEnvelope(message1, correlationId: correlationId, timestamp: DateTimeOffset.UtcNow.AddSeconds(-2));
-    var envelope2 = CreateTestEnvelope(message2, correlationId: correlationId, timestamp: DateTimeOffset.UtcNow.AddSeconds(-1));
-    var envelope3 = CreateTestEnvelope(message3, correlationId: correlationId, timestamp: DateTimeOffset.UtcNow);
+    var envelope1 = _createTestEnvelope(message1, correlationId: correlationId, timestamp: DateTimeOffset.UtcNow.AddSeconds(-2));
+    var envelope2 = _createTestEnvelope(message2, correlationId: correlationId, timestamp: DateTimeOffset.UtcNow.AddSeconds(-1));
+    var envelope3 = _createTestEnvelope(message3, correlationId: correlationId, timestamp: DateTimeOffset.UtcNow);
 
     await store.StoreAsync(envelope1);
     await store.StoreAsync(envelope2);
@@ -105,7 +105,7 @@ public abstract class TraceStoreContractTests {
     var results = await store.GetByCorrelationAsync(correlationId);
 
     // Assert
-    await Assert.That(results).HasCount().EqualTo(3);
+    await Assert.That(results).Count().IsEqualTo(3);
     await Assert.That(results[0].MessageId).IsEqualTo(envelope1.MessageId);
     await Assert.That(results[1].MessageId).IsEqualTo(envelope2.MessageId);
     await Assert.That(results[2].MessageId).IsEqualTo(envelope3.MessageId);
@@ -132,14 +132,14 @@ public abstract class TraceStoreContractTests {
 
     // Create causal chain: message1 -> message2 -> message3
     var message1 = new OrderCommand("order-1", 100m);
-    var envelope1 = CreateTestEnvelope(
+    var envelope1 = _createTestEnvelope(
       message1,
       correlationId: correlationId,
       timestamp: DateTimeOffset.UtcNow.AddSeconds(-2)
     );
 
     var message2 = new OrderCommand("order-2", 200m);
-    var envelope2 = CreateTestEnvelope(
+    var envelope2 = _createTestEnvelope(
       message2,
       correlationId: correlationId,
       causationId: MessageId.From(envelope1.MessageId.Value),
@@ -147,7 +147,7 @@ public abstract class TraceStoreContractTests {
     );
 
     var message3 = new OrderCommand("order-3", 300m);
-    var envelope3 = CreateTestEnvelope(
+    var envelope3 = _createTestEnvelope(
       message3,
       correlationId: correlationId,
       causationId: MessageId.From(envelope2.MessageId.Value),
@@ -162,7 +162,7 @@ public abstract class TraceStoreContractTests {
     var chain = await store.GetCausalChainAsync(envelope3.MessageId);
 
     // Assert - Should include message3, message2, and message1
-    await Assert.That(chain).HasCount().GreaterThanOrEqualTo(3);
+    await Assert.That(chain).Count().IsGreaterThanOrEqualTo(3);
     await Assert.That(chain.Select(e => e.MessageId)).Contains(envelope1.MessageId);
     await Assert.That(chain.Select(e => e.MessageId)).Contains(envelope2.MessageId);
     await Assert.That(chain.Select(e => e.MessageId)).Contains(envelope3.MessageId);
@@ -173,7 +173,7 @@ public abstract class TraceStoreContractTests {
     // Arrange
     var store = CreateTraceStore();
     var message = new OrderCommand("order-1", 100m);
-    var envelope = CreateTestEnvelope(message);
+    var envelope = _createTestEnvelope(message);
 
     await store.StoreAsync(envelope);
 
@@ -181,7 +181,7 @@ public abstract class TraceStoreContractTests {
     var chain = await store.GetCausalChainAsync(envelope.MessageId);
 
     // Assert - Should include only the message itself
-    await Assert.That(chain).HasCount().EqualTo(1);
+    await Assert.That(chain).Count().IsEqualTo(1);
     await Assert.That(chain[0].MessageId).IsEqualTo(envelope.MessageId);
   }
 
@@ -208,9 +208,9 @@ public abstract class TraceStoreContractTests {
     var message2 = new OrderCommand("order-2", 200m);
     var message3 = new OrderCommand("order-3", 300m);
 
-    var envelope1 = CreateTestEnvelope(message1, timestamp: now.AddSeconds(-10));
-    var envelope2 = CreateTestEnvelope(message2, timestamp: now.AddSeconds(-5));
-    var envelope3 = CreateTestEnvelope(message3, timestamp: now);
+    var envelope1 = _createTestEnvelope(message1, timestamp: now.AddSeconds(-10));
+    var envelope2 = _createTestEnvelope(message2, timestamp: now.AddSeconds(-5));
+    var envelope3 = _createTestEnvelope(message3, timestamp: now);
 
     await store.StoreAsync(envelope1);
     await store.StoreAsync(envelope2);
@@ -220,7 +220,7 @@ public abstract class TraceStoreContractTests {
     var results = await store.GetByTimeRangeAsync(now.AddSeconds(-7), now.AddSeconds(-3));
 
     // Assert - Should only return envelope2
-    await Assert.That(results).HasCount().EqualTo(1);
+    await Assert.That(results).Count().IsEqualTo(1);
     await Assert.That(results[0].MessageId).IsEqualTo(envelope2.MessageId);
   }
 
@@ -231,7 +231,7 @@ public abstract class TraceStoreContractTests {
     var now = DateTimeOffset.UtcNow;
 
     var message = new OrderCommand("order-1", 100m);
-    var envelope = CreateTestEnvelope(message, timestamp: now);
+    var envelope = _createTestEnvelope(message, timestamp: now);
 
     await store.StoreAsync(envelope);
 
@@ -252,9 +252,9 @@ public abstract class TraceStoreContractTests {
     var message2 = new OrderCommand("order-2", 200m);
     var message3 = new OrderCommand("order-3", 300m);
 
-    var envelope1 = CreateTestEnvelope(message1, timestamp: now.AddSeconds(-10));
-    var envelope2 = CreateTestEnvelope(message2, timestamp: now.AddSeconds(-5));
-    var envelope3 = CreateTestEnvelope(message3, timestamp: now);
+    var envelope1 = _createTestEnvelope(message1, timestamp: now.AddSeconds(-10));
+    var envelope2 = _createTestEnvelope(message2, timestamp: now.AddSeconds(-5));
+    var envelope3 = _createTestEnvelope(message3, timestamp: now);
 
     // Store in random order
     await store.StoreAsync(envelope2);
@@ -265,7 +265,7 @@ public abstract class TraceStoreContractTests {
     var results = await store.GetByTimeRangeAsync(now.AddSeconds(-15), now.AddSeconds(5));
 
     // Assert - Should return in chronological order
-    await Assert.That(results).HasCount().EqualTo(3);
+    await Assert.That(results).Count().IsEqualTo(3);
     await Assert.That(results[0].MessageId).IsEqualTo(envelope1.MessageId);
     await Assert.That(results[1].MessageId).IsEqualTo(envelope2.MessageId);
     await Assert.That(results[2].MessageId).IsEqualTo(envelope3.MessageId);
@@ -280,7 +280,7 @@ public abstract class TraceStoreContractTests {
     // Act - Store 100 messages concurrently
     for (int i = 0; i < 100; i++) {
       var message = new OrderCommand($"order-{i}", i * 10m);
-      var envelope = CreateTestEnvelope(message);
+      var envelope = _createTestEnvelope(message);
       tasks.Add(store.StoreAsync(envelope));
     }
 
@@ -288,6 +288,6 @@ public abstract class TraceStoreContractTests {
 
     // Assert - Verify we can query by time range and get all messages
     var results = await store.GetByTimeRangeAsync(DateTimeOffset.UtcNow.AddMinutes(-1), DateTimeOffset.UtcNow.AddMinutes(1));
-    await Assert.That(results).HasCount().GreaterThanOrEqualTo(100);
+    await Assert.That(results).Count().IsGreaterThanOrEqualTo(100);
   }
 }

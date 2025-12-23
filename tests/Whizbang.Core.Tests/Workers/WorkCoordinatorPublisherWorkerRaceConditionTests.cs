@@ -23,9 +23,9 @@ namespace Whizbang.Core.Tests.Workers;
 /// Tests race conditions that might not be caught by fast unit tests.
 /// </summary>
 public class WorkCoordinatorPublisherWorkerRaceConditionTests {
-  private record _testMessage { }
+  private sealed record _testMessage { }
 
-  private static IMessageEnvelope<JsonElement> _createTestEnvelope(Guid messageId) {
+  private static MessageEnvelope<JsonElement> _createTestEnvelope(Guid messageId) {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
@@ -37,7 +37,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
   /// <summary>
   /// Work coordinator that simulates realistic database latency (50-200ms per call).
   /// </summary>
-  private class RealisticWorkCoordinator : IWorkCoordinator {
+  private sealed class RealisticWorkCoordinator : IWorkCoordinator {
     private readonly Random _random = new();
     private readonly object _lock = new();
     private readonly ConcurrentDictionary<Guid, bool> _claimedMessages = new();
@@ -120,12 +120,12 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
   /// <summary>
   /// Publish strategy that simulates realistic transport latency (100-500ms per publish).
   /// </summary>
-  private class RealisticPublishStrategy : IMessagePublishStrategy {
+  private sealed class RealisticPublishStrategy : IMessagePublishStrategy {
     private readonly Random _random = new();
     public List<OutboxWork> PublishedWork { get; } = [];
     public TimeSpan MinLatency { get; set; } = TimeSpan.FromMilliseconds(100);
     public TimeSpan MaxLatency { get; set; } = TimeSpan.FromMilliseconds(500);
-    public double FailureRate { get; set; } = 0.0; // 0.0 = no failures, 0.1 = 10% failure
+    public double FailureRate { get; set; } // 0.0 = no failures, 0.1 = 10% failure
 
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
       return Task.FromResult(true);
@@ -160,7 +160,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     }
   }
 
-  private class RealisticDatabaseReadinessCheck : IDatabaseReadinessCheck {
+  private sealed class RealisticDatabaseReadinessCheck : IDatabaseReadinessCheck {
     private readonly Random _random = new();
     public bool IsReady { get; set; } = true;
     public TimeSpan CheckLatency { get; set; } = TimeSpan.FromMilliseconds(10);
@@ -171,7 +171,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     }
   }
 
-  private record _processWorkBatchCall {
+  private sealed record _processWorkBatchCall {
     public required int CallNumber { get; init; }
     public required Guid InstanceId { get; init; }
     public required DateTimeOffset Timestamp { get; init; }
@@ -235,7 +235,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     var worker2Task = worker2.StartAsync(cts.Token);
 
     // Let them run for 10 seconds (enough time for 20 messages with realistic delays and retries)
-    await Task.Delay(10000);
+    await Task.Delay(10000, cancellationToken);
 
     cts.Cancel();
 
@@ -247,7 +247,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
 
     // Assert - all 20 messages should be published exactly once (no duplicates)
     var allPublished = publishStrategy1.PublishedWork.Concat(publishStrategy2.PublishedWork).ToList();
-    await Assert.That(allPublished).HasCount().EqualTo(20);
+    await Assert.That(allPublished).Count().IsEqualTo(20);
 
     // Verify no duplicate MessageIds
     var uniqueMessageIds = allPublished.Select(w => w.MessageId).Distinct().Count();
@@ -307,7 +307,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     var workerTask = worker.StartAsync(cts.Token);
 
     // Wait for initial processing + first few polls (realistic delays mean this takes longer)
-    await Task.Delay(7000); // 7 seconds should be enough with realistic delays
+    await Task.Delay(7000, cancellationToken); // 7 seconds should be enough with realistic delays
 
     cts.Cancel();
 
@@ -323,10 +323,10 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     await Assert.That(firstCall).IsNotNull();
 
     // All messages should eventually be published
-    await Assert.That(publishStrategy.PublishedWork).HasCount().EqualTo(12);
+    await Assert.That(publishStrategy.PublishedWork).Count().IsEqualTo(12);
 
     // Verify multiple coordinator calls happened (initial + polling)
-    await Assert.That(workCoordinator.Calls).HasCount().GreaterThanOrEqualTo(2);
+    await Assert.That(workCoordinator.Calls).Count().IsGreaterThanOrEqualTo(2);
   }
 
   [Test]
@@ -367,7 +367,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     var workerTask = worker.StartAsync(cts.Token);
 
     // Wait long enough for slow DB calls
-    await Task.Delay(8000); // 8 seconds
+    await Task.Delay(8000, cancellationToken); // 8 seconds
 
     cts.Cancel();
 
@@ -378,7 +378,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     }
 
     // Assert - publishing should still succeed despite slow DB
-    await Assert.That(publishStrategy.PublishedWork).HasCount().EqualTo(5);
+    await Assert.That(publishStrategy.PublishedWork).Count().IsEqualTo(5);
 
     // Verify database was called multiple times despite slowness
     await Assert.That(workCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(2);
@@ -423,7 +423,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     var workerTask = worker.StartAsync(cts.Token);
 
     // Wait long enough for retries
-    await Task.Delay(10000); // 10 seconds
+    await Task.Delay(10000, cancellationToken); // 10 seconds
 
     cts.Cancel();
 
@@ -435,7 +435,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
 
     // Assert - most messages should eventually succeed (retries work)
     // With 30% failure rate and 10 seconds of retries, we expect most to succeed
-    await Assert.That(publishStrategy.PublishedWork).HasCount().GreaterThanOrEqualTo(5);
+    await Assert.That(publishStrategy.PublishedWork).Count().IsGreaterThanOrEqualTo(5);
 
     // Verify multiple attempts were made
     await Assert.That(workCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(3);
@@ -471,14 +471,14 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     var workerTask = worker.StartAsync(cts.Token);
 
     // Wait 1 second - should NOT publish anything yet
-    await Task.Delay(1000);
-    await Assert.That(publishStrategy.PublishedWork).HasCount().EqualTo(0);
+    await Task.Delay(1000, cancellationToken);
+    await Assert.That(publishStrategy.PublishedWork).Count().IsEqualTo(0);
 
     // Make database ready
     databaseReadiness.IsReady = true;
 
     // Wait another 3 seconds - should now publish
-    await Task.Delay(3000);
+    await Task.Delay(3000, cancellationToken);
 
     cts.Cancel();
 
@@ -489,7 +489,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     }
 
     // Assert - messages published after database became ready
-    await Assert.That(publishStrategy.PublishedWork).HasCount().EqualTo(5);
+    await Assert.That(publishStrategy.PublishedWork).Count().IsEqualTo(5);
 
     // Verify work coordinator was NOT called while database not ready
     // First call should happen AFTER database became ready
@@ -510,7 +510,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     };
   }
 
-  private static IServiceInstanceProvider _createTestInstanceProvider() {
+  private static ServiceInstanceProvider _createTestInstanceProvider() {
     return new ServiceInstanceProvider(
       Guid.NewGuid(),
       "TestService",
@@ -519,7 +519,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     );
   }
 
-  private static IServiceCollection _createServiceCollection(
+  private static ServiceCollection _createServiceCollection(
     IWorkCoordinator workCoordinator,
     IMessagePublishStrategy publishStrategy,
     IDatabaseReadinessCheck databaseReadiness,
@@ -535,7 +535,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
   }
 
   // Test helper - Mock work channel writer
-  private class TestWorkChannelWriter : IWorkChannelWriter {
+  private sealed class TestWorkChannelWriter : IWorkChannelWriter {
     private readonly System.Threading.Channels.Channel<OutboxWork> _channel;
     public List<OutboxWork> WrittenWork { get; } = [];
 

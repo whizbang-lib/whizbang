@@ -51,7 +51,7 @@ public class OrderStatusHub(ILogger<OrderStatusHub> logger) : Hub {
   /// <summary>
   /// Client subscribes to updates for a specific order
   /// </summary>
-  public async Task SubscribeToOrder(string orderId) {
+  public async Task SubscribeToOrderAsync(string orderId) {
     await Groups.AddToGroupAsync(Context.ConnectionId, $"order-{orderId}");
 
     _logger.LogInformation(
@@ -64,7 +64,7 @@ public class OrderStatusHub(ILogger<OrderStatusHub> logger) : Hub {
   /// <summary>
   /// Client unsubscribes from updates for a specific order
   /// </summary>
-  public async Task UnsubscribeFromOrder(string orderId) {
+  public async Task UnsubscribeFromOrderAsync(string orderId) {
     await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"order-{orderId}");
 
     _logger.LogInformation(

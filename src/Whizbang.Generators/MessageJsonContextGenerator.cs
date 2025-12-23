@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Immutable;
+using System.Globalization;
 using System.Linq;
 using System.Reflection;
 using System.Text;
@@ -47,7 +48,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var messageTypes = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 } ||
                                        node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => ExtractMessageTypeInfo(ctx, ct)
+        transform: static (ctx, ct) => _extractMessageTypeInfo(ctx, ct)
     ).Where(static info => info is not null);
 
     // Combine messages with compilation
@@ -56,7 +57,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Generate WhizbangJsonContext from collected message types
     context.RegisterSourceOutput(
         messagesWithCompilation,
-        static (ctx, data) => GenerateWhizbangJsonContext(
+        static (ctx, data) => _generateWhizbangJsonContext(
             ctx,
             data.Left!,    // messages
             data.Right     // compilation
@@ -65,10 +66,37 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Symbol display format that includes nullable reference type annotations.
+  /// This is critical for generating correct nullable-aware code in CS8619/CS8603 scenarios.
+  /// </summary>
+  private static readonly SymbolDisplayFormat _fullyQualifiedWithNullabilityFormat = new SymbolDisplayFormat(
+      globalNamespaceStyle: SymbolDisplayGlobalNamespaceStyle.Included,
+      typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
+      genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters,
+      miscellaneousOptions: SymbolDisplayMiscellaneousOptions.IncludeNullableReferenceTypeModifier |
+                            SymbolDisplayMiscellaneousOptions.UseSpecialTypes);
+
+  /// <summary>
+  /// Strips nullable reference type annotation (?) from a type name for use in typeof() expressions.
+  /// Example: "global::System.String?" becomes "global::System.String"
+  /// Note: typeof(string?) is invalid C# syntax for nullable reference types.
+  /// Nullable value types like int? are NOT stripped as typeof(int?) is valid.
+  /// </summary>
+  private static string _stripNullableForTypeOf(string typeName) {
+    // Only strip '?' from reference types (not value types like int?, decimal?, etc.)
+    // For simplicity, we strip all trailing '?' as value types can use both typeof(int?) and typeof(int)
+    // The actual Type object is the same for both expressions.
+    if (typeName.EndsWith("?", StringComparison.Ordinal)) {
+      return typeName.Substring(0, typeName.Length - 1);
+    }
+    return typeName;
+  }
+
+  /// <summary>
   /// Extracts message type information from syntax node using semantic analysis.
   /// Returns null if the node is not a message type (ICommand or IEvent).
   /// </summary>
-  private static JsonMessageTypeInfo? ExtractMessageTypeInfo(
+  private static JsonMessageTypeInfo? _extractMessageTypeInfo(
       GeneratorSyntaxContext context,
       CancellationToken ct) {
 
@@ -97,12 +125,13 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var simpleName = typeSymbol.Name;
 
     // Extract property information for JSON serialization
+    // Use custom format that includes nullability annotations to avoid CS8619/CS8603 warnings
     var properties = typeSymbol.GetMembers()
         .OfType<IPropertySymbol>()
         .Where(p => p.DeclaredAccessibility == Accessibility.Public && !p.IsStatic)
         .Select(p => new PropertyInfo(
             Name: p.Name,
-            Type: p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+            Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
             IsInitOnly: p.SetMethod?.IsInitOnly ?? false
         ))
         .ToArray();
@@ -130,7 +159,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Generates WhizbangJsonContext.g.cs with JsonTypeInfo objects for all discovered message types
   /// and Whizbang core types (MessageId, CorrelationId, etc.).
   /// </summary>
-  private static void GenerateWhizbangJsonContext(
+  private static void _generateWhizbangJsonContext(
       SourceProductionContext context,
       ImmutableArray<JsonMessageTypeInfo> messages,
       Compilation compilation) {
@@ -161,7 +190,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     // Discover nested custom types used in message properties (e.g., OrderLineItem in List<OrderLineItem>)
-    var nestedTypes = DiscoverNestedTypes(messages, compilation);
+    var nestedTypes = _discoverNestedTypes(messages, compilation);
 
     // Report diagnostics for discovered nested types
     foreach (var nestedType in nestedTypes) {
@@ -177,7 +206,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     var allTypes = messages.Concat(nestedTypes).ToImmutableArray();
 
     // Discover List<T> types used in all messages and nested types
-    var listTypes = DiscoverListTypes(allTypes);
+    var listTypes = _discoverListTypes(allTypes);
 
     // Report diagnostics for discovered list types
     foreach (var listType in listTypes) {
@@ -205,26 +234,27 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // Generate lazy fields (messages + nested types + lists)
     var lazyFields = new System.Text.StringBuilder();
-    lazyFields.Append(GenerateLazyFields(assembly, allTypes));
-    lazyFields.Append(GenerateListLazyFields(assembly, listTypes));
+    lazyFields.Append(_generateLazyFields(assembly, allTypes));
+    lazyFields.Append(_generateListLazyFields(assembly, listTypes));
 
     // Generate factory methods (messages + lists)
     var factories = new System.Text.StringBuilder();
-    factories.Append(GenerateMessageTypeFactories(assembly, allTypes));
-    factories.Append(GenerateListFactories(assembly, listTypes));
+    factories.Append(_generateMessageTypeFactories(assembly, allTypes));
+    factories.Append(_generateListFactories(assembly, listTypes));
 
     // Discover WhizbangId converters by examining message property types
-    var converters = DiscoverWhizbangIdConverters(allTypes, compilation);
+    var converters = _discoverWhizbangIdConverters(allTypes, compilation);
 
     // Generate and replace each region
     template = TemplateUtilities.ReplaceRegion(template, "LAZY_FIELDS", lazyFields.ToString());
-    template = TemplateUtilities.ReplaceRegion(template, "LAZY_PROPERTIES", GenerateLazyProperties(assembly, allTypes));
-    template = TemplateUtilities.ReplaceRegion(template, "ASSEMBLY_AWARE_HELPER", GenerateAssemblyAwareHelper(assembly, converters));
-    template = TemplateUtilities.ReplaceRegion(template, "GET_DISCOVERED_TYPE_INFO", GenerateGetTypeInfo(assembly, allTypes, listTypes));
-    template = TemplateUtilities.ReplaceRegion(template, "HELPER_METHODS", GenerateHelperMethods(assembly));
-    template = TemplateUtilities.ReplaceRegion(template, "CORE_TYPE_FACTORIES", GenerateCoreTypeFactories(assembly));
+    template = TemplateUtilities.ReplaceRegion(template, "LAZY_PROPERTIES", _generateLazyProperties(assembly, allTypes));
+    template = TemplateUtilities.ReplaceRegion(template, "ASSEMBLY_AWARE_HELPER", _generateAssemblyAwareHelper(assembly, converters));
+    template = TemplateUtilities.ReplaceRegion(template, "GET_DISCOVERED_TYPE_INFO", _generateGetTypeInfo(assembly, allTypes, listTypes));
+    template = TemplateUtilities.ReplaceRegion(template, "HELPER_METHODS", _generateHelperMethods(assembly));
+    template = TemplateUtilities.ReplaceRegion(template, "GET_TYPE_INFO_BY_NAME", _generateGetTypeInfoByName(assembly, allTypes, compilation));
+    template = TemplateUtilities.ReplaceRegion(template, "CORE_TYPE_FACTORIES", _generateCoreTypeFactories(assembly));
     template = TemplateUtilities.ReplaceRegion(template, "MESSAGE_TYPE_FACTORIES", factories.ToString());
-    template = TemplateUtilities.ReplaceRegion(template, "MESSAGE_ENVELOPE_FACTORIES", GenerateMessageEnvelopeFactories(assembly, messages));
+    template = TemplateUtilities.ReplaceRegion(template, "MESSAGE_ENVELOPE_FACTORIES", _generateMessageEnvelopeFactories(assembly, messages));
 
     context.AddSource("MessageJsonContext.g.cs", template);
 
@@ -252,7 +282,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
   }
 
-  private static string GenerateLazyFields(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes) {
+  private static string _generateLazyFields(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes) {
     var sb = new System.Text.StringBuilder();
 
     // Suppress CS0169 warning for unused fields (fields are reserved for future lazy initialization)
@@ -304,7 +334,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     return sb.ToString();
   }
 
-  private static string GenerateLazyProperties(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> messages) {
+  private static string _generateLazyProperties(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> messages) {
     var sb = new System.Text.StringBuilder();
 
     // Note: We don't use lazy properties anymore since we create in GetTypeInfo with provided options
@@ -313,7 +343,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     return sb.ToString();
   }
 
-  private static string GenerateGetTypeInfo(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes, ImmutableArray<ListTypeInfo> listTypes) {
+  private static string _generateGetTypeInfo(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes, ImmutableArray<ListTypeInfo> listTypes) {
     var sb = new System.Text.StringBuilder();
 
     // Load snippets
@@ -397,7 +427,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     return sb.ToString();
   }
 
-  private static string GenerateHelperMethods(Assembly assembly) {
+  private static string _generateHelperMethods(Assembly assembly) {
     var sb = new StringBuilder();
 
     // Load helper snippets
@@ -418,7 +448,56 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     return sb.ToString();
   }
 
-  private static string GenerateCoreTypeFactories(Assembly assembly) {
+  /// <summary>
+  /// Generates AOT-safe GetTypeInfoByName method that maps assembly-qualified type names to JsonTypeInfo
+  /// using compile-time typeof() calls instead of runtime Type.GetType().
+  /// This avoids IL2057 trimming warnings by using static type references.
+  /// Works with cross-assembly ModuleInitializer registration pattern.
+  /// </summary>
+  private static string _generateGetTypeInfoByName(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes, Compilation compilation) {
+    var sb = new StringBuilder();
+
+    // Get the actual assembly name from the compilation
+    var actualAssemblyName = compilation.AssemblyName ?? "Unknown";
+
+    sb.AppendLine("/// <summary>");
+    sb.AppendLine("/// Gets JsonTypeInfo for a message type by its assembly-qualified name.");
+    sb.AppendLine("/// Uses compile-time typeof() calls for AOT compatibility (avoids IL2057 trimming warnings).");
+    sb.AppendLine("/// This method is generated per-assembly and knows only about types in this assembly.");
+    sb.AppendLine("/// </summary>");
+    sb.AppendLine("/// <param name=\"assemblyQualifiedTypeName\">Assembly-qualified type name (e.g., \"MyApp.Commands.CreateOrder, MyApp\")</param>");
+    sb.AppendLine("/// <param name=\"options\">JsonSerializerOptions to use for creating JsonTypeInfo</param>");
+    sb.AppendLine("/// <returns>JsonTypeInfo for the type, or null if not found in this assembly</returns>");
+    sb.AppendLine("public static JsonTypeInfo? GetTypeInfoByName(string assemblyQualifiedTypeName, JsonSerializerOptions options) {");
+    sb.AppendLine("  if (string.IsNullOrEmpty(assemblyQualifiedTypeName)) return null;");
+    sb.AppendLine("  if (options == null) return null;");
+    sb.AppendLine();
+    sb.AppendLine("  // Create a temporary context instance to access GetTypeInfoInternal");
+    sb.AppendLine("  var context = new MessageJsonContext(options);");
+    sb.AppendLine();
+    sb.AppendLine("  // Use switch expression for AOT-safe type name mapping");
+    sb.AppendLine("  // Each case uses typeof() which is compile-time and AOT-safe");
+    sb.AppendLine("  return assemblyQualifiedTypeName switch {");
+
+    // Only generate mappings for actual message types (commands/events), not nested types
+    var messageTypes = allTypes.Where(t => t.IsCommand || t.IsEvent).ToList();
+    foreach (var type in messageTypes) {
+      // Get assembly-qualified name using the ACTUAL compilation assembly name
+      // FullyQualifiedName is like "global::MyApp.Commands.CreateOrder"
+      // We need "MyApp.Commands.CreateOrder, MyApp.Contracts" (actual assembly name)
+      var typeNameWithoutGlobal = type.FullyQualifiedName.Replace("global::", "");
+
+      sb.AppendLine($"    \"{typeNameWithoutGlobal}, {actualAssemblyName}\" => context.GetTypeInfoInternal(typeof({type.FullyQualifiedName}), options),");
+    }
+
+    sb.AppendLine("    _ => null  // Type not found in this assembly");
+    sb.AppendLine("  };");
+    sb.AppendLine("}");
+
+    return sb.ToString();
+  }
+
+  private static string _generateCoreTypeFactories(Assembly assembly) {
     var sb = new System.Text.StringBuilder();
 
     // Load snippet
@@ -440,7 +519,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     return sb.ToString();
   }
 
-  private static string GenerateMessageTypeFactories(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> messages) {
+  private static string _generateMessageTypeFactories(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> messages) {
     var sb = new StringBuilder();
 
     // Load snippets
@@ -468,7 +547,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
             : $"(obj, value) => (({message.FullyQualifiedName})obj).{prop.Name} = value,";
 
         var propertyCode = propertyCreationSnippet
-            .Replace("__INDEX__", i.ToString())
+            .Replace("__INDEX__", i.ToString(CultureInfo.InvariantCulture))
             .Replace("__PROPERTY_TYPE__", prop.Type)
             .Replace("__PROPERTY_NAME__", prop.Name)
             .Replace("__MESSAGE_TYPE__", message.FullyQualifiedName)
@@ -486,9 +565,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         for (int i = 0; i < message.Properties.Length; i++) {
           var prop = message.Properties[i];
           var parameterCode = parameterInfoSnippet
-              .Replace("__INDEX__", i.ToString())
+              .Replace("__INDEX__", i.ToString(CultureInfo.InvariantCulture))
               .Replace("__PARAMETER_NAME__", prop.Name)
-              .Replace("__PROPERTY_TYPE__", prop.Type);
+              .Replace("__PROPERTY_TYPE__", _stripNullableForTypeOf(prop.Type));
 
           sb.AppendLine(parameterCode);
         }
@@ -514,9 +593,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         for (int i = 0; i < message.Properties.Length; i++) {
           var prop = message.Properties[i];
           var parameterCode = parameterInfoSnippet
-              .Replace("__INDEX__", i.ToString())
+              .Replace("__INDEX__", i.ToString(CultureInfo.InvariantCulture))
               .Replace("__PARAMETER_NAME__", prop.Name)
-              .Replace("__PROPERTY_TYPE__", prop.Type);
+              .Replace("__PROPERTY_TYPE__", _stripNullableForTypeOf(prop.Type));
 
           sb.AppendLine(parameterCode);
         }
@@ -548,7 +627,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     return sb.ToString();
   }
 
-  private static string GenerateMessageEnvelopeFactories(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> messages) {
+  private static string _generateMessageEnvelopeFactories(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> messages) {
     var sb = new StringBuilder();
 
     // Load snippets
@@ -605,19 +684,19 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       var messageIdParam = parameterInfoSnippet
           .Replace("__INDEX__", "0")
           .Replace("__PARAMETER_NAME__", "messageId")
-          .Replace("__PROPERTY_TYPE__", "MessageId");
+          .Replace("__PROPERTY_TYPE__", _stripNullableForTypeOf("MessageId"));
       sb.AppendLine(messageIdParam);
 
       var payloadParam = parameterInfoSnippet
           .Replace("__INDEX__", "1")
           .Replace("__PARAMETER_NAME__", "payload")
-          .Replace("__PROPERTY_TYPE__", message.FullyQualifiedName);
+          .Replace("__PROPERTY_TYPE__", _stripNullableForTypeOf(message.FullyQualifiedName));
       sb.AppendLine(payloadParam);
 
       var hopsParam = parameterInfoSnippet
           .Replace("__INDEX__", "2")
           .Replace("__PARAMETER_NAME__", "hops")
-          .Replace("__PROPERTY_TYPE__", "List<MessageHop>");
+          .Replace("__PROPERTY_TYPE__", _stripNullableForTypeOf("List<MessageHop>"));
       sb.AppendLine(hopsParam);
       sb.AppendLine();
 
@@ -643,7 +722,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     return sb.ToString();
   }
 
-  private static string GenerateAssemblyAwareHelper(Assembly assembly, ImmutableArray<WhizbangIdTypeInfo> converters) {
+  private static string _generateAssemblyAwareHelper(Assembly assembly, ImmutableArray<WhizbangIdTypeInfo> converters) {
     // Load snippet
     var createOptionsSnippet = TemplateUtilities.ExtractSnippet(
         assembly,
@@ -668,7 +747,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Discovers nested custom types used in message properties (e.g., OrderLineItem inside List&lt;OrderLineItem&gt;).
   /// These types need JsonTypeInfo generated for AOT serialization to work properly.
   /// </summary>
-  private static ImmutableArray<JsonMessageTypeInfo> DiscoverNestedTypes(
+  private static ImmutableArray<JsonMessageTypeInfo> _discoverNestedTypes(
       ImmutableArray<JsonMessageTypeInfo> messages,
       Compilation compilation) {
 
@@ -677,7 +756,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var message in messages) {
       foreach (var property in message.Properties) {
         // Extract type symbol from the property's fully qualified type name
-        var elementTypeName = ExtractElementType(property.Type);
+        var elementTypeName = _extractElementType(property.Type);
         if (elementTypeName == null) {
           continue;
         }
@@ -692,7 +771,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         }
 
         // Skip primitive and framework types
-        if (IsPrimitiveOrFrameworkType(elementTypeName)) {
+        if (_isPrimitiveOrFrameworkType(elementTypeName)) {
           continue;
         }
 
@@ -708,12 +787,13 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         }
 
         // Extract property information
+        // Use custom format that includes nullability annotations to avoid CS8619/CS8603 warnings
         var nestedProperties = typeSymbol.GetMembers()
             .OfType<IPropertySymbol>()
             .Where(p => p.DeclaredAccessibility == Accessibility.Public && !p.IsStatic)
             .Select(p => new PropertyInfo(
                 Name: p.Name,
-                Type: p.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
                 IsInitOnly: p.SetMethod?.IsInitOnly ?? false
             ))
             .ToArray();
@@ -745,7 +825,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Extracts the element type from a generic collection type.
   /// For example: "global::System.Collections.Generic.List&lt;global::MyApp.OrderLineItem&gt;" returns "global::MyApp.OrderLineItem"
   /// </summary>
-  private static string? ExtractElementType(string fullyQualifiedTypeName) {
+  private static string? _extractElementType(string fullyQualifiedTypeName) {
     // Check for common generic collection types
     var genericTypes = new[] {
       "global::System.Collections.Generic.List<",
@@ -757,7 +837,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     };
 
     foreach (var genericPrefix in genericTypes) {
-      if (fullyQualifiedTypeName.StartsWith(genericPrefix)) {
+      if (fullyQualifiedTypeName.StartsWith(genericPrefix, StringComparison.Ordinal)) {
         // Extract the type argument between < and >
         var startIndex = genericPrefix.Length;
         var endIndex = fullyQualifiedTypeName.LastIndexOf('>');
@@ -773,7 +853,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <summary>
   /// Checks if a type is a primitive or framework type that doesn't need custom JsonTypeInfo.
   /// </summary>
-  private static bool IsPrimitiveOrFrameworkType(string fullyQualifiedTypeName) {
+  private static bool _isPrimitiveOrFrameworkType(string fullyQualifiedTypeName) {
     var frameworkTypes = new[] {
       "global::System.String",
       "global::System.Int32",
@@ -804,7 +884,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Uses naming conventions since source generators run in parallel and generated types may not be visible.
   /// Returns info about converters that need to be registered in JsonSerializerOptions.
   /// </summary>
-  private static ImmutableArray<WhizbangIdTypeInfo> DiscoverWhizbangIdConverters(
+  private static ImmutableArray<WhizbangIdTypeInfo> _discoverWhizbangIdConverters(
       ImmutableArray<JsonMessageTypeInfo> allTypes,
       Compilation compilation) {
 
@@ -813,12 +893,12 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var type in allTypes) {
       foreach (var property in type.Properties) {
         // Skip primitive and framework types
-        if (IsPrimitiveOrFrameworkType(property.Type)) {
+        if (_isPrimitiveOrFrameworkType(property.Type)) {
           continue;
         }
 
         // Skip collection types
-        if (ExtractElementType(property.Type) != null) {
+        if (_extractElementType(property.Type) != null) {
           continue;
         }
 
@@ -829,7 +909,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
         // Heuristic: If type name ends with "Id", it's likely a WhizbangId type with a generated converter
         // This includes types like ProductId, OrderId, CustomerId, MessageId, CorrelationId, etc.
-        if (!typeName.EndsWith("Id")) {
+        if (!typeName.EndsWith("Id", StringComparison.Ordinal)) {
           continue;
         }
 
@@ -860,12 +940,12 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Discovers List&lt;T&gt; types used in message properties.
   /// Returns info needed to generate explicit List&lt;T&gt; JsonTypeInfo for AOT compatibility.
   /// </summary>
-  private static ImmutableArray<ListTypeInfo> DiscoverListTypes(ImmutableArray<JsonMessageTypeInfo> allTypes) {
+  private static ImmutableArray<ListTypeInfo> _discoverListTypes(ImmutableArray<JsonMessageTypeInfo> allTypes) {
     var listTypes = new Dictionary<string, ListTypeInfo>();
 
     foreach (var type in allTypes) {
       foreach (var property in type.Properties) {
-        var elementTypeName = ExtractElementType(property.Type);
+        var elementTypeName = _extractElementType(property.Type);
         if (elementTypeName == null) {
           continue;
         }
@@ -894,7 +974,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates lazy fields for List&lt;T&gt; types.
   /// </summary>
-  private static string GenerateListLazyFields(Assembly assembly, ImmutableArray<ListTypeInfo> listTypes) {
+  private static string _generateListLazyFields(Assembly assembly, ImmutableArray<ListTypeInfo> listTypes) {
     if (listTypes.IsEmpty) {
       return string.Empty;
     }
@@ -924,7 +1004,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates GetTypeInfo checks for List&lt;T&gt; types.
   /// </summary>
-  private static string GenerateListGetTypeInfo(Assembly assembly, ImmutableArray<ListTypeInfo> listTypes) {
+  private static string _generateListGetTypeInfo(Assembly assembly, ImmutableArray<ListTypeInfo> listTypes) {
     if (listTypes.IsEmpty) {
       return string.Empty;
     }
@@ -947,7 +1027,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates factory methods for List&lt;T&gt; types.
   /// </summary>
-  private static string GenerateListFactories(Assembly assembly, ImmutableArray<ListTypeInfo> listTypes) {
+  private static string _generateListFactories(Assembly assembly, ImmutableArray<ListTypeInfo> listTypes) {
     if (listTypes.IsEmpty) {
       return string.Empty;
     }

@@ -14,23 +14,19 @@ namespace Whizbang.Benchmarks;
 [MemoryDiagnoser]
 [MarkdownExporter]
 public class AllocationProfilingBenchmarks {
-  private record TestCommand(string Id, int Value);
+  private sealed record TestCommand(string Id, int Value);
 
-  private IExecutionStrategy _parallelExecutor = null!;
-  private IExecutionStrategy _serialExecutor = null!;
-  private IMessageEnvelope _envelope = null!;
+  private ParallelExecutor _parallelExecutor = null!;
+  private SerialExecutor _serialExecutor = null!;
+  private MessageEnvelope<TestCommand> _envelope = null!;
   private PolicyContext _context = null!;
   private PolicyContext _pooledContext = null!;
 
   // Pre-allocated handler to avoid lambda allocation
   private Func<IMessageEnvelope, PolicyContext, ValueTask<int>> _handler = null!;
 
-  // For testing
-  private readonly SemaphoreSlim _testSemaphore = null!;
-  private readonly object _testLock = null!;
-
   [GlobalSetup]
-  public async Task Setup() {
+  public async Task SetupAsync() {
     _parallelExecutor = new ParallelExecutor(maxConcurrency: 10);
     await _parallelExecutor.StartAsync();
 
@@ -80,7 +76,7 @@ public class AllocationProfilingBenchmarks {
   }
 
   [GlobalCleanup]
-  public async Task Cleanup() {
+  public async Task CleanupAsync() {
     await _parallelExecutor.StopAsync();
     await _serialExecutor.StopAsync();
     PolicyContextPool.Return(_pooledContext);
@@ -90,7 +86,7 @@ public class AllocationProfilingBenchmarks {
   /// Baseline: ParallelExecutor with inline lambda (current implementation)
   /// </summary>
   [Benchmark(Baseline = true)]
-  public async Task<int> ParallelExecutor_InlineLambda() {
+  public async Task<int> ParallelExecutor_InlineLambdaAsync() {
     return await _parallelExecutor.ExecuteAsync<int>(
       _envelope,
       (env, ctx) => ValueTask.FromResult(((TestCommand)ctx.Message).Value),
@@ -102,7 +98,7 @@ public class AllocationProfilingBenchmarks {
   /// Test: ParallelExecutor with pre-allocated static handler
   /// </summary>
   [Benchmark]
-  public async Task<int> ParallelExecutor_PreAllocatedHandler() {
+  public async Task<int> ParallelExecutor_PreAllocatedHandlerAsync() {
     return await _parallelExecutor.ExecuteAsync<int>(
       _envelope,
       _handler,
@@ -114,7 +110,7 @@ public class AllocationProfilingBenchmarks {
   /// Test: ParallelExecutor with pooled context
   /// </summary>
   [Benchmark]
-  public async Task<int> ParallelExecutor_PooledContext() {
+  public async Task<int> ParallelExecutor_PooledContextAsync() {
     var pooled = PolicyContextPool.Rent(
       ((TestCommand)_context.Message),
       _envelope,
@@ -144,7 +140,7 @@ public class AllocationProfilingBenchmarks {
   /// Test: Direct async/await without executor
   /// </summary>
   [Benchmark]
-  public async ValueTask<int> DirectAsyncAwait() {
+  public async ValueTask<int> DirectAsyncAwaitAsync() {
     return await ValueTask.FromResult(((TestCommand)_context.Message).Value);
   }
 
@@ -181,7 +177,7 @@ public class AllocationProfilingBenchmarks {
   /// SerialExecutor: Baseline with inline lambda
   /// </summary>
   [Benchmark]
-  public async Task<int> SerialExecutor_InlineLambda() {
+  public async Task<int> SerialExecutor_InlineLambdaAsync() {
     return await _serialExecutor.ExecuteAsync<int>(
       _envelope,
       (env, ctx) => ValueTask.FromResult(((TestCommand)ctx.Message).Value),
@@ -193,7 +189,7 @@ public class AllocationProfilingBenchmarks {
   /// SerialExecutor: Pre-allocated handler
   /// </summary>
   [Benchmark]
-  public async Task<int> SerialExecutor_PreAllocatedHandler() {
+  public async Task<int> SerialExecutor_PreAllocatedHandlerAsync() {
     return await _serialExecutor.ExecuteAsync<int>(
       _envelope,
       _handler,

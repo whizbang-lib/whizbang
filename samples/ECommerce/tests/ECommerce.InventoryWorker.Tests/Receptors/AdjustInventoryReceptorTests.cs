@@ -36,6 +36,7 @@ public class AdjustInventoryReceptorTests {
   }
 
   [Test]
+  [Obsolete]
   public async Task HandleAsync_PublishesInventoryAdjustedEventAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
@@ -135,6 +136,7 @@ public class AdjustInventoryReceptorTests {
   }
 
   [Test]
+  [Obsolete]
   public async Task HandleAsync_LogsInformation_AboutAdjustmentAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();

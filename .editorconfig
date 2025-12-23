@@ -107,6 +107,7 @@ dotnet_naming_symbols.type_parameters_symbols.applicable_kinds = type_parameter
 dotnet_naming_symbols.type_parameters_symbols.resharper_applicable_kinds = type_parameter
 dotnet_naming_symbols.type_parameters_symbols.resharper_required_modifiers = any
 dotnet_naming_symbols.async_methods.applicable_kinds = method
+dotnet_naming_symbols.async_methods.applicable_accessibilities = public,internal,protected,protected_internal,private_protected
 dotnet_naming_symbols.async_methods.required_modifiers = async
 # Abstract methods should use PascalCase (higher priority than protected)
 dotnet_naming_rule.abstract_methods_pascal_case.severity = warning
@@ -121,10 +122,10 @@ dotnet_naming_rule.private_methods_must_have_underscore.symbols = private_method
 dotnet_naming_rule.private_methods_must_have_underscore.style = underscore_camel_case_style
 dotnet_naming_symbols.private_methods.applicable_kinds = method
 dotnet_naming_symbols.private_methods.applicable_accessibilities = private
-# Protected methods should use _camelCase
-dotnet_naming_rule.protected_methods_must_have_underscore.severity = warning
-dotnet_naming_rule.protected_methods_must_have_underscore.symbols = protected_methods
-dotnet_naming_rule.protected_methods_must_have_underscore.style = underscore_camel_case_style
+# Protected methods should use PascalCase (CA1707 compliance)
+dotnet_naming_rule.protected_methods_pascal_case.severity = warning
+dotnet_naming_rule.protected_methods_pascal_case.symbols = protected_methods
+dotnet_naming_rule.protected_methods_pascal_case.style = upper_camel_case_style
 dotnet_naming_symbols.protected_methods.applicable_kinds = method
 dotnet_naming_symbols.protected_methods.applicable_accessibilities = protected
 # Private properties should use _camelCase
@@ -133,10 +134,10 @@ dotnet_naming_rule.private_properties_must_have_underscore.symbols = private_pro
 dotnet_naming_rule.private_properties_must_have_underscore.style = underscore_camel_case_style
 dotnet_naming_symbols.private_properties.applicable_kinds = property
 dotnet_naming_symbols.private_properties.applicable_accessibilities = private
-# Protected properties should use _camelCase
-dotnet_naming_rule.protected_properties_must_have_underscore.severity = warning
-dotnet_naming_rule.protected_properties_must_have_underscore.symbols = protected_properties
-dotnet_naming_rule.protected_properties_must_have_underscore.style = underscore_camel_case_style
+# Protected properties should use PascalCase (CA1707 compliance)
+dotnet_naming_rule.protected_properties_pascal_case.severity = warning
+dotnet_naming_rule.protected_properties_pascal_case.symbols = protected_properties
+dotnet_naming_rule.protected_properties_pascal_case.style = upper_camel_case_style
 dotnet_naming_symbols.protected_properties.applicable_kinds = property
 dotnet_naming_symbols.protected_properties.applicable_accessibilities = protected
 # Define the underscore camel case style once
@@ -220,7 +221,7 @@ dotnet_style_prefer_conditional_expression_over_return = true:silent
 # Naming Conventions          #
 ###############################
 # Style Definitions
-dotnet_diagnostic.ide0055.severity = warning
+dotnet_diagnostic.ide0055.severity = error
 # IDE1006: Naming rule violation (enforced as error after Phase 3 cleanup)
 dotnet_diagnostic.IDE1006.severity = error
 dotnet_naming_style.pascal_case_style.capitalization = pascal_case

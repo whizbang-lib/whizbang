@@ -16,7 +16,7 @@ namespace Whizbang.Core.Messaging;
 /// Provides lowest latency but highest database load.
 /// Best for: Real-time scenarios, low-throughput services, critical operations.
 /// </summary>
-public class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
+public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
   private readonly IWorkCoordinator _coordinator;
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly WorkCoordinatorOptions _options;
@@ -48,7 +48,9 @@ public class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
   /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueOutboxMessage_FlushesOnCallAsync</tests>
   public void QueueOutboxMessage(OutboxMessage message) {
     _queuedOutboxMessages.Add(message);
-    _logger?.LogTrace("Immediate strategy: Outbox message queued (will be sent on next Flush)");
+    if (_logger != null) {
+      LogOutboxMessageQueued(_logger);
+    }
   }
 
   /// <summary>
@@ -57,7 +59,9 @@ public class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
   /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:QueueInboxMessage_FlushesOnCallAsync</tests>
   public void QueueInboxMessage(InboxMessage message) {
     _queuedInboxMessages.Add(message);
-    _logger?.LogTrace("Immediate strategy: Inbox message queued (will be stored on next Flush)");
+    if (_logger != null) {
+      LogInboxMessageQueued(_logger);
+    }
   }
 
   /// <summary>
@@ -68,7 +72,9 @@ public class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
       MessageId = messageId,
       Status = completedStatus
     });
-    _logger?.LogTrace("Immediate strategy: Outbox completion queued (will be reported on next Flush)");
+    if (_logger != null) {
+      LogOutboxCompletionQueued(_logger);
+    }
   }
 
   /// <summary>
@@ -79,31 +85,37 @@ public class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
       MessageId = messageId,
       Status = completedStatus
     });
-    _logger?.LogTrace("Immediate strategy: Inbox completion queued (will be reported on next Flush)");
+    if (_logger != null) {
+      LogInboxCompletionQueued(_logger);
+    }
   }
 
   /// <summary>
   /// Queues an outbox message failure for immediate flush.
   /// </summary>
-  public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string error) {
+  public void QueueOutboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) {
     _queuedOutboxFailures.Add(new MessageFailure {
       MessageId = messageId,
       CompletedStatus = completedStatus,
-      Error = error
+      Error = errorMessage
     });
-    _logger?.LogTrace("Immediate strategy: Outbox failure queued (will be reported on next Flush)");
+    if (_logger != null) {
+      LogOutboxFailureQueued(_logger);
+    }
   }
 
   /// <summary>
   /// Queues an inbox message failure for immediate flush.
   /// </summary>
-  public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string error) {
+  public void QueueInboxFailure(Guid messageId, MessageProcessingStatus completedStatus, string errorMessage) {
     _queuedInboxFailures.Add(new MessageFailure {
       MessageId = messageId,
       CompletedStatus = completedStatus,
-      Error = error
+      Error = errorMessage
     });
-    _logger?.LogTrace("Immediate strategy: Inbox failure queued (will be reported on next Flush)");
+    if (_logger != null) {
+      LogInboxFailureQueued(_logger);
+    }
   }
 
   /// <summary>
@@ -112,13 +124,15 @@ public class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
   /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateWorkCoordinatorStrategyTests.cs:FlushAsync_ImmediatelyCallsWorkCoordinatorAsync</tests>
   public async Task<WorkBatch> FlushAsync(WorkBatchFlags flags, CancellationToken ct = default) {
     // Immediate strategy calls process_work_batch with all queued operations
-    _logger?.LogTrace(
-      "Immediate strategy flush: {OutboxMsg} outbox, {InboxMsg} inbox, {Completions} completions, {Failures} failures",
-      _queuedOutboxMessages.Count,
-      _queuedInboxMessages.Count,
-      _queuedOutboxCompletions.Count + _queuedInboxCompletions.Count,
-      _queuedOutboxFailures.Count + _queuedInboxFailures.Count
-    );
+    if (_logger != null) {
+      LogFlushStarting(
+        _logger,
+        _queuedOutboxMessages.Count,
+        _queuedInboxMessages.Count,
+        _queuedOutboxCompletions.Count + _queuedInboxCompletions.Count,
+        _queuedOutboxFailures.Count + _queuedInboxFailures.Count
+      );
+    }
 
     var workBatch = await _coordinator.ProcessWorkBatchAsync(
       _instanceProvider.InstanceId,
@@ -155,4 +169,63 @@ public class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
 
     return workBatch;
   }
+
+  // ========================================
+  // High-Performance LoggerMessage Delegates
+  // ========================================
+
+  [LoggerMessage(
+    EventId = 1,
+    Level = LogLevel.Trace,
+    Message = "Immediate strategy: Outbox message queued (will be sent on next Flush)"
+  )]
+  static partial void LogOutboxMessageQueued(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 2,
+    Level = LogLevel.Trace,
+    Message = "Immediate strategy: Inbox message queued (will be stored on next Flush)"
+  )]
+  static partial void LogInboxMessageQueued(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 3,
+    Level = LogLevel.Trace,
+    Message = "Immediate strategy: Outbox completion queued (will be reported on next Flush)"
+  )]
+  static partial void LogOutboxCompletionQueued(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 4,
+    Level = LogLevel.Trace,
+    Message = "Immediate strategy: Inbox completion queued (will be reported on next Flush)"
+  )]
+  static partial void LogInboxCompletionQueued(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 5,
+    Level = LogLevel.Trace,
+    Message = "Immediate strategy: Outbox failure queued (will be reported on next Flush)"
+  )]
+  static partial void LogOutboxFailureQueued(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 6,
+    Level = LogLevel.Trace,
+    Message = "Immediate strategy: Inbox failure queued (will be reported on next Flush)"
+  )]
+  static partial void LogInboxFailureQueued(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 7,
+    Level = LogLevel.Trace,
+    Message = "Immediate strategy flush: {OutboxMsgCount} outbox, {InboxMsgCount} inbox, {CompletionCount} completions, {FailureCount} failures"
+  )]
+  static partial void LogFlushStarting(
+    ILogger logger,
+    int outboxMsgCount,
+    int inboxMsgCount,
+    int completionCount,
+    int failureCount
+  );
 }

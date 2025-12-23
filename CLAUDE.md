@@ -251,7 +251,9 @@ public interface IDispatcher {
 - `mcp__whizbang-docs__get-related-docs` - Find docs for a symbol
 - `mcp__whizbang-docs__validate-doc-links` - Validate all links
 
-📖 **Read**: `ai-docs/documentation-maintenance.md` for complete workflow with version awareness.
+📖 **Read**:
+- `ai-docs/documentation-maintenance.md` - Complete workflow with version awareness
+- `../whizbang-lib.github.io/CONTRIBUTING.md#mcp-server-setup-optional-for-ai-assisted-development` - MCP setup instructions
 
 ---
 
@@ -277,6 +279,8 @@ public void Dispatch<TMessage>(TMessage message) where TMessage : IMessage {
 - `mcp__whizbang-docs__get-code-for-test` - Find code tested by test
 - `mcp__whizbang-docs__validate-test-links` - Validate test links
 - `mcp__whizbang-docs__get-coverage-stats` - Get coverage statistics
+
+**Note**: MCP tools require setup. See `../whizbang-lib.github.io/CONTRIBUTING.md#mcp-server-setup-optional-for-ai-assisted-development` for configuration instructions.
 
 ---
 

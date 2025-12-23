@@ -27,7 +27,7 @@ public class OutboxSchemaTests {
     var columns = OutboxSchema.Table.Columns;
 
     // Assert - Verify column count
-    await Assert.That(columns).HasCount().EqualTo(18);
+    await Assert.That(columns).Count().IsEqualTo(18);
 
     // Verify each column definition
     var messageId = columns[0];
@@ -88,19 +88,19 @@ public class OutboxSchemaTests {
     var indexes = OutboxSchema.Table.Indexes;
 
     // Assert - Verify index count
-    await Assert.That(indexes).HasCount().EqualTo(6);
+    await Assert.That(indexes).Count().IsEqualTo(6);
 
     // Verify composite index on status and created_at
     var statusCreatedIndex = indexes[0];
     await Assert.That(statusCreatedIndex.Name).IsEqualTo("idx_outbox_status_created_at");
-    await Assert.That(statusCreatedIndex.Columns).HasCount().EqualTo(2);
+    await Assert.That(statusCreatedIndex.Columns).Count().IsEqualTo(2);
     await Assert.That(statusCreatedIndex.Columns[0]).IsEqualTo("status");
     await Assert.That(statusCreatedIndex.Columns[1]).IsEqualTo("created_at");
 
     // Verify index on published_at
     var publishedAtIndex = indexes[1];
     await Assert.That(publishedAtIndex.Name).IsEqualTo("idx_outbox_published_at");
-    await Assert.That(publishedAtIndex.Columns).HasCount().EqualTo(1);
+    await Assert.That(publishedAtIndex.Columns).Count().IsEqualTo(1);
     await Assert.That(publishedAtIndex.Columns[0]).IsEqualTo("published_at");
   }
 

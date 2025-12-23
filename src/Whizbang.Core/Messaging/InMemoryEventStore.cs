@@ -113,6 +113,7 @@ public class InMemoryEventStore(
     private readonly List<EventRecord> _events = [];
     private long _currentSequence = -1;
 
+    [SuppressMessage("Performance", "CA1859:Use concrete types when possible for improved performance", Justification = "Interface required for polymorphic storage of envelopes with different TMessage types")]
     public void Append(IMessageEnvelope envelope) {
       lock (_lock) {
         _currentSequence++;

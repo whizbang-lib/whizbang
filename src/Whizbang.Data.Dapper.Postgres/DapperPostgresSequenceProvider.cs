@@ -21,7 +21,7 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:CancellationToken_WhenCancelled_ShouldThrowAsync</tests>
 public class DapperPostgresSequenceProvider(IDbConnectionFactory connectionFactory, IDbExecutor executor) : DapperSequenceProviderBase(connectionFactory, executor) {
   /// <summary>
-  /// 
+  /// Returns the PostgreSQL-specific SQL for updating a sequence value atomically using RETURNING.
   /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetNextAsync_MultipleCalls_ShouldIncrementMonotonicallyAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetNextAsync_DifferentStreamKeys_ShouldMaintainSeparateSequencesAsync</tests>
@@ -34,7 +34,7 @@ public class DapperPostgresSequenceProvider(IDbConnectionFactory connectionFacto
     RETURNING current_value";
 
   /// <summary>
-  /// 
+  /// Returns the PostgreSQL-specific SQL for inserting or updating a sequence using ON CONFLICT UPSERT.
   /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetNextAsync_FirstCall_ShouldReturnZeroAsync</tests>
   protected override string GetInsertOrUpdateSequenceSql() => @"
@@ -46,7 +46,7 @@ public class DapperPostgresSequenceProvider(IDbConnectionFactory connectionFacto
     RETURNING current_value";
 
   /// <summary>
-  /// 
+  /// Returns the PostgreSQL-specific SQL for retrieving the current sequence value without incrementing.
   /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetCurrentAsync_WithoutGetNext_ShouldReturnNegativeOneAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:GetCurrentAsync_AfterGetNext_ShouldReturnLastIssuedSequenceAsync</tests>
@@ -57,7 +57,7 @@ public class DapperPostgresSequenceProvider(IDbConnectionFactory connectionFacto
     WHERE sequence_name = @SequenceKey";
 
   /// <summary>
-  /// 
+  /// Returns the PostgreSQL-specific SQL for resetting a sequence to a specific value using UPSERT.
   /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:ResetAsync_WithDefaultValue_ShouldResetToZeroAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresSequenceProviderTests.cs:ResetAsync_WithCustomValue_ShouldResetToSpecifiedValueAsync</tests>

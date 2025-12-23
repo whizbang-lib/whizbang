@@ -78,7 +78,7 @@ public abstract class PartitionRouterContractTests {
   }
 
   [Test]
-  public async Task SelectPartition_DifferentStreamKeys_ShouldDistributeEvenly() {
+  public async Task SelectPartition_DifferentStreamKeys_ShouldDistributeEvenlyAsync() {
     // Arrange
     var router = CreateRouter();
     var context = CreateTestContext();

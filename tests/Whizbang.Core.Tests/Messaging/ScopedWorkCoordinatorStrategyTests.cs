@@ -13,12 +13,12 @@ namespace Whizbang.Core.Tests.Messaging;
 /// Tests for ScopedWorkCoordinatorStrategy - verifies scope-based batching and disposal flush.
 /// </summary>
 public class ScopedWorkCoordinatorStrategyTests {
-  private readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
+  private readonly Uuid7IdProvider _idProvider = new Uuid7IdProvider();
 
   // Test message types
-  public record _testEvent1 : IEvent { }
-  public record _testEvent2 : IEvent { }
-  public record _testEvent3 : IEvent { }
+  public record _testEvent1([StreamKey] string Id = "test-1") : IEvent { }
+  public record _testEvent2([StreamKey] string Id = "test-2") : IEvent { }
+  public record _testEvent3([StreamKey] string Id = "test-3") : IEvent { }
 
   // ========================================
   // Priority 3 Tests: Scoped Strategy
@@ -115,8 +115,8 @@ public class ScopedWorkCoordinatorStrategyTests {
     // Assert - Messages should be flushed on disposal
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
       .Because("DisposeAsync should flush queued messages");
-    await Assert.That(fakeCoordinator.LastNewOutboxMessages).HasCount().EqualTo(1);
-    await Assert.That(fakeCoordinator.LastNewInboxMessages).HasCount().EqualTo(1);
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
+    await Assert.That(fakeCoordinator.LastNewInboxMessages).Count().IsEqualTo(1);
     await Assert.That(fakeCoordinator.LastNewOutboxMessages[0].MessageId).IsEqualTo(messageId1);
     await Assert.That(fakeCoordinator.LastNewInboxMessages[0].MessageId).IsEqualTo(messageId2);
   }
@@ -181,7 +181,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     // Assert - Manual flush should work immediately
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
       .Because("Manual FlushAsync should flush immediately");
-    await Assert.That(fakeCoordinator.LastNewOutboxMessages).HasCount().EqualTo(1);
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(1);
     await Assert.That(fakeCoordinator.LastNewOutboxMessages[0].MessageId).IsEqualTo(messageId);
 
     // Act - Dispose after manual flush (should not flush again - queue is empty)
@@ -317,17 +317,17 @@ public class ScopedWorkCoordinatorStrategyTests {
     // Assert - All operations flushed in single batch
     await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1)
       .Because("All operations should be flushed in a single batch");
-    await Assert.That(fakeCoordinator.LastNewOutboxMessages).HasCount().EqualTo(2);
-    await Assert.That(fakeCoordinator.LastNewInboxMessages).HasCount().EqualTo(1);
-    await Assert.That(fakeCoordinator.LastOutboxCompletions).HasCount().EqualTo(1);
-    await Assert.That(fakeCoordinator.LastInboxFailures).HasCount().EqualTo(1);
+    await Assert.That(fakeCoordinator.LastNewOutboxMessages).Count().IsEqualTo(2);
+    await Assert.That(fakeCoordinator.LastNewInboxMessages).Count().IsEqualTo(1);
+    await Assert.That(fakeCoordinator.LastOutboxCompletions).Count().IsEqualTo(1);
+    await Assert.That(fakeCoordinator.LastInboxFailures).Count().IsEqualTo(1);
   }
 
   // ========================================
   // Test Fakes
   // ========================================
 
-  private class FakeWorkCoordinator : IWorkCoordinator {
+  private sealed class FakeWorkCoordinator : IWorkCoordinator {
     public int ProcessWorkBatchCallCount { get; private set; }
     public OutboxMessage[] LastNewOutboxMessages { get; private set; } = [];
     public InboxMessage[] LastNewInboxMessages { get; private set; } = [];
@@ -371,7 +371,7 @@ public class ScopedWorkCoordinatorStrategyTests {
     }
   }
 
-  private class FakeServiceInstanceProvider : IServiceInstanceProvider {
+  private sealed class FakeServiceInstanceProvider : IServiceInstanceProvider {
     public Guid InstanceId { get; } = Guid.NewGuid();
     public string ServiceName { get; } = "TestService";
     public string HostName { get; } = "test-host";

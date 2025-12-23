@@ -9,11 +9,11 @@ namespace ECommerce.Contracts.Tests.Events;
 /// Tests for InventoryRestockedEvent
 /// </summary>
 public class InventoryRestockedEventTests {
-  private static readonly IWhizbangIdProvider IdProvider = new Uuid7IdProvider();
+  private static readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
   [Test]
   public async Task InventoryRestockedEvent_WithValidProperties_InitializesSuccessfullyAsync() {
     // Arrange & Act
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var restockedAt = DateTime.UtcNow;
     var evt = new InventoryRestockedEvent {
       ProductId = productId,
@@ -33,7 +33,7 @@ public class InventoryRestockedEventTests {
   public async Task InventoryRestockedEvent_WithZeroInitialStock_InitializesSuccessfullyAsync() {
     // Arrange & Act
     var evt = new InventoryRestockedEvent {
-      ProductId = IdProvider.NewGuid(),
+      ProductId = _idProvider.NewGuid(),
       QuantityAdded = 50,
       NewTotalQuantity = 50,
       RestockedAt = DateTime.UtcNow
@@ -47,7 +47,7 @@ public class InventoryRestockedEventTests {
   [Test]
   public async Task InventoryRestockedEvent_RecordEquality_WorksCorrectlyAsync() {
     // Arrange
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var restockedAt = DateTime.UtcNow;
     var evt1 = new InventoryRestockedEvent {
       ProductId = productId,
@@ -70,7 +70,7 @@ public class InventoryRestockedEventTests {
   [Test]
   public async Task InventoryRestockedEvent_ToString_ReturnsReadableRepresentationAsync() {
     // Arrange & Act
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var evt = new InventoryRestockedEvent {
       ProductId = productId,
       QuantityAdded = 500,
@@ -89,7 +89,7 @@ public class InventoryRestockedEventTests {
   public async Task InventoryRestockedEvent_WithLargeQuantities_InitializesSuccessfullyAsync() {
     // Arrange & Act
     var evt = new InventoryRestockedEvent {
-      ProductId = IdProvider.NewGuid(),
+      ProductId = _idProvider.NewGuid(),
       QuantityAdded = 10000,
       NewTotalQuantity = 25000,
       RestockedAt = DateTime.UtcNow

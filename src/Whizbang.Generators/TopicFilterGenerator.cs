@@ -1,3 +1,4 @@
+using System;
 using System.Collections.Immutable;
 using System.Linq;
 using System.Text;
@@ -38,7 +39,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
             ((TypeDeclarationSyntax)node).AttributeLists.Count > 0,
 
         // Semantic analysis: Extract topic filter info (expensive, only on filtered nodes)
-        transform: static (ctx, ct) => ExtractTopicFilters(ctx, ct)
+        transform: static (ctx, ct) => _extractTopicFilters(ctx, ct)
     ).Where(static infos => infos is not null && infos.Value.Length > 0);
 
     // Combine with compilation to get assembly name for namespace
@@ -57,7 +58,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
               .SelectMany(f => f!.Value)
               .ToImmutableArray();
 
-          GenerateRegistry(ctx, compilation, filters);
+          _generateRegistry(ctx, compilation, filters);
         }
     );
   }
@@ -67,7 +68,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
   /// Returns array of TopicFilterInfo for all [TopicFilter] attributes found.
   /// Returns null if class doesn't implement ICommand or has no TopicFilter attributes.
   /// </summary>
-  private static ImmutableArray<TopicFilterInfo>? ExtractTopicFilters(
+  private static ImmutableArray<TopicFilterInfo>? _extractTopicFilters(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
 
@@ -104,7 +105,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
       while (currentClass is not null) {
         var fullName = currentClass.ToDisplayString();
         if (fullName == TOPIC_FILTER_ATTRIBUTE ||
-            fullName.StartsWith(TOPIC_FILTER_ATTRIBUTE + "<")) {
+            fullName.StartsWith(TOPIC_FILTER_ATTRIBUTE + "<", StringComparison.Ordinal)) {
           return true;
         }
         currentClass = currentClass.BaseType;
@@ -120,7 +121,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
     var filters = ImmutableArray.CreateBuilder<TopicFilterInfo>();
 
     foreach (var attr in topicFilterAttrs) {
-      var filterString = ExtractFilterString(attr, cancellationToken);
+      var filterString = _extractFilterString(attr, cancellationToken);
       if (filterString is not null) {
         filters.Add(new TopicFilterInfo(commandType, filterString));
       }
@@ -134,7 +135,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
   /// For string-based attributes: uses constructor argument directly.
   /// For enum-based attributes: extracts Description attribute or uses enum symbol name.
   /// </summary>
-  private static string? ExtractFilterString(
+  private static string? _extractFilterString(
       AttributeData attribute,
       System.Threading.CancellationToken cancellationToken) {
 
@@ -189,7 +190,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates the TopicFilterRegistry class with AOT-compatible lookups.
   /// </summary>
-  private static void GenerateRegistry(
+  private static void _generateRegistry(
       SourceProductionContext context,
       Compilation compilation,
       ImmutableArray<TopicFilterInfo> filters) {
@@ -208,7 +209,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.TopicFilterDiscovered,
           Location.None,
-          GetSimpleName(filter.CommandType),
+          _getSimpleName(filter.CommandType),
           filter.Filter
       ));
     }
@@ -264,7 +265,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
       sb.AppendLine($"    if (typeof(TCommand) == typeof({commandType})) {{");
 
       // Generate array of filters
-      var filterArrayContent = string.Join(", ", commandFilters.Select(f => $"\"{EscapeString(f)}\""));
+      var filterArrayContent = string.Join(", ", commandFilters.Select(f => $"\"{_escapeString(f)}\""));
       sb.AppendLine($"      return new[] {{ {filterArrayContent} }};");
 
       sb.AppendLine("    }");
@@ -286,9 +287,9 @@ public class TopicFilterGenerator : IIncrementalGenerator {
       var commandType = kvp.Key;
       var commandFilters = kvp.Value;
 
-      var simpleName = GetSimpleName(commandType);
-      var filterArrayContent = string.Join(", ", commandFilters.Select(f => $"\"{EscapeString(f)}\""));
-      sb.AppendLine($"      {{ \"{EscapeString(simpleName)}\", new[] {{ {filterArrayContent} }} }},");
+      var simpleName = _getSimpleName(commandType);
+      var filterArrayContent = string.Join(", ", commandFilters.Select(f => $"\"{_escapeString(f)}\""));
+      sb.AppendLine($"      {{ \"{_escapeString(simpleName)}\", new[] {{ {filterArrayContent} }} }},");
     }
 
     sb.AppendLine("    };");
@@ -305,7 +306,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
   /// Gets the simple name from a fully qualified type name.
   /// E.g., "global::MyApp.Commands.CreateOrder" -> "CreateOrder"
   /// </summary>
-  private static string GetSimpleName(string fullyQualifiedName) {
+  private static string _getSimpleName(string fullyQualifiedName) {
     var lastDot = fullyQualifiedName.LastIndexOf('.');
     return lastDot >= 0 ? fullyQualifiedName[(lastDot + 1)..] : fullyQualifiedName;
   }
@@ -313,7 +314,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
   /// <summary>
   /// Escapes a string for use in C# string literal.
   /// </summary>
-  private static string EscapeString(string value) {
+  private static string _escapeString(string value) {
     return value
         .Replace("\\", "\\\\")
         .Replace("\"", "\\\"")

@@ -95,11 +95,11 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
     var serviceBusConnection = _serviceBusContainer.GetConnectionString();
 
     // Create service hosts (but don't start them yet)
-    _inventoryHost = CreateInventoryHost(postgresConnection, serviceBusConnection);
-    _bffHost = CreateBffHost(postgresConnection, serviceBusConnection);
+    _inventoryHost = _createInventoryHost(postgresConnection, serviceBusConnection);
+    _bffHost = _createBffHost(postgresConnection, serviceBusConnection);
 
     // Initialize PostgreSQL schema using EFCore DbContexts
-    await InitializeSchemaAsync(cancellationToken);
+    await _initializeSchemaAsync(cancellationToken);
 
     // Start service hosts
     await Task.WhenAll(
@@ -118,7 +118,7 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
   /// </summary>
   [RequiresUnreferencedCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
   [RequiresDynamicCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
-  private IHost CreateInventoryHost(string postgresConnection, string serviceBusConnection) {
+  private IHost _createInventoryHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
 
     // Register Azure Service Bus transport
@@ -194,7 +194,7 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
   /// </summary>
   [RequiresUnreferencedCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
   [RequiresDynamicCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
-  private IHost CreateBffHost(string postgresConnection, string serviceBusConnection) {
+  private IHost _createBffHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
 
     // Register Azure Service Bus transport
@@ -255,7 +255,7 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
   /// <summary>
   /// Initializes the PostgreSQL schema: Whizbang core tables + InventoryWorker schema + BFF schema.
   /// </summary>
-  private async Task InitializeSchemaAsync(CancellationToken cancellationToken = default) {
+  private async Task _initializeSchemaAsync(CancellationToken cancellationToken = default) {
     // Initialize Whizbang core schema using EFCore
     // Creates Inbox/Outbox/EventStore + PostgreSQL functions + perspective tables for both InventoryWorker and BFF
     using (var scope = _inventoryHost!.Services.CreateScope()) {

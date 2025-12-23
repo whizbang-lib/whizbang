@@ -12,12 +12,12 @@ namespace Whizbang.Data.Postgres.Tests;
 /// auto-creates checkpoint rows when message associations exist for perspectives.
 /// </summary>
 public class AutoCheckpointCreationTests : PostgresTestBase {
-  private readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
+  private readonly Uuid7IdProvider _idProvider = new Uuid7IdProvider();
 
   [Test]
   public async Task ProcessWorkBatch_WithEventAndPerspectiveAssociation_CreatesCheckpointAsync() {
     // Arrange - Register a perspective association for "ProductCreatedEvent" -> "ProductListPerspective"
-    await RegisterMessageAssociationAsync(
+    await _registerMessageAssociationAsync(
       messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
       associationType: "perspective",
       targetName: "ProductListPerspective",
@@ -27,7 +27,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     var eventId = _idProvider.NewGuid();
 
     // Insert event into event store (simulating event being written)
-    await InsertEventStoreRecordAsync(
+    await _insertEventStoreRecordAsync(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
@@ -46,7 +46,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       new { instanceId = _idProvider.NewGuid() });
 
     // Assert - Checkpoint row should be created
-    var checkpoint = await GetPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
+    var checkpoint = await _getPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
     await Assert.That(checkpoint).IsNotNull()
       .Because("process_work_batch should auto-create checkpoint when perspective association exists");
     await Assert.That(checkpoint!.stream_id).IsEqualTo(streamId);
@@ -64,7 +64,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     var eventId = _idProvider.NewGuid();
 
     // Insert event into event store
-    await InsertEventStoreRecordAsync(
+    await _insertEventStoreRecordAsync(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
@@ -83,21 +83,21 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       new { instanceId = _idProvider.NewGuid() });
 
     // Assert - NO checkpoint should be created
-    var checkpoints = await GetAllPerspectiveCheckpointsAsync(streamId);
-    await Assert.That(checkpoints).HasCount().EqualTo(0)
+    var checkpoints = await _getAllPerspectiveCheckpointsAsync(streamId);
+    await Assert.That(checkpoints).Count().IsEqualTo(0)
       .Because("Without message association, no checkpoint should be auto-created");
   }
 
   [Test]
   public async Task ProcessWorkBatch_WithMultiplePerspectiveAssociations_CreatesMultipleCheckpointsAsync() {
     // Arrange - Register TWO perspective associations for same event type
-    await RegisterMessageAssociationAsync(
+    await _registerMessageAssociationAsync(
       messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
       associationType: "perspective",
       targetName: "ProductListPerspective",
       serviceName: "ECommerce.ReadModels");
 
-    await RegisterMessageAssociationAsync(
+    await _registerMessageAssociationAsync(
       messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
       associationType: "perspective",
       targetName: "ProductDetailsPerspective",
@@ -107,7 +107,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     var eventId = _idProvider.NewGuid();
 
     // Insert event into event store
-    await InsertEventStoreRecordAsync(
+    await _insertEventStoreRecordAsync(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
@@ -126,8 +126,8 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       new { instanceId = _idProvider.NewGuid() });
 
     // Assert - TWO checkpoints should be created
-    var checkpoints = await GetAllPerspectiveCheckpointsAsync(streamId);
-    await Assert.That(checkpoints).HasCount().EqualTo(2)
+    var checkpoints = await _getAllPerspectiveCheckpointsAsync(streamId);
+    await Assert.That(checkpoints).Count().IsEqualTo(2)
       .Because("Both perspective associations should result in checkpoint creation");
 
     var checkpoint1 = checkpoints.FirstOrDefault(c => c.perspective_name == "ProductListPerspective");
@@ -140,7 +140,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
   [Test]
   public async Task ProcessWorkBatch_WithExistingCheckpoint_DoesNotDuplicateAsync() {
     // Arrange - Register association
-    await RegisterMessageAssociationAsync(
+    await _registerMessageAssociationAsync(
       messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
       associationType: "perspective",
       targetName: "ProductListPerspective",
@@ -150,10 +150,10 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     var eventId = _idProvider.NewGuid();
 
     // Manually insert checkpoint (simulating it already exists)
-    await InsertPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
+    await _insertPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
 
     // Insert event into event store
-    await InsertEventStoreRecordAsync(
+    await _insertEventStoreRecordAsync(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
@@ -172,15 +172,15 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       new { instanceId = _idProvider.NewGuid() });
 
     // Assert - Still only ONE checkpoint
-    var checkpoints = await GetAllPerspectiveCheckpointsAsync(streamId);
-    await Assert.That(checkpoints).HasCount().EqualTo(1)
+    var checkpoints = await _getAllPerspectiveCheckpointsAsync(streamId);
+    await Assert.That(checkpoints).Count().IsEqualTo(1)
       .Because("Existing checkpoint should not be duplicated");
   }
 
   [Test]
   public async Task ProcessWorkBatch_WithNonPerspectiveAssociation_DoesNotCreateCheckpointAsync() {
     // Arrange - Register RECEPTOR association (not perspective)
-    await RegisterMessageAssociationAsync(
+    await _registerMessageAssociationAsync(
       messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
       associationType: "receptor",
       targetName: "SendEmailReceptor",
@@ -190,7 +190,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     var eventId = _idProvider.NewGuid();
 
     // Insert event into event store
-    await InsertEventStoreRecordAsync(
+    await _insertEventStoreRecordAsync(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
@@ -209,8 +209,8 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       new { instanceId = _idProvider.NewGuid() });
 
     // Assert - NO checkpoint should be created (receptors don't use checkpoints)
-    var checkpoints = await GetAllPerspectiveCheckpointsAsync(streamId);
-    await Assert.That(checkpoints).HasCount().EqualTo(0)
+    var checkpoints = await _getAllPerspectiveCheckpointsAsync(streamId);
+    await Assert.That(checkpoints).Count().IsEqualTo(0)
       .Because("Receptor associations should not trigger checkpoint creation");
   }
 
@@ -219,7 +219,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
   [Test]
   public async Task ProcessWorkBatch_WithAssemblyQualifiedNameEvent_MatchesShortFormAssociationAsync() {
     // Arrange - Association has short form "TypeName, AssemblyName"
-    await RegisterMessageAssociationAsync(
+    await _registerMessageAssociationAsync(
       messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
       associationType: "perspective",
       targetName: "ProductListPerspective",
@@ -229,7 +229,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     var eventId = _idProvider.NewGuid();
 
     // Act - Event has FULL AssemblyQualifiedName with Version/Culture/PublicKeyToken
-    await InsertEventStoreRecordAsync(
+    await _insertEventStoreRecordAsync(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
@@ -248,7 +248,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       new { instanceId = _idProvider.NewGuid() });
 
     // Assert - Checkpoint SHOULD be created despite format difference
-    var checkpoint = await GetPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
+    var checkpoint = await _getPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
     await Assert.That(checkpoint).IsNotNull()
       .Because("Fuzzy matching should match on TypeName + AssemblyName, ignoring Version/Culture/PublicKeyToken");
   }
@@ -256,7 +256,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
   [Test]
   public async Task ProcessWorkBatch_WithShortFormEvent_MatchesAssemblyQualifiedAssociationAsync() {
     // Arrange - Association has FULL AssemblyQualifiedName
-    await RegisterMessageAssociationAsync(
+    await _registerMessageAssociationAsync(
       messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
       associationType: "perspective",
       targetName: "ProductListPerspective",
@@ -266,7 +266,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     var eventId = _idProvider.NewGuid();
 
     // Act - Event has short form "TypeName, AssemblyName"
-    await InsertEventStoreRecordAsync(
+    await _insertEventStoreRecordAsync(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
@@ -285,7 +285,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       new { instanceId = _idProvider.NewGuid() });
 
     // Assert - Checkpoint SHOULD be created despite format difference
-    var checkpoint = await GetPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
+    var checkpoint = await _getPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
     await Assert.That(checkpoint).IsNotNull()
       .Because("Fuzzy matching should match on TypeName + AssemblyName, ignoring Version/Culture/PublicKeyToken");
   }
@@ -293,7 +293,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
   [Test]
   public async Task ProcessWorkBatch_WithDifferentVersions_StillMatchesAsync() {
     // Arrange - Association registered with version 1.0.0.0
-    await RegisterMessageAssociationAsync(
+    await _registerMessageAssociationAsync(
       messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
       associationType: "perspective",
       targetName: "ProductListPerspective",
@@ -303,7 +303,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     var eventId = _idProvider.NewGuid();
 
     // Act - Event has version 2.0.0.0 (different!)
-    await InsertEventStoreRecordAsync(
+    await _insertEventStoreRecordAsync(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain, Version=2.0.0.0, Culture=neutral, PublicKeyToken=abc123",
@@ -322,7 +322,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       new { instanceId = _idProvider.NewGuid() });
 
     // Assert - Checkpoint SHOULD be created despite version difference
-    var checkpoint = await GetPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
+    var checkpoint = await _getPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
     await Assert.That(checkpoint).IsNotNull()
       .Because("Fuzzy matching should ignore version numbers and match on TypeName + AssemblyName");
   }
@@ -330,7 +330,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
   [Test]
   public async Task ProcessWorkBatch_WithOnlyTypeNameEvent_DoesNotMatchAsync() {
     // Arrange - Association has "TypeName, AssemblyName"
-    await RegisterMessageAssociationAsync(
+    await _registerMessageAssociationAsync(
       messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
       associationType: "perspective",
       targetName: "ProductListPerspective",
@@ -340,7 +340,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     var eventId = _idProvider.NewGuid();
 
     // Act - Event has ONLY TypeName (no assembly - this is too loose!)
-    await InsertEventStoreRecordAsync(
+    await _insertEventStoreRecordAsync(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent",
@@ -359,15 +359,15 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       new { instanceId = _idProvider.NewGuid() });
 
     // Assert - NO checkpoint should be created (TypeName alone is not enough)
-    var checkpoints = await GetAllPerspectiveCheckpointsAsync(streamId);
-    await Assert.That(checkpoints).HasCount().EqualTo(0)
+    var checkpoints = await _getAllPerspectiveCheckpointsAsync(streamId);
+    await Assert.That(checkpoints).Count().IsEqualTo(0)
       .Because("TypeName alone is insufficient - we need at least TypeName + AssemblyName for safe matching");
   }
 
   [Test]
   public async Task ProcessWorkBatch_WithDifferentAssemblyNames_DoesNotMatchAsync() {
     // Arrange - Association for "ECommerce.Domain" assembly
-    await RegisterMessageAssociationAsync(
+    await _registerMessageAssociationAsync(
       messageType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
       associationType: "perspective",
       targetName: "ProductListPerspective",
@@ -377,7 +377,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     var eventId = _idProvider.NewGuid();
 
     // Act - Event from DIFFERENT assembly "ECommerce.Domain.V2"
-    await InsertEventStoreRecordAsync(
+    await _insertEventStoreRecordAsync(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain.V2",
@@ -396,8 +396,8 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       new { instanceId = _idProvider.NewGuid() });
 
     // Assert - NO checkpoint (different assemblies = different types)
-    var checkpoints = await GetAllPerspectiveCheckpointsAsync(streamId);
-    await Assert.That(checkpoints).HasCount().EqualTo(0)
+    var checkpoints = await _getAllPerspectiveCheckpointsAsync(streamId);
+    await Assert.That(checkpoints).Count().IsEqualTo(0)
       .Because("AssemblyName mismatch means different types - no match");
   }
 
@@ -411,12 +411,12 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     var eventId2 = _idProvider.NewGuid();
     var eventId3 = _idProvider.NewGuid();
 
-    await InsertPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
+    await _insertPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
 
     // Insert some events
-    await InsertEventStoreRecordAsync(streamId, eventId1, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 1);
-    await InsertEventStoreRecordAsync(streamId, eventId2, "ECommerce.Domain.Events.ProductUpdatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 2);
-    await InsertEventStoreRecordAsync(streamId, eventId3, "ECommerce.Domain.Events.ProductUpdatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 3);
+    await _insertEventStoreRecordAsync(streamId, eventId1, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 1);
+    await _insertEventStoreRecordAsync(streamId, eventId2, "ECommerce.Domain.Events.ProductUpdatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 2);
+    await _insertEventStoreRecordAsync(streamId, eventId3, "ECommerce.Domain.Events.ProductUpdatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 3);
 
     // Act - Report perspective completion (processed up to eventId2)
     var perspectiveCompletions = new[] {
@@ -443,7 +443,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       });
 
     // Assert - Checkpoint should be updated with eventId2
-    var checkpoint = await GetPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
+    var checkpoint = await _getPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
     await Assert.That(checkpoint).IsNotNull();
     await Assert.That(checkpoint!.last_event_id).IsEqualTo(eventId2)
       .Because("Checkpoint should be updated to reflect last processed event from perspective completion");
@@ -458,11 +458,11 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     var eventId1 = _idProvider.NewGuid();
     var eventId2 = _idProvider.NewGuid();
 
-    await InsertPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
-    await InsertPerspectiveCheckpointAsync(streamId, "ProductDetailsPerspective");
+    await _insertPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
+    await _insertPerspectiveCheckpointAsync(streamId, "ProductDetailsPerspective");
 
-    await InsertEventStoreRecordAsync(streamId, eventId1, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 1);
-    await InsertEventStoreRecordAsync(streamId, eventId2, "ECommerce.Domain.Events.ProductUpdatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 2);
+    await _insertEventStoreRecordAsync(streamId, eventId1, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 1);
+    await _insertEventStoreRecordAsync(streamId, eventId2, "ECommerce.Domain.Events.ProductUpdatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 2);
 
     // Act - Report completions for BOTH perspectives (but at different points)
     var perspectiveCompletions = new[] {
@@ -495,8 +495,8 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       });
 
     // Assert - Both checkpoints should be updated independently
-    var checkpoint1 = await GetPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
-    var checkpoint2 = await GetPerspectiveCheckpointAsync(streamId, "ProductDetailsPerspective");
+    var checkpoint1 = await _getPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
+    var checkpoint2 = await _getPerspectiveCheckpointAsync(streamId, "ProductDetailsPerspective");
 
     await Assert.That(checkpoint1!.last_event_id).IsEqualTo(eventId2);
     await Assert.That(checkpoint2!.last_event_id).IsEqualTo(eventId1);
@@ -508,8 +508,8 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
 
-    await InsertPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
-    await InsertEventStoreRecordAsync(streamId, eventId, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 1);
+    await _insertPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
+    await _insertEventStoreRecordAsync(streamId, eventId, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 1);
 
     // Act - Report perspective FAILURE
     var perspectiveFailures = new[] {
@@ -537,7 +537,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       });
 
     // Assert - Checkpoint should be updated with failed status AND error message
-    var checkpoint = await GetPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
+    var checkpoint = await _getPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
     await Assert.That(checkpoint!.status).IsEqualTo((short)2)  // Failed
       .Because("Checkpoint should reflect the failure status");
     await Assert.That(checkpoint.error).IsEqualTo("Database connection timeout")
@@ -550,8 +550,8 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
 
-    await InsertPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
-    await InsertEventStoreRecordAsync(streamId, eventId, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 1);
+    await _insertPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
+    await _insertEventStoreRecordAsync(streamId, eventId, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 1);
 
     // Act - Call process_work_batch with NO completions/failures
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -565,14 +565,14 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       new { instanceId = _idProvider.NewGuid() });
 
     // Assert - Checkpoint should remain unchanged (still NULL last_event_id)
-    var checkpoint = await GetPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
+    var checkpoint = await _getPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
     await Assert.That(checkpoint!.last_event_id).IsNull()
       .Because("Without completion report, checkpoint should not be updated");
   }
 
   // Helper methods
 
-  private async Task RegisterMessageAssociationAsync(
+  private async Task _registerMessageAssociationAsync(
     string messageType,
     string associationType,
     string targetName,
@@ -584,7 +584,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       new { messageType, associationType, targetName, serviceName });
   }
 
-  private async Task InsertEventStoreRecordAsync(
+  private async Task _insertEventStoreRecordAsync(
     Guid streamId,
     Guid eventId,
     string eventType,
@@ -600,7 +600,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       new { eventId, streamId, eventType, eventData, version });
   }
 
-  private async Task InsertPerspectiveCheckpointAsync(Guid streamId, string perspectiveName) {
+  private async Task _insertPerspectiveCheckpointAsync(Guid streamId, string perspectiveName) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     await connection.ExecuteAsync(@"
       INSERT INTO wh_perspective_checkpoints (stream_id, perspective_name, last_event_id, status)
@@ -608,7 +608,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       new { streamId, perspectiveName });
   }
 
-  private async Task<PerspectiveCheckpoint?> GetPerspectiveCheckpointAsync(Guid streamId, string perspectiveName) {
+  private async Task<PerspectiveCheckpoint?> _getPerspectiveCheckpointAsync(Guid streamId, string perspectiveName) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     return await connection.QueryFirstOrDefaultAsync<PerspectiveCheckpoint>(@"
       SELECT stream_id, perspective_name, last_event_id, status, error
@@ -617,7 +617,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       new { streamId, perspectiveName });
   }
 
-  private async Task<List<PerspectiveCheckpoint>> GetAllPerspectiveCheckpointsAsync(Guid streamId) {
+  private async Task<List<PerspectiveCheckpoint>> _getAllPerspectiveCheckpointsAsync(Guid streamId) {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     var results = await connection.QueryAsync<PerspectiveCheckpoint>(@"
       SELECT stream_id, perspective_name, last_event_id, status, error
@@ -628,7 +628,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
   }
 
   // Lowercase properties match PostgreSQL column names (Dapper maps case-insensitively to record constructor parameters)
-  private record PerspectiveCheckpoint(
+  private sealed record PerspectiveCheckpoint(
     Guid stream_id,
     string perspective_name,
     Guid? last_event_id,

@@ -42,7 +42,7 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
   /// Zero reflection - uses compile-time type matching and lambda expressions.
   /// </summary>
   [DebuggerStepThrough]
-  protected override ReceptorInvoker<TResult>? _getReceptorInvoker<TResult>(object message, Type messageType) {
+  protected override ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType) {
     // Generated routing - zero reflection!
     #region SEND_ROUTING
     // This region will be replaced with generated routing code
@@ -56,7 +56,7 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
   /// Zero reflection - uses compile-time type matching and lambda expressions.
   /// </summary>
   [DebuggerStepThrough]
-  protected override VoidReceptorInvoker? _getVoidReceptorInvoker(object message, Type messageType) {
+  protected override VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType) {
     // Generated routing - zero reflection!
     #region VOID_SEND_ROUTING
     // This region will be replaced with generated void receptor routing code
@@ -70,7 +70,7 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
   /// Zero reflection - uses compile-time type matching and lambda expressions.
   /// </summary>
   [DebuggerStepThrough]
-  protected override ReceptorPublisher<TEvent> _getReceptorPublisher<TEvent>(TEvent @event, Type eventType) {
+  protected override ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent @event, Type eventType) {
     // Generated routing - zero reflection!
     #region PUBLISH_ROUTING
     // This region will be replaced with generated publish routing code

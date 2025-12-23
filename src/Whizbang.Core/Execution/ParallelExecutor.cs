@@ -21,7 +21,7 @@ namespace Whizbang.Core.Execution;
 /// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:DrainAsync_WhenNotRunning_ReturnsImmediatelyAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:ExecuteAsync_ParallelExecution_RunsConcurrentlyAsync</tests>
 /// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:ExecuteAsync_CancellationToken_CancelsSemaphoreWaitAsync</tests>
-public class ParallelExecutor : IExecutionStrategy {
+public class ParallelExecutor : IExecutionStrategy, IAsyncDisposable {
   private enum State { NotStarted, Running, Stopped }
 
   private readonly SemaphoreSlim _semaphore;
@@ -29,6 +29,7 @@ public class ParallelExecutor : IExecutionStrategy {
   private State _state = State.NotStarted;
   private readonly Lock _stateLock = new();
   private readonly ConcurrentBag<Task> _runningTasks = [];
+  private bool _disposed;
 
   public ParallelExecutor(int maxConcurrency = 10) {
     if (maxConcurrency <= 0) {
@@ -65,7 +66,7 @@ public class ParallelExecutor : IExecutionStrategy {
         }
 
         // Handler is async, await it
-        return AwaitAndReleaseAsync(result, _semaphore);
+        return _awaitAndReleaseAsync(result, _semaphore);
       } catch {
         _semaphore.Release();
         throw;
@@ -73,10 +74,10 @@ public class ParallelExecutor : IExecutionStrategy {
     }
 
     // Slow path: async wait (allocates if we need to wait)
-    return SlowPathAsync(envelope, handler, context, ct);
+    return _slowPathAsync(envelope, handler, context, ct);
   }
 
-  private static async ValueTask<TResult> AwaitAndReleaseAsync<TResult>(
+  private static async ValueTask<TResult> _awaitAndReleaseAsync<TResult>(
     ValueTask<TResult> task,
     SemaphoreSlim semaphore
   ) {
@@ -87,7 +88,7 @@ public class ParallelExecutor : IExecutionStrategy {
     }
   }
 
-  private async ValueTask<TResult> SlowPathAsync<TResult>(
+  private async ValueTask<TResult> _slowPathAsync<TResult>(
     IMessageEnvelope envelope,
     Func<IMessageEnvelope, PolicyContext, ValueTask<TResult>> handler,
     PolicyContext context,
@@ -148,5 +149,20 @@ public class ParallelExecutor : IExecutionStrategy {
 
     // Release all slots back
     _semaphore.Release(_maxConcurrency);
+  }
+
+  public async ValueTask DisposeAsync() {
+    if (_disposed) {
+      return;
+    }
+
+    // Stop the executor if running
+    await StopAsync();
+
+    // Dispose the semaphore
+    _semaphore.Dispose();
+
+    _disposed = true;
+    GC.SuppressFinalize(this);
   }
 }

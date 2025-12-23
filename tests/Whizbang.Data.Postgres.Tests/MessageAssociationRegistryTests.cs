@@ -1,4 +1,5 @@
 using System.Data;
+using System.Globalization;
 using System.Text.Json;
 using Npgsql;
 using Testcontainers.PostgreSql;
@@ -153,7 +154,7 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
     // Arrange
     await using var conn = new NpgsqlConnection(_connectionString!);
     await conn.OpenAsync();
-    await CleanupAssociationsAsync(conn);
+    await _cleanupAssociationsAsync(conn);
 
     var associations = JsonSerializer.Serialize(new[] {
       new {
@@ -176,7 +177,7 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
     await cmd.ExecuteNonQueryAsync();
 
     // Assert - Verify inserted
-    var count = await GetAssociationCountAsync(conn);
+    var count = await _getAssociationCountAsync(conn);
     await Assert.That(count).IsEqualTo(2);
   }
 
@@ -188,7 +189,7 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
     // Arrange
     await using var conn = new NpgsqlConnection(_connectionString!);
     await conn.OpenAsync();
-    await CleanupAssociationsAsync(conn);
+    await _cleanupAssociationsAsync(conn);
 
     var associations = JsonSerializer.Serialize(new[] {
       new {
@@ -205,7 +206,7 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
       await cmd.ExecuteNonQueryAsync();
     }
 
-    var firstUpdatedAt = await GetAssociationUpdatedAtAsync(conn, "ProductCreatedEvent", "ProductCatalogPerspective");
+    var firstUpdatedAt = await _getAssociationUpdatedAtAsync(conn, "ProductCreatedEvent", "ProductCatalogPerspective");
 
     // Wait 100ms to ensure timestamp changes
     await Task.Delay(100);
@@ -216,7 +217,7 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
       await cmd.ExecuteNonQueryAsync();
     }
 
-    var secondUpdatedAt = await GetAssociationUpdatedAtAsync(conn, "ProductCreatedEvent", "ProductCatalogPerspective");
+    var secondUpdatedAt = await _getAssociationUpdatedAtAsync(conn, "ProductCreatedEvent", "ProductCatalogPerspective");
 
     // Assert - Timestamp updated
     await Assert.That(secondUpdatedAt).IsGreaterThan(firstUpdatedAt);
@@ -230,7 +231,7 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
     // Arrange
     await using var conn = new NpgsqlConnection(_connectionString!);
     await conn.OpenAsync();
-    await CleanupAssociationsAsync(conn);
+    await _cleanupAssociationsAsync(conn);
 
     // Insert 2 associations
     var initialAssociations = JsonSerializer.Serialize(new[] {
@@ -269,28 +270,28 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
     }
 
     // Assert - Only 1 association remains
-    var count = await GetAssociationCountAsync(conn);
+    var count = await _getAssociationCountAsync(conn);
     await Assert.That(count).IsEqualTo(1);
 
     // Assert - Correct one remains
-    var exists = await AssociationExistsAsync(conn, "ProductCreatedEvent", "ProductCatalogPerspective");
+    var exists = await _associationExistsAsync(conn, "ProductCreatedEvent", "ProductCatalogPerspective");
     await Assert.That(exists).IsTrue();
   }
 
   // Helper methods
 
-  private static async Task CleanupAssociationsAsync(NpgsqlConnection conn) {
+  private static async Task _cleanupAssociationsAsync(NpgsqlConnection conn) {
     await using var cmd = new NpgsqlCommand("DELETE FROM wh_message_associations", conn);
     await cmd.ExecuteNonQueryAsync();
   }
 
-  private static async Task<int> GetAssociationCountAsync(NpgsqlConnection conn) {
+  private static async Task<int> _getAssociationCountAsync(NpgsqlConnection conn) {
     await using var cmd = new NpgsqlCommand("SELECT COUNT(*) FROM wh_message_associations", conn);
     var result = await cmd.ExecuteScalarAsync();
-    return Convert.ToInt32(result);
+    return Convert.ToInt32(result, CultureInfo.InvariantCulture);
   }
 
-  private static async Task<DateTime> GetAssociationUpdatedAtAsync(NpgsqlConnection conn, string messageType, string targetName) {
+  private static async Task<DateTime> _getAssociationUpdatedAtAsync(NpgsqlConnection conn, string messageType, string targetName) {
     await using var cmd = new NpgsqlCommand(
       "SELECT updated_at FROM wh_message_associations WHERE message_type = @mt AND target_name = @tn",
       conn);
@@ -300,7 +301,7 @@ public class MessageAssociationRegistryTests : IAsyncDisposable {
     return (DateTime)result!;
   }
 
-  private static async Task<bool> AssociationExistsAsync(NpgsqlConnection conn, string messageType, string targetName) {
+  private static async Task<bool> _associationExistsAsync(NpgsqlConnection conn, string messageType, string targetName) {
     await using var cmd = new NpgsqlCommand(
       "SELECT EXISTS(SELECT 1 FROM wh_message_associations WHERE message_type = @mt AND target_name = @tn)",
       conn);

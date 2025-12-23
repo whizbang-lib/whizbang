@@ -51,7 +51,7 @@ public class ProductInventoryHub(ILogger<ProductInventoryHub> logger) : Hub {
   /// <summary>
   /// Client subscribes to updates for a specific product
   /// </summary>
-  public async Task SubscribeToProduct(string productId) {
+  public async Task SubscribeToProductAsync(string productId) {
     await Groups.AddToGroupAsync(Context.ConnectionId, $"product-{productId}");
 
     _logger.LogInformation(
@@ -64,7 +64,7 @@ public class ProductInventoryHub(ILogger<ProductInventoryHub> logger) : Hub {
   /// <summary>
   /// Client unsubscribes from updates for a specific product
   /// </summary>
-  public async Task UnsubscribeFromProduct(string productId) {
+  public async Task UnsubscribeFromProductAsync(string productId) {
     await Groups.RemoveFromGroupAsync(Context.ConnectionId, $"product-{productId}");
 
     _logger.LogInformation(
@@ -77,7 +77,7 @@ public class ProductInventoryHub(ILogger<ProductInventoryHub> logger) : Hub {
   /// <summary>
   /// Client subscribes to updates for all products
   /// </summary>
-  public async Task SubscribeToAllProducts() {
+  public async Task SubscribeToAllProductsAsync() {
     await Groups.AddToGroupAsync(Context.ConnectionId, "all-products");
 
     _logger.LogInformation(
@@ -89,7 +89,7 @@ public class ProductInventoryHub(ILogger<ProductInventoryHub> logger) : Hub {
   /// <summary>
   /// Client unsubscribes from updates for all products
   /// </summary>
-  public async Task UnsubscribeFromAllProducts() {
+  public async Task UnsubscribeFromAllProductsAsync() {
     await Groups.RemoveFromGroupAsync(Context.ConnectionId, "all-products");
 
     _logger.LogInformation(

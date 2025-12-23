@@ -17,12 +17,15 @@ namespace Whizbang.Generators;
 public class PerspectiveInvokerGenerator : IIncrementalGenerator {
   private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
 
+  /// <summary>
+  /// Initializes the incremental generator by discovering perspective implementations and registering source generation.
+  /// </summary>
   /// <tests>No tests found</tests>
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover IPerspectiveFor implementations
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => ExtractPerspectiveInfo(ctx, ct)
+        transform: static (ctx, ct) => _extractPerspectiveInfo(ctx, ct)
     ).Where(static info => info is not null);
 
     // Generate perspective invoker with routing logic
@@ -34,7 +37,7 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
         static (ctx, data) => {
           var compilation = data.Left;
           var perspectives = data.Right;
-          GeneratePerspectiveInvoker(ctx, compilation, perspectives!);
+          _generatePerspectiveInvoker(ctx, compilation, perspectives!);
         }
     );
   }
@@ -45,7 +48,7 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
   /// A class can implement multiple IPerspectiveFor&lt;TModel, TEvent&gt; interfaces.
   /// </summary>
   /// <tests>No tests found</tests>
-  private static PerspectiveInfo? ExtractPerspectiveInfo(
+  private static PerspectiveInfo? _extractPerspectiveInfo(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
 
@@ -105,14 +108,14 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
   /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
   /// <tests>No tests found</tests>
-  private static void GeneratePerspectiveInvoker(
+  private static void _generatePerspectiveInvoker(
       SourceProductionContext context,
       Compilation compilation,
       ImmutableArray<PerspectiveInfo> perspectives) {
 
     if (perspectives.IsEmpty) {
       // No perspectives found - generate empty invoker
-      GenerateEmptyInvoker(context, compilation);
+      _generateEmptyInvoker(context, compilation);
       return;
     }
 
@@ -122,11 +125,11 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
 
     // Report each discovered perspective for routing
     foreach (var perspective in perspectives) {
-      var eventNames = string.Join(", ", perspective.EventTypes.Select(GetSimpleName));
+      var eventNames = string.Join(", ", perspective.EventTypes.Select(_getSimpleName));
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.PerspectiveInvokerGenerated,
           Location.None,
-          GetSimpleName(perspective.ClassName),
+          _getSimpleName(perspective.ClassName),
           eventNames
       ));
     }
@@ -181,7 +184,7 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
   /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
   /// <tests>No tests found</tests>
-  private static void GenerateEmptyInvoker(SourceProductionContext context, Compilation compilation) {
+  private static void _generateEmptyInvoker(SourceProductionContext context, Compilation compilation) {
     // Determine namespace from assembly name
     var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
@@ -204,7 +207,7 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
   /// E.g., "global::MyApp.Events.OrderCreatedEvent" -> "OrderCreatedEvent"
   /// </summary>
   /// <tests>No tests found</tests>
-  private static string GetSimpleName(string fullyQualifiedName) {
+  private static string _getSimpleName(string fullyQualifiedName) {
     var lastDot = fullyQualifiedName.LastIndexOf('.');
     return lastDot >= 0 ? fullyQualifiedName[(lastDot + 1)..] : fullyQualifiedName;
   }

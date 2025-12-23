@@ -1,8 +1,10 @@
 // Test message types for TransportAutoDiscoveryTests
 // These simulate different namespace patterns for pattern matching tests
 
-// Message with no namespace (for null namespace test)
-public record NoNamespaceMessage;
+namespace Whizbang.Transports.Tests {
+  // Message with no namespace test (in Whizbang.Transports.Tests namespace)
+  public record NoNamespaceMessage;
+}
 
 // MyApp.Orders.* pattern
 namespace MyApp.Orders {

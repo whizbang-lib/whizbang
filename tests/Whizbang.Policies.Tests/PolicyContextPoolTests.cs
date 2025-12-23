@@ -16,7 +16,7 @@ public class PolicyContextPoolTests {
   public async Task Rent_ShouldReturnInitializedContextAsync() {
     // Arrange
     var message = new TestMessage();
-    var envelope = CreateTestEnvelope();
+    var envelope = _createTestEnvelope();
     var environment = "test";
 
     // Act
@@ -39,7 +39,7 @@ public class PolicyContextPoolTests {
   public async Task RentReturn_ShouldReinitializeContextAsync() {
     // Arrange
     var message1 = new TestMessage { Content = "first" };
-    var envelope1 = CreateTestEnvelope();
+    var envelope1 = _createTestEnvelope();
 
     // Act - Rent and return a context to populate the pool
     var context1 = PolicyContextPool.Rent(message1, envelope1, null, "env1");
@@ -47,7 +47,7 @@ public class PolicyContextPoolTests {
 
     // Rent again - might get same instance or different one from pool
     var message2 = new TestMessage { Content = "second" };
-    var envelope2 = CreateTestEnvelope();
+    var envelope2 = _createTestEnvelope();
     var context2 = PolicyContextPool.Rent(message2, envelope2, null, "env2");
 
     // Assert - Context should be properly initialized with new values
@@ -60,8 +60,8 @@ public class PolicyContextPoolTests {
   [Test]
   public async Task Pool_ShouldCreateNewContext_WhenEmptyAsync() {
     // Act - Rent from empty pool
-    var context1 = PolicyContextPool.Rent(new TestMessage(), CreateTestEnvelope(), null, "env");
-    var context2 = PolicyContextPool.Rent(new TestMessage(), CreateTestEnvelope(), null, "env");
+    var context1 = PolicyContextPool.Rent(new TestMessage(), _createTestEnvelope(), null, "env");
+    var context2 = PolicyContextPool.Rent(new TestMessage(), _createTestEnvelope(), null, "env");
 
     // Assert - Should be different instances (pool was empty)
     await Assert.That(context1).IsNotSameReferenceAs(context2);
@@ -75,7 +75,7 @@ public class PolicyContextPoolTests {
 
     // Act - Rent many contexts
     for (int i = 0; i < contextCount; i++) {
-      var context = PolicyContextPool.Rent(new TestMessage(), CreateTestEnvelope(), null, $"env-{i}");
+      var context = PolicyContextPool.Rent(new TestMessage(), _createTestEnvelope(), null, $"env-{i}");
       contexts.Add(context);
     }
 
@@ -87,7 +87,7 @@ public class PolicyContextPoolTests {
     // Rent contexts again - pool should have capped at max size
     var rentedAfterReturn = new List<PolicyContext>();
     for (int i = 0; i < contextCount; i++) {
-      rentedAfterReturn.Add(PolicyContextPool.Rent(new TestMessage(), CreateTestEnvelope(), null, $"env-{i}"));
+      rentedAfterReturn.Add(PolicyContextPool.Rent(new TestMessage(), _createTestEnvelope(), null, $"env-{i}"));
     }
 
     // Assert - At least 1024 should be reused, but not more
@@ -102,7 +102,7 @@ public class PolicyContextPoolTests {
     await Assert.That(reusedCount).IsLessThanOrEqualTo(1024);
   }
 
-  private static MessageEnvelope<TestMessage> CreateTestEnvelope() {
+  private static MessageEnvelope<TestMessage> _createTestEnvelope() {
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage(),
@@ -121,7 +121,7 @@ public class PolicyContextPoolTests {
     };
   }
 
-  private class TestMessage {
+  private sealed class TestMessage {
     public string Content { get; set; } = "test";
   }
 }

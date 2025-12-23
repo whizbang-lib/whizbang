@@ -51,7 +51,7 @@ public class DapperPostgresEventStore(
     ArgumentNullException.ThrowIfNull(envelope);
 
     // Get policy configuration
-    var payload = envelope.Payload;
+    var payload = envelope.Payload!;  // Payload is guaranteed non-null by MessageEnvelope contract
     var policyCtx = new PolicyContext(payload, envelope);
     var policy = await _policyEngine.MatchAsync(policyCtx);
 
@@ -199,7 +199,7 @@ public class DapperPostgresEventStore(
   }
 
   /// <summary>
-  /// 
+  /// Determines whether an exception represents a PostgreSQL unique constraint violation (23505 error or message pattern match).
   /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.UnitTests.cs:IsUniqueConstraintViolation_WithNonPostgresException_UniqueConstraintMessage_ShouldReturnTrueAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.UnitTests.cs:IsUniqueConstraintViolation_WithNonPostgresException_DuplicateKeyMessage_ShouldReturnTrueAsync</tests>
@@ -215,7 +215,7 @@ public class DapperPostgresEventStore(
   }
 
   /// <summary>
-  /// 
+  /// Returns the PostgreSQL-specific SQL for inserting events with 3-column JSONB structure.
   /// </summary>
   /// <tests>No tests found</tests>
   protected override string GetAppendSql() => @"
@@ -226,7 +226,7 @@ public class DapperPostgresEventStore(
        @EventData::jsonb, @Metadata::jsonb, @Scope::jsonb, @CreatedAt)";
 
   /// <summary>
-  /// 
+  /// Returns the PostgreSQL-specific SQL for reading events from a stream by sequence number.
   /// </summary>
   /// <tests>No tests found</tests>
   protected override string GetReadSql() => @"
@@ -240,7 +240,7 @@ public class DapperPostgresEventStore(
     ORDER BY sequence_number";
 
   /// <summary>
-  /// 
+  /// Returns the PostgreSQL-specific SQL for retrieving the last sequence number in a stream.
   /// </summary>
   /// <tests>No tests found</tests>
   protected override string GetLastSequenceSql() => @"

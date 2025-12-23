@@ -19,9 +19,9 @@ namespace Whizbang.Core.Tests.Workers;
 /// Phase 2: Verifies that transport readiness buffering is properly tracked and logged.
 /// </summary>
 public class WorkCoordinatorPublisherWorkerMetricsTests {
-  private record _testMessage { }
+  private sealed record _testMessage { }
 
-  private static IMessageEnvelope<JsonElement> _createTestEnvelope(Guid messageId) {
+  private static MessageEnvelope<JsonElement> _createTestEnvelope(Guid messageId) {
     var envelope = new MessageEnvelope<JsonElement> {
       MessageId = MessageId.From(messageId),
       Payload = JsonDocument.Parse("{}").RootElement,
@@ -220,7 +220,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
   }
 
   // Test helper classes
-  private class TestWorkCoordinator : IWorkCoordinator {
+  private sealed class TestWorkCoordinator : IWorkCoordinator {
     public List<OutboxWork> WorkToReturn { get; set; } = [];
     public int CallCount { get; private set; }
 
@@ -260,7 +260,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     }
   }
 
-  private class TestPublishStrategy : IMessagePublishStrategy {
+  private sealed class TestPublishStrategy : IMessagePublishStrategy {
     public bool IsReadyResult { get; set; } = true;
     public List<OutboxWork> PublishedWork { get; } = [];
 
@@ -278,7 +278,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     }
   }
 
-  private class TestLogger<T> : ILogger<T> {
+  private sealed class TestLogger<T> : ILogger<T> {
     private readonly List<LogEntry> _logs = [];
 
     public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
@@ -299,7 +299,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     public List<LogEntry> GetLogsAtLevel(LogLevel level) =>
       _logs.FindAll(l => l.LogLevel == level);
 
-    public class LogEntry {
+    public sealed class LogEntry {
       public LogLevel LogLevel { get; init; }
       public string Message { get; init; } = "";
       public Exception? Exception { get; init; }
@@ -320,7 +320,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     };
   }
 
-  private static IServiceInstanceProvider _createTestInstanceProvider() {
+  private static ServiceInstanceProvider _createTestInstanceProvider() {
     return new ServiceInstanceProvider(
       Guid.NewGuid(),
       "TestService",
@@ -329,7 +329,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     );
   }
 
-  private static IServiceProvider _createServiceCollection(
+  private static ServiceProvider _createServiceCollection(
     IWorkCoordinator workCoordinator,
     IMessagePublishStrategy publishStrategy,
     IServiceInstanceProvider instanceProvider,
@@ -355,7 +355,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
   }
 
   // Test helper - Mock work channel writer
-  private class TestWorkChannelWriter : IWorkChannelWriter {
+  private sealed class TestWorkChannelWriter : IWorkChannelWriter {
     private readonly System.Threading.Channels.Channel<OutboxWork> _channel;
     public List<OutboxWork> WrittenWork { get; } = [];
 

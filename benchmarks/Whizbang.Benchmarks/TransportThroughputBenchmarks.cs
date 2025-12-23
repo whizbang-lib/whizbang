@@ -19,7 +19,7 @@ public class TransportThroughputBenchmarks {
   private ITransport _transport = null!;
   private ServiceProvider _serviceProvider = null!;
 
-  private record TestCommand(string Id, int Value);
+  private sealed record TestCommand(string Id, int Value);
   private List<IMessageEnvelope> _testEnvelopes = null!;
 
   [GlobalSetup]
@@ -34,7 +34,7 @@ public class TransportThroughputBenchmarks {
     _transport = _serviceProvider.GetRequiredService<ITransport>();
 
     // Pre-generate test envelopes
-    _testEnvelopes = [.. Enumerable.Range(0, 100_000).Select(i => CreateEnvelope(new TestCommand($"cmd-{i}", i)))];
+    _testEnvelopes = [.. Enumerable.Range(0, 100_000).Select(i => _createEnvelope(new TestCommand($"cmd-{i}", i)))];
   }
 
   [GlobalCleanup]
@@ -48,7 +48,7 @@ public class TransportThroughputBenchmarks {
   /// </summary>
   [Benchmark(Baseline = true)]
   [Arguments(100_000)]
-  public async Task SingleTopic_SingleSubscriber_100K_Messages(int messageCount) {
+  public async Task SingleTopic_SingleSubscriber_100K_MessagesAsync(int messageCount) {
     var receivedCount = 0;
     var tcs = new TaskCompletionSource<bool>();
     var topic = "transport-single";
@@ -74,7 +74,7 @@ public class TransportThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(50_000, 5)] // 50K messages to 5 subscribers = 250K deliveries
-  public async Task SingleTopic_MultipleSubscribers_FanOut(int messageCount, int subscriberCount) {
+  public async Task SingleTopic_MultipleSubscribers_FanOutAsync(int messageCount, int subscriberCount) {
     var topic = "transport-fanout";
     var expectedTotal = messageCount * subscriberCount;
     var receivedCount = 0;
@@ -109,7 +109,7 @@ public class TransportThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(10, 10_000)] // 10 topics, 10K messages each
-  public async Task MultipleTopics_DedicatedSubscribers(int topicCount, int messagesPerTopic) {
+  public async Task MultipleTopics_DedicatedSubscribersAsync(int topicCount, int messagesPerTopic) {
     var totalMessages = topicCount * messagesPerTopic;
     var receivedCount = 0;
     var tcs = new TaskCompletionSource<bool>();
@@ -150,7 +150,7 @@ public class TransportThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(10_000)]
-  public async Task SubscribeUnsubscribe_10K_Operations(int operationCount) {
+  public async Task SubscribeUnsubscribe_10K_OperationsAsync(int operationCount) {
     var topic = "transport-subscribe-test";
 
     for (int i = 0; i < operationCount; i++) {
@@ -168,7 +168,7 @@ public class TransportThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(10, 10_000)] // 10 publishers, 10K each = 100K total
-  public async Task ConcurrentPublishers_SameTopic(int publisherCount, int messagesPerPublisher) {
+  public async Task ConcurrentPublishers_SameTopicAsync(int publisherCount, int messagesPerPublisher) {
     var totalMessages = publisherCount * messagesPerPublisher;
     var receivedCount = 0;
     var tcs = new TaskCompletionSource<bool>();
@@ -203,7 +203,7 @@ public class TransportThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(100_000)]
-  public async Task BatchedPublish_100K_FireAndForget(int messageCount) {
+  public async Task BatchedPublish_100K_FireAndForgetAsync(int messageCount) {
     var topic = "transport-batched";
     var receivedCount = 0;
 
@@ -234,7 +234,7 @@ public class TransportThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(50_000)]
-  public async Task WithRoutingKeys_50K_Messages(int messageCount) {
+  public async Task WithRoutingKeys_50K_MessagesAsync(int messageCount) {
     var receivedCount = 0;
     var tcs = new TaskCompletionSource<bool>();
     var topic = "transport.routing.test";
@@ -262,7 +262,7 @@ public class TransportThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(10, 5_000)] // 10 topics, 5K messages each
-  public async Task MixedTopicsAndRoutingKeys(int topicCount, int messagesPerTopic) {
+  public async Task MixedTopicsAndRoutingKeysAsync(int topicCount, int messagesPerTopic) {
     var totalMessages = topicCount * messagesPerTopic;
     var receivedCount = 0;
     var tcs = new TaskCompletionSource<bool>();
@@ -300,7 +300,7 @@ public class TransportThroughputBenchmarks {
     }
   }
 
-  private static IMessageEnvelope CreateEnvelope(TestCommand command) {
+  private static MessageEnvelope<TestCommand> _createEnvelope(TestCommand command) {
     var envelope = new MessageEnvelope<TestCommand> {
       MessageId = MessageId.New(),
       Payload = command,

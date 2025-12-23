@@ -41,7 +41,7 @@ public class EFCorePerspectiveConfigurationGeneratorDiagnosticsTests {
     var result = await GeneratorTestHelpers.RunEFCoreGeneratorAsync(source);
 
     // Assert - Generated class should implement IWhizbangDiscoveryDiagnostics
-    await Assert.That(result.GeneratedSources).HasCount().GreaterThanOrEqualTo(1);
+    await Assert.That(result.GeneratedSources).Count().IsGreaterThanOrEqualTo(1);
 
     var generatedCode = result.GeneratedSources
       .FirstOrDefault(s => s.HintName == "WhizbangModelBuilderExtensions.g.cs");

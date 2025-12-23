@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Workers;
 
@@ -16,7 +17,7 @@ namespace Whizbang.Core.Workers;
 /// </summary>
 /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
 /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
-public class ServiceBusConsumerWorker(
+public partial class ServiceBusConsumerWorker(
   IServiceInstanceProvider instanceProvider,
   ITransport transport,
   IServiceScopeFactory scopeFactory,
@@ -45,7 +46,7 @@ public class ServiceBusConsumerWorker(
     activity?.SetTag("worker.subscriptions_count", _options.Subscriptions.Count);
     activity?.SetTag("servicebus.has_filter", _options.Subscriptions.Any(s => !string.IsNullOrWhiteSpace(s.DestinationFilter)));
 
-    _logger.LogInformation("ServiceBusConsumerWorker starting - creating subscriptions...");
+    LogWorkerStarting(_logger);
 
     try {
       // Subscribe to configured topics (BLOCKING - ensures subscriptions ready before ExecuteAsync)
@@ -62,26 +63,22 @@ public class ServiceBusConsumerWorker(
         );
 
         var subscription = await _transport.SubscribeAsync(
-          async (envelope, ct) => await HandleMessageAsync(envelope, ct),
+          async (envelope, ct) => await _handleMessageAsync(envelope, ct),
           destination,
           cancellationToken
         );
 
         _subscriptions.Add(subscription);
 
-        _logger.LogInformation(
-          "Subscribed to topic {TopicName} with subscription {SubscriptionName}",
-          topicConfig.TopicName,
-          topicConfig.SubscriptionName
-        );
+        LogSubscribedToTopic(_logger, topicConfig.TopicName, topicConfig.SubscriptionName);
       }
 
-      _logger.LogInformation("ServiceBusConsumerWorker subscriptions ready ({Count} subscriptions)", _subscriptions.Count);
+      LogSubscriptionsReady(_logger, _subscriptions.Count);
 
       // Call base.StartAsync to trigger ExecuteAsync
       await base.StartAsync(cancellationToken);
     } catch (Exception ex) {
-      _logger.LogError(ex, "Failed to start ServiceBusConsumerWorker - subscriptions not ready");
+      LogFailedToStart(_logger, ex);
       throw;
     }
   }
@@ -93,29 +90,26 @@ public class ServiceBusConsumerWorker(
   /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
   /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   protected override async Task ExecuteAsync(CancellationToken stoppingToken) {
-    _logger.LogInformation("ServiceBusConsumerWorker background processing started");
+    LogBackgroundProcessingStarted(_logger);
 
     try {
       // Keep the worker running while subscriptions are active
       await Task.Delay(Timeout.Infinite, stoppingToken);
     } catch (OperationCanceledException) {
-      _logger.LogInformation("ServiceBusConsumerWorker is stopping...");
+      LogWorkerStopping(_logger);
     } catch (Exception ex) {
-      _logger.LogError(ex, "Fatal error in ServiceBusConsumerWorker");
+      LogFatalError(_logger, ex);
       throw;
     }
   }
 
-  private async Task HandleMessageAsync(IMessageEnvelope envelope, CancellationToken ct) {
+  private async Task _handleMessageAsync(IMessageEnvelope envelope, CancellationToken ct) {
     try {
       // Create scope to resolve scoped services (IWorkCoordinatorStrategy, IPerspectiveInvoker)
       await using var scope = _scopeFactory.CreateAsyncScope();
       var strategy = scope.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
 
-      _logger.LogInformation(
-        "Processing message {MessageId} from Service Bus",
-        envelope.MessageId
-      );
+      LogProcessingMessage(_logger, envelope.MessageId);
 
       // 1. Serialize envelope to InboxMessage
       var newInboxMessage = _serializeToNewInboxMessage(envelope);
@@ -130,18 +124,11 @@ public class ServiceBusConsumerWorker(
       var myWork = workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value).ToList();
 
       if (myWork.Count == 0) {
-        _logger.LogInformation(
-          "Message {MessageId} already processed (duplicate), skipping",
-          envelope.MessageId
-        );
+        LogMessageAlreadyProcessed(_logger, envelope.MessageId);
         return;
       }
 
-      _logger.LogInformation(
-        "Message {MessageId} accepted for processing ({WorkCount} inbox work items)",
-        envelope.MessageId,
-        myWork.Count
-      );
+      LogMessageAcceptedForProcessing(_logger, envelope.MessageId, myWork.Count);
 
       // 5. Process using OrderedStreamProcessor (maintains stream ordering)
       // Resolve perspective invoker once for all work items
@@ -160,19 +147,11 @@ public class ServiceBusConsumerWorker(
             // Invoke perspectives for this event
             await perspectiveInvoker.InvokePerspectivesAsync(ct);
 
-            _logger.LogInformation(
-              "Invoked perspectives for {EventType} (message {MessageId})",
-              typedEvent.GetType().Name,
-              work.MessageId
-            );
+            LogInvokedPerspectives(_logger, typedEvent.GetType().Name, work.MessageId);
 
             return MessageProcessingStatus.EventStored;
           } else {
-            _logger.LogWarning(
-              "Failed to invoke perspectives - Event: {EventType}, HasInvoker: {HasInvoker}",
-              @event?.GetType().Name ?? "null",
-              perspectiveInvoker != null
-            );
+            LogFailedToInvokePerspectives(_logger, @event?.GetType().Name ?? "null", perspectiveInvoker != null);
 
             // Still mark as event stored even if perspective invocation failed
             return MessageProcessingStatus.EventStored;
@@ -180,11 +159,11 @@ public class ServiceBusConsumerWorker(
         },
         completionHandler: (msgId, status) => {
           strategy.QueueInboxCompletion(msgId, status);
-          _logger.LogDebug("Queued completion for {MessageId} with status {Status}", msgId, status);
+          LogQueuedCompletion(_logger, msgId, status);
         },
         failureHandler: (msgId, status, error) => {
           strategy.QueueInboxFailure(msgId, status, error);
-          _logger.LogError("Queued failure for {MessageId}: {Error}", msgId, error);
+          LogQueuedFailure(_logger, msgId, error);
         },
         ct
       );
@@ -192,18 +171,11 @@ public class ServiceBusConsumerWorker(
       // 6. Report completions/failures back to database
       await strategy.FlushAsync(WorkBatchFlags.None, ct);
 
-      _logger.LogInformation(
-        "Successfully processed message {MessageId}",
-        envelope.MessageId
-      );
+      LogSuccessfullyProcessedMessage(_logger, envelope.MessageId);
 
       // Scope will be disposed automatically by 'await using' at end of method
     } catch (Exception ex) {
-      _logger.LogError(
-        ex,
-        "Error processing message {MessageId}",
-        envelope.MessageId
-      );
+      LogErrorProcessingMessage(_logger, envelope.MessageId, ex);
       throw; // Let the transport handle retry/dead-letter
     }
   }
@@ -235,8 +207,12 @@ public class ServiceBusConsumerWorker(
 
     // Serialize the envelope to JSON and deserialize as MessageEnvelope<JsonElement>
     // This allows AOT-compatible storage without runtime type resolution
-    var envelopeJson = JsonSerializer.Serialize((object)envelope, _jsonOptions);
-    var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, _jsonOptions)
+    // Use JsonTypeInfo for AOT compatibility (no reflection)
+    var objectTypeInfo = _jsonOptions.GetTypeInfo(typeof(object));
+    var envelopeJson = JsonSerializer.Serialize((object)envelope, objectTypeInfo);
+
+    var jsonEnvelopeTypeInfo = (System.Text.Json.Serialization.Metadata.JsonTypeInfo<MessageEnvelope<JsonElement>>)_jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
+    var jsonEnvelope = JsonSerializer.Deserialize(envelopeJson, jsonEnvelopeTypeInfo)
       ?? throw new InvalidOperationException($"Failed to deserialize envelope as MessageEnvelope<JsonElement> for message {envelope.MessageId}");
 
     return new InboxMessage {
@@ -262,18 +238,18 @@ public class ServiceBusConsumerWorker(
       // Deserialize the JsonElement payload back to the actual event type
       var jsonElement = work.Envelope.Payload;
 
-      // Get the message type from the work item
-      var messageType = Type.GetType(work.MessageType);
-      if (messageType == null) {
-        _logger.LogError("Could not resolve message type {MessageType} for message {MessageId}", work.MessageType, work.MessageId);
+      // Use GetTypeInfoByName from MessageJsonContext for AOT-safe type lookup
+      // This avoids Type.GetType() reflection (IL2057 warning) by using compile-time typeof() calls
+      var jsonTypeInfo = global::Whizbang.Core.Generated.MessageJsonContext.GetTypeInfoByName(work.MessageType, _jsonOptions);
+      if (jsonTypeInfo == null) {
+        LogCouldNotResolveJsonTypeInfo(_logger, work.MessageType, work.MessageId);
         return null;
       }
 
-      // Deserialize JsonElement to the actual event type
-      var @event = JsonSerializer.Deserialize(jsonElement, messageType, _jsonOptions);
+      var @event = JsonSerializer.Deserialize(jsonElement, jsonTypeInfo);
       return @event;
     } catch (Exception ex) {
-      _logger.LogError(ex, "Failed to deserialize event payload from envelope for message {MessageId}", work.MessageId);
+      LogFailedToDeserializeEvent(_logger, work.MessageId, ex);
       return null;
     }
   }
@@ -342,7 +318,7 @@ public class ServiceBusConsumerWorker(
   /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
   /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   public override async Task StopAsync(CancellationToken cancellationToken) {
-    _logger.LogInformation("ServiceBusConsumerWorker stopping...");
+    LogWorkerStoppingGracefully(_logger);
 
     // Dispose all subscriptions
     foreach (var subscription in _subscriptions) {
@@ -351,6 +327,143 @@ public class ServiceBusConsumerWorker(
 
     await base.StopAsync(cancellationToken);
   }
+
+  // ========================================
+  // High-Performance LoggerMessage Delegates
+  // ========================================
+
+  [LoggerMessage(
+    EventId = 1,
+    Level = LogLevel.Information,
+    Message = "ServiceBusConsumerWorker starting - creating subscriptions..."
+  )]
+  static partial void LogWorkerStarting(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 2,
+    Level = LogLevel.Information,
+    Message = "Subscribed to topic {TopicName} with subscription {SubscriptionName}"
+  )]
+  static partial void LogSubscribedToTopic(ILogger logger, string topicName, string subscriptionName);
+
+  [LoggerMessage(
+    EventId = 3,
+    Level = LogLevel.Information,
+    Message = "ServiceBusConsumerWorker subscriptions ready ({Count} subscriptions)"
+  )]
+  static partial void LogSubscriptionsReady(ILogger logger, int count);
+
+  [LoggerMessage(
+    EventId = 4,
+    Level = LogLevel.Error,
+    Message = "Failed to start ServiceBusConsumerWorker - subscriptions not ready"
+  )]
+  static partial void LogFailedToStart(ILogger logger, Exception ex);
+
+  [LoggerMessage(
+    EventId = 5,
+    Level = LogLevel.Information,
+    Message = "ServiceBusConsumerWorker background processing started"
+  )]
+  static partial void LogBackgroundProcessingStarted(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 6,
+    Level = LogLevel.Information,
+    Message = "ServiceBusConsumerWorker is stopping..."
+  )]
+  static partial void LogWorkerStopping(ILogger logger);
+
+  [LoggerMessage(
+    EventId = 7,
+    Level = LogLevel.Error,
+    Message = "Fatal error in ServiceBusConsumerWorker"
+  )]
+  static partial void LogFatalError(ILogger logger, Exception ex);
+
+  [LoggerMessage(
+    EventId = 8,
+    Level = LogLevel.Information,
+    Message = "Processing message {MessageId} from Service Bus"
+  )]
+  static partial void LogProcessingMessage(ILogger logger, MessageId messageId);
+
+  [LoggerMessage(
+    EventId = 9,
+    Level = LogLevel.Information,
+    Message = "Message {MessageId} already processed (duplicate), skipping"
+  )]
+  static partial void LogMessageAlreadyProcessed(ILogger logger, MessageId messageId);
+
+  [LoggerMessage(
+    EventId = 10,
+    Level = LogLevel.Information,
+    Message = "Message {MessageId} accepted for processing ({WorkCount} inbox work items)"
+  )]
+  static partial void LogMessageAcceptedForProcessing(ILogger logger, MessageId messageId, int workCount);
+
+  [LoggerMessage(
+    EventId = 11,
+    Level = LogLevel.Information,
+    Message = "Invoked perspectives for {EventType} (message {MessageId})"
+  )]
+  static partial void LogInvokedPerspectives(ILogger logger, string eventType, Guid messageId);
+
+  [LoggerMessage(
+    EventId = 12,
+    Level = LogLevel.Warning,
+    Message = "Failed to invoke perspectives - Event: {EventType}, HasInvoker: {HasInvoker}"
+  )]
+  static partial void LogFailedToInvokePerspectives(ILogger logger, string eventType, bool hasInvoker);
+
+  [LoggerMessage(
+    EventId = 13,
+    Level = LogLevel.Debug,
+    Message = "Queued completion for {MessageId} with status {Status}"
+  )]
+  static partial void LogQueuedCompletion(ILogger logger, Guid messageId, MessageProcessingStatus status);
+
+  [LoggerMessage(
+    EventId = 14,
+    Level = LogLevel.Error,
+    Message = "Queued failure for {MessageId}: {Error}"
+  )]
+  static partial void LogQueuedFailure(ILogger logger, Guid messageId, string error);
+
+  [LoggerMessage(
+    EventId = 15,
+    Level = LogLevel.Information,
+    Message = "Successfully processed message {MessageId}"
+  )]
+  static partial void LogSuccessfullyProcessedMessage(ILogger logger, MessageId messageId);
+
+  [LoggerMessage(
+    EventId = 16,
+    Level = LogLevel.Error,
+    Message = "Error processing message {MessageId}"
+  )]
+  static partial void LogErrorProcessingMessage(ILogger logger, MessageId messageId, Exception ex);
+
+  [LoggerMessage(
+    EventId = 17,
+    Level = LogLevel.Error,
+    Message = "Could not resolve JsonTypeInfo for message type {MessageType} for message {MessageId}"
+  )]
+  static partial void LogCouldNotResolveJsonTypeInfo(ILogger logger, string messageType, Guid messageId);
+
+  [LoggerMessage(
+    EventId = 18,
+    Level = LogLevel.Error,
+    Message = "Failed to deserialize event payload from envelope for message {MessageId}"
+  )]
+  static partial void LogFailedToDeserializeEvent(ILogger logger, Guid messageId, Exception ex);
+
+  [LoggerMessage(
+    EventId = 19,
+    Level = LogLevel.Information,
+    Message = "ServiceBusConsumerWorker stopping..."
+  )]
+  static partial void LogWorkerStoppingGracefully(ILogger logger);
 }
 
 /// <summary>

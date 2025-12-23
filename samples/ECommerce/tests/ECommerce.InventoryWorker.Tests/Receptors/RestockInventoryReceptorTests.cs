@@ -38,6 +38,7 @@ public class RestockInventoryReceptorTests {
   }
 
   [Test]
+  [Obsolete]
   public async Task HandleAsync_PublishesInventoryRestockedEventAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
@@ -92,6 +93,7 @@ public class RestockInventoryReceptorTests {
   }
 
   [Test]
+  [Obsolete]
   public async Task HandleAsync_LogsInformation_AboutRestockingAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();

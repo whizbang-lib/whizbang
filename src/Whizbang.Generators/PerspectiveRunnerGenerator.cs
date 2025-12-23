@@ -21,7 +21,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Reuse the same discovery logic as PerspectiveDiscoveryGenerator
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => ExtractPerspectiveInfo(ctx, ct)
+        transform: static (ctx, ct) => _extractPerspectiveInfo(ctx, ct)
     ).Where(static info => info is not null);
 
     // Combine with compilation to get assembly name
@@ -32,7 +32,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         static (ctx, data) => {
           var compilation = data.Left;
           var perspectives = data.Right;
-          GeneratePerspectiveRunners(ctx, compilation, perspectives!);
+          _generatePerspectiveRunners(ctx, compilation, perspectives!);
         }
     );
   }
@@ -41,7 +41,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// Extracts perspective information from a class declaration.
   /// Returns null if the class doesn't implement IPerspectiveFor&lt;TModel, TEvent&gt; or IGlobalPerspectiveFor&lt;TModel, TPartitionKey, TEvent&gt;.
   /// </summary>
-  private static PerspectiveInfo? ExtractPerspectiveInfo(
+  private static PerspectiveInfo? _extractPerspectiveInfo(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
 
@@ -161,7 +161,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       var eventTypeSymbol = eventTypeSymbols[i];
 
       // Extract StreamKey property name from event
-      var eventStreamKeyProp = ExtractStreamKeyProperty(eventTypeSymbol);
+      var eventStreamKeyProp = _extractStreamKeyProperty(eventTypeSymbol);
       if (eventStreamKeyProp != null) {
         eventStreamKeys.Add(new EventStreamKeyInfo(
             EventTypeName: eventTypeName,
@@ -186,7 +186,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// Extracts the StreamKey property name from an event type.
   /// Returns the property name if exactly one [StreamKey] is found, null otherwise.
   /// </summary>
-  private static string? ExtractStreamKeyProperty(ITypeSymbol eventTypeSymbol) {
+  private static string? _extractStreamKeyProperty(ITypeSymbol eventTypeSymbol) {
     foreach (var member in eventTypeSymbol.GetMembers()) {
       if (member is IPropertySymbol property) {
         var hasStreamKeyAttribute = property.GetAttributes()
@@ -204,7 +204,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates IPerspectiveRunner implementations for all discovered perspectives with models.
   /// </summary>
-  private static void GeneratePerspectiveRunners(
+  private static void _generatePerspectiveRunners(
       SourceProductionContext context,
       Compilation compilation,
       ImmutableArray<PerspectiveInfo> perspectives) {
@@ -215,15 +215,15 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
     // Generate a runner for each perspective
     foreach (var perspective in perspectives) {
-      var runnerSource = GenerateRunnerSource(compilation, perspective);
-      var runnerName = GetRunnerName(perspective.ClassName);
+      var runnerSource = _generateRunnerSource(compilation, perspective);
+      var runnerName = _getRunnerName(perspective.ClassName);
       context.AddSource($"{runnerName}.g.cs", runnerSource);
 
       // Report diagnostic
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.PerspectiveRunnerGenerated,
           Location.None,
-          GetSimpleName(perspective.ClassName),
+          _getSimpleName(perspective.ClassName),
           runnerName
       ));
     }
@@ -233,7 +233,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// Generates the C# source code for a perspective runner.
   /// Uses template-based generation with unit-of-work pattern and AOT-compatible switch statements.
   /// </summary>
-  private static string GenerateRunnerSource(Compilation compilation, PerspectiveInfo perspective) {
+  private static string _generateRunnerSource(Compilation compilation, PerspectiveInfo perspective) {
     var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
 
@@ -243,8 +243,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         "PerspectiveRunnerTemplate.cs"
     );
 
-    var runnerName = GetRunnerName(perspective.ClassName);
-    var perspectiveSimpleName = GetSimpleName(perspective.ClassName);
+    var runnerName = _getRunnerName(perspective.ClassName);
+    var perspectiveSimpleName = _getSimpleName(perspective.ClassName);
 
     // Generate AOT-compatible switch cases for event application
     var applyCases = new StringBuilder();
@@ -259,7 +259,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     if (perspective.EventStreamKeys != null) {
       foreach (var eventStreamKey in perspective.EventStreamKeys) {
         extractStreamIdMethods.AppendLine($"  /// <summary>");
-        extractStreamIdMethods.AppendLine($"  /// Extracts the stream ID from {GetSimpleName(eventStreamKey.EventTypeName)} event.");
+        extractStreamIdMethods.AppendLine($"  /// Extracts the stream ID from {_getSimpleName(eventStreamKey.EventTypeName)} event.");
         extractStreamIdMethods.AppendLine($"  /// </summary>");
         extractStreamIdMethods.AppendLine($"  private static string ExtractStreamId({eventStreamKey.EventTypeName} @event) {{");
         extractStreamIdMethods.AppendLine($"    return @event.{eventStreamKey.StreamKeyPropertyName}.ToString();");
@@ -291,8 +291,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// Gets the runner class name from a perspective class name.
   /// E.g., "MyApp.OrderPerspective" -> "OrderPerspectiveRunner"
   /// </summary>
-  private static string GetRunnerName(string perspectiveClassName) {
-    var simpleName = GetSimpleName(perspectiveClassName);
+  private static string _getRunnerName(string perspectiveClassName) {
+    var simpleName = _getSimpleName(perspectiveClassName);
     return $"{simpleName}Runner";
   }
 
@@ -300,7 +300,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   /// Gets the simple name from a fully qualified type name.
   /// E.g., "global::MyApp.OrderPerspective" -> "OrderPerspective"
   /// </summary>
-  private static string GetSimpleName(string fullyQualifiedName) {
+  private static string _getSimpleName(string fullyQualifiedName) {
     var lastDot = fullyQualifiedName.LastIndexOf('.');
     return lastDot >= 0 ? fullyQualifiedName[(lastDot + 1)..] : fullyQualifiedName;
   }

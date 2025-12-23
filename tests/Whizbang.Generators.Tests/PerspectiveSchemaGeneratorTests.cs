@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using Microsoft.CodeAnalysis;
 
 namespace Whizbang.Generators.Tests;
@@ -133,7 +134,7 @@ public class PerspectiveSchemaGeneratorTests {
     // Arrange - Create perspective with many properties (>35 to exceed 1500 byte threshold)
     var properties = new System.Text.StringBuilder();
     for (int i = 1; i <= 40; i++) {
-      properties.AppendLine($"  public string Property{i} {{ get; set; }} = string.Empty;");
+      properties.AppendLine(CultureInfo.InvariantCulture, $"  public string Property{i} {{ get; set; }} = string.Empty;");
     }
 
     var source = $$"""
@@ -495,7 +496,7 @@ public class PerspectiveSchemaGeneratorTests {
     // Calculation: 20 (base) + (propertyCount * 40) = 1500 → propertyCount = 37
     var properties = new System.Text.StringBuilder();
     for (int i = 1; i <= 37; i++) {
-      properties.AppendLine($"                public string Prop{i} {{ get; set; }} = \"\";");
+      properties.AppendLine(CultureInfo.InvariantCulture, $"                public string Prop{i} {{ get; set; }} = \"\";");
     }
 
     var source = $$"""
@@ -526,7 +527,7 @@ public class PerspectiveSchemaGeneratorTests {
 
     // Assert - Should generate size warning at threshold (37 properties + Id = 38, ~1540 bytes)
     var sizeWarnings = result.Diagnostics.Where(d => d.Id == "WHIZ008").ToArray();
-    await Assert.That(sizeWarnings).HasCount().GreaterThanOrEqualTo(1);
+    await Assert.That(sizeWarnings).Count().IsGreaterThanOrEqualTo(1);
   }
 
   [Test]

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 
 namespace Whizbang.Core;
@@ -37,7 +38,7 @@ internal static class JsonElementHelper {
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/JsonElementHelperTests.cs:JsonElementHelper_FromInt32_WithValidInt_ReturnsJsonElementAsync</tests>
   public static JsonElement FromInt32(int value) {
-    return JsonDocument.Parse(value.ToString()).RootElement.Clone();
+    return JsonDocument.Parse(value.ToString(CultureInfo.InvariantCulture)).RootElement.Clone();
   }
 
   /// <summary>

@@ -25,8 +25,8 @@ public class IMessageSerializerTests {
   [Test]
   public async Task Serialize_WithMessageEnvelope_ReturnsNonEmptyBytesAsync() {
     // Arrange
-    var serializer = CreateTestSerializer();
-    var envelope = CreateTestEnvelope();
+    var serializer = _createTestSerializer();
+    var envelope = _createTestEnvelope();
 
     // Act
     var bytes = await serializer.SerializeAsync(envelope);
@@ -39,8 +39,8 @@ public class IMessageSerializerTests {
   [Test]
   public async Task Deserialize_WithSerializedEnvelope_ReturnsEnvelopeAsync() {
     // Arrange
-    var serializer = CreateTestSerializer();
-    var original = CreateTestEnvelope();
+    var serializer = _createTestSerializer();
+    var original = _createTestEnvelope();
     var bytes = await serializer.SerializeAsync(original);
 
     // Act
@@ -53,8 +53,8 @@ public class IMessageSerializerTests {
   [Test]
   public async Task RoundTrip_PreservesMessageIdAsync() {
     // Arrange
-    var serializer = CreateTestSerializer();
-    var original = CreateTestEnvelope();
+    var serializer = _createTestSerializer();
+    var original = _createTestEnvelope();
     var originalMessageId = original.MessageId;
 
     // Act
@@ -68,9 +68,9 @@ public class IMessageSerializerTests {
   [Test]
   public async Task RoundTrip_PreservesPayloadAsync() {
     // Arrange
-    var serializer = CreateTestSerializer();
+    var serializer = _createTestSerializer();
     var message = new TestMessage { Content = "Test Content", Value = 42 };
-    var original = CreateTestEnvelope(message);
+    var original = _createTestEnvelope(message);
 
     // Act
     var bytes = await serializer.SerializeAsync(original);
@@ -85,8 +85,8 @@ public class IMessageSerializerTests {
   [Test]
   public async Task RoundTrip_PreservesAllMessageHopsAsync() {
     // Arrange
-    var serializer = CreateTestSerializer();
-    var original = CreateEnvelopeWithMultipleHops();
+    var serializer = _createTestSerializer();
+    var original = _createEnvelopeWithMultipleHops();
     var originalHopCount = original.Hops.Count;
 
     // Act
@@ -94,15 +94,15 @@ public class IMessageSerializerTests {
     var deserialized = await serializer.DeserializeAsync<TestMessage>(bytes);
 
     // Assert
-    await Assert.That(deserialized.Hops).HasCount().EqualTo(originalHopCount);
+    await Assert.That(deserialized.Hops).Count().IsEqualTo(originalHopCount);
     await Assert.That(deserialized.Hops.Count).IsEqualTo(3); // Original + 2 causation hops
   }
 
   [Test]
   public async Task RoundTrip_PreservesHopTypeAsync() {
     // Arrange
-    var serializer = CreateTestSerializer();
-    var original = CreateEnvelopeWithMultipleHops();
+    var serializer = _createTestSerializer();
+    var original = _createEnvelopeWithMultipleHops();
 
     // Act
     var bytes = await serializer.SerializeAsync(original);
@@ -117,7 +117,7 @@ public class IMessageSerializerTests {
   [Test]
   public async Task RoundTrip_PreservesCorrelationIdAsync() {
     // Arrange
-    var serializer = CreateTestSerializer();
+    var serializer = _createTestSerializer();
     var correlationId = CorrelationId.New();
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
@@ -147,7 +147,7 @@ public class IMessageSerializerTests {
   [Test]
   public async Task RoundTrip_PreservesCausationIdAsync() {
     // Arrange
-    var serializer = CreateTestSerializer();
+    var serializer = _createTestSerializer();
     var causationId = MessageId.New();
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
@@ -179,7 +179,7 @@ public class IMessageSerializerTests {
   [RequiresDynamicCode("")]
   public async Task RoundTrip_PreservesMetadataAsync() {
     // Arrange
-    var serializer = CreateTestSerializer();
+    var serializer = _createTestSerializer();
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "Test", Value = 1 },
@@ -214,7 +214,7 @@ public class IMessageSerializerTests {
   [Test]
   public async Task RoundTrip_PreservesServiceNameAsync() {
     // Arrange
-    var serializer = CreateTestSerializer();
+    var serializer = _createTestSerializer();
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "Test", Value = 1 },
@@ -242,7 +242,7 @@ public class IMessageSerializerTests {
   [Test]
   public async Task RoundTrip_PreservesTopicStreamKeyPartitionAsync() {
     // Arrange
-    var serializer = CreateTestSerializer();
+    var serializer = _createTestSerializer();
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "Test", Value = 1 },
@@ -276,7 +276,7 @@ public class IMessageSerializerTests {
   [Test]
   public async Task RoundTrip_PreservesSequenceNumberAsync() {
     // Arrange
-    var serializer = CreateTestSerializer();
+    var serializer = _createTestSerializer();
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "Test", Value = 1 },
@@ -306,7 +306,7 @@ public class IMessageSerializerTests {
   [Test]
   public async Task RoundTrip_PreservesTimestampAsync() {
     // Arrange
-    var serializer = CreateTestSerializer();
+    var serializer = _createTestSerializer();
     var timestamp = DateTimeOffset.UtcNow;
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
@@ -335,7 +335,7 @@ public class IMessageSerializerTests {
   [Test]
   public async Task RoundTrip_WithNullValues_HandlesGracefullyAsync() {
     // Arrange
-    var serializer = CreateTestSerializer();
+    var serializer = _createTestSerializer();
     var original = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "Test", Value = 1 },
@@ -348,8 +348,8 @@ public class IMessageSerializerTests {
             ProcessId = 12345
           },
           Timestamp = DateTimeOffset.UtcNow,
-          Topic = null,
-          StreamKey = null,
+          Topic = string.Empty,
+          StreamKey = string.Empty,
           Metadata = null
         }
       ]
@@ -359,21 +359,21 @@ public class IMessageSerializerTests {
     var bytes = await serializer.SerializeAsync(original);
     var deserialized = await serializer.DeserializeAsync<TestMessage>(bytes);
 
-    // Assert - Should not throw, nulls preserved
+    // Assert - Should not throw, empty strings and nulls preserved
     var typed = (MessageEnvelope<TestMessage>)deserialized;
-    await Assert.That(typed.GetCurrentTopic()).IsNull();
-    await Assert.That(typed.GetCurrentStreamKey()).IsNull();
+    await Assert.That(typed.GetCurrentTopic()).IsEqualTo(string.Empty);
+    await Assert.That(typed.GetCurrentStreamKey()).IsEqualTo(string.Empty);
   }
 
   // Helper methods
-  private static IMessageSerializer CreateTestSerializer() {
+  private static JsonMessageSerializer _createTestSerializer() {
     // AOT-compatible serializer using WhizbangJsonContext
     // Use CreateOptions to properly configure options with all contexts
     var options = WhizbangJsonContext.CreateOptions();
     return new JsonMessageSerializer(options);
   }
 
-  private static MessageEnvelope<TestMessage> CreateTestEnvelope(TestMessage? message = null) {
+  private static MessageEnvelope<TestMessage> _createTestEnvelope(TestMessage? message = null) {
     var msg = message ?? new TestMessage { Content = "Test", Value = 1 };
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
@@ -392,7 +392,7 @@ public class IMessageSerializerTests {
     };
   }
 
-  private static IMessageEnvelope CreateEnvelopeWithMultipleHops() {
+  private static MessageEnvelope<TestMessage> _createEnvelopeWithMultipleHops() {
     var envelope = new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
       Payload = new TestMessage { Content = "Test", Value = 1 },

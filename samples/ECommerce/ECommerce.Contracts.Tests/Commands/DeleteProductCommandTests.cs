@@ -9,11 +9,11 @@ namespace ECommerce.Contracts.Tests.Commands;
 /// Tests for DeleteProductCommand
 /// </summary>
 public class DeleteProductCommandTests {
-  private static readonly IWhizbangIdProvider IdProvider = new Uuid7IdProvider();
+  private static readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
   [Test]
   public async Task DeleteProductCommand_WithValidProductId_InitializesSuccessfullyAsync() {
     // Arrange & Act
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var cmd = new DeleteProductCommand {
       ProductId = productId
     };
@@ -25,7 +25,7 @@ public class DeleteProductCommandTests {
   [Test]
   public async Task DeleteProductCommand_RecordEquality_WorksCorrectlyAsync() {
     // Arrange
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var cmd1 = new DeleteProductCommand {
       ProductId = productId
     };
@@ -41,7 +41,7 @@ public class DeleteProductCommandTests {
   [Test]
   public async Task DeleteProductCommand_ToString_ReturnsReadableRepresentationAsync() {
     // Arrange & Act
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var cmd = new DeleteProductCommand {
       ProductId = productId
     };
@@ -57,11 +57,11 @@ public class DeleteProductCommandTests {
   public async Task DeleteProductCommand_WithDifferentProductIds_AreNotEqualAsync() {
     // Arrange
     var cmd1 = new DeleteProductCommand {
-      ProductId = IdProvider.NewGuid()
+      ProductId = _idProvider.NewGuid()
     };
 
     var cmd2 = new DeleteProductCommand {
-      ProductId = IdProvider.NewGuid()
+      ProductId = _idProvider.NewGuid()
     };
 
     // Act & Assert

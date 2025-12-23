@@ -24,9 +24,9 @@ public class ThroughputBenchmarks {
   private IMessageSerializer _serializer = null!;
 
   // Test message types
-  private record SmallCommand(string Id, int Value);
-  private record MediumCommand(string Id, int Value, string Data1, string Data2, string Data3);
-  private record LargeCommand(string Id, int Value, string Payload);
+  private sealed record SmallCommand(string Id, int Value);
+  private sealed record MediumCommand(string Id, int Value, string Data1, string Data2, string Data3);
+  private sealed record LargeCommand(string Id, int Value, string Payload);
 
   private List<SmallCommand> _smallMessages = null!;
   private List<MediumCommand> _mediumMessages = null!;
@@ -63,7 +63,7 @@ public class ThroughputBenchmarks {
   /// </summary>
   [Benchmark(Baseline = true)]
   [Arguments(100_000)]
-  public async Task Throughput_InProcessTransport_100K_SmallMessages(int messageCount) {
+  public async Task Throughput_InProcessTransport_100K_SmallMessagesAsync(int messageCount) {
     var receivedCount = 0;
     var tcs = new TaskCompletionSource<bool>();
     var topic = "throughput-test";
@@ -79,7 +79,7 @@ public class ThroughputBenchmarks {
 
     // Publish messages
     for (int i = 0; i < messageCount; i++) {
-      var envelope = CreateEnvelope(_smallMessages[i]);
+      var envelope = _createEnvelope(_smallMessages[i]);
       await _transport.PublishAsync(envelope, new TransportDestination(topic));
     }
 
@@ -94,7 +94,7 @@ public class ThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(50_000)]
-  public async Task Throughput_InProcessTransport_50K_MediumMessages(int messageCount) {
+  public async Task Throughput_InProcessTransport_50K_MediumMessagesAsync(int messageCount) {
     var receivedCount = 0;
     var tcs = new TaskCompletionSource<bool>();
     var topic = "throughput-medium";
@@ -108,7 +108,7 @@ public class ThroughputBenchmarks {
     }, new TransportDestination(topic));
 
     for (int i = 0; i < messageCount; i++) {
-      var envelope = CreateEnvelope(_mediumMessages[i]);
+      var envelope = _createEnvelope(_mediumMessages[i]);
       await _transport.PublishAsync(envelope, new TransportDestination(topic));
     }
 
@@ -121,7 +121,7 @@ public class ThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(10_000)]
-  public async Task Throughput_InProcessTransport_10K_LargeMessages(int messageCount) {
+  public async Task Throughput_InProcessTransport_10K_LargeMessagesAsync(int messageCount) {
     var receivedCount = 0;
     var tcs = new TaskCompletionSource<bool>();
     var topic = "throughput-large";
@@ -135,7 +135,7 @@ public class ThroughputBenchmarks {
     }, new TransportDestination(topic));
 
     for (int i = 0; i < messageCount; i++) {
-      var envelope = CreateEnvelope(_largeMessages[i]);
+      var envelope = _createEnvelope(_largeMessages[i]);
       await _transport.PublishAsync(envelope, new TransportDestination(topic));
     }
 
@@ -149,7 +149,7 @@ public class ThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(10, 10_000)] // 10 publishers, 10K messages each = 100K total
-  public async Task Throughput_Concurrent_MultiplePublishers(int publisherCount, int messagesPerPublisher) {
+  public async Task Throughput_Concurrent_MultiplePublishersAsync(int publisherCount, int messagesPerPublisher) {
     var totalMessages = publisherCount * messagesPerPublisher;
     var receivedCount = 0;
     var tcs = new TaskCompletionSource<bool>();
@@ -167,7 +167,7 @@ public class ThroughputBenchmarks {
       .Select(async publisherId => {
         for (int i = 0; i < messagesPerPublisher; i++) {
           var msgIndex = (publisherId * messagesPerPublisher) + i;
-          var envelope = CreateEnvelope(_smallMessages[msgIndex % _smallMessages.Count]);
+          var envelope = _createEnvelope(_smallMessages[msgIndex % _smallMessages.Count]);
           await _transport.PublishAsync(envelope, new TransportDestination(topic));
         }
       });
@@ -183,7 +183,7 @@ public class ThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(10, 10_000)] // 10 topics, 10K messages each = 100K total
-  public async Task Throughput_Concurrent_MultipleTopics(int topicCount, int messagesPerTopic) {
+  public async Task Throughput_Concurrent_MultipleTopicsAsync(int topicCount, int messagesPerTopic) {
     var totalMessages = topicCount * messagesPerTopic;
     var receivedCount = 0;
     var tcs = new TaskCompletionSource<bool>();
@@ -208,7 +208,7 @@ public class ThroughputBenchmarks {
     var publishTasks = topics.Select(async (topic, topicIndex) => {
       for (int i = 0; i < messagesPerTopic; i++) {
         var msgIndex = (topicIndex * messagesPerTopic) + i;
-        var envelope = CreateEnvelope(_smallMessages[msgIndex % _smallMessages.Count]);
+        var envelope = _createEnvelope(_smallMessages[msgIndex % _smallMessages.Count]);
         await _transport.PublishAsync(envelope, new TransportDestination(topic));
       }
     });
@@ -228,7 +228,7 @@ public class ThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(10_000)]
-  public async Task Throughput_RequestResponse_10K_Requests(int requestCount) {
+  public async Task Throughput_RequestResponse_10K_RequestsAsync(int requestCount) {
     var store = new InMemoryRequestResponseStore();
     var topic = "throughput-request-response";
 
@@ -237,7 +237,7 @@ public class ThroughputBenchmarks {
       // Simulate processing and send response
       var typedEnvelope = (MessageEnvelope<SmallCommand>)requestEnvelope;
       var response = new SmallCommand($"response-{typedEnvelope.Payload.Id}", typedEnvelope.Payload.Value * 2);
-      var responseEnvelope = CreateEnvelope(response);
+      var responseEnvelope = _createEnvelope(response);
 
       // Get correlation ID from request
       var correlationId = requestEnvelope.Hops.Last().CorrelationId;
@@ -256,7 +256,7 @@ public class ThroughputBenchmarks {
       await store.SaveRequestAsync(correlationId, requestId, TimeSpan.FromSeconds(10), CancellationToken.None);
 
       var request = _smallMessages[i % _smallMessages.Count];
-      var envelope = CreateEnvelope(request, correlationId);
+      var envelope = _createEnvelope(request, correlationId);
 
       await _transport.PublishAsync(envelope, new TransportDestination(topic));
 
@@ -273,7 +273,7 @@ public class ThroughputBenchmarks {
   /// </summary>
   [Benchmark]
   [Arguments(50_000)]
-  public async Task Throughput_WithTracing_50K_Messages(int messageCount) {
+  public async Task Throughput_WithTracing_50K_MessagesAsync(int messageCount) {
     var receivedCount = 0;
     var tcs = new TaskCompletionSource<bool>();
     var topic = "throughput-tracing";
@@ -290,7 +290,7 @@ public class ThroughputBenchmarks {
     }, new TransportDestination(topic));
 
     for (int i = 0; i < messageCount; i++) {
-      var envelope = CreateEnvelopeWithTracing(_smallMessages[i]);
+      var envelope = _createEnvelopeWithTracing(_smallMessages[i]);
       await _transport.PublishAsync(envelope, new TransportDestination(topic));
     }
 
@@ -298,7 +298,7 @@ public class ThroughputBenchmarks {
     subscription.Dispose();
   }
 
-  private static IMessageEnvelope CreateEnvelope<T>(T payload, CorrelationId? correlationId = null) {
+  private static MessageEnvelope<T> _createEnvelope<T>(T payload, CorrelationId? correlationId = null) {
     var envelope = new MessageEnvelope<T> {
       MessageId = MessageId.New(),
       Payload = payload,
@@ -323,7 +323,7 @@ public class ThroughputBenchmarks {
 
   [RequiresUnreferencedCode("Calls System.Text.Json.JsonSerializer.SerializeToElement<TValue>(TValue, JsonSerializerOptions)")]
   [RequiresDynamicCode("Calls System.Text.Json.JsonSerializer.SerializeToElement<TValue>(TValue, JsonSerializerOptions)")]
-  private static IMessageEnvelope CreateEnvelopeWithTracing<T>(T payload) {
+  private static MessageEnvelope<T> _createEnvelopeWithTracing<T>(T payload) {
     var envelope = new MessageEnvelope<T> {
       MessageId = MessageId.New(),
       Payload = payload,
@@ -354,7 +354,7 @@ public class ThroughputBenchmarks {
   }
 
   // Helper classes for benchmarking
-  private class InMemoryTraceStore : ITraceStore {
+  private sealed class InMemoryTraceStore : ITraceStore {
     public Task StoreAsync(IMessageEnvelope envelope, CancellationToken cancellationToken = default) {
       // No-op storage for benchmarking
       return Task.CompletedTask;
@@ -377,7 +377,7 @@ public class ThroughputBenchmarks {
     }
   }
 
-  private class InMemoryRequestResponseStore : IRequestResponseStore {
+  private sealed class InMemoryRequestResponseStore : IRequestResponseStore {
     private readonly ConcurrentDictionary<CorrelationId, TaskCompletionSource<IMessageEnvelope>> _pending = new();
 
     public Task SaveRequestAsync(CorrelationId correlationId, MessageId requestId, TimeSpan timeout, CancellationToken cancellationToken = default) {

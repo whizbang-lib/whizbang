@@ -20,7 +20,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     // Reuse the same discovery logic as PerspectiveRunnerGenerator
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => ExtractPerspectiveInfo(ctx, ct)
+        transform: static (ctx, ct) => _extractPerspectiveInfo(ctx, ct)
     ).Where(static info => info is not null);
 
     // Combine with compilation to get assembly name
@@ -31,7 +31,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
         static (ctx, data) => {
           var compilation = data.Left;
           var perspectives = data.Right;
-          GeneratePerspectiveRunnerRegistry(ctx, compilation, perspectives!);
+          _generatePerspectiveRunnerRegistry(ctx, compilation, perspectives!);
         }
     );
   }
@@ -40,7 +40,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
   /// Extracts perspective information from a class declaration.
   /// Returns null if the class doesn't implement IPerspectiveFor&lt;TModel, TEvent&gt; or IGlobalPerspectiveFor&lt;TModel, TPartitionKey, TEvent&gt;.
   /// </summary>
-  private static PerspectiveRegistryInfo? ExtractPerspectiveInfo(
+  private static PerspectiveRegistryInfo? _extractPerspectiveInfo(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
 
@@ -113,7 +113,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     }
 
     var className = classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-    var simpleName = GetSimpleName(className);
+    var simpleName = _getSimpleName(className);
 
     return new PerspectiveRegistryInfo(
         ClassName: className,
@@ -125,7 +125,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Generates the static registry class with GetRunner() and AddPerspectiveRunners() methods.
   /// </summary>
-  private static void GeneratePerspectiveRunnerRegistry(
+  private static void _generatePerspectiveRunnerRegistry(
       SourceProductionContext context,
       Compilation compilation,
       ImmutableArray<PerspectiveRegistryInfo> perspectives) {
@@ -227,7 +227,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
   /// Gets the simple name from a fully qualified type name.
   /// E.g., "global::MyApp.OrderPerspective" -> "OrderPerspective"
   /// </summary>
-  private static string GetSimpleName(string fullyQualifiedName) {
+  private static string _getSimpleName(string fullyQualifiedName) {
     var lastDot = fullyQualifiedName.LastIndexOf('.');
     return lastDot >= 0 ? fullyQualifiedName[(lastDot + 1)..] : fullyQualifiedName;
   }

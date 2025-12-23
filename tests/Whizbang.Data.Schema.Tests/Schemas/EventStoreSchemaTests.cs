@@ -27,7 +27,7 @@ public class EventStoreSchemaTests {
     var columns = EventStoreSchema.Table.Columns;
 
     // Assert - Verify column count
-    await Assert.That(columns).HasCount().EqualTo(11);
+    await Assert.That(columns).Count().IsEqualTo(11);
 
     // Verify each column definition
     var eventId = columns[0];
@@ -96,12 +96,12 @@ public class EventStoreSchemaTests {
     var indexes = EventStoreSchema.Table.Indexes;
 
     // Assert - Verify index count
-    await Assert.That(indexes).HasCount().EqualTo(4);
+    await Assert.That(indexes).Count().IsEqualTo(4);
 
     // Verify unique stream index
     var streamIndex = indexes[0];
     await Assert.That(streamIndex.Name).IsEqualTo("idx_event_store_stream");
-    await Assert.That(streamIndex.Columns).HasCount().EqualTo(2);
+    await Assert.That(streamIndex.Columns).Count().IsEqualTo(2);
     await Assert.That(streamIndex.Columns[0]).IsEqualTo("stream_id");
     await Assert.That(streamIndex.Columns[1]).IsEqualTo("version");
     await Assert.That(streamIndex.Unique).IsTrue();
@@ -109,7 +109,7 @@ public class EventStoreSchemaTests {
     // Verify unique aggregate index
     var aggregateIndex = indexes[1];
     await Assert.That(aggregateIndex.Name).IsEqualTo("idx_event_store_aggregate");
-    await Assert.That(aggregateIndex.Columns).HasCount().EqualTo(2);
+    await Assert.That(aggregateIndex.Columns).Count().IsEqualTo(2);
     await Assert.That(aggregateIndex.Columns[0]).IsEqualTo("aggregate_id");
     await Assert.That(aggregateIndex.Columns[1]).IsEqualTo("version");
     await Assert.That(aggregateIndex.Unique).IsTrue();
@@ -117,14 +117,14 @@ public class EventStoreSchemaTests {
     // Verify aggregate_type index
     var aggregateTypeIndex = indexes[2];
     await Assert.That(aggregateTypeIndex.Name).IsEqualTo("idx_event_store_aggregate_type");
-    await Assert.That(aggregateTypeIndex.Columns).HasCount().EqualTo(2);
+    await Assert.That(aggregateTypeIndex.Columns).Count().IsEqualTo(2);
     await Assert.That(aggregateTypeIndex.Columns[0]).IsEqualTo("aggregate_type");
     await Assert.That(aggregateTypeIndex.Columns[1]).IsEqualTo("created_at");
 
     // Verify sequence index
     var sequenceIndex = indexes[3];
     await Assert.That(sequenceIndex.Name).IsEqualTo("idx_event_store_sequence");
-    await Assert.That(sequenceIndex.Columns).HasCount().EqualTo(1);
+    await Assert.That(sequenceIndex.Columns).Count().IsEqualTo(1);
     await Assert.That(sequenceIndex.Columns[0]).IsEqualTo("sequence_number");
   }
 
@@ -151,7 +151,7 @@ public class EventStoreSchemaTests {
     // Assert
     await Assert.That(aggregateIndex).IsNotNull();
     await Assert.That(aggregateIndex!.Unique).IsTrue();
-    await Assert.That(aggregateIndex.Columns).HasCount().EqualTo(2);
+    await Assert.That(aggregateIndex.Columns).Count().IsEqualTo(2);
     await Assert.That(aggregateIndex.Columns[0]).IsEqualTo("aggregate_id");
     await Assert.That(aggregateIndex.Columns[1]).IsEqualTo("version");
   }
@@ -234,7 +234,7 @@ public class EventStoreSchemaTests {
     // Assert
     await Assert.That(streamIndex).IsNotNull();
     await Assert.That(streamIndex!.Unique).IsTrue();
-    await Assert.That(streamIndex.Columns).HasCount().EqualTo(2);
+    await Assert.That(streamIndex.Columns).Count().IsEqualTo(2);
     await Assert.That(streamIndex.Columns[0]).IsEqualTo("stream_id");
     await Assert.That(streamIndex.Columns[1]).IsEqualTo("version");
   }

@@ -19,7 +19,7 @@ public abstract class IUnitOfWorkStrategyContractTests {
   protected abstract IUnitOfWorkStrategy CreateStrategy();
 
   [Test]
-  public async Task QueueMessageAsync_ReturnsNonEmptyGuid() {
+  public async Task QueueMessageAsync_ReturnsNonEmptyGuidAsync() {
     // Arrange
     await using var strategy = CreateStrategy();
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
@@ -34,7 +34,7 @@ public abstract class IUnitOfWorkStrategyContractTests {
   }
 
   [Test]
-  public async Task QueueMessageAsync_StoresMessage() {
+  public async Task QueueMessageAsync_StoresMessageAsync() {
     // Arrange
     await using var strategy = CreateStrategy();
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
@@ -51,7 +51,7 @@ public abstract class IUnitOfWorkStrategyContractTests {
   }
 
   [Test]
-  public async Task QueueMessageAsync_WithLifecycleStage_StoresLifecycleMapping() {
+  public async Task QueueMessageAsync_WithLifecycleStage_StoresLifecycleMappingAsync() {
     // Arrange
     await using var strategy = CreateStrategy();
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
@@ -71,7 +71,7 @@ public abstract class IUnitOfWorkStrategyContractTests {
   }
 
   [Test]
-  public async Task GetMessagesForUnit_NonExistentUnit_ReturnsEmpty() {
+  public async Task GetMessagesForUnit_NonExistentUnit_ReturnsEmptyAsync() {
     // Arrange
     await using var strategy = CreateStrategy();
     var nonExistentUnitId = Guid.NewGuid();
@@ -84,7 +84,7 @@ public abstract class IUnitOfWorkStrategyContractTests {
   }
 
   [Test]
-  public async Task GetLifecycleStagesForUnit_NonExistentUnit_ReturnsEmpty() {
+  public async Task GetLifecycleStagesForUnit_NonExistentUnit_ReturnsEmptyAsync() {
     // Arrange
     await using var strategy = CreateStrategy();
     var nonExistentUnitId = Guid.NewGuid();
@@ -97,7 +97,7 @@ public abstract class IUnitOfWorkStrategyContractTests {
   }
 
   [Test]
-  public async Task CancelUnitAsync_ExistingUnit_RemovesUnit() {
+  public async Task CancelUnitAsync_ExistingUnit_RemovesUnitAsync() {
     // Arrange
     await using var strategy = CreateStrategy();
     strategy.OnFlushRequested += async (unitId, ct) => await Task.CompletedTask;
@@ -114,7 +114,7 @@ public abstract class IUnitOfWorkStrategyContractTests {
   }
 
   [Test]
-  public async Task CancelUnitAsync_NonExistentUnit_DoesNotThrow() {
+  public async Task CancelUnitAsync_NonExistentUnit_DoesNotThrowAsync() {
     // Arrange
     await using var strategy = CreateStrategy();
     var nonExistentUnitId = Guid.NewGuid();
@@ -124,14 +124,12 @@ public abstract class IUnitOfWorkStrategyContractTests {
   }
 
   [Test]
-  public async Task OnFlushRequested_CanBeWired() {
+  public async Task OnFlushRequested_CanBeWiredAsync() {
     // Arrange
     await using var strategy = CreateStrategy();
-    var callbackInvoked = false;
     Guid? callbackUnitId = null;
 
     strategy.OnFlushRequested += async (unitId, ct) => {
-      callbackInvoked = true;
       callbackUnitId = unitId;
       await Task.CompletedTask;
     };
@@ -152,7 +150,7 @@ public abstract class IUnitOfWorkStrategyContractTests {
   /// <summary>
   /// Test message class for contract tests.
   /// </summary>
-  private class TestMessage {
+  private sealed class TestMessage {
     public string Value { get; set; } = string.Empty;
   }
 }

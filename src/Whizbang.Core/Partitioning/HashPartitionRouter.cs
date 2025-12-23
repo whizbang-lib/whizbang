@@ -57,7 +57,7 @@ public class HashPartitionRouter : IPartitionRouter {
     }
 
     // Compute hash using FNV-1a algorithm (fast and well-distributed)
-    var hash = ComputeFnv1aHash(streamKey);
+    var hash = _computeFnv1aHash(streamKey);
 
     // Use modulo to map hash to partition index
     // Take absolute value to handle negative hash values
@@ -77,7 +77,7 @@ public class HashPartitionRouter : IPartitionRouter {
   /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:HashAlgorithm_SimilarKeys_ProduceDifferentHashesAsync</tests>
   /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:EdgeCase_VaryingKeyLengths_HandlesCorrectlyAsync</tests>
   /// <tests>tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs:Performance_VariousKeySizes_HandlesEfficientlyAsync</tests>
-  private static int ComputeFnv1aHash(string value) {
+  private static int _computeFnv1aHash(string value) {
     // FNV-1a parameters for 32-bit hash
     const int FNV_PRIME = 16777619;
     const int FNV_OFFSET_BASIS = unchecked((int)2166136261);

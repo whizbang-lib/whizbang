@@ -12,7 +12,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// These tests use EF Core InMemory provider for fast, isolated testing.
 /// </summary>
 public class EFCorePostgresLensQueryTests {
-  private readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
+  private readonly Uuid7IdProvider _idProvider = new Uuid7IdProvider();
 
   private TestDbContext CreateInMemoryDbContext() {
     var options = new DbContextOptionsBuilder<TestDbContext>()
@@ -129,7 +129,7 @@ public class EFCorePostgresLensQueryTests {
         .ToListAsync();
 
     // Assert
-    await Assert.That(results).HasCount().EqualTo(2);
+    await Assert.That(results).Count().IsEqualTo(2);
     await Assert.That(results.Select(r => r.Data.Name)).Contains("Alice");
     await Assert.That(results.Select(r => r.Data.Name)).Contains("Charlie");
   }
@@ -166,7 +166,7 @@ public class EFCorePostgresLensQueryTests {
         .ToListAsync();
 
     // Assert
-    await Assert.That(results).HasCount().EqualTo(2);
+    await Assert.That(results).Count().IsEqualTo(2);
     await Assert.That(results.Select(r => r.Id)).Contains(id1);
     await Assert.That(results.Select(r => r.Id)).Contains(id3);
   }
@@ -194,7 +194,7 @@ public class EFCorePostgresLensQueryTests {
         .ToListAsync();
 
     // Assert
-    await Assert.That(results).HasCount().EqualTo(2);
+    await Assert.That(results).Count().IsEqualTo(2);
     await Assert.That(results.Select(r => r.Id)).Contains(id1);
     await Assert.That(results.Select(r => r.Id)).Contains(id3);
   }
@@ -225,7 +225,7 @@ public class EFCorePostgresLensQueryTests {
         .ToListAsync();
 
     // Assert
-    await Assert.That(results).HasCount().EqualTo(1);
+    await Assert.That(results).Count().IsEqualTo(1);
     await Assert.That(results[0].Name).IsEqualTo("Alice");
     await Assert.That(results[0].EventType).IsEqualTo("OrderCreated");
     await Assert.That(results[0].TenantId).IsEqualTo("tenant-1");
@@ -255,7 +255,7 @@ public class EFCorePostgresLensQueryTests {
         .ToListAsync();
 
     // Assert
-    await Assert.That(results).HasCount().EqualTo(1);
+    await Assert.That(results).Count().IsEqualTo(1);
     await Assert.That(results[0].Data.Name).IsEqualTo("Alice");
   }
 
@@ -277,7 +277,7 @@ public class EFCorePostgresLensQueryTests {
         .ToListAsync();
 
     // Assert
-    await Assert.That(results).HasCount().EqualTo(1);
+    await Assert.That(results).Count().IsEqualTo(1);
     await Assert.That(results[0].Data.Name).IsEqualTo("Charlie");
     await Assert.That(results[0].Data.Value).IsEqualTo(200);
   }

@@ -28,7 +28,8 @@ public class TransportDestinationTests {
     // Assert
     await Assert.That(destination.Address).IsEqualTo(address);
     await Assert.That(destination.RoutingKey).IsNull();
-    await Assert.That(destination.Metadata).IsNull();
+    // Note: Metadata is intentionally nullable - testing that it IS null
+    await Assert.That(destination.Metadata!).IsNull();
   }
 
   [Test]
@@ -64,10 +65,16 @@ public class TransportDestinationTests {
     );
 
     // Assert
-    await Assert.That(destination.Metadata).IsNotNull();
-    await Assert.That(destination.Metadata!["priority"].GetString()).IsEqualTo("high");
-    await Assert.That(destination.Metadata["retry-count"].GetInt32()).IsEqualTo(3);
-    await Assert.That(destination.Metadata["timeout-ms"].GetInt32()).IsEqualTo(5000);
+    // Defensive null check before assertion
+    var destinationMetadata = destination.Metadata;
+    if (destinationMetadata == null) {
+      throw new InvalidOperationException("Test failed: Expected metadata to be non-null");
+    }
+
+    await Assert.That(destinationMetadata).IsNotNull();
+    await Assert.That(destinationMetadata["priority"].GetString()).IsEqualTo("high");
+    await Assert.That(destinationMetadata["retry-count"].GetInt32()).IsEqualTo(3);
+    await Assert.That(destinationMetadata["timeout-ms"].GetInt32()).IsEqualTo(5000);
   }
 
   [Test]
@@ -77,44 +84,45 @@ public class TransportDestinationTests {
 
     // Assert
     await Assert.That(destination.Address).IsEqualTo("test-topic");
-    await Assert.That(destination.Metadata).IsNull();
+    // Note: Metadata is intentionally nullable - testing that it IS null
+    await Assert.That(destination.Metadata!).IsNull();
   }
 
   // ============================================================================
   // Record Equality Tests
   // ============================================================================
 
-  public static IEnumerable<(TransportDestination d1, TransportDestination d2, bool shouldBeEqual)> GetEqualityTestCases() {
+  public static IEnumerable<Func<(TransportDestination d1, TransportDestination d2, bool shouldBeEqual)>> GetEqualityTestCases() {
     // Same address and routing key
-    yield return (
+    yield return () => (
       new TransportDestination("topic", RoutingKey: "key1"),
       new TransportDestination("topic", RoutingKey: "key1"),
       true
     );
 
     // Same address, different routing key
-    yield return (
+    yield return () => (
       new TransportDestination("topic", RoutingKey: "key1"),
       new TransportDestination("topic", RoutingKey: "key2"),
       false
     );
 
     // Different address, same routing key
-    yield return (
+    yield return () => (
       new TransportDestination("topic1", RoutingKey: "key"),
       new TransportDestination("topic2", RoutingKey: "key"),
       false
     );
 
     // Same address, one with routing key, one without
-    yield return (
+    yield return () => (
       new TransportDestination("topic", RoutingKey: "key"),
       new TransportDestination("topic"),
       false
     );
 
     // Both without routing key
-    yield return (
+    yield return () => (
       new TransportDestination("topic"),
       new TransportDestination("topic"),
       true
@@ -173,8 +181,14 @@ public class TransportDestinationTests {
     var destination = new TransportDestination("topic", Metadata: metadata);
 
     // Assert
-    await Assert.That(destination.Metadata).IsNotNull();
-    await Assert.That(destination.Metadata!.Count).IsEqualTo(0);
+    // Defensive null check before assertion
+    var destinationMetadata = destination.Metadata;
+    if (destinationMetadata == null) {
+      throw new InvalidOperationException("Test failed: Expected metadata to be non-null");
+    }
+
+    await Assert.That(destinationMetadata).IsNotNull();
+    await Assert.That(destinationMetadata.Count).IsEqualTo(0);
   }
 
   [Test]
@@ -187,6 +201,7 @@ public class TransportDestinationTests {
     var destination = new TransportDestination("topic", Metadata: metadata);
 
     // Act & Assert - Metadata should be IReadOnlyDictionary
-    await Assert.That(destination.Metadata).IsTypeOf<IReadOnlyDictionary<string, JsonElement>>();
+    // Note: Metadata is nullable, but we're testing type when non-null
+    await Assert.That(destination.Metadata!).IsTypeOf<IReadOnlyDictionary<string, JsonElement>>();
   }
 }

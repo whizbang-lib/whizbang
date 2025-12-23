@@ -57,7 +57,7 @@ public abstract class ExecutionStrategyContractTests {
     return envelope;
   }
 
-  private record TestMessage(string Content);
+  private sealed record TestMessage(string Content);
 
   [Test]
   public async Task ExecuteAsync_ShouldCallHandlerAsync() {
@@ -255,7 +255,7 @@ public abstract class ExecutionStrategyContractTests {
     await Assert.That(name).IsNotEmpty();
   }
 
-  // Ordering-specific test (only runs if GuaranteesOrdering is true)
+  // Ordering-specific test (only runs if _guaranteesOrdering is true)
   [Test]
   public async Task ExecuteAsync_ShouldMaintainStrictFifoOrder_WhenOrderingGuaranteedAsync() {
     // Skip for strategies that don't guarantee ordering
@@ -293,7 +293,7 @@ public abstract class ExecutionStrategyContractTests {
     await Task.WhenAll(tasks);
 
     // Assert - Order should be preserved (0, 1, 2, ..., 9)
-    await Assert.That(executionOrder).HasCount().EqualTo(10);
+    await Assert.That(executionOrder).Count().IsEqualTo(10);
     for (int i = 0; i < 10; i++) {
       await Assert.That(executionOrder[i]).IsEqualTo(i);
     }

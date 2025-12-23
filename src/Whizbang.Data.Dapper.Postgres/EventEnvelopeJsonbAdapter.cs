@@ -20,7 +20,7 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
 
   /// <summary>
-  /// 
+  /// Converts a message envelope to the 3-column JSONB persistence model (event_data, metadata, scope).
   /// </summary>
   /// <tests>No tests found</tests>
   public JsonbPersistenceModel ToJsonb(IMessageEnvelope source, PolicyConfiguration? policyConfig = null) {
@@ -90,7 +90,7 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
   }
 
   /// <summary>
-  /// 
+  /// Reconstructs a strongly-typed message envelope from the 3-column JSONB persistence model.
   /// </summary>
   /// <tests>No tests found</tests>
   public MessageEnvelope<TMessage> FromJsonb<TMessage>(JsonbPersistenceModel jsonb) {

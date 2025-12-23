@@ -98,7 +98,7 @@ public class IMessageQueueTests {
     var orphanedMessages = await queue.LeaseOrphanedMessagesAsync("instance2", 10, TimeSpan.FromMinutes(5));
 
     // Assert
-    await Assert.That(orphanedMessages).HasCount().EqualTo(2);
+    await Assert.That(orphanedMessages).Count().IsEqualTo(2);
     await Assert.That(orphanedMessages[0].MessageId).IsEqualTo(message1.MessageId);
     await Assert.That(orphanedMessages[1].MessageId).IsEqualTo(message2.MessageId);
   }
@@ -107,7 +107,7 @@ public class IMessageQueueTests {
   /// Simple in-memory fake implementation of IMessageQueue for contract testing.
   /// Uses dictionaries to track messages, leases, and processed state.
   /// </summary>
-  private class FakeMessageQueue : IMessageQueue {
+  private sealed class FakeMessageQueue : IMessageQueue {
     private readonly Dictionary<Guid, QueuedMessage> _messages = new();
     private readonly HashSet<Guid> _processed = new();
     private readonly Dictionary<Guid, (string instanceId, DateTime leaseExpiry)> _leases = new();

@@ -71,7 +71,7 @@ public static class PerspectiveDiscovery {
     var stateType = perspectiveInterface.TypeArguments[1];
 
     // Generate table name from state type (snake_case convention)
-    var tableName = ToSnakeCase(stateType.Name);
+    var tableName = _toSnakeCase(stateType.Name);
 
     return new PerspectiveInfo(
         HandlerType: namedSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
@@ -153,7 +153,7 @@ public static class PerspectiveDiscovery {
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/Discovery/PerspectiveDiscoveryTests.cs:ToSnakeCase_PascalCase_ReturnsSnakeCaseAsync</tests>
   /// <tests>tests/Whizbang.Generators.Tests/Discovery/PerspectiveDiscoveryTests.cs:ToSnakeCase_EmptyString_ReturnsEmptyAsync</tests>
-  private static string ToSnakeCase(string input) {
+  private static string _toSnakeCase(string input) {
     if (string.IsNullOrEmpty(input)) {
       return input;
     }

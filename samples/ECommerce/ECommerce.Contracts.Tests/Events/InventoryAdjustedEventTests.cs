@@ -9,11 +9,11 @@ namespace ECommerce.Contracts.Tests.Events;
 /// Tests for InventoryAdjustedEvent
 /// </summary>
 public class InventoryAdjustedEventTests {
-  private static readonly IWhizbangIdProvider IdProvider = new Uuid7IdProvider();
+  private static readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
   [Test]
   public async Task InventoryAdjustedEvent_WithPositiveChange_InitializesSuccessfullyAsync() {
     // Arrange & Act
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var adjustedAt = DateTime.UtcNow;
     var evt = new InventoryAdjustedEvent {
       ProductId = productId,
@@ -35,7 +35,7 @@ public class InventoryAdjustedEventTests {
   public async Task InventoryAdjustedEvent_WithNegativeChange_InitializesSuccessfullyAsync() {
     // Arrange & Act
     var evt = new InventoryAdjustedEvent {
-      ProductId = IdProvider.NewGuid(),
+      ProductId = _idProvider.NewGuid(),
       QuantityChange = -5,
       NewTotalQuantity = 95,
       Reason = "Damaged goods",
@@ -52,7 +52,7 @@ public class InventoryAdjustedEventTests {
   public async Task InventoryAdjustedEvent_WithZeroChange_InitializesSuccessfullyAsync() {
     // Arrange & Act
     var evt = new InventoryAdjustedEvent {
-      ProductId = IdProvider.NewGuid(),
+      ProductId = _idProvider.NewGuid(),
       QuantityChange = 0,
       NewTotalQuantity = 100,
       Reason = "Audit - no discrepancies found",
@@ -67,7 +67,7 @@ public class InventoryAdjustedEventTests {
   [Test]
   public async Task InventoryAdjustedEvent_RecordEquality_WorksCorrectlyAsync() {
     // Arrange
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var adjustedAt = DateTime.UtcNow;
     var evt1 = new InventoryAdjustedEvent {
       ProductId = productId,
@@ -92,7 +92,7 @@ public class InventoryAdjustedEventTests {
   [Test]
   public async Task InventoryAdjustedEvent_ToString_ReturnsReadableRepresentationAsync() {
     // Arrange & Act
-    var productId = IdProvider.NewGuid();
+    var productId = _idProvider.NewGuid();
     var evt = new InventoryAdjustedEvent {
       ProductId = productId,
       QuantityChange = -15,

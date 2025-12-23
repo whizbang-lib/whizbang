@@ -1,4 +1,3 @@
-using System.Runtime.CompilerServices;
 using System.Text.Json.Serialization;
 using ECommerce.Contracts.Commands;
 using ECommerce.Contracts.Events;
@@ -10,6 +9,7 @@ namespace ECommerce.Contracts;
 /// <summary>
 /// JSON source generation context for ECommerce message types.
 /// Provides AOT-compatible serialization for all commands, events, and value objects.
+/// Call <see cref="Register"/> during application startup to register this context with the global registry.
 /// </summary>
 [JsonSourceGenerationOptions(WriteIndented = false)]
 // Commands
@@ -67,15 +67,15 @@ namespace ECommerce.Contracts;
 // Collection types (for List<OrderLineItem>)
 [JsonSerializable(typeof(List<OrderLineItem>))]
 public partial class ECommerceJsonContext : JsonSerializerContext {
-}
-
-/// <summary>
-/// Module initializer to register ECommerceJsonContext with JsonContextRegistry.
-/// Runs before Main() to ensure ECommerce types are available for serialization.
-/// </summary>
-internal static class ECommerceJsonContextInitializer {
-  [ModuleInitializer]
-  internal static void Initialize() {
-    JsonContextRegistry.RegisterContext(ECommerceJsonContext.Default);
+  /// <summary>
+  /// Registers this JSON context with the global JsonContextRegistry.
+  /// Call this method during application startup (in Program.cs) to enable serialization of ECommerce message types.
+  /// </summary>
+  /// <remarks>
+  /// This must be called explicitly to avoid the CA2255 warning about ModuleInitializers in library code.
+  /// Previously used ModuleInitializer, but that's discouraged for libraries as it gives consumers no control.
+  /// </remarks>
+  public static void Register() {
+    JsonContextRegistry.RegisterContext(Default);
   }
 }

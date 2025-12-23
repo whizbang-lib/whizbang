@@ -23,6 +23,7 @@ public static class ServiceCollectionExtensions {
   /// <param name="connectionString">The Azure Service Bus connection string.</param>
   /// <param name="configureOptions">Optional configuration callback for transport options.</param>
   /// <returns>The service collection for chaining.</returns>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Startup initialization logging - infrequent calls during DI registration")]
   public static IServiceCollection AddAzureServiceBusTransport(
     this IServiceCollection services,
     string connectionString,

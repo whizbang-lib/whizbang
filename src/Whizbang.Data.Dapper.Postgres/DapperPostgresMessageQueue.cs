@@ -13,6 +13,8 @@ namespace Whizbang.Data.Dapper.Postgres;
 /// Provides distributed exactly-once processing via transactional queue + processed_messages table.
 /// </summary>
 /// <tests>No tests found</tests>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Message queue diagnostic logging - I/O bound database operations where LoggerMessage overhead isn't justified")]
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Naming", "CA1711:Identifiers should not have incorrect suffix", Justification = "Name correctly represents a message queue implementation of IMessageQueue interface")]
 public class DapperPostgresMessageQueue(
   IDbConnectionFactory connectionFactory,
   ILogger<DapperPostgresMessageQueue> logger) : IMessageQueue {
@@ -20,7 +22,7 @@ public class DapperPostgresMessageQueue(
   private readonly ILogger<DapperPostgresMessageQueue> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
   /// <summary>
-  /// 
+  /// Atomically checks if a message has been processed, enqueues it if not, and immediately leases it for processing.
   /// </summary>
   /// <tests>No tests found</tests>
   public async Task<bool> EnqueueAndLeaseAsync(
@@ -101,7 +103,7 @@ public class DapperPostgresMessageQueue(
   }
 
   /// <summary>
-  /// 
+  /// Marks a message as processed and removes it from the queue atomically.
   /// </summary>
   /// <tests>No tests found</tests>
   public async Task CompleteAsync(
@@ -157,7 +159,7 @@ public class DapperPostgresMessageQueue(
   }
 
   /// <summary>
-  /// 
+  /// Atomically leases orphaned messages (unleased or with expired leases) for crash recovery.
   /// </summary>
   /// <tests>No tests found</tests>
   public async Task<System.Collections.Generic.IReadOnlyList<QueuedMessage>> LeaseOrphanedMessagesAsync(

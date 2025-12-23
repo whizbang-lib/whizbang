@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Collections.Immutable;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -69,32 +70,40 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover message types (ICommand, IEvent)
+    // Where() filters nulls, Select() unwraps nullable for incremental generator caching
     var messageTypes = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 } ||
                                        node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => ExtractMessageType(ctx, ct)
-    ).Where(static info => info is not null);
+        transform: static (ctx, ct) => _extractMessageType(ctx, ct)
+    ).Where(static info => info is not null)
+     .Select(static (info, _) => info!);
 
     // Discover dispatchers (SendAsync and PublishAsync calls)
+    // Where() filters nulls, Select() unwraps nullable for incremental generator caching
     var dispatchers = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is InvocationExpressionSyntax invocation &&
                                        invocation.Expression is MemberAccessExpressionSyntax memberAccess &&
                                        (memberAccess.Name.Identifier.Text == "SendAsync" ||
                                         memberAccess.Name.Identifier.Text == "PublishAsync"),
-        transform: static (ctx, ct) => ExtractDispatcher(ctx, ct)
-    ).Where(static info => info is not null);
+        transform: static (ctx, ct) => _extractDispatcher(ctx, ct)
+    ).Where(static info => info is not null)
+     .Select(static (info, _) => info!);
 
     // Discover receptors (IReceptor implementations)
+    // Where() filters nulls, Select() unwraps nullable for incremental generator caching
     var receptors = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => ExtractReceptor(ctx, ct)
-    ).Where(static info => info is not null);
+        transform: static (ctx, ct) => _extractReceptor(ctx, ct)
+    ).Where(static info => info is not null)
+     .Select(static (info, _) => info!);
 
     // Discover perspectives (IPerspectiveFor<TEvent> implementations)
+    // Where() filters nulls, Select() unwraps nullable for incremental generator caching
     var perspectives = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => ExtractPerspective(ctx, ct)
-    ).Where(static info => info is not null);
+        transform: static (ctx, ct) => _extractPerspective(ctx, ct)
+    ).Where(static info => info is not null)
+     .Select(static (info, _) => info!);
 
     // Combine all discoveries and generate JSON
     var allData = messageTypes.Collect()
@@ -104,11 +113,11 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
 
     context.RegisterSourceOutput(
         allData,
-        static (ctx, data) => GenerateMessageRegistry(ctx, data)
+        static (ctx, data) => _generateMessageRegistry(ctx, data)
     );
   }
 
-  private static MessageTypeInfo? ExtractMessageType(
+  private static MessageTypeInfo? _extractMessageType(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
 
@@ -142,7 +151,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     );
   }
 
-  private static DispatcherLocationInfo? ExtractDispatcher(
+  private static DispatcherLocationInfo? _extractDispatcher(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
 
@@ -198,7 +207,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     );
   }
 
-  private static ReceptorLocationInfo? ExtractReceptor(
+  private static ReceptorLocationInfo? _extractReceptor(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
 
@@ -236,7 +245,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     } else {
       // Void receptor - defensive guard
       RoslynGuards.ValidateTypeArgumentCount(voidReceptorInterface!, 1, "IReceptor<TMessage>");
-      messageType = voidReceptorInterface.TypeArguments[0].ToDisplayString();
+      messageType = voidReceptorInterface!.TypeArguments[0].ToDisplayString();
       responseType = "void";
     }
 
@@ -259,7 +268,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     );
   }
 
-  private static PerspectiveLocationInfo? ExtractPerspective(
+  private static PerspectiveLocationInfo? _extractPerspective(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
 
@@ -277,12 +286,12 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
           var originalDef = i.OriginalDefinition.ToDisplayString();
           // Check for base marker or event-handling variants (with or without space after comma)
           return originalDef == I_PERSPECTIVE_FOR + "<TModel>" ||
-                 originalDef.StartsWith(I_PERSPECTIVE_FOR + "<TModel,") ||
-                 originalDef.StartsWith(I_PERSPECTIVE_FOR + "<TModel, ");
+                 originalDef.StartsWith(I_PERSPECTIVE_FOR + "<TModel,", StringComparison.Ordinal) ||
+                 originalDef.StartsWith(I_PERSPECTIVE_FOR + "<TModel, ", StringComparison.Ordinal);
         })
         .ToList();
 
-    if (!perspectiveInterfaces.Any()) {
+    if (perspectiveInterfaces.Count == 0) {
       return null;
     }
 
@@ -315,21 +324,21 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     );
   }
 
-  private static void GenerateMessageRegistry(
+  private static void _generateMessageRegistry(
       SourceProductionContext context,
       (((ImmutableArray<MessageTypeInfo>, ImmutableArray<DispatcherLocationInfo>), ImmutableArray<ReceptorLocationInfo>), ImmutableArray<PerspectiveLocationInfo>) data) {
 
     var (((messages, dispatchers), receptors), perspectives) = data;
 
     // Load documentation and test mappings for VSCode tooling enhancement
-    var docsMap = LoadCodeDocsMap(context);
-    var testsMap = LoadCodeTestsMap(context);
+    var docsMap = _loadCodeDocsMap(context);
+    var testsMap = _loadCodeTestsMap(context);
 
     // Enrich all data with documentation URLs and test counts
-    var enrichedMessages = messages.Select(m => EnrichMessageInfo(m, docsMap, testsMap)).ToImmutableArray();
-    var enrichedDispatchers = dispatchers.Select(d => EnrichDispatcherInfo(d, docsMap, testsMap)).ToImmutableArray();
-    var enrichedReceptors = receptors.Select(r => EnrichReceptorInfo(r, docsMap, testsMap)).ToImmutableArray();
-    var enrichedPerspectives = perspectives.Select(p => EnrichPerspectiveInfo(p, docsMap, testsMap)).ToImmutableArray();
+    var enrichedMessages = messages.Select(m => _enrichMessageInfo(m, docsMap, testsMap)).ToImmutableArray();
+    var enrichedDispatchers = dispatchers.Select(d => _enrichDispatcherInfo(d, docsMap, testsMap)).ToImmutableArray();
+    var enrichedReceptors = receptors.Select(r => _enrichReceptorInfo(r, docsMap, testsMap)).ToImmutableArray();
+    var enrichedPerspectives = perspectives.Select(p => _enrichPerspectiveInfo(p, docsMap, testsMap)).ToImmutableArray();
 
     // Load snippets
     var messageHeaderSnippet = TemplateUtilities.ExtractSnippet(
@@ -412,16 +421,16 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
 
       // Build message header
       var messageHeader = messageHeaderSnippet
-          .Replace("__MESSAGE_TYPE__", EscapeJson(group.TypeName));
+          .Replace("__MESSAGE_TYPE__", _escapeJson(group.TypeName));
 
       // If message is defined in this project, use its metadata; otherwise, infer from usage
       if (msg is not null) {
-        var testEntries = BuildTestEntries(msg.Tests, testSnippet);
+        var testEntries = _buildTestEntries(msg.Tests, testSnippet);
         messageHeader = messageHeader
-            .Replace("__IS_COMMAND__", msg.IsCommand.ToString().ToLower())
-            .Replace("__IS_EVENT__", msg.IsEvent.ToString().ToLower())
-            .Replace("__FILE_PATH__", EscapeJson(msg.FilePath))
-            .Replace("__LINE_NUMBER__", msg.LineNumber.ToString())
+            .Replace("__IS_COMMAND__", msg.IsCommand.ToString().ToLowerInvariant())
+            .Replace("__IS_EVENT__", msg.IsEvent.ToString().ToLowerInvariant())
+            .Replace("__FILE_PATH__", _escapeJson(msg.FilePath))
+            .Replace("__LINE_NUMBER__", msg.LineNumber.ToString(CultureInfo.InvariantCulture))
             .Replace("__DOCS_URL__", msg.DocsUrl ?? "")
             .Replace("__TESTS__", testEntries);
       } else {
@@ -430,8 +439,8 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
         var isEvent = group.Perspectives.Count > 0 || (group.Receptors.Count == 0 && group.Dispatchers.Count > 0);
 
         messageHeader = messageHeader
-            .Replace("__IS_COMMAND__", isCommand.ToString().ToLower())
-            .Replace("__IS_EVENT__", isEvent.ToString().ToLower())
+            .Replace("__IS_COMMAND__", isCommand.ToString().ToLowerInvariant())
+            .Replace("__IS_EVENT__", isEvent.ToString().ToLowerInvariant())
             .Replace("__FILE_PATH__", "")
             .Replace("__LINE_NUMBER__", "0")
             .Replace("__DOCS_URL__", "")
@@ -442,12 +451,12 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
       var dispatcherEntries = new StringBuilder();
       for (int j = 0; j < group.Dispatchers.Count; j++) {
         var d = group.Dispatchers[j];
-        var dispatcherTestEntries = BuildTestEntries(d.Tests, testSnippet);
+        var dispatcherTestEntries = _buildTestEntries(d.Tests, testSnippet);
         var entry = dispatcherSnippet
-            .Replace("__CLASS_NAME__", EscapeJson(d.ClassName))
-            .Replace("__METHOD_NAME__", EscapeJson(d.MethodName))
-            .Replace("__FILE_PATH__", EscapeJson(d.FilePath))
-            .Replace("__LINE_NUMBER__", d.LineNumber.ToString())
+            .Replace("__CLASS_NAME__", _escapeJson(d.ClassName))
+            .Replace("__METHOD_NAME__", _escapeJson(d.MethodName))
+            .Replace("__FILE_PATH__", _escapeJson(d.FilePath))
+            .Replace("__LINE_NUMBER__", d.LineNumber.ToString(CultureInfo.InvariantCulture))
             .Replace("__DOCS_URL__", d.DocsUrl ?? "")
             .Replace("__TESTS__", dispatcherTestEntries);
 
@@ -461,12 +470,12 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
       var receptorEntries = new StringBuilder();
       for (int j = 0; j < group.Receptors.Count; j++) {
         var r = group.Receptors[j];
-        var receptorTestEntries = BuildTestEntries(r.Tests, testSnippet);
+        var receptorTestEntries = _buildTestEntries(r.Tests, testSnippet);
         var entry = receptorSnippet
-            .Replace("__CLASS_NAME__", EscapeJson(r.ClassName))
-            .Replace("__METHOD_NAME__", EscapeJson(r.MethodName))
-            .Replace("__FILE_PATH__", EscapeJson(r.FilePath))
-            .Replace("__LINE_NUMBER__", r.LineNumber.ToString())
+            .Replace("__CLASS_NAME__", _escapeJson(r.ClassName))
+            .Replace("__METHOD_NAME__", _escapeJson(r.MethodName))
+            .Replace("__FILE_PATH__", _escapeJson(r.FilePath))
+            .Replace("__LINE_NUMBER__", r.LineNumber.ToString(CultureInfo.InvariantCulture))
             .Replace("__DOCS_URL__", r.DocsUrl ?? "")
             .Replace("__TESTS__", receptorTestEntries);
 
@@ -480,11 +489,11 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
       var perspectiveEntries = new StringBuilder();
       for (int j = 0; j < group.Perspectives.Count; j++) {
         var p = group.Perspectives[j];
-        var perspectiveTestEntries = BuildTestEntries(p.Tests, testSnippet);
+        var perspectiveTestEntries = _buildTestEntries(p.Tests, testSnippet);
         var entry = perspectiveSnippet
-            .Replace("__CLASS_NAME__", EscapeJson(p.ClassName))
-            .Replace("__FILE_PATH__", EscapeJson(p.FilePath))
-            .Replace("__LINE_NUMBER__", p.LineNumber.ToString())
+            .Replace("__CLASS_NAME__", _escapeJson(p.ClassName))
+            .Replace("__FILE_PATH__", _escapeJson(p.FilePath))
+            .Replace("__LINE_NUMBER__", p.LineNumber.ToString(CultureInfo.InvariantCulture))
             .Replace("__DOCS_URL__", p.DocsUrl ?? "")
             .Replace("__TESTS__", perspectiveTestEntries);
 
@@ -531,7 +540,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   /// Loads code-docs-map.json from documentation repository.
   /// Returns mapping: symbol name → documentation URL
   /// </summary>
-  private static Dictionary<string, string> LoadCodeDocsMap(SourceProductionContext context) {
+  private static Dictionary<string, string> _loadCodeDocsMap(SourceProductionContext context) {
     var docsPath = PathResolver.FindDocsRepositoryPath();
     if (docsPath == null) {
       return new Dictionary<string, string>();
@@ -564,7 +573,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   /// Loads code-tests-map.json from documentation repository.
   /// Returns mapping: symbol name → test information array
   /// </summary>
-  private static Dictionary<string, TestInfo[]> LoadCodeTestsMap(SourceProductionContext context) {
+  private static Dictionary<string, TestInfo[]> _loadCodeTestsMap(SourceProductionContext context) {
     var docsPath = PathResolver.FindDocsRepositoryPath();
     if (docsPath == null) {
       return new Dictionary<string, TestInfo[]>();
@@ -603,7 +612,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   /// "Whizbang.Core.Dispatcher" → "Dispatcher"
   /// "IDispatcher" → "IDispatcher" (keeps interface prefix)
   /// </summary>
-  private static string ExtractSimpleTypeName(string fullName) {
+  private static string _extractSimpleTypeName(string fullName) {
     var lastDot = fullName.LastIndexOf('.');
     return lastDot >= 0 ? fullName.Substring(lastDot + 1) : fullName;
   }
@@ -611,12 +620,12 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Enriches a MessageTypeInfo with documentation URL and test information.
   /// </summary>
-  private static MessageTypeInfo EnrichMessageInfo(
+  private static MessageTypeInfo _enrichMessageInfo(
       MessageTypeInfo info,
       Dictionary<string, string> docsMap,
       Dictionary<string, TestInfo[]> testsMap) {
 
-    var simpleName = ExtractSimpleTypeName(info.TypeName);
+    var simpleName = _extractSimpleTypeName(info.TypeName);
     var docsUrl = docsMap.TryGetValue(simpleName, out var docs) ? docs : null;
     var tests = testsMap.TryGetValue(simpleName, out var t) ? t : [];
 
@@ -626,12 +635,12 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Enriches a DispatcherLocationInfo with documentation URL and test information.
   /// </summary>
-  private static DispatcherLocationInfo EnrichDispatcherInfo(
+  private static DispatcherLocationInfo _enrichDispatcherInfo(
       DispatcherLocationInfo info,
       Dictionary<string, string> docsMap,
       Dictionary<string, TestInfo[]> testsMap) {
 
-    var simpleName = ExtractSimpleTypeName(info.ClassName);
+    var simpleName = _extractSimpleTypeName(info.ClassName);
     var docsUrl = docsMap.TryGetValue(simpleName, out var docs) ? docs : null;
     var tests = testsMap.TryGetValue(simpleName, out var t) ? t : [];
 
@@ -641,12 +650,12 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Enriches a ReceptorLocationInfo with documentation URL and test information.
   /// </summary>
-  private static ReceptorLocationInfo EnrichReceptorInfo(
+  private static ReceptorLocationInfo _enrichReceptorInfo(
       ReceptorLocationInfo info,
       Dictionary<string, string> docsMap,
       Dictionary<string, TestInfo[]> testsMap) {
 
-    var simpleName = ExtractSimpleTypeName(info.ClassName);
+    var simpleName = _extractSimpleTypeName(info.ClassName);
     var docsUrl = docsMap.TryGetValue(simpleName, out var docs) ? docs : null;
     var tests = testsMap.TryGetValue(simpleName, out var t) ? t : [];
 
@@ -656,26 +665,26 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Enriches a PerspectiveLocationInfo with documentation URL and test information.
   /// </summary>
-  private static PerspectiveLocationInfo EnrichPerspectiveInfo(
+  private static PerspectiveLocationInfo _enrichPerspectiveInfo(
       PerspectiveLocationInfo info,
       Dictionary<string, string> docsMap,
       Dictionary<string, TestInfo[]> testsMap) {
 
-    var simpleName = ExtractSimpleTypeName(info.ClassName);
+    var simpleName = _extractSimpleTypeName(info.ClassName);
     var docsUrl = docsMap.TryGetValue(simpleName, out var docs) ? docs : null;
     var tests = testsMap.TryGetValue(simpleName, out var t) ? t : [];
 
     return info with { DocsUrl = docsUrl, Tests = tests };
   }
 
-  private static string EscapeJson(string value) {
+  private static string _escapeJson(string value) {
     return value.Replace("\\", "\\\\").Replace("\"", "\\\"");
   }
 
   /// <summary>
   /// Builds JSON test entries from test information array.
   /// </summary>
-  private static string BuildTestEntries(TestInfo[] tests, string testSnippet) {
+  private static string _buildTestEntries(TestInfo[] tests, string testSnippet) {
     if (tests.Length == 0) {
       return "";
     }
@@ -684,10 +693,10 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     for (int i = 0; i < tests.Length; i++) {
       var test = tests[i];
       var entry = testSnippet
-          .Replace("__TEST_FILE__", EscapeJson(test.TestFile))
-          .Replace("__TEST_METHOD__", EscapeJson(test.TestMethod))
-          .Replace("__TEST_LINE__", test.TestLine.ToString())
-          .Replace("__TEST_CLASS__", EscapeJson(test.TestClass));
+          .Replace("__TEST_FILE__", _escapeJson(test.TestFile))
+          .Replace("__TEST_METHOD__", _escapeJson(test.TestMethod))
+          .Replace("__TEST_LINE__", test.TestLine.ToString(CultureInfo.InvariantCulture))
+          .Replace("__TEST_CLASS__", _escapeJson(test.TestClass));
 
       entries.Append(entry);
       if (i < tests.Length - 1) {
@@ -699,18 +708,18 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   }
 
   // Helper classes for JSON deserialization
-  private class CodeDocsEntry {
+  private sealed class CodeDocsEntry {
     public string File { get; set; } = "";
     public int Line { get; set; }
     public string Symbol { get; set; } = "";
     public string Docs { get; set; } = "";
   }
 
-  private class CodeTestsMapData {
+  private sealed class CodeTestsMapData {
     public Dictionary<string, TestLinkMapping[]>? CodeToTests { get; set; }
   }
 
-  private class TestLinkMapping {
+  private sealed class TestLinkMapping {
     public string TestFile { get; set; } = "";
     public string TestMethod { get; set; } = "";
     public int TestLine { get; set; }

@@ -86,22 +86,22 @@ public class SecurityContextTests {
   /// Data source for 'with' expression tests.
   /// Returns a function that applies the 'with' expression and the expected values.
   /// </summary>
-  public static IEnumerable<(Func<SecurityContext, SecurityContext> withExpression, string expectedUserId, string expectedTenantId, string originalProperty, string description)> GetWithExpressions() {
-    yield return (
+  public static IEnumerable<Func<(Func<SecurityContext, SecurityContext> withExpression, string expectedUserId, string expectedTenantId, string originalProperty, string description)>> GetWithExpressions() {
+    yield return () => (
       ctx => ctx with { UserId = "user-456" },
       "user-456",
       "tenant-abc",
       "UserId",
       "Update UserId"
     );
-    yield return (
+    yield return () => (
       ctx => ctx with { TenantId = "tenant-xyz" },
       "user-123",
       "tenant-xyz",
       "TenantId",
       "Update TenantId"
     );
-    yield return (
+    yield return () => (
       ctx => ctx with { UserId = "user-789", TenantId = "tenant-def" },
       "user-789",
       "tenant-def",

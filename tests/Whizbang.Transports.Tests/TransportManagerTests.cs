@@ -187,7 +187,7 @@ public class TransportManagerTests {
     var subscriptions = await manager.SubscribeFromTargetsAsync(targets, handler);
 
     // Assert
-    await Assert.That(subscriptions).HasCount().EqualTo(0);
+    await Assert.That(subscriptions).Count().IsEqualTo(0);
   }
 
   [Test]
@@ -198,7 +198,7 @@ public class TransportManagerTests {
     static Task handler(IMessageEnvelope envelope) => Task.CompletedTask;
 
     // Act & Assert
-    await Assert.That(() => manager.SubscribeFromTargetsAsync(null!, handler))
+    await Assert.That(async () => await manager.SubscribeFromTargetsAsync(null!, handler))
       .ThrowsExactly<ArgumentNullException>();
   }
 
@@ -209,7 +209,7 @@ public class TransportManagerTests {
     var targets = new List<SubscriptionTarget>();
 
     // Act & Assert
-    await Assert.That(() => manager.SubscribeFromTargetsAsync(targets, null!))
+    await Assert.That(async () => await manager.SubscribeFromTargetsAsync(targets, null!))
       .ThrowsExactly<ArgumentNullException>();
   }
 }

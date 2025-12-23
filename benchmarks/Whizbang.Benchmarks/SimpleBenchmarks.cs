@@ -13,8 +13,8 @@ namespace Whizbang.Benchmarks;
 [MemoryDiagnoser]
 [MarkdownExporter]
 public class SimpleBenchmarks {
-  private record TestCommand(string Id, int Value);
-  private ISequenceProvider _sequenceProvider = null!;
+  private sealed record TestCommand(string Id, int Value);
+  private InMemorySequenceProvider _sequenceProvider = null!;
   private InMemoryTraceStore _traceStore = null!;
 
   [GlobalSetup]
@@ -36,12 +36,12 @@ public class SimpleBenchmarks {
 
   // Sequence Provider Benchmarks
   [Benchmark]
-  public async Task<long> GetNextSequence() {
+  public async Task<long> GetNextSequenceAsync() {
     return await _sequenceProvider.GetNextAsync("test-stream");
   }
 
   [Benchmark]
-  public async Task GetNextSequence_100Times() {
+  public async Task GetNextSequence_100TimesAsync() {
     for (int i = 0; i < 100; i++) {
       await _sequenceProvider.GetNextAsync("test-stream");
     }
@@ -104,7 +104,7 @@ public class SimpleBenchmarks {
 
   // TraceStore Benchmarks
   [Benchmark]
-  public async Task TraceStore_Store10Envelopes() {
+  public async Task TraceStore_Store10EnvelopesAsync() {
     for (int i = 0; i < 10; i++) {
       var envelope = CreateEnvelope();
       await _traceStore.StoreAsync(envelope);
@@ -112,7 +112,7 @@ public class SimpleBenchmarks {
   }
 
   [Benchmark]
-  public async Task TraceStore_StoreAndRetrieve() {
+  public async Task TraceStore_StoreAndRetrieveAsync() {
     var envelope = CreateEnvelope();
     await _traceStore.StoreAsync(envelope);
     var retrieved = await _traceStore.GetByMessageIdAsync(envelope.MessageId);

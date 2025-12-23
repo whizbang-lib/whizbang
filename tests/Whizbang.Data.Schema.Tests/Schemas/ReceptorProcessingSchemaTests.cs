@@ -30,7 +30,7 @@ public class ReceptorProcessingSchemaTests {
     var columns = ReceptorProcessingSchema.Table.Columns;
 
     // Assert - Verify column count
-    await Assert.That(columns).HasCount().EqualTo(8);
+    await Assert.That(columns).Count().IsEqualTo(8);
 
     // Verify each column definition
     var id = columns[0];
@@ -193,24 +193,24 @@ public class ReceptorProcessingSchemaTests {
     var indexes = ReceptorProcessingSchema.Table.Indexes;
 
     // Assert - Verify index count
-    await Assert.That(indexes).HasCount().EqualTo(3);
+    await Assert.That(indexes).Count().IsEqualTo(3);
 
     // Verify index on event_id
     var eventIdIndex = indexes[0];
     await Assert.That(eventIdIndex.Name).IsEqualTo("idx_receptor_processing_event_id");
-    await Assert.That(eventIdIndex.Columns).HasCount().EqualTo(1);
+    await Assert.That(eventIdIndex.Columns).Count().IsEqualTo(1);
     await Assert.That(eventIdIndex.Columns[0]).IsEqualTo("event_id");
 
     // Verify index on receptor_name
     var receptorNameIndex = indexes[1];
     await Assert.That(receptorNameIndex.Name).IsEqualTo("idx_receptor_processing_receptor_name");
-    await Assert.That(receptorNameIndex.Columns).HasCount().EqualTo(1);
+    await Assert.That(receptorNameIndex.Columns).Count().IsEqualTo(1);
     await Assert.That(receptorNameIndex.Columns[0]).IsEqualTo("receptor_name");
 
     // Verify index on status
     var statusIndex = indexes[2];
     await Assert.That(statusIndex.Name).IsEqualTo("idx_receptor_processing_status");
-    await Assert.That(statusIndex.Columns).HasCount().EqualTo(1);
+    await Assert.That(statusIndex.Columns).Count().IsEqualTo(1);
     await Assert.That(statusIndex.Columns[0]).IsEqualTo("status");
   }
 

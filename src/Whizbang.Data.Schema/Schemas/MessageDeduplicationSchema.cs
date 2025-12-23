@@ -26,15 +26,15 @@ public static class MessageDeduplicationSchema {
     Columns: ImmutableArray.Create(
       new ColumnDefinition(
         Name: "message_id",
-        DataType: WhizbangDataType.Uuid,
+        DataType: WhizbangDataType.UUID,
         PrimaryKey: true,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "first_seen_at",
-        DataType: WhizbangDataType.TimestampTz,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
-        DefaultValue: DefaultValue.Function(DefaultValueFunction.DateTime_Now)
+        DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       )
     ),
     Indexes: ImmutableArray.Create(
@@ -50,7 +50,7 @@ public static class MessageDeduplicationSchema {
   /// </summary>
   /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/MessageDeduplicationSchemaTests.cs:Columns_ShouldProvideTypeConstantsAsync</tests>
   public static class Columns {
-    public const string MessageId = "message_id";
-    public const string FirstSeenAt = "first_seen_at";
+    public const string MESSAGE_ID = "message_id";
+    public const string FIRST_SEEN_AT = "first_seen_at";
   }
 }

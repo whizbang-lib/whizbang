@@ -8,46 +8,46 @@ namespace Whizbang.Data.Schema.Schemas;
 /// Enables sticky assignment and cross-subsystem coordination (outbox/inbox/perspectives).
 /// </summary>
 public static class ActiveStreamsSchema {
-  public const string TableName = "active_streams";
+  public const string TABLE_NAME = "active_streams";
 
   /// <summary>
   /// Complete active_streams table definition.
   /// </summary>
   public static readonly TableDefinition Table = new(
-    Name: TableName,
+    Name: TABLE_NAME,
     Columns: ImmutableArray.Create(
       new ColumnDefinition(
         Name: "stream_id",
-        DataType: WhizbangDataType.Uuid,
+        DataType: WhizbangDataType.UUID,
         PrimaryKey: true,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "partition_number",
-        DataType: WhizbangDataType.Integer,
+        DataType: WhizbangDataType.INTEGER,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "assigned_instance_id",
-        DataType: WhizbangDataType.Uuid,
+        DataType: WhizbangDataType.UUID,
         Nullable: true  // NULL indicates orphaned stream (FK in migration)
       ),
       new ColumnDefinition(
         Name: "lease_expiry",
-        DataType: WhizbangDataType.TimestampTz,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: true  // NULL indicates no lease
       ),
       new ColumnDefinition(
         Name: "created_at",
-        DataType: WhizbangDataType.TimestampTz,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
-        DefaultValue: DefaultValue.Function(DefaultValueFunction.DateTime_Now)
+        DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       ),
       new ColumnDefinition(
         Name: "updated_at",
-        DataType: WhizbangDataType.TimestampTz,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
-        DefaultValue: DefaultValue.Function(DefaultValueFunction.DateTime_Now)
+        DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       )
     ),
     Indexes: ImmutableArray.Create(
@@ -73,11 +73,11 @@ public static class ActiveStreamsSchema {
   /// Column name constants for type-safe access.
   /// </summary>
   public static class Columns {
-    public const string StreamId = "stream_id";
-    public const string PartitionNumber = "partition_number";
-    public const string AssignedInstanceId = "assigned_instance_id";
-    public const string LeaseExpiry = "lease_expiry";
-    public const string CreatedAt = "created_at";
-    public const string UpdatedAt = "updated_at";
+    public const string STREAM_ID = "stream_id";
+    public const string PARTITION_NUMBER = "partition_number";
+    public const string ASSIGNED_INSTANCE_ID = "assigned_instance_id";
+    public const string LEASE_EXPIRY = "lease_expiry";
+    public const string CREATED_AT = "created_at";
+    public const string UPDATED_AT = "updated_at";
   }
 }

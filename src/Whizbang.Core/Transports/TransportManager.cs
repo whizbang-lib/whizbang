@@ -88,10 +88,10 @@ public class TransportManager(IMessageSerializer serializer, IServiceInstancePro
     context ??= MessageContext.New();
 
     // Create envelope once (shared across all targets)
-    var envelope = CreateEnvelope(message, context);
+    var envelope = _createEnvelope(message, context);
 
     // Publish to all targets in parallel
-    var tasks = targets.Select(target => PublishToTargetAsync(envelope, target));
+    var tasks = targets.Select(target => _publishToTargetAsync(envelope, target));
     await Task.WhenAll(tasks);
   }
 
@@ -112,7 +112,7 @@ public class TransportManager(IMessageSerializer serializer, IServiceInstancePro
     }
 
     // Subscribe to all targets in parallel
-    var tasks = targets.Select(target => SubscribeFromTargetAsync(target, handler));
+    var tasks = targets.Select(target => _subscribeFromTargetAsync(target, handler));
     var subscriptions = await Task.WhenAll(tasks);
 
     return [.. subscriptions];
@@ -121,7 +121,7 @@ public class TransportManager(IMessageSerializer serializer, IServiceInstancePro
   /// <summary>
   /// Publishes an envelope to a single target.
   /// </summary>
-  private async Task PublishToTargetAsync(IMessageEnvelope envelope, PublishTarget target) {
+  private async Task _publishToTargetAsync(IMessageEnvelope envelope, PublishTarget target) {
     // Get transport for this target
     var transport = GetTransport(target.TransportType);
 
@@ -138,7 +138,7 @@ public class TransportManager(IMessageSerializer serializer, IServiceInstancePro
   /// <summary>
   /// Creates a subscription from a single target.
   /// </summary>
-  private async Task<ISubscription> SubscribeFromTargetAsync(
+  private async Task<ISubscription> _subscribeFromTargetAsync(
     SubscriptionTarget target,
     Func<IMessageEnvelope, Task> handler
   ) {
@@ -181,18 +181,18 @@ public class TransportManager(IMessageSerializer serializer, IServiceInstancePro
     );
 
     // Wrap handler to match ITransport signature (adds CancellationToken parameter)
-    Task transportHandler(IMessageEnvelope envelope, CancellationToken ct) {
+    Task __transportHandler(IMessageEnvelope envelope, CancellationToken ct) {
       return handler(envelope);
     }
 
     // Subscribe to transport (handler is first parameter!)
-    return await transport.SubscribeAsync(transportHandler, destination, CancellationToken.None);
+    return await transport.SubscribeAsync(__transportHandler, destination, CancellationToken.None);
   }
 
   /// <summary>
   /// Creates a message envelope with hop for observability.
   /// </summary>
-  private MessageEnvelope<TMessage> CreateEnvelope<TMessage>(
+  private MessageEnvelope<TMessage> _createEnvelope<TMessage>(
     TMessage message,
     IMessageContext context
   ) {

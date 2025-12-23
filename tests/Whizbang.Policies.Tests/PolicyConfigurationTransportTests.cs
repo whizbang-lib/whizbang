@@ -397,7 +397,7 @@ public class PolicyConfigurationTransportTests {
     config.PublishToKafka("orders-topic");
 
     // Assert
-    await Assert.That(config.PublishTargets).HasCount().EqualTo(1);
+    await Assert.That(config.PublishTargets).Count().IsEqualTo(1);
     await Assert.That(config.PublishTargets[0].TransportType).IsEqualTo(TransportType.Kafka);
     await Assert.That(config.PublishTargets[0].Destination).IsEqualTo("orders-topic");
   }
@@ -411,7 +411,7 @@ public class PolicyConfigurationTransportTests {
     config.PublishToServiceBus("orders-topic");
 
     // Assert
-    await Assert.That(config.PublishTargets).HasCount().EqualTo(1);
+    await Assert.That(config.PublishTargets).Count().IsEqualTo(1);
     await Assert.That(config.PublishTargets[0].TransportType).IsEqualTo(TransportType.ServiceBus);
     await Assert.That(config.PublishTargets[0].Destination).IsEqualTo("orders-topic");
   }
@@ -425,7 +425,7 @@ public class PolicyConfigurationTransportTests {
     config.PublishToRabbitMQ("orders-exchange", "order.created");
 
     // Assert
-    await Assert.That(config.PublishTargets).HasCount().EqualTo(1);
+    await Assert.That(config.PublishTargets).Count().IsEqualTo(1);
     await Assert.That(config.PublishTargets[0].TransportType).IsEqualTo(TransportType.RabbitMQ);
     await Assert.That(config.PublishTargets[0].Destination).IsEqualTo("orders-exchange");
     await Assert.That(config.PublishTargets[0].RoutingKey).IsEqualTo("order.created");
@@ -442,7 +442,7 @@ public class PolicyConfigurationTransportTests {
       .PublishToServiceBus("orders-topic");
 
     // Assert
-    await Assert.That(config.PublishTargets).HasCount().EqualTo(2);
+    await Assert.That(config.PublishTargets).Count().IsEqualTo(2);
     await Assert.That(config.PublishTargets[0].TransportType).IsEqualTo(TransportType.Kafka);
     await Assert.That(config.PublishTargets[1].TransportType).IsEqualTo(TransportType.ServiceBus);
   }
@@ -472,7 +472,7 @@ public class PolicyConfigurationTransportTests {
     config.SubscribeFromKafka("orders-topic", "inventory-service");
 
     // Assert
-    await Assert.That(config.SubscriptionTargets).HasCount().EqualTo(1);
+    await Assert.That(config.SubscriptionTargets).Count().IsEqualTo(1);
     await Assert.That(config.SubscriptionTargets[0].TransportType).IsEqualTo(TransportType.Kafka);
     await Assert.That(config.SubscriptionTargets[0].Topic).IsEqualTo("orders-topic");
     await Assert.That(config.SubscriptionTargets[0].ConsumerGroup).IsEqualTo("inventory-service");
@@ -499,7 +499,7 @@ public class PolicyConfigurationTransportTests {
     config.SubscribeFromServiceBus("orders-topic", "inventory-sub");
 
     // Assert
-    await Assert.That(config.SubscriptionTargets).HasCount().EqualTo(1);
+    await Assert.That(config.SubscriptionTargets).Count().IsEqualTo(1);
     await Assert.That(config.SubscriptionTargets[0].TransportType).IsEqualTo(TransportType.ServiceBus);
     await Assert.That(config.SubscriptionTargets[0].Topic).IsEqualTo("orders-topic");
     await Assert.That(config.SubscriptionTargets[0].SubscriptionName).IsEqualTo("inventory-sub");
@@ -526,7 +526,7 @@ public class PolicyConfigurationTransportTests {
     config.SubscribeFromRabbitMQ("orders-exchange", "inventory-queue");
 
     // Assert
-    await Assert.That(config.SubscriptionTargets).HasCount().EqualTo(1);
+    await Assert.That(config.SubscriptionTargets).Count().IsEqualTo(1);
     await Assert.That(config.SubscriptionTargets[0].TransportType).IsEqualTo(TransportType.RabbitMQ);
     await Assert.That(config.SubscriptionTargets[0].Topic).IsEqualTo("orders-exchange");
     await Assert.That(config.SubscriptionTargets[0].QueueName).IsEqualTo("inventory-queue");
@@ -555,7 +555,7 @@ public class PolicyConfigurationTransportTests {
       .SubscribeFromServiceBus("orders-topic", "inventory-sub");
 
     // Assert
-    await Assert.That(config.SubscriptionTargets).HasCount().EqualTo(2);
+    await Assert.That(config.SubscriptionTargets).Count().IsEqualTo(2);
     await Assert.That(config.SubscriptionTargets[0].TransportType).IsEqualTo(TransportType.Kafka);
     await Assert.That(config.SubscriptionTargets[1].TransportType).IsEqualTo(TransportType.ServiceBus);
   }

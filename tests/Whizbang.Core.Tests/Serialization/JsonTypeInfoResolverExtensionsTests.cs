@@ -103,5 +103,5 @@ public class JsonTypeInfoResolverExtensionsTests {
 /// Test JsonSerializerContext for testing purposes.
 /// </summary>
 [JsonSerializable(typeof(string))]
-internal partial class TestJsonContext : JsonSerializerContext {
+internal sealed partial class TestJsonContext : JsonSerializerContext {
 }

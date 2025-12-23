@@ -15,7 +15,7 @@ namespace Whizbang.Generators.Templates.Snippets;
 /// </summary>
 public class DispatcherSnippets {
   // Placeholder property to make snippets compile
-  protected IServiceProvider _serviceProvider => null!;
+  protected IServiceProvider ServiceProvider => null!;
 
   /// <summary>
   /// Example method showing snippet structure for Send routing.
@@ -24,7 +24,7 @@ public class DispatcherSnippets {
   protected ReceptorInvoker<TResult>? SendRoutingExample<TResult>(object message, Type messageType) {
     #region SEND_ROUTING_SNIPPET
     if (messageType == typeof(__MESSAGE_TYPE__)) {
-      var receptor = _serviceProvider.GetService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
+      var receptor = ServiceProvider.GetService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
       if (receptor == null) {
         return null;
       }
@@ -62,7 +62,7 @@ public class DispatcherSnippets {
   protected ReceptorPublisher<TEvent> PublishRoutingExample<TEvent>(TEvent @event, Type eventType) {
     #region PUBLISH_ROUTING_SNIPPET
     if (eventType == typeof(__MESSAGE_TYPE__)) {
-      var receptors = _serviceProvider.GetServices<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, object>>();
+      var receptors = ServiceProvider.GetServices<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, object>>();
 
       [System.Diagnostics.DebuggerStepThrough]
       async Task PublishToReceptors(TEvent evt) {
@@ -103,7 +103,7 @@ public class DispatcherSnippets {
   protected VoidReceptorInvoker? VoidSendRoutingExample(object message, Type messageType) {
     #region VOID_SEND_ROUTING_SNIPPET
     if (messageType == typeof(__MESSAGE_TYPE__)) {
-      var receptor = _serviceProvider.GetService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
+      var receptor = ServiceProvider.GetService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
       if (receptor == null) {
         return null;
       }

@@ -16,8 +16,8 @@ namespace Whizbang.Core.Pooling;
 /// </summary>
 public static class PolicyContextPool {
   private static readonly ConcurrentBag<PolicyContext> _pool = [];
-  private static int _poolSize = 0;
-  private const int MaxPoolSize = 1024;
+  private static int _poolSize;
+  private const int MAX_POOL_SIZE = 1024;
 
   /// <summary>
   /// Rents a PolicyContext from the pool and initializes it with the specified values.
@@ -59,7 +59,7 @@ public static class PolicyContextPool {
     context.Reset();
 
     // Only add back to pool if we haven't reached max size
-    if (_poolSize < MaxPoolSize) {
+    if (_poolSize < MAX_POOL_SIZE) {
       _pool.Add(context);
       Interlocked.Increment(ref _poolSize);
     }

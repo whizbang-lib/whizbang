@@ -15,9 +15,9 @@ namespace Whizbang.Data.Dapper.Custom;
 /// </summary>
 /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs</tests>
 public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
-  protected readonly IDbConnectionFactory _connectionFactory;
-  protected readonly IDbExecutor _executor;
-  protected readonly JsonSerializerOptions _jsonOptions;
+  private readonly IDbConnectionFactory _connectionFactory;
+  private readonly IDbExecutor _executor;
+  private readonly JsonSerializerOptions _jsonOptions;
 
   protected DapperRequestResponseStoreBase(
     IDbConnectionFactory connectionFactory,
@@ -32,6 +32,10 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
     _executor = executor;
     _jsonOptions = jsonOptions;
   }
+
+  protected IDbConnectionFactory ConnectionFactory => _connectionFactory;
+  protected IDbExecutor Executor => _executor;
+  protected JsonSerializerOptions JsonOptions => _jsonOptions;
 
   /// <summary>
   /// Ensures the connection is open. Handles both pre-opened and closed connections.
@@ -80,13 +84,13 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
   /// </summary>
   /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:SaveRequestAsync_ShouldStoreRequestAsync</tests>
   public async Task SaveRequestAsync(CorrelationId correlationId, MessageId requestId, TimeSpan timeout, CancellationToken cancellationToken = default) {
-    using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
+    using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
 
     var sql = GetSaveRequestSql();
     var expiresAt = DateTimeOffset.UtcNow + timeout;
 
-    await _executor.ExecuteAsync(
+    await Executor.ExecuteAsync(
       connection,
       sql,
       new {
@@ -119,12 +123,12 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
       var startTime = DateTimeOffset.UtcNow;
 
       while (!cancellationToken.IsCancellationRequested) {
-        using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
+        using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
         EnsureConnectionOpen(connection);
 
         var sql = GetWaitForResponseSql();
 
-        var row = await _executor.QuerySingleOrDefaultAsync<RequestResponseRow>(
+        var row = await Executor.QuerySingleOrDefaultAsync<RequestResponseRow>(
           connection,
           sql,
           new { CorrelationId = correlationId.Value },
@@ -143,7 +147,7 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
         if (!string.IsNullOrEmpty(row.ResponseEnvelope)) {
           // Response is available - deserialize with concrete type (AOT-compatible)
           var envelopeType = typeof(MessageEnvelope<TMessage>);
-          var typeInfo = _jsonOptions.GetTypeInfo(envelopeType) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
+          var typeInfo = JsonOptions.GetTypeInfo(envelopeType) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
           return JsonSerializer.Deserialize(row.ResponseEnvelope, typeInfo) as MessageEnvelope<TMessage>;
         }
 
@@ -170,16 +174,16 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
   public async Task SaveResponseAsync(CorrelationId correlationId, IMessageEnvelope response, CancellationToken cancellationToken = default) {
     ArgumentNullException.ThrowIfNull(response);
 
-    using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
+    using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
 
     // Serialize using the actual runtime type to preserve all properties (AOT-compatible)
     var responseType = response.GetType();
-    var typeInfo = _jsonOptions.GetTypeInfo(responseType) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {responseType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
+    var typeInfo = JsonOptions.GetTypeInfo(responseType) ?? throw new InvalidOperationException($"No JsonTypeInfo found for {responseType.Name}. Ensure the message type is registered in WhizbangJsonContext.");
     var json = JsonSerializer.Serialize(response, typeInfo);
     var sql = GetSaveResponseSql();
 
-    await _executor.ExecuteAsync(
+    await Executor.ExecuteAsync(
       connection,
       sql,
       new {
@@ -194,12 +198,12 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
   /// </summary>
   /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:CleanupExpiredAsync_ShouldNotThrowAsync</tests>
   public async Task CleanupExpiredAsync(CancellationToken cancellationToken = default) {
-    using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
+    using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
 
     var sql = GetCleanupExpiredSql();
 
-    await _executor.ExecuteAsync(
+    await Executor.ExecuteAsync(
       connection,
       sql,
       new { Now = DateTimeOffset.UtcNow },

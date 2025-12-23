@@ -37,6 +37,9 @@ public class WorkChannelWriter : IWorkChannelWriter {
   /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedWorkCoordinatorStrategyImmediateProcessingTests.cs:TestWorkChannelWriter.Reader</tests>
   public ChannelReader<OutboxWork> Reader => _channel.Reader;
 
+  /// <summary>
+  /// Asynchronously writes work to the channel, waiting if necessary.
+  /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerDatabaseReadinessTests.cs:TestWorkChannelWriter.WriteAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerChannelTests.cs:TestWorkChannelWriter.WriteAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerStartupTests.cs:TestWorkChannelWriter.WriteAsync</tests>
@@ -47,6 +50,9 @@ public class WorkChannelWriter : IWorkChannelWriter {
     return _channel.Writer.WriteAsync(work, ct);
   }
 
+  /// <summary>
+  /// Attempts to write work to the channel immediately without waiting.
+  /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerDatabaseReadinessTests.cs:TestWorkChannelWriter.TryWrite</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerChannelTests.cs:TestWorkChannelWriter.TryWrite</tests>
   /// <tests>tests/Whizbang.Core.Tests/Workers/WorkCoordinatorPublisherWorkerStartupTests.cs:TestWorkChannelWriter.TryWrite</tests>

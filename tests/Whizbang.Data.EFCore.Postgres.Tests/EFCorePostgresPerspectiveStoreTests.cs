@@ -12,7 +12,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// These tests use EF Core InMemory provider for fast, isolated testing.
 /// </summary>
 public class EFCorePostgresPerspectiveStoreTests {
-  private readonly IWhizbangIdProvider _idProvider = new Uuid7IdProvider();
+  private readonly Uuid7IdProvider _idProvider = new Uuid7IdProvider();
 
   private TestDbContext CreateInMemoryDbContext() {
     var options = new DbContextOptionsBuilder<TestDbContext>()

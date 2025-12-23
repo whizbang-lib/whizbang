@@ -13,7 +13,7 @@ namespace Whizbang.Core.Data;
 /// </summary>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStoreTests.cs:CreateEventStoreAsync</tests>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:SetupAsync</tests>
-public class JsonbSizeValidator(ILogger<JsonbSizeValidator> logger, JsonSerializerOptions jsonOptions) {
+public partial class JsonbSizeValidator(ILogger<JsonbSizeValidator> logger, JsonSerializerOptions jsonOptions) {
   /// <summary>
   /// TOAST compression threshold: PostgreSQL begins compressing columns > 2KB.
   /// Performance impact: ~2× slower than uncompressed.
@@ -59,29 +59,25 @@ public class JsonbSizeValidator(ILogger<JsonbSizeValidator> logger, JsonSerializ
 
     // Check TOAST externalization threshold (7KB default)
     if (dataSize >= threshold) {
-      var message = $"{typeName} data size ({dataSize:N0} bytes) exceeds TOAST externalization threshold ({threshold:N0} bytes). " +
-                    $"This will cause 5-10× performance degradation. " +
-                    $"Consider splitting data or using fixed columns for frequently-queried fields.";
-
-      _logger.LogWarning(message);
+      LogToastExternalizationWarning(_logger, typeName, dataSize, threshold);
 
       // Add warning to metadata (only when threshold crossed)
-      model = AddSizeWarningToMetadata(model, dataSize, threshold, "externalized");
+      model = _addSizeWarningToMetadata(model, dataSize, threshold, "externalized");
 
       // Optionally throw exception
       if (policy?.ThrowOnSizeExceeded == true) {
+        var message = $"{typeName} data size ({dataSize:N0} bytes) exceeds TOAST externalization threshold ({threshold:N0} bytes). " +
+                      $"This will cause 5-10× performance degradation. " +
+                      $"Consider splitting data or using fixed columns for frequently-queried fields.";
         throw new InvalidOperationException(message);
       }
     }
     // Check TOAST compression threshold (2KB)
     else if (dataSize >= TOAST_COMPRESSION_THRESHOLD) {
-      var message = $"{typeName} data size ({dataSize:N0} bytes) exceeds TOAST compression threshold (2,000 bytes). " +
-                    $"This will cause ~2× performance degradation due to compression overhead.";
-
-      _logger.LogInformation(message);
+      LogToastCompressionInfo(_logger, typeName, dataSize, TOAST_COMPRESSION_THRESHOLD);
 
       // Add warning to metadata (only when threshold crossed)
-      model = AddSizeWarningToMetadata(model, dataSize, TOAST_COMPRESSION_THRESHOLD, "compressed");
+      model = _addSizeWarningToMetadata(model, dataSize, TOAST_COMPRESSION_THRESHOLD, "compressed");
     }
 
     return model;
@@ -92,7 +88,7 @@ public class JsonbSizeValidator(ILogger<JsonbSizeValidator> logger, JsonSerializ
   /// Only called when threshold is crossed (for troubleshooting).
   /// AOT-compatible using JsonDocument for reading and Utf8JsonWriter for writing.
   /// </summary>
-  private JsonbPersistenceModel AddSizeWarningToMetadata(
+  private JsonbPersistenceModel _addSizeWarningToMetadata(
     JsonbPersistenceModel model,
     int actualSize,
     int threshold,
@@ -124,8 +120,49 @@ public class JsonbSizeValidator(ILogger<JsonbSizeValidator> logger, JsonSerializ
       return model with { MetadataJson = updatedMetadataJson };
     } catch (JsonException ex) {
       // If metadata JSON is malformed, log error but don't fail validation
-      _logger.LogError(ex, "Failed to add size warning to metadata JSON. Proceeding without size metadata.");
+      LogMetadataError(_logger, ex);
       return model;
     }
   }
+
+  // ========================================
+  // High-Performance LoggerMessage Delegates
+  // ========================================
+  // These are source-generated at compile time for zero-allocation logging.
+  // Each method is compiled to a strongly-typed delegate that:
+  // - Avoids boxing value types
+  // - Pre-compiles the format string
+  // - Eliminates reflection overhead
+  // Performance: ~20-50ns per call vs 200-500ns for traditional logging
+
+  [LoggerMessage(
+    EventId = 1,
+    Level = LogLevel.Warning,
+    Message = "{TypeName} data size ({DataSize} bytes) exceeds TOAST externalization threshold ({Threshold} bytes). This will cause 5-10× performance degradation. Consider splitting data or using fixed columns for frequently-queried fields."
+  )]
+  static partial void LogToastExternalizationWarning(
+    ILogger logger,
+    string typeName,
+    int dataSize,
+    int threshold
+  );
+
+  [LoggerMessage(
+    EventId = 2,
+    Level = LogLevel.Information,
+    Message = "{TypeName} data size ({DataSize} bytes) exceeds TOAST compression threshold ({Threshold} bytes). This will cause ~2× performance degradation due to compression overhead."
+  )]
+  static partial void LogToastCompressionInfo(
+    ILogger logger,
+    string typeName,
+    int dataSize,
+    int threshold
+  );
+
+  [LoggerMessage(
+    EventId = 3,
+    Level = LogLevel.Error,
+    Message = "Failed to add size warning to metadata JSON. Proceeding without size metadata."
+  )]
+  static partial void LogMetadataError(ILogger logger, Exception ex);
 }

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 using Whizbang.Core.Observability;
 
@@ -212,13 +213,13 @@ public class PolicyContext {
         return false;
       }
       var flagsValue = jsonElement.GetInt64();
-      var targetFlagValue = Convert.ToInt64(flag);
+      var targetFlagValue = Convert.ToInt64(flag, CultureInfo.InvariantCulture);
       return (flagsValue & targetFlagValue) == targetFlagValue;
     }
 
     // Handle direct numeric values (for backwards compatibility)
-    var flagsNumeric = Convert.ToInt64(flags);
-    var targetFlag = Convert.ToInt64(flag);
+    var flagsNumeric = Convert.ToInt64(flags, CultureInfo.InvariantCulture);
+    var targetFlag = Convert.ToInt64(flag, CultureInfo.InvariantCulture);
     return (flagsNumeric & targetFlag) == targetFlag;
   }
 

@@ -93,7 +93,7 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
 
     // Convert partition key to Guid for storage
     // Supports Guid, string, int, etc. via conversion
-    var partitionGuid = ConvertPartitionKeyToGuid(partitionKey);
+    var partitionGuid = _convertPartitionKeyToGuid(partitionKey);
 
     // Query the perspective table by Id (which stores the partition key)
     var row = await _context.Set<PerspectiveRow<TModel>>()
@@ -114,7 +114,7 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
       where TPartitionKey : notnull {
 
     // Convert partition key to Guid for storage
-    var partitionGuid = ConvertPartitionKeyToGuid(partitionKey);
+    var partitionGuid = _convertPartitionKeyToGuid(partitionKey);
 
     // Use default metadata for generic upserts
     var metadata = new PerspectiveMetadata {
@@ -140,7 +140,8 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
   /// Converts a partition key of any type to a Guid for storage.
   /// Supports Guid (identity), string (deterministic hash), int, etc.
   /// </summary>
-  private static Guid ConvertPartitionKeyToGuid<TPartitionKey>(TPartitionKey partitionKey)
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA5351:Do Not Use Broken Cryptographic Algorithms", Justification = "MD5 used for deterministic GUID generation, not for cryptographic security")]
+  private static Guid _convertPartitionKeyToGuid<TPartitionKey>(TPartitionKey partitionKey)
       where TPartitionKey : notnull {
 
     // If already a Guid, return as-is
@@ -151,15 +152,13 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
     // If string, create deterministic Guid from hash
     if (partitionKey is string str) {
       // Use MD5 for deterministic Guid generation (not cryptographic)
-      using var md5 = System.Security.Cryptography.MD5.Create();
-      var hash = md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes(str));
+      var hash = System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(str));
       return new Guid(hash);
     }
 
     // For other types (int, long, etc.), convert to string then to Guid
     var stringValue = partitionKey.ToString()!;
-    using var md5Other = System.Security.Cryptography.MD5.Create();
-    var hashOther = md5Other.ComputeHash(System.Text.Encoding.UTF8.GetBytes(stringValue));
+    var hashOther = System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(stringValue));
     return new Guid(hashOther);
   }
 }

@@ -126,16 +126,16 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Wait for PostgreSQL to be ready before proceeding
     // Aspire starts containers but doesn't guarantee they're accepting connections
     Console.WriteLine("[AspireFixture] Waiting for PostgreSQL to be ready...");
-    await WaitForPostgresReadyAsync(cancellationToken);
+    await _waitForPostgresReadyAsync(cancellationToken);
 
     // Create service hosts (but don't start them yet)
-    _inventoryHost = CreateInventoryHost(_postgresConnection, _serviceBusConnection);
-    _bffHost = CreateBffHost(_postgresConnection, _serviceBusConnection);
+    _inventoryHost = _createInventoryHost(_postgresConnection, _serviceBusConnection);
+    _bffHost = _createBffHost(_postgresConnection, _serviceBusConnection);
 
     Console.WriteLine("[AspireFixture] Service hosts created. Initializing schema...");
 
     // Initialize PostgreSQL schema using EFCore DbContexts
-    await InitializeSchemaAsync(cancellationToken);
+    await _initializeSchemaAsync(cancellationToken);
 
     Console.WriteLine("[AspireFixture] Schema initialized.");
 
@@ -147,7 +147,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // NOTE: The config file with $Default TrueFilter rules is mounted via Aspire at container startup
     // (see ECommerce.Integration.Tests.AppHost/Program.cs), so we don't need to modify config here.
     Console.WriteLine("[AspireFixture] Waiting for Azure Service Bus Emulator to be fully ready...");
-    await WaitForServiceBusEmulatorReadyAsync(cancellationToken);
+    await _waitForServiceBusEmulatorReadyAsync(cancellationToken);
 
     Console.WriteLine("[AspireFixture] Starting service hosts...");
 
@@ -172,7 +172,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   /// </summary>
   [RequiresUnreferencedCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
   [RequiresDynamicCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
-  private IHost CreateInventoryHost(string postgresConnection, string serviceBusConnection) {
+  private IHost _createInventoryHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
 
     // Register service instance provider (uses shared instance ID for partition claiming compatibility)
@@ -293,7 +293,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   /// </summary>
   [RequiresUnreferencedCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
   [RequiresDynamicCode("Calls Npgsql.NpgsqlDataSourceBuilder.EnableDynamicJson(Type[], Type[])")]
-  private IHost CreateBffHost(string postgresConnection, string serviceBusConnection) {
+  private IHost _createBffHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
 
     // Register service instance provider (uses shared instance ID for partition claiming compatibility)
@@ -408,7 +408,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Initializes the PostgreSQL schema: Whizbang core tables + InventoryWorker schema + BFF schema.
   /// </summary>
-  private async Task InitializeSchemaAsync(CancellationToken cancellationToken = default) {
+  private async Task _initializeSchemaAsync(CancellationToken cancellationToken = default) {
     // Initialize InventoryWorker schema using EFCore
     // Creates Inbox/Outbox/EventStore + PostgreSQL functions + perspective tables for InventoryWorker
     using (var scope = _inventoryHost!.Services.CreateScope()) {
@@ -428,7 +428,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   /// Waits for PostgreSQL to be ready by attempting to connect until successful.
   /// Aspire starts containers but doesn't guarantee they're accepting connections.
   /// </summary>
-  private async Task WaitForPostgresReadyAsync(CancellationToken cancellationToken = default) {
+  private async Task _waitForPostgresReadyAsync(CancellationToken cancellationToken = default) {
     var maxAttempts = 30; // 30 seconds total
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
@@ -451,7 +451,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   /// The emulator takes 60-90 seconds to initialize on ARM64 (start SQL Server, create databases, provision topics).
   /// The pre-configured Config.json with $Default TrueFilter rules is mounted at container startup via Aspire.
   /// </summary>
-  private async Task WaitForServiceBusEmulatorReadyAsync(CancellationToken cancellationToken = default) {
+  private async Task _waitForServiceBusEmulatorReadyAsync(CancellationToken cancellationToken = default) {
     // WORKAROUND: Azure Service Bus Emulator takes significant time to initialize:
     // 1. Start SQL Server (15s initial wait + retries)
     // 2. Create databases (SbGatewayDatabase, SbMessageContainerDatabase00001)
@@ -474,10 +474,10 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   /// Adds $Default TrueFilter rules to all Service Bus subscriptions by modifying the emulator's config file.
   /// Uses Docker cp + Python script to modify JSON since ServiceBusAdministrationClient isn't supported by emulator.
   /// </summary>
-  private async Task AddServiceBusSubscriptionRulesAsync(CancellationToken cancellationToken = default) {
+  private async Task _addServiceBusSubscriptionRulesAsync(CancellationToken cancellationToken = default) {
     // Find the Service Bus emulator container
     var findContainerCmd = "docker ps --filter \"ancestor=mcr.microsoft.com/azure-messaging/servicebus-emulator\" --format \"{{.ID}}\"";
-    var findResult = await RunBashCommandAsync(findContainerCmd, cancellationToken);
+    var findResult = await _runBashCommandAsync(findContainerCmd, cancellationToken);
     var containerId = findResult.Trim();
 
     if (string.IsNullOrEmpty(containerId)) {
@@ -493,18 +493,18 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
 
       // Copy config file from container to host
       var copyFromCmd = $"docker cp {containerId}:/ServiceBus_Emulator/ConfigFiles/Config.json {tempConfigPath}";
-      await RunBashCommandAsync(copyFromCmd, cancellationToken);
+      await _runBashCommandAsync(copyFromCmd, cancellationToken);
       Console.WriteLine("[AspireFixture] Copied config from container");
 
       // Run Python script to add rules
       var scriptPath = Path.Combine(AppContext.BaseDirectory, "add-servicebus-rules.py");
       var modifyConfigCmd = $"/usr/bin/python3 {scriptPath} < {tempConfigPath} > {tempModifiedPath} 2>&1";
-      var pythonOutput = await RunBashCommandAsync(modifyConfigCmd, cancellationToken);
+      var pythonOutput = await _runBashCommandAsync(modifyConfigCmd, cancellationToken);
       Console.WriteLine($"[AspireFixture] Python script output: {pythonOutput}");
 
       // Copy modified config back to container
       var copyToCmd = $"docker cp {tempModifiedPath} {containerId}:/ServiceBus_Emulator/ConfigFiles/Config.json";
-      await RunBashCommandAsync(copyToCmd, cancellationToken);
+      await _runBashCommandAsync(copyToCmd, cancellationToken);
       Console.WriteLine("[AspireFixture] Copied modified config back to container");
 
       // Clean up temp files
@@ -515,7 +515,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
 
       // Verify the rules were added (read config again)
       var readConfigCmd = $"docker exec {containerId} cat /ServiceBus_Emulator/ConfigFiles/Config.json";
-      var updatedConfig = await RunBashCommandAsync(readConfigCmd, cancellationToken);
+      var updatedConfig = await _runBashCommandAsync(readConfigCmd, cancellationToken);
       if (updatedConfig.Contains("\"Name\":\"$Default\"")) {
         Console.WriteLine("[AspireFixture] Verified: $Default rules present in config");
       } else {
@@ -527,7 +527,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     }
   }
 
-  private async Task<string> RunBashCommandAsync(string command, CancellationToken cancellationToken = default) {
+  private async Task<string> _runBashCommandAsync(string command, CancellationToken cancellationToken = default) {
     var processInfo = new System.Diagnostics.ProcessStartInfo {
       FileName = "/bin/bash",
       Arguments = $"-c \"{command}\"",

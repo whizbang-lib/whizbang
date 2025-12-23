@@ -45,7 +45,7 @@ public class ServiceBusInfrastructureOptionsTests {
     options.RequiredTopics.Add(requirement);
 
     // Assert
-    await Assert.That(options.RequiredTopics).HasCount().EqualTo(1);
+    await Assert.That(options.RequiredTopics).Count().IsEqualTo(1);
     await Assert.That(options.RequiredTopics[0]).IsEqualTo(requirement);
   }
 
@@ -109,7 +109,7 @@ public class ServiceBusInfrastructureOptionsTests {
     options.RequiredTopics.Add(req3);
 
     // Assert
-    await Assert.That(options.RequiredTopics).HasCount().EqualTo(3);
+    await Assert.That(options.RequiredTopics).Count().IsEqualTo(3);
     await Assert.That(options.RequiredTopics).Contains(req1);
     await Assert.That(options.RequiredTopics).Contains(req2);
     await Assert.That(options.RequiredTopics).Contains(req3);

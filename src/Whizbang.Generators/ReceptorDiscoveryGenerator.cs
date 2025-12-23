@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Immutable;
+using System.Globalization;
 using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
@@ -41,13 +43,13 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Pipeline 1: Discover IReceptor implementations
     var receptorCandidates = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => ExtractReceptorInfo(ctx, ct)
+        transform: static (ctx, ct) => _extractReceptorInfo(ctx, ct)
     ).Where(static info => info is not null);
 
     // Pipeline 2: Check for IPerspectiveFor implementations (for WHIZ002 diagnostic)
     var perspectiveCandidates = context.SyntaxProvider.CreateSyntaxProvider(
         predicate: static (node, _) => node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
-        transform: static (ctx, ct) => HasPerspectiveInterface(ctx, ct)
+        transform: static (ctx, ct) => _hasPerspectiveInterface(ctx, ct)
     ).Where(static hasPerspective => hasPerspective);
 
     // Combine both pipelines to determine if any message handlers exist
@@ -64,7 +66,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
           var compilation = data.Left;
           var receptors = data.Right.Left;
           var perspectives = data.Right.Right;
-          GenerateDispatcherRegistrations(ctx, compilation, receptors!, perspectives);
+          _generateDispatcherRegistrations(ctx, compilation, receptors!, perspectives);
         }
     );
   }
@@ -74,7 +76,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// Returns null if the class doesn't implement IReceptor.
   /// Supports both IReceptor&lt;TMessage, TResponse&gt; and IReceptor&lt;TMessage&gt; (void) patterns.
   /// </summary>
-  private static ReceptorInfo? ExtractReceptorInfo(
+  private static ReceptorInfo? _extractReceptorInfo(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
 
@@ -122,7 +124,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// Supports both variadic interface pattern (IPerspectiveFor&lt;TModel, TEvent1, TEvent2&gt;)
   /// and multiple separate interfaces (IPerspectiveFor&lt;TModel, TEvent1&gt;, IPerspectiveFor&lt;TModel, TEvent2&gt;).
   /// </summary>
-  private static bool HasPerspectiveInterface(
+  private static bool _hasPerspectiveInterface(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
 
@@ -137,7 +139,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var hasPerspective = classSymbol.AllInterfaces.Any(i => {
       var originalDef = i.OriginalDefinition.ToDisplayString();
       // Check if it starts with our perspective interface name and has at least 2 type arguments (model + events)
-      return originalDef.StartsWith(PERSPECTIVE_INTERFACE_NAME + "<") && i.TypeArguments.Length >= 2;
+      return originalDef.StartsWith(PERSPECTIVE_INTERFACE_NAME + "<", StringComparison.Ordinal) && i.TypeArguments.Length >= 2;
     });
 
     return hasPerspective;
@@ -148,7 +150,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// Only reports WHIZ002 warning if BOTH receptors and perspectives are absent.
   /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
-  private static void GenerateDispatcherRegistrations(
+  private static void _generateDispatcherRegistrations(
       SourceProductionContext context,
       Compilation compilation,
       ImmutableArray<ReceptorInfo> receptors,
@@ -170,23 +172,23 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     // Report each discovered receptor
     foreach (var receptor in receptors) {
-      var responseTypeName = receptor.IsVoid ? "void" : GetSimpleName(receptor.ResponseType!);
+      var responseTypeName = receptor.IsVoid ? "void" : _getSimpleName(receptor.ResponseType!);
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.ReceptorDiscovered,
           Location.None,
-          GetSimpleName(receptor.ClassName),
-          GetSimpleName(receptor.MessageType),
+          _getSimpleName(receptor.ClassName),
+          _getSimpleName(receptor.MessageType),
           responseTypeName
       ));
     }
 
-    var registrationSource = GenerateRegistrationSource(compilation, receptors);
+    var registrationSource = _generateRegistrationSource(compilation, receptors);
     context.AddSource("DispatcherRegistrations.g.cs", registrationSource);
 
-    var dispatcherSource = GenerateDispatcherSource(compilation, receptors);
+    var dispatcherSource = _generateDispatcherSource(compilation, receptors);
     context.AddSource("Dispatcher.g.cs", dispatcherSource);
 
-    var diagnosticsSource = GenerateDiagnosticsSource(compilation, receptors);
+    var diagnosticsSource = _generateDiagnosticsSource(compilation, receptors);
     context.AddSource("ReceptorDiscoveryDiagnostics.g.cs", diagnosticsSource);
   }
 
@@ -196,7 +198,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// Handles both IReceptor&lt;TMessage, TResponse&gt; and IReceptor&lt;TMessage&gt; (void) patterns.
   /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
-  private static string GenerateRegistrationSource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
+  private static string _generateRegistrationSource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
     // Determine namespace from assembly name
     var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
@@ -247,7 +249,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var result = template;
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(ReceptorDiscoveryGenerator).Assembly, result);
     result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName} {{");
-    result = result.Replace("{{RECEPTOR_COUNT}}", receptors.Length.ToString());
+    result = result.Replace("{{RECEPTOR_COUNT}}", receptors.Length.ToString(CultureInfo.InvariantCulture));
     result = TemplateUtilities.ReplaceRegion(result, "RECEPTOR_REGISTRATIONS", registrations.ToString());
 
     return result;
@@ -259,7 +261,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// Handles both IReceptor&lt;TMessage, TResponse&gt; and IReceptor&lt;TMessage&gt; (void) patterns.
   /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
-  private static string GenerateDispatcherSource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
+  private static string _generateDispatcherSource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
     // Determine namespace from assembly name
     var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
@@ -358,7 +360,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName};");
 
     // Replace {{VARIABLE}} markers with simple string replacement
-    result = result.Replace("{{RECEPTOR_COUNT}}", receptors.Length.ToString());
+    result = result.Replace("{{RECEPTOR_COUNT}}", receptors.Length.ToString(CultureInfo.InvariantCulture));
 
     // Replace #region markers using shared utilities (robust against whitespace)
     result = TemplateUtilities.ReplaceRegion(result, "SEND_ROUTING", sendRouting.ToString());
@@ -374,12 +376,12 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// Uses template-based generation for IDE support.
   /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
   /// </summary>
-  private static string GenerateDiagnosticsSource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
+  private static string _generateDiagnosticsSource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
     // Determine namespace from assembly name
     var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
     var namespaceName = $"{assemblyName}.Generated";
 
-    var timestamp = System.DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss UTC");
+    var timestamp = System.DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss UTC", CultureInfo.InvariantCulture);
 
     // Load template from embedded resource
     var template = TemplateUtilities.GetEmbeddedTemplate(
@@ -398,11 +400,11 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var messages = new StringBuilder();
     for (int i = 0; i < receptors.Length; i++) {
       var receptor = receptors[i];
-      var responseTypeName = receptor.IsVoid ? "void" : GetSimpleName(receptor.ResponseType!);
+      var responseTypeName = receptor.IsVoid ? "void" : _getSimpleName(receptor.ResponseType!);
       var generatedCode = messageSnippet
-          .Replace("__INDEX__", (i + 1).ToString())
-          .Replace("__RECEPTOR_NAME__", GetSimpleName(receptor.ClassName))
-          .Replace("__MESSAGE_NAME__", GetSimpleName(receptor.MessageType))
+          .Replace("__INDEX__", (i + 1).ToString(CultureInfo.InvariantCulture))
+          .Replace("__RECEPTOR_NAME__", _getSimpleName(receptor.ClassName))
+          .Replace("__MESSAGE_NAME__", _getSimpleName(receptor.MessageType))
           .Replace("__RESPONSE_NAME__", responseTypeName);
 
       messages.Append(TemplateUtilities.IndentCode(generatedCode, "            "));
@@ -417,7 +419,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var result = template;
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(ReceptorDiscoveryGenerator).Assembly, result);
     result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName} {{");
-    result = result.Replace("{{RECEPTOR_COUNT}}", receptors.Length.ToString());
+    result = result.Replace("{{RECEPTOR_COUNT}}", receptors.Length.ToString(CultureInfo.InvariantCulture));
     result = result.Replace("{{TIMESTAMP}}", timestamp);
     result = TemplateUtilities.ReplaceRegion(result, "DIAGNOSTIC_MESSAGES", messages.ToString());
 
@@ -431,22 +433,22 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// E.g., "(global::A.B, global::C.D)" -> "(B, D)"
   /// E.g., "global::MyApp.Events.NotificationEvent[]" -> "NotificationEvent[]"
   /// </summary>
-  private static string GetSimpleName(string fullyQualifiedName) {
+  private static string _getSimpleName(string fullyQualifiedName) {
     // Handle tuples: (Type1, Type2, ...)
-    if (fullyQualifiedName.StartsWith("(") && fullyQualifiedName.EndsWith(")")) {
+    if (fullyQualifiedName.StartsWith("(", StringComparison.Ordinal) && fullyQualifiedName.EndsWith(")", StringComparison.Ordinal)) {
       var inner = fullyQualifiedName[1..^1];
-      var parts = SplitTupleParts(inner);
+      var parts = _splitTupleParts(inner);
       var simplifiedParts = new string[parts.Length];
       for (int i = 0; i < parts.Length; i++) {
-        simplifiedParts[i] = GetSimpleName(parts[i].Trim());
+        simplifiedParts[i] = _getSimpleName(parts[i].Trim());
       }
       return "(" + string.Join(", ", simplifiedParts) + ")";
     }
 
     // Handle arrays: Type[]
-    if (fullyQualifiedName.EndsWith("[]")) {
+    if (fullyQualifiedName.EndsWith("[]", StringComparison.Ordinal)) {
       var baseType = fullyQualifiedName[..^2];
-      return GetSimpleName(baseType) + "[]";
+      return _getSimpleName(baseType) + "[]";
     }
 
     // Handle simple types
@@ -458,7 +460,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// Splits tuple parts respecting nested tuples and parentheses.
   /// E.g., "A, B, (C, D)" -> ["A", "B", "(C, D)"]
   /// </summary>
-  private static string[] SplitTupleParts(string tupleContent) {
+  private static string[] _splitTupleParts(string tupleContent) {
     var parts = new System.Collections.Generic.List<string>();
     var currentPart = new System.Text.StringBuilder();
     var depth = 0;

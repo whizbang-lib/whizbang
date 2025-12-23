@@ -32,9 +32,9 @@ public interface IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1> : IGlobal
   /// Extracts the partition key from an event to determine which model instance to update.
   /// MUST be a pure function: deterministic, no side effects.
   /// </summary>
-  /// <param name="event">The event that occurred</param>
+  /// <param name="eventData">The event that occurred</param>
   /// <returns>The partition key that identifies which model to update</returns>
-  TPartitionKey GetPartitionKey(TEvent1 @event);
+  TPartitionKey GetPartitionKey(TEvent1 eventData);
 
   /// <summary>
   /// Applies an event to the model and returns a new model.
@@ -42,9 +42,9 @@ public interface IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1> : IGlobal
   /// Use event timestamps instead of DateTime.UtcNow for time values.
   /// </summary>
   /// <param name="currentData">The current state of the read model for this partition</param>
-  /// <param name="event">The event that occurred</param>
+  /// <param name="eventData">The event that occurred</param>
   /// <returns>A new model with the event applied</returns>
-  TModel Apply(TModel currentData, TEvent1 @event);
+  TModel Apply(TModel currentData, TEvent1 eventData);
 }
 
 /// <summary>
@@ -55,11 +55,11 @@ public interface IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1, TEvent2> 
   where TPartitionKey : notnull
   where TEvent1 : IEvent
   where TEvent2 : IEvent {
-  TPartitionKey GetPartitionKey(TEvent1 @event);
-  TPartitionKey GetPartitionKey(TEvent2 @event);
+  TPartitionKey GetPartitionKey(TEvent1 eventData);
+  TPartitionKey GetPartitionKey(TEvent2 eventData);
 
-  TModel Apply(TModel currentData, TEvent1 @event);
-  TModel Apply(TModel currentData, TEvent2 @event);
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  TModel Apply(TModel currentData, TEvent2 eventData);
 }
 
 /// <summary>
@@ -71,13 +71,13 @@ public interface IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1, TEvent2, 
   where TEvent1 : IEvent
   where TEvent2 : IEvent
   where TEvent3 : IEvent {
-  TPartitionKey GetPartitionKey(TEvent1 @event);
-  TPartitionKey GetPartitionKey(TEvent2 @event);
-  TPartitionKey GetPartitionKey(TEvent3 @event);
+  TPartitionKey GetPartitionKey(TEvent1 eventData);
+  TPartitionKey GetPartitionKey(TEvent2 eventData);
+  TPartitionKey GetPartitionKey(TEvent3 eventData);
 
-  TModel Apply(TModel currentData, TEvent1 @event);
-  TModel Apply(TModel currentData, TEvent2 @event);
-  TModel Apply(TModel currentData, TEvent3 @event);
+  TModel Apply(TModel currentData, TEvent1 eventData);
+  TModel Apply(TModel currentData, TEvent2 eventData);
+  TModel Apply(TModel currentData, TEvent3 eventData);
 }
 
 // TODO: Generate remaining variants (4-50 event types) via source generator or T4 template

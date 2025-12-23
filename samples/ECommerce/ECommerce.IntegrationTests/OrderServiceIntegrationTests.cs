@@ -11,6 +11,7 @@ namespace ECommerce.IntegrationTests;
 /// </summary>
 public class OrderServiceIntegrationTests {
   [Test]
+  [Obsolete]
   public async Task CreateOrderCommand_HasRequiredPropertiesAsync() {
     // Arrange & Act
     var orderId = OrderId.New();

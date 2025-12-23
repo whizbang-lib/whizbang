@@ -21,47 +21,47 @@ public enum WhizbangDataType {
   /// Universally Unique Identifier (UUID/GUID).
   /// Maps to: UUID (Postgres), BLOB (SQLite), UNIQUEIDENTIFIER (SQL Server)
   /// </summary>
-  Uuid,
+  UUID,
 
   /// <summary>
   /// Variable-length string with optional max length.
   /// Maps to: VARCHAR(n)/TEXT (Postgres), TEXT (SQLite), NVARCHAR(n) (SQL Server)
   /// </summary>
-  String,
+  STRING,
 
   /// <summary>
   /// Timestamp with timezone.
   /// Maps to: TIMESTAMPTZ (Postgres), TEXT (SQLite ISO8601), DATETIMEOFFSET (SQL Server)
   /// </summary>
-  TimestampTz,
+  TIMESTAMP_TZ,
 
   /// <summary>
   /// JSON/JSONB data type.
   /// Maps to: JSONB (Postgres), TEXT (SQLite), NVARCHAR(MAX) (SQL Server)
   /// </summary>
-  Json,
+  JSON,
 
   /// <summary>
   /// 64-bit signed integer.
   /// Maps to: BIGINT (Postgres), INTEGER (SQLite), BIGINT (SQL Server)
   /// </summary>
-  BigInt,
+  BIG_INT,
 
   /// <summary>
   /// 32-bit signed integer.
   /// Maps to: INTEGER (Postgres), INTEGER (SQLite), INT (SQL Server)
   /// </summary>
-  Integer,
+  INTEGER,
 
   /// <summary>
   /// 16-bit signed integer (commonly used for flags and small enums).
   /// Maps to: SMALLINT (Postgres), INTEGER (SQLite), SMALLINT (SQL Server)
   /// </summary>
-  SmallInt,
+  SMALL_INT,
 
   /// <summary>
   /// Boolean type.
   /// Maps to: BOOLEAN (Postgres), INTEGER 0/1 (SQLite), BIT (SQL Server)
   /// </summary>
-  Boolean
+  BOOLEAN
 }

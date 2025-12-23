@@ -15,25 +15,25 @@ namespace Whizbang.Benchmarks;
 [MemoryDiagnoser]
 [MarkdownExporter]
 public class MultiStreamExecutorBenchmarks {
-  private record TestCommand(string AggregateId, int SequenceNumber);
+  private sealed record TestCommand(string AggregateId, int SequenceNumber);
 
   private IExecutionStrategy[] _executors = null!;
   private IMessageEnvelope[] _envelopes = null!;
   private PolicyContext[] _contexts = null!;
-  private const int StreamCount = 10;
-  private const int MessagesPerStream = 100;
+  private const int STREAM_COUNT = 10;
+  private const int MESSAGES_PER_STREAM = 100;
 
   [GlobalSetup]
-  public async Task Setup() {
-    _executors = new IExecutionStrategy[StreamCount];
-    _envelopes = new IMessageEnvelope[StreamCount];
-    _contexts = new PolicyContext[StreamCount];
+  public async Task SetupAsync() {
+    _executors = new IExecutionStrategy[STREAM_COUNT];
+    _envelopes = new IMessageEnvelope[STREAM_COUNT];
+    _contexts = new PolicyContext[STREAM_COUNT];
 
     var services = new ServiceCollection();
     var serviceProvider = services.BuildServiceProvider();
 
     // Create independent SerialExecutor instances for each stream
-    for (int i = 0; i < StreamCount; i++) {
+    for (int i = 0; i < STREAM_COUNT; i++) {
       _executors[i] = new SerialExecutor();
       await _executors[i].StartAsync();
 
@@ -67,7 +67,7 @@ public class MultiStreamExecutorBenchmarks {
   }
 
   [GlobalCleanup]
-  public async Task Cleanup() {
+  public async Task CleanupAsync() {
     foreach (var executor in _executors) {
       await executor.StopAsync();
     }
@@ -77,8 +77,8 @@ public class MultiStreamExecutorBenchmarks {
   /// Baseline: Single SerialExecutor processing messages serially.
   /// </summary>
   [Benchmark(Baseline = true)]
-  public async Task SingleStream_100Messages() {
-    for (int i = 0; i < MessagesPerStream; i++) {
+  public async Task SingleStream_100MessagesAsync() {
+    for (int i = 0; i < MESSAGES_PER_STREAM; i++) {
       await _executors[0].ExecuteAsync<int>(
         _envelopes[0],
         (env, ctx) => ValueTask.FromResult(i),
@@ -93,13 +93,13 @@ public class MultiStreamExecutorBenchmarks {
   /// Total: 10 streams × 100 messages = 1000 messages processed.
   /// </summary>
   [Benchmark]
-  public async Task MultiStream_10x100Messages() {
-    var tasks = new Task[StreamCount];
+  public async Task MultiStream_10x100MessagesAsync() {
+    var tasks = new Task[STREAM_COUNT];
 
-    for (int streamId = 0; streamId < StreamCount; streamId++) {
+    for (int streamId = 0; streamId < STREAM_COUNT; streamId++) {
       var id = streamId; // Capture for closure
       tasks[id] = Task.Run(async () => {
-        for (int i = 0; i < MessagesPerStream; i++) {
+        for (int i = 0; i < MESSAGES_PER_STREAM; i++) {
           await _executors[id].ExecuteAsync<int>(
             _envelopes[id],
             (env, ctx) => ValueTask.FromResult(i),
@@ -117,12 +117,12 @@ public class MultiStreamExecutorBenchmarks {
   /// Shows the performance difference between multi-stream serial vs single parallel.
   /// </summary>
   [Benchmark]
-  public async Task ParallelExecutor_1000Messages() {
+  public async Task ParallelExecutor_1000MessagesAsync() {
     var parallelExecutor = new ParallelExecutor(maxConcurrency: 10);
     await parallelExecutor.StartAsync();
 
     try {
-      var tasks = new Task<int>[StreamCount * MessagesPerStream];
+      var tasks = new Task<int>[STREAM_COUNT * MESSAGES_PER_STREAM];
       for (int i = 0; i < tasks.Length; i++) {
         var capturedI = i;
         tasks[i] = parallelExecutor.ExecuteAsync<int>(

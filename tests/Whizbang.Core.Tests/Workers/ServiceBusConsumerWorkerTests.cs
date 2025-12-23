@@ -216,6 +216,7 @@ public class ServiceBusConsumerWorkerTests {
 /// Test event for ServiceBusConsumerWorker tests (Worker-specific to avoid naming conflicts)
 /// </summary>
 public record ServiceBusWorkerTestEvent : IEvent {
+  [StreamKey]
   public string Data { get; init; } = string.Empty;
 }
 
@@ -225,7 +226,7 @@ public record ServiceBusWorkerTestEvent : IEvent {
 [JsonSerializable(typeof(ServiceBusWorkerTestEvent))]
 [JsonSerializable(typeof(MessageEnvelope<ServiceBusWorkerTestEvent>))]
 [JsonSerializable(typeof(EnvelopeMetadata))]
-internal partial class TestWorkerJsonContext : JsonSerializerContext {
+internal sealed partial class TestWorkerJsonContext : JsonSerializerContext {
 }
 
 /// <summary>
@@ -243,7 +244,7 @@ public class ScopeMarker : IDisposable {
 /// <summary>
 /// Test double for IPerspectiveInvoker that tracks invocation
 /// </summary>
-internal class TestPerspectiveInvoker(Action onInvoke) : IPerspectiveInvoker {
+internal sealed class TestPerspectiveInvoker(Action onInvoke) : IPerspectiveInvoker {
   private readonly Action _onInvoke = onInvoke;
 
   public void QueueEvent(IEvent @event) {
@@ -264,7 +265,7 @@ internal class TestPerspectiveInvoker(Action onInvoke) : IPerspectiveInvoker {
 /// <summary>
 /// Test double for ITransport
 /// </summary>
-internal class TestTransport : ITransport {
+internal sealed class TestTransport : ITransport {
   private bool _isInitialized;
 
   public bool IsInitialized => _isInitialized;
@@ -299,14 +300,14 @@ internal class TestTransport : ITransport {
   }
 
   public void Dispose() {
-    GC.SuppressFinalize(this);
+    // No unmanaged resources to dispose
   }
 }
 
 /// <summary>
 /// Test double for ISubscription
 /// </summary>
-internal class TestSubscription : ISubscription {
+internal sealed class TestSubscription : ISubscription {
   public bool IsActive { get; private set; } = true;
 
   public Task PauseAsync() {
@@ -328,7 +329,7 @@ internal class TestSubscription : ISubscription {
 /// <summary>
 /// Test double for IWorkCoordinatorStrategy
 /// </summary>
-internal class TestWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
+internal sealed class TestWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
   private readonly Func<WorkBatch> _flushFunc;
 
   public TestWorkCoordinatorStrategy(Func<WorkBatch> flushFunc) {
@@ -350,7 +351,7 @@ internal class TestWorkCoordinatorStrategy : IWorkCoordinatorStrategy {
 /// <summary>
 /// Test double for ILogger
 /// </summary>
-internal class TestLogger<T> : ILogger<T> {
+internal sealed class TestLogger<T> : ILogger<T> {
   public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 
   public bool IsEnabled(LogLevel logLevel) => true;
@@ -368,7 +369,7 @@ internal class TestLogger<T> : ILogger<T> {
 /// <summary>
 /// Test double for IServiceInstanceProvider
 /// </summary>
-internal class TestServiceInstanceProvider : IServiceInstanceProvider {
+internal sealed class TestServiceInstanceProvider : IServiceInstanceProvider {
   private readonly Guid _instanceId = Guid.NewGuid();
 
   public Guid InstanceId => _instanceId;

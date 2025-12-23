@@ -13,7 +13,7 @@ public class JsonContextRegistryTests {
   /// <summary>
   /// Test converter for MessageId-like type (simulates generated WhizbangId converter).
   /// </summary>
-  private class TestIdJsonConverter : JsonConverter<_testId> {
+  private sealed class TestIdJsonConverter : JsonConverter<_testId> {
     public override _testId Read(ref Utf8JsonReader reader, Type typeToConvert, JsonSerializerOptions options) {
       return new _testId { Value = reader.GetString() ?? string.Empty };
     }
@@ -55,7 +55,7 @@ public class JsonContextRegistryTests {
         .ThrowsExactly<ArgumentNullException>();
 
     // Verify the parameter name is "converter"
-    await Assert.That(exception.ParamName).IsEqualTo("converter");
+    await Assert.That(exception!.ParamName).IsEqualTo("converter");
   }
 
   [Test]

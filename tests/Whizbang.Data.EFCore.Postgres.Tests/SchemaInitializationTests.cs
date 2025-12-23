@@ -104,7 +104,7 @@ public class SchemaInitializationTests : EFCoreTestBase {
       perspectiveTables.Add(reader.GetString(0));
     }
 
-    await Assert.That(perspectiveTables).HasCount().EqualTo(1);
+    await Assert.That(perspectiveTables).Count().IsEqualTo(1);
     await Assert.That(perspectiveTables[0]).IsEqualTo("wh_per_order");
   }
 
@@ -139,7 +139,7 @@ public class SchemaInitializationTests : EFCoreTestBase {
 
     // At least instance_id and lease_expiry should be present (from migrations 001/002)
     // partition_number may be added in a later migration
-    await Assert.That(outboxColumns).HasCount().GreaterThanOrEqualTo(2);
+    await Assert.That(outboxColumns).Count().IsGreaterThanOrEqualTo(2);
     await Assert.That(outboxColumns).Contains("instance_id");
     await Assert.That(outboxColumns).Contains("lease_expiry");
 

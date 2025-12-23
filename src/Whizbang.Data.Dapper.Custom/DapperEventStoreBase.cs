@@ -15,9 +15,9 @@ namespace Whizbang.Data.Dapper.Custom;
 /// </summary>
 /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs</tests>
 public abstract class DapperEventStoreBase : IEventStore {
-  protected readonly IDbConnectionFactory _connectionFactory;
-  protected readonly IDbExecutor _executor;
-  protected readonly JsonSerializerOptions _jsonOptions;
+  private readonly IDbConnectionFactory _connectionFactory;
+  private readonly IDbExecutor _executor;
+  private readonly JsonSerializerOptions _jsonOptions;
 
   protected DapperEventStoreBase(
     IDbConnectionFactory connectionFactory,
@@ -35,6 +35,7 @@ public abstract class DapperEventStoreBase : IEventStore {
 
   protected IDbConnectionFactory ConnectionFactory => _connectionFactory;
   protected IDbExecutor Executor => _executor;
+  protected JsonSerializerOptions JsonOptions => _jsonOptions;
 
   /// <summary>
   /// Ensures the connection is open. Handles both pre-opened and closed connections.
@@ -110,12 +111,12 @@ public abstract class DapperEventStoreBase : IEventStore {
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:GetLastSequenceAsync_EmptyStream_ShouldReturnMinusOneAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:GetLastSequenceAsync_AfterAppends_ShouldReturnCorrectSequenceAsync</tests>
   public async Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) {
-    using var connection = await _connectionFactory.CreateConnectionAsync(cancellationToken);
+    using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
 
     var sql = GetLastSequenceSql();
 
-    var lastSequence = await _executor.ExecuteScalarAsync<long?>(
+    var lastSequence = await Executor.ExecuteScalarAsync<long?>(
       connection,
       sql,
       new { StreamId = streamId },

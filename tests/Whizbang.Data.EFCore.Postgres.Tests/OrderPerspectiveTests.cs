@@ -156,7 +156,7 @@ public class OrderPerspectiveTests {
   /// Note: Uses owned types instead of generated JSON configuration for InMemory compatibility.
   /// The actual PostgreSQL implementation will use the generated ConfigureWhizbangPerspectives() method.
   /// </summary>
-  private class TestDbContext : DbContext {
+  private sealed class TestDbContext : DbContext {
     public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder) {

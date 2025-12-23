@@ -21,7 +21,7 @@ public static class PathResolver {
     }
 
     // Priority 2: Sibling directory discovery
-    var libraryRoot = FindGitRoot(Directory.GetCurrentDirectory());
+    var libraryRoot = _findGitRoot(Directory.GetCurrentDirectory());
     if (libraryRoot == null) {
       return null;
     }
@@ -40,7 +40,7 @@ public static class PathResolver {
   /// </summary>
   /// <param name="startPath">Starting directory path</param>
   /// <returns>Git root directory path, or null if not found</returns>
-  private static string? FindGitRoot(string startPath) {
+  private static string? _findGitRoot(string startPath) {
     var current = new DirectoryInfo(startPath);
     while (current != null) {
       if (Directory.Exists(Path.Combine(current.FullName, ".git"))) {

@@ -23,7 +23,7 @@ public abstract class PostgresTestBase : IAsyncDisposable {
     SqlMapper.AddTypeHandler(new DateTimeOffsetHandler());
   }
 
-  private class DateTimeOffsetHandler : SqlMapper.TypeHandler<DateTimeOffset> {
+  private sealed class DateTimeOffsetHandler : SqlMapper.TypeHandler<DateTimeOffset> {
     public override DateTimeOffset Parse(object value) {
       if (value is DateTime dt) {
         return new DateTimeOffset(DateTime.SpecifyKind(dt, DateTimeKind.Utc));
@@ -69,7 +69,7 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       ConnectionString = connectionString;
 
       // Initialize database schema
-      await InitializeDatabaseAsync();
+      await _initializeDatabaseAsync();
 
       setupSucceeded = true;
     } finally {
@@ -95,7 +95,7 @@ public abstract class PostgresTestBase : IAsyncDisposable {
     GC.SuppressFinalize(this);
   }
 
-  private async Task InitializeDatabaseAsync() {
+  private async Task _initializeDatabaseAsync() {
     using var connection = await _connectionFactory!.CreateConnectionAsync();
     // Connection is already opened by PostgresConnectionFactory
 

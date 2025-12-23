@@ -31,36 +31,36 @@ public static class PerspectiveCheckpointsSchema {
     Columns: ImmutableArray.Create(
       new ColumnDefinition(
         Name: "stream_id",
-        DataType: WhizbangDataType.Uuid,
+        DataType: WhizbangDataType.UUID,
         PrimaryKey: true,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "perspective_name",
-        DataType: WhizbangDataType.String,
+        DataType: WhizbangDataType.STRING,
         PrimaryKey: true,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "last_event_id",
-        DataType: WhizbangDataType.Uuid,
+        DataType: WhizbangDataType.UUID,
         Nullable: true  // Nullable - checkpoints start with no processed events
       ),
       new ColumnDefinition(
         Name: "status",
-        DataType: WhizbangDataType.SmallInt,
+        DataType: WhizbangDataType.SMALL_INT,
         Nullable: false,
         DefaultValue: DefaultValue.Integer(0)
       ),
       new ColumnDefinition(
         Name: "processed_at",
-        DataType: WhizbangDataType.TimestampTz,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
-        DefaultValue: DefaultValue.Function(DefaultValueFunction.DateTime_Now)
+        DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       ),
       new ColumnDefinition(
         Name: "error",
-        DataType: WhizbangDataType.String,
+        DataType: WhizbangDataType.STRING,
         Nullable: true
       )
     ),
@@ -81,11 +81,11 @@ public static class PerspectiveCheckpointsSchema {
   /// </summary>
   /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/PerspectiveCheckpointsSchemaTests.cs:Columns_Constants_MatchColumnNamesAsync</tests>
   public static class Columns {
-    public const string StreamId = "stream_id";
-    public const string PerspectiveName = "perspective_name";
-    public const string LastEventId = "last_event_id";
-    public const string Status = "status";
-    public const string ProcessedAt = "processed_at";
-    public const string Error = "error";
+    public const string STREAM_ID = "stream_id";
+    public const string PERSPECTIVE_NAME = "perspective_name";
+    public const string LAST_EVENT_ID = "last_event_id";
+    public const string STATUS = "status";
+    public const string PROCESSED_AT = "processed_at";
+    public const string ERROR = "error";
   }
 }

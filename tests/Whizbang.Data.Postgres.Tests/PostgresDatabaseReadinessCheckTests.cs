@@ -30,11 +30,11 @@ public class PostgresDatabaseReadinessCheckTests : PostgresTestBase {
   }
 
   [Test]
-  public async Task IsReadyAsync_WithInvalidConnectionString_ReturnsFalseAsync() {
+  public async Task IsReadyAsync_WithInvalid_connectionString_ReturnsFalseAsync() {
     // Arrange
-    var invalidConnectionString = "Host=localhost;Port=9999;Database=nonexistent;Username=invalid;Password=invalid;Timeout=1;";
+    var invalid_connectionString = "Host=localhost;Port=9999;Database=nonexistent;Username=invalid;Password=invalid;Timeout=1;";
     var readinessCheck = new PostgresDatabaseReadinessCheck(
-      invalidConnectionString,
+      invalid_connectionString,
       NullLogger<PostgresDatabaseReadinessCheck>.Instance
     );
 

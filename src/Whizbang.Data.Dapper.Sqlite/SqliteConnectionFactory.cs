@@ -11,12 +11,18 @@ namespace Whizbang.Data.Dapper.Sqlite;
 public class SqliteConnectionFactory : IDbConnectionFactory {
   private readonly string _connectionString;
 
+  /// <summary>
+  /// Initializes a new instance of the SqliteConnectionFactory with the specified connection string.
+  /// </summary>
   /// <tests>No tests found</tests>
   public SqliteConnectionFactory(string connectionString) {
     ArgumentNullException.ThrowIfNull(connectionString);
     _connectionString = connectionString;
   }
 
+  /// <summary>
+  /// Creates a new SQLite database connection asynchronously.
+  /// </summary>
   /// <tests>No tests found</tests>
   public Task<IDbConnection> CreateConnectionAsync(CancellationToken cancellationToken = default) {
     var connection = new SqliteConnection(_connectionString);

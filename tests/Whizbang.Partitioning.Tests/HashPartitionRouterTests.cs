@@ -220,7 +220,7 @@ public class HashPartitionRouterTests : PartitionRouterContractTests {
     }
 
     // Assert - Should always return 0 when only one partition
-    await Assert.That(results).HasCount().EqualTo(1);
+    await Assert.That(results).Count().IsEqualTo(1);
     await Assert.That(results.First()).IsEqualTo(0);
   }
 

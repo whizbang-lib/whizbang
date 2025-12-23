@@ -22,16 +22,16 @@ public static class WhizbangModelBuilderExtensions {
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs:ConfigureWhizbangInfrastructure_ConfiguresServiceInstanceEntityAsync</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs:ConfigureWhizbangInfrastructure_ConfiguresMessageDeduplicationEntityAsync</tests>
     public ModelBuilder ConfigureWhizbangInfrastructure() {
-      ConfigureInbox(modelBuilder);
-      ConfigureOutbox(modelBuilder);
-      ConfigureEventStore(modelBuilder);
-      ConfigureServiceInstance(modelBuilder);
-      ConfigureMessageDeduplication(modelBuilder);
+      _configureInbox(modelBuilder);
+      _configureOutbox(modelBuilder);
+      _configureEventStore(modelBuilder);
+      _configureServiceInstance(modelBuilder);
+      _configureMessageDeduplication(modelBuilder);
       return modelBuilder;
     }
   }
 
-  private static void ConfigureInbox(ModelBuilder modelBuilder) {
+  private static void _configureInbox(ModelBuilder modelBuilder) {
     modelBuilder.Entity<InboxRecord>(entity => {
       entity.ToTable("wh_inbox");
       entity.HasKey(e => e.MessageId);
@@ -59,7 +59,7 @@ public static class WhizbangModelBuilderExtensions {
     });
   }
 
-  private static void ConfigureOutbox(ModelBuilder modelBuilder) {
+  private static void _configureOutbox(ModelBuilder modelBuilder) {
     modelBuilder.Entity<OutboxRecord>(entity => {
       entity.ToTable("wh_outbox");
       entity.HasKey(e => e.MessageId);
@@ -89,7 +89,7 @@ public static class WhizbangModelBuilderExtensions {
     });
   }
 
-  private static void ConfigureEventStore(ModelBuilder modelBuilder) {
+  private static void _configureEventStore(ModelBuilder modelBuilder) {
     modelBuilder.Entity<EventStoreRecord>(entity => {
       entity.ToTable("wh_event_store");
       entity.HasKey(e => e.Id);
@@ -114,7 +114,7 @@ public static class WhizbangModelBuilderExtensions {
     });
   }
 
-  private static void ConfigureServiceInstance(ModelBuilder modelBuilder) {
+  private static void _configureServiceInstance(ModelBuilder modelBuilder) {
     modelBuilder.Entity<ServiceInstanceRecord>(entity => {
       entity.ToTable("wh_service_instances");
       entity.HasKey(e => e.InstanceId);
@@ -133,7 +133,7 @@ public static class WhizbangModelBuilderExtensions {
   }
 
 
-  private static void ConfigureMessageDeduplication(ModelBuilder modelBuilder) {
+  private static void _configureMessageDeduplication(ModelBuilder modelBuilder) {
     modelBuilder.Entity<MessageDeduplicationRecord>(entity => {
       entity.ToTable("wh_message_deduplication");
       entity.HasKey(e => e.MessageId);

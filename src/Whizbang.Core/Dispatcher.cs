@@ -32,7 +32,7 @@ public delegate ValueTask VoidReceptorInvoker(object message);
 /// Delegate for invoking multiple receptors for publish operations.
 /// Generated code creates these delegates with proper type safety - zero reflection.
 /// </summary>
-public delegate Task ReceptorPublisher<in TEvent>(TEvent @event);
+public delegate Task ReceptorPublisher<in TEvent>(TEvent eventData);
 
 /// <summary>
 /// Base dispatcher class with core logic. The source generator creates a derived class
@@ -59,7 +59,9 @@ public abstract class Dispatcher(
   /// Gets the service provider for receptor resolution.
   /// Available to generated derived class.
   /// </summary>
-  protected IServiceProvider _serviceProvider => _internalServiceProvider;
+#pragma warning disable IDE1006 // CA1707 takes precedence - protected properties should not have underscores
+  protected IServiceProvider ServiceProvider => _internalServiceProvider;
+#pragma warning restore IDE1006
 
   // ========================================
   // SEND PATTERN - Command Dispatch with Acknowledgment
@@ -79,7 +81,7 @@ public abstract class Dispatcher(
 #endif
   public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message) where TMessage : notnull {
     var context = MessageContext.New();
-    return SendAsyncInternal<TMessage>(message, context);
+    return _sendAsyncInternalAsync<TMessage>(message, context);
   }
 
   /// <summary>
@@ -119,13 +121,13 @@ public abstract class Dispatcher(
     var messageType = message.GetType();
 
     // Get strongly-typed delegate from generated code
-    var invoker = _getReceptorInvoker<object>(message, messageType);
+    var invoker = GetReceptorInvoker<object>(message, messageType);
 
     // If no local receptor exists, check for work coordinator strategy
     if (invoker == null) {
       // Try strategy-based outbox pattern (new work coordinator pattern)
       // Route to outbox for remote delivery (AOT-compatible, no reflection)
-      return await SendToOutboxViaScopeAsync(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
+      return await _sendToOutboxViaScopeAsync(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
     }
 
     // Create envelope with hop for observability
@@ -157,7 +159,8 @@ public abstract class Dispatcher(
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  private async Task<IDeliveryReceipt> SendAsyncInternal<TMessage>(
+  [SuppressMessage("Performance", "CA1859:Use concrete types when possible for improved performance", Justification = "Interface parameter required as this method is called from public API with IMessageContext")]
+  private async Task<IDeliveryReceipt> _sendAsyncInternalAsync<TMessage>(
     TMessage message,
     IMessageContext context,
     [CallerMemberName] string callerMemberName = "",
@@ -170,13 +173,13 @@ public abstract class Dispatcher(
     var messageType = typeof(TMessage);
 
     // Get strongly-typed delegate from generated code
-    var invoker = _getReceptorInvoker<object>(message, messageType);
+    var invoker = GetReceptorInvoker<object>(message, messageType);
 
     // If no local receptor exists, check for work coordinator strategy
     if (invoker == null) {
       // Try strategy-based outbox pattern (new work coordinator pattern)
       // Route to outbox for remote delivery (AOT-compatible, no reflection)
-      return await SendToOutboxViaScopeAsync<TMessage>(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
+      return await _sendToOutboxViaScopeAsync<TMessage>(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
     }
 
     // Create envelope with hop for observability - generic version preserves type!
@@ -252,7 +255,7 @@ public abstract class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) where TMessage : notnull {
-    return LocalInvokeAsyncInternal<TMessage, TResult>(message, context, callerMemberName, callerFilePath, callerLineNumber);
+    return _localInvokeAsyncInternal<TMessage, TResult>(message, context, callerMemberName, callerFilePath, callerLineNumber);
   }
 
   /// <summary>
@@ -280,7 +283,7 @@ public abstract class Dispatcher(
     var messageType = message.GetType();
 
     // Get strongly-typed delegate from generated code
-    var invoker = _getReceptorInvoker<TResult>(message, messageType) ?? throw new HandlerNotFoundException(messageType);
+    var invoker = GetReceptorInvoker<TResult>(message, messageType) ?? throw new HandlerNotFoundException(messageType);
 
     // OPTIMIZATION: Skip envelope creation when trace store is null
     // This achieves zero allocation for high-throughput scenarios
@@ -322,7 +325,7 @@ public abstract class Dispatcher(
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  private ValueTask<TResult> LocalInvokeAsyncInternal<TMessage, TResult>(
+  private ValueTask<TResult> _localInvokeAsyncInternal<TMessage, TResult>(
     TMessage message,
     IMessageContext context,
     [CallerMemberName] string callerMemberName = "",
@@ -335,12 +338,12 @@ public abstract class Dispatcher(
     var messageType = typeof(TMessage);
 
     // Get strongly-typed delegate from generated code
-    var invoker = _getReceptorInvoker<TResult>(message, messageType) ?? throw new HandlerNotFoundException(messageType);
+    var invoker = GetReceptorInvoker<TResult>(message, messageType) ?? throw new HandlerNotFoundException(messageType);
 
     // OPTIMIZATION: Skip envelope creation when trace store is null
     // This achieves zero allocation for high-throughput scenarios
     if (_traceStore != null) {
-      return _localInvokeWithTracingAsyncInternal<TMessage, TResult>(message, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
+      return _localInvokeWithTracingAsyncInternalAsync<TMessage, TResult>(message, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
     }
 
     // FAST PATH: Zero allocation when no tracing
@@ -354,7 +357,7 @@ public abstract class Dispatcher(
   /// Uses async/await to store envelope before invoking receptor.
   /// Preserves type information to create correctly-typed MessageEnvelope.
   /// </summary>
-  private async ValueTask<TResult> _localInvokeWithTracingAsyncInternal<TMessage, TResult>(
+  private async ValueTask<TResult> _localInvokeWithTracingAsyncInternalAsync<TMessage, TResult>(
     TMessage message,
     IMessageContext context,
     ReceptorInvoker<TResult> invoker,
@@ -366,7 +369,7 @@ public abstract class Dispatcher(
     await _traceStore!.StoreAsync(envelope);
 
     // Invoke using delegate - zero reflection, strongly typed
-    var result = await invoker(message);
+    var result = await invoker(message!);
     return result;
   }
 
@@ -419,7 +422,7 @@ public abstract class Dispatcher(
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
   ) where TMessage : notnull {
-    return LocalInvokeAsyncInternal<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
+    return _localInvokeAsyncInternal<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
   }
 
   /// <summary>
@@ -447,7 +450,7 @@ public abstract class Dispatcher(
     var messageType = message.GetType();
 
     // Get strongly-typed void delegate from generated code
-    var invoker = _getVoidReceptorInvoker(message, messageType) ?? throw new HandlerNotFoundException(messageType);
+    var invoker = GetVoidReceptorInvoker(message, messageType) ?? throw new HandlerNotFoundException(messageType);
 
     // OPTIMIZATION: Skip envelope creation when trace store is null
     // This achieves zero allocation for high-throughput scenarios
@@ -488,7 +491,7 @@ public abstract class Dispatcher(
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  private ValueTask LocalInvokeAsyncInternal<TMessage>(
+  private ValueTask _localInvokeAsyncInternal<TMessage>(
     TMessage message,
     IMessageContext context,
     [CallerMemberName] string callerMemberName = "",
@@ -501,12 +504,12 @@ public abstract class Dispatcher(
     var messageType = typeof(TMessage);
 
     // Get strongly-typed void delegate from generated code
-    var invoker = _getVoidReceptorInvoker(message, messageType) ?? throw new HandlerNotFoundException(messageType);
+    var invoker = GetVoidReceptorInvoker(message, messageType) ?? throw new HandlerNotFoundException(messageType);
 
     // OPTIMIZATION: Skip envelope creation when trace store is null
     // This achieves zero allocation for high-throughput scenarios
     if (_traceStore != null) {
-      return _localInvokeVoidWithTracingAsyncInternal<TMessage>(message, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
+      return _localInvokeVoidWithTracingAsyncInternalAsync<TMessage>(message, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
     }
 
     // FAST PATH: Zero allocation when no tracing
@@ -520,7 +523,7 @@ public abstract class Dispatcher(
   /// Uses async/await to store envelope before invoking receptor.
   /// Preserves type information to create correctly-typed MessageEnvelope.
   /// </summary>
-  private async ValueTask _localInvokeVoidWithTracingAsyncInternal<TMessage>(
+  private async ValueTask _localInvokeVoidWithTracingAsyncInternalAsync<TMessage>(
     TMessage message,
     IMessageContext context,
     VoidReceptorInvoker invoker,
@@ -532,14 +535,14 @@ public abstract class Dispatcher(
     await _traceStore!.StoreAsync(envelope);
 
     // Invoke using delegate - zero reflection, strongly typed
-    await invoker(message);
+    await invoker(message!);
   }
 
   /// <summary>
   /// Creates a MessageEnvelope with initial hop containing caller information and context.
   /// Generic version - preserves type information at compile time.
   /// </summary>
-  private IMessageEnvelope<TMessage> _createEnvelope<TMessage>(
+  private MessageEnvelope<TMessage> _createEnvelope<TMessage>(
     TMessage message,
     IMessageContext context,
     string callerMemberName,
@@ -573,7 +576,7 @@ public abstract class Dispatcher(
   /// Used when compile-time type is unknown (e.g., from non-generic SendAsync).
   /// For AOT compatibility, prefer using the generic overload when the type is known.
   /// </summary>
-  private IMessageEnvelope<object> _createEnvelope(
+  private MessageEnvelope<object> _createEnvelope(
     object message,
     IMessageContext context,
     string callerMemberName,
@@ -612,12 +615,12 @@ public abstract class Dispatcher(
   [DebuggerStepThrough]
   [StackTraceHidden]
 #endif
-  public async Task PublishAsync<TEvent>(TEvent @event) {
-    if (@event == null) {
-      throw new ArgumentNullException(nameof(@event));
+  public async Task PublishAsync<TEvent>(TEvent eventData) {
+    if (eventData == null) {
+      throw new ArgumentNullException(nameof(eventData));
     }
 
-    var eventType = @event.GetType();
+    var eventType = eventData.GetType();
 
     // If this is an IEvent, write to Event Store FIRST
     // Create a scope to resolve scoped services (IEventStore, IAggregateIdExtractor)
@@ -627,12 +630,12 @@ public abstract class Dispatcher(
       var eventStore = scope.ServiceProvider.GetService<IEventStore>();
       var aggregateIdExtractor = scope.ServiceProvider.GetService<IAggregateIdExtractor>();
 
-      if (@event is IEvent && eventStore != null) {
+      if (eventData is IEvent && eventStore != null) {
         // Create envelope with event
         var messageId = MessageId.New();
         var envelope = new MessageEnvelope<TEvent> {
           MessageId = messageId,
-          Payload = @event,
+          Payload = eventData,
           Hops = []
         };
 
@@ -648,7 +651,7 @@ public abstract class Dispatcher(
         // This ensures ALL events are persisted while maintaining proper streams for aggregates
         Guid streamId;
         if (aggregateIdExtractor != null) {
-          var aggregateId = aggregateIdExtractor.ExtractAggregateId(@event, eventType);
+          var aggregateId = aggregateIdExtractor.ExtractAggregateId(eventData, eventType);
           streamId = aggregateId ?? messageId.Value;
         } else {
           streamId = messageId.Value;
@@ -671,13 +674,13 @@ public abstract class Dispatcher(
     }
 
     // Get strongly-typed delegate from generated code
-    var publisher = _getReceptorPublisher(@event, eventType);
+    var publisher = GetReceptorPublisher(eventData, eventType);
 
     // Invoke local handlers - zero reflection, strongly typed
-    await publisher(@event);
+    await publisher(eventData);
 
     // Publish event for cross-service delivery if work coordinator strategy is available
-    await PublishToOutboxViaScopeAsync(@event, eventType);
+    await _publishToOutboxViaScopeAsync(eventData, eventType);
   }
 
   /// <summary>
@@ -686,7 +689,7 @@ public abstract class Dispatcher(
   /// Resolves IWorkCoordinatorStrategy from active scope (scoped service).
   /// Creates a complete MessageEnvelope with a hop indicating "stored to outbox".
   /// </summary>
-  private async Task PublishToOutboxViaScopeAsync<TEvent>(TEvent @event, Type eventType) {
+  private async Task _publishToOutboxViaScopeAsync<TEvent>(TEvent eventData, Type eventType) {
     // Create scope to resolve scoped IWorkCoordinatorStrategy
     var scope = _scopeFactory.CreateScope();
     try {
@@ -699,13 +702,13 @@ public abstract class Dispatcher(
 
       // Determine destination topic from event type name
       // TODO: Make this configurable via IEventRoutingConfiguration
-      var destination = DetermineEventTopic(eventType);
+      var destination = _determineEventTopic(eventType);
 
       // Create MessageEnvelope wrapping the event
       var messageId = MessageId.New();
       var envelope = new MessageEnvelope<TEvent> {
         MessageId = messageId,
-        Payload = @event,
+        Payload = eventData,
         Hops = []
       };
 
@@ -721,7 +724,7 @@ public abstract class Dispatcher(
       System.Diagnostics.Debug.WriteLine($"[Dispatcher] Queueing event {eventType.Name} to work coordinator with destination '{destination}'");
 
       // Serialize envelope to OutboxMessage
-      var newOutboxMessage = _serializeToNewOutboxMessage(envelope, @event!, eventType, destination);
+      var newOutboxMessage = _serializeToNewOutboxMessage(envelope, eventData!, eventType, destination);
 
       // Queue event for batched processing
       strategy.QueueOutboxMessage(newOutboxMessage);
@@ -744,19 +747,19 @@ public abstract class Dispatcher(
   /// Determines the Service Bus topic for an event type.
   /// Convention: ProductCreatedEvent → "products", InventoryRestockedEvent → "inventory"
   /// </summary>
-  private static string DetermineEventTopic(Type eventType) {
+  private static string _determineEventTopic(Type eventType) {
     var typeName = eventType.Name;
 
     // Convention-based routing: ProductXxxEvent → "products", InventoryXxxEvent → "inventory"
-    if (typeName.StartsWith("Product")) {
+    if (typeName.StartsWith("Product", StringComparison.Ordinal)) {
       return "products";
     }
 
-    if (typeName.StartsWith("Inventory")) {
+    if (typeName.StartsWith("Inventory", StringComparison.Ordinal)) {
       return "inventory";
     }
 
-    if (typeName.StartsWith("Order")) {
+    if (typeName.StartsWith("Order", StringComparison.Ordinal)) {
       return "orders";
     }
 
@@ -768,19 +771,19 @@ public abstract class Dispatcher(
   /// Determines the Service Bus topic for a command type.
   /// Convention: CreateProductCommand → "products", UpdateInventoryCommand → "inventory"
   /// </summary>
-  private static string DetermineCommandDestination(Type messageType) {
+  private static string _determineCommandDestination(Type messageType) {
     var typeName = messageType.Name;
 
     // Convention-based routing: ProductXxxCommand → "products", InventoryXxxCommand → "inventory"
-    if (typeName.StartsWith("Product") || typeName.StartsWith("CreateProduct")) {
+    if (typeName.StartsWith("Product", StringComparison.Ordinal) || typeName.StartsWith("CreateProduct", StringComparison.Ordinal)) {
       return "products";
     }
 
-    if (typeName.StartsWith("Inventory")) {
+    if (typeName.StartsWith("Inventory", StringComparison.Ordinal)) {
       return "inventory";
     }
 
-    if (typeName.StartsWith("Order")) {
+    if (typeName.StartsWith("Order", StringComparison.Ordinal)) {
       return "orders";
     }
 
@@ -794,7 +797,7 @@ public abstract class Dispatcher(
   /// Resolves IWorkCoordinatorStrategy from active scope (scoped service).
   /// Type information is preserved at compile time, avoiding reflection.
   /// </summary>
-  private async Task<IDeliveryReceipt> SendToOutboxViaScopeAsync<TMessage>(
+  private async Task<IDeliveryReceipt> _sendToOutboxViaScopeAsync<TMessage>(
     TMessage message,
     Type messageType,
     IMessageContext context,
@@ -813,7 +816,7 @@ public abstract class Dispatcher(
       }
 
       // Determine destination topic from message type name
-      var destination = DetermineCommandDestination(messageType);
+      var destination = _determineCommandDestination(messageType);
 
       // Create envelope with hop for observability - generic version preserves type!
       var envelope = _createEnvelope<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
@@ -854,7 +857,7 @@ public abstract class Dispatcher(
   /// AOT-compatible - uses JsonTypeInfo for serialization, no reflection.
   /// For AOT compatibility, use the generic overload SendToOutboxViaScopeAsync&lt;TMessage&gt;.
   /// </summary>
-  private async Task<IDeliveryReceipt> SendToOutboxViaScopeAsync(
+  private async Task<IDeliveryReceipt> _sendToOutboxViaScopeAsync(
     object message,
     Type messageType,
     IMessageContext context,
@@ -873,7 +876,7 @@ public abstract class Dispatcher(
       }
 
       // Determine destination topic from message type name
-      var destination = DetermineCommandDestination(messageType);
+      var destination = _determineCommandDestination(messageType);
 
       // Create envelope with hop for observability (returns IMessageEnvelope)
       // WARN: This creates MessageEnvelope<object> - type information is lost
@@ -913,7 +916,7 @@ public abstract class Dispatcher(
   /// Sends multiple messages to the outbox in a single batch operation.
   /// Creates ONE scope, queues all messages, and flushes once for optimal performance.
   /// </summary>
-  private async Task<List<IDeliveryReceipt>> SendManyToOutboxAsync(
+  private async Task<List<IDeliveryReceipt>> _sendManyToOutboxAsync(
     List<(object message, Type messageType, IMessageContext context)> messages,
     [CallerMemberName] string callerMemberName = "",
     [CallerFilePath] string callerFilePath = "",
@@ -933,7 +936,7 @@ public abstract class Dispatcher(
 
       // Queue ALL messages to the strategy
       foreach (var (message, messageType, context) in messages) {
-        var destination = DetermineCommandDestination(messageType);
+        var destination = _determineCommandDestination(messageType);
         var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
         var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination);
 
@@ -983,7 +986,7 @@ public abstract class Dispatcher(
 
     var receipts = new List<IDeliveryReceipt>();
     foreach (var message in messages) {
-      var receipt = await SendAsyncInternal<TMessage>(message, MessageContext.New());
+      var receipt = await _sendAsyncInternalAsync<TMessage>(message, MessageContext.New());
       receipts.Add(receipt);
     }
 
@@ -1011,7 +1014,7 @@ public abstract class Dispatcher(
 
     foreach (var message in messageList) {
       var messageType = message.GetType();
-      var invoker = _getReceptorInvoker<object>(message, messageType);
+      var invoker = GetReceptorInvoker<object>(message, messageType);
 
       if (invoker != null) {
         // Has local receptor
@@ -1030,7 +1033,7 @@ public abstract class Dispatcher(
 
     // Process outbox messages in a single batch (optimized)
     if (outboxMessages.Count > 0) {
-      var outboxReceipts = await SendManyToOutboxAsync(outboxMessages);
+      var outboxReceipts = await _sendManyToOutboxAsync(outboxMessages);
       receipts.AddRange(outboxReceipts);
     }
 
@@ -1087,8 +1090,12 @@ public abstract class Dispatcher(
       throw new InvalidOperationException("JsonSerializerOptions required for envelope serialization");
     }
 
-    var envelopeJson = JsonSerializer.Serialize((object)envelope, _jsonOptions);
-    var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, _jsonOptions)
+    // Use JsonTypeInfo for AOT compatibility (no reflection)
+    var objectTypeInfo = _jsonOptions.GetTypeInfo(typeof(object));
+    var envelopeJson = JsonSerializer.Serialize((object)envelope, objectTypeInfo);
+
+    var jsonEnvelopeTypeInfo = (JsonTypeInfo<MessageEnvelope<JsonElement>>)_jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
+    var jsonEnvelope = JsonSerializer.Deserialize(envelopeJson, jsonEnvelopeTypeInfo)
       ?? throw new InvalidOperationException($"Failed to deserialize envelope as MessageEnvelope<JsonElement> for message {envelope.MessageId}");
 
     return new OutboxMessage {
@@ -1162,18 +1169,18 @@ public abstract class Dispatcher(
   /// Implemented by generated code - returns a strongly-typed delegate for invoking a receptor.
   /// The delegate encapsulates the receptor lookup and invocation with zero reflection.
   /// </summary>
-  protected abstract ReceptorInvoker<TResult>? _getReceptorInvoker<TResult>(object message, Type messageType);
+  protected abstract ReceptorInvoker<TResult>? GetReceptorInvoker<TResult>(object message, Type messageType);
 
   /// <summary>
   /// Implemented by generated code - returns a strongly-typed delegate for invoking a void receptor.
   /// The delegate encapsulates the receptor lookup and invocation with zero reflection.
   /// Returns null if no void receptor is registered for the message type.
   /// </summary>
-  protected abstract VoidReceptorInvoker? _getVoidReceptorInvoker(object message, Type messageType);
+  protected abstract VoidReceptorInvoker? GetVoidReceptorInvoker(object message, Type messageType);
 
   /// <summary>
   /// Implemented by generated code - returns a strongly-typed delegate for publishing to receptors.
   /// The delegate encapsulates finding all receptors and invoking them with zero reflection.
   /// </summary>
-  protected abstract ReceptorPublisher<TEvent> _getReceptorPublisher<TEvent>(TEvent @event, Type eventType);
+  protected abstract ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent eventData, Type eventType);
 }

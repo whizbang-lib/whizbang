@@ -11,8 +11,8 @@ namespace Whizbang.Benchmarks;
 [MemoryDiagnoser]
 [MarkdownExporter]
 public class SequenceProviderBenchmarks {
-  private ISequenceProvider _provider = null!;
-  private const string StreamKey = "benchmark-stream";
+  private InMemorySequenceProvider _provider = null!;
+  private const string STREAM_KEY = "benchmark-stream";
 
   [GlobalSetup]
   public void Setup() {
@@ -20,37 +20,37 @@ public class SequenceProviderBenchmarks {
   }
 
   [Benchmark(Baseline = true)]
-  public async Task<long> SingleSequence() {
-    return await _provider.GetNextAsync(StreamKey);
+  public async Task<long> SingleSequenceAsync() {
+    return await _provider.GetNextAsync(STREAM_KEY);
   }
 
   [Benchmark]
-  public async Task Generate100Sequences_Serial() {
+  public async Task Generate100Sequences_SerialAsync() {
     for (int i = 0; i < 100; i++) {
-      await _provider.GetNextAsync(StreamKey);
+      await _provider.GetNextAsync(STREAM_KEY);
     }
   }
 
   [Benchmark]
-  public async Task Generate100Sequences_Parallel() {
+  public async Task Generate100Sequences_ParallelAsync() {
     var tasks = new List<Task<long>>();
     for (int i = 0; i < 100; i++) {
-      tasks.Add(_provider.GetNextAsync(StreamKey));
+      tasks.Add(_provider.GetNextAsync(STREAM_KEY));
     }
     await Task.WhenAll(tasks);
   }
 
   [Benchmark]
-  public async Task Generate1000Sequences_Parallel() {
+  public async Task Generate1000Sequences_ParallelAsync() {
     var tasks = new List<Task<long>>();
     for (int i = 0; i < 1000; i++) {
-      tasks.Add(_provider.GetNextAsync(StreamKey));
+      tasks.Add(_provider.GetNextAsync(STREAM_KEY));
     }
     await Task.WhenAll(tasks);
   }
 
   [Benchmark]
-  public async Task MultipleStreams_10Streams_100Each() {
+  public async Task MultipleStreams_10Streams_100EachAsync() {
     var tasks = new List<Task<long>>();
     for (int stream = 0; stream < 10; stream++) {
       var streamKey = $"stream-{stream}";

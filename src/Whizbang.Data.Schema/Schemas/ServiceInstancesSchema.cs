@@ -26,42 +26,42 @@ public static class ServiceInstancesSchema {
     Columns: ImmutableArray.Create(
       new ColumnDefinition(
         Name: "instance_id",
-        DataType: WhizbangDataType.Uuid,
+        DataType: WhizbangDataType.UUID,
         PrimaryKey: true,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "service_name",
-        DataType: WhizbangDataType.String,
+        DataType: WhizbangDataType.STRING,
         MaxLength: 200,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "host_name",
-        DataType: WhizbangDataType.String,
+        DataType: WhizbangDataType.STRING,
         MaxLength: 200,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "process_id",
-        DataType: WhizbangDataType.Integer,
+        DataType: WhizbangDataType.INTEGER,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "started_at",
-        DataType: WhizbangDataType.TimestampTz,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
-        DefaultValue: DefaultValue.Function(DefaultValueFunction.DateTime_Now)
+        DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       ),
       new ColumnDefinition(
         Name: "last_heartbeat_at",
-        DataType: WhizbangDataType.TimestampTz,
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
-        DefaultValue: DefaultValue.Function(DefaultValueFunction.DateTime_Now)
+        DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       ),
       new ColumnDefinition(
         Name: "metadata",
-        DataType: WhizbangDataType.Json,
+        DataType: WhizbangDataType.JSON,
         Nullable: true
       )
     ),
@@ -82,12 +82,12 @@ public static class ServiceInstancesSchema {
   /// </summary>
   /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ServiceInstancesSchemaTests.cs:Columns_HasAllConstantsAsync</tests>
   public static class Columns {
-    public const string InstanceId = "instance_id";
-    public const string ServiceName = "service_name";
-    public const string HostName = "host_name";
-    public const string ProcessId = "process_id";
-    public const string StartedAt = "started_at";
-    public const string LastHeartbeatAt = "last_heartbeat_at";
-    public const string Metadata = "metadata";
+    public const string INSTANCE_ID = "instance_id";
+    public const string SERVICE_NAME = "service_name";
+    public const string HOST_NAME = "host_name";
+    public const string PROCESS_ID = "process_id";
+    public const string STARTED_AT = "started_at";
+    public const string LAST_HEARTBEAT_AT = "last_heartbeat_at";
+    public const string METADATA = "metadata";
   }
 }

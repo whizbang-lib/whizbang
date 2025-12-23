@@ -57,6 +57,10 @@ public partial class MessageJsonContext : JsonSerializerContext, IJsonTypeInfoRe
   // Generic helper methods for creating JsonTypeInfo objects
   #endregion
 
+  #region GET_TYPE_INFO_BY_NAME
+  // AOT-safe type name to JsonTypeInfo lookup using compile-time typeof() calls
+  #endregion
+
   #region CORE_TYPE_FACTORIES
   // Factory methods for Whizbang core types (MessageId, CorrelationId, etc.)
   #endregion

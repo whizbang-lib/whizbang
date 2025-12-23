@@ -15,6 +15,10 @@
     <!-- Disable TypeForwardedTo generation for polyfills to avoid conflicts with .NET 10 test project -->
     <!-- See: https://github.com/Sergio0694/PolySharp/issues/103 -->
     <PolySharpExcludeTypeForwardedToDeclarations>true</PolySharpExcludeTypeForwardedToDeclarations>
+
+    <!-- Suppress code analysis rules for source generator helper library -->
+    <!-- CA1716: "Shared" is VB.NET keyword but this is C#-only project, no interop concerns -->
+    <NoWarn>$(NoWarn);CA1716</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

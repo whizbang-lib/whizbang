@@ -14,10 +14,10 @@ namespace Whizbang.Core.Tests.Internal;
 [Category("Internal")]
 public class EventExtractorTests {
   // Test event types
-  private record _testEvent1(string Name) : IEvent;
-  private record _testEvent2(int Value) : IEvent;
-  private record _testEvent3(bool Flag) : IEvent;
-  private record _nonEvent(string Data); // Does not implement IEvent
+  private sealed record _testEvent1([StreamKey] string Name) : IEvent;
+  private sealed record _testEvent2([StreamKey] int Value) : IEvent;
+  private sealed record _testEvent3([StreamKey] bool Flag) : IEvent;
+  private sealed record _nonEvent(string Data); // Does not implement IEvent
 
   [Test]
   public async Task ExtractEvents_WithNull_ReturnsEmptyAsync() {
@@ -28,7 +28,7 @@ public class EventExtractorTests {
     var events = EventExtractor.ExtractEvents(result);
 
     // Assert
-    await Assert.That(events).HasCount().EqualTo(0);
+    await Assert.That(events).Count().IsEqualTo(0);
   }
 
   [Test]
@@ -40,7 +40,7 @@ public class EventExtractorTests {
     var events = EventExtractor.ExtractEvents(evt);
 
     // Assert
-    await Assert.That(events).HasCount().EqualTo(1);
+    await Assert.That(events).Count().IsEqualTo(1);
     await Assert.That(events.First()).IsEqualTo(evt);
   }
 
@@ -53,7 +53,7 @@ public class EventExtractorTests {
     var events = EventExtractor.ExtractEvents(_nonEvent);
 
     // Assert
-    await Assert.That(events).HasCount().EqualTo(0);
+    await Assert.That(events).Count().IsEqualTo(0);
   }
 
   [Test]
@@ -68,7 +68,7 @@ public class EventExtractorTests {
     var events = EventExtractor.ExtractEvents(eventArray);
 
     // Assert
-    await Assert.That(events).HasCount().EqualTo(3);
+    await Assert.That(events).Count().IsEqualTo(3);
     await Assert.That(events.ElementAt(0)).IsEqualTo(evt1);
     await Assert.That(events.ElementAt(1)).IsEqualTo(evt2);
     await Assert.That(events.ElementAt(2)).IsEqualTo(evt3);
@@ -85,7 +85,7 @@ public class EventExtractorTests {
     var events = EventExtractor.ExtractEvents(eventEnumerable);
 
     // Assert
-    await Assert.That(events).HasCount().EqualTo(2);
+    await Assert.That(events).Count().IsEqualTo(2);
     await Assert.That(events.ElementAt(0)).IsEqualTo(evt1);
     await Assert.That(events.ElementAt(1)).IsEqualTo(evt2);
   }
@@ -102,7 +102,7 @@ public class EventExtractorTests {
     var events = EventExtractor.ExtractEvents(tuple);
 
     // Assert
-    await Assert.That(events).HasCount().EqualTo(2);
+    await Assert.That(events).Count().IsEqualTo(2);
     await Assert.That(events.ElementAt(0)).IsEqualTo(evt1);
     await Assert.That(events.ElementAt(1)).IsEqualTo(evt2);
   }
@@ -118,7 +118,7 @@ public class EventExtractorTests {
     var events = EventExtractor.ExtractEvents(valueTuple);
 
     // Assert
-    await Assert.That(events).HasCount().EqualTo(2);
+    await Assert.That(events).Count().IsEqualTo(2);
     await Assert.That(events.ElementAt(0)).IsEqualTo(evt1);
     await Assert.That(events.ElementAt(1)).IsEqualTo(evt2);
   }
@@ -136,7 +136,7 @@ public class EventExtractorTests {
     var events = EventExtractor.ExtractEvents(tuple);
 
     // Assert
-    await Assert.That(events).HasCount().EqualTo(3);
+    await Assert.That(events).Count().IsEqualTo(3);
     await Assert.That(events.ElementAt(0)).IsEqualTo(evt1);
     await Assert.That(events.ElementAt(1)).IsEqualTo(evt2);
     await Assert.That(events.ElementAt(2)).IsEqualTo(evt3);
@@ -155,7 +155,7 @@ public class EventExtractorTests {
     var events = EventExtractor.ExtractEvents(outerEnumerable);
 
     // Assert
-    await Assert.That(events).HasCount().EqualTo(3);
+    await Assert.That(events).Count().IsEqualTo(3);
     await Assert.That(events.ElementAt(0)).IsEqualTo(evt1);
     await Assert.That(events.ElementAt(1)).IsEqualTo(evt2);
     await Assert.That(events.ElementAt(2)).IsEqualTo(evt3);
@@ -170,7 +170,7 @@ public class EventExtractorTests {
     var events = EventExtractor.ExtractEvents(emptyArray);
 
     // Assert
-    await Assert.That(events).HasCount().EqualTo(0);
+    await Assert.That(events).Count().IsEqualTo(0);
   }
 
   [Test]
@@ -182,7 +182,7 @@ public class EventExtractorTests {
     var events = EventExtractor.ExtractEvents(emptyEnumerable);
 
     // Assert
-    await Assert.That(events).HasCount().EqualTo(0);
+    await Assert.That(events).Count().IsEqualTo(0);
   }
 
   [Test]
@@ -194,7 +194,7 @@ public class EventExtractorTests {
     var events = EventExtractor.ExtractEvents(tuple);
 
     // Assert
-    await Assert.That(events).HasCount().EqualTo(0);
+    await Assert.That(events).Count().IsEqualTo(0);
   }
 
   [Test]
@@ -211,7 +211,7 @@ public class EventExtractorTests {
     var events = EventExtractor.ExtractEvents(tuple);
 
     // Assert
-    await Assert.That(events).HasCount().EqualTo(4);
+    await Assert.That(events).Count().IsEqualTo(4);
     await Assert.That(events.ElementAt(0)).IsEqualTo(evt1);
     await Assert.That(events.ElementAt(1)).IsEqualTo(evt2);
     await Assert.That(events.ElementAt(2)).IsEqualTo(evt3);

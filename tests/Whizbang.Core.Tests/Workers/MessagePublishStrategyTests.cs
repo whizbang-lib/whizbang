@@ -66,7 +66,7 @@ public class MessagePublishStrategyTests {
     await Assert.That(method!.ReturnType).IsEqualTo(typeof(Task<MessagePublishResult>));
 
     var parameters = method.GetParameters();
-    await Assert.That(parameters).HasCount().EqualTo(2);
+    await Assert.That(parameters).Count().IsEqualTo(2);
     await Assert.That(parameters[0].ParameterType).IsEqualTo(typeof(OutboxWork));
     await Assert.That(parameters[1].ParameterType).IsEqualTo(typeof(CancellationToken));
   }
@@ -114,7 +114,7 @@ public class MessagePublishStrategyTests {
   // Test Implementations
   // ========================================
 
-  private class DefaultPublishStrategy : IMessagePublishStrategy {
+  private sealed class DefaultPublishStrategy : IMessagePublishStrategy {
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
       cancellationToken.ThrowIfCancellationRequested();
       return Task.FromResult(true);
@@ -129,7 +129,7 @@ public class MessagePublishStrategyTests {
     }
   }
 
-  private class ReadinessAwarePublishStrategy : IMessagePublishStrategy {
+  private sealed class ReadinessAwarePublishStrategy : IMessagePublishStrategy {
     private readonly bool _isReady;
 
     public ReadinessAwarePublishStrategy(bool isReady) {

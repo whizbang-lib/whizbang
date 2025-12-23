@@ -18,14 +18,14 @@ namespace Whizbang.Policies.Tests;
 [Category("Policies")]
 public class PolicyEngineTests {
   // Test messages
-  private record OrderCommand(string OrderId, decimal Amount);
-  private record PaymentCommand(string PaymentId, decimal Amount);
-  private record NotificationCommand(string UserId, string Message);
+  private sealed record OrderCommand(string OrderId, decimal Amount);
+  private sealed record PaymentCommand(string PaymentId, decimal Amount);
+  private sealed record NotificationCommand(string UserId, string Message);
 
   /// <summary>
   /// Helper to create a test envelope
   /// </summary>
-  private static Whizbang.Core.Observability.MessageEnvelope<TMessage> CreateTestEnvelope<TMessage>(TMessage payload) {
+  private static Whizbang.Core.Observability.MessageEnvelope<TMessage> _createTestEnvelope<TMessage>(TMessage payload) {
     var envelope = new Whizbang.Core.Observability.MessageEnvelope<TMessage> {
       MessageId = MessageId.New(),
       Payload = payload,
@@ -48,7 +48,7 @@ public class PolicyEngineTests {
   /// <summary>
   /// Helper to create a test policy context
   /// </summary>
-  private static PolicyContext CreateTestContext<TMessage>(TMessage message, IMessageEnvelope envelope) {
+  private static PolicyContext _createTestContext<TMessage>(TMessage message, IMessageEnvelope envelope) {
     var services = new ServiceCollection().BuildServiceProvider();
     return new PolicyContext(
       message: message!,
@@ -70,8 +70,8 @@ public class PolicyEngineTests {
     });
 
     var message = new OrderCommand("order-123", 100m);
-    var envelope = CreateTestEnvelope(message);
-    var context = CreateTestContext(message, envelope);
+    var envelope = _createTestEnvelope(message);
+    var context = _createTestContext(message, envelope);
 
     // Act
     var policyConfig = await engine.MatchAsync(context);
@@ -99,14 +99,14 @@ public class PolicyEngineTests {
     });
 
     var message = new OrderCommand("order-123", 100m);
-    var envelope = CreateTestEnvelope(message);
-    var context = CreateTestContext(message, envelope);
+    var envelope = _createTestEnvelope(message);
+    var context = _createTestContext(message, envelope);
 
     // Act
     var policyConfig = await engine.MatchAsync(context);
 
     // Assert - Should match first policy only
-    await Assert.That(matchedPolicies).HasCount().EqualTo(1);
+    await Assert.That(matchedPolicies).Count().IsEqualTo(1);
     await Assert.That(matchedPolicies[0]).IsEqualTo("Policy1");
     await Assert.That(policyConfig!.Topic).IsEqualTo("topic1");
   }
@@ -121,8 +121,8 @@ public class PolicyEngineTests {
     });
 
     var message = new OrderCommand("order-123", 100m);
-    var envelope = CreateTestEnvelope(message);
-    var context = CreateTestContext(message, envelope);
+    var envelope = _createTestEnvelope(message);
+    var context = _createTestContext(message, envelope);
 
     // Act
     var policyConfig = await engine.MatchAsync(context);
@@ -141,15 +141,15 @@ public class PolicyEngineTests {
     });
 
     var message = new OrderCommand("order-123", 100m);
-    var envelope = CreateTestEnvelope(message);
-    var context = CreateTestContext(message, envelope);
+    var envelope = _createTestEnvelope(message);
+    var context = _createTestContext(message, envelope);
 
     // Act
     await engine.MatchAsync(context);
 
     // Assert - Decision should be recorded in trail
     var decisions = context.Trail.Decisions;
-    await Assert.That(decisions).HasCount().GreaterThan(0);
+    await Assert.That(decisions).Count().IsGreaterThan(0);
     await Assert.That(decisions[0].PolicyName).IsEqualTo("OrderPolicy");
     await Assert.That(decisions[0].Matched).IsTrue();
   }
@@ -164,15 +164,15 @@ public class PolicyEngineTests {
     });
 
     var message = new OrderCommand("order-123", 100m);
-    var envelope = CreateTestEnvelope(message);
-    var context = CreateTestContext(message, envelope);
+    var envelope = _createTestEnvelope(message);
+    var context = _createTestContext(message, envelope);
 
     // Act
     await engine.MatchAsync(context);
 
     // Assert - Unmatched policy should be recorded
     var decisions = context.Trail.Decisions;
-    await Assert.That(decisions).HasCount().GreaterThan(0);
+    await Assert.That(decisions).Count().IsGreaterThan(0);
     await Assert.That(decisions[0].PolicyName).IsEqualTo("PaymentPolicy");
     await Assert.That(decisions[0].Matched).IsFalse();
   }
@@ -187,8 +187,8 @@ public class PolicyEngineTests {
     });
 
     var message = new OrderCommand("order-123", 100m);
-    var envelope = CreateTestEnvelope(message);
-    var context = CreateTestContext(message, envelope);
+    var envelope = _createTestEnvelope(message);
+    var context = _createTestContext(message, envelope);
 
     // Act
     var policyConfig = await engine.MatchAsync(context);
@@ -207,8 +207,8 @@ public class PolicyEngineTests {
     });
 
     var message = new OrderCommand("order-123", 100m);
-    var envelope = CreateTestEnvelope(message);
-    var context = CreateTestContext(message, envelope);
+    var envelope = _createTestEnvelope(message);
+    var context = _createTestContext(message, envelope);
 
     // Act
     var policyConfig = await engine.MatchAsync(context);
@@ -227,8 +227,8 @@ public class PolicyEngineTests {
     });
 
     var message = new OrderCommand("order-123", 100m);
-    var envelope = CreateTestEnvelope(message);
-    var context = CreateTestContext(message, envelope);
+    var envelope = _createTestEnvelope(message);
+    var context = _createTestContext(message, envelope);
 
     // Act
     var policyConfig = await engine.MatchAsync(context);
@@ -247,8 +247,8 @@ public class PolicyEngineTests {
     });
 
     var message = new OrderCommand("order-123", 100m);
-    var envelope = CreateTestEnvelope(message);
-    var context = CreateTestContext(message, envelope);
+    var envelope = _createTestEnvelope(message);
+    var context = _createTestContext(message, envelope);
 
     // Act
     var policyConfig = await engine.MatchAsync(context);
@@ -267,8 +267,8 @@ public class PolicyEngineTests {
     });
 
     var message = new OrderCommand("order-123", 100m);
-    var envelope = CreateTestEnvelope(message);
-    var context = CreateTestContext(message, envelope);
+    var envelope = _createTestEnvelope(message);
+    var context = _createTestContext(message, envelope);
 
     // Act
     var policyConfig = await engine.MatchAsync(context);
@@ -287,8 +287,8 @@ public class PolicyEngineTests {
     });
 
     var message = new OrderCommand("order-123", 100m);
-    var envelope = CreateTestEnvelope(message);
-    var context = CreateTestContext(message, envelope);
+    var envelope = _createTestEnvelope(message);
+    var context = _createTestContext(message, envelope);
 
     // Act
     var policyConfig = await engine.MatchAsync(context);
@@ -307,8 +307,8 @@ public class PolicyEngineTests {
     });
 
     var message = new OrderCommand("order-123", 100m);
-    var envelope = CreateTestEnvelope(message);
-    var context = CreateTestContext(message, envelope);
+    var envelope = _createTestEnvelope(message);
+    var context = _createTestContext(message, envelope);
 
     // Act
     var policyConfig = await engine.MatchAsync(context);
@@ -325,7 +325,7 @@ public class PolicyEngineTests {
     // Act & Assert
     var exception = await Assert.That(() => engine.AddPolicy(null!, ctx => true, config => { }))
       .ThrowsExactly<ArgumentException>();
-    await Assert.That(exception.Message).Contains("Policy name cannot be null or empty");
+    await Assert.That(exception!.Message).Contains("Policy name cannot be null or empty");
   }
 
   [Test]
@@ -336,7 +336,7 @@ public class PolicyEngineTests {
     // Act & Assert
     var exception = await Assert.That(() => engine.AddPolicy("", ctx => true, config => { }))
       .ThrowsExactly<ArgumentException>();
-    await Assert.That(exception.Message).Contains("Policy name cannot be null or empty");
+    await Assert.That(exception!.Message).Contains("Policy name cannot be null or empty");
   }
 
   [Test]
@@ -347,7 +347,7 @@ public class PolicyEngineTests {
     // Act & Assert
     var exception = await Assert.That(() => engine.AddPolicy("   ", ctx => true, config => { }))
       .ThrowsExactly<ArgumentException>();
-    await Assert.That(exception.Message).Contains("Policy name cannot be null or empty");
+    await Assert.That(exception!.Message).Contains("Policy name cannot be null or empty");
   }
 
   [Test]
@@ -393,8 +393,8 @@ public class PolicyEngineTests {
     });
 
     var message = new OrderCommand("order-123", 100m);
-    var envelope = CreateTestEnvelope(message);
-    var context = CreateTestContext(message, envelope);
+    var envelope = _createTestEnvelope(message);
+    var context = _createTestContext(message, envelope);
 
     // Act
     var policyConfig = await engine.MatchAsync(context);
@@ -402,7 +402,7 @@ public class PolicyEngineTests {
     // Assert - Should return null and record failure
     await Assert.That(policyConfig).IsNull();
     var decisions = context.Trail.Decisions;
-    await Assert.That(decisions).HasCount().EqualTo(1);
+    await Assert.That(decisions).Count().IsEqualTo(1);
     await Assert.That(decisions[0].PolicyName).IsEqualTo("FailingPolicy");
     await Assert.That(decisions[0].Matched).IsFalse();
     await Assert.That(decisions[0].Reason).Contains("Evaluation failed");
@@ -421,8 +421,8 @@ public class PolicyEngineTests {
     });
 
     var message = new OrderCommand("order-123", 100m);
-    var envelope = CreateTestEnvelope(message);
-    var context = CreateTestContext(message, envelope);
+    var envelope = _createTestEnvelope(message);
+    var context = _createTestContext(message, envelope);
 
     // Act
     var policyConfig = await engine.MatchAsync(context);
@@ -431,7 +431,7 @@ public class PolicyEngineTests {
     await Assert.That(policyConfig).IsNotNull();
     await Assert.That(policyConfig!.Topic).IsEqualTo("test2");
     var decisions = context.Trail.Decisions;
-    await Assert.That(decisions).HasCount().EqualTo(2);
+    await Assert.That(decisions).Count().IsEqualTo(2);
     await Assert.That(decisions[0].Matched).IsFalse(); // FailingPolicy
     await Assert.That(decisions[1].Matched).IsTrue(); // SuccessPolicy
   }

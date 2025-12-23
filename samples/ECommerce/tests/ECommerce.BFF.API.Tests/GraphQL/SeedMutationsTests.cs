@@ -76,6 +76,7 @@ public class SeedMutationsTests {
   /// Tests that SeedProducts dispatches 12 CreateProductCommands when no products exist.
   /// </summary>
   [Test]
+  [Obsolete]
   public async Task SeedProducts_WhenNoProductsExist_Dispatches12CommandsAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
@@ -85,7 +86,7 @@ public class SeedMutationsTests {
     var sut = new SeedMutations(dispatcher, productLens, logger);
 
     // Act
-    var result = await sut.SeedProducts();
+    var result = await sut.SeedProductsAsync();
 
     // Assert - Verify 12 commands were dispatched
     await Assert.That(result).IsEqualTo(12);
@@ -118,7 +119,7 @@ public class SeedMutationsTests {
     var sut = new SeedMutations(dispatcher, productLens, logger);
 
     // Act
-    var result = await sut.SeedProducts();
+    var result = await sut.SeedProductsAsync();
 
     // Assert - Verify no commands were dispatched
     await Assert.That(result).IsEqualTo(0);
@@ -138,7 +139,7 @@ public class SeedMutationsTests {
     var sut = new SeedMutations(dispatcher, productLens, logger);
 
     // Act
-    await sut.SeedProducts();
+    await sut.SeedProductsAsync();
 
     // Assert - Verify all 12 commands have required data
     await Assert.That(dispatcher.SentCommands.Count).IsEqualTo(12);
@@ -177,7 +178,7 @@ public class SeedMutationsTests {
     var sut = new SeedMutations(dispatcher, productLens, logger);
 
     // Act & Assert - Verify exception is propagated
-    await Assert.That(async () => await sut.SeedProducts())
+    await Assert.That(async () => await sut.SeedProductsAsync())
       .Throws<InvalidOperationException>()
       .WithMessage("Dispatcher failure");
   }

@@ -80,7 +80,7 @@ public class ModelTypeInfoTests {
   /// <summary>
   /// Test model class used for testing ModelTypeInfo.
   /// </summary>
-  private record TestModel {
+  private sealed record TestModel {
     public string Id { get; init; } = "";
     public string Name { get; init; } = "";
   }
