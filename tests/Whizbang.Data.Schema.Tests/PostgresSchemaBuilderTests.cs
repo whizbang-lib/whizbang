@@ -1,5 +1,5 @@
 using System.Collections.Immutable;
-using Whizbang.Data.Dapper.Postgres.Schema;
+using Whizbang.Data.Postgres.Schema;
 using Whizbang.Data.Schema.Schemas;
 
 namespace Whizbang.Data.Schema.Tests;
@@ -19,7 +19,7 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
     var table = new TableDefinition(
       Name: "test_table",
       Columns: ImmutableArray.Create(
-        new ColumnDefinition("id", WhizbangDataType.Uuid, PrimaryKey: true, Nullable: false)
+        new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false)
       )
     );
     var config = new SchemaConfiguration();
@@ -28,7 +28,7 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
     var sql = PostgresSchemaBuilder.Instance.BuildCreateTable(table, config.InfrastructurePrefix);
 
     // Assert
-    await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wb_test_table");
+    await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_test_table");
     await Assert.That(sql).Contains("id UUID NOT NULL PRIMARY KEY");
   }
 
@@ -38,9 +38,9 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
     var table = new TableDefinition(
       Name: "users",
       Columns: ImmutableArray.Create(
-        new ColumnDefinition("id", WhizbangDataType.Uuid, PrimaryKey: true, Nullable: false),
-        new ColumnDefinition("name", WhizbangDataType.String, MaxLength: 255, Nullable: false),
-        new ColumnDefinition("age", WhizbangDataType.Integer, Nullable: true)
+        new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false),
+        new ColumnDefinition("name", WhizbangDataType.STRING, MaxLength: 255, Nullable: false),
+        new ColumnDefinition("age", WhizbangDataType.INTEGER, Nullable: true)
       )
     );
     var config = new SchemaConfiguration();
@@ -60,12 +60,12 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
     var table = new TableDefinition(
       Name: "events",
       Columns: ImmutableArray.Create(
-        new ColumnDefinition("id", WhizbangDataType.Uuid, PrimaryKey: true, Nullable: false),
+        new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false),
         new ColumnDefinition(
           "created_at",
-          WhizbangDataType.TimestampTz,
+          WhizbangDataType.TIMESTAMP_TZ,
           Nullable: false,
-          DefaultValue: DefaultValue.Function(DefaultValueFunction.DateTime_Now)
+          DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
         )
       )
     );
@@ -84,8 +84,8 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
     var table = new TableDefinition(
       Name: "users",
       Columns: ImmutableArray.Create(
-        new ColumnDefinition("id", WhizbangDataType.Uuid, PrimaryKey: true, Nullable: false),
-        new ColumnDefinition("email", WhizbangDataType.String, MaxLength: 255, Nullable: false, Unique: true)
+        new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false),
+        new ColumnDefinition("email", WhizbangDataType.STRING, MaxLength: 255, Nullable: false, Unique: true)
       )
     );
     var config = new SchemaConfiguration();
@@ -103,7 +103,7 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
     var table = new TableDefinition(
       Name: "product_dto",
       Columns: ImmutableArray.Create(
-        new ColumnDefinition("id", WhizbangDataType.Uuid, PrimaryKey: true, Nullable: false)
+        new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false)
       )
     );
     var config = new SchemaConfiguration();
@@ -112,7 +112,7 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
     var sql = PostgresSchemaBuilder.Instance.BuildCreateTable(table, config.PerspectivePrefix);
 
     // Assert
-    await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wb_per_product_dto");
+    await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_per_product_dto");
   }
 
   [Test]
@@ -123,14 +123,14 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
       Columns: ImmutableArray.Create("email")
     );
     var tableName = "users";
-    var prefix = "wb_";
+    var prefix = "wh_";
 
     // Act
     var sql = PostgresSchemaBuilder.Instance.BuildCreateIndex(index, tableName, prefix);
 
     // Assert
     await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_users_email");
-    await Assert.That(sql).Contains("ON wb_users (email)");
+    await Assert.That(sql).Contains("ON wh_users (email)");
   }
 
   [Test]
@@ -141,14 +141,14 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
       Columns: ImmutableArray.Create("event_type", "created_at")
     );
     var tableName = "events";
-    var prefix = "wb_";
+    var prefix = "wh_";
 
     // Act
     var sql = PostgresSchemaBuilder.Instance.BuildCreateIndex(index, tableName, prefix);
 
     // Assert
     await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_events_type_created");
-    await Assert.That(sql).Contains("ON wb_events (event_type, created_at)");
+    await Assert.That(sql).Contains("ON wh_events (event_type, created_at)");
   }
 
   [Test]
@@ -160,14 +160,14 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
       Unique: true
     );
     var tableName = "event_store";
-    var prefix = "wb_";
+    var prefix = "wh_";
 
     // Act
     var sql = PostgresSchemaBuilder.Instance.BuildCreateIndex(index, tableName, prefix);
 
     // Assert
     await Assert.That(sql).Contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_aggregate_version");
-    await Assert.That(sql).Contains("ON wb_event_store (aggregate_id, version)");
+    await Assert.That(sql).Contains("ON wh_event_store (aggregate_id, version)");
   }
 
   [Test]
@@ -179,11 +179,11 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
     var sql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(config);
 
     // Assert
-    await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wb_inbox");
-    await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wb_outbox");
-    await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wb_event_store");
-    await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wb_request_response");
-    await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wb_sequences");
+    await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_inbox");
+    await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_outbox");
+    await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_event_store");
+    await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_request_response");
+    await Assert.That(sql).Contains("CREATE TABLE IF NOT EXISTS wh_sequences");
   }
 
   [Test]
@@ -255,11 +255,11 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
 
     // Assert
     await Assert.That(sql).Contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_event_store_aggregate");
-    await Assert.That(sql).Contains("ON wb_event_store (aggregate_id, version)");
+    await Assert.That(sql).Contains("ON wh_event_store (aggregate_id, version)");
   }
 
   [Test]
-  public async Task BuildInfrastructureSchema_CustomPrefix_UsesCustomPrefixAsync() {
+  public new async Task BuildInfrastructureSchema_CustomPrefix_UsesCustomPrefixAsync() {
     // Arrange
     var config = new SchemaConfiguration(InfrastructurePrefix: "custom_");
 
@@ -322,7 +322,7 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
     var sql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(config);
 
     // Assert
-    await Assert.That(sql).Contains("CREATE SEQUENCE IF NOT EXISTS wb_event_sequence");
+    await Assert.That(sql).Contains("CREATE SEQUENCE IF NOT EXISTS wh_event_sequence");
     await Assert.That(sql).Contains("START WITH 1 INCREMENT BY 1");
   }
 

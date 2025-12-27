@@ -248,7 +248,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Generate and replace each region
     template = TemplateUtilities.ReplaceRegion(template, "LAZY_FIELDS", lazyFields.ToString());
     template = TemplateUtilities.ReplaceRegion(template, "LAZY_PROPERTIES", _generateLazyProperties(assembly, allTypes));
-    template = TemplateUtilities.ReplaceRegion(template, "ASSEMBLY_AWARE_HELPER", _generateAssemblyAwareHelper(assembly, converters));
+    template = TemplateUtilities.ReplaceRegion(template, "ASSEMBLY_AWARE_HELPER", _generateAssemblyAwareHelper(assembly, converters, messages, compilation));
     template = TemplateUtilities.ReplaceRegion(template, "GET_DISCOVERED_TYPE_INFO", _generateGetTypeInfo(assembly, allTypes, listTypes));
     template = TemplateUtilities.ReplaceRegion(template, "HELPER_METHODS", _generateHelperMethods(assembly));
     template = TemplateUtilities.ReplaceRegion(template, "GET_TYPE_INFO_BY_NAME", _generateGetTypeInfoByName(assembly, allTypes, compilation));
@@ -452,7 +452,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Generates AOT-safe GetTypeInfoByName method that maps assembly-qualified type names to JsonTypeInfo
   /// using compile-time typeof() calls instead of runtime Type.GetType().
   /// This avoids IL2057 trimming warnings by using static type references.
-  /// Works with cross-assembly ModuleInitializer registration pattern.
+  /// NOTE: Deprecated in favor of JsonContextRegistry.GetTypeInfoByName for cross-assembly support.
   /// </summary>
   private static string _generateGetTypeInfoByName(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes, Compilation compilation) {
     var sb = new StringBuilder();
@@ -464,10 +464,12 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine("/// Gets JsonTypeInfo for a message type by its assembly-qualified name.");
     sb.AppendLine("/// Uses compile-time typeof() calls for AOT compatibility (avoids IL2057 trimming warnings).");
     sb.AppendLine("/// This method is generated per-assembly and knows only about types in this assembly.");
+    sb.AppendLine("/// DEPRECATED: Use JsonContextRegistry.GetTypeInfoByName() instead for cross-assembly support.");
     sb.AppendLine("/// </summary>");
-    sb.AppendLine("/// <param name=\"assemblyQualifiedTypeName\">Assembly-qualified type name (e.g., \"MyApp.Commands.CreateOrder, MyApp\")</param>");
+    sb.AppendLine("/// <param name=\"assemblyQualifiedTypeName\">Assembly-qualified type name (e.g., \"YourNamespace.Commands.CreateOrder, YourAssembly\")</param>");
     sb.AppendLine("/// <param name=\"options\">JsonSerializerOptions to use for creating JsonTypeInfo</param>");
     sb.AppendLine("/// <returns>JsonTypeInfo for the type, or null if not found in this assembly</returns>");
+    sb.AppendLine("[System.Obsolete(\"Use JsonContextRegistry.GetTypeInfoByName() for cross-assembly type resolution with fuzzy matching support.\")]");
     sb.AppendLine("public static JsonTypeInfo? GetTypeInfoByName(string assemblyQualifiedTypeName, JsonSerializerOptions options) {");
     sb.AppendLine("  if (string.IsNullOrEmpty(assemblyQualifiedTypeName)) return null;");
     sb.AppendLine("  if (options == null) return null;");
@@ -477,7 +479,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine();
     sb.AppendLine("  // Use switch expression for AOT-safe type name mapping");
     sb.AppendLine("  // Each case uses typeof() which is compile-time and AOT-safe");
-    sb.AppendLine("  return assemblyQualifiedTypeName switch {");
+    sb.AppendLine("  var typeInfo = assemblyQualifiedTypeName switch {");
 
     // Only generate mappings for actual message types (commands/events), not nested types
     var messageTypes = allTypes.Where(t => t.IsCommand || t.IsEvent).ToList();
@@ -490,8 +492,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       sb.AppendLine($"    \"{typeNameWithoutGlobal}, {actualAssemblyName}\" => context.GetTypeInfoInternal(typeof({type.FullyQualifiedName}), options),");
     }
 
-    sb.AppendLine("    _ => null  // Type not found in this assembly");
+    sb.AppendLine("    _ => (JsonTypeInfo?)null  // Type not found in this assembly");
     sb.AppendLine("  };");
+    sb.AppendLine();
+    sb.AppendLine("  return typeInfo;");
     sb.AppendLine("}");
 
     return sb.ToString();
@@ -722,18 +726,41 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     return sb.ToString();
   }
 
-  private static string _generateAssemblyAwareHelper(Assembly assembly, ImmutableArray<WhizbangIdTypeInfo> converters) {
+  private static string _generateAssemblyAwareHelper(Assembly assembly, ImmutableArray<WhizbangIdTypeInfo> converters, ImmutableArray<JsonMessageTypeInfo> messages, Compilation compilation) {
     // Load snippet
     var createOptionsSnippet = TemplateUtilities.ExtractSnippet(
         assembly,
         "JsonContextSnippets.cs",
         "HELPER_CREATE_OPTIONS");
 
+    // Get the actual assembly name from the compilation
+    var actualAssemblyName = compilation.AssemblyName ?? "Unknown";
+
     // Generate converter instance registration code for ModuleInitializer (no reflection - AOT compatible!)
     var converterRegistrations = new System.Text.StringBuilder();
     if (!converters.IsEmpty) {
       foreach (var converter in converters) {
         converterRegistrations.AppendLine($"  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterConverter(new global::{converter.FullyQualifiedTypeName}());");
+      }
+    }
+
+    // Generate type name registration code for ModuleInitializer (no reflection - AOT compatible!)
+    // Register only actual message types (commands/events), not nested types
+    // This enables cross-assembly type resolution via JsonContextRegistry.GetTypeInfoByName()
+    var messageTypes = messages.Where(m => m.IsCommand || m.IsEvent).ToList();
+    if (messageTypes.Count > 0) {
+      converterRegistrations.AppendLine();
+      converterRegistrations.AppendLine("  // Register type name mappings for cross-assembly resolution");
+      foreach (var message in messageTypes) {
+        // Generate type name without "global::" prefix for assembly-qualified name
+        // e.g., "MyApp.Commands.CreateOrder, MyApp.Contracts"
+        var typeNameWithoutGlobal = message.FullyQualifiedName.Replace("global::", "");
+        var assemblyQualifiedName = $"{typeNameWithoutGlobal}, {actualAssemblyName}";
+
+        converterRegistrations.AppendLine($"  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(");
+        converterRegistrations.AppendLine($"    \"{assemblyQualifiedName}\",");
+        converterRegistrations.AppendLine($"    typeof({message.FullyQualifiedName}),");
+        converterRegistrations.AppendLine($"    MessageJsonContext.Default);");
       }
     }
 

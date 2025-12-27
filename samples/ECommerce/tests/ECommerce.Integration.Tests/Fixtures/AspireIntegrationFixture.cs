@@ -5,6 +5,7 @@ using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Generated;
 using ECommerce.InventoryWorker.Generated;
 using ECommerce.InventoryWorker.Lenses;
+using Medo;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -30,7 +31,9 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   private bool _isInitialized;
   private IHost? _inventoryHost;
   private IHost? _bffHost;
-  private readonly Guid _sharedInstanceId = Guid.CreateVersion7(); // Shared across both services for partition claiming
+  private readonly Guid _inventoryInstanceId = Uuid7.NewUuid7().ToGuid(); // Unique ID for InventoryWorker partition claiming
+  private readonly Guid _bffInstanceId = Uuid7.NewUuid7().ToGuid(); // Unique ID for BFF partition claiming
+  private readonly Guid _testPollerInstanceId = Uuid7.NewUuid7().ToGuid(); // Separate ID for test polling to avoid work conflicts
   private string? _postgresConnection;
   private string? _serviceBusConnection;
   private IServiceScope? _inventoryScope;  // Long-lived scope for lens access
@@ -117,7 +120,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     _postgresConnection = await _app.GetConnectionStringAsync("whizbang-integration-test", cancellationToken)
       ?? throw new InvalidOperationException("Failed to get PostgreSQL connection string");
 
-    _serviceBusConnection = await _app.GetConnectionStringAsync("servicebus", cancellationToken)
+    _serviceBusConnection = await _app.GetConnectionStringAsync("sbemulatorns", cancellationToken)
       ?? throw new InvalidOperationException("Failed to get Service Bus connection string");
 
     Console.WriteLine($"[AspireFixture] PostgreSQL Connection: {_postgresConnection}");
@@ -139,15 +142,24 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
 
     Console.WriteLine("[AspireFixture] Schema initialized.");
 
+    // Clean up any stale data from previous test runs BEFORE starting workers
+    // This removes accumulated perspective checkpoints that cause timeouts
+    Console.WriteLine("[AspireFixture] Cleaning stale data from previous test runs...");
+    await CleanupDatabaseAsync(cancellationToken);
+    Console.WriteLine("[AspireFixture] Database cleaned.");
+
     // WORKAROUND: Azure Service Bus Emulator reports ready before it can actually process messages
     // Wait for the emulator to be truly ready BEFORE starting service hosts
     // If we start hosts first, ServiceBusConsumerWorker will try to connect immediately and fail
     // See: https://github.com/Azure/azure-service-bus-emulator-installer/issues/35
-    //
-    // NOTE: The config file with $Default TrueFilter rules is mounted via Aspire at container startup
-    // (see ECommerce.Integration.Tests.AppHost/Program.cs), so we don't need to modify config here.
     Console.WriteLine("[AspireFixture] Waiting for Azure Service Bus Emulator to be fully ready...");
     await _waitForServiceBusEmulatorReadyAsync(cancellationToken);
+
+    // CRITICAL: Aspire does NOT automatically add $Default TrueFilter rules despite documentation claims
+    // We must manually add them to ensure messages are delivered to all subscriptions
+    Console.WriteLine("[AspireFixture] Manually adding $Default TrueFilter rules to all subscriptions...");
+    await _addServiceBusSubscriptionRulesAsync(cancellationToken);
+    Console.WriteLine("[AspireFixture] Subscription rules configured.");
 
     Console.WriteLine("[AspireFixture] Starting service hosts...");
 
@@ -175,8 +187,8 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   private IHost _createInventoryHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
 
-    // Register service instance provider (uses shared instance ID for partition claiming compatibility)
-    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(_sharedInstanceId, "InventoryWorker"));
+    // Register service instance provider (uses unique instance ID to avoid partition claiming conflicts)
+    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(_inventoryInstanceId, "InventoryWorker"));
 
     // Register Azure Service Bus transport
     var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
@@ -245,8 +257,8 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
 
     // Register Service Bus consumer subscriptions for InventoryWorker's own perspectives
     var consumerOptions = new ServiceBusConsumerOptions();
-    consumerOptions.Subscriptions.Add(new TopicSubscription("products", "inventory-worker"));
-    consumerOptions.Subscriptions.Add(new TopicSubscription("inventory", "inventory-worker"));
+    consumerOptions.Subscriptions.Add(new TopicSubscription("products", "products-inventory-worker"));
+    consumerOptions.Subscriptions.Add(new TopicSubscription("inventory", "inventory-inventory-worker"));
     builder.Services.AddSingleton(consumerOptions);
 
     // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
@@ -259,6 +271,9 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
 
     // Register IWorkChannelWriter for communication between strategy and worker
     builder.Services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
+
+    // Register InstantCompletionStrategy for immediate perspective completion reporting (test optimization)
+    builder.Services.AddSingleton<IPerspectiveCompletionStrategy, InstantCompletionStrategy>();
 
     // Configure PerspectiveWorker with faster polling for integration tests
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {
@@ -296,8 +311,8 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   private IHost _createBffHost(string postgresConnection, string serviceBusConnection) {
     var builder = Host.CreateApplicationBuilder();
 
-    // Register service instance provider (uses shared instance ID for partition claiming compatibility)
-    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(_sharedInstanceId, "BFF.API"));
+    // Register service instance provider (uses unique instance ID to avoid partition claiming conflicts)
+    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(_bffInstanceId, "BFF.API"));
 
     var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
 
@@ -371,6 +386,9 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Register IWorkChannelWriter for communication between strategy and worker
     builder.Services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
 
+    // Register InstantCompletionStrategy for immediate perspective completion reporting (test optimization)
+    builder.Services.AddSingleton<IPerspectiveCompletionStrategy, InstantCompletionStrategy>();
+
     // Configure PerspectiveWorker with faster polling for integration tests
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
@@ -387,8 +405,8 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
 
     // Register Service Bus consumer to receive events
     var consumerOptions = new ServiceBusConsumerOptions();
-    consumerOptions.Subscriptions.Add(new TopicSubscription("products", "bff-service"));
-    consumerOptions.Subscriptions.Add(new TopicSubscription("inventory", "bff-service"));
+    consumerOptions.Subscriptions.Add(new TopicSubscription("products", "products-bff-service"));
+    consumerOptions.Subscriptions.Add(new TopicSubscription("inventory", "inventory-bff-service"));
     builder.Services.AddSingleton(consumerOptions);
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
       new ServiceBusConsumerWorker(
@@ -421,6 +439,54 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     using (var scope = _bffHost!.Services.CreateScope()) {
       var bffDbContext = scope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
       await ECommerce.BFF.API.Generated.BffDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(bffDbContext, logger: null, cancellationToken);
+    }
+
+    // Seed message associations for perspectives
+    // These associations tell ProcessWorkBatchAsync which perspectives to invoke for which events
+    using (var scope = _inventoryHost!.Services.CreateScope()) {
+      var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+
+      // Seed associations for InventoryWorker.ProductCatalogPerspective
+      await dbContext.Database.ExecuteSqlRawAsync(@"
+        INSERT INTO wh_message_associations (message_type, association_type, target_name, service_name, created_at, updated_at)
+        VALUES
+          ('ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts', 'perspective', 'ProductCatalogPerspective', 'ECommerce.InventoryWorker', NOW(), NOW()),
+          ('ECommerce.Contracts.Events.ProductUpdatedEvent, ECommerce.Contracts', 'perspective', 'ProductCatalogPerspective', 'ECommerce.InventoryWorker', NOW(), NOW()),
+          ('ECommerce.Contracts.Events.ProductDeletedEvent, ECommerce.Contracts', 'perspective', 'ProductCatalogPerspective', 'ECommerce.InventoryWorker', NOW(), NOW())
+        ON CONFLICT (message_type, association_type, target_name, service_name) DO NOTHING
+      ", cancellationToken);
+
+      // Seed associations for InventoryWorker.InventoryLevelsPerspective
+      await dbContext.Database.ExecuteSqlRawAsync(@"
+        INSERT INTO wh_message_associations (message_type, association_type, target_name, service_name, created_at, updated_at)
+        VALUES
+          ('ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.InventoryWorker', NOW(), NOW()),
+          ('ECommerce.Contracts.Events.InventoryRestockedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.InventoryWorker', NOW(), NOW()),
+          ('ECommerce.Contracts.Events.InventoryReservedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.InventoryWorker', NOW(), NOW()),
+          ('ECommerce.Contracts.Events.InventoryAdjustedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.InventoryWorker', NOW(), NOW())
+        ON CONFLICT (message_type, association_type, target_name, service_name) DO NOTHING
+      ", cancellationToken);
+
+      // Seed associations for BFF.ProductCatalogPerspective
+      await dbContext.Database.ExecuteSqlRawAsync(@"
+        INSERT INTO wh_message_associations (message_type, association_type, target_name, service_name, created_at, updated_at)
+        VALUES
+          ('ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts', 'perspective', 'ProductCatalogPerspective', 'ECommerce.BFF.API', NOW(), NOW()),
+          ('ECommerce.Contracts.Events.ProductUpdatedEvent, ECommerce.Contracts', 'perspective', 'ProductCatalogPerspective', 'ECommerce.BFF.API', NOW(), NOW()),
+          ('ECommerce.Contracts.Events.ProductDeletedEvent, ECommerce.Contracts', 'perspective', 'ProductCatalogPerspective', 'ECommerce.BFF.API', NOW(), NOW())
+        ON CONFLICT (message_type, association_type, target_name, service_name) DO NOTHING
+      ", cancellationToken);
+
+      // Seed associations for BFF.InventoryLevelsPerspective
+      await dbContext.Database.ExecuteSqlRawAsync(@"
+        INSERT INTO wh_message_associations (message_type, association_type, target_name, service_name, created_at, updated_at)
+        VALUES
+          ('ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.BFF.API', NOW(), NOW()),
+          ('ECommerce.Contracts.Events.InventoryRestockedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.BFF.API', NOW(), NOW()),
+          ('ECommerce.Contracts.Events.InventoryReservedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.BFF.API', NOW(), NOW()),
+          ('ECommerce.Contracts.Events.InventoryAdjustedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.BFF.API', NOW(), NOW())
+        ON CONFLICT (message_type, association_type, target_name, service_name) DO NOTHING
+      ", cancellationToken);
     }
   }
 
@@ -472,65 +538,173 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
 
   /// <summary>
   /// Adds $Default TrueFilter rules to all Service Bus subscriptions by modifying the emulator's config file.
-  /// Uses Docker cp + Python script to modify JSON since ServiceBusAdministrationClient isn't supported by emulator.
+  /// Uses Docker cp + C# JSON manipulation since ServiceBusAdministrationClient isn't supported by emulator.
   /// </summary>
   private async Task _addServiceBusSubscriptionRulesAsync(CancellationToken cancellationToken = default) {
     // Find the Service Bus emulator container
-    var findContainerCmd = "docker ps --filter \"ancestor=mcr.microsoft.com/azure-messaging/servicebus-emulator\" --format \"{{.ID}}\"";
-    var findResult = await _runBashCommandAsync(findContainerCmd, cancellationToken);
-    var containerId = findResult.Trim();
-
-    if (string.IsNullOrEmpty(containerId)) {
-      throw new InvalidOperationException("Could not find Service Bus emulator container");
-    }
-
-    Console.WriteLine($"[AspireFixture] Found Service Bus emulator container: {containerId}");
-
+    // Create a shell script to execute docker commands with proper environment
+    var scriptPath = Path.Combine(Path.GetTempPath(), $"docker-{Guid.NewGuid()}.sh");
     try {
+      await File.WriteAllTextAsync(scriptPath, @"#!/bin/bash
+export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+docker ps --filter ""ancestor=mcr.microsoft.com/azure-messaging/servicebus-emulator"" --format ""{{.ID}}""
+", cancellationToken);
+
+      // Execute the script through bash
+      var findResult = await _runShellScriptAsync(scriptPath, cancellationToken);
+      var containerId = findResult.Trim();
+
+      if (string.IsNullOrEmpty(containerId)) {
+        throw new InvalidOperationException("Could not find Service Bus emulator container");
+      }
+
+      Console.WriteLine($"[AspireFixture] Found Service Bus emulator container: {containerId}");
+
       // Create temp files
       var tempConfigPath = Path.GetTempFileName();
       var tempModifiedPath = Path.GetTempFileName();
 
-      // Copy config file from container to host
-      var copyFromCmd = $"docker cp {containerId}:/ServiceBus_Emulator/ConfigFiles/Config.json {tempConfigPath}";
-      await _runBashCommandAsync(copyFromCmd, cancellationToken);
+      // Copy config file from container to host using shell script
+      var copyFromScriptPath = Path.Combine(Path.GetTempPath(), $"docker-copy-from-{Guid.NewGuid()}.sh");
+      await File.WriteAllTextAsync(copyFromScriptPath, $@"#!/bin/bash
+export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+docker cp {containerId}:/ServiceBus_Emulator/ConfigFiles/Config.json ""{tempConfigPath}""
+", cancellationToken);
+
+      await _runShellScriptAsync(copyFromScriptPath, cancellationToken);
+      File.Delete(copyFromScriptPath);
       Console.WriteLine("[AspireFixture] Copied config from container");
 
-      // Run Python script to add rules
-      var scriptPath = Path.Combine(AppContext.BaseDirectory, "add-servicebus-rules.py");
-      var modifyConfigCmd = $"/usr/bin/python3 {scriptPath} < {tempConfigPath} > {tempModifiedPath} 2>&1";
-      var pythonOutput = await _runBashCommandAsync(modifyConfigCmd, cancellationToken);
-      Console.WriteLine($"[AspireFixture] Python script output: {pythonOutput}");
+      // Read and modify JSON using System.Text.Json
+      var configJson = await File.ReadAllTextAsync(tempConfigPath, cancellationToken);
+      var config = System.Text.Json.JsonDocument.Parse(configJson);
+      var configDict = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(configJson);
 
-      // Copy modified config back to container
-      var copyToCmd = $"docker cp {tempModifiedPath} {containerId}:/ServiceBus_Emulator/ConfigFiles/Config.json";
-      await _runBashCommandAsync(copyToCmd, cancellationToken);
-      Console.WriteLine("[AspireFixture] Copied modified config back to container");
+      if (configDict == null) {
+        throw new InvalidOperationException("Failed to parse Service Bus config JSON");
+      }
+
+      // Navigate to UserConfig.Namespaces and add rules
+      var modified = false;
+      if (configDict.TryGetValue("UserConfig", out var userConfigObj) && userConfigObj is System.Text.Json.JsonElement userConfigElem) {
+        var userConfigStr = userConfigElem.GetRawText();
+        var userConfig = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(userConfigStr);
+
+        if (userConfig != null && userConfig.TryGetValue("Namespaces", out var namespacesObj) && namespacesObj is System.Text.Json.JsonElement namespacesElem) {
+          var namespacesList = System.Text.Json.JsonSerializer.Deserialize<List<Dictionary<string, object>>>(namespacesElem.GetRawText());
+
+          if (namespacesList != null) {
+            foreach (var ns in namespacesList) {
+              if (ns.TryGetValue("Topics", out var topicsObj) && topicsObj is System.Text.Json.JsonElement topicsElem) {
+                var topicsList = System.Text.Json.JsonSerializer.Deserialize<List<Dictionary<string, object>>>(topicsElem.GetRawText());
+
+                if (topicsList != null) {
+                  foreach (var topic in topicsList) {
+                    var topicName = topic.TryGetValue("Name", out var tn) && tn is System.Text.Json.JsonElement tne ? tne.GetString() : "unknown";
+
+                    if (topic.TryGetValue("Subscriptions", out var subsObj) && subsObj is System.Text.Json.JsonElement subsElem) {
+                      var subsList = System.Text.Json.JsonSerializer.Deserialize<List<Dictionary<string, object>>>(subsElem.GetRawText());
+
+                      if (subsList != null) {
+                        foreach (var sub in subsList) {
+                          var subName = sub.TryGetValue("Name", out var sn) && sn is System.Text.Json.JsonElement sne ? sne.GetString() : "unknown";
+
+                          // Check if Rules array exists and is empty
+                          var hasRules = sub.TryGetValue("Rules", out var rulesObj) &&
+                                        rulesObj is System.Text.Json.JsonElement rulesElem &&
+                                        rulesElem.GetArrayLength() > 0;
+
+                          if (!hasRules) {
+                            // Add $Default TrueFilter rule
+                            var defaultRule = new Dictionary<string, object> {
+                              ["Name"] = "$Default",
+                              ["Properties"] = new Dictionary<string, object> {
+                                ["FilterType"] = 0,  // SqlFilter
+                                ["SqlFilter"] = new Dictionary<string, object> {
+                                  ["SqlExpression"] = "1=1"  // TrueFilter - matches all messages
+                                }
+                              }
+                            };
+                            sub["Rules"] = new List<object> { defaultRule };
+                            Console.WriteLine($"[AspireFixture] Added $Default rule to {topicName}/{subName}");
+                            modified = true;
+                          } else {
+                            Console.WriteLine($"[AspireFixture] Subscription {topicName}/{subName} already has rules, skipping");
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+
+      if (modified) {
+        // Serialize modified config back to JSON
+        var modifiedJson = System.Text.Json.JsonSerializer.Serialize(configDict, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        await File.WriteAllTextAsync(tempModifiedPath, modifiedJson, cancellationToken);
+
+        // Copy modified config back to container using shell script
+        var copyToScriptPath = Path.Combine(Path.GetTempPath(), $"docker-copy-to-{Guid.NewGuid()}.sh");
+        await File.WriteAllTextAsync(copyToScriptPath, $@"#!/bin/bash
+export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+docker cp ""{tempModifiedPath}"" {containerId}:/ServiceBus_Emulator/ConfigFiles/Config.json
+", cancellationToken);
+
+        await _runShellScriptAsync(copyToScriptPath, cancellationToken);
+        File.Delete(copyToScriptPath);
+        Console.WriteLine("[AspireFixture] Copied modified config back to container");
+
+        Console.WriteLine("[AspireFixture] Successfully added $Default TrueFilter rules to all subscriptions");
+      } else {
+        Console.WriteLine("[AspireFixture] All subscriptions already have rules, no modifications needed");
+      }
 
       // Clean up temp files
       File.Delete(tempConfigPath);
-      File.Delete(tempModifiedPath);
+      if (File.Exists(tempModifiedPath)) {
+        File.Delete(tempModifiedPath);
+      }
 
-      Console.WriteLine("[AspireFixture] Successfully added $Default TrueFilter rules to all subscriptions");
+      // Verify the rules were added using shell script (non-fatal)
+      try {
+        var verifyScriptPath = Path.Combine(Path.GetTempPath(), $"docker-verify-{Guid.NewGuid()}.sh");
+        await File.WriteAllTextAsync(verifyScriptPath, $@"#!/bin/bash
+export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
+docker exec {containerId} cat /ServiceBus_Emulator/ConfigFiles/Config.json
+", cancellationToken);
 
-      // Verify the rules were added (read config again)
-      var readConfigCmd = $"docker exec {containerId} cat /ServiceBus_Emulator/ConfigFiles/Config.json";
-      var updatedConfig = await _runBashCommandAsync(readConfigCmd, cancellationToken);
-      if (updatedConfig.Contains("\"Name\":\"$Default\"")) {
-        Console.WriteLine("[AspireFixture] Verified: $Default rules present in config");
-      } else {
-        Console.WriteLine("[AspireFixture] WARNING: $Default rules not found in updated config!");
+        var updatedConfig = await _runShellScriptAsync(verifyScriptPath, cancellationToken);
+        File.Delete(verifyScriptPath);
+
+        if (updatedConfig.Contains("\"Name\":\"$Default\"")) {
+          Console.WriteLine("[AspireFixture] Verified: $Default rules present in config");
+        } else {
+          Console.WriteLine("[AspireFixture] WARNING: $Default rules not found in updated config!");
+        }
+      } catch (Exception verifyEx) {
+        Console.WriteLine($"[AspireFixture] WARNING: Could not verify rules (non-fatal): {verifyEx.Message}");
+        Console.WriteLine("[AspireFixture] Rules were successfully added and copied to container, verification skipped");
       }
     } catch (Exception ex) {
       Console.WriteLine($"[AspireFixture] ERROR adding subscription rules: {ex.Message}");
       throw;
+    } finally {
+      // Clean up the initial find container script
+      if (File.Exists(scriptPath)) {
+        File.Delete(scriptPath);
+      }
     }
   }
 
-  private async Task<string> _runBashCommandAsync(string command, CancellationToken cancellationToken = default) {
+  private async Task<string> _runShellScriptAsync(string scriptPath, CancellationToken cancellationToken = default) {
+    // Execute script through bash explicitly instead of directly
     var processInfo = new System.Diagnostics.ProcessStartInfo {
       FileName = "/bin/bash",
-      Arguments = $"-c \"{command}\"",
+      Arguments = scriptPath,
       RedirectStandardOutput = true,
       RedirectStandardError = true,
       UseShellExecute = false,
@@ -539,7 +713,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
 
     using var process = System.Diagnostics.Process.Start(processInfo);
     if (process == null) {
-      throw new InvalidOperationException($"Failed to start process for command: {command}");
+      throw new InvalidOperationException($"Failed to start process for script: {scriptPath}");
     }
 
     var output = await process.StandardOutput.ReadToEndAsync(cancellationToken);
@@ -548,151 +722,86 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     await process.WaitForExitAsync(cancellationToken);
 
     if (process.ExitCode != 0) {
-      throw new InvalidOperationException($"Command failed with exit code {process.ExitCode}: {error}");
+      throw new InvalidOperationException($"Script failed with exit code {process.ExitCode}: {error}\nOutput: {output}");
     }
 
     return output;
   }
 
   /// <summary>
-  /// Waits for both InventoryWorker and BFF work processing to become idle.
-  /// Tracks 4 workers: WorkCoordinatorPublisherWorker (outbox/inbox) + PerspectiveWorker (perspective materialization) for both services.
-  /// Uses event callbacks to efficiently detect when all event processing is complete.
-  /// Falls back to timeout if idle state is not reached within the specified time.
+  /// Waits for all event processing to complete by querying database tables directly.
+  /// Checks for any uncompleted outbox/inbox messages and perspective checkpoints.
+  /// This is more reliable than using ProcessWorkBatchAsync which only shows available (not in-progress) work.
   /// </summary>
-  public async Task WaitForEventProcessingAsync(int timeoutMilliseconds = 30000) {
-    // Get WorkCoordinatorPublisherWorker instances (outbox/inbox processing)
-    var inventoryPublisher = _inventoryHost!.Services.GetServices<IHostedService>()
-      .OfType<WorkCoordinatorPublisherWorker>()
-      .FirstOrDefault();
+  public async Task WaitForEventProcessingAsync(int timeoutMilliseconds = 60000) {
+    var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+    const int pollIntervalMs = 100;  // Poll every 100ms
 
-    var bffPublisher = _bffHost!.Services.GetServices<IHostedService>()
-      .OfType<WorkCoordinatorPublisherWorker>()
-      .FirstOrDefault();
+    while (stopwatch.ElapsedMilliseconds < timeoutMilliseconds) {
+      using var scope = _inventoryHost!.Services.CreateScope();
+      var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
-    // Get PerspectiveWorker instances (perspective materialization)
-    var inventoryPerspectiveWorker = _inventoryHost!.Services.GetServices<IHostedService>()
-      .OfType<PerspectiveWorker>()
-      .FirstOrDefault();
-
-    var bffPerspectiveWorker = _bffHost!.Services.GetServices<IHostedService>()
-      .OfType<PerspectiveWorker>()
-      .FirstOrDefault();
-
-    // Create TaskCompletionSources for all 4 workers
-    var inventoryPublisherTcs = new TaskCompletionSource<bool>();
-    var bffPublisherTcs = new TaskCompletionSource<bool>();
-    var inventoryPerspectiveTcs = new TaskCompletionSource<bool>();
-    var bffPerspectiveTcs = new TaskCompletionSource<bool>();
-
-    // Wire up one-time idle callbacks
-    WorkProcessingIdleHandler? inventoryPublisherHandler = null;
-    WorkProcessingIdleHandler? bffPublisherHandler = null;
-    WorkProcessingIdleHandler? inventoryPerspectiveHandler = null;
-    WorkProcessingIdleHandler? bffPerspectiveHandler = null;
-
-    inventoryPublisherHandler = () => {
-      inventoryPublisherTcs.TrySetResult(true);
-      if (inventoryPublisher != null && inventoryPublisherHandler != null) {
-        inventoryPublisher.OnWorkProcessingIdle -= inventoryPublisherHandler;
+      // Query database directly for any uncompleted work using ADO.NET
+      var connection = dbContext.Database.GetDbConnection();
+      if (connection.State != System.Data.ConnectionState.Open) {
+        await connection.OpenAsync();
       }
-    };
+      await using var cmd = connection.CreateCommand();
 
-    bffPublisherHandler = () => {
-      bffPublisherTcs.TrySetResult(true);
-      if (bffPublisher != null && bffPublisherHandler != null) {
-        bffPublisher.OnWorkProcessingIdle -= bffPublisherHandler;
-      }
-    };
+      // Check outbox: any messages not marked as Sent (status & 2 = 0)
+      cmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM wh_outbox WHERE (status & 2) = 0";
+      var pendingOutbox = (int)(await cmd.ExecuteScalarAsync() ?? 0);
 
-    inventoryPerspectiveHandler = () => {
-      inventoryPerspectiveTcs.TrySetResult(true);
-      if (inventoryPerspectiveWorker != null && inventoryPerspectiveHandler != null) {
-        inventoryPerspectiveWorker.OnWorkProcessingIdle -= inventoryPerspectiveHandler;
-      }
-    };
+      // Check inbox: any messages not marked as Completed (status & 2 = 0)
+      cmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM wh_inbox WHERE (status & 2) = 0";
+      var pendingInbox = (int)(await cmd.ExecuteScalarAsync() ?? 0);
 
-    bffPerspectiveHandler = () => {
-      bffPerspectiveTcs.TrySetResult(true);
-      if (bffPerspectiveWorker != null && bffPerspectiveHandler != null) {
-        bffPerspectiveWorker.OnWorkProcessingIdle -= bffPerspectiveHandler;
-      }
-    };
+      // Check perspective checkpoints: any not marked as Completed (status & 2 = 0) AND not Failed (status & 4 = 0)
+      cmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM wh_perspective_checkpoints WHERE (status & 2) = 0 AND (status & 4) = 0";
+      var pendingPerspectives = (int)(await cmd.ExecuteScalarAsync() ?? 0);
 
-    // Register WorkCoordinatorPublisherWorker callbacks
-    if (inventoryPublisher != null) {
-      inventoryPublisher.OnWorkProcessingIdle += inventoryPublisherHandler;
-      if (inventoryPublisher.IsIdle) {
-        inventoryPublisherTcs.TrySetResult(true);
+      if (pendingOutbox == 0 && pendingInbox == 0 && pendingPerspectives == 0) {
+        Console.WriteLine($"[AspireFixture] Event processing complete - no pending work (checked database after {stopwatch.ElapsedMilliseconds}ms)");
+        return;
       }
-    } else {
-      inventoryPublisherTcs.TrySetResult(true);
+
+      // Log what's still pending
+      if (pendingOutbox > 0 || pendingInbox > 0 || pendingPerspectives > 0) {
+        Console.WriteLine($"[AspireFixture] Still processing: Outbox={pendingOutbox}, Inbox={pendingInbox}, Perspectives={pendingPerspectives} (elapsed: {stopwatch.ElapsedMilliseconds}ms)");
+      }
+
+      // Wait before next poll
+      await Task.Delay(pollIntervalMs);
     }
 
-    if (bffPublisher != null) {
-      bffPublisher.OnWorkProcessingIdle += bffPublisherHandler;
-      if (bffPublisher.IsIdle) {
-        bffPublisherTcs.TrySetResult(true);
-      }
-    } else {
-      bffPublisherTcs.TrySetResult(true);
+    // Timeout reached - log final state
+    Console.WriteLine($"[AspireFixture] WARNING: Event processing did not complete within {timeoutMilliseconds}ms timeout");
+
+    using var finalScope = _inventoryHost!.Services.CreateScope();
+    var finalDbContext = finalScope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+
+    var finalConnection = finalDbContext.Database.GetDbConnection();
+    if (finalConnection.State != System.Data.ConnectionState.Open) {
+      await finalConnection.OpenAsync();
     }
+    await using var finalCmd = finalConnection.CreateCommand();
 
-    // Register PerspectiveWorker callbacks
-    if (inventoryPerspectiveWorker != null) {
-      inventoryPerspectiveWorker.OnWorkProcessingIdle += inventoryPerspectiveHandler;
-      if (inventoryPerspectiveWorker.IsIdle) {
-        inventoryPerspectiveTcs.TrySetResult(true);
-      }
-    } else {
-      inventoryPerspectiveTcs.TrySetResult(true);
-    }
+    finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM wh_outbox WHERE (status & 2) = 0";
+    var finalOutbox = (int)(await finalCmd.ExecuteScalarAsync() ?? 0);
 
-    if (bffPerspectiveWorker != null) {
-      bffPerspectiveWorker.OnWorkProcessingIdle += bffPerspectiveHandler;
-      if (bffPerspectiveWorker.IsIdle) {
-        bffPerspectiveTcs.TrySetResult(true);
-      }
-    } else {
-      bffPerspectiveTcs.TrySetResult(true);
-    }
+    finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM wh_inbox WHERE (status & 2) = 0";
+    var finalInbox = (int)(await finalCmd.ExecuteScalarAsync() ?? 0);
 
-    // Wait for all 4 workers to become idle (or timeout)
-    using var cts = new CancellationTokenSource(timeoutMilliseconds);
+    finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM wh_perspective_checkpoints WHERE (status & 2) = 0 AND (status & 4) = 0";
+    var finalPerspectives = (int)(await finalCmd.ExecuteScalarAsync() ?? 0);
 
-    try {
-      await Task.WhenAll(
-        inventoryPublisherTcs.Task,
-        bffPublisherTcs.Task,
-        inventoryPerspectiveTcs.Task,
-        bffPerspectiveTcs.Task
-      ).WaitAsync(cts.Token);
-
-      Console.WriteLine("[AspireFixture] Event processing idle - all workers have no pending work (2 publishers + 2 perspective workers)");
-    } catch (OperationCanceledException) {
-      Console.WriteLine($"[AspireFixture] WARNING: Event processing did not reach idle state within {timeoutMilliseconds}ms timeout");
-      Console.WriteLine($"[AspireFixture] InventoryWorker Publisher idle: {inventoryPublisher?.IsIdle ?? true}, PerspectiveWorker idle: {inventoryPerspectiveWorker?.IsIdle ?? true}");
-      Console.WriteLine($"[AspireFixture] BFF Publisher idle: {bffPublisher?.IsIdle ?? true}, PerspectiveWorker idle: {bffPerspectiveWorker?.IsIdle ?? true}");
-    } finally {
-      // Clean up handlers
-      if (inventoryPublisher != null && inventoryPublisherHandler != null) {
-        inventoryPublisher.OnWorkProcessingIdle -= inventoryPublisherHandler;
-      }
-      if (bffPublisher != null && bffPublisherHandler != null) {
-        bffPublisher.OnWorkProcessingIdle -= bffPublisherHandler;
-      }
-      if (inventoryPerspectiveWorker != null && inventoryPerspectiveHandler != null) {
-        inventoryPerspectiveWorker.OnWorkProcessingIdle -= inventoryPerspectiveHandler;
-      }
-      if (bffPerspectiveWorker != null && bffPerspectiveHandler != null) {
-        bffPerspectiveWorker.OnWorkProcessingIdle -= bffPerspectiveHandler;
-      }
-    }
+    Console.WriteLine($"[AspireFixture] Final state: Outbox={finalOutbox}, Inbox={finalInbox}, Perspectives={finalPerspectives}");
   }
 
   /// <summary>
   /// Cleans up all test data from the database (truncates all tables).
   /// Call this between test classes to ensure isolation.
+  /// Gracefully handles the case where the database container has already stopped.
   /// </summary>
   public async Task CleanupDatabaseAsync(CancellationToken cancellationToken = default) {
     if (!_isInitialized) {
@@ -701,30 +810,100 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
 
     // Truncate all Whizbang tables in the shared database
     // Both InventoryWorker and BFF share the same database, so we only need to truncate once
-    using (var scope = _inventoryHost!.Services.CreateScope()) {
-      var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+    // Gracefully handle connection failures (container may have stopped after test completion)
+    try {
+      using (var scope = _inventoryHost!.Services.CreateScope()) {
+        var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
-      // Truncate Whizbang core tables, perspective tables, and checkpoints
-      // CASCADE ensures all dependent data is cleared
-      // Use DO block to gracefully handle case where tables don't exist
-      await dbContext.Database.ExecuteSqlRawAsync(@"
-        DO $$
-        BEGIN
-          -- Truncate core infrastructure tables
-          TRUNCATE TABLE wh_event_store, wh_outbox, wh_inbox, wh_perspective_checkpoints, wh_receptor_processing CASCADE;
+        // Truncate Whizbang core tables, perspective tables, and checkpoints
+        // CASCADE ensures all dependent data is cleared
+        // Use DO block to gracefully handle case where tables don't exist
+        await dbContext.Database.ExecuteSqlRawAsync(@"
+          DO $$
+          BEGIN
+            -- Truncate core infrastructure tables
+            TRUNCATE TABLE wh_event_store, wh_outbox, wh_inbox, wh_perspective_checkpoints, wh_receptor_processing CASCADE;
 
-          -- Truncate all perspective tables (pattern: wh_per_*)
-          -- This clears materialized views from both InventoryWorker and BFF
-          TRUNCATE TABLE wh_per_inventory_level_dto CASCADE;
-          TRUNCATE TABLE wh_per_order_read_model CASCADE;
-          TRUNCATE TABLE wh_per_product_dto CASCADE;
-        EXCEPTION
-          WHEN undefined_table THEN
-            -- Tables don't exist, nothing to clean up
-            NULL;
-        END $$;
-      ", cancellationToken);
+            -- Truncate all perspective tables (pattern: wh_per_*)
+            -- This clears materialized views from both InventoryWorker and BFF
+            TRUNCATE TABLE wh_per_inventory_level_dto CASCADE;
+            TRUNCATE TABLE wh_per_order_read_model CASCADE;
+            TRUNCATE TABLE wh_per_product_dto CASCADE;
+          EXCEPTION
+            WHEN undefined_table THEN
+              -- Tables don't exist, nothing to clean up
+              NULL;
+          END $$;
+        ", cancellationToken);
+      }
+    } catch (Npgsql.NpgsqlException ex) when (ex.Message.Contains("Failed to connect")) {
+      // Database container has been stopped - this is expected during test teardown
+      // Silently ignore connection failures since cleanup is not critical after tests complete
+      Console.WriteLine("[AspireFixture] Database cleanup skipped - container already stopped");
     }
+  }
+
+  /// <summary>
+  /// DIAGNOSTIC: Query event types and message associations after events are written.
+  /// Helps identify naming mismatches between event_type and message_type columns.
+  /// </summary>
+  public async Task DumpEventTypesAndAssociationsAsync(CancellationToken cancellationToken = default) {
+    using var scope = _inventoryHost!.Services.GetRequiredService<IServiceScopeFactory>().CreateScope();
+    var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+
+    var output = new System.Text.StringBuilder();
+    output.AppendLine("[DIAGNOSTIC] ===== EVENT TYPE DIAGNOSTIC =====");
+    Console.WriteLine("[DIAGNOSTIC] ===== EVENT TYPE DIAGNOSTIC =====");
+
+    // Use ADO.NET directly to avoid EF Core scalar query issues
+    var connection = dbContext.Database.GetDbConnection();
+    if (connection.State != System.Data.ConnectionState.Open) {
+      await connection.OpenAsync(cancellationToken);
+    }
+
+    // Query actual event types in event store
+    await using (var cmd = connection.CreateCommand()) {
+      cmd.CommandText = "SELECT DISTINCT event_type FROM wh_event_store ORDER BY event_type LIMIT 20";
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+      var count = 0;
+      while (await reader.ReadAsync(cancellationToken)) {
+        var eventType = reader.GetString(0);
+        output.AppendLine($"[DIAGNOSTIC]   event_type: '{eventType}'");
+        Console.WriteLine($"[DIAGNOSTIC]   event_type: '{eventType}'");
+        count++;
+      }
+      output.AppendLine($"[DIAGNOSTIC] Found {count} distinct event types in wh_event_store");
+      Console.WriteLine($"[DIAGNOSTIC] Found {count} distinct event types in wh_event_store");
+    }
+
+    // Query message associations
+    await using (var cmd = connection.CreateCommand()) {
+      cmd.CommandText = "SELECT DISTINCT message_type FROM wh_message_associations WHERE association_type = 'perspective' ORDER BY message_type LIMIT 20";
+      await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
+      var count = 0;
+      while (await reader.ReadAsync(cancellationToken)) {
+        var msgType = reader.GetString(0);
+        output.AppendLine($"[DIAGNOSTIC]   message_type: '{msgType}'");
+        Console.WriteLine($"[DIAGNOSTIC]   message_type: '{msgType}'");
+        count++;
+      }
+      output.AppendLine($"[DIAGNOSTIC] Found {count} message_type values in wh_message_associations");
+      Console.WriteLine($"[DIAGNOSTIC] Found {count} message_type values in wh_message_associations");
+    }
+
+    // Query perspective checkpoints created
+    await using (var cmd = connection.CreateCommand()) {
+      cmd.CommandText = "SELECT COUNT(*)::int FROM wh_perspective_checkpoints";
+      var checkpointCount = (int)(await cmd.ExecuteScalarAsync(cancellationToken) ?? 0);
+      output.AppendLine($"[DIAGNOSTIC] Found {checkpointCount} perspective checkpoints in wh_perspective_checkpoints");
+      Console.WriteLine($"[DIAGNOSTIC] Found {checkpointCount} perspective checkpoints in wh_perspective_checkpoints");
+    }
+
+    output.AppendLine("[DIAGNOSTIC] ===== END DIAGNOSTIC =====");
+    Console.WriteLine("[DIAGNOSTIC] ===== END DIAGNOSTIC =====");
+
+    // Write to file for examination
+    await System.IO.File.WriteAllTextAsync("/tmp/event-type-diagnostic.log", output.ToString(), cancellationToken);
   }
 
   public async ValueTask DisposeAsync() {

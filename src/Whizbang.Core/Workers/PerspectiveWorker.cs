@@ -22,6 +22,7 @@ public partial class PerspectiveWorker(
   IServiceInstanceProvider instanceProvider,
   IServiceScopeFactory scopeFactory,
   IOptions<PerspectiveWorkerOptions> options,
+  IPerspectiveCompletionStrategy? completionStrategy = null,
   IDatabaseReadinessCheck? databaseReadinessCheck = null,
   ILogger<PerspectiveWorker>? logger = null
 ) : BackgroundService {
@@ -30,10 +31,7 @@ public partial class PerspectiveWorker(
   private readonly IDatabaseReadinessCheck _databaseReadinessCheck = databaseReadinessCheck ?? new DefaultDatabaseReadinessCheck();
   private readonly ILogger<PerspectiveWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PerspectiveWorker>.Instance;
   private readonly PerspectiveWorkerOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
-
-  // Bags for collecting perspective processing results (completions, failures)
-  private readonly ConcurrentBag<PerspectiveCheckpointCompletion> _completions = new();
-  private readonly ConcurrentBag<PerspectiveCheckpointFailure> _failures = new();
+  private readonly IPerspectiveCompletionStrategy _completionStrategy = completionStrategy ?? new BatchedCompletionStrategy();
 
   // Metrics tracking
   private int _consecutiveDatabaseNotReadyChecks;
@@ -130,14 +128,13 @@ public partial class PerspectiveWorker(
 
   private async Task _processWorkBatchAsync(CancellationToken cancellationToken) {
     // Create a scope to resolve scoped IWorkCoordinator
-    using var scope = _scopeFactory.CreateScope();
+    await using var scope = _scopeFactory.CreateAsyncScope();
     var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
-    // Collect accumulated results from perspective processing
-    var perspectiveCompletions = _completions.ToArray();
-    var perspectiveFailures = _failures.ToArray();
-    _completions.Clear();
-    _failures.Clear();
+    // Collect accumulated results from perspective processing via strategy
+    var perspectiveCompletions = _completionStrategy.GetPendingCompletions();
+    var perspectiveFailures = _completionStrategy.GetPendingFailures();
+    _completionStrategy.ClearPending();
 
     // Get work batch (heartbeat, claim perspective work, return for processing)
     var workBatch = await workCoordinator.ProcessWorkBatchAsync(
@@ -191,20 +188,23 @@ public partial class PerspectiveWorker(
           cancellationToken
         );
 
-        // Collect completion
-        _completions.Add(result);
+        // Report completion via strategy
+        await _completionStrategy.ReportCompletionAsync(result, workCoordinator, cancellationToken);
 
         LogPerspectiveCheckpointCompleted(_logger, perspectiveWork.PerspectiveName, perspectiveWork.StreamId, result.LastEventId);
       } catch (Exception ex) {
         LogErrorProcessingPerspectiveCheckpoint(_logger, ex, perspectiveWork.PerspectiveName, perspectiveWork.StreamId);
 
-        _failures.Add(new PerspectiveCheckpointFailure {
+        var failure = new PerspectiveCheckpointFailure {
           StreamId = perspectiveWork.StreamId,
           PerspectiveName = perspectiveWork.PerspectiveName,
           LastEventId = perspectiveWork.LastProcessedEventId ?? Guid.Empty,
           Status = PerspectiveProcessingStatus.Failed,
           Error = ex.Message
-        });
+        };
+
+        // Report failure via strategy
+        await _completionStrategy.ReportFailureAsync(failure, workCoordinator, cancellationToken);
       }
     }
 

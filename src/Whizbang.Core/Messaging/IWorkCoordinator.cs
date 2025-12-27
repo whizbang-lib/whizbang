@@ -134,6 +134,46 @@ public interface IWorkCoordinator {
     int staleThresholdSeconds = 600,
     CancellationToken cancellationToken = default
   );
+
+  /// <summary>
+  /// Reports perspective checkpoint completion or failure directly (out-of-band).
+  /// This lightweight method ONLY updates the perspective checkpoint without affecting
+  /// heartbeats, work claiming, or other coordination operations.
+  /// </summary>
+  /// <param name="completion">Perspective checkpoint completion to report</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>Task representing the async operation</returns>
+  /// <remarks>
+  /// Use this method for instant perspective reporting strategies where completions
+  /// should be persisted immediately without waiting for the next work batch cycle.
+  /// This calls the complete_perspective_checkpoint_work SQL function directly.
+  /// </remarks>
+  /// <docs>workers/perspective-worker</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:InstantStrategy_ReportCompletionAsync_CallsCoordinatorImmediately_Async</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStrategyTests.cs:PerspectiveWorker_WithInstantStrategy_ReportsImmediately_Async</tests>
+  Task ReportPerspectiveCompletionAsync(
+    PerspectiveCheckpointCompletion completion,
+    CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Reports perspective checkpoint failure directly (out-of-band).
+  /// This lightweight method ONLY updates the perspective checkpoint without affecting
+  /// heartbeats, work claiming, or other coordination operations.
+  /// </summary>
+  /// <param name="failure">Perspective checkpoint failure to report</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>Task representing the async operation</returns>
+  /// <remarks>
+  /// Use this method for instant perspective reporting strategies where failures
+  /// should be persisted immediately without waiting for the next work batch cycle.
+  /// This calls the complete_perspective_checkpoint_work SQL function directly.
+  /// </remarks>
+  /// <docs>workers/perspective-worker</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:InstantStrategy_ReportFailureAsync_CallsCoordinatorImmediately_Async</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveWorkerStrategyTests.cs:PerspectiveWorker_OnFailure_UsesStrategyToReportFailure_Async</tests>
+  Task ReportPerspectiveFailureAsync(
+    PerspectiveCheckpointFailure failure,
+    CancellationToken cancellationToken = default);
 }
 
 /// <summary>

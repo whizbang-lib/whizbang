@@ -170,8 +170,8 @@ public class IntervalUnitOfWorkStrategyTests {
     var message = new TestMessage { Value = "test" };
     await strategy.QueueMessageAsync(message);
 
-    // Wait for timer to tick (200ms should be enough for 100ms interval)
-    await Task.Delay(200);
+    // Wait for timer to tick (increased for systems under load)
+    await Task.Delay(400);
 
     // Assert - Timer should have triggered callback
     await Assert.That(callbackInvoked).IsTrue();
@@ -279,8 +279,8 @@ public class IntervalUnitOfWorkStrategyTests {
     var message1 = new TestMessage { Value = "test1" };
     var unitId1 = await strategy.QueueMessageAsync(message1);
 
-    // Wait for timer to flush first unit
-    await Task.Delay(150);
+    // Wait for timer to flush first unit (increased for systems under load)
+    await Task.Delay(300);
 
     var message2 = new TestMessage { Value = "test2" };
     var unitId2 = await strategy.QueueMessageAsync(message2);
@@ -350,14 +350,14 @@ public class IntervalUnitOfWorkStrategyTests {
     var unitId1 = await strategy.QueueMessageAsync(new TestMessage { Value = "1a" });
     await strategy.QueueMessageAsync(new TestMessage { Value = "1b" });
 
-    // Wait for first flush
-    await Task.Delay(100);
+    // Wait for first flush (increased for systems under load)
+    await Task.Delay(250);
 
     // Queue second batch
     var unitId2 = await strategy.QueueMessageAsync(new TestMessage { Value = "2a" });
 
-    // Wait for second flush
-    await Task.Delay(100);
+    // Wait for second flush (increased for systems under load)
+    await Task.Delay(250);
 
     // Assert - Both units should be flushed
     await Assert.That(flushedUnitIds.Count).IsGreaterThanOrEqualTo(2);

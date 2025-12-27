@@ -46,6 +46,16 @@ public static class ReceptorProcessingSchema {
         Nullable: false
       ),
       new ColumnDefinition(
+        Name: "stream_id",
+        DataType: WhizbangDataType.UUID,
+        Nullable: false
+      ),
+      new ColumnDefinition(
+        Name: "partition_number",
+        DataType: WhizbangDataType.INTEGER,
+        Nullable: true
+      ),
+      new ColumnDefinition(
         Name: "status",
         DataType: WhizbangDataType.SMALL_INT,
         Nullable: false,
@@ -63,10 +73,30 @@ public static class ReceptorProcessingSchema {
         Nullable: true
       ),
       new ColumnDefinition(
+        Name: "instance_id",
+        DataType: WhizbangDataType.UUID,
+        Nullable: true
+      ),
+      new ColumnDefinition(
+        Name: "lease_expiry",
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
+        Nullable: true
+      ),
+      new ColumnDefinition(
         Name: "started_at",
         DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
+      ),
+      new ColumnDefinition(
+        Name: "claimed_at",
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
+        Nullable: true
+      ),
+      new ColumnDefinition(
+        Name: "completed_at",
+        DataType: WhizbangDataType.TIMESTAMP_TZ,
+        Nullable: true
       ),
       new ColumnDefinition(
         Name: "processed_at",
@@ -98,10 +128,16 @@ public static class ReceptorProcessingSchema {
     public const string ID = "id";
     public const string EVENT_ID = "event_id";
     public const string RECEPTOR_NAME = "receptor_name";
+    public const string STREAM_ID = "stream_id";
+    public const string PARTITION_NUMBER = "partition_number";
     public const string STATUS = "status";
     public const string ATTEMPTS = "attempts";
     public const string ERROR = "error";
+    public const string INSTANCE_ID = "instance_id";
+    public const string LEASE_EXPIRY = "lease_expiry";
     public const string STARTED_AT = "started_at";
+    public const string CLAIMED_AT = "claimed_at";
+    public const string COMPLETED_AT = "completed_at";
     public const string PROCESSED_AT = "processed_at";
   }
 }

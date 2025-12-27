@@ -20,13 +20,13 @@ public class PerspectiveSchemaTests {
     var columns = ImmutableArray.Create(
       new ColumnDefinition(
         Name: "name",
-        DataType: WhizbangDataType.String,
+        DataType: WhizbangDataType.STRING,
         MaxLength: 100,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "description",
-        DataType: WhizbangDataType.String,
+        DataType: WhizbangDataType.STRING,
         MaxLength: 500,
         Nullable: true
       )
@@ -50,12 +50,12 @@ public class PerspectiveSchemaTests {
     var columns = ImmutableArray.Create(
       new ColumnDefinition(
         Name: "product_id",
-        DataType: WhizbangDataType.Uuid,
+        DataType: WhizbangDataType.UUID,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "status",
-        DataType: WhizbangDataType.String,
+        DataType: WhizbangDataType.STRING,
         MaxLength: 50,
         Nullable: false
       )
@@ -85,13 +85,13 @@ public class PerspectiveSchemaTests {
     var additionalColumns = ImmutableArray.Create(
       new ColumnDefinition(
         Name: "name",
-        DataType: WhizbangDataType.String,
+        DataType: WhizbangDataType.STRING,
         MaxLength: 100,
         Nullable: false
       ),
       new ColumnDefinition(
         Name: "price",
-        DataType: WhizbangDataType.Integer,
+        DataType: WhizbangDataType.INTEGER,
         Nullable: false
       )
     );
@@ -106,7 +106,7 @@ public class PerspectiveSchemaTests {
     // Verify ID column is first
     var idColumn = table.Columns[0];
     await Assert.That(idColumn.Name).IsEqualTo("id");
-    await Assert.That(idColumn.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(idColumn.DataType).IsEqualTo(WhizbangDataType.UUID);
     await Assert.That(idColumn.PrimaryKey).IsTrue();
     await Assert.That(idColumn.Nullable).IsFalse();
 
@@ -123,7 +123,7 @@ public class PerspectiveSchemaTests {
 
     // Assert
     await Assert.That(idColumn.Name).IsEqualTo("id");
-    await Assert.That(idColumn.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(idColumn.DataType).IsEqualTo(WhizbangDataType.UUID);
     await Assert.That(idColumn.PrimaryKey).IsTrue();
     await Assert.That(idColumn.Nullable).IsFalse();
   }
@@ -136,11 +136,11 @@ public class PerspectiveSchemaTests {
 
     // Assert
     await Assert.That(createdAtColumn.Name).IsEqualTo("created_at");
-    await Assert.That(createdAtColumn.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
+    await Assert.That(createdAtColumn.DataType).IsEqualTo(WhizbangDataType.TIMESTAMP_TZ);
     await Assert.That(createdAtColumn.Nullable).IsFalse();
     await Assert.That(createdAtColumn.DefaultValue).IsNotNull();
     await Assert.That(createdAtColumn.DefaultValue).IsTypeOf<FunctionDefault>();
-    await Assert.That(((FunctionDefault)createdAtColumn.DefaultValue!).FunctionType).IsEqualTo(DefaultValueFunction.DateTime_Now);
+    await Assert.That(((FunctionDefault)createdAtColumn.DefaultValue!).FunctionType).IsEqualTo(DefaultValueFunction.DATE_TIME__NOW);
   }
 
   [Test]
@@ -151,7 +151,7 @@ public class PerspectiveSchemaTests {
 
     // Assert
     await Assert.That(updatedAtColumn.Name).IsEqualTo("updated_at");
-    await Assert.That(updatedAtColumn.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
+    await Assert.That(updatedAtColumn.DataType).IsEqualTo(WhizbangDataType.TIMESTAMP_TZ);
     await Assert.That(updatedAtColumn.Nullable).IsTrue();
     await Assert.That(updatedAtColumn.DefaultValue).IsNull();
   }
@@ -164,7 +164,7 @@ public class PerspectiveSchemaTests {
 
     // Assert
     await Assert.That(versionColumn.Name).IsEqualTo("version");
-    await Assert.That(versionColumn.DataType).IsEqualTo(WhizbangDataType.Integer);
+    await Assert.That(versionColumn.DataType).IsEqualTo(WhizbangDataType.INTEGER);
     await Assert.That(versionColumn.Nullable).IsFalse();
     await Assert.That(versionColumn.DefaultValue).IsNotNull();
     await Assert.That(versionColumn.DefaultValue).IsTypeOf<IntegerDefault>();
@@ -179,7 +179,7 @@ public class PerspectiveSchemaTests {
 
     // Assert
     await Assert.That(deletedAtColumn.Name).IsEqualTo("deleted_at");
-    await Assert.That(deletedAtColumn.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
+    await Assert.That(deletedAtColumn.DataType).IsEqualTo(WhizbangDataType.TIMESTAMP_TZ);
     await Assert.That(deletedAtColumn.Nullable).IsTrue();
     await Assert.That(deletedAtColumn.DefaultValue).IsNull();
   }

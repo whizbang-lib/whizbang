@@ -152,6 +152,16 @@ public static class OutboxSchema {
         Name: "idx_outbox_scheduled_for",
         Columns: ImmutableArray.Create("stream_id", "scheduled_for", "created_at"),
         WhereClause: "scheduled_for IS NOT NULL"
+      ),
+      new IndexDefinition(
+        Name: "idx_outbox_partition_claiming",
+        Columns: ImmutableArray.Create("partition_number", "scheduled_for", "created_at"),
+        WhereClause: "(status & 4) != 4 AND (status & 32768) = 0"
+      ),
+      new IndexDefinition(
+        Name: "idx_outbox_instance_lease",
+        Columns: ImmutableArray.Create("instance_id", "lease_expiry"),
+        WhereClause: "instance_id IS NOT NULL AND lease_expiry IS NOT NULL"
       )
     )
   );

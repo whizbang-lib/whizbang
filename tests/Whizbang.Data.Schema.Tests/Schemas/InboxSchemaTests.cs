@@ -27,49 +27,49 @@ public class InboxSchemaTests {
     var columns = InboxSchema.Table.Columns;
 
     // Assert - Verify column count
-    await Assert.That(columns).Count().IsEqualTo(17);
+    await Assert.That(columns).Count().IsEqualTo(18);
 
     // Verify each column definition
     var messageId = columns[0];
     await Assert.That(messageId.Name).IsEqualTo("message_id");
-    await Assert.That(messageId.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(messageId.DataType).IsEqualTo(WhizbangDataType.UUID);
     await Assert.That(messageId.PrimaryKey).IsTrue();
     await Assert.That(messageId.Nullable).IsFalse();
 
     var handlerName = columns[1];
     await Assert.That(handlerName.Name).IsEqualTo("handler_name");
-    await Assert.That(handlerName.DataType).IsEqualTo(WhizbangDataType.String);
+    await Assert.That(handlerName.DataType).IsEqualTo(WhizbangDataType.STRING);
     await Assert.That(handlerName.MaxLength).IsEqualTo(500);
     await Assert.That(handlerName.Nullable).IsFalse();
 
     var eventType = columns[2];
     await Assert.That(eventType.Name).IsEqualTo("event_type");
-    await Assert.That(eventType.DataType).IsEqualTo(WhizbangDataType.String);
+    await Assert.That(eventType.DataType).IsEqualTo(WhizbangDataType.STRING);
     await Assert.That(eventType.MaxLength).IsEqualTo(500);
     await Assert.That(eventType.Nullable).IsFalse();
 
     var eventData = columns[3];
     await Assert.That(eventData.Name).IsEqualTo("event_data");
-    await Assert.That(eventData.DataType).IsEqualTo(WhizbangDataType.Json);
+    await Assert.That(eventData.DataType).IsEqualTo(WhizbangDataType.JSON);
     await Assert.That(eventData.Nullable).IsFalse();
 
     var metadata = columns[4];
     await Assert.That(metadata.Name).IsEqualTo("metadata");
-    await Assert.That(metadata.DataType).IsEqualTo(WhizbangDataType.Json);
+    await Assert.That(metadata.DataType).IsEqualTo(WhizbangDataType.JSON);
     await Assert.That(metadata.Nullable).IsFalse();
 
     var scope = columns[5];
     await Assert.That(scope.Name).IsEqualTo("scope");
-    await Assert.That(scope.DataType).IsEqualTo(WhizbangDataType.Json);
+    await Assert.That(scope.DataType).IsEqualTo(WhizbangDataType.JSON);
     await Assert.That(scope.Nullable).IsTrue();
 
     // Verify key columns by finding them (schema has 17 columns total)
     var processedAt = columns.First(c => c.Name == "processed_at");
-    await Assert.That(processedAt.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
+    await Assert.That(processedAt.DataType).IsEqualTo(WhizbangDataType.TIMESTAMP_TZ);
     await Assert.That(processedAt.Nullable).IsTrue();
 
     var receivedAt = columns.First(c => c.Name == "received_at");
-    await Assert.That(receivedAt.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
+    await Assert.That(receivedAt.DataType).IsEqualTo(WhizbangDataType.TIMESTAMP_TZ);
     await Assert.That(receivedAt.Nullable).IsFalse();
   }
 
@@ -80,7 +80,7 @@ public class InboxSchemaTests {
     var indexes = InboxSchema.Table.Indexes;
 
     // Assert - Verify index count
-    await Assert.That(indexes).Count().IsEqualTo(6);
+    await Assert.That(indexes).Count().IsEqualTo(8);
 
     // Verify processed_at index
     var processedAtIndex = indexes[0];
@@ -105,30 +105,30 @@ public class InboxSchemaTests {
     // Assert
     await Assert.That(primaryKeyColumn).IsNotNull();
     await Assert.That(primaryKeyColumn!.Name).IsEqualTo("message_id");
-    await Assert.That(primaryKeyColumn.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(primaryKeyColumn.DataType).IsEqualTo(WhizbangDataType.UUID);
   }
 
   [Test]
   [Category("Schema")]
   public async Task Columns_ShouldProvideAllConstantsAsync() {
     // Arrange & Act - Get all column constants
-    var messageId = InboxSchema.Columns.MessageId;
-    var handlerName = InboxSchema.Columns.HandlerName;
-    var eventType = InboxSchema.Columns.EventType;
-    var eventData = InboxSchema.Columns.EventData;
-    var metadata = InboxSchema.Columns.Metadata;
-    var scope = InboxSchema.Columns.Scope;
-    var streamId = InboxSchema.Columns.StreamId;
-    var partitionNumber = InboxSchema.Columns.PartitionNumber;
-    var status = InboxSchema.Columns.Status;
-    var attempts = InboxSchema.Columns.Attempts;
-    var error = InboxSchema.Columns.Error;
-    var instanceId = InboxSchema.Columns.InstanceId;
-    var leaseExpiry = InboxSchema.Columns.LeaseExpiry;
-    var failureReason = InboxSchema.Columns.FailureReason;
-    var scheduledFor = InboxSchema.Columns.ScheduledFor;
-    var processedAt = InboxSchema.Columns.ProcessedAt;
-    var receivedAt = InboxSchema.Columns.ReceivedAt;
+    var messageId = InboxSchema.Columns.MESSAGE_ID;
+    var handlerName = InboxSchema.Columns.HANDLER_NAME;
+    var eventType = InboxSchema.Columns.EVENT_TYPE;
+    var eventData = InboxSchema.Columns.EVENT_DATA;
+    var metadata = InboxSchema.Columns.METADATA;
+    var scope = InboxSchema.Columns.SCOPE;
+    var streamId = InboxSchema.Columns.STREAM_ID;
+    var partitionNumber = InboxSchema.Columns.PARTITION_NUMBER;
+    var status = InboxSchema.Columns.STATUS;
+    var attempts = InboxSchema.Columns.ATTEMPTS;
+    var error = InboxSchema.Columns.ERROR;
+    var instanceId = InboxSchema.Columns.INSTANCE_ID;
+    var leaseExpiry = InboxSchema.Columns.LEASE_EXPIRY;
+    var failureReason = InboxSchema.Columns.FAILURE_REASON;
+    var scheduledFor = InboxSchema.Columns.SCHEDULED_FOR;
+    var processedAt = InboxSchema.Columns.PROCESSED_AT;
+    var receivedAt = InboxSchema.Columns.RECEIVED_AT;
 
     // Assert - Verify constants match column names
     await Assert.That(messageId).IsEqualTo("message_id");
@@ -160,6 +160,6 @@ public class InboxSchemaTests {
     // Assert - Verify received_at default value
     await Assert.That(receivedAtColumn.DefaultValue).IsNotNull();
     await Assert.That(receivedAtColumn.DefaultValue).IsTypeOf<FunctionDefault>();
-    await Assert.That(((FunctionDefault)receivedAtColumn.DefaultValue!).FunctionType).IsEqualTo(DefaultValueFunction.DateTime_Now);
+    await Assert.That(((FunctionDefault)receivedAtColumn.DefaultValue!).FunctionType).IsEqualTo(DefaultValueFunction.DATE_TIME__NOW);
   }
 }

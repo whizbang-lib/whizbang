@@ -70,6 +70,18 @@ public interface IEventStore {
   IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(Guid streamId, Guid? fromEventId, CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Reads events from a stream polymorphically, deserializing each event to its concrete type.
+  /// Uses the EventType column to determine which concrete type to deserialize to.
+  /// Supports perspectives that handle multiple event types.
+  /// </summary>
+  /// <param name="streamId">The stream identifier (aggregate ID as UUID)</param>
+  /// <param name="fromEventId">The event ID to start reading after (null = from beginning)</param>
+  /// <param name="eventTypes">The concrete event types to deserialize (must be registered in JsonSerializerContext)</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>Async enumerable of message envelopes with polymorphic payloads ordered by event ID (UUIDv7)</returns>
+  IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default);
+
+  /// <summary>
   /// Gets the last (highest) sequence number for a stream.
   /// Returns -1 if the stream doesn't exist or is empty.
   /// </summary>

@@ -284,7 +284,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var orphanedId2 = _idProvider.NewGuid();
     var activeId = _idProvider.NewGuid();
 
-    // Orphaned messages (expired leases)
+    // Orphaned messages (expired leases) - no stream IDs since they're orphaned
     await _insertOutboxMessageAsync(
       orphanedId1,
       "topic1",
@@ -293,7 +293,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       status: "Publishing",
       instanceId: _idProvider.NewGuid(),
       leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-10),
-      streamId: _idProvider.NewGuid());
+      streamId: null);  // No stream ID for orphaned messages
 
     await _insertOutboxMessageAsync(
       orphanedId2,
@@ -303,7 +303,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       status: "Publishing",
       instanceId: _idProvider.NewGuid(),
       leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-5),
-      streamId: _idProvider.NewGuid());
+      streamId: null);  // No stream ID for orphaned messages
 
     // Active message (not expired)
     await _insertOutboxMessageAsync(
@@ -314,7 +314,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       status: "Publishing",
       instanceId: _idProvider.NewGuid(),
       leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(5),
-      streamId: _idProvider.NewGuid());
+      streamId: null);
 
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
@@ -361,7 +361,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     var orphanedId1 = _idProvider.NewGuid();
     var orphanedId2 = _idProvider.NewGuid();
 
-    // Orphaned messages (expired leases)
+    // Orphaned messages (expired leases) - no stream IDs since they're orphaned
     await _insertInboxMessageAsync(
       orphanedId1,
       "Handler1",
@@ -370,7 +370,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       status: "Processing",
       instanceId: _idProvider.NewGuid(),
       leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-10),
-      streamId: _idProvider.NewGuid());
+      streamId: null);  // No stream ID for orphaned messages
 
     await _insertInboxMessageAsync(
       orphanedId2,
@@ -380,7 +380,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       status: "Processing",
       instanceId: _idProvider.NewGuid(),
       leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-5),
-      streamId: _idProvider.NewGuid());
+      streamId: null);  // No stream ID for orphaned messages
 
     // Act
     var result = await _sut.ProcessWorkBatchAsync(

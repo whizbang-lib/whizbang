@@ -32,60 +32,60 @@ public class EventStoreSchemaTests {
     // Verify each column definition
     var eventId = columns[0];
     await Assert.That(eventId.Name).IsEqualTo("event_id");
-    await Assert.That(eventId.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(eventId.DataType).IsEqualTo(WhizbangDataType.UUID);
     await Assert.That(eventId.PrimaryKey).IsTrue();
     await Assert.That(eventId.Nullable).IsFalse();
 
     var streamId = columns[1];
     await Assert.That(streamId.Name).IsEqualTo("stream_id");
-    await Assert.That(streamId.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(streamId.DataType).IsEqualTo(WhizbangDataType.UUID);
     await Assert.That(streamId.Nullable).IsFalse();
 
     var aggregateId = columns[2];
     await Assert.That(aggregateId.Name).IsEqualTo("aggregate_id");
-    await Assert.That(aggregateId.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(aggregateId.DataType).IsEqualTo(WhizbangDataType.UUID);
     await Assert.That(aggregateId.Nullable).IsFalse();
 
     var aggregateType = columns[3];
     await Assert.That(aggregateType.Name).IsEqualTo("aggregate_type");
-    await Assert.That(aggregateType.DataType).IsEqualTo(WhizbangDataType.String);
+    await Assert.That(aggregateType.DataType).IsEqualTo(WhizbangDataType.STRING);
     await Assert.That(aggregateType.MaxLength).IsEqualTo(500);
     await Assert.That(aggregateType.Nullable).IsFalse();
 
     var eventType = columns[4];
     await Assert.That(eventType.Name).IsEqualTo("event_type");
-    await Assert.That(eventType.DataType).IsEqualTo(WhizbangDataType.String);
+    await Assert.That(eventType.DataType).IsEqualTo(WhizbangDataType.STRING);
     await Assert.That(eventType.MaxLength).IsEqualTo(500);
     await Assert.That(eventType.Nullable).IsFalse();
 
     var eventData = columns[5];
     await Assert.That(eventData.Name).IsEqualTo("event_data");
-    await Assert.That(eventData.DataType).IsEqualTo(WhizbangDataType.Json);
+    await Assert.That(eventData.DataType).IsEqualTo(WhizbangDataType.JSON);
     await Assert.That(eventData.Nullable).IsFalse();
 
     var metadata = columns[6];
     await Assert.That(metadata.Name).IsEqualTo("metadata");
-    await Assert.That(metadata.DataType).IsEqualTo(WhizbangDataType.Json);
+    await Assert.That(metadata.DataType).IsEqualTo(WhizbangDataType.JSON);
     await Assert.That(metadata.Nullable).IsFalse();
 
     var scope = columns[7];
     await Assert.That(scope.Name).IsEqualTo("scope");
-    await Assert.That(scope.DataType).IsEqualTo(WhizbangDataType.Json);
+    await Assert.That(scope.DataType).IsEqualTo(WhizbangDataType.JSON);
     await Assert.That(scope.Nullable).IsTrue();
 
     var sequenceNumber = columns[8];
     await Assert.That(sequenceNumber.Name).IsEqualTo("sequence_number");
-    await Assert.That(sequenceNumber.DataType).IsEqualTo(WhizbangDataType.BigInt);
+    await Assert.That(sequenceNumber.DataType).IsEqualTo(WhizbangDataType.BIG_INT);
     await Assert.That(sequenceNumber.Nullable).IsFalse();
 
     var version = columns[9];
     await Assert.That(version.Name).IsEqualTo("version");
-    await Assert.That(version.DataType).IsEqualTo(WhizbangDataType.Integer);
+    await Assert.That(version.DataType).IsEqualTo(WhizbangDataType.INTEGER);
     await Assert.That(version.Nullable).IsFalse();
 
     var createdAt = columns[10];
     await Assert.That(createdAt.Name).IsEqualTo("created_at");
-    await Assert.That(createdAt.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
+    await Assert.That(createdAt.DataType).IsEqualTo(WhizbangDataType.TIMESTAMP_TZ);
     await Assert.That(createdAt.Nullable).IsFalse();
   }
 
@@ -138,7 +138,7 @@ public class EventStoreSchemaTests {
     // Assert
     await Assert.That(primaryKeyColumn).IsNotNull();
     await Assert.That(primaryKeyColumn!.Name).IsEqualTo("event_id");
-    await Assert.That(primaryKeyColumn.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(primaryKeyColumn.DataType).IsEqualTo(WhizbangDataType.UUID);
   }
 
   [Test]
@@ -160,17 +160,17 @@ public class EventStoreSchemaTests {
   [Category("Schema")]
   public async Task Columns_ShouldProvideAllConstantsAsync() {
     // Arrange & Act - Get all column constants
-    var eventId = EventStoreSchema.Columns.EventId;
-    var streamId = EventStoreSchema.Columns.StreamId;
-    var aggregateId = EventStoreSchema.Columns.AggregateId;
-    var aggregateType = EventStoreSchema.Columns.AggregateType;
-    var eventType = EventStoreSchema.Columns.EventType;
-    var eventData = EventStoreSchema.Columns.EventData;
-    var metadata = EventStoreSchema.Columns.Metadata;
-    var scope = EventStoreSchema.Columns.Scope;
-    var sequenceNumber = EventStoreSchema.Columns.SequenceNumber;
-    var version = EventStoreSchema.Columns.Version;
-    var createdAt = EventStoreSchema.Columns.CreatedAt;
+    var eventId = EventStoreSchema.Columns.EVENT_ID;
+    var streamId = EventStoreSchema.Columns.STREAM_ID;
+    var aggregateId = EventStoreSchema.Columns.AGGREGATE_ID;
+    var aggregateType = EventStoreSchema.Columns.AGGREGATE_TYPE;
+    var eventType = EventStoreSchema.Columns.EVENT_TYPE;
+    var eventData = EventStoreSchema.Columns.EVENT_DATA;
+    var metadata = EventStoreSchema.Columns.METADATA;
+    var scope = EventStoreSchema.Columns.SCOPE;
+    var sequenceNumber = EventStoreSchema.Columns.SEQUENCE_NUMBER;
+    var version = EventStoreSchema.Columns.VERSION;
+    var createdAt = EventStoreSchema.Columns.CREATED_AT;
 
     // Assert - Verify constants match column names
     await Assert.That(eventId).IsEqualTo("event_id");
@@ -196,7 +196,7 @@ public class EventStoreSchemaTests {
     // Assert - Verify created_at default value
     await Assert.That(createdAtColumn.DefaultValue).IsNotNull();
     await Assert.That(createdAtColumn.DefaultValue).IsTypeOf<FunctionDefault>();
-    await Assert.That(((FunctionDefault)createdAtColumn.DefaultValue!).FunctionType).IsEqualTo(DefaultValueFunction.DateTime_Now);
+    await Assert.That(((FunctionDefault)createdAtColumn.DefaultValue!).FunctionType).IsEqualTo(DefaultValueFunction.DATE_TIME__NOW);
   }
 
   [Test]
@@ -207,7 +207,7 @@ public class EventStoreSchemaTests {
     var streamIdColumn = columns.First(c => c.Name == "stream_id");
 
     // Assert
-    await Assert.That(streamIdColumn.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(streamIdColumn.DataType).IsEqualTo(WhizbangDataType.UUID);
     await Assert.That(streamIdColumn.Nullable).IsFalse();
     await Assert.That(streamIdColumn.PrimaryKey).IsFalse();
   }
@@ -220,7 +220,7 @@ public class EventStoreSchemaTests {
     var scopeColumn = columns.First(c => c.Name == "scope");
 
     // Assert
-    await Assert.That(scopeColumn.DataType).IsEqualTo(WhizbangDataType.Json);
+    await Assert.That(scopeColumn.DataType).IsEqualTo(WhizbangDataType.JSON);
     await Assert.That(scopeColumn.Nullable).IsTrue();
   }
 

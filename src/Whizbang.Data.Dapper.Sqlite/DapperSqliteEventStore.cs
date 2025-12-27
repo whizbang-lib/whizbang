@@ -3,10 +3,12 @@ using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Whizbang.Core;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Dapper.Custom;
 
 namespace Whizbang.Data.Dapper.Sqlite;
@@ -154,6 +156,101 @@ public class DapperSqliteEventStore(
           yield return envelope;
         }
       }
+    }
+  }
+
+  /// <summary>
+  /// Reads events from a stream polymorphically, deserializing each event to its concrete type.
+  /// NOTE: SQLite stores full envelope JSON, so we deserialize the JSON directly.
+  /// This implementation is not AOT-compatible and is intended for testing only.
+  /// </summary>
+  public override async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
+    Guid streamId,
+    Guid? fromEventId,
+    IReadOnlyList<Type> eventTypes,
+    [EnumeratorCancellation] CancellationToken cancellationToken = default) {
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+
+    var sql = fromEventId == null
+      ? @"SELECT envelope AS Envelope
+          FROM whizbang_event_store
+          WHERE stream_id = @StreamId
+          ORDER BY created_at, rowid"
+      : @"SELECT envelope AS Envelope
+          FROM whizbang_event_store
+          WHERE stream_id = @StreamId
+          ORDER BY created_at, rowid";
+
+    var rows = await Executor.QueryAsync<EnvelopeRow>(
+      connection,
+      sql,
+      new {
+        StreamId = streamId,
+        FromEventId = fromEventId
+      },
+      cancellationToken: cancellationToken);
+
+    // Deserialize all rows first to avoid yield in try-catch
+    var results = new List<MessageEnvelope<IEvent>>();
+    var hopsTypeInfo = JsonOptions.GetTypeInfo(typeof(List<MessageHop>));
+
+    foreach (var row in rows) {
+      // Parse JSON once to extract MessageId and compare
+      using var doc = JsonDocument.Parse(row.Envelope);
+      var root = doc.RootElement;
+
+      // Try to deserialize the payload with each event type
+      foreach (var eventType in eventTypes) {
+        // Try to deserialize using the type's JsonTypeInfo
+        var typeInfo = JsonOptions.GetTypeInfo(eventType);
+        if (typeInfo != null) {
+          // Get the MessageId first to filter
+          if (root.TryGetProperty("MessageId", out var messageIdProp)) {
+            var messageIdGuid = messageIdProp.GetProperty("Value").GetGuid();
+
+            // Filter by fromEventId
+            if (fromEventId != null && messageIdGuid.CompareTo(fromEventId.Value) <= 0) {
+              break; // Skip this row
+            }
+
+            // Try to deserialize the whole envelope
+            // For SQLite, we need to check if Payload can deserialize as this event type
+            if (root.TryGetProperty("Payload", out var payloadProp)) {
+              var payloadJson = payloadProp.GetRawText();
+              var payload = JsonSerializer.Deserialize(payloadJson, typeInfo);
+              if (payload is IEvent eventPayload) {
+                // Successfully deserialized, extract full envelope
+                var messageIdTypeInfo = JsonOptions.GetTypeInfo(typeof(MessageId));
+                var messageIdJson = messageIdProp.GetRawText();
+                var messageIdValue = messageIdTypeInfo != null
+                  ? (MessageId?)JsonSerializer.Deserialize(messageIdJson, messageIdTypeInfo)
+                  : null;
+
+                if (messageIdValue == null) {
+                  continue; // Skip if MessageId deserialization failed
+                }
+
+                var hops = root.TryGetProperty("Hops", out var hopsProp) && hopsTypeInfo != null
+                  ? (List<MessageHop>?)JsonSerializer.Deserialize(hopsProp.GetRawText(), hopsTypeInfo)
+                  : null;
+
+                results.Add(new MessageEnvelope<IEvent> {
+                  MessageId = messageIdValue.Value,
+                  Payload = eventPayload,
+                  Hops = hops ?? []
+                });
+                break; // Found correct type, move to next row
+              }
+            }
+          }
+        }
+      }
+    }
+
+    foreach (var result in results) {
+      yield return result;
     }
   }
 

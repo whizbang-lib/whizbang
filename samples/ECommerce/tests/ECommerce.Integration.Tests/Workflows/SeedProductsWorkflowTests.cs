@@ -1,3 +1,6 @@
+// NOTE: Database cleanup happens at fixture initialization (AspireIntegrationFixture.cs:147)
+// No need for [After(Class)] cleanup - the container may be stopped by then
+
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.BFF.API.GraphQL;
 using ECommerce.Integration.Tests.Fixtures;
@@ -23,12 +26,6 @@ public class SeedProductsWorkflowTests {
     await _fixture.CleanupDatabaseAsync();
   }
 
-  [After(Class)]
-  public static async Task CleanupAsync() {
-    if (_fixture != null) {
-      await _fixture.CleanupDatabaseAsync();
-    }
-  }
 
   /// <summary>
   /// Tests that calling SeedProducts mutation results in:

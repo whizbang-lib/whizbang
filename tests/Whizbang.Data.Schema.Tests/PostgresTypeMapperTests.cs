@@ -1,4 +1,4 @@
-using Whizbang.Data.Dapper.Postgres.Schema;
+using Whizbang.Data.Postgres.Schema;
 
 namespace Whizbang.Data.Schema.Tests;
 
@@ -9,7 +9,7 @@ public class PostgresTypeMapperTests {
   [Test]
   public async Task MapDataType_Uuid_ReturnsUuidAsync() {
     // Arrange & Act
-    var result = PostgresTypeMapper.MapDataType(WhizbangDataType.Uuid);
+    var result = PostgresTypeMapper.MapDataType(WhizbangDataType.UUID);
 
     // Assert
     await Assert.That(result).IsEqualTo("UUID");
@@ -18,7 +18,7 @@ public class PostgresTypeMapperTests {
   [Test]
   public async Task MapDataType_String_ReturnsTextAsync() {
     // Arrange & Act
-    var result = PostgresTypeMapper.MapDataType(WhizbangDataType.String);
+    var result = PostgresTypeMapper.MapDataType(WhizbangDataType.STRING);
 
     // Assert
     await Assert.That(result).IsEqualTo("TEXT");
@@ -27,7 +27,7 @@ public class PostgresTypeMapperTests {
   [Test]
   public async Task MapDataType_StringWithMaxLength_ReturnsVarcharAsync() {
     // Arrange & Act
-    var result = PostgresTypeMapper.MapDataType(WhizbangDataType.String, maxLength: 255);
+    var result = PostgresTypeMapper.MapDataType(WhizbangDataType.STRING, maxLength: 255);
 
     // Assert
     await Assert.That(result).IsEqualTo("VARCHAR(255)");
@@ -36,7 +36,7 @@ public class PostgresTypeMapperTests {
   [Test]
   public async Task MapDataType_TimestampTz_ReturnsTimestamptzAsync() {
     // Arrange & Act
-    var result = PostgresTypeMapper.MapDataType(WhizbangDataType.TimestampTz);
+    var result = PostgresTypeMapper.MapDataType(WhizbangDataType.TIMESTAMP_TZ);
 
     // Assert
     await Assert.That(result).IsEqualTo("TIMESTAMPTZ");
@@ -45,7 +45,7 @@ public class PostgresTypeMapperTests {
   [Test]
   public async Task MapDataType_Json_ReturnsJsonbAsync() {
     // Arrange & Act
-    var result = PostgresTypeMapper.MapDataType(WhizbangDataType.Json);
+    var result = PostgresTypeMapper.MapDataType(WhizbangDataType.JSON);
 
     // Assert
     await Assert.That(result).IsEqualTo("JSONB");
@@ -54,7 +54,7 @@ public class PostgresTypeMapperTests {
   [Test]
   public async Task MapDataType_BigInt_ReturnsBigintAsync() {
     // Arrange & Act
-    var result = PostgresTypeMapper.MapDataType(WhizbangDataType.BigInt);
+    var result = PostgresTypeMapper.MapDataType(WhizbangDataType.BIG_INT);
 
     // Assert
     await Assert.That(result).IsEqualTo("BIGINT");
@@ -63,7 +63,7 @@ public class PostgresTypeMapperTests {
   [Test]
   public async Task MapDataType_Integer_ReturnsIntegerAsync() {
     // Arrange & Act
-    var result = PostgresTypeMapper.MapDataType(WhizbangDataType.Integer);
+    var result = PostgresTypeMapper.MapDataType(WhizbangDataType.INTEGER);
 
     // Assert
     await Assert.That(result).IsEqualTo("INTEGER");
@@ -72,7 +72,7 @@ public class PostgresTypeMapperTests {
   [Test]
   public async Task MapDataType_Boolean_ReturnsBooleanAsync() {
     // Arrange & Act
-    var result = PostgresTypeMapper.MapDataType(WhizbangDataType.Boolean);
+    var result = PostgresTypeMapper.MapDataType(WhizbangDataType.BOOLEAN);
 
     // Assert
     await Assert.That(result).IsEqualTo("BOOLEAN");
@@ -81,7 +81,7 @@ public class PostgresTypeMapperTests {
   [Test]
   public async Task MapDefaultValue_FunctionDateTimeNow_ReturnsCurrentTimestampAsync() {
     // Arrange
-    var defaultValue = DefaultValue.Function(DefaultValueFunction.DateTime_Now);
+    var defaultValue = DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW);
 
     // Act
     var result = PostgresTypeMapper.MapDefaultValue(defaultValue);
@@ -93,7 +93,7 @@ public class PostgresTypeMapperTests {
   [Test]
   public async Task MapDefaultValue_FunctionDateTimeUtcNow_ReturnsUtcExpressionAsync() {
     // Arrange
-    var defaultValue = DefaultValue.Function(DefaultValueFunction.DateTime_UtcNow);
+    var defaultValue = DefaultValue.Function(DefaultValueFunction.DATE_TIME__UTC_NOW);
 
     // Act
     var result = PostgresTypeMapper.MapDefaultValue(defaultValue);
@@ -105,7 +105,7 @@ public class PostgresTypeMapperTests {
   [Test]
   public async Task MapDefaultValue_FunctionUuidGenerate_ReturnsGenRandomUuidAsync() {
     // Arrange
-    var defaultValue = DefaultValue.Function(DefaultValueFunction.Uuid_Generate);
+    var defaultValue = DefaultValue.Function(DefaultValueFunction.UUID__GENERATE);
 
     // Act
     var result = PostgresTypeMapper.MapDefaultValue(defaultValue);
@@ -117,7 +117,7 @@ public class PostgresTypeMapperTests {
   [Test]
   public async Task MapDefaultValue_FunctionBooleanTrue_ReturnsTrueAsync() {
     // Arrange
-    var defaultValue = DefaultValue.Function(DefaultValueFunction.Boolean_True);
+    var defaultValue = DefaultValue.Function(DefaultValueFunction.BOOLEAN__TRUE);
 
     // Act
     var result = PostgresTypeMapper.MapDefaultValue(defaultValue);
@@ -129,7 +129,7 @@ public class PostgresTypeMapperTests {
   [Test]
   public async Task MapDefaultValue_FunctionBooleanFalse_ReturnsFalseAsync() {
     // Arrange
-    var defaultValue = DefaultValue.Function(DefaultValueFunction.Boolean_False);
+    var defaultValue = DefaultValue.Function(DefaultValueFunction.BOOLEAN__FALSE);
 
     // Act
     var result = PostgresTypeMapper.MapDefaultValue(defaultValue);

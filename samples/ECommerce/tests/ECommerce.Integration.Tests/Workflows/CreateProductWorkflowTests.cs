@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
 using ECommerce.Integration.Tests.Fixtures;
+using Medo;
 
 namespace ECommerce.Integration.Tests.Workflows;
 
@@ -13,13 +14,13 @@ namespace ECommerce.Integration.Tests.Workflows;
 public class CreateProductWorkflowTests {
   private static AspireIntegrationFixture? _fixture;
 
-  // Test product IDs (deterministic GUIDs for reproducibility)
-  private static readonly ProductId _testProd1 = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000001"));
-  private static readonly ProductId _testProdMulti1 = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000011"));
-  private static readonly ProductId _testProdMulti2 = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000012"));
-  private static readonly ProductId _testProdMulti3 = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000013"));
-  private static readonly ProductId _testProdZeroStock = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000020"));
-  private static readonly ProductId _testProdNoImage = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000030"));
+  // Test product IDs (UUIDv7 for proper time-ordering and uniqueness across test runs)
+  private static readonly ProductId _testProd1 = ProductId.From(Uuid7.NewUuid7().ToGuid());
+  private static readonly ProductId _testProdMulti1 = ProductId.From(Uuid7.NewUuid7().ToGuid());
+  private static readonly ProductId _testProdMulti2 = ProductId.From(Uuid7.NewUuid7().ToGuid());
+  private static readonly ProductId _testProdMulti3 = ProductId.From(Uuid7.NewUuid7().ToGuid());
+  private static readonly ProductId _testProdZeroStock = ProductId.From(Uuid7.NewUuid7().ToGuid());
+  private static readonly ProductId _testProdNoImage = ProductId.From(Uuid7.NewUuid7().ToGuid());
 
   [Before(Test)]
   [RequiresUnreferencedCode("Test code - reflection allowed")]
@@ -28,12 +29,8 @@ public class CreateProductWorkflowTests {
     _fixture = await SharedFixtureSource.GetFixtureAsync();
   }
 
-  [After(Class)]
-  public static async Task CleanupAsync() {
-    if (_fixture != null) {
-      await _fixture.CleanupDatabaseAsync();
-    }
-  }
+  // NOTE: Database cleanup happens at fixture initialization (AspireIntegrationFixture.cs:147)
+  // No need for [After(Class)] cleanup - the container may be stopped by then
 
   /// <summary>
   /// Tests that creating a product via IDispatcher results in:

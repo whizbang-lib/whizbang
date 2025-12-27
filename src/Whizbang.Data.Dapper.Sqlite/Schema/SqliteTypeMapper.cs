@@ -55,6 +55,7 @@ public static class SqliteTypeMapper {
       Whizbang.Data.Schema.WhizbangDataType.JSON => "TEXT",        // JSON as text (use JSON1 extension for querying)
       Whizbang.Data.Schema.WhizbangDataType.BIG_INT => "INTEGER",   // 64-bit signed integer
       Whizbang.Data.Schema.WhizbangDataType.INTEGER => "INTEGER",  // Stored as INTEGER affinity
+      Whizbang.Data.Schema.WhizbangDataType.SMALL_INT => "INTEGER", // 16-bit integer stored as INTEGER affinity
       Whizbang.Data.Schema.WhizbangDataType.BOOLEAN => "INTEGER",  // 0 or 1
       _ => throw new ArgumentOutOfRangeException(nameof(dataType), dataType, "Unknown data type")
     };

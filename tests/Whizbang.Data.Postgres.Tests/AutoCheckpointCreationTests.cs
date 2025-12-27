@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Dapper;
 using TUnit.Assertions;
 using TUnit.Core;
@@ -25,6 +26,10 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
 
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
 
     // Insert event into event store (simulating event being written)
     await _insertEventStoreRecordAsync(
@@ -34,27 +39,61 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}",
       version: 1);
 
-    // Act - Call process_work_batch (should auto-create checkpoint)
-    using var connection = await ConnectionFactory.CreateConnectionAsync();
-    await connection.ExecuteAsync(@"
+    // Act - Call process_work_batch to trigger perspective association matching
+    var _ = await connection.QueryAsync(@"
       SELECT * FROM process_work_batch(
         p_instance_id := @instanceId::uuid,
         p_service_name := 'TestService',
         p_host_name := 'test-host',
-        p_process_id := 12345
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2
       )",
-      new { instanceId = _idProvider.NewGuid() });
+      new { instanceId, now });
 
-    // Assert - Checkpoint row should be created
+    // Check if perspective events were created (indicates match)
+    var perspectiveEvents = await connection.QueryAsync<PerspectiveEventRow>(@"
+      SELECT event_work_id, stream_id, perspective_name, event_id, sequence_number, status
+      FROM wh_perspective_events
+      WHERE stream_id = @streamId
+        AND perspective_name = 'ProductListPerspective'",
+      new { streamId });
+
+    await Assert.That(perspectiveEvents.Count()).IsEqualTo(1)
+      .Because("process_work_batch should create perspective event when association matches");
+
+    // Complete perspective events to trigger checkpoint creation
+    var completions = perspectiveEvents.Select(pe => new {
+      EventWorkId = pe.event_work_id,
+      StatusFlags = 8  // Completed flag
+    }).ToArray();
+
+    var _2 = await connection.QueryAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_perspective_event_completions := @completions::jsonb
+      )",
+      new { instanceId, now, completions = JsonSerializer.Serialize(completions) });
+
+    // Assert - Checkpoint row should be created after completion
     var checkpoint = await _getPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
     await Assert.That(checkpoint).IsNotNull()
-      .Because("process_work_batch should auto-create checkpoint when perspective association exists");
+      .Because("process_work_batch should create checkpoint when perspective events are completed");
     await Assert.That(checkpoint!.stream_id).IsEqualTo(streamId);
     await Assert.That(checkpoint.perspective_name).IsEqualTo("ProductListPerspective");
-    await Assert.That(checkpoint.last_event_id).IsNull()
-      .Because("Newly created checkpoint has not processed any events yet");
-    await Assert.That(checkpoint.status).IsEqualTo((short)0)  // PerspectiveProcessingStatus.None = 0
-      .Because("Newly created checkpoint starts with no status flags");
+    await Assert.That(checkpoint.last_event_id).IsEqualTo(eventId)
+      .Because("Checkpoint should be updated with last completed event");
+    await Assert.That(checkpoint.status).IsEqualTo((short)2)  // PerspectiveProcessingStatus.Completed = 2
+      .Because("Checkpoint should be marked as completed when all events processed");
   }
 
   [Test]
@@ -78,7 +117,9 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_instance_id := @instanceId::uuid,
         p_service_name := 'TestService',
         p_host_name := 'test-host',
-        p_process_id := 12345
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := NOW()
       )",
       new { instanceId = _idProvider.NewGuid() });
 
@@ -121,7 +162,9 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_instance_id := @instanceId::uuid,
         p_service_name := 'TestService',
         p_host_name := 'test-host',
-        p_process_id := 12345
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := NOW()
       )",
       new { instanceId = _idProvider.NewGuid() });
 
@@ -167,7 +210,9 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_instance_id := @instanceId::uuid,
         p_service_name := 'TestService',
         p_host_name := 'test-host',
-        p_process_id := 12345
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := NOW()
       )",
       new { instanceId = _idProvider.NewGuid() });
 
@@ -204,7 +249,9 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_instance_id := @instanceId::uuid,
         p_service_name := 'TestService',
         p_host_name := 'test-host',
-        p_process_id := 12345
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := NOW()
       )",
       new { instanceId = _idProvider.NewGuid() });
 
@@ -243,7 +290,9 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_instance_id := @instanceId::uuid,
         p_service_name := 'TestService',
         p_host_name := 'test-host',
-        p_process_id := 12345
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := NOW()
       )",
       new { instanceId = _idProvider.NewGuid() });
 
@@ -280,7 +329,9 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_instance_id := @instanceId::uuid,
         p_service_name := 'TestService',
         p_host_name := 'test-host',
-        p_process_id := 12345
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := NOW()
       )",
       new { instanceId = _idProvider.NewGuid() });
 
@@ -317,7 +368,9 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_instance_id := @instanceId::uuid,
         p_service_name := 'TestService',
         p_host_name := 'test-host',
-        p_process_id := 12345
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := NOW()
       )",
       new { instanceId = _idProvider.NewGuid() });
 
@@ -354,7 +407,9 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_instance_id := @instanceId::uuid,
         p_service_name := 'TestService',
         p_host_name := 'test-host',
-        p_process_id := 12345
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := NOW()
       )",
       new { instanceId = _idProvider.NewGuid() });
 
@@ -391,7 +446,9 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_instance_id := @instanceId::uuid,
         p_service_name := 'TestService',
         p_host_name := 'test-host',
-        p_process_id := 12345
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := NOW()
       )",
       new { instanceId = _idProvider.NewGuid() });
 
@@ -421,10 +478,10 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     // Act - Report perspective completion (processed up to eventId2)
     var perspectiveCompletions = new[] {
       new {
-        stream_id = streamId,
-        perspective_name = "ProductListPerspective",
-        last_event_id = eventId2,
-        status = (short)1  // PerspectiveProcessingStatus.Completed
+        StreamId = streamId,
+        PerspectiveName = "ProductListPerspective",
+        LastEventId = eventId2,
+        Status = (short)1  // PerspectiveProcessingStatus.Completed
       }
     };
 
@@ -435,6 +492,8 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_service_name := 'TestService',
         p_host_name := 'test-host',
         p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := NOW(),
         p_perspective_completions := @completions::jsonb
       )",
       new {
@@ -467,16 +526,16 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     // Act - Report completions for BOTH perspectives (but at different points)
     var perspectiveCompletions = new[] {
       new {
-        stream_id = streamId,
-        perspective_name = "ProductListPerspective",
-        last_event_id = eventId2,  // Processed both events
-        status = (short)1
+        StreamId = streamId,
+        PerspectiveName = "ProductListPerspective",
+        LastEventId = eventId2,  // Processed both events
+        Status = (short)1
       },
       new {
-        stream_id = streamId,
-        perspective_name = "ProductDetailsPerspective",
-        last_event_id = eventId1,  // Only processed first event
-        status = (short)1
+        StreamId = streamId,
+        PerspectiveName = "ProductDetailsPerspective",
+        LastEventId = eventId1,  // Only processed first event
+        Status = (short)1
       }
     };
 
@@ -487,6 +546,8 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_service_name := 'TestService',
         p_host_name := 'test-host',
         p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := NOW(),
         p_perspective_completions := @completions::jsonb
       )",
       new {
@@ -514,11 +575,11 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     // Act - Report perspective FAILURE
     var perspectiveFailures = new[] {
       new {
-        stream_id = streamId,
-        perspective_name = "ProductListPerspective",
-        last_event_id = eventId,
-        status = (short)2,  // PerspectiveProcessingStatus.Failed
-        error = "Database connection timeout"
+        StreamId = streamId,
+        PerspectiveName = "ProductListPerspective",
+        LastEventId = eventId,
+        Status = (short)2,  // PerspectiveProcessingStatus.Failed
+        Error = "Database connection timeout"
       }
     };
 
@@ -529,6 +590,8 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_service_name := 'TestService',
         p_host_name := 'test-host',
         p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := NOW(),
         p_perspective_failures := @failures::jsonb
       )",
       new {
@@ -560,7 +623,9 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_instance_id := @instanceId::uuid,
         p_service_name := 'TestService',
         p_host_name := 'test-host',
-        p_process_id := 12345
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := NOW()
       )",
       new { instanceId = _idProvider.NewGuid() });
 
@@ -634,4 +699,12 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     Guid? last_event_id,
     short status,
     string? error);
+
+  private sealed record PerspectiveEventRow(
+    Guid event_work_id,
+    Guid stream_id,
+    string perspective_name,
+    Guid event_id,
+    long sequence_number,
+    int status);
 }

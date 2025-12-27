@@ -15,7 +15,7 @@ public class DefaultValueTests {
   [Test]
   public async Task DefaultValueFunction_HasDateTimeNowAsync() {
     // Arrange & Act
-    var hasValue = Enum.IsDefined(typeof(DefaultValueFunction), "DateTime_Now");
+    var hasValue = Enum.IsDefined(typeof(DefaultValueFunction), "DATE_TIME__NOW");
 
     // Assert
     await Assert.That(hasValue).IsTrue();
@@ -24,7 +24,7 @@ public class DefaultValueTests {
   [Test]
   public async Task DefaultValueFunction_HasDateTimeUtcNowAsync() {
     // Arrange & Act
-    var hasValue = Enum.IsDefined(typeof(DefaultValueFunction), "DateTime_UtcNow");
+    var hasValue = Enum.IsDefined(typeof(DefaultValueFunction), "DATE_TIME__UTC_NOW");
 
     // Assert
     await Assert.That(hasValue).IsTrue();
@@ -33,7 +33,7 @@ public class DefaultValueTests {
   [Test]
   public async Task DefaultValueFunction_HasUuidGenerateAsync() {
     // Arrange & Act
-    var hasValue = Enum.IsDefined(typeof(DefaultValueFunction), "Uuid_Generate");
+    var hasValue = Enum.IsDefined(typeof(DefaultValueFunction), "UUID__GENERATE");
 
     // Assert
     await Assert.That(hasValue).IsTrue();
@@ -42,7 +42,7 @@ public class DefaultValueTests {
   [Test]
   public async Task DefaultValueFunction_HasBooleanTrueAsync() {
     // Arrange & Act
-    var hasValue = Enum.IsDefined(typeof(DefaultValueFunction), "Boolean_True");
+    var hasValue = Enum.IsDefined(typeof(DefaultValueFunction), "BOOLEAN__TRUE");
 
     // Assert
     await Assert.That(hasValue).IsTrue();
@@ -51,7 +51,7 @@ public class DefaultValueTests {
   [Test]
   public async Task DefaultValueFunction_HasBooleanFalseAsync() {
     // Arrange & Act
-    var hasValue = Enum.IsDefined(typeof(DefaultValueFunction), "Boolean_False");
+    var hasValue = Enum.IsDefined(typeof(DefaultValueFunction), "BOOLEAN__FALSE");
 
     // Assert
     await Assert.That(hasValue).IsTrue();
@@ -71,7 +71,7 @@ public class DefaultValueTests {
   [Test]
   public async Task DefaultValue_FunctionFactory_ReturnsFunctionDefaultAsync() {
     // Arrange & Act
-    var defaultValue = DefaultValue.Function(DefaultValueFunction.DateTime_Now);
+    var defaultValue = DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW);
 
     // Assert
     await Assert.That(defaultValue).IsNotNull();
@@ -123,7 +123,7 @@ public class DefaultValueTests {
   [Test]
   public async Task FunctionDefault_PreservesFunctionValueAsync() {
     // Arrange
-    var function = DefaultValueFunction.Uuid_Generate;
+    var function = DefaultValueFunction.UUID__GENERATE;
 
     // Act
     var defaultValue = DefaultValue.Function(function);
@@ -193,8 +193,8 @@ public class DefaultValueTests {
   [Test]
   public async Task FunctionDefault_SameFunctionValue_AreEqualAsync() {
     // Arrange
-    var default1 = DefaultValue.Function(DefaultValueFunction.DateTime_Now);
-    var default2 = DefaultValue.Function(DefaultValueFunction.DateTime_Now);
+    var default1 = DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW);
+    var default2 = DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW);
 
     // Act & Assert
     await Assert.That(default1).IsEqualTo(default2);
@@ -203,8 +203,8 @@ public class DefaultValueTests {
   [Test]
   public async Task FunctionDefault_DifferentFunctionValue_AreNotEqualAsync() {
     // Arrange
-    var default1 = DefaultValue.Function(DefaultValueFunction.DateTime_Now);
-    var default2 = DefaultValue.Function(DefaultValueFunction.DateTime_UtcNow);
+    var default1 = DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW);
+    var default2 = DefaultValue.Function(DefaultValueFunction.DATE_TIME__UTC_NOW);
 
     // Act & Assert
     await Assert.That(default1).IsNotEqualTo(default2);

@@ -44,7 +44,7 @@ public static class ActiveStreamsSchema {
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       ),
       new ColumnDefinition(
-        Name: "updated_at",
+        Name: "last_activity_at",
         DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
@@ -78,6 +78,6 @@ public static class ActiveStreamsSchema {
     public const string ASSIGNED_INSTANCE_ID = "assigned_instance_id";
     public const string LEASE_EXPIRY = "lease_expiry";
     public const string CREATED_AT = "created_at";
-    public const string UPDATED_AT = "updated_at";
+    public const string LAST_ACTIVITY_AT = "last_activity_at";
   }
 }

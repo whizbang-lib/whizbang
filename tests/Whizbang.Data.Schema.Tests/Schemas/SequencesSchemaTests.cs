@@ -33,7 +33,7 @@ public class SequencesSchemaTests {
     // Verify sequence_name column
     var sequenceName = columns[0];
     await Assert.That(sequenceName.Name).IsEqualTo("sequence_name");
-    await Assert.That(sequenceName.DataType).IsEqualTo(WhizbangDataType.String);
+    await Assert.That(sequenceName.DataType).IsEqualTo(WhizbangDataType.STRING);
     await Assert.That(sequenceName.MaxLength).IsEqualTo(200);
     await Assert.That(sequenceName.PrimaryKey).IsTrue();
     await Assert.That(sequenceName.Nullable).IsFalse();
@@ -41,19 +41,19 @@ public class SequencesSchemaTests {
     // Verify current_value column
     var currentValue = columns[1];
     await Assert.That(currentValue.Name).IsEqualTo("current_value");
-    await Assert.That(currentValue.DataType).IsEqualTo(WhizbangDataType.BigInt);
+    await Assert.That(currentValue.DataType).IsEqualTo(WhizbangDataType.BIG_INT);
     await Assert.That(currentValue.Nullable).IsFalse();
 
     // Verify increment_by column
     var incrementBy = columns[2];
     await Assert.That(incrementBy.Name).IsEqualTo("increment_by");
-    await Assert.That(incrementBy.DataType).IsEqualTo(WhizbangDataType.Integer);
+    await Assert.That(incrementBy.DataType).IsEqualTo(WhizbangDataType.INTEGER);
     await Assert.That(incrementBy.Nullable).IsFalse();
 
     // Verify last_updated_at column
     var lastUpdatedAt = columns[3];
     await Assert.That(lastUpdatedAt.Name).IsEqualTo("last_updated_at");
-    await Assert.That(lastUpdatedAt.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
+    await Assert.That(lastUpdatedAt.DataType).IsEqualTo(WhizbangDataType.TIMESTAMP_TZ);
     await Assert.That(lastUpdatedAt.Nullable).IsFalse();
   }
 
@@ -67,7 +67,7 @@ public class SequencesSchemaTests {
     // Assert
     await Assert.That(primaryKeyColumn).IsNotNull();
     await Assert.That(primaryKeyColumn!.Name).IsEqualTo("sequence_name");
-    await Assert.That(primaryKeyColumn.DataType).IsEqualTo(WhizbangDataType.String);
+    await Assert.That(primaryKeyColumn.DataType).IsEqualTo(WhizbangDataType.STRING);
     await Assert.That(primaryKeyColumn.MaxLength).IsEqualTo(200);
   }
 
@@ -117,17 +117,17 @@ public class SequencesSchemaTests {
     // Assert
     await Assert.That(lastUpdatedAtColumn.DefaultValue).IsNotNull();
     await Assert.That(lastUpdatedAtColumn.DefaultValue).IsTypeOf<FunctionDefault>();
-    await Assert.That(((FunctionDefault)lastUpdatedAtColumn.DefaultValue!).FunctionType).IsEqualTo(DefaultValueFunction.DateTime_Now);
+    await Assert.That(((FunctionDefault)lastUpdatedAtColumn.DefaultValue!).FunctionType).IsEqualTo(DefaultValueFunction.DATE_TIME__NOW);
   }
 
   [Test]
   [Category("Schema")]
   public async Task Columns_HasAllConstantsAsync() {
     // Arrange & Act - Get all column constants
-    var sequenceName = SequencesSchema.Columns.SequenceName;
-    var currentValue = SequencesSchema.Columns.CurrentValue;
-    var incrementBy = SequencesSchema.Columns.IncrementBy;
-    var lastUpdatedAt = SequencesSchema.Columns.LastUpdatedAt;
+    var sequenceName = SequencesSchema.Columns.SEQUENCE_NAME;
+    var currentValue = SequencesSchema.Columns.CURRENT_VALUE;
+    var incrementBy = SequencesSchema.Columns.INCREMENT_BY;
+    var lastUpdatedAt = SequencesSchema.Columns.LAST_UPDATED_AT;
 
     // Assert - Verify constants match column names
     await Assert.That(sequenceName).IsEqualTo("sequence_name");

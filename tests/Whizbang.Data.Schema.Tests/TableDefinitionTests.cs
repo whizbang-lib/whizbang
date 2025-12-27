@@ -15,8 +15,8 @@ public class TableDefinitionTests {
   public async Task TableDefinition_WithRequiredProperties_CreatesInstanceAsync() {
     // Arrange
     var columns = ImmutableArray.Create(
-      new ColumnDefinition("id", WhizbangDataType.Uuid, PrimaryKey: true),
-      new ColumnDefinition("name", WhizbangDataType.String, MaxLength: 100)
+      new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true),
+      new ColumnDefinition("name", WhizbangDataType.STRING, MaxLength: 100)
     );
 
     // Act
@@ -35,7 +35,7 @@ public class TableDefinitionTests {
   public async Task TableDefinition_WithoutIndexes_UsesDefaultAsync() {
     // Arrange
     var columns = ImmutableArray.Create(
-      new ColumnDefinition("id", WhizbangDataType.Uuid)
+      new ColumnDefinition("id", WhizbangDataType.UUID)
     );
 
     // Act
@@ -50,9 +50,9 @@ public class TableDefinitionTests {
   public async Task TableDefinition_WithIndexes_StoresAllAsync() {
     // Arrange
     var columns = ImmutableArray.Create(
-      new ColumnDefinition("id", WhizbangDataType.Uuid, PrimaryKey: true),
-      new ColumnDefinition("email", WhizbangDataType.String, MaxLength: 255),
-      new ColumnDefinition("created_at", WhizbangDataType.TimestampTz)
+      new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true),
+      new ColumnDefinition("email", WhizbangDataType.STRING, MaxLength: 255),
+      new ColumnDefinition("created_at", WhizbangDataType.TIMESTAMP_TZ)
     );
 
     var indexes = ImmutableArray.Create(
@@ -77,7 +77,7 @@ public class TableDefinitionTests {
   public async Task TableDefinition_SameValues_AreEqualAsync() {
     // Arrange
     var columns = ImmutableArray.Create(
-      new ColumnDefinition("id", WhizbangDataType.Uuid)
+      new ColumnDefinition("id", WhizbangDataType.UUID)
     );
 
     var table1 = new TableDefinition("test", columns);
@@ -91,7 +91,7 @@ public class TableDefinitionTests {
   public async Task TableDefinition_DifferentName_AreNotEqualAsync() {
     // Arrange
     var columns = ImmutableArray.Create(
-      new ColumnDefinition("id", WhizbangDataType.Uuid)
+      new ColumnDefinition("id", WhizbangDataType.UUID)
     );
 
     var table1 = new TableDefinition("table1", columns);

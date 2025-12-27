@@ -45,5 +45,12 @@ public static class WhizbangJsonContext {
     // This allows InfrastructureJsonContext to find them via TryGetTypeInfoForRuntimeCustomConverter
     JsonContextRegistry.RegisterConverter(new ValueObjects.MessageIdJsonConverter());
     JsonContextRegistry.RegisterConverter(new ValueObjects.CorrelationIdJsonConverter());
+
+    // Register type name mappings for infrastructure types
+    // This enables Azure Service Bus and other transports to deserialize messages by assembly-qualified name
+    JsonContextRegistry.RegisterTypeName(
+      "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
+      typeof(Observability.MessageEnvelope<System.Text.Json.JsonElement>),
+      InfrastructureJsonContext.Default);
   }
 }

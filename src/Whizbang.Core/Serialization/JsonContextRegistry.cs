@@ -36,6 +36,14 @@ public static class JsonContextRegistry {
   private static readonly ConcurrentBag<JsonConverter> _converters = new();
 
   /// <summary>
+  /// Thread-safe dictionary mapping normalized type names to (Type, Resolver) tuples.
+  /// Populated via [ModuleInitializer] methods in each assembly.
+  /// Supports fuzzy matching on "TypeName, AssemblyName" portion (strips Version/Culture/PublicKeyToken).
+  /// This allows cross-assembly type resolution without reflection.
+  /// </summary>
+  private static readonly ConcurrentDictionary<string, (Type type, IJsonTypeInfoResolver resolver)> _typeNameMappings = new();
+
+  /// <summary>
   /// Registers a JsonSerializerContext resolver.
   /// Called from [ModuleInitializer] methods - runs before Main().
   /// </summary>
@@ -98,8 +106,84 @@ public static class JsonContextRegistry {
   }
 
   /// <summary>
+  /// Registers a type name mapping for AOT-safe type resolution by string name.
+  /// Called from [ModuleInitializer] methods - runs before Main().
+  /// Uses compile-time typeof() for AOT compatibility (no reflection).
+  /// Normalizes type name to support fuzzy matching (strips Version/Culture/PublicKeyToken).
+  /// </summary>
+  /// <param name="assemblyQualifiedName">Assembly-qualified type name (e.g., "MyApp.Commands.CreateOrder, MyApp.Contracts")</param>
+  /// <param name="type">The Type object (obtained via typeof() at compile-time)</param>
+  /// <param name="resolver">The resolver that can provide JsonTypeInfo for this type</param>
+  public static void RegisterTypeName(string assemblyQualifiedName, Type type, IJsonTypeInfoResolver resolver) {
+    ArgumentNullException.ThrowIfNull(assemblyQualifiedName);
+    ArgumentNullException.ThrowIfNull(type);
+    ArgumentNullException.ThrowIfNull(resolver);
+
+    var normalizedName = _normalizeTypeName(assemblyQualifiedName);
+    _typeNameMappings[normalizedName] = (type, resolver);
+  }
+
+  /// <summary>
+  /// Gets JsonTypeInfo for a type by its assembly-qualified name.
+  /// Supports fuzzy matching on "TypeName, AssemblyName" portion (strips Version/Culture/PublicKeyToken).
+  /// This allows short-form names to match full AssemblyQualifiedNames.
+  /// </summary>
+  /// <param name="assemblyQualifiedName">Assembly-qualified type name (can be short or full form)</param>
+  /// <param name="options">JsonSerializerOptions to use for creating JsonTypeInfo</param>
+  /// <returns>JsonTypeInfo for the type, or null if not registered</returns>
+  public static JsonTypeInfo? GetTypeInfoByName(string assemblyQualifiedName, JsonSerializerOptions options) {
+    if (string.IsNullOrEmpty(assemblyQualifiedName)) {
+      return null;
+    }
+
+    if (options == null) {
+      return null;
+    }
+
+    var normalizedName = _normalizeTypeName(assemblyQualifiedName);
+
+    if (_typeNameMappings.TryGetValue(normalizedName, out var entry)) {
+      return entry.resolver.GetTypeInfo(entry.type, options);
+    }
+
+    return null;
+  }
+
+  /// <summary>
+  /// Normalizes a .NET type name by extracting "TypeName, AssemblyName" portion.
+  /// Strips Version, Culture, and PublicKeyToken for fuzzy matching.
+  /// This matches the fuzzy matching logic used in the database for perspective event subscriptions.
+  /// </summary>
+  /// <param name="assemblyQualifiedName">Full or short-form assembly-qualified type name</param>
+  /// <returns>Normalized "TypeName, AssemblyName" string</returns>
+  private static string _normalizeTypeName(string assemblyQualifiedName) {
+    if (string.IsNullOrEmpty(assemblyQualifiedName)) {
+      return assemblyQualifiedName;
+    }
+
+    // Find the first occurrence of Version, Culture, or PublicKeyToken
+    var versionIndex = assemblyQualifiedName.IndexOf(", Version=", StringComparison.Ordinal);
+    var cultureIndex = assemblyQualifiedName.IndexOf(", Culture=", StringComparison.Ordinal);
+    var tokenIndex = assemblyQualifiedName.IndexOf(", PublicKeyToken=", StringComparison.Ordinal);
+
+    // Get the minimum index (first occurrence of any of these)
+    var indices = new[] { versionIndex, cultureIndex, tokenIndex }.Where(i => i > 0);
+    if (!indices.Any()) {
+      return assemblyQualifiedName; // No version info found, use as-is
+    }
+
+    var cutoff = indices.Min();
+    return assemblyQualifiedName.Substring(0, cutoff);
+  }
+
+  /// <summary>
   /// Gets the count of registered resolvers (for diagnostics/testing).
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/JsonContextRegistryTests.cs:RegisterConverter_WithConverterInstance_AddsToConverterCollectionAsync</tests>
   public static int RegisteredCount => _resolvers.Count;
+
+  /// <summary>
+  /// Gets the count of registered type name mappings (for diagnostics/testing).
+  /// </summary>
+  public static int RegisteredTypeNameCount => _typeNameMappings.Count;
 }

@@ -84,9 +84,10 @@ public class DapperPostgresEventStore(
             AggregateType = typeof(TMessage).Name,
             SequenceNumber = nextSequence,
             Version = (int)nextSequence, // version tracks stream-specific sequence
-            // Use short form: "TypeName, AssemblyName" (NOT AssemblyQualifiedName which includes Version/Culture/PublicKeyToken)
-            // This matches the format expected by wh_message_associations and used in process_work_batch SQL JOIN
-            EventType = $"{typeof(TMessage).FullName}, {typeof(TMessage).Assembly.GetName().Name}",
+            // Use centralized formatter for consistent type name format across all event stores
+            // Format: "TypeName, AssemblyName" (medium form)
+            // This matches wh_message_associations format and enables auto-checkpoint creation
+            EventType = TypeNameFormatter.Format(typeof(TMessage)),
             EventData = jsonb.DataJson,
             Metadata = jsonb.MetadataJson,
             Scope = jsonb.ScopeJson,
@@ -195,6 +196,104 @@ public class DapperPostgresEventStore(
 
       var envelope = _adapter.FromJsonb<TMessage>(jsonb);
       yield return envelope;
+    }
+  }
+
+  /// <summary>
+  /// Reads events from a stream polymorphically, deserializing each event to its concrete type.
+  /// Uses the event_type column to determine which concrete type to deserialize to.
+  /// </summary>
+  public override async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
+    Guid streamId,
+    Guid? fromEventId,
+    IReadOnlyList<Type> eventTypes,
+    [EnumeratorCancellation] CancellationToken cancellationToken = default) {
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+
+    // Build type lookup dictionary for fast EventType -> Type resolution
+    var typeMap = new Dictionary<string, Type>();
+    foreach (var type in eventTypes) {
+      // Use the same format as AppendAsync: "TypeName, AssemblyName"
+      var typeKey = $"{type.FullName}, {type.Assembly.GetName().Name}";
+      typeMap[typeKey] = type;
+    }
+
+    var sql = fromEventId == null
+      ? @"SELECT event_type AS EventType,
+                 event_data::text AS EventData,
+                 metadata::text AS Metadata,
+                 scope::text AS Scope
+          FROM wh_event_store
+          WHERE stream_id = @StreamId
+          ORDER BY event_id"
+      : @"SELECT event_type AS EventType,
+                 event_data::text AS EventData,
+                 metadata::text AS Metadata,
+                 scope::text AS Scope
+          FROM wh_event_store
+          WHERE stream_id = @StreamId AND event_id > @FromEventId
+          ORDER BY event_id";
+
+    var rows = await Executor.QueryAsync<EventRow>(
+      connection,
+      sql,
+      new {
+        StreamId = streamId,
+        FromEventId = fromEventId
+      },
+      cancellationToken: cancellationToken);
+
+    foreach (var row in rows) {
+      // Look up the concrete type from the event_type column
+      if (!typeMap.TryGetValue(row.EventType, out var concreteType)) {
+        throw new InvalidOperationException(
+          $"Event type '{row.EventType}' in stream {streamId} is not in the provided event types list. " +
+          $"Available types: {string.Join(", ", typeMap.Keys)}"
+        );
+      }
+
+      var jsonb = new JsonbPersistenceModel {
+        DataJson = row.EventData,
+        MetadataJson = row.Metadata,
+        ScopeJson = row.Scope
+      };
+
+      // Deserialize using the concrete type's JsonTypeInfo
+      var typeInfo = JsonOptions.GetTypeInfo(concreteType);
+      if (typeInfo == null) {
+        throw new InvalidOperationException(
+          $"No JsonTypeInfo found for type {concreteType.FullName}. " +
+          "Ensure the event type is registered in your JsonSerializerContext."
+        );
+      }
+
+      var eventData = JsonSerializer.Deserialize(jsonb.DataJson, typeInfo);
+      if (eventData == null) {
+        throw new InvalidOperationException($"Failed to deserialize event of type {concreteType.FullName}");
+      }
+
+      // Deserialize metadata
+      var metadataTypeInfo = JsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
+      if (metadataTypeInfo == null) {
+        throw new InvalidOperationException("No JsonTypeInfo found for EnvelopeMetadata");
+      }
+
+      var metadata = JsonSerializer.Deserialize(jsonb.MetadataJson, metadataTypeInfo);
+      if (metadata == null) {
+        throw new InvalidOperationException("Failed to deserialize envelope metadata");
+      }
+
+      // Cast to IEvent and construct envelope
+      if (eventData is IEvent eventPayload) {
+        var typedEnvelope = new MessageEnvelope<IEvent> {
+          MessageId = ((EnvelopeMetadata)metadata).MessageId,
+          Payload = eventPayload,
+          Hops = ((EnvelopeMetadata)metadata).Hops
+        };
+        yield return typedEnvelope;
+      }
     }
   }
 

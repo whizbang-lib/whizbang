@@ -32,37 +32,37 @@ public class PerspectiveCheckpointsSchemaTests {
     // Assert - Verify column count
     await Assert.That(columns).Count().IsEqualTo(6);
 
-    // Verify each column definition
-    var streamId = columns[0];
+    // Verify each column definition (use First to avoid order dependency)
+    var streamId = columns.First(c => c.Name == "stream_id");
     await Assert.That(streamId.Name).IsEqualTo("stream_id");
-    await Assert.That(streamId.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(streamId.DataType).IsEqualTo(WhizbangDataType.UUID);
     await Assert.That(streamId.PrimaryKey).IsTrue();
     await Assert.That(streamId.Nullable).IsFalse();
 
-    var perspectiveName = columns[1];
+    var perspectiveName = columns.First(c => c.Name == "perspective_name");
     await Assert.That(perspectiveName.Name).IsEqualTo("perspective_name");
-    await Assert.That(perspectiveName.DataType).IsEqualTo(WhizbangDataType.String);
+    await Assert.That(perspectiveName.DataType).IsEqualTo(WhizbangDataType.STRING);
     await Assert.That(perspectiveName.PrimaryKey).IsTrue();
     await Assert.That(perspectiveName.Nullable).IsFalse();
 
-    var lastEventId = columns[2];
+    var lastEventId = columns.First(c => c.Name == "last_event_id");
     await Assert.That(lastEventId.Name).IsEqualTo("last_event_id");
-    await Assert.That(lastEventId.DataType).IsEqualTo(WhizbangDataType.Uuid);
-    await Assert.That(lastEventId.Nullable).IsFalse();
+    await Assert.That(lastEventId.DataType).IsEqualTo(WhizbangDataType.UUID);
+    await Assert.That(lastEventId.Nullable).IsTrue();
 
-    var status = columns[3];
+    var status = columns.First(c => c.Name == "status");
     await Assert.That(status.Name).IsEqualTo("status");
-    await Assert.That(status.DataType).IsEqualTo(WhizbangDataType.SmallInt);
+    await Assert.That(status.DataType).IsEqualTo(WhizbangDataType.SMALL_INT);
     await Assert.That(status.Nullable).IsFalse();
 
-    var processedAt = columns[4];
+    var processedAt = columns.First(c => c.Name == "processed_at");
     await Assert.That(processedAt.Name).IsEqualTo("processed_at");
-    await Assert.That(processedAt.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
+    await Assert.That(processedAt.DataType).IsEqualTo(WhizbangDataType.TIMESTAMP_TZ);
     await Assert.That(processedAt.Nullable).IsFalse();
 
-    var error = columns[5];
+    var error = columns.First(c => c.Name == "error");
     await Assert.That(error.Name).IsEqualTo("error");
-    await Assert.That(error.DataType).IsEqualTo(WhizbangDataType.String);
+    await Assert.That(error.DataType).IsEqualTo(WhizbangDataType.STRING);
     await Assert.That(error.Nullable).IsTrue();
   }
 
@@ -74,7 +74,7 @@ public class PerspectiveCheckpointsSchemaTests {
     var streamId = columns.First(c => c.Name == "stream_id");
 
     // Assert
-    await Assert.That(streamId.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(streamId.DataType).IsEqualTo(WhizbangDataType.UUID);
     await Assert.That(streamId.PrimaryKey).IsTrue();
     await Assert.That(streamId.Nullable).IsFalse();
   }
@@ -87,7 +87,7 @@ public class PerspectiveCheckpointsSchemaTests {
     var perspectiveName = columns.First(c => c.Name == "perspective_name");
 
     // Assert
-    await Assert.That(perspectiveName.DataType).IsEqualTo(WhizbangDataType.String);
+    await Assert.That(perspectiveName.DataType).IsEqualTo(WhizbangDataType.STRING);
     await Assert.That(perspectiveName.PrimaryKey).IsTrue();
     await Assert.That(perspectiveName.Nullable).IsFalse();
   }
@@ -100,8 +100,8 @@ public class PerspectiveCheckpointsSchemaTests {
     var lastEventId = columns.First(c => c.Name == "last_event_id");
 
     // Assert
-    await Assert.That(lastEventId.DataType).IsEqualTo(WhizbangDataType.Uuid);
-    await Assert.That(lastEventId.Nullable).IsFalse();
+    await Assert.That(lastEventId.DataType).IsEqualTo(WhizbangDataType.UUID);
+    await Assert.That(lastEventId.Nullable).IsTrue();
     await Assert.That(lastEventId.PrimaryKey).IsFalse();
   }
 
@@ -113,7 +113,7 @@ public class PerspectiveCheckpointsSchemaTests {
     var status = columns.First(c => c.Name == "status");
 
     // Assert
-    await Assert.That(status.DataType).IsEqualTo(WhizbangDataType.SmallInt);
+    await Assert.That(status.DataType).IsEqualTo(WhizbangDataType.SMALL_INT);
     await Assert.That(status.Nullable).IsFalse();
     await Assert.That(status.DefaultValue).IsNotNull();
     await Assert.That(status.DefaultValue).IsTypeOf<IntegerDefault>();
@@ -128,11 +128,11 @@ public class PerspectiveCheckpointsSchemaTests {
     var processedAt = columns.First(c => c.Name == "processed_at");
 
     // Assert
-    await Assert.That(processedAt.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
+    await Assert.That(processedAt.DataType).IsEqualTo(WhizbangDataType.TIMESTAMP_TZ);
     await Assert.That(processedAt.Nullable).IsFalse();
     await Assert.That(processedAt.DefaultValue).IsNotNull();
     await Assert.That(processedAt.DefaultValue).IsTypeOf<FunctionDefault>();
-    await Assert.That(((FunctionDefault)processedAt.DefaultValue!).FunctionType).IsEqualTo(DefaultValueFunction.DateTime_Now);
+    await Assert.That(((FunctionDefault)processedAt.DefaultValue!).FunctionType).IsEqualTo(DefaultValueFunction.DATE_TIME__NOW);
   }
 
   [Test]
@@ -143,7 +143,7 @@ public class PerspectiveCheckpointsSchemaTests {
     var error = columns.First(c => c.Name == "error");
 
     // Assert
-    await Assert.That(error.DataType).IsEqualTo(WhizbangDataType.String);
+    await Assert.That(error.DataType).IsEqualTo(WhizbangDataType.STRING);
     await Assert.That(error.Nullable).IsTrue();
   }
 
@@ -173,12 +173,12 @@ public class PerspectiveCheckpointsSchemaTests {
   [Category("Schema")]
   public async Task Columns_Constants_MatchColumnNamesAsync() {
     // Arrange & Act - Get all column constants
-    var streamId = PerspectiveCheckpointsSchema.Columns.StreamId;
-    var perspectiveName = PerspectiveCheckpointsSchema.Columns.PerspectiveName;
-    var lastEventId = PerspectiveCheckpointsSchema.Columns.LastEventId;
-    var status = PerspectiveCheckpointsSchema.Columns.Status;
-    var processedAt = PerspectiveCheckpointsSchema.Columns.ProcessedAt;
-    var error = PerspectiveCheckpointsSchema.Columns.Error;
+    var streamId = PerspectiveCheckpointsSchema.Columns.STREAM_ID;
+    var perspectiveName = PerspectiveCheckpointsSchema.Columns.PERSPECTIVE_NAME;
+    var lastEventId = PerspectiveCheckpointsSchema.Columns.LAST_EVENT_ID;
+    var status = PerspectiveCheckpointsSchema.Columns.STATUS;
+    var processedAt = PerspectiveCheckpointsSchema.Columns.PROCESSED_AT;
+    var error = PerspectiveCheckpointsSchema.Columns.ERROR;
 
     // Assert - Verify constants match column names
     await Assert.That(streamId).IsEqualTo("stream_id");

@@ -81,11 +81,19 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var lastSuccessfulEventId = lastProcessedEventId;
     __MODEL_TYPE_NAME__ updatedModel = currentModel;
 
+    // Build list of event types this perspective handles (for polymorphic deserialization)
+    var eventTypes = new[] {
+      #region EVENT_TYPES
+      // Generated event type list goes here
+      #endregion
+    };
+
     try {
-      // Read events in UUID7 order (time-ordered, no sequence numbers needed)
-      await foreach (var envelope in _eventStore.ReadAsync<IEvent>(
+      // Read events in UUID7 order with polymorphic deserialization (time-ordered, no sequence numbers needed)
+      await foreach (var envelope in _eventStore.ReadPolymorphicAsync(
           streamId,
           lastProcessedEventId,
+          eventTypes,
           cancellationToken)) {
 
         // Extract event from envelope
@@ -178,7 +186,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     // Set the stream key property
     var streamKeyProperty = typeof(__MODEL_TYPE_NAME__).GetProperty("__STREAM_KEY_PROPERTY__");
     if (streamKeyProperty != null && streamKeyProperty.CanWrite) {
-      streamKeyProperty.SetValue(model, streamId.ToString());
+      streamKeyProperty.SetValue(model, streamId);
     }
 
     return model;

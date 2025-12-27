@@ -254,6 +254,17 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       applyCases.AppendLine();
     }
 
+    // Generate event types array for polymorphic deserialization
+    var eventTypesArray = new StringBuilder();
+    for (int i = 0; i < perspective.EventTypes.Length; i++) {
+      eventTypesArray.Append($"      typeof({perspective.EventTypes[i]})");
+      if (i < perspective.EventTypes.Length - 1) {
+        eventTypesArray.AppendLine(",");
+      } else {
+        eventTypesArray.AppendLine();
+      }
+    }
+
     // Generate ExtractStreamId methods (one per event type with StreamKey)
     var extractStreamIdMethods = new StringBuilder();
     if (perspective.EventStreamKeys != null) {
@@ -272,6 +283,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var result = template;
     result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName};");
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(PerspectiveRunnerGenerator).Assembly, result);
+    result = TemplateUtilities.ReplaceRegion(result, "EVENT_TYPES", eventTypesArray.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "EVENT_APPLY_CASES", applyCases.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "EXTRACT_STREAM_ID_METHODS", extractStreamIdMethods.ToString());
 

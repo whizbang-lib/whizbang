@@ -359,10 +359,10 @@ public class IMessageSerializerTests {
     var bytes = await serializer.SerializeAsync(original);
     var deserialized = await serializer.DeserializeAsync<TestMessage>(bytes);
 
-    // Assert - Should not throw, empty strings and nulls preserved
+    // Assert - Should not throw, GetCurrentTopic/StreamKey treat empty strings as null
     var typed = (MessageEnvelope<TestMessage>)deserialized;
-    await Assert.That(typed.GetCurrentTopic()).IsEqualTo(string.Empty);
-    await Assert.That(typed.GetCurrentStreamKey()).IsEqualTo(string.Empty);
+    await Assert.That(typed.GetCurrentTopic()).IsNull();
+    await Assert.That(typed.GetCurrentStreamKey()).IsNull();
   }
 
   // Helper methods

@@ -95,6 +95,47 @@ public class InMemoryEventStore(
   }
 
   /// <inheritdoc />
+  public async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
+    Guid streamId,
+    Guid? fromEventId,
+    IReadOnlyList<Type> eventTypes,
+    [EnumeratorCancellation] CancellationToken cancellationToken = default
+  ) {
+    if (!_streams.TryGetValue(streamId, out var stream)) {
+      yield break;
+    }
+
+    // Build type lookup for validation
+    var typeSet = new HashSet<Type>(eventTypes);
+
+    foreach (var envelope in stream.ReadByEventId(fromEventId)) {
+      cancellationToken.ThrowIfCancellationRequested();
+
+      // Check if the payload is an IEvent
+      if (envelope.Payload is IEvent eventPayload) {
+        // Verify the payload type is in the allowed list
+        var payloadType = eventPayload.GetType();
+        if (!typeSet.Contains(payloadType)) {
+          throw new InvalidOperationException(
+            $"Event type '{payloadType.FullName}' in stream {streamId} is not in the provided event types list. " +
+            $"Available types: {string.Join(", ", eventTypes.Select(t => t.FullName))}"
+          );
+        }
+
+        // Create new envelope with IEvent payload
+        var typedEnvelope = new MessageEnvelope<IEvent> {
+          MessageId = envelope.MessageId,
+          Payload = eventPayload,
+          Hops = envelope.Hops
+        };
+        yield return typedEnvelope;
+      }
+    }
+
+    await Task.CompletedTask;
+  }
+
+  /// <inheritdoc />
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:GetLastSequenceAsync_EmptyStream_ShouldReturnMinusOneAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:GetLastSequenceAsync_AfterAppends_ShouldReturnCorrectSequenceAsync</tests>
   public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) {

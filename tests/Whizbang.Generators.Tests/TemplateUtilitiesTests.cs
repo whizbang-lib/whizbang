@@ -228,7 +228,7 @@ namespace Test;";
 
     // Act - Using reflection to call private method
     var method = typeof(TemplateUtilities).GetMethod(
-        "RemoveIndentation",
+        "_removeIndentation",
         System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
     );
     var result = method!.Invoke(null, [code, "  "]) as string;
@@ -244,7 +244,7 @@ namespace Test;";
 
     // Act - Using reflection to call private method
     var method = typeof(TemplateUtilities).GetMethod(
-        "RemoveIndentation",
+        "_removeIndentation",
         System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
     );
     var result = method!.Invoke(null, [code, ""]) as string;
@@ -260,7 +260,7 @@ namespace Test;";
 
     // Act - Using reflection to call private method
     var method = typeof(TemplateUtilities).GetMethod(
-        "RemoveIndentation",
+        "_removeIndentation",
         System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
     );
     var result = method!.Invoke(null, [code, "  "]) as string;
@@ -276,7 +276,7 @@ namespace Test;";
 
     // Act - Using reflection to call private method
     var method = typeof(TemplateUtilities).GetMethod(
-        "RemoveIndentation",
+        "_removeIndentation",
         System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
     );
     var result = method!.Invoke(null, [code, "  "]) as string;
@@ -292,7 +292,7 @@ namespace Test;";
 
     // Act - Using reflection to call private method
     var method = typeof(TemplateUtilities).GetMethod(
-        "RemoveIndentation",
+        "_removeIndentation",
         System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static
     );
     var result = method!.Invoke(null, [code, "  "]) as string;

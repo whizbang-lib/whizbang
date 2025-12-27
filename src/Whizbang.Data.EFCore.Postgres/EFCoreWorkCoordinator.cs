@@ -44,6 +44,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private readonly TDbContext _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<EFCoreWorkCoordinator<TDbContext>>? _logger = logger;
+  private readonly string _connectionString = dbContext.Database.GetConnectionString()
+    ?? throw new InvalidOperationException("DbContext must have a connection string configured");
 
   public async Task<WorkBatch> ProcessWorkBatchAsync(
     Guid instanceId,
@@ -89,8 +91,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var outboxFailuresJson = _serializeFailures(outboxFailures);
     var inboxCompletionsJson = _serializeCompletions(inboxCompletions);
     var inboxFailuresJson = _serializeFailures(inboxFailures);
-    var receptorCompletionsJson = _serializeReceptorCompletions(receptorCompletions);
-    var receptorFailuresJson = _serializeReceptorFailures(receptorFailures);
     var perspectiveCompletionsJson = _serializePerspectiveCompletions(perspectiveCompletions);
     var perspectiveFailuresJson = _serializePerspectiveFailures(perspectiveFailures);
     var newOutboxJson = _serializeNewOutboxMessages(newOutboxMessages);
@@ -111,17 +111,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var inboxFailuresParam = PostgresJsonHelper.JsonStringToJsonb(inboxFailuresJson);
     inboxFailuresParam.ParameterName = "p_inbox_failures";
 
-    var receptorCompletionsParam = PostgresJsonHelper.JsonStringToJsonb(receptorCompletionsJson);
-    receptorCompletionsParam.ParameterName = "p_receptor_completions";
-
-    var receptorFailuresParam = PostgresJsonHelper.JsonStringToJsonb(receptorFailuresJson);
-    receptorFailuresParam.ParameterName = "p_receptor_failures";
-
-    var perspectiveCompletionsParam = PostgresJsonHelper.JsonStringToJsonb(perspectiveCompletionsJson);
-    perspectiveCompletionsParam.ParameterName = "p_perspective_completions";
-
-    var perspectiveFailuresParam = PostgresJsonHelper.JsonStringToJsonb(perspectiveFailuresJson);
-    perspectiveFailuresParam.ParameterName = "p_perspective_failures";
 
     var newOutboxParam = PostgresJsonHelper.JsonStringToJsonb(newOutboxJson);
     newOutboxParam.ParameterName = "p_new_outbox_messages";
@@ -138,8 +127,27 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var renewInboxParam = PostgresJsonHelper.JsonStringToJsonb(renewInboxJson);
     renewInboxParam.ParameterName = "p_renew_inbox_lease_ids";
 
-    // Execute the process_work_batch function
-    // Note: Type casts removed because NpgsqlParameter.NpgsqlDbType handles typing
+    var perspectiveEventCompletionsParam = PostgresJsonHelper.JsonStringToJsonb("[]");
+    perspectiveEventCompletionsParam.ParameterName = "p_perspective_event_completions";
+
+    var perspectiveCompletionsParam = PostgresJsonHelper.JsonStringToJsonb(perspectiveCompletionsJson);
+    perspectiveCompletionsParam.ParameterName = "p_perspective_completions";
+
+    var perspectiveEventFailuresParam = PostgresJsonHelper.JsonStringToJsonb("[]");
+    perspectiveEventFailuresParam.ParameterName = "p_perspective_event_failures";
+
+    var perspectiveFailuresParam = PostgresJsonHelper.JsonStringToJsonb(perspectiveFailuresJson);
+    perspectiveFailuresParam.ParameterName = "p_perspective_failures";
+
+    var newPerspectiveEventsParam = PostgresJsonHelper.JsonStringToJsonb("[]");
+    newPerspectiveEventsParam.ParameterName = "p_new_perspective_events";
+
+    var renewPerspectiveEventLeaseIdsParam = PostgresJsonHelper.JsonStringToJsonb("[]");
+    renewPerspectiveEventLeaseIdsParam.ParameterName = "p_renew_perspective_event_lease_ids";
+
+    var now = DateTimeOffset.UtcNow;
+
+    // Execute the process_work_batch function (new signature after decomposition)
     var sql = @"
       SELECT * FROM process_work_batch(
         @p_instance_id,
@@ -147,22 +155,25 @@ public class EFCoreWorkCoordinator<TDbContext>(
         @p_host_name,
         @p_process_id,
         @p_metadata,
+        @p_now,
+        @p_lease_duration_seconds,
+        @p_partition_count,
         @p_outbox_completions,
-        @p_outbox_failures,
         @p_inbox_completions,
-        @p_inbox_failures,
-        @p_receptor_completions,
-        @p_receptor_failures,
+        @p_perspective_event_completions,
         @p_perspective_completions,
+        @p_outbox_failures,
+        @p_inbox_failures,
+        @p_perspective_event_failures,
         @p_perspective_failures,
         @p_new_outbox_messages,
         @p_new_inbox_messages,
+        @p_new_perspective_events,
         @p_renew_outbox_lease_ids,
         @p_renew_inbox_lease_ids,
-        @p_lease_seconds,
-        @p_stale_threshold_seconds,
+        @p_renew_perspective_event_lease_ids,
         @p_flags,
-        @p_partition_count
+        @p_stale_threshold_seconds
       )";
 
     // Hook PostgreSQL RAISE NOTICE messages for debugging
@@ -183,22 +194,25 @@ public class EFCoreWorkCoordinator<TDbContext>(
         new Npgsql.NpgsqlParameter("p_host_name", hostName),
         new Npgsql.NpgsqlParameter("p_process_id", processId),
         metadataParam,
+        new Npgsql.NpgsqlParameter("p_now", now),
+        new Npgsql.NpgsqlParameter("p_lease_duration_seconds", leaseSeconds),
+        new Npgsql.NpgsqlParameter("p_partition_count", partitionCount),
         outboxCompletionsParam,
-        outboxFailuresParam,
         inboxCompletionsParam,
-        inboxFailuresParam,
-        receptorCompletionsParam,
-        receptorFailuresParam,
+        perspectiveEventCompletionsParam,
         perspectiveCompletionsParam,
+        outboxFailuresParam,
+        inboxFailuresParam,
+        perspectiveEventFailuresParam,
         perspectiveFailuresParam,
         newOutboxParam,
         newInboxParam,
+        newPerspectiveEventsParam,
         renewOutboxParam,
         renewInboxParam,
-        new Npgsql.NpgsqlParameter("p_lease_seconds", leaseSeconds),
-        new Npgsql.NpgsqlParameter("p_stale_threshold_seconds", staleThresholdSeconds),
+        renewPerspectiveEventLeaseIdsParam,
         new Npgsql.NpgsqlParameter("p_flags", (int)flags),
-        new Npgsql.NpgsqlParameter("p_partition_count", partitionCount)
+        new Npgsql.NpgsqlParameter("p_stale_threshold_seconds", staleThresholdSeconds)
       )
       .ToListAsync(cancellationToken);
 
@@ -215,21 +229,30 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var outboxWork = results
       .Where(r => r.Source == "outbox")
       .Select(r => {
-        var envelope = _deserializeEnvelope(r.EnvelopeType, r.EnvelopeData);
+        var envelope = _deserializeEnvelope(r.MessageType!, r.MessageData!);
         // Cast to IMessageEnvelope<JsonElement> - envelope is always deserialized as MessageEnvelope<JsonElement>
         var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
-          ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.MessageId}");
+          ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.WorkId}");
+
+        var flags = WorkBatchFlags.None;
+        if (r.IsNewlyStored) {
+          flags |= WorkBatchFlags.NewlyStored;
+        }
+
+        if (r.IsOrphaned) {
+          flags |= WorkBatchFlags.Orphaned;
+        }
 
         return new OutboxWork {
-          MessageId = r.MessageId,
+          MessageId = r.WorkId,
           Destination = r.Destination!,
           Envelope = jsonEnvelope,
           StreamId = r.StreamId,
           PartitionNumber = r.PartitionNumber,
           Attempts = r.Attempts,
           Status = (MessageProcessingStatus)r.Status,
-          Flags = (WorkBatchFlags)r.Flags,
-          SequenceOrder = r.SequenceOrder
+          Flags = flags,
+          SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()  // Use current time for ordering
         };
       })
       .ToList();
@@ -237,33 +260,53 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var inboxWork = results
       .Where(r => r.Source == "inbox")
       .Select(r => {
-        var envelope = _deserializeEnvelope(r.EnvelopeType, r.EnvelopeData);
+        var envelope = _deserializeEnvelope(r.MessageType!, r.MessageData!);
         // Cast to IMessageEnvelope<JsonElement> - envelope is always deserialized as MessageEnvelope<JsonElement>
         var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
-          ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.MessageId}");
+          ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.WorkId}");
+
+        var flags = WorkBatchFlags.None;
+        if (r.IsNewlyStored) {
+          flags |= WorkBatchFlags.NewlyStored;
+        }
+
+        if (r.IsOrphaned) {
+          flags |= WorkBatchFlags.Orphaned;
+        }
 
         return new InboxWork {
-          MessageId = r.MessageId,
+          MessageId = r.WorkId,
           Envelope = jsonEnvelope,
-          MessageType = r.EnvelopeType,  // Use envelope_type until event_type is added to WorkBatchRow
+          MessageType = r.MessageType!,
           StreamId = r.StreamId,
           PartitionNumber = r.PartitionNumber,
           Status = (MessageProcessingStatus)r.Status,
-          Flags = (WorkBatchFlags)r.Flags,
-          SequenceOrder = r.SequenceOrder
+          Flags = flags,
+          SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()  // Use current time for ordering
         };
       })
       .ToList();
 
     var perspectiveWork = results
       .Where(r => r.Source == "perspective")
-      .Select(r => new PerspectiveWork {
-        StreamId = r.StreamId ?? throw new InvalidOperationException($"Perspective work must have StreamId"),
-        PerspectiveName = r.Destination ?? throw new InvalidOperationException($"Perspective work must have PerspectiveName in destination field"),
-        LastProcessedEventId = r.LastEventId,  // From wh_perspective_checkpoints.last_event_id
-        Status = (PerspectiveProcessingStatus)r.Status,
-        PartitionNumber = r.PartitionNumber,
-        Flags = (WorkBatchFlags)r.Flags
+      .Select(r => {
+        var flags = WorkBatchFlags.None;
+        if (r.IsNewlyStored) {
+          flags |= WorkBatchFlags.NewlyStored;
+        }
+
+        if (r.IsOrphaned) {
+          flags |= WorkBatchFlags.Orphaned;
+        }
+
+        return new PerspectiveWork {
+          StreamId = r.StreamId ?? throw new InvalidOperationException($"Perspective work must have StreamId"),
+          PerspectiveName = r.PerspectiveName ?? throw new InvalidOperationException($"Perspective work must have PerspectiveName"),
+          LastProcessedEventId = null,  // No longer returned by process_work_batch
+          Status = (PerspectiveProcessingStatus)r.Status,
+          PartitionNumber = r.PartitionNumber,
+          Flags = flags
+        };
       })
       .ToList();
 
@@ -472,6 +515,90 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <summary>
+  /// Reports perspective checkpoint completion directly (out-of-band).
+  /// Calls complete_perspective_checkpoint_work SQL function directly without full work batch processing.
+  /// Creates its own database connection to allow calling after the scoped DbContext is disposed.
+  /// </summary>
+  public async Task ReportPerspectiveCompletionAsync(
+    PerspectiveCheckpointCompletion completion,
+    CancellationToken cancellationToken = default) {
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    await using var command = connection.CreateCommand();
+    command.CommandText = "SELECT complete_perspective_checkpoint_work(@p0, @p1, @p2, @p3, @p4)";
+
+    var p0 = command.CreateParameter();
+    p0.ParameterName = "@p0";
+    p0.Value = completion.StreamId;
+    command.Parameters.Add(p0);
+
+    var p1 = command.CreateParameter();
+    p1.ParameterName = "@p1";
+    p1.Value = completion.PerspectiveName;
+    command.Parameters.Add(p1);
+
+    var p2 = command.CreateParameter();
+    p2.ParameterName = "@p2";
+    p2.Value = completion.LastEventId;
+    command.Parameters.Add(p2);
+
+    var p3 = command.CreateParameter();
+    p3.ParameterName = "@p3";
+    p3.Value = (short)completion.Status;
+    command.Parameters.Add(p3);
+
+    var p4 = command.CreateParameter();
+    p4.ParameterName = "@p4";
+    p4.Value = (object?)null ?? DBNull.Value;
+    command.Parameters.Add(p4);
+
+    await command.ExecuteNonQueryAsync(cancellationToken);
+  }
+
+  /// <summary>
+  /// Reports perspective checkpoint failure directly (out-of-band).
+  /// Calls complete_perspective_checkpoint_work SQL function directly without full work batch processing.
+  /// Creates its own database connection to allow calling after the scoped DbContext is disposed.
+  /// </summary>
+  public async Task ReportPerspectiveFailureAsync(
+    PerspectiveCheckpointFailure failure,
+    CancellationToken cancellationToken = default) {
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    await using var command = connection.CreateCommand();
+    command.CommandText = "SELECT complete_perspective_checkpoint_work(@p0, @p1, @p2, @p3, @p4)";
+
+    var p0 = command.CreateParameter();
+    p0.ParameterName = "@p0";
+    p0.Value = failure.StreamId;
+    command.Parameters.Add(p0);
+
+    var p1 = command.CreateParameter();
+    p1.ParameterName = "@p1";
+    p1.Value = failure.PerspectiveName;
+    command.Parameters.Add(p1);
+
+    var p2 = command.CreateParameter();
+    p2.ParameterName = "@p2";
+    p2.Value = failure.LastEventId;
+    command.Parameters.Add(p2);
+
+    var p3 = command.CreateParameter();
+    p3.ParameterName = "@p3";
+    p3.Value = (short)failure.Status;
+    command.Parameters.Add(p3);
+
+    var p4 = command.CreateParameter();
+    p4.ParameterName = "@p4";
+    p4.Value = (object?)failure.Error ?? DBNull.Value;
+    command.Parameters.Add(p4);
+
+    await command.ExecuteNonQueryAsync(cancellationToken);
+  }
+
+  /// <summary>
   /// Handles PostgreSQL RAISE NOTICE messages by logging them at Debug level.
   /// Notices are only generated when WorkBatchFlags.DebugMode is set in the SQL function.
   /// </summary>
@@ -486,39 +613,51 @@ public class EFCoreWorkCoordinator<TDbContext>(
 /// Matches the function's return type structure.
 /// </summary>
 internal class WorkBatchRow {
-  [Column("source")]
-  public required string Source { get; set; }  // 'outbox' or 'inbox'
+  [Column("instance_rank")]
+  public int InstanceRank { get; set; }
 
-  [Column("msg_id")]
-  public required Guid MessageId { get; set; }
+  [Column("active_instance_count")]
+  public int ActiveInstanceCount { get; set; }
+
+  [Column("source")]
+  public required string Source { get; set; }  // 'outbox', 'inbox', 'receptor', 'perspective'
+
+  [Column("work_id")]
+  public required Guid WorkId { get; set; }  // message_id or event_work_id or processing_id
+
+  [Column("work_stream_id")]
+  public Guid? StreamId { get; set; }
+
+  [Column("partition_number")]
+  public int? PartitionNumber { get; set; }  // Partition assignment for load balancing
 
   [Column("destination")]
-  public string? Destination { get; set; }  // null for inbox
+  public string? Destination { get; set; }  // Topic name (outbox) or handler name (inbox)
 
-  [Column("envelope_type")]
-  public required string EnvelopeType { get; set; }  // Assembly qualified name of envelope type
+  [Column("message_type")]
+  public string? MessageType { get; set; }  // For outbox/inbox
 
-  [Column("envelope_data")]
-  public required string EnvelopeData { get; set; }  // Complete serialized MessageEnvelope<T> as JSON
+  [Column("message_data")]
+  public string? MessageData { get; set; }
 
-  [Column("stream_uuid")]
-  public Guid? StreamId { get; set; }  // Stream ID for ordering
+  [Column("metadata")]
+  public string? Metadata { get; set; }  // JSONB as string
 
-  [Column("partition_num")]
-  public int? PartitionNumber { get; set; }  // Partition number
+  [Column("status")]
+  public int Status { get; set; }  // MessageProcessingStatus flags
 
   [Column("attempts")]
   public int Attempts { get; set; }
 
-  [Column("status")]
-  public required int Status { get; set; }  // MessageProcessingStatus flags
+  [Column("is_newly_stored")]
+  public bool IsNewlyStored { get; set; }
 
-  [Column("flags")]
-  public required int Flags { get; set; }  // WorkBatchFlags
+  [Column("is_orphaned")]
+  public bool IsOrphaned { get; set; }
 
-  [Column("sequence_order")]
-  public required long SequenceOrder { get; set; }  // Epoch milliseconds for ordering
+  [Column("perspective_name")]
+  public string? PerspectiveName { get; set; }  // NULL for non-perspective work
 
-  [Column("last_event_id")]
-  public Guid? LastEventId { get; set; }  // Last processed event ID (perspective work only)
+  [Column("sequence_number")]
+  public long? SequenceNumber { get; set; }  // NULL for non-perspective work
 }

@@ -7,23 +7,24 @@ var postgres = builder.AddPostgres("postgres")
   .AddDatabase("whizbang-integration-test");
 
 // Azure Service Bus Emulator
+// CRITICAL: Emulator requires namespace name to be exactly "sbemulatorns" (non-modifiable)
 // Aspire automatically creates $Default TrueFilter rules for subscriptions without explicit filters
 // Session lifetime ensures clean state on every test run
-var serviceBus = builder.AddAzureServiceBus("servicebus")
+var serviceBus = builder.AddAzureServiceBus("sbemulatorns")
   .RunAsEmulator(configureContainer => configureContainer
     .WithLifetime(ContainerLifetime.Session));
 
 // Create topics and subscriptions
 // Aspire automatically provisions $Default TrueFilter rules (all messages delivered)
-// Subscription names must match the service instance names used in AzureServiceBusTransport
-// In tests, we create subscriptions per service even though both services run in-process
+// Subscription names must be globally unique within the namespace
+// Format: {topic}-{service} to avoid collisions across topics
 var productsTopic = serviceBus.AddServiceBusTopic("products");
-productsTopic.AddServiceBusSubscription("bff-service");
-productsTopic.AddServiceBusSubscription("inventory-worker");
+productsTopic.AddServiceBusSubscription("products-bff-service");
+productsTopic.AddServiceBusSubscription("products-inventory-worker");
 
 var inventoryTopic = serviceBus.AddServiceBusTopic("inventory");
-inventoryTopic.AddServiceBusSubscription("bff-service");
-inventoryTopic.AddServiceBusSubscription("inventory-worker");
+inventoryTopic.AddServiceBusSubscription("inventory-bff-service");
+inventoryTopic.AddServiceBusSubscription("inventory-inventory-worker");
 
 // Export connection strings for tests to consume
 builder.Build().Run();

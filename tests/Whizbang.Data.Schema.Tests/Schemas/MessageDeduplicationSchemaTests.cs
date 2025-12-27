@@ -34,14 +34,14 @@ public class MessageDeduplicationSchemaTests {
     // Verify message_id column
     var messageId = columns[0];
     await Assert.That(messageId.Name).IsEqualTo("message_id");
-    await Assert.That(messageId.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(messageId.DataType).IsEqualTo(WhizbangDataType.UUID);
     await Assert.That(messageId.PrimaryKey).IsTrue();
     await Assert.That(messageId.Nullable).IsFalse();
 
     // Verify first_seen_at column
     var firstSeenAt = columns[1];
     await Assert.That(firstSeenAt.Name).IsEqualTo("first_seen_at");
-    await Assert.That(firstSeenAt.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
+    await Assert.That(firstSeenAt.DataType).IsEqualTo(WhizbangDataType.TIMESTAMP_TZ);
     await Assert.That(firstSeenAt.Nullable).IsFalse();
   }
 
@@ -98,7 +98,7 @@ public class MessageDeduplicationSchemaTests {
     await Assert.That(firstSeenAtColumn).IsNotNull();
     await Assert.That(firstSeenAtColumn!.DefaultValue).IsNotNull();
     await Assert.That(firstSeenAtColumn.DefaultValue).IsTypeOf<FunctionDefault>();
-    await Assert.That(((FunctionDefault)firstSeenAtColumn.DefaultValue!).FunctionType).IsEqualTo(DefaultValueFunction.DateTime_Now);
+    await Assert.That(((FunctionDefault)firstSeenAtColumn.DefaultValue!).FunctionType).IsEqualTo(DefaultValueFunction.DATE_TIME__NOW);
   }
 
   [Test]
@@ -116,8 +116,8 @@ public class MessageDeduplicationSchemaTests {
   [Category("Schema")]
   public async Task Columns_ShouldProvideTypeConstantsAsync() {
     // Arrange & Act
-    var messageId = MessageDeduplicationSchema.Columns.MessageId;
-    var firstSeenAt = MessageDeduplicationSchema.Columns.FirstSeenAt;
+    var messageId = MessageDeduplicationSchema.Columns.MESSAGE_ID;
+    var firstSeenAt = MessageDeduplicationSchema.Columns.FIRST_SEEN_AT;
 
     // Assert - Verify constants match column names
     await Assert.That(messageId).IsEqualTo("message_id");

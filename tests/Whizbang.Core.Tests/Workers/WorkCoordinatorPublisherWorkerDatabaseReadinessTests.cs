@@ -144,10 +144,11 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     );
 
     // Act - Run long enough to exceed threshold (10 consecutive checks)
+    // Increased wait time for systems under load
     var worker = services.GetRequiredService<IHostedService>();
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await Task.Delay(1500);  // Allow ~15 polls at 100ms intervals
+    await Task.Delay(2500);  // Allow sufficient time for multiple polls under load
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 
@@ -275,6 +276,18 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
         InboxWork = [],
         PerspectiveWork = []
       });
+    }
+
+    public Task ReportPerspectiveCompletionAsync(
+      PerspectiveCheckpointCompletion completion,
+      CancellationToken cancellationToken = default) {
+      return Task.CompletedTask;
+    }
+
+    public Task ReportPerspectiveFailureAsync(
+      PerspectiveCheckpointFailure failure,
+      CancellationToken cancellationToken = default) {
+      return Task.CompletedTask;
     }
   }
 

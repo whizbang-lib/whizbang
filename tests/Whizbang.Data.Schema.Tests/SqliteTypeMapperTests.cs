@@ -9,7 +9,7 @@ public class SqliteTypeMapperTests {
   [Test]
   public async Task MapDataType_Uuid_ReturnsTextAsync() {
     // Arrange & Act
-    var result = SqliteTypeMapper.MapDataType(WhizbangDataType.Uuid);
+    var result = SqliteTypeMapper.MapDataType(WhizbangDataType.UUID);
 
     // Assert
     await Assert.That(result).IsEqualTo("TEXT");
@@ -18,7 +18,7 @@ public class SqliteTypeMapperTests {
   [Test]
   public async Task MapDataType_String_ReturnsTextAsync() {
     // Arrange & Act
-    var result = SqliteTypeMapper.MapDataType(WhizbangDataType.String);
+    var result = SqliteTypeMapper.MapDataType(WhizbangDataType.STRING);
 
     // Assert
     await Assert.That(result).IsEqualTo("TEXT");
@@ -28,7 +28,7 @@ public class SqliteTypeMapperTests {
   public async Task MapDataType_StringWithMaxLength_ReturnsTextAsync() {
     // Arrange & Act
     // SQLite doesn't enforce length constraints, so VARCHAR(n) becomes TEXT
-    var result = SqliteTypeMapper.MapDataType(WhizbangDataType.String, maxLength: 255);
+    var result = SqliteTypeMapper.MapDataType(WhizbangDataType.STRING, maxLength: 255);
 
     // Assert
     await Assert.That(result).IsEqualTo("TEXT");
@@ -37,7 +37,7 @@ public class SqliteTypeMapperTests {
   [Test]
   public async Task MapDataType_TimestampTz_ReturnsTextAsync() {
     // Arrange & Act
-    var result = SqliteTypeMapper.MapDataType(WhizbangDataType.TimestampTz);
+    var result = SqliteTypeMapper.MapDataType(WhizbangDataType.TIMESTAMP_TZ);
 
     // Assert
     await Assert.That(result).IsEqualTo("TEXT");
@@ -46,7 +46,7 @@ public class SqliteTypeMapperTests {
   [Test]
   public async Task MapDataType_Json_ReturnsTextAsync() {
     // Arrange & Act
-    var result = SqliteTypeMapper.MapDataType(WhizbangDataType.Json);
+    var result = SqliteTypeMapper.MapDataType(WhizbangDataType.JSON);
 
     // Assert
     await Assert.That(result).IsEqualTo("TEXT");
@@ -55,7 +55,7 @@ public class SqliteTypeMapperTests {
   [Test]
   public async Task MapDataType_BigInt_ReturnsIntegerAsync() {
     // Arrange & Act
-    var result = SqliteTypeMapper.MapDataType(WhizbangDataType.BigInt);
+    var result = SqliteTypeMapper.MapDataType(WhizbangDataType.BIG_INT);
 
     // Assert
     await Assert.That(result).IsEqualTo("INTEGER");
@@ -64,7 +64,7 @@ public class SqliteTypeMapperTests {
   [Test]
   public async Task MapDataType_Integer_ReturnsIntegerAsync() {
     // Arrange & Act
-    var result = SqliteTypeMapper.MapDataType(WhizbangDataType.Integer);
+    var result = SqliteTypeMapper.MapDataType(WhizbangDataType.INTEGER);
 
     // Assert
     await Assert.That(result).IsEqualTo("INTEGER");
@@ -73,7 +73,7 @@ public class SqliteTypeMapperTests {
   [Test]
   public async Task MapDataType_Boolean_ReturnsIntegerAsync() {
     // Arrange & Act
-    var result = SqliteTypeMapper.MapDataType(WhizbangDataType.Boolean);
+    var result = SqliteTypeMapper.MapDataType(WhizbangDataType.BOOLEAN);
 
     // Assert
     await Assert.That(result).IsEqualTo("INTEGER");
@@ -82,7 +82,7 @@ public class SqliteTypeMapperTests {
   [Test]
   public async Task MapDefaultValue_FunctionDateTimeNow_ReturnsCurrentTimestampAsync() {
     // Arrange
-    var defaultValue = DefaultValue.Function(DefaultValueFunction.DateTime_Now);
+    var defaultValue = DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW);
 
     // Act
     var result = SqliteTypeMapper.MapDefaultValue(defaultValue);
@@ -94,7 +94,7 @@ public class SqliteTypeMapperTests {
   [Test]
   public async Task MapDefaultValue_FunctionDateTimeUtcNow_ReturnsDatetimeUtcAsync() {
     // Arrange
-    var defaultValue = DefaultValue.Function(DefaultValueFunction.DateTime_UtcNow);
+    var defaultValue = DefaultValue.Function(DefaultValueFunction.DATE_TIME__UTC_NOW);
 
     // Act
     var result = SqliteTypeMapper.MapDefaultValue(defaultValue);
@@ -106,7 +106,7 @@ public class SqliteTypeMapperTests {
   [Test]
   public async Task MapDefaultValue_FunctionUuidGenerate_ReturnsLowerHexAsync() {
     // Arrange
-    var defaultValue = DefaultValue.Function(DefaultValueFunction.Uuid_Generate);
+    var defaultValue = DefaultValue.Function(DefaultValueFunction.UUID__GENERATE);
 
     // Act
     var result = SqliteTypeMapper.MapDefaultValue(defaultValue);
@@ -119,7 +119,7 @@ public class SqliteTypeMapperTests {
   [Test]
   public async Task MapDefaultValue_FunctionBooleanTrue_Returns1Async() {
     // Arrange
-    var defaultValue = DefaultValue.Function(DefaultValueFunction.Boolean_True);
+    var defaultValue = DefaultValue.Function(DefaultValueFunction.BOOLEAN__TRUE);
 
     // Act
     var result = SqliteTypeMapper.MapDefaultValue(defaultValue);
@@ -131,7 +131,7 @@ public class SqliteTypeMapperTests {
   [Test]
   public async Task MapDefaultValue_FunctionBooleanFalse_Returns0Async() {
     // Arrange
-    var defaultValue = DefaultValue.Function(DefaultValueFunction.Boolean_False);
+    var defaultValue = DefaultValue.Function(DefaultValueFunction.BOOLEAN__FALSE);
 
     // Act
     var result = SqliteTypeMapper.MapDefaultValue(defaultValue);

@@ -1,9 +1,10 @@
--- Migration: 006_CreateProcessWorkBatchFunction.sql
+-- Migration: 007_CreateProcessWorkBatchFunction.sql
 -- Date: 2025-12-18
 -- Description: Creates process_work_batch function with stream management, active streams coordination,
 --              and perspective checkpoint processing. This migration consolidates migrations 014-018
 --              into a single clean migration for the v0.1.0 release.
--- Dependencies: 001-005a (compute_partition, receptor processing, perspectives, complete_perspective_checkpoint_work)
+--              Uses normalize_event_type function (from 006) for defensive type name normalization.
+-- Dependencies: 001-006 (compute_partition, receptor processing, perspectives, complete_perspective_checkpoint_work, normalize_event_type)
 -- Note: wh_active_streams table is created from C# schema (ActiveStreamsSchema.cs), not SQL migrations.
 
 -- ======================================================================================
@@ -358,10 +359,10 @@ BEGIN
   IF jsonb_array_length(p_perspective_completions) > 0 THEN
     FOR v_completion IN
       SELECT
-        (elem->>'stream_id')::UUID as stream_id,
-        elem->>'perspective_name' as perspective_name,
-        (elem->>'last_event_id')::UUID as last_event_id,
-        (elem->>'status')::SMALLINT as status
+        (elem->>'StreamId')::UUID as stream_id,
+        elem->>'PerspectiveName' as perspective_name,
+        (elem->>'LastEventId')::UUID as last_event_id,
+        (elem->>'Status')::SMALLINT as status
       FROM jsonb_array_elements(p_perspective_completions) as elem
     LOOP
       PERFORM complete_perspective_checkpoint_work(
@@ -378,11 +379,11 @@ BEGIN
   IF jsonb_array_length(p_perspective_failures) > 0 THEN
     FOR v_failure IN
       SELECT
-        (elem->>'stream_id')::UUID as stream_id,
-        elem->>'perspective_name' as perspective_name,
-        (elem->>'last_event_id')::UUID as last_event_id,
-        (elem->>'status')::SMALLINT as status,
-        elem->>'error' as error_message
+        (elem->>'StreamId')::UUID as stream_id,
+        elem->>'PerspectiveName' as perspective_name,
+        (elem->>'LastEventId')::UUID as last_event_id,
+        (elem->>'Status')::SMALLINT as status,
+        elem->>'Error' as error_message
       FROM jsonb_array_elements(p_perspective_failures) as elem
     LOOP
       PERFORM complete_perspective_checkpoint_work(
@@ -618,7 +619,7 @@ BEGIN
     created_at
   )
   SELECT
-    gen_random_uuid(),
+    (bv.elem->>'MessageId')::UUID,  -- Use MessageId to preserve Uuid7 time-ordering
     bv.stream_id,
     bv.stream_id,
     CASE
@@ -628,7 +629,7 @@ BEGIN
         regexp_replace(bv.elem->>'MessageType', '([A-Z][a-z]+).*Event$', '\1')
       ELSE 'Unknown'
     END,
-    bv.elem->>'MessageType',
+    normalize_event_type(bv.elem->>'MessageType'),  -- Defensive normalization to "TypeName, AssemblyName" format
     (bv.elem->'Envelope'->'Payload')::JSONB,
     (bv.elem->'Envelope')::JSONB,
     NULL,
@@ -676,7 +677,7 @@ BEGIN
     created_at
   )
   SELECT
-    gen_random_uuid(),
+    (bv.elem->>'MessageId')::UUID,  -- Use MessageId to preserve Uuid7 time-ordering
     bv.stream_id,
     bv.stream_id,
     CASE
@@ -686,7 +687,7 @@ BEGIN
         regexp_replace(bv.elem->>'MessageType', '([A-Z][a-z]+).*Event$', '\1')
       ELSE 'Unknown'
     END,
-    bv.elem->>'MessageType',
+    normalize_event_type(bv.elem->>'MessageType'),  -- Defensive normalization to "TypeName, AssemblyName" format
     (bv.elem->'Envelope'->'Payload')::JSONB,
     (bv.elem->'Envelope')::JSONB,
     NULL,
@@ -1011,10 +1012,22 @@ BEGIN
     ON pc.stream_id = ast.stream_id
     AND ast.assigned_instance_id = p_instance_id
   WHERE pc.status != 2  -- Not Completed (PerspectiveProcessingStatus.Completed = 1 << 1 = 2)
-    AND EXISTS (
-      SELECT 1 FROM wh_event_store es
-      WHERE es.stream_id = pc.stream_id
-        AND (pc.last_event_id IS NULL OR es.event_id > pc.last_event_id)
+    AND (
+      -- Case 1: Never processed (last_event_id IS NULL) - return if ANY events exist
+      (pc.last_event_id IS NULL AND EXISTS (
+        SELECT 1 FROM wh_event_store es
+        WHERE es.stream_id = pc.stream_id
+      ))
+      OR
+      -- Case 2: Previously processed - find events with sequence_number > last processed event's sequence_number
+      (pc.last_event_id IS NOT NULL AND EXISTS (
+        SELECT 1 FROM wh_event_store es
+        WHERE es.stream_id = pc.stream_id
+          AND es.sequence_number > (
+            SELECT sequence_number FROM wh_event_store
+            WHERE event_id = pc.last_event_id
+          )
+      ))
     )
   ORDER BY ast.partition_number, pc.stream_id, pc.perspective_name
   LIMIT 100;  -- Limit to prevent overwhelming the worker

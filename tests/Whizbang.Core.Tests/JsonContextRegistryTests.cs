@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using TUnit.Assertions;
 using TUnit.Core;
 using Whizbang.Core.Serialization;
@@ -9,7 +10,7 @@ namespace Whizbang.Core.Tests;
 /// <summary>
 /// Tests for JsonContextRegistry - ensures AOT-compatible converter registration works correctly.
 /// </summary>
-public class JsonContextRegistryTests {
+public partial class JsonContextRegistryTests {
   /// <summary>
   /// Test converter for MessageId-like type (simulates generated WhizbangId converter).
   /// </summary>
@@ -111,5 +112,176 @@ public class JsonContextRegistryTests {
     foreach (var converter in options.Converters) {
       await Assert.That(converter).IsNotNull();
     }
+  }
+
+  // ===========================
+  // Type Name Mapping Tests
+  // ===========================
+
+  /// <summary>
+  /// Test message type for type name mapping tests.
+  /// </summary>
+  internal sealed record TestMessage(string Data);
+
+  /// <summary>
+  /// Test JsonSerializerContext for type name mapping tests.
+  /// </summary>
+  [JsonSerializable(typeof(TestMessage))]
+  internal sealed partial class TestMessageJsonContext : JsonSerializerContext {
+  }
+
+  [Test]
+  public async Task RegisterTypeName_WithValidArguments_RegistersSuccessfullyAsync() {
+    // Arrange
+    var typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
+    var resolver = TestMessageJsonContext.Default;
+    var initialCount = JsonContextRegistry.RegisteredTypeNameCount;
+
+    // Act
+    JsonContextRegistry.RegisterTypeName(typeName, typeof(TestMessage), resolver);
+
+    // Assert
+    // Note: Type may already be registered from other tests or module initializers
+    // Just verify that registration doesn't throw and count hasn't decreased
+    await Assert.That(JsonContextRegistry.RegisteredTypeNameCount).IsGreaterThanOrEqualTo(initialCount);
+  }
+
+  [Test]
+  public async Task RegisterTypeName_WithNullTypeName_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var resolver = TestMessageJsonContext.Default;
+
+    // Act & Assert
+    var exception = await Assert.That(() =>
+      JsonContextRegistry.RegisterTypeName(null!, typeof(TestMessage), resolver))
+      .ThrowsExactly<ArgumentNullException>();
+
+    await Assert.That(exception!.ParamName).IsEqualTo("assemblyQualifiedName");
+  }
+
+  [Test]
+  public async Task RegisterTypeName_WithNullType_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
+    var resolver = TestMessageJsonContext.Default;
+
+    // Act & Assert
+    var exception = await Assert.That(() =>
+      JsonContextRegistry.RegisterTypeName(typeName, null!, resolver))
+      .ThrowsExactly<ArgumentNullException>();
+
+    await Assert.That(exception!.ParamName).IsEqualTo("type");
+  }
+
+  [Test]
+  public async Task RegisterTypeName_WithNullResolver_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
+
+    // Act & Assert
+    var exception = await Assert.That(() =>
+      JsonContextRegistry.RegisterTypeName(typeName, typeof(TestMessage), null!))
+      .ThrowsExactly<ArgumentNullException>();
+
+    await Assert.That(exception!.ParamName).IsEqualTo("resolver");
+  }
+
+  [Test]
+  public async Task GetTypeInfoByName_WithRegisteredType_ReturnsJsonTypeInfoAsync() {
+    // Arrange
+    var typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
+    var resolver = TestMessageJsonContext.Default;
+    JsonContextRegistry.RegisterTypeName(typeName, typeof(TestMessage), resolver);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    // Act
+    var typeInfo = JsonContextRegistry.GetTypeInfoByName(typeName, options);
+
+    // Assert
+    await Assert.That(typeInfo).IsNotNull();
+    await Assert.That(typeInfo!.Type).IsEqualTo(typeof(TestMessage));
+  }
+
+  [Test]
+  public async Task GetTypeInfoByName_WithFuzzyMatch_MatchesShortFormToFullFormAsync() {
+    // Arrange - Register with short form
+    var shortForm = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
+    var resolver = TestMessageJsonContext.Default;
+    JsonContextRegistry.RegisterTypeName(shortForm, typeof(TestMessage), resolver);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    // Act - Lookup with full AssemblyQualifiedName (includes Version, Culture, PublicKeyToken)
+    var fullForm = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
+    var typeInfo = JsonContextRegistry.GetTypeInfoByName(fullForm, options);
+
+    // Assert - Should match despite different formats
+    await Assert.That(typeInfo).IsNotNull();
+    await Assert.That(typeInfo!.Type).IsEqualTo(typeof(TestMessage));
+  }
+
+  [Test]
+  public async Task GetTypeInfoByName_WithFuzzyMatch_MatchesFullFormToShortFormAsync() {
+    // Arrange - Register with full AssemblyQualifiedName
+    var fullForm = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
+    var resolver = TestMessageJsonContext.Default;
+    JsonContextRegistry.RegisterTypeName(fullForm, typeof(TestMessage), resolver);
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    // Act - Lookup with short form
+    var shortForm = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
+    var typeInfo = JsonContextRegistry.GetTypeInfoByName(shortForm, options);
+
+    // Assert - Should match despite different formats
+    await Assert.That(typeInfo).IsNotNull();
+    await Assert.That(typeInfo!.Type).IsEqualTo(typeof(TestMessage));
+  }
+
+  [Test]
+  public async Task GetTypeInfoByName_WithUnregisteredType_ReturnsNullAsync() {
+    // Arrange
+    var typeName = "SomeUnregisteredType, SomeAssembly";
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    // Act
+    var typeInfo = JsonContextRegistry.GetTypeInfoByName(typeName, options);
+
+    // Assert
+    await Assert.That(typeInfo).IsNull();
+  }
+
+  [Test]
+  public async Task GetTypeInfoByName_WithNullTypeName_ReturnsNullAsync() {
+    // Arrange
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    // Act
+    var typeInfo = JsonContextRegistry.GetTypeInfoByName(null!, options);
+
+    // Assert
+    await Assert.That(typeInfo).IsNull();
+  }
+
+  [Test]
+  public async Task GetTypeInfoByName_WithEmptyTypeName_ReturnsNullAsync() {
+    // Arrange
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    // Act
+    var typeInfo = JsonContextRegistry.GetTypeInfoByName(string.Empty, options);
+
+    // Assert
+    await Assert.That(typeInfo).IsNull();
+  }
+
+  [Test]
+  public async Task GetTypeInfoByName_WithNullOptions_ReturnsNullAsync() {
+    // Arrange
+    var typeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestMessage, Whizbang.Core.Tests";
+
+    // Act
+    var typeInfo = JsonContextRegistry.GetTypeInfoByName(typeName, null!);
+
+    // Assert
+    await Assert.That(typeInfo).IsNull();
   }
 }

@@ -2,11 +2,9 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
-using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
-using Whizbang.Core.Perspectives;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
@@ -14,178 +12,13 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
-/// Regression tests for ServiceBusConsumerWorker.
-/// Ensures critical scope disposal ordering is maintained.
+/// Tests for ServiceBusConsumerWorker.
 /// </summary>
-public class ServiceBusConsumerWorkerTests {
-  /// <summary>
-  /// REGRESSION TEST: Verifies that perspectives are invoked BEFORE the scope is disposed.
-  ///
-  /// **Background**: In a previous bug, InvokePerspectivesAsync() was called AFTER scope.DisposeAsync(),
-  /// causing scoped services to be disposed before perspectives could use them. This resulted in
-  /// ObjectDisposedException when perspectives tried to access DbContext, IEventStore, etc.
-  ///
-  /// **This test ensures**:
-  /// 1. IPerspectiveInvoker.InvokePerspectivesAsync() is called
-  /// 2. It's called while the scope is still active (not disposed)
-  /// 3. Scoped services are available when perspectives need them
-  ///
-  /// **If this test fails**, it means someone moved InvokePerspectivesAsync() to execute after
-  /// scope disposal, which will break perspective materialization in production.
-  /// </summary>
-  [Test]
-  public async Task HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync() {
-    // Arrange
-    // Register test context with global registry for this test
-    Whizbang.Core.Serialization.JsonContextRegistry.RegisterContext(TestWorkerJsonContext.Default);
-
-    var invokedWhileScopeActive = false;
-    var perspectiveInvokerCalled = false;
-
-    // Create test event
-    var testEvent = new ServiceBusWorkerTestEvent { Data = "test data" };
-    var envelope = _createTestEnvelope(testEvent);
-
-    // Create JsonOptions first (needed for envelope serialization)
-    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-
-    // Create service collection with test invoker
-    var services = new ServiceCollection();
-
-    // Register scoped marker service to verify scope is active
-    services.AddScoped<ScopeMarker>();
-
-    // Register test work coordinator strategy that returns the message for processing
-    services.AddScoped<IWorkCoordinatorStrategy>(sp => new TestWorkCoordinatorStrategy(() => {
-      // Serialize envelope to JsonElement for InboxWork
-      var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
-      var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)
-        ?? throw new InvalidOperationException("Failed to deserialize envelope as MessageEnvelope<JsonElement>");
-
-      var inboxWork = new List<InboxWork> {
-        new InboxWork {
-          MessageId = envelope.MessageId.Value,
-          Envelope = jsonEnvelope,
-          MessageType = typeof(ServiceBusWorkerTestEvent).AssemblyQualifiedName!,
-          StreamId = Guid.NewGuid(),
-          PartitionNumber = 1,
-          Status = MessageProcessingStatus.Stored,
-          Flags = WorkBatchFlags.None,
-          SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
-        }
-      };
-      return new WorkBatch { InboxWork = inboxWork, OutboxWork = new List<OutboxWork>(), PerspectiveWork = [] };
-    }));
-
-    // Register test perspective invoker that verifies scope is active
-    services.AddScoped<IPerspectiveInvoker>(sp => {
-      var scopeMarker = sp.GetService<ScopeMarker>();
-      return new TestPerspectiveInvoker(() => {
-        perspectiveInvokerCalled = true;
-
-        // CRITICAL: Verify scope is still active when invoker runs
-        // If scope was disposed, GetService<ScopeMarker>() would throw
-        invokedWhileScopeActive = scopeMarker != null && !scopeMarker.IsDisposed;
-      });
-    });
-
-    var serviceProvider = services.BuildServiceProvider();
-    var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
-
-    // Create test dependencies
-    var instanceProvider = new TestServiceInstanceProvider();
-    var transport = new TestTransport();
-    var logger = new TestLogger<ServiceBusConsumerWorker>();
-
-    // We can't easily test the protected ExecuteAsync method directly,
-    // so we'll test the underlying HandleMessageAsync behavior through
-    // a reflection call (not ideal, but necessary for regression test)
-    var orderedProcessor = new OrderedStreamProcessor();
-    var worker = new ServiceBusConsumerWorker(
-      instanceProvider,
-      transport,
-      scopeFactory,
-      jsonOptions,
-      logger,
-      orderedProcessor,
-      options: null
-    );
-
-    // Use reflection to access private HandleMessageAsync method
-    var handleMessageMethod = typeof(ServiceBusConsumerWorker)
-      .GetMethod("HandleMessageAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-
-    // Act
-    await (Task)handleMessageMethod!.Invoke(worker, [envelope, CancellationToken.None])!;
-
-    // Assert
-    await Assert.That(perspectiveInvokerCalled).IsTrue()
-      .Because("IPerspectiveInvoker.InvokePerspectivesAsync() should have been called");
-
-    await Assert.That(invokedWhileScopeActive).IsTrue()
-      .Because("Perspectives must be invoked BEFORE scope disposal - scoped services must be available");
-  }
-
-  /// <summary>
-  /// Test to verify that messages already processed (in inbox) are skipped.
-  /// This prevents duplicate processing even if Service Bus redelivers.
-  /// </summary>
-  [Test]
-  public async Task HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync() {
-    // Arrange
-    // Register test context with global registry for this test
-    Whizbang.Core.Serialization.JsonContextRegistry.RegisterContext(TestWorkerJsonContext.Default);
-
-    var perspectiveInvokerCalled = false;
-
-    var testEvent = new ServiceBusWorkerTestEvent { Data = "test data" };
-    var envelope = _createTestEnvelope(testEvent);
-
-    // Register test work coordinator strategy that returns EMPTY work (duplicate message)
-    var services = new ServiceCollection();
-    services.AddScoped<IWorkCoordinatorStrategy>(sp => new TestWorkCoordinatorStrategy(() => {
-      // Return empty work batch - this simulates the message being a duplicate
-      // (atomic INSERT ... ON CONFLICT DO NOTHING at database level)
-      return new WorkBatch {
-        InboxWork = new List<InboxWork>(),  // Empty - message was duplicate
-        OutboxWork = new List<OutboxWork>(),
-        PerspectiveWork = []
-      };
-    }));
-
-    services.AddScoped<IPerspectiveInvoker>(sp => new TestPerspectiveInvoker(() => {
-      perspectiveInvokerCalled = true;
-    }));
-
-    var serviceProvider = services.BuildServiceProvider();
-    var scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
-
-    var instanceProvider = new TestServiceInstanceProvider();
-    var transport = new TestTransport();
-    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-    var logger = new TestLogger<ServiceBusConsumerWorker>();
-    var orderedProcessor = new OrderedStreamProcessor();
-
-    var worker = new ServiceBusConsumerWorker(
-      instanceProvider,
-      transport,
-      scopeFactory,
-      jsonOptions,
-      logger,
-      orderedProcessor,
-      options: null
-    );
-
-    var handleMessageMethod = typeof(ServiceBusConsumerWorker)
-      .GetMethod("HandleMessageAsync", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-
-    // Act
-    await (Task)handleMessageMethod!.Invoke(worker, [envelope, CancellationToken.None])!;
-
-    // Assert
-    await Assert.That(perspectiveInvokerCalled).IsFalse()
-      .Because("Messages already in inbox should be skipped to prevent duplicate processing");
-  }
+public static class ServiceBusConsumerWorkerTests {
+  // NOTE: Previous tests for inline perspective invocation have been removed.
+  // The architecture changed - perspectives are now processed asynchronously via PerspectiveWorker
+  // using checkpoints created by process_work_batch, not inline during message handling.
+  // See ServiceBusConsumerWorker.cs:134-137 for architecture details.
 
   private static MessageEnvelope<ServiceBusWorkerTestEvent> _createTestEnvelope(ServiceBusWorkerTestEvent payload) {
     // Create hop without PayloadType metadata - not needed for scope disposal test
@@ -227,39 +60,6 @@ public record ServiceBusWorkerTestEvent : IEvent {
 [JsonSerializable(typeof(MessageEnvelope<ServiceBusWorkerTestEvent>))]
 [JsonSerializable(typeof(EnvelopeMetadata))]
 internal sealed partial class TestWorkerJsonContext : JsonSerializerContext {
-}
-
-/// <summary>
-/// Marker class to verify scope is active during perspective invocation
-/// </summary>
-public class ScopeMarker : IDisposable {
-  public bool IsDisposed { get; private set; }
-
-  public void Dispose() {
-    IsDisposed = true;
-    GC.SuppressFinalize(this);
-  }
-}
-
-/// <summary>
-/// Test double for IPerspectiveInvoker that tracks invocation
-/// </summary>
-internal sealed class TestPerspectiveInvoker(Action onInvoke) : IPerspectiveInvoker {
-  private readonly Action _onInvoke = onInvoke;
-
-  public void QueueEvent(IEvent @event) {
-    // No-op for testing
-  }
-
-  public async Task InvokePerspectivesAsync(CancellationToken cancellationToken = default) {
-    _onInvoke();
-    await Task.CompletedTask;
-  }
-
-  public ValueTask DisposeAsync() {
-    GC.SuppressFinalize(this);
-    return ValueTask.CompletedTask;
-  }
 }
 
 /// <summary>

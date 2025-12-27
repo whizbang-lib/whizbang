@@ -30,48 +30,48 @@ public class ReceptorProcessingSchemaTests {
     var columns = ReceptorProcessingSchema.Table.Columns;
 
     // Assert - Verify column count
-    await Assert.That(columns).Count().IsEqualTo(8);
+    await Assert.That(columns).Count().IsEqualTo(14);
 
-    // Verify each column definition
-    var id = columns[0];
+    // Verify each column definition (use First to avoid order dependency)
+    var id = columns.First(c => c.Name == "id");
     await Assert.That(id.Name).IsEqualTo("id");
-    await Assert.That(id.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(id.DataType).IsEqualTo(WhizbangDataType.UUID);
     await Assert.That(id.PrimaryKey).IsTrue();
     await Assert.That(id.Nullable).IsFalse();
 
-    var eventId = columns[1];
+    var eventId = columns.First(c => c.Name == "event_id");
     await Assert.That(eventId.Name).IsEqualTo("event_id");
-    await Assert.That(eventId.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(eventId.DataType).IsEqualTo(WhizbangDataType.UUID);
     await Assert.That(eventId.Nullable).IsFalse();
 
-    var receptorName = columns[2];
+    var receptorName = columns.First(c => c.Name == "receptor_name");
     await Assert.That(receptorName.Name).IsEqualTo("receptor_name");
-    await Assert.That(receptorName.DataType).IsEqualTo(WhizbangDataType.String);
+    await Assert.That(receptorName.DataType).IsEqualTo(WhizbangDataType.STRING);
     await Assert.That(receptorName.Nullable).IsFalse();
 
-    var status = columns[3];
+    var status = columns.First(c => c.Name == "status");
     await Assert.That(status.Name).IsEqualTo("status");
-    await Assert.That(status.DataType).IsEqualTo(WhizbangDataType.SmallInt);
+    await Assert.That(status.DataType).IsEqualTo(WhizbangDataType.SMALL_INT);
     await Assert.That(status.Nullable).IsFalse();
 
-    var attempts = columns[4];
+    var attempts = columns.First(c => c.Name == "attempts");
     await Assert.That(attempts.Name).IsEqualTo("attempts");
-    await Assert.That(attempts.DataType).IsEqualTo(WhizbangDataType.Integer);
+    await Assert.That(attempts.DataType).IsEqualTo(WhizbangDataType.INTEGER);
     await Assert.That(attempts.Nullable).IsFalse();
 
-    var error = columns[5];
+    var error = columns.First(c => c.Name == "error");
     await Assert.That(error.Name).IsEqualTo("error");
-    await Assert.That(error.DataType).IsEqualTo(WhizbangDataType.String);
+    await Assert.That(error.DataType).IsEqualTo(WhizbangDataType.STRING);
     await Assert.That(error.Nullable).IsTrue();
 
-    var startedAt = columns[6];
+    var startedAt = columns.First(c => c.Name == "started_at");
     await Assert.That(startedAt.Name).IsEqualTo("started_at");
-    await Assert.That(startedAt.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
+    await Assert.That(startedAt.DataType).IsEqualTo(WhizbangDataType.TIMESTAMP_TZ);
     await Assert.That(startedAt.Nullable).IsFalse();
 
-    var processedAt = columns[7];
+    var processedAt = columns.First(c => c.Name == "processed_at");
     await Assert.That(processedAt.Name).IsEqualTo("processed_at");
-    await Assert.That(processedAt.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
+    await Assert.That(processedAt.DataType).IsEqualTo(WhizbangDataType.TIMESTAMP_TZ);
     await Assert.That(processedAt.Nullable).IsTrue();
   }
 
@@ -85,7 +85,7 @@ public class ReceptorProcessingSchemaTests {
     // Assert
     await Assert.That(primaryKeyColumn).IsNotNull();
     await Assert.That(primaryKeyColumn!.Name).IsEqualTo("id");
-    await Assert.That(primaryKeyColumn.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(primaryKeyColumn.DataType).IsEqualTo(WhizbangDataType.UUID);
     await Assert.That(primaryKeyColumn.Nullable).IsFalse();
   }
 
@@ -97,7 +97,7 @@ public class ReceptorProcessingSchemaTests {
     var eventIdColumn = columns.First(c => c.Name == "event_id");
 
     // Assert
-    await Assert.That(eventIdColumn.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(eventIdColumn.DataType).IsEqualTo(WhizbangDataType.UUID);
     await Assert.That(eventIdColumn.Nullable).IsFalse();
     await Assert.That(eventIdColumn.PrimaryKey).IsFalse();
   }
@@ -110,7 +110,7 @@ public class ReceptorProcessingSchemaTests {
     var receptorNameColumn = columns.First(c => c.Name == "receptor_name");
 
     // Assert
-    await Assert.That(receptorNameColumn.DataType).IsEqualTo(WhizbangDataType.String);
+    await Assert.That(receptorNameColumn.DataType).IsEqualTo(WhizbangDataType.STRING);
     await Assert.That(receptorNameColumn.Nullable).IsFalse();
     await Assert.That(receptorNameColumn.PrimaryKey).IsFalse();
   }
@@ -123,7 +123,7 @@ public class ReceptorProcessingSchemaTests {
     var statusColumn = columns.First(c => c.Name == "status");
 
     // Assert
-    await Assert.That(statusColumn.DataType).IsEqualTo(WhizbangDataType.SmallInt);
+    await Assert.That(statusColumn.DataType).IsEqualTo(WhizbangDataType.SMALL_INT);
     await Assert.That(statusColumn.Nullable).IsFalse();
     await Assert.That(statusColumn.DefaultValue).IsNotNull();
     await Assert.That(statusColumn.DefaultValue).IsTypeOf<IntegerDefault>();
@@ -138,7 +138,7 @@ public class ReceptorProcessingSchemaTests {
     var attemptsColumn = columns.First(c => c.Name == "attempts");
 
     // Assert
-    await Assert.That(attemptsColumn.DataType).IsEqualTo(WhizbangDataType.Integer);
+    await Assert.That(attemptsColumn.DataType).IsEqualTo(WhizbangDataType.INTEGER);
     await Assert.That(attemptsColumn.Nullable).IsFalse();
     await Assert.That(attemptsColumn.DefaultValue).IsNotNull();
     await Assert.That(attemptsColumn.DefaultValue).IsTypeOf<IntegerDefault>();
@@ -153,7 +153,7 @@ public class ReceptorProcessingSchemaTests {
     var errorColumn = columns.First(c => c.Name == "error");
 
     // Assert
-    await Assert.That(errorColumn.DataType).IsEqualTo(WhizbangDataType.String);
+    await Assert.That(errorColumn.DataType).IsEqualTo(WhizbangDataType.STRING);
     await Assert.That(errorColumn.Nullable).IsTrue();
     await Assert.That(errorColumn.PrimaryKey).IsFalse();
   }
@@ -166,11 +166,11 @@ public class ReceptorProcessingSchemaTests {
     var startedAtColumn = columns.First(c => c.Name == "started_at");
 
     // Assert
-    await Assert.That(startedAtColumn.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
+    await Assert.That(startedAtColumn.DataType).IsEqualTo(WhizbangDataType.TIMESTAMP_TZ);
     await Assert.That(startedAtColumn.Nullable).IsFalse();
     await Assert.That(startedAtColumn.DefaultValue).IsNotNull();
     await Assert.That(startedAtColumn.DefaultValue).IsTypeOf<FunctionDefault>();
-    await Assert.That(((FunctionDefault)startedAtColumn.DefaultValue!).FunctionType).IsEqualTo(DefaultValueFunction.DateTime_Now);
+    await Assert.That(((FunctionDefault)startedAtColumn.DefaultValue!).FunctionType).IsEqualTo(DefaultValueFunction.DATE_TIME__NOW);
   }
 
   [Test]
@@ -181,7 +181,7 @@ public class ReceptorProcessingSchemaTests {
     var processedAtColumn = columns.First(c => c.Name == "processed_at");
 
     // Assert
-    await Assert.That(processedAtColumn.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
+    await Assert.That(processedAtColumn.DataType).IsEqualTo(WhizbangDataType.TIMESTAMP_TZ);
     await Assert.That(processedAtColumn.Nullable).IsTrue();
     await Assert.That(processedAtColumn.PrimaryKey).IsFalse();
   }
@@ -218,14 +218,14 @@ public class ReceptorProcessingSchemaTests {
   [Category("Schema")]
   public async Task Columns_Constants_MatchColumnNamesAsync() {
     // Arrange & Act - Get all column constants
-    var id = ReceptorProcessingSchema.Columns.Id;
-    var eventId = ReceptorProcessingSchema.Columns.EventId;
-    var receptorName = ReceptorProcessingSchema.Columns.ReceptorName;
-    var status = ReceptorProcessingSchema.Columns.Status;
-    var attempts = ReceptorProcessingSchema.Columns.Attempts;
-    var error = ReceptorProcessingSchema.Columns.Error;
-    var startedAt = ReceptorProcessingSchema.Columns.StartedAt;
-    var processedAt = ReceptorProcessingSchema.Columns.ProcessedAt;
+    var id = ReceptorProcessingSchema.Columns.ID;
+    var eventId = ReceptorProcessingSchema.Columns.EVENT_ID;
+    var receptorName = ReceptorProcessingSchema.Columns.RECEPTOR_NAME;
+    var status = ReceptorProcessingSchema.Columns.STATUS;
+    var attempts = ReceptorProcessingSchema.Columns.ATTEMPTS;
+    var error = ReceptorProcessingSchema.Columns.ERROR;
+    var startedAt = ReceptorProcessingSchema.Columns.STARTED_AT;
+    var processedAt = ReceptorProcessingSchema.Columns.PROCESSED_AT;
 
     // Assert - Verify constants match column names
     await Assert.That(id).IsEqualTo("id");

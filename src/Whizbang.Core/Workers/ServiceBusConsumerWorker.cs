@@ -15,8 +15,6 @@ namespace Whizbang.Core.Workers;
 /// Uses work coordinator pattern for atomic deduplication and stream-based ordering.
 /// Events from remote services are stored in inbox via process_work_batch and perspectives are invoked with ordering guarantees.
 /// </summary>
-/// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
-/// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
 public partial class ServiceBusConsumerWorker(
   IServiceInstanceProvider instanceProvider,
   ITransport transport,
@@ -39,8 +37,6 @@ public partial class ServiceBusConsumerWorker(
   /// Starts the worker and creates all subscriptions BEFORE background processing begins.
   /// This ensures subscriptions are ready before ExecuteAsync runs (blocking initialization).
   /// </summary>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
   public override async Task StartAsync(CancellationToken cancellationToken) {
     using var activity = WhizbangActivitySource.Hosting.StartActivity("ServiceBusConsumerWorker.Start");
     activity?.SetTag("worker.subscriptions_count", _options.Subscriptions.Count);
@@ -131,8 +127,10 @@ public partial class ServiceBusConsumerWorker(
       LogMessageAcceptedForProcessing(_logger, envelope.MessageId, myWork.Count);
 
       // 5. Process using OrderedStreamProcessor (maintains stream ordering)
-      // Resolve perspective invoker once for all work items
-      var perspectiveInvoker = scope.ServiceProvider.GetService<Perspectives.IPerspectiveInvoker>();
+      // NOTE: Inline perspective invocation has been removed - perspectives are now processed via:
+      // 1. process_work_batch automatically creates perspective checkpoints (Migration 006)
+      // 2. PerspectiveWorker picks up checkpoints and processes them asynchronously
+      // This provides better reliability, scalability, and separation of concerns.
 
       await _orderedProcessor.ProcessInboxWorkAsync(
         myWork,
@@ -140,22 +138,14 @@ public partial class ServiceBusConsumerWorker(
           // Deserialize event from work item
           var @event = _deserializeEvent(work);
 
-          // Queue event to perspective invoker if available
-          if (perspectiveInvoker != null && @event is IEvent typedEvent) {
-            perspectiveInvoker.QueueEvent(typedEvent);
-
-            // Invoke perspectives for this event
-            await perspectiveInvoker.InvokePerspectivesAsync(ct);
-
-            LogInvokedPerspectives(_logger, typedEvent.GetType().Name, work.MessageId);
-
-            return MessageProcessingStatus.EventStored;
-          } else {
-            LogFailedToInvokePerspectives(_logger, @event?.GetType().Name ?? "null", perspectiveInvoker != null);
-
-            // Still mark as event stored even if perspective invocation failed
+          // Mark as EventStored - perspectives will be processed via PerspectiveWorker
+          // from checkpoints created by process_work_batch
+          if (@event is IEvent) {
             return MessageProcessingStatus.EventStored;
           }
+
+          // Non-event messages (if any) - just mark as stored
+          return MessageProcessingStatus.EventStored;
         },
         completionHandler: (msgId, status) => {
           strategy.QueueInboxCompletion(msgId, status);
@@ -238,9 +228,10 @@ public partial class ServiceBusConsumerWorker(
       // Deserialize the JsonElement payload back to the actual event type
       var jsonElement = work.Envelope.Payload;
 
-      // Use GetTypeInfoByName from MessageJsonContext for AOT-safe type lookup
-      // This avoids Type.GetType() reflection (IL2057 warning) by using compile-time typeof() calls
-      var jsonTypeInfo = global::Whizbang.Core.Generated.MessageJsonContext.GetTypeInfoByName(work.MessageType, _jsonOptions);
+      // Use GetTypeInfoByName from JsonContextRegistry for AOT-safe cross-assembly type lookup
+      // This queries all registered type name mappings from all assemblies via ModuleInitializers
+      // Supports fuzzy matching on "TypeName, AssemblyName" (strips Version/Culture/PublicKeyToken)
+      var jsonTypeInfo = Serialization.JsonContextRegistry.GetTypeInfoByName(work.MessageType, _jsonOptions);
       if (jsonTypeInfo == null) {
         LogCouldNotResolveJsonTypeInfo(_logger, work.MessageType, work.MessageId);
         return null;

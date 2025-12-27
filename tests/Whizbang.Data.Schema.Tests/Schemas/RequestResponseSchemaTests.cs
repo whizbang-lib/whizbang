@@ -34,56 +34,56 @@ public class RequestResponseSchemaTests {
     // Verify each column definition
     var requestId = columns[0];
     await Assert.That(requestId.Name).IsEqualTo("request_id");
-    await Assert.That(requestId.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(requestId.DataType).IsEqualTo(WhizbangDataType.UUID);
     await Assert.That(requestId.PrimaryKey).IsTrue();
     await Assert.That(requestId.Nullable).IsFalse();
 
     var correlationId = columns[1];
     await Assert.That(correlationId.Name).IsEqualTo("correlation_id");
-    await Assert.That(correlationId.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(correlationId.DataType).IsEqualTo(WhizbangDataType.UUID);
     await Assert.That(correlationId.Nullable).IsFalse();
 
     var requestType = columns[2];
     await Assert.That(requestType.Name).IsEqualTo("request_type");
-    await Assert.That(requestType.DataType).IsEqualTo(WhizbangDataType.String);
+    await Assert.That(requestType.DataType).IsEqualTo(WhizbangDataType.STRING);
     await Assert.That(requestType.MaxLength).IsEqualTo(500);
     await Assert.That(requestType.Nullable).IsFalse();
 
     var requestData = columns[3];
     await Assert.That(requestData.Name).IsEqualTo("request_data");
-    await Assert.That(requestData.DataType).IsEqualTo(WhizbangDataType.Json);
+    await Assert.That(requestData.DataType).IsEqualTo(WhizbangDataType.JSON);
     await Assert.That(requestData.Nullable).IsFalse();
 
     var responseType = columns[4];
     await Assert.That(responseType.Name).IsEqualTo("response_type");
-    await Assert.That(responseType.DataType).IsEqualTo(WhizbangDataType.String);
+    await Assert.That(responseType.DataType).IsEqualTo(WhizbangDataType.STRING);
     await Assert.That(responseType.MaxLength).IsEqualTo(500);
     await Assert.That(responseType.Nullable).IsTrue();
 
     var responseData = columns[5];
     await Assert.That(responseData.Name).IsEqualTo("response_data");
-    await Assert.That(responseData.DataType).IsEqualTo(WhizbangDataType.Json);
+    await Assert.That(responseData.DataType).IsEqualTo(WhizbangDataType.JSON);
     await Assert.That(responseData.Nullable).IsTrue();
 
     var status = columns[6];
     await Assert.That(status.Name).IsEqualTo("status");
-    await Assert.That(status.DataType).IsEqualTo(WhizbangDataType.String);
+    await Assert.That(status.DataType).IsEqualTo(WhizbangDataType.STRING);
     await Assert.That(status.MaxLength).IsEqualTo(50);
     await Assert.That(status.Nullable).IsFalse();
 
     var createdAt = columns[7];
     await Assert.That(createdAt.Name).IsEqualTo("created_at");
-    await Assert.That(createdAt.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
+    await Assert.That(createdAt.DataType).IsEqualTo(WhizbangDataType.TIMESTAMP_TZ);
     await Assert.That(createdAt.Nullable).IsFalse();
 
     var completedAt = columns[8];
     await Assert.That(completedAt.Name).IsEqualTo("completed_at");
-    await Assert.That(completedAt.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
+    await Assert.That(completedAt.DataType).IsEqualTo(WhizbangDataType.TIMESTAMP_TZ);
     await Assert.That(completedAt.Nullable).IsTrue();
 
     var expiresAt = columns[9];
     await Assert.That(expiresAt.Name).IsEqualTo("expires_at");
-    await Assert.That(expiresAt.DataType).IsEqualTo(WhizbangDataType.TimestampTz);
+    await Assert.That(expiresAt.DataType).IsEqualTo(WhizbangDataType.TIMESTAMP_TZ);
     await Assert.That(expiresAt.Nullable).IsTrue();
   }
 
@@ -194,23 +194,23 @@ public class RequestResponseSchemaTests {
     await Assert.That(createdAtColumn).IsNotNull();
     await Assert.That(createdAtColumn!.DefaultValue).IsNotNull();
     await Assert.That(createdAtColumn.DefaultValue).IsTypeOf<FunctionDefault>();
-    await Assert.That(((FunctionDefault)createdAtColumn.DefaultValue!).FunctionType).IsEqualTo(DefaultValueFunction.DateTime_Now);
+    await Assert.That(((FunctionDefault)createdAtColumn.DefaultValue!).FunctionType).IsEqualTo(DefaultValueFunction.DATE_TIME__NOW);
   }
 
   [Test]
   [Category("Schema")]
   public async Task Columns_ShouldProvideTypeConstantsAsync() {
     // Arrange & Act - Access all column constants
-    var requestId = RequestResponseSchema.Columns.RequestId;
-    var correlationId = RequestResponseSchema.Columns.CorrelationId;
-    var requestType = RequestResponseSchema.Columns.RequestType;
-    var requestData = RequestResponseSchema.Columns.RequestData;
-    var responseType = RequestResponseSchema.Columns.ResponseType;
-    var responseData = RequestResponseSchema.Columns.ResponseData;
-    var status = RequestResponseSchema.Columns.Status;
-    var createdAt = RequestResponseSchema.Columns.CreatedAt;
-    var completedAt = RequestResponseSchema.Columns.CompletedAt;
-    var expiresAt = RequestResponseSchema.Columns.ExpiresAt;
+    var requestId = RequestResponseSchema.Columns.REQUEST_ID;
+    var correlationId = RequestResponseSchema.Columns.CORRELATION_ID;
+    var requestType = RequestResponseSchema.Columns.REQUEST_TYPE;
+    var requestData = RequestResponseSchema.Columns.REQUEST_DATA;
+    var responseType = RequestResponseSchema.Columns.RESPONSE_TYPE;
+    var responseData = RequestResponseSchema.Columns.RESPONSE_DATA;
+    var status = RequestResponseSchema.Columns.STATUS;
+    var createdAt = RequestResponseSchema.Columns.CREATED_AT;
+    var completedAt = RequestResponseSchema.Columns.COMPLETED_AT;
+    var expiresAt = RequestResponseSchema.Columns.EXPIRES_AT;
 
     // Assert - Verify constants match actual column names
     await Assert.That(requestId).IsEqualTo("request_id");

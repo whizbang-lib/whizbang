@@ -176,6 +176,7 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
       (OutboxSchema.Table, "Outbox - Transactional messaging pattern"),
       (EventStoreSchema.Table, "Event Store - Event sourcing and audit trail"),
       (ReceptorProcessingSchema.Table, "Receptor Processing - Event handler tracking (log-style)"),
+      // NOTE: PerspectiveEventsSchema.Table is created by migration 009, not by base schema
       (PerspectiveCheckpointsSchema.Table, "Perspective Checkpoints - Read model projection tracking (checkpoint-style)"),
       (MessageAssociationsSchema.Table, "Message Associations - Message type to consumer mappings"),
       (RequestResponseSchema.Table, "Request/Response - Async request/response tracking"),

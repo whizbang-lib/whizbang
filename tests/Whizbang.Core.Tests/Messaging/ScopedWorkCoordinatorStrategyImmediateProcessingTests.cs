@@ -246,6 +246,18 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
         PerspectiveWork = []
       });
     }
+
+    public Task ReportPerspectiveCompletionAsync(
+      PerspectiveCheckpointCompletion completion,
+      CancellationToken cancellationToken = default) {
+      return Task.CompletedTask;
+    }
+
+    public Task ReportPerspectiveFailureAsync(
+      PerspectiveCheckpointFailure failure,
+      CancellationToken cancellationToken = default) {
+      return Task.CompletedTask;
+    }
   }
 
   // Test helper - Mock service instance provider

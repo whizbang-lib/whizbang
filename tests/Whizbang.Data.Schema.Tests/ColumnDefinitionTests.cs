@@ -15,13 +15,13 @@ public class ColumnDefinitionTests {
     // Arrange & Act
     var column = new ColumnDefinition(
       Name: "message_id",
-      DataType: WhizbangDataType.Uuid
+      DataType: WhizbangDataType.UUID
     );
 
     // Assert
     await Assert.That(column).IsNotNull();
     await Assert.That(column.Name).IsEqualTo("message_id");
-    await Assert.That(column.DataType).IsEqualTo(WhizbangDataType.Uuid);
+    await Assert.That(column.DataType).IsEqualTo(WhizbangDataType.UUID);
   }
 
   [Test]
@@ -29,7 +29,7 @@ public class ColumnDefinitionTests {
     // Arrange & Act
     var column = new ColumnDefinition(
       Name: "test_column",
-      DataType: WhizbangDataType.String
+      DataType: WhizbangDataType.STRING
     );
 
     // Assert - Verify default values
@@ -45,7 +45,7 @@ public class ColumnDefinitionTests {
     // Arrange & Act
     var column = new ColumnDefinition(
       Name: "id",
-      DataType: WhizbangDataType.Uuid,
+      DataType: WhizbangDataType.UUID,
       PrimaryKey: true
     );
 
@@ -58,7 +58,7 @@ public class ColumnDefinitionTests {
     // Arrange & Act
     var column = new ColumnDefinition(
       Name: "optional_field",
-      DataType: WhizbangDataType.String,
+      DataType: WhizbangDataType.STRING,
       Nullable: true
     );
 
@@ -71,7 +71,7 @@ public class ColumnDefinitionTests {
     // Arrange & Act
     var column = new ColumnDefinition(
       Name: "email",
-      DataType: WhizbangDataType.String,
+      DataType: WhizbangDataType.STRING,
       Unique: true
     );
 
@@ -84,7 +84,7 @@ public class ColumnDefinitionTests {
     // Arrange & Act
     var column = new ColumnDefinition(
       Name: "status",
-      DataType: WhizbangDataType.String,
+      DataType: WhizbangDataType.STRING,
       MaxLength: 50
     );
 
@@ -100,7 +100,7 @@ public class ColumnDefinitionTests {
     // Act
     var column = new ColumnDefinition(
       Name: "attempts",
-      DataType: WhizbangDataType.Integer,
+      DataType: WhizbangDataType.INTEGER,
       DefaultValue: defaultValue
     );
 
@@ -116,7 +116,7 @@ public class ColumnDefinitionTests {
     // Act
     var column = new ColumnDefinition(
       Name: "status",
-      DataType: WhizbangDataType.String,
+      DataType: WhizbangDataType.STRING,
       Nullable: false,
       PrimaryKey: false,
       Unique: true,
@@ -126,7 +126,7 @@ public class ColumnDefinitionTests {
 
     // Assert
     await Assert.That(column.Name).IsEqualTo("status");
-    await Assert.That(column.DataType).IsEqualTo(WhizbangDataType.String);
+    await Assert.That(column.DataType).IsEqualTo(WhizbangDataType.STRING);
     await Assert.That(column.Nullable).IsFalse();
     await Assert.That(column.PrimaryKey).IsFalse();
     await Assert.That(column.Unique).IsTrue();
@@ -139,13 +139,13 @@ public class ColumnDefinitionTests {
     // Arrange
     var column1 = new ColumnDefinition(
       Name: "test",
-      DataType: WhizbangDataType.String,
+      DataType: WhizbangDataType.STRING,
       MaxLength: 50
     );
 
     var column2 = new ColumnDefinition(
       Name: "test",
-      DataType: WhizbangDataType.String,
+      DataType: WhizbangDataType.STRING,
       MaxLength: 50
     );
 
@@ -156,8 +156,8 @@ public class ColumnDefinitionTests {
   [Test]
   public async Task ColumnDefinition_DifferentName_AreNotEqualAsync() {
     // Arrange
-    var column1 = new ColumnDefinition("test1", WhizbangDataType.String);
-    var column2 = new ColumnDefinition("test2", WhizbangDataType.String);
+    var column1 = new ColumnDefinition("test1", WhizbangDataType.STRING);
+    var column2 = new ColumnDefinition("test2", WhizbangDataType.STRING);
 
     // Act & Assert
     await Assert.That(column1).IsNotEqualTo(column2);
@@ -166,8 +166,8 @@ public class ColumnDefinitionTests {
   [Test]
   public async Task ColumnDefinition_DifferentDataType_AreNotEqualAsync() {
     // Arrange
-    var column1 = new ColumnDefinition("test", WhizbangDataType.String);
-    var column2 = new ColumnDefinition("test", WhizbangDataType.Integer);
+    var column1 = new ColumnDefinition("test", WhizbangDataType.STRING);
+    var column2 = new ColumnDefinition("test", WhizbangDataType.INTEGER);
 
     // Act & Assert
     await Assert.That(column1).IsNotEqualTo(column2);

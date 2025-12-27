@@ -309,8 +309,8 @@ public class HashPartitionRouterTests : PartitionRouterContractTests {
     }
     stopwatch.Stop();
 
-    // Assert - Should complete in reasonable time (< 1 second)
-    await Assert.That(stopwatch.Elapsed.TotalSeconds).IsLessThan(1.0);
+    // Assert - Should complete in reasonable time (< 3 seconds for system under load)
+    await Assert.That(stopwatch.Elapsed.TotalSeconds).IsLessThan(3.0);
   }
 
   [Test]

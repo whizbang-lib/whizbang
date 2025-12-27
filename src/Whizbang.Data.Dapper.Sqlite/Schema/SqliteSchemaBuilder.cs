@@ -144,12 +144,19 @@ public class SqliteSchemaBuilder : ISchemaBuilder {
     sb.AppendLine("--   Booleans: INTEGER (0 = false, 1 = true)");
     sb.AppendLine();
 
-    // Build all infrastructure tables
+    // Build all infrastructure tables from C# schema definitions
     var tables = new[] {
+      (ServiceInstancesSchema.Table, "Service Instances - Distributed work coordination"),
+      (ActiveStreamsSchema.Table, "Active Streams - Ephemeral stream coordination"),
+      (PartitionAssignmentsSchema.Table, "Partition Assignments - Distributed work coordination"),
+      (MessageDeduplicationSchema.Table, "Message Deduplication - Permanent idempotency tracking"),
       (InboxSchema.Table, "Inbox - Message deduplication and idempotency"),
       (OutboxSchema.Table, "Outbox - Transactional messaging pattern"),
       (EventStoreSchema.Table, "Event Store - Event sourcing and audit trail"),
-      (ActiveStreamsSchema.Table, "Active Streams - Ephemeral stream coordination"),
+      (ReceptorProcessingSchema.Table, "Receptor Processing - Event handler tracking (log-style)"),
+      // NOTE: PerspectiveEventsSchema.Table is created by migration 009, not by base schema
+      (PerspectiveCheckpointsSchema.Table, "Perspective Checkpoints - Read model projection tracking (checkpoint-style)"),
+      (MessageAssociationsSchema.Table, "Message Associations - Message type to consumer mappings"),
       (RequestResponseSchema.Table, "Request/Response - Async request/response tracking"),
       (SequencesSchema.Table, "Sequences - Distributed sequence generation")
     };

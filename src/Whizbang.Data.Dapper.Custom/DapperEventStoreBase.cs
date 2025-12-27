@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using Whizbang.Core;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -103,6 +104,15 @@ public abstract class DapperEventStoreBase : IEventStore {
   public abstract IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
     Guid streamId,
     Guid? fromEventId,
+    CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Reads events from a stream polymorphically, deserializing each event to its concrete type.
+  /// </summary>
+  public abstract IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
+    Guid streamId,
+    Guid? fromEventId,
+    IReadOnlyList<Type> eventTypes,
     CancellationToken cancellationToken = default);
 
   /// <summary>

@@ -237,6 +237,40 @@ ctorParams[__INDEX__] = new JsonParameterInfoValues {
   DefaultValue = null
 };
   #endregion
+
+  #region GET_TYPE_INFO_BY_NAME_FALLBACK
+  // Fallback: Try to resolve using the options' resolver chain
+  // This allows types from other registered contexts to be found
+  // (e.g., test types registered via JsonContextRegistry)
+  // Note: Uses Type.GetType() and Assembly.GetType() which trigger AOT warnings - suppressed as this is intentional
+  // This fallback is primarily for testing and cross-assembly scenarios
+  if (typeInfo == null) {
+#pragma warning disable IL2026  // RequiresUnreferencedCode on Assembly.GetType
+#pragma warning disable IL2057  // Unrecognized type passed to Type.GetType()
+    var runtimeType = Type.GetType(assemblyQualifiedTypeName, throwOnError: false);
+
+    // If Type.GetType() fails, try searching all loaded assemblies
+    // This is needed for test assemblies that aren't referenced by the current assembly
+    if (runtimeType == null) {
+      // Extract just the type name (before first comma)
+      var commaIndex = assemblyQualifiedTypeName.IndexOf(',');
+      if (commaIndex > 0) {
+        var typeName = assemblyQualifiedTypeName.Substring(0, commaIndex).Trim();
+        // Search all loaded assemblies
+        foreach (var assembly in AppDomain.CurrentDomain.GetAssemblies()) {
+          runtimeType = assembly.GetType(typeName, throwOnError: false);
+          if (runtimeType != null) break;
+        }
+      }
+    }
+#pragma warning restore IL2057
+#pragma warning restore IL2026
+
+    if (runtimeType != null) {
+      typeInfo = options.GetTypeInfo(runtimeType);
+    }
+  }
+  #endregion
 }
 internal class __MESSAGE_TYPE__ {
   internal __PROPERTY_TYPE__ __PROPERTY_NAME__;

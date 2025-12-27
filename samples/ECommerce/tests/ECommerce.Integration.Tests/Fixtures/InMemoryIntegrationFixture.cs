@@ -245,6 +245,9 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     // Register IWorkChannelWriter for communication between strategy and worker
     builder.Services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
 
+    // Register InstantCompletionStrategy for immediate perspective completion reporting (test optimization)
+    builder.Services.AddSingleton<IPerspectiveCompletionStrategy, InstantCompletionStrategy>();
+
     // Configure PerspectiveWorker with faster polling for integration tests
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
@@ -351,6 +354,9 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
 
     // Register IWorkChannelWriter for communication between strategy and worker
     builder.Services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
+
+    // Register InstantCompletionStrategy for immediate perspective completion reporting (test optimization)
+    builder.Services.AddSingleton<IPerspectiveCompletionStrategy, InstantCompletionStrategy>();
 
     // Configure PerspectiveWorker with faster polling for integration tests
     builder.Services.Configure<PerspectiveWorkerOptions>(options => {

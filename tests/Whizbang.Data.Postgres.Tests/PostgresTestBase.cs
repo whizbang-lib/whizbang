@@ -122,8 +122,31 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       "003_CreateCompleteReceptorProcessingFunction.sql",
       "004_CreateAcquirePerspectiveCheckpointFunction.sql",
       "005_CreateCompletePerspectiveCheckpointFunction.sql",
-      "006_CreateProcessWorkBatchFunction.sql",  // Table moved to C# schema
-      "007_CreateMessageAssociationRegistry.sql"
+      "006_CreateNormalizeEventTypeFunction.sql",
+      "007_CreateProcessWorkBatchFunction.sql",
+      "008_CreateMessageAssociationRegistry.sql",
+      "008_1_CreateActiveStreamsTable.sql",
+      "009_CreatePerspectiveEventsTable.sql",
+      "010_RegisterInstanceHeartbeat.sql",
+      "011_CleanupStaleInstances.sql",
+      "012_CalculateInstanceRank.sql",
+      "013_ProcessOutboxCompletions.sql",
+      "014_ProcessInboxCompletions.sql",
+      "015_ProcessPerspectiveEventCompletions.sql",
+      "016_UpdatePerspectiveCheckpoints.sql",
+      "017_ProcessOutboxFailures.sql",
+      "018_ProcessInboxFailures.sql",
+      "019_ProcessPerspectiveEventFailures.sql",
+      "020_StoreOutboxMessages.sql",
+      "021_StoreInboxMessages.sql",
+      "022_StorePerspectiveEvents.sql",
+      "023_CleanupCompletedStreams.sql",
+      "024_ClaimOrphanedOutbox.sql",
+      "025_ClaimOrphanedInbox.sql",
+      "026_ClaimOrphanedReceptorWork.sql",
+      "027_ClaimOrphanedPerspectiveEvents.sql",
+      "028_ProcessWorkBatch.sql",
+      "029_DecompositionComplete.sql"
     };
 
     foreach (var functionFile in functionFiles) {

@@ -316,20 +316,9 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
             return;
           }
 
-          // Resolve the envelope type
-          var envelopeType = Type.GetType(envelopeTypeName);
-          if (envelopeType == null) {
-            _logger.LogError("Could not resolve envelope type {EnvelopeType}", envelopeTypeName);
-            await args.DeadLetterMessageAsync(
-              args.Message,
-              "UnresolvableEnvelopeType",
-              $"Could not resolve envelope type: {envelopeTypeName}",
-              cancellationToken: args.CancellationToken
-            );
-            return;
-          }
-
-          // Deserialize envelope using the resolved type and AOT-compatible options from registry
+          // Deserialize envelope using AOT-compatible JsonContextRegistry
+          // Use JsonContextRegistry.GetTypeInfoByName() instead of Type.GetType() to support
+          // cross-assembly generic types like MessageEnvelope<TEvent> where TEvent is from a different assembly
           var json = args.Message.Body.ToString();
 
           // DIAGNOSTIC: Log the JSON and Service Bus MessageId before deserializing
@@ -339,9 +328,11 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
             json.Length > 500 ? json[..500] + "..." : json
           );
 
-          var typeInfo = _jsonOptions.GetTypeInfo(envelopeType);
+          // Resolve JsonTypeInfo for the envelope type using JsonContextRegistry
+          // This supports fuzzy matching and cross-assembly type resolution
+          var typeInfo = Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName(envelopeTypeName, _jsonOptions);
           if (typeInfo == null) {
-            _logger.LogError("No JsonTypeInfo found for {EnvelopeType}", envelopeTypeName);
+            _logger.LogError("No JsonTypeInfo found for envelope type {EnvelopeType}", envelopeTypeName);
             await args.DeadLetterMessageAsync(
               args.Message,
               "MissingJsonTypeInfo",

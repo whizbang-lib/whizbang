@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
@@ -82,7 +83,11 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       AggregateType = typeof(TMessage).FullName ?? "Unknown",  // Aggregate type from event type
       Sequence = nextSequence,
       Version = (int)nextSequence,  // Backwards compatibility: Version = Sequence
-      EventType = typeof(TMessage).FullName ?? "Unknown",
+      // Use centralized formatter for consistent type name format across all event stores
+      // Format: "TypeName, AssemblyName" (medium form)
+      // This matches wh_message_associations format and enables auto-checkpoint creation
+      // Fuzzy matching in migration 006 handles AssemblyQualifiedName (long form) differences
+      EventType = TypeNameFormatter.Format(typeof(TMessage)),
       EventData = eventData,
       Metadata = metadataDoc,
       CreatedAt = DateTime.UtcNow
@@ -194,6 +199,91 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       var envelope = new MessageEnvelope<TMessage> {
         MessageId = metadata.MessageId,
         Payload = eventData,
+        Hops = metadata.Hops
+      };
+
+      yield return envelope;
+    }
+  }
+
+  /// <summary>
+  /// Reads events from a stream polymorphically, deserializing each event to its concrete type.
+  /// Uses the EventType column to determine which concrete type to deserialize to.
+  /// </summary>
+  public async IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
+      Guid streamId,
+      Guid? fromEventId,
+      IReadOnlyList<Type> eventTypes,
+      [EnumeratorCancellation] CancellationToken cancellationToken = default) {
+
+    // Build type lookup dictionary with multiple keys for flexible matching
+    // Supports: TypeNameFormatter format (medium form), AssemblyQualifiedName (long form), FullName, and Name (short form)
+    var typeMap = new Dictionary<string, Type>();
+    foreach (var type in eventTypes) {
+      // Add all possible keys for this type
+
+      // PRIMARY KEY: TypeNameFormatter format ("TypeName, AssemblyName")
+      // This is the format used by AppendAsync (line 90) and matches wh_message_associations
+      var formattedName = TypeNameFormatter.Format(type);
+      typeMap[formattedName] = type;
+
+      // FALLBACK KEYS: Support other formats for compatibility
+      if (type.AssemblyQualifiedName != null) {
+        typeMap[type.AssemblyQualifiedName] = type;
+      }
+      if (type.FullName != null) {
+        typeMap[type.FullName] = type;
+      }
+      typeMap[type.Name] = type;
+    }
+
+    // Query events from the specified event ID onwards
+    var query = fromEventId == null
+      ? _context.Set<EventStoreRecord>()
+          .Where(e => e.StreamId == streamId)
+          .OrderBy(e => e.Id)
+          .AsAsyncEnumerable()
+      : _context.Set<EventStoreRecord>()
+          .Where(e => e.StreamId == streamId && e.Id.CompareTo(fromEventId.Value) > 0)
+          .OrderBy(e => e.Id)
+          .AsAsyncEnumerable();
+
+    await foreach (var record in query.WithCancellation(cancellationToken)) {
+      // Look up the concrete type from the EventType column
+      // Try exact match first, then fall back to comparing just the type+assembly part
+      if (!typeMap.TryGetValue(record.EventType, out var concreteType)) {
+        // Try without version/culture/token (extract "TypeName, AssemblyName" from full qualified name)
+        var typeAndAssembly = string.Join(", ", record.EventType.Split(',').Take(2).Select(s => s.Trim()));
+        if (!string.IsNullOrEmpty(typeAndAssembly) && typeMap.TryGetValue(typeAndAssembly, out concreteType)) {
+          // Found via simplified name
+        } else {
+          throw new InvalidOperationException(
+              $"Event type '{record.EventType}' in event {record.Id} is not in the provided event types list. " +
+              $"Available types: {string.Join(", ", eventTypes.Select(TypeNameFormatter.Format))}"
+          );
+        }
+      }
+
+      // Deserialize the event payload to the concrete type
+      var eventDataJson = record.EventData.RootElement.GetRawText();
+      var typeInfo = _jsonOptions.GetTypeInfo(concreteType);
+      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo);
+      if (eventData == null) {
+        throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
+      }
+
+      // Deserialize metadata (MessageId + Hops) directly
+      var metadataJson = record.Metadata.RootElement.GetRawText();
+      var metadataTypeInfo = (JsonTypeInfo<EnvelopeMetadata>)_jsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
+      var metadata = JsonSerializer.Deserialize(metadataJson, metadataTypeInfo);
+      if (metadata == null) {
+        throw new InvalidOperationException($"Failed to deserialize metadata for event ID {record.Id}");
+      }
+
+      // Reconstruct the message envelope with the polymorphic payload cast to IEvent
+      var envelope = new MessageEnvelope<IEvent> {
+        MessageId = metadata.MessageId,
+        Payload = (IEvent)eventData,
         Hops = metadata.Hops
       };
 

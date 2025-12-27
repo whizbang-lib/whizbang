@@ -1,6 +1,10 @@
+// NOTE: Database cleanup happens at fixture initialization (AspireIntegrationFixture.cs:147)
+// No need for [After(Class)] cleanup - the container may be stopped by then
+
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
 using ECommerce.Integration.Tests.Fixtures;
+using Medo;
 
 namespace ECommerce.Integration.Tests.Workflows;
 
@@ -12,31 +16,21 @@ namespace ECommerce.Integration.Tests.Workflows;
 public class UpdateProductWorkflowTests {
   private static AspireIntegrationFixture? _fixture;
 
-  // Test product IDs (deterministic GUIDs for reproducibility)
-  private static readonly ProductId _testProdUpdateName = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000201"));
-  private static readonly ProductId _testProdUpdateAll = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000202"));
-  private static readonly ProductId _testProdUpdatePrice = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000203"));
-  private static readonly ProductId _testProdUpdateDescImg = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000204"));
-  private static readonly ProductId _testProdMultiUpdate = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000205"));
-  private static readonly ProductId _testProdUpdateNoInventory = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000206"));
+  // Test product IDs (UUIDv7 for proper time-ordering and uniqueness across test runs)
+  private static readonly ProductId _testProdUpdateName = ProductId.From(Uuid7.NewUuid7().ToGuid());
+  private static readonly ProductId _testProdUpdateAll = ProductId.From(Uuid7.NewUuid7().ToGuid());
+  private static readonly ProductId _testProdUpdatePrice = ProductId.From(Uuid7.NewUuid7().ToGuid());
+  private static readonly ProductId _testProdUpdateDescImg = ProductId.From(Uuid7.NewUuid7().ToGuid());
+  private static readonly ProductId _testProdMultiUpdate = ProductId.From(Uuid7.NewUuid7().ToGuid());
+  private static readonly ProductId _testProdUpdateNoInventory = ProductId.From(Uuid7.NewUuid7().ToGuid());
 
   [Before(Test)]
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
     _fixture = await SharedFixtureSource.GetFixtureAsync();
-
-    // Clean database before each test to ensure isolated state
-    // This prevents deadlocks from transaction locks held by previous tests
-    await _fixture.CleanupDatabaseAsync();
   }
 
-  [After(Class)]
-  public static async Task CleanupAsync() {
-    if (_fixture != null) {
-      await _fixture.CleanupDatabaseAsync();
-    }
-  }
 
   /// <summary>
   /// Tests that updating a product's name via IDispatcher results in:

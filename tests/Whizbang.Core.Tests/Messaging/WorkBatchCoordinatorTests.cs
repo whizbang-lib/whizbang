@@ -40,6 +40,18 @@ public class WorkBatchCoordinatorTests {
         PerspectiveWork = []
       });
     }
+
+    public Task ReportPerspectiveCompletionAsync(
+      PerspectiveCheckpointCompletion completion,
+      CancellationToken cancellationToken = default) {
+      return Task.CompletedTask;
+    }
+
+    public Task ReportPerspectiveFailureAsync(
+      PerspectiveCheckpointFailure failure,
+      CancellationToken cancellationToken = default) {
+      return Task.CompletedTask;
+    }
   }
 
   private sealed class TestServiceInstanceProvider : IServiceInstanceProvider {

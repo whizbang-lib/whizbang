@@ -1,6 +1,10 @@
+// NOTE: Database cleanup happens at fixture initialization (AspireIntegrationFixture.cs:147)
+// No need for [After(Class)] cleanup - the container may be stopped by then
+
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
 using ECommerce.Integration.Tests.Fixtures;
+using Medo;
 
 namespace ECommerce.Integration.Tests.Workflows;
 
@@ -12,12 +16,12 @@ namespace ECommerce.Integration.Tests.Workflows;
 public class RestockInventoryWorkflowTests {
   private static AspireIntegrationFixture? _fixture;
 
-  // Test product IDs (deterministic GUIDs for reproducibility)
-  private static readonly ProductId _testProdRestock1 = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000101"));
-  private static readonly ProductId _testProdMultiRestock = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000102"));
-  private static readonly ProductId _testProdRestockZero = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000103"));
-  private static readonly ProductId _testProdRestockZeroQty = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000104"));
-  private static readonly ProductId _testProdLargeRestock = ProductId.From(Guid.Parse("00000000-0000-0000-0000-000000000105"));
+  // Test product IDs (UUIDv7 for proper time-ordering and uniqueness across test runs)
+  private static readonly ProductId _testProdRestock1 = ProductId.From(Uuid7.NewUuid7().ToGuid());
+  private static readonly ProductId _testProdMultiRestock = ProductId.From(Uuid7.NewUuid7().ToGuid());
+  private static readonly ProductId _testProdRestockZero = ProductId.From(Uuid7.NewUuid7().ToGuid());
+  private static readonly ProductId _testProdRestockZeroQty = ProductId.From(Uuid7.NewUuid7().ToGuid());
+  private static readonly ProductId _testProdLargeRestock = ProductId.From(Uuid7.NewUuid7().ToGuid());
 
   [Before(Test)]
   [RequiresUnreferencedCode("Test code - reflection allowed")]
@@ -30,12 +34,6 @@ public class RestockInventoryWorkflowTests {
     await _fixture.CleanupDatabaseAsync();
   }
 
-  [After(Class)]
-  public static async Task CleanupAsync() {
-    if (_fixture != null) {
-      await _fixture.CleanupDatabaseAsync();
-    }
-  }
 
   /// <summary>
   /// Tests that restocking inventory via IDispatcher results in:

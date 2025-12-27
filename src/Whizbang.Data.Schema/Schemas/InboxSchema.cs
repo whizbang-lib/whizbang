@@ -147,6 +147,16 @@ public static class InboxSchema {
         Name: "idx_inbox_scheduled_for",
         Columns: ImmutableArray.Create("stream_id", "scheduled_for", "received_at"),
         WhereClause: "scheduled_for IS NOT NULL"
+      ),
+      new IndexDefinition(
+        Name: "idx_inbox_partition_claiming",
+        Columns: ImmutableArray.Create("partition_number", "scheduled_for", "received_at"),
+        WhereClause: "(status & 2) != 2 AND (status & 32768) = 0"
+      ),
+      new IndexDefinition(
+        Name: "idx_inbox_instance_lease",
+        Columns: ImmutableArray.Create("instance_id", "lease_expiry"),
+        WhereClause: "instance_id IS NOT NULL AND lease_expiry IS NOT NULL"
       )
     )
   );

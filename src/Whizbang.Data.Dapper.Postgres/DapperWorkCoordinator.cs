@@ -108,8 +108,6 @@ public class DapperWorkCoordinator(
     var outboxFailuresJson = _serializeFailures(outboxFailures);
     var inboxCompletionsJson = _serializeCompletions(inboxCompletions);
     var inboxFailuresJson = _serializeFailures(inboxFailures);
-    var receptorCompletionsJson = _serializeReceptorCompletions(receptorCompletions);
-    var receptorFailuresJson = _serializeReceptorFailures(receptorFailures);
     var perspectiveCompletionsJson = _serializePerspectiveCompletions(perspectiveCompletions);
     var perspectiveFailuresJson = _serializePerspectiveFailures(perspectiveFailures);
     var newOutboxJson = _serializeNewOutboxMessages(newOutboxMessages);
@@ -118,7 +116,8 @@ public class DapperWorkCoordinator(
     var renewOutboxJson = _serializeLeaseRenewals(renewOutboxLeaseIds);
     var renewInboxJson = _serializeLeaseRenewals(renewInboxLeaseIds);
 
-    // Execute the process_work_batch function
+    // Execute the process_work_batch function (new signature after decomposition)
+    var now = DateTimeOffset.UtcNow;
     var sql = @"
       SELECT * FROM process_work_batch(
         @p_instance_id::uuid,
@@ -126,22 +125,25 @@ public class DapperWorkCoordinator(
         @p_host_name::varchar,
         @p_process_id::int,
         @p_metadata::jsonb,
+        @p_now::timestamptz,
+        @p_lease_duration_seconds::int,
+        @p_partition_count::int,
         @p_outbox_completions::jsonb,
-        @p_outbox_failures::jsonb,
         @p_inbox_completions::jsonb,
-        @p_inbox_failures::jsonb,
-        @p_receptor_completions::jsonb,
-        @p_receptor_failures::jsonb,
+        @p_perspective_event_completions::jsonb,
         @p_perspective_completions::jsonb,
+        @p_outbox_failures::jsonb,
+        @p_inbox_failures::jsonb,
+        @p_perspective_event_failures::jsonb,
         @p_perspective_failures::jsonb,
         @p_new_outbox_messages::jsonb,
         @p_new_inbox_messages::jsonb,
+        @p_new_perspective_events::jsonb,
         @p_renew_outbox_lease_ids::jsonb,
         @p_renew_inbox_lease_ids::jsonb,
-        @p_lease_seconds::int,
-        @p_stale_threshold_seconds::int,
+        @p_renew_perspective_event_lease_ids::jsonb,
         @p_flags::int,
-        @p_partition_count::int
+        @p_stale_threshold_seconds::int
       )";
 
     var parameters = new {
@@ -150,22 +152,25 @@ public class DapperWorkCoordinator(
       p_host_name = hostName,
       p_process_id = processId,
       p_metadata = metadataJson,
+      p_now = now,
+      p_lease_duration_seconds = leaseSeconds,
+      p_partition_count = partitionCount,
       p_outbox_completions = outboxCompletionsJson,
-      p_outbox_failures = outboxFailuresJson,
       p_inbox_completions = inboxCompletionsJson,
+      p_perspective_event_completions = "[]",  // Not used - perspective events managed internally
+      p_perspective_completions = perspectiveCompletionsJson,  // Checkpoint-level completions
+      p_outbox_failures = outboxFailuresJson,
       p_inbox_failures = inboxFailuresJson,
-      p_receptor_completions = receptorCompletionsJson,
-      p_receptor_failures = receptorFailuresJson,
-      p_perspective_completions = perspectiveCompletionsJson,
-      p_perspective_failures = perspectiveFailuresJson,
+      p_perspective_event_failures = "[]",  // Not used - perspective events managed internally
+      p_perspective_failures = perspectiveFailuresJson,  // Checkpoint-level failures
       p_new_outbox_messages = newOutboxJson,
       p_new_inbox_messages = newInboxJson,
+      p_new_perspective_events = "[]",
       p_renew_outbox_lease_ids = renewOutboxJson,
       p_renew_inbox_lease_ids = renewInboxJson,
-      p_lease_seconds = leaseSeconds,
-      p_stale_threshold_seconds = staleThresholdSeconds,
+      p_renew_perspective_event_lease_ids = "[]",
       p_flags = (int)flags,
-      p_partition_count = partitionCount
+      p_stale_threshold_seconds = staleThresholdSeconds
     };
 
     var commandDefinition = new CommandDefinition(
@@ -181,21 +186,34 @@ public class DapperWorkCoordinator(
     var outboxWork = resultList
       .Where(r => r.source == "outbox")
       .Select(r => {
-        var envelope = _deserializeEnvelope(r.envelope_type, r.envelope_data);
+        if (string.IsNullOrWhiteSpace(r.message_type) || string.IsNullOrWhiteSpace(r.message_data)) {
+          throw new InvalidOperationException($"Outbox work {r.work_id} missing message_type or message_data");
+        }
+
+        var envelope = _deserializeEnvelope(r.message_type, r.message_data);
         // Cast to IMessageEnvelope<JsonElement> - envelope is always deserialized as MessageEnvelope<JsonElement>
         var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
-          ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.msg_id}");
+          ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.work_id}");
+
+        var flags = WorkBatchFlags.None;
+        if (r.is_newly_stored) {
+          flags |= WorkBatchFlags.NewlyStored;
+        }
+
+        if (r.is_orphaned) {
+          flags |= WorkBatchFlags.Orphaned;
+        }
 
         return new OutboxWork {
-          MessageId = r.msg_id,
+          MessageId = r.work_id,
           Destination = r.destination!,
           Envelope = jsonEnvelope,
-          StreamId = r.stream_uuid,
-          PartitionNumber = r.partition_num,
+          StreamId = r.work_stream_id,
+          PartitionNumber = r.partition_number,
           Attempts = r.attempts,
           Status = (MessageProcessingStatus)r.status,
-          Flags = (WorkBatchFlags)r.flags,
-          SequenceOrder = r.sequence_order
+          Flags = flags,
+          SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         };
       })
       .ToList();
@@ -203,33 +221,57 @@ public class DapperWorkCoordinator(
     var inboxWork = resultList
       .Where(r => r.source == "inbox")
       .Select(r => {
-        var envelope = _deserializeEnvelope(r.envelope_type, r.envelope_data);
+        if (string.IsNullOrWhiteSpace(r.message_type) || string.IsNullOrWhiteSpace(r.message_data)) {
+          throw new InvalidOperationException($"Inbox work {r.work_id} missing message_type or message_data");
+        }
+
+        var envelope = _deserializeEnvelope(r.message_type, r.message_data);
         // Cast to IMessageEnvelope<JsonElement> - envelope is always deserialized as MessageEnvelope<JsonElement>
         var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
-          ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.msg_id}");
+          ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.work_id}");
+
+        var flags = WorkBatchFlags.None;
+        if (r.is_newly_stored) {
+          flags |= WorkBatchFlags.NewlyStored;
+        }
+
+        if (r.is_orphaned) {
+          flags |= WorkBatchFlags.Orphaned;
+        }
 
         return new InboxWork {
-          MessageId = r.msg_id,
+          MessageId = r.work_id,
           Envelope = jsonEnvelope,
-          MessageType = r.envelope_type,  // Use envelope_type until event_type is added to WorkBatchRow
-          StreamId = r.stream_uuid,
-          PartitionNumber = r.partition_num,
+          MessageType = r.message_type,
+          StreamId = r.work_stream_id,
+          PartitionNumber = r.partition_number,
           Status = (MessageProcessingStatus)r.status,
-          Flags = (WorkBatchFlags)r.flags,
-          SequenceOrder = r.sequence_order
+          Flags = flags,
+          SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
         };
       })
       .ToList();
 
     var perspectiveWork = resultList
       .Where(r => r.source == "perspective")
-      .Select(r => new PerspectiveWork {
-        StreamId = r.stream_uuid ?? throw new InvalidOperationException($"Perspective work must have StreamId"),
-        PerspectiveName = r.destination ?? throw new InvalidOperationException($"Perspective work must have PerspectiveName in destination field"),
-        LastProcessedEventId = r.last_event_id,  // From wh_perspective_checkpoints.last_event_id
-        Status = (PerspectiveProcessingStatus)r.status,
-        PartitionNumber = r.partition_num,
-        Flags = (WorkBatchFlags)r.flags
+      .Select(r => {
+        var flags = WorkBatchFlags.None;
+        if (r.is_newly_stored) {
+          flags |= WorkBatchFlags.NewlyStored;
+        }
+
+        if (r.is_orphaned) {
+          flags |= WorkBatchFlags.Orphaned;
+        }
+
+        return new PerspectiveWork {
+          StreamId = r.work_stream_id ?? throw new InvalidOperationException($"Perspective work must have StreamId"),
+          PerspectiveName = r.perspective_name ?? throw new InvalidOperationException($"Perspective work must have PerspectiveName"),
+          LastProcessedEventId = null,
+          Status = (PerspectiveProcessingStatus)r.status,
+          PartitionNumber = r.partition_number,
+          Flags = flags
+        };
       })
       .ToList();
 
@@ -386,6 +428,48 @@ public class DapperWorkCoordinator(
   }
 
   /// <summary>
+  /// Reports perspective checkpoint completion directly (out-of-band).
+  /// Calls complete_perspective_checkpoint_work SQL function directly without full work batch processing.
+  /// </summary>
+  public async Task ReportPerspectiveCompletionAsync(
+    PerspectiveCheckpointCompletion completion,
+    CancellationToken cancellationToken = default) {
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    await connection.ExecuteAsync(
+      "SELECT complete_perspective_checkpoint_work(@StreamId, @PerspectiveName, @LastEventId, @Status, @Error)",
+      new {
+        StreamId = completion.StreamId,
+        PerspectiveName = completion.PerspectiveName,
+        LastEventId = completion.LastEventId,
+        Status = (short)completion.Status,
+        Error = (string?)null
+      });
+  }
+
+  /// <summary>
+  /// Reports perspective checkpoint failure directly (out-of-band).
+  /// Calls complete_perspective_checkpoint_work SQL function directly without full work batch processing.
+  /// </summary>
+  public async Task ReportPerspectiveFailureAsync(
+    PerspectiveCheckpointFailure failure,
+    CancellationToken cancellationToken = default) {
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    await connection.ExecuteAsync(
+      "SELECT complete_perspective_checkpoint_work(@StreamId, @PerspectiveName, @LastEventId, @Status, @Error)",
+      new {
+        StreamId = failure.StreamId,
+        PerspectiveName = failure.PerspectiveName,
+        LastEventId = failure.LastEventId,
+        Status = (short)failure.Status,
+        Error = failure.Error
+      });
+  }
+
+  /// <summary>
   /// Handles PostgreSQL RAISE NOTICE messages by logging them at Debug level.
   /// Notices are only generated when WorkBatchFlags.DebugMode is set in the SQL function.
   /// </summary>
@@ -398,19 +482,24 @@ public class DapperWorkCoordinator(
 /// <summary>
 /// Internal DTO for mapping process_work_batch function results.
 /// Matches the function's return type structure with snake_case naming (PostgreSQL convention).
+/// Updated for decomposed process_work_batch (migrations 009-029).
 /// </summary>
 internal class WorkBatchRow {
-  public required string source { get; set; }  // 'outbox' or 'inbox'
-  public required Guid msg_id { get; set; }
-  public string? destination { get; set; }  // null for inbox
-  public required string envelope_type { get; set; }  // Assembly qualified name of envelope type
-  public required string envelope_data { get; set; }  // Complete serialized MessageEnvelope<T> as JSON
-  public Guid? stream_uuid { get; set; }  // Stream ID for ordering (matches SQL column name)
-  public int? partition_num { get; set; }  // Partition number (matches SQL column name)
-  public required int attempts { get; set; }
-  public required int status { get; set; }  // MessageProcessingStatus flags
-  public required int flags { get; set; }  // WorkBatchFlags
-  public required long sequence_order { get; set; }  // Epoch milliseconds for ordering
-  public Guid? last_event_id { get; set; }  // Last processed event ID (perspective work only)
+  public int instance_rank { get; set; }
+  public int active_instance_count { get; set; }
+  public required string source { get; set; }  // 'outbox', 'inbox', 'receptor', 'perspective'
+  public required Guid work_id { get; set; }
+  public Guid? work_stream_id { get; set; }
+  public int? partition_number { get; set; }  // Partition assignment for load balancing
+  public string? destination { get; set; }  // Topic name (outbox) or handler name (inbox)
+  public string? message_type { get; set; }  // Assembly qualified name or perspective name
+  public string? message_data { get; set; }  // Complete serialized MessageEnvelope<T> as JSON
+  public string? metadata { get; set; }
+  public int status { get; set; }  // MessageProcessingStatus flags
+  public int attempts { get; set; }
+  public bool is_newly_stored { get; set; }
+  public bool is_orphaned { get; set; }
+  public string? perspective_name { get; set; }
+  public long? sequence_number { get; set; }
 }
 

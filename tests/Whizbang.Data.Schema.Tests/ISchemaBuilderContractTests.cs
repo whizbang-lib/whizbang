@@ -38,17 +38,17 @@ public abstract class ISchemaBuilderContractTests {
     var table = new TableDefinition(
       Name: "test_table",
       Columns: ImmutableArray.Create(
-        new ColumnDefinition("id", WhizbangDataType.Uuid, PrimaryKey: true, Nullable: false)
+        new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false)
       )
     );
-    var prefix = "wb_";
+    var prefix = "wh_";
 
     // Act
     var sql = builder.BuildCreateTable(table, prefix);
 
     // Assert
     await Assert.That(sql).IsNotEmpty();
-    await Assert.That(sql).Contains("wb_test_table");
+    await Assert.That(sql).Contains("wh_test_table");
     await Assert.That(sql).Contains("id");
   }
 
@@ -59,12 +59,12 @@ public abstract class ISchemaBuilderContractTests {
     var table = new TableDefinition(
       Name: "users",
       Columns: ImmutableArray.Create(
-        new ColumnDefinition("id", WhizbangDataType.Uuid, PrimaryKey: true, Nullable: false),
-        new ColumnDefinition("name", WhizbangDataType.String, MaxLength: 255, Nullable: false),
-        new ColumnDefinition("age", WhizbangDataType.Integer, Nullable: true)
+        new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false),
+        new ColumnDefinition("name", WhizbangDataType.STRING, MaxLength: 255, Nullable: false),
+        new ColumnDefinition("age", WhizbangDataType.INTEGER, Nullable: true)
       )
     );
-    var prefix = "wb_";
+    var prefix = "wh_";
 
     // Act
     var sql = builder.BuildCreateTable(table, prefix);
@@ -82,11 +82,11 @@ public abstract class ISchemaBuilderContractTests {
     var table = new TableDefinition(
       Name: "test",
       Columns: ImmutableArray.Create(
-        new ColumnDefinition("id", WhizbangDataType.Uuid, PrimaryKey: true, Nullable: false),
-        new ColumnDefinition("optional_field", WhizbangDataType.String, Nullable: true)
+        new ColumnDefinition("id", WhizbangDataType.UUID, PrimaryKey: true, Nullable: false),
+        new ColumnDefinition("optional_field", WhizbangDataType.STRING, Nullable: true)
       )
     );
-    var prefix = "wb_";
+    var prefix = "wh_";
 
     // Act
     var sql = builder.BuildCreateTable(table, prefix);
@@ -104,7 +104,7 @@ public abstract class ISchemaBuilderContractTests {
       Columns: ImmutableArray.Create("email")
     );
     var tableName = "users";
-    var prefix = "wb_";
+    var prefix = "wh_";
 
     // Act
     var sql = builder.BuildCreateIndex(index, tableName, prefix);
@@ -124,7 +124,7 @@ public abstract class ISchemaBuilderContractTests {
       Columns: ImmutableArray.Create("event_type", "created_at")
     );
     var tableName = "events";
-    var prefix = "wb_";
+    var prefix = "wh_";
 
     // Act
     var sql = builder.BuildCreateIndex(index, tableName, prefix);
@@ -139,14 +139,14 @@ public abstract class ISchemaBuilderContractTests {
     // Arrange
     var builder = CreateBuilder();
     var sequence = new SequenceDefinition("event_sequence");
-    var prefix = "wb_";
+    var prefix = "wh_";
 
     // Act
     var sql = builder.BuildCreateSequence(sequence, prefix);
 
     // Assert
     await Assert.That(sql).IsNotEmpty();
-    await Assert.That(sql).Contains("wb_event_sequence");
+    await Assert.That(sql).Contains("wh_event_sequence");
   }
 
   [Test]
@@ -159,17 +159,17 @@ public abstract class ISchemaBuilderContractTests {
     var sql = builder.BuildInfrastructureSchema(config);
 
     // Assert - Verify all core infrastructure tables are included
-    await Assert.That(sql).Contains("wb_inbox");
-    await Assert.That(sql).Contains("wb_outbox");
-    await Assert.That(sql).Contains("wb_event_store");
-    await Assert.That(sql).Contains("wb_service_instances");
-    await Assert.That(sql).Contains("wb_active_streams");
-    await Assert.That(sql).Contains("wb_partition_assignments");
-    await Assert.That(sql).Contains("wb_message_deduplication");
-    await Assert.That(sql).Contains("wb_receptor_processing");
-    await Assert.That(sql).Contains("wb_perspective_checkpoints");
-    await Assert.That(sql).Contains("wb_request_response");
-    await Assert.That(sql).Contains("wb_sequences");
+    await Assert.That(sql).Contains("wh_inbox");
+    await Assert.That(sql).Contains("wh_outbox");
+    await Assert.That(sql).Contains("wh_event_store");
+    await Assert.That(sql).Contains("wh_service_instances");
+    await Assert.That(sql).Contains("wh_active_streams");
+    await Assert.That(sql).Contains("wh_partition_assignments");
+    await Assert.That(sql).Contains("wh_message_deduplication");
+    await Assert.That(sql).Contains("wh_receptor_processing");
+    await Assert.That(sql).Contains("wh_perspective_checkpoints");
+    await Assert.That(sql).Contains("wh_request_response");
+    await Assert.That(sql).Contains("wh_sequences");
   }
 
   [Test]
@@ -220,21 +220,21 @@ public abstract class ISchemaBuilderContractTests {
   public async Task BuildPerspectiveTable_GeneratesValidDDLAsync() {
     // Arrange
     var builder = CreateBuilder();
-    var tableName = "wb_per_product_dto";
+    var tableName = "wh_per_product_dto";
 
     // Act
     var sql = builder.BuildPerspectiveTable(tableName);
 
     // Assert
     await Assert.That(sql).IsNotEmpty();
-    await Assert.That(sql).Contains("wb_per_product_dto");
+    await Assert.That(sql).Contains("wh_per_product_dto");
   }
 
   [Test]
   public async Task BuildPerspectiveTable_IncludesRequiredColumnsAsync() {
     // Arrange
     var builder = CreateBuilder();
-    var tableName = "wb_per_test";
+    var tableName = "wh_per_test";
 
     // Act
     var sql = builder.BuildPerspectiveTable(tableName);
