@@ -3,7 +3,9 @@ using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
 using TUnit.Assertions;
 using TUnit.Core;
+using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Tests;
 
@@ -283,5 +285,108 @@ public partial class JsonContextRegistryTests {
 
     // Assert
     await Assert.That(typeInfo).IsNull();
+  }
+
+  // ===========================
+  // Envelope Type Deserialization Tests
+  // ===========================
+
+  /// <summary>
+  /// Test event for envelope deserialization test.
+  /// </summary>
+  internal sealed record TestEvent(string Data) : IEvent;
+
+  /// <summary>
+  /// Test JsonSerializerContext for envelope deserialization test.
+  /// Simulates what MessageJsonContextGenerator produces.
+  /// </summary>
+  [JsonSerializable(typeof(TestEvent))]
+  [JsonSerializable(typeof(MessageEnvelope<TestEvent>))]
+  internal sealed partial class TestEventJsonContext : JsonSerializerContext {
+  }
+
+  [Test]
+  public async Task GetTypeInfoByName_WithEnvelopeType_ReturnsEnvelopeJsonTypeInfoAsync() {
+    // Arrange - Register both payload type and envelope type (simulating MessageJsonContextGenerator)
+    var payloadTypeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests";
+    var envelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests]], Whizbang.Core";
+    var resolver = TestEventJsonContext.Default;
+
+    // Register payload type
+    JsonContextRegistry.RegisterTypeName(payloadTypeName, typeof(TestEvent), resolver);
+
+    // Register envelope type (THIS IS WHAT THE FIX ADDS)
+    JsonContextRegistry.RegisterTypeName(
+      envelopeTypeName,
+      typeof(MessageEnvelope<TestEvent>),
+      resolver);
+
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    // Act - Lookup envelope type (simulating what AzureServiceBusTransport does)
+    var envelopeTypeInfo = JsonContextRegistry.GetTypeInfoByName(envelopeTypeName, options);
+
+    // Assert - Should find the envelope type
+    await Assert.That(envelopeTypeInfo).IsNotNull();
+    await Assert.That(envelopeTypeInfo!.Type).IsEqualTo(typeof(MessageEnvelope<TestEvent>));
+  }
+
+  [Test]
+  public async Task EnvelopeType_CanBeDeserializedFromJson_WithRegisteredTypeInfoAsync() {
+    // Arrange - Register both payload type and envelope type
+    var payloadTypeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests";
+    var envelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests]], Whizbang.Core";
+    var resolver = TestEventJsonContext.Default;
+
+    JsonContextRegistry.RegisterTypeName(payloadTypeName, typeof(TestEvent), resolver);
+    JsonContextRegistry.RegisterTypeName(envelopeTypeName, typeof(MessageEnvelope<TestEvent>), resolver);
+
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    // Create a test envelope
+    var testEvent = new TestEvent("test-data");
+    var envelope = new MessageEnvelope<TestEvent>(
+      MessageId.New(),
+      testEvent,
+      new List<MessageHop>()
+    );
+
+    // Serialize to JSON
+    var json = JsonSerializer.Serialize(envelope, options);
+
+    // Act - Deserialize using the envelope type name (simulating Azure Service Bus deserialization)
+    var envelopeTypeInfo = JsonContextRegistry.GetTypeInfoByName(envelopeTypeName, options);
+    await Assert.That(envelopeTypeInfo).IsNotNull();
+
+    var deserializedEnvelope = JsonSerializer.Deserialize(json, envelopeTypeInfo!) as MessageEnvelope<TestEvent>;
+
+    // Assert - Should successfully deserialize
+    await Assert.That(deserializedEnvelope).IsNotNull();
+    await Assert.That(deserializedEnvelope!.MessageId).IsEqualTo(envelope.MessageId);
+    await Assert.That(deserializedEnvelope.Payload).IsNotNull();
+    await Assert.That(deserializedEnvelope.Payload.Data).IsEqualTo("test-data");
+  }
+
+  [Test]
+  public async Task EnvelopeType_WithFullAssemblyQualifiedName_MatchesFuzzilyAsync() {
+    // Arrange - Register with short form (what generator produces)
+    var shortForm = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests]], Whizbang.Core";
+    var resolver = TestEventJsonContext.Default;
+
+    JsonContextRegistry.RegisterTypeName(
+      "Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests",
+      typeof(TestEvent),
+      resolver);
+    JsonContextRegistry.RegisterTypeName(shortForm, typeof(MessageEnvelope<TestEvent>), resolver);
+
+    var options = JsonContextRegistry.CreateCombinedOptions();
+
+    // Act - Lookup with full AssemblyQualifiedName (what AzureServiceBusTransport sends)
+    var fullForm = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null]], Whizbang.Core, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
+    var typeInfo = JsonContextRegistry.GetTypeInfoByName(fullForm, options);
+
+    // Assert - Should match despite different formats (fuzzy matching)
+    await Assert.That(typeInfo).IsNotNull();
+    await Assert.That(typeInfo!.Type).IsEqualTo(typeof(MessageEnvelope<TestEvent>));
   }
 }

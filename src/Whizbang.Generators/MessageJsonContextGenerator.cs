@@ -762,6 +762,22 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         converterRegistrations.AppendLine($"    typeof({message.FullyQualifiedName}),");
         converterRegistrations.AppendLine($"    MessageJsonContext.Default);");
       }
+
+      // Register MessageEnvelope<T> wrapper types for transport deserialization
+      // When messages are published to Azure Service Bus, the envelope type is stored in metadata
+      // The receiving side needs to deserialize the envelope using JsonContextRegistry.GetTypeInfoByName()
+      converterRegistrations.AppendLine();
+      converterRegistrations.AppendLine("  // Register MessageEnvelope<T> wrapper types for transport deserialization");
+      foreach (var message in messageTypes) {
+        var typeNameWithoutGlobal = message.FullyQualifiedName.Replace("global::", "");
+        // Format: Whizbang.Core.Observability.MessageEnvelope`1[[PayloadType, Assembly]], Whizbang.Core
+        var envelopeTypeName = $"Whizbang.Core.Observability.MessageEnvelope`1[[{typeNameWithoutGlobal}, {actualAssemblyName}]], Whizbang.Core";
+
+        converterRegistrations.AppendLine($"  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(");
+        converterRegistrations.AppendLine($"    \"{envelopeTypeName}\",");
+        converterRegistrations.AppendLine($"    typeof(global::Whizbang.Core.Observability.MessageEnvelope<{message.FullyQualifiedName}>),");
+        converterRegistrations.AppendLine($"    MessageJsonContext.Default);");
+      }
     }
 
     // Replace __CONVERTER_REGISTRATIONS__ placeholder

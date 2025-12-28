@@ -61,6 +61,7 @@ CREATE OR REPLACE FUNCTION process_work_batch(
   partition_number INTEGER,     -- Partition assignment for load balancing
   destination VARCHAR(200),     -- Topic name (outbox) or handler name (inbox)
   message_type VARCHAR(500),    -- For outbox/inbox
+  envelope_type VARCHAR(500),   -- Assembly-qualified name of envelope type (for outbox only)
   message_data TEXT,
   metadata JSONB,
   status INTEGER,               -- MessageProcessingStatus flags
@@ -368,7 +369,7 @@ BEGIN
     bv.base_version + bv.row_num as version,
     p_now
   FROM outbox_base_versions bv
-  ON CONFLICT (stream_id, version) DO NOTHING;
+  ON CONFLICT (event_id) DO NOTHING;
 
   -- Store events from inbox messages
   WITH inbox_events AS (
@@ -428,7 +429,7 @@ BEGIN
     bv.base_version + bv.row_num as version,
     p_now
   FROM inbox_base_versions bv
-  ON CONFLICT (stream_id, version) DO NOTHING;
+  ON CONFLICT (event_id) DO NOTHING;
 
   -- ========================================
   -- Phase 4.6: Auto-Create Perspective Events
@@ -648,6 +649,7 @@ BEGIN
     o.partition_number,
     o.destination as destination,
     o.event_type as message_type,
+    o.envelope_type as envelope_type,
     o.event_data::TEXT as message_data,
     o.metadata,
     o.status,
@@ -675,6 +677,7 @@ BEGIN
     i.partition_number,
     i.handler_name as destination,
     i.event_type as message_type,
+    NULL::VARCHAR(500) as envelope_type,
     i.event_data::TEXT as message_data,
     i.metadata,
     i.status,
@@ -702,6 +705,7 @@ BEGIN
     rp.partition_number,
     NULL::VARCHAR(200) as destination,
     NULL::VARCHAR(500) as message_type,
+    NULL::VARCHAR(500) as envelope_type,
     NULL::TEXT as message_data,
     NULL::JSONB as metadata,
     rp.status::INTEGER,
@@ -727,6 +731,7 @@ BEGIN
     NULL::INTEGER as partition_number,  -- Perspectives don't use partition-based load balancing
     NULL::VARCHAR(200) as destination,
     NULL::VARCHAR(500) as message_type,  -- Event type comes from wh_event_store
+    NULL::VARCHAR(500) as envelope_type, -- Event envelope type comes from wh_event_store
     NULL::TEXT as message_data,          -- Event data comes from wh_event_store
     NULL::JSONB as metadata,             -- Event metadata comes from wh_event_store
     pe.status,

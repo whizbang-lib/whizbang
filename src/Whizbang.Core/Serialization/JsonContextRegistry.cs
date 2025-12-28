@@ -152,6 +152,7 @@ public static class JsonContextRegistry {
   /// <summary>
   /// Normalizes a .NET type name by extracting "TypeName, AssemblyName" portion.
   /// Strips Version, Culture, and PublicKeyToken for fuzzy matching.
+  /// Handles nested generic types (e.g., MessageEnvelope`1[[PayloadType, Assembly]], OuterAssembly).
   /// This matches the fuzzy matching logic used in the database for perspective event subscriptions.
   /// </summary>
   /// <param name="assemblyQualifiedName">Full or short-form assembly-qualified type name</param>
@@ -161,19 +162,19 @@ public static class JsonContextRegistry {
       return assemblyQualifiedName;
     }
 
-    // Find the first occurrence of Version, Culture, or PublicKeyToken
-    var versionIndex = assemblyQualifiedName.IndexOf(", Version=", StringComparison.Ordinal);
-    var cultureIndex = assemblyQualifiedName.IndexOf(", Culture=", StringComparison.Ordinal);
-    var tokenIndex = assemblyQualifiedName.IndexOf(", PublicKeyToken=", StringComparison.Ordinal);
+    // For generic types like MessageEnvelope`1[[PayloadType, Assembly, Version=..., ...]], OuterAssembly, Version=..., ...
+    // we need to strip version info from BOTH the inner type and the outer type.
+    // Strategy: Use regex to replace ", Version=..., Culture=..., PublicKeyToken=..." patterns anywhere in the string.
 
-    // Get the minimum index (first occurrence of any of these)
-    var indices = new[] { versionIndex, cultureIndex, tokenIndex }.Where(i => i > 0);
-    if (!indices.Any()) {
-      return assemblyQualifiedName; // No version info found, use as-is
-    }
+    // Pattern matches: ", Version=X, Culture=Y, PublicKeyToken=Z" or any subset
+    // This works for both simple types and nested generic types
+    var result = System.Text.RegularExpressions.Regex.Replace(
+      assemblyQualifiedName,
+      @",\s*Version=[^,\]]+(?:,\s*Culture=[^,\]]+)?(?:,\s*PublicKeyToken=[^,\]]+)?",
+      "",
+      System.Text.RegularExpressions.RegexOptions.None);
 
-    var cutoff = indices.Min();
-    return assemblyQualifiedName.Substring(0, cutoff);
+    return result;
   }
 
   /// <summary>
