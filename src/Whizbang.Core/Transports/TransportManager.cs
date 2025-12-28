@@ -132,7 +132,7 @@ public class TransportManager(IMessageSerializer serializer, IServiceInstancePro
     );
 
     // Publish to transport
-    await transport.PublishAsync(envelope, destination, CancellationToken.None);
+    await transport.PublishAsync(envelope, destination, envelopeType: null, CancellationToken.None);
   }
 
   /// <summary>

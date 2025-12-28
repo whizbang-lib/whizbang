@@ -73,6 +73,7 @@ public class InProcessTransport : ITransport {
   public async Task PublishAsync(
     IMessageEnvelope envelope,
     TransportDestination destination,
+    string? envelopeType = null,
     CancellationToken cancellationToken = default
   ) {
     cancellationToken.ThrowIfCancellationRequested();
@@ -144,7 +145,7 @@ public class InProcessTransport : ITransport {
 
     try {
       // Publish the request
-      await PublishAsync(requestEnvelope, destination, cancellationToken);
+      await PublishAsync(requestEnvelope, destination, envelopeType: null, cancellationToken);
 
       // Wait for response (with cancellation support)
       using (cancellationToken.Register(() => tcs.TrySetCanceled())) {

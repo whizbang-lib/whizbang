@@ -139,7 +139,7 @@ internal sealed class FakeTransport : ITransport {
 
   public Task InitializeAsync(CancellationToken cancellationToken = default) => Task.CompletedTask;
 
-  public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, CancellationToken cancellationToken = default) {
+  public Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, CancellationToken cancellationToken = default) {
     throw new NotImplementedException();
   }
 

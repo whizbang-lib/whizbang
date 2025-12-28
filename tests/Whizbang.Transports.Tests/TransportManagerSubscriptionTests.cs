@@ -46,7 +46,7 @@ public class TransportManagerSubscriptionTests {
       Payload = "test",
       Hops = []
     };
-    await transport.PublishAsync(testEnvelope, new TransportDestination("test-topic"), CancellationToken.None);
+    await transport.PublishAsync(testEnvelope, new TransportDestination("test-topic"), envelopeType: null, CancellationToken.None);
     await Task.Delay(50); // Allow async processing
 
     await Assert.That(handlerCalled).IsTrue();
@@ -282,7 +282,7 @@ public class TransportManagerSubscriptionTests {
       Payload = "test-payload",
       Hops = []
     };
-    await transport.PublishAsync(testEnvelope, new TransportDestination("handler-test"), CancellationToken.None);
+    await transport.PublishAsync(testEnvelope, new TransportDestination("handler-test"), envelopeType: null, CancellationToken.None);
     await Task.Delay(50); // Allow async processing
 
     // Assert

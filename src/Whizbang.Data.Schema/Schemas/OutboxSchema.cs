@@ -39,6 +39,12 @@ public static class OutboxSchema {
         Nullable: false
       ),
       new ColumnDefinition(
+        Name: "envelope_type",
+        DataType: WhizbangDataType.STRING,
+        MaxLength: 500,
+        Nullable: true
+      ),
+      new ColumnDefinition(
         Name: "event_data",
         DataType: WhizbangDataType.JSON,
         Nullable: false
@@ -174,6 +180,7 @@ public static class OutboxSchema {
     public const string MESSAGE_ID = "message_id";
     public const string DESTINATION = "destination";
     public const string EVENT_TYPE = "event_type";
+    public const string ENVELOPE_TYPE = "envelope_type";
     public const string EVENT_DATA = "event_data";
     public const string METADATA = "metadata";
     public const string SCOPE = "scope";

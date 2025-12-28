@@ -57,7 +57,8 @@ public class TransportPublishStrategy : IMessagePublishStrategy {
 
       // Publish to transport - envelope is already deserialized
       // OutboxWork is non-generic, Envelope is IMessageEnvelope<object>
-      await _transport.PublishAsync(work.Envelope, destination, cancellationToken);
+      // Pass EnvelopeType from OutboxWork to preserve original payload type information
+      await _transport.PublishAsync(work.Envelope, destination, work.EnvelopeType, cancellationToken);
 
       // Return success result
       return new MessagePublishResult {

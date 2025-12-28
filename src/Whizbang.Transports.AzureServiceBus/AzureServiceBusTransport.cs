@@ -136,6 +136,7 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
   public async Task PublishAsync(
     IMessageEnvelope envelope,
     TransportDestination destination,
+    string? envelopeType = null,
     CancellationToken cancellationToken = default
   ) {
     ObjectDisposedException.ThrowIf(_disposed, this);
@@ -147,14 +148,18 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
       var sender = await _getOrCreateSenderAsync(destination.Address, cancellationToken);
       _logger.LogWarning("DIAGNOSTIC [PublishAsync]: Got sender for {Destination}", destination.Address);
 
-      // Get the envelope type to store as metadata for deserialization
-      var envelopeType = envelope.GetType();
-      var envelopeTypeName = envelopeType.AssemblyQualifiedName
+      // Use provided envelope type name if available, otherwise get it from runtime type
+      // IMPORTANT: The envelope object is already correctly typed (MessageEnvelope<JsonElement>), so we serialize using envelope.GetType()
+      //            But for METADATA, we use the provided envelopeType string which preserves the original payload type information
+      var envelopeTypeName = envelopeType ?? envelope.GetType().AssemblyQualifiedName
         ?? throw new InvalidOperationException("Envelope type must have an assembly qualified name");
 
+      // For serialization, always use the actual runtime type of the envelope object (AOT-safe)
+      var envelopeRuntimeType = envelope.GetType();
+
       // Serialize envelope to JSON using AOT-compatible options from registry
-      var typeInfo = _jsonOptions.GetTypeInfo(envelopeType)
-        ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeType.Name}. Ensure the message type is registered via JsonContextRegistry.");
+      var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
+        ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}. Ensure the message type is registered via JsonContextRegistry.");
       var json = JsonSerializer.Serialize(envelope, typeInfo);
 
       // DIAGNOSTIC: Log the first 500 chars of JSON to see if MessageId is in there

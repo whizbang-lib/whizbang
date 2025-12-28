@@ -249,6 +249,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
           MessageId = r.WorkId,
           Destination = r.Destination!,
           Envelope = jsonEnvelope,
+          EnvelopeType = r.EnvelopeType!,
           StreamId = r.StreamId,
           PartitionNumber = r.PartitionNumber,
           Attempts = r.Attempts,
@@ -638,6 +639,9 @@ internal class WorkBatchRow {
 
   [Column("message_type")]
   public string? MessageType { get; set; }  // For outbox/inbox
+
+  [Column("envelope_type")]
+  public string? EnvelopeType { get; set; }  // For outbox work only
 
   [Column("message_data")]
   public string? MessageData { get; set; }

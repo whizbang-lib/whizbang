@@ -2457,4 +2457,125 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     await dbContext.SaveChangesAsync();
   }
+
+  /// <summary>
+  /// Minimal reproduction test for event storage issue.
+  /// Tests that events with [StreamKey] are properly stored in wh_event_store.
+  /// </summary>
+  [Test]
+  public async Task ProcessWorkBatchAsync_EventWithStreamKey_StoresInEventStoreAsync() {
+    // Arrange
+    await InsertServiceInstanceAsync(_instanceId, "TestService", "test-host", 12345);
+
+    // Create a simple test event with StreamKey
+    var testEventType = "Whizbang.Data.EFCore.Postgres.Tests.TestProductEvent, Whizbang.Data.EFCore.Postgres.Tests";
+    var productId = _idProvider.NewGuid();
+    var messageId = _idProvider.NewGuid();
+
+    // Simulate event payload with StreamKey (ProductId)
+    var eventPayload = $$"""
+    {
+      "ProductId": "{{productId}}",
+      "Name": "Test Product"
+    }
+    """;
+
+    // Create envelope with metadata indicating this is an event with stream_id
+    var envelope = $$"""
+    {
+      "MessageId": "{{messageId}}",
+      "Payload": {{eventPayload}},
+      "Hops": []
+    }
+    """;
+
+    var envelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{testEventType}]], Whizbang.Core";
+
+    var outboxMessage = new OutboxMessage {
+      MessageId = messageId,
+      Destination = "test-topic",
+      Envelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(
+        envelope,
+        JsonContextRegistry.CreateCombinedOptions()
+      )!,
+      EnvelopeType = envelopeType,
+      StreamId = productId,  // This should be extracted from [StreamKey] attribute
+      IsEvent = true,        // Mark as event
+      MessageType = testEventType
+    };
+
+    // Act
+    var result = await _sut.ProcessWorkBatchAsync(
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      receptorCompletions: [],
+      receptorFailures: [],
+      perspectiveCompletions: [],
+      perspectiveFailures: [],
+      newOutboxMessages: [outboxMessage],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
+      leaseSeconds: 300);
+
+    // Assert - Verify event was stored using raw SQL
+    var dbContext = CreateDbContext();
+    var connection = dbContext.Database.GetDbConnection();
+    await connection.OpenAsync();
+
+    try {
+      // Count events in event store
+      using var countCmd = connection.CreateCommand();
+      countCmd.CommandText = @"
+        SELECT COUNT(*)
+        FROM wh_event_store
+        WHERE event_id = @eventId";
+
+      var eventIdParam = countCmd.CreateParameter();
+      eventIdParam.ParameterName = "@eventId";
+      eventIdParam.Value = messageId;
+      countCmd.Parameters.Add(eventIdParam);
+
+      var eventStoreCount = (long)(await countCmd.ExecuteScalarAsync() ?? 0L);
+
+      await Assert.That(eventStoreCount).IsEqualTo(1L)
+        .Because("Event with is_event=true and stream_id should be stored in wh_event_store");
+
+      // Verify the stored event has correct stream_id
+      using var selectCmd = connection.CreateCommand();
+      selectCmd.CommandText = @"
+        SELECT event_id, stream_id, event_type
+        FROM wh_event_store
+        WHERE event_id = @eventId";
+
+      var eventIdParam2 = selectCmd.CreateParameter();
+      eventIdParam2.ParameterName = "@eventId";
+      eventIdParam2.Value = messageId;
+      selectCmd.Parameters.Add(eventIdParam2);
+
+      using var reader = await selectCmd.ExecuteReaderAsync();
+      var found = await reader.ReadAsync();
+
+      await Assert.That(found).IsTrue()
+        .Because("Event should exist in wh_event_store");
+
+      if (found) {
+        var storedStreamId = reader.GetGuid(reader.GetOrdinal("stream_id"));
+        var storedEventType = reader.GetString(reader.GetOrdinal("event_type"));
+
+        await Assert.That(storedStreamId).IsEqualTo(productId)
+          .Because("Stream ID should match the ProductId from [StreamKey]");
+        await Assert.That(storedEventType).IsEqualTo(testEventType);
+      }
+    } finally {
+      await connection.CloseAsync();
+    }
+  }
 }

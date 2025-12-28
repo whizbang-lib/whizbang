@@ -284,6 +284,7 @@ public class OrderedStreamProcessorTests {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = envelope,
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       StreamId = streamId,
       PartitionNumber = 0,
       Attempts = 0,

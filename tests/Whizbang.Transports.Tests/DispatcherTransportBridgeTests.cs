@@ -132,7 +132,7 @@ public class DispatcherTransportBridgeTests {
         };
 
         var responseDestination = new TransportDestination($"response-{requestEnvelope.MessageId.Value}");
-        await transport.PublishAsync(responseEnvelope, responseDestination, ct);
+        await transport.PublishAsync(responseEnvelope, responseDestination, envelopeType: null, ct);
       },
       destination: destination
     );
@@ -193,7 +193,7 @@ public class DispatcherTransportBridgeTests {
     };
 
     // Act - Publish to transport (simulates remote send)
-    await transport.PublishAsync(envelope, destination, CancellationToken.None);
+    await transport.PublishAsync(envelope, destination, envelopeType: null, CancellationToken.None);
 
     // Wait a bit for async processing
     await Task.Delay(100);
@@ -248,7 +248,7 @@ public class DispatcherTransportBridgeTests {
     };
 
     // Act - Publish serialized envelope to transport
-    await transport.PublishAsync(envelope, destination, CancellationToken.None);
+    await transport.PublishAsync(envelope, destination, envelopeType: null, CancellationToken.None);
     await Task.Delay(100);
 
     // Assert - Message was deserialized and passed to dispatcher
@@ -369,7 +369,7 @@ public class DispatcherTransportBridgeTests {
         };
 
         var responseDestination = new TransportDestination($"response-{requestEnvelope.MessageId.Value}");
-        await transport.PublishAsync(responseEnvelope, responseDestination, ct);
+        await transport.PublishAsync(responseEnvelope, responseDestination, envelopeType: null, ct);
       },
       destination: destination
     );

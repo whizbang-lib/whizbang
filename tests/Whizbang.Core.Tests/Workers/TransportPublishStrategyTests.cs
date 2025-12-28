@@ -45,7 +45,7 @@ public class TransportPublishStrategyTests {
     public IMessageEnvelope? LastPublishedEnvelope { get; private set; }
     public TransportDestination? LastPublishedDestination { get; private set; }
 
-    public async Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, CancellationToken cancellationToken = default) {
+    public async Task PublishAsync(IMessageEnvelope envelope, TransportDestination destination, string? envelopeType = null, CancellationToken cancellationToken = default) {
       LastPublishedEnvelope = envelope;
       LastPublishedDestination = destination;
 
@@ -119,6 +119,7 @@ public class TransportPublishStrategyTests {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       StreamId = Guid.NewGuid(),
       PartitionNumber = 1,
       Attempts = 0,
@@ -154,6 +155,7 @@ public class TransportPublishStrategyTests {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       StreamId = Guid.NewGuid(),
       PartitionNumber = 1,
       Attempts = 1,
@@ -186,6 +188,7 @@ public class TransportPublishStrategyTests {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       StreamId = Guid.NewGuid(),
       PartitionNumber = 1,
       Attempts = 0,
@@ -216,6 +219,7 @@ public class TransportPublishStrategyTests {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       StreamId = streamId,
       PartitionNumber = 1,
       Attempts = 0,

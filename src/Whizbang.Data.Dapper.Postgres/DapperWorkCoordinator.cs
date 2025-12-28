@@ -208,6 +208,7 @@ public class DapperWorkCoordinator(
           MessageId = r.work_id,
           Destination = r.destination!,
           Envelope = jsonEnvelope,
+          EnvelopeType = r.envelope_type!,
           StreamId = r.work_stream_id,
           PartitionNumber = r.partition_number,
           Attempts = r.attempts,
@@ -493,6 +494,7 @@ internal class WorkBatchRow {
   public int? partition_number { get; set; }  // Partition assignment for load balancing
   public string? destination { get; set; }  // Topic name (outbox) or handler name (inbox)
   public string? message_type { get; set; }  // Assembly qualified name or perspective name
+  public string? envelope_type { get; set; }  // Assembly qualified name of envelope type (for outbox only)
   public string? message_data { get; set; }  // Complete serialized MessageEnvelope<T> as JSON
   public string? metadata { get; set; }
   public int status { get; set; }  // MessageProcessingStatus flags

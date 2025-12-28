@@ -33,6 +33,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
         new OutboxWork {
           MessageId = messageId1,
           Destination = "test-topic",
+          EnvelopeType = "Whizbang.Core.Tests.Messaging.ScopedWorkCoordinatorStrategyImmediateProcessingTests+TestMessageEnvelope, Whizbang.Core.Tests",
           Envelope = _createTestEnvelope(messageId1),
           Attempts = 0,
           Status = MessageProcessingStatus.None
@@ -40,6 +41,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
         new OutboxWork {
           MessageId = messageId2,
           Destination = "test-topic",
+          EnvelopeType = "Whizbang.Core.Tests.Messaging.ScopedWorkCoordinatorStrategyImmediateProcessingTests+TestMessageEnvelope, Whizbang.Core.Tests",
           Envelope = _createTestEnvelope(messageId2),
           Attempts = 0,
           Status = MessageProcessingStatus.None
@@ -113,8 +115,8 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     var msg1 = System.Guid.NewGuid();
     var msg2 = System.Guid.NewGuid();
     coordinator.WorkToReturn = [
-      new OutboxWork { MessageId = msg1, Destination = "topic1", Envelope = _createTestEnvelope(msg1), Attempts = 0, Status = MessageProcessingStatus.None },
-      new OutboxWork { MessageId = msg2, Destination = "topic1", Envelope = _createTestEnvelope(msg2), Attempts = 0, Status = MessageProcessingStatus.None }
+      new OutboxWork { MessageId = msg1, Destination = "topic1", EnvelopeType = "Whizbang.Core.Tests.Messaging.ScopedWorkCoordinatorStrategyImmediateProcessingTests+TestMessageEnvelope, Whizbang.Core.Tests", Envelope = _createTestEnvelope(msg1), Attempts = 0, Status = MessageProcessingStatus.None },
+      new OutboxWork { MessageId = msg2, Destination = "topic1", EnvelopeType = "Whizbang.Core.Tests.Messaging.ScopedWorkCoordinatorStrategyImmediateProcessingTests+TestMessageEnvelope, Whizbang.Core.Tests", Envelope = _createTestEnvelope(msg2), Attempts = 0, Status = MessageProcessingStatus.None }
     ];
     var queued1 = System.Guid.NewGuid();
     strategy.QueueOutboxMessage(new OutboxMessage {
@@ -132,9 +134,9 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     var msg4 = System.Guid.NewGuid();
     var msg5 = System.Guid.NewGuid();
     coordinator.WorkToReturn = [
-      new OutboxWork { MessageId = msg3, Destination = "topic2", Envelope = _createTestEnvelope(msg3), Attempts = 0, Status = MessageProcessingStatus.None },
-      new OutboxWork { MessageId = msg4, Destination = "topic2", Envelope = _createTestEnvelope(msg4), Attempts = 0, Status = MessageProcessingStatus.None },
-      new OutboxWork { MessageId = msg5, Destination = "topic2", Envelope = _createTestEnvelope(msg5), Attempts = 0, Status = MessageProcessingStatus.None }
+      new OutboxWork { MessageId = msg3, Destination = "topic2", EnvelopeType = "Whizbang.Core.Tests.Messaging.ScopedWorkCoordinatorStrategyImmediateProcessingTests+TestMessageEnvelope, Whizbang.Core.Tests", Envelope = _createTestEnvelope(msg3), Attempts = 0, Status = MessageProcessingStatus.None },
+      new OutboxWork { MessageId = msg4, Destination = "topic2", EnvelopeType = "Whizbang.Core.Tests.Messaging.ScopedWorkCoordinatorStrategyImmediateProcessingTests+TestMessageEnvelope, Whizbang.Core.Tests", Envelope = _createTestEnvelope(msg4), Attempts = 0, Status = MessageProcessingStatus.None },
+      new OutboxWork { MessageId = msg5, Destination = "topic2", EnvelopeType = "Whizbang.Core.Tests.Messaging.ScopedWorkCoordinatorStrategyImmediateProcessingTests+TestMessageEnvelope, Whizbang.Core.Tests", Envelope = _createTestEnvelope(msg5), Attempts = 0, Status = MessageProcessingStatus.None }
     ];
     var queued2 = System.Guid.NewGuid();
     strategy.QueueOutboxMessage(new OutboxMessage {
@@ -161,9 +163,9 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
 
     var coordinator = new TestWorkCoordinator {
       WorkToReturn = [
-        new OutboxWork { MessageId = messageId1, Destination = "topic", Envelope = _createTestEnvelope(messageId1), Attempts = 0, Status = MessageProcessingStatus.None },
-        new OutboxWork { MessageId = messageId2, Destination = "topic", Envelope = _createTestEnvelope(messageId2), Attempts = 0, Status = MessageProcessingStatus.None },
-        new OutboxWork { MessageId = messageId3, Destination = "topic", Envelope = _createTestEnvelope(messageId3), Attempts = 0, Status = MessageProcessingStatus.None }
+        new OutboxWork { MessageId = messageId1, Destination = "topic", EnvelopeType = "Whizbang.Core.Tests.Messaging.ScopedWorkCoordinatorStrategyImmediateProcessingTests+TestMessageEnvelope, Whizbang.Core.Tests", Envelope = _createTestEnvelope(messageId1), Attempts = 0, Status = MessageProcessingStatus.None },
+        new OutboxWork { MessageId = messageId2, Destination = "topic", EnvelopeType = "Whizbang.Core.Tests.Messaging.ScopedWorkCoordinatorStrategyImmediateProcessingTests+TestMessageEnvelope, Whizbang.Core.Tests", Envelope = _createTestEnvelope(messageId2), Attempts = 0, Status = MessageProcessingStatus.None },
+        new OutboxWork { MessageId = messageId3, Destination = "topic", EnvelopeType = "Whizbang.Core.Tests.Messaging.ScopedWorkCoordinatorStrategyImmediateProcessingTests+TestMessageEnvelope, Whizbang.Core.Tests", Envelope = _createTestEnvelope(messageId3), Attempts = 0, Status = MessageProcessingStatus.None }
       ]
     };
 

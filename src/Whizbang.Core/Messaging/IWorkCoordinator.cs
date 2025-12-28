@@ -391,6 +391,13 @@ public record OutboxWork {
   public required IMessageEnvelope<JsonElement> Envelope { get; init; }
 
   /// <summary>
+  /// Assembly-qualified name of the envelope type (e.g., "Whizbang.Core.MessageEnvelope`1[[MyApp.CreateProductCommand, MyApp]], Whizbang.Core").
+  /// Required for proper deserialization when publishing to transports.
+  /// Stored in database but Envelope.GetType() at runtime returns MessageEnvelope&lt;JsonElement&gt; which loses the original payload type.
+  /// </summary>
+  public required string EnvelopeType { get; init; }
+
+  /// <summary>
   /// Stream ID for ordering (aggregate ID or message ID).
   /// Events from the same stream must be processed in order.
   /// </summary>

@@ -86,6 +86,7 @@ internal sealed class TestTransport : ITransport {
   public Task PublishAsync(
     IMessageEnvelope envelope,
     TransportDestination destination,
+    string? envelopeType = null,
     CancellationToken cancellationToken = default) {
     return Task.CompletedTask;
   }

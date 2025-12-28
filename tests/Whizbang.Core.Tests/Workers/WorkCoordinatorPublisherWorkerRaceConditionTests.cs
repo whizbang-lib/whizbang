@@ -512,6 +512,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     return new OutboxWork {
       MessageId = messageId,
       Destination = destination,
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       Envelope = _createTestEnvelope(messageId),
       StreamId = Guid.NewGuid(),
       PartitionNumber = 1,

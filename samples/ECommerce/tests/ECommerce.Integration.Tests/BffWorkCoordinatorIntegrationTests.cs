@@ -451,6 +451,7 @@ public class TestTransport : Whizbang.Core.Transports.ITransport {
   public Task PublishAsync(
     Whizbang.Core.Observability.IMessageEnvelope envelope,
     Whizbang.Core.Transports.TransportDestination destination,
+    string? envelopeType = null,
     CancellationToken cancellationToken = default) {
 
     lock (_lock) {

@@ -78,6 +78,7 @@ public class WorkBatchCoordinatorTests {
     var outboxWork = new OutboxWork {
       MessageId = messageId,
       Destination = "test-topic",
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       Envelope = _createTestEnvelope(messageId),
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
@@ -168,6 +169,7 @@ public class WorkBatchCoordinatorTests {
     var outboxWork = new OutboxWork {
       MessageId = messageId,
       Destination = "test-topic",
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       Envelope = _createTestEnvelope(messageId),
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,

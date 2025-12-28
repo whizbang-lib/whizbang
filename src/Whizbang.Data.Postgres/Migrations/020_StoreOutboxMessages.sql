@@ -24,6 +24,7 @@ BEGIN
     SELECT
       (elem->>'MessageId')::UUID as msg_id,
       elem->>'Destination' as destination,
+      elem->>'MessageType' as message_type,
       elem->>'EnvelopeType' as envelope_type,
       elem->'Envelope' as envelope_data,
       elem->'Metadata' as metadata,
@@ -44,6 +45,7 @@ BEGIN
       message_id,
       destination,
       event_type,
+      envelope_type,
       event_data,
       metadata,
       scope,
@@ -58,6 +60,7 @@ BEGIN
     ) VALUES (
       v_msg.msg_id,
       v_msg.destination,
+      v_msg.message_type,
       v_msg.envelope_type,
       COALESCE(v_msg.envelope_data, '{}'::jsonb),
       COALESCE(v_msg.metadata, '{}'::jsonb),

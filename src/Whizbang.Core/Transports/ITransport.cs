@@ -41,6 +41,7 @@ public interface ITransport {
   /// </summary>
   /// <param name="envelope">The message envelope to publish</param>
   /// <param name="destination">The destination to publish to</param>
+  /// <param name="envelopeType">Optional assembly-qualified name of the envelope type. If provided, used instead of envelope.GetType() for serialization metadata.</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Task that completes when the message is published</returns>
   /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_PublishAsync_WithValidMessage_CompletesSuccessfullyAsync</tests>
@@ -48,6 +49,7 @@ public interface ITransport {
   Task PublishAsync(
     IMessageEnvelope envelope,
     TransportDestination destination,
+    string? envelopeType = null,
     CancellationToken cancellationToken = default
   );
 

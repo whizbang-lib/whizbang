@@ -349,6 +349,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = _createTestEnvelope(messageId),
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       StreamId = Guid.NewGuid(),
       PartitionNumber = 1,
       Attempts = 0,
