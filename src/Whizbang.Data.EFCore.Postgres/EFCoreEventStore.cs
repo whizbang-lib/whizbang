@@ -78,6 +78,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     var metadataDoc = JsonDocument.Parse(metadataJson);
 
     var record = new EventStoreRecord {
+      Id = envelope.MessageId.Value,  // Use MessageId from envelope as event_id (matches outbox message_id)
       StreamId = streamId,
       AggregateId = streamId,  // Backwards compatibility: AggregateId = StreamId
       AggregateType = typeof(TMessage).FullName ?? "Unknown",  // Aggregate type from event type

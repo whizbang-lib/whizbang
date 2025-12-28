@@ -31,10 +31,10 @@ public class OrderPerspectiveTests {
     var perspective = new OrderPerspective(store);
     var orderId = _orderIdProvider.NewId();
 
-    var @event = new SampleOrderCreatedEvent(
-      OrderId: orderId,
-      Amount: 99.99m
-    );
+    var @event = new SampleOrderCreatedEvent {
+      OrderId = orderId,
+      Amount = 99.99m
+    };
 
     // Act
     await perspective.Update(@event, CancellationToken.None);
@@ -61,7 +61,7 @@ public class OrderPerspectiveTests {
     var perspective = new OrderPerspective(store);
     var orderId = _orderIdProvider.NewId();
 
-    var @event = new SampleOrderCreatedEvent(orderId, 50.00m);
+    var @event = new SampleOrderCreatedEvent { OrderId = orderId, Amount = 50.00m };
 
     // Act
     await perspective.Update(@event, CancellationToken.None);
@@ -86,7 +86,7 @@ public class OrderPerspectiveTests {
     var perspective = new OrderPerspective(store);
     var orderId = _orderIdProvider.NewId();
 
-    var @event = new SampleOrderCreatedEvent(orderId, 75.50m);
+    var @event = new SampleOrderCreatedEvent { OrderId = orderId, Amount = 75.50m };
 
     // Act
     await perspective.Update(@event, CancellationToken.None);
@@ -112,7 +112,7 @@ public class OrderPerspectiveTests {
     var orderId = _orderIdProvider.NewId();
 
     var before = DateTime.UtcNow;
-    var @event = new SampleOrderCreatedEvent(orderId, 100.00m);
+    var @event = new SampleOrderCreatedEvent { OrderId = orderId, Amount = 100.00m };
 
     // Act
     await perspective.Update(@event, CancellationToken.None);
@@ -139,8 +139,8 @@ public class OrderPerspectiveTests {
     var orderId = _orderIdProvider.NewId();
 
     // Act - Update same order twice
-    await perspective.Update(new SampleOrderCreatedEvent(orderId, 10.00m), CancellationToken.None);
-    await perspective.Update(new SampleOrderCreatedEvent(orderId, 20.00m), CancellationToken.None);
+    await perspective.Update(new SampleOrderCreatedEvent { OrderId = orderId, Amount = 10.00m }, CancellationToken.None);
+    await perspective.Update(new SampleOrderCreatedEvent { OrderId = orderId, Amount = 20.00m }, CancellationToken.None);
 
     // Assert - Version should be incremented
     var saved = await context.Set<PerspectiveRow<Order>>()

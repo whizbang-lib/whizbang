@@ -46,7 +46,9 @@ public abstract class Dispatcher(
   IServiceInstanceProvider instanceProvider,
   ITraceStore? traceStore = null,
   ITransport? transport = null,
-  JsonSerializerOptions? jsonOptions = null
+  JsonSerializerOptions? jsonOptions = null,
+  Routing.ITopicRegistry? topicRegistry = null,
+  Routing.ITopicRoutingStrategy? topicRoutingStrategy = null
   ) : IDispatcher {
   private readonly IServiceProvider _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -54,6 +56,8 @@ public abstract class Dispatcher(
   private readonly ITraceStore? _traceStore = traceStore;
   private readonly ITransport? _transport = transport;
   private readonly JsonSerializerOptions? _jsonOptions = jsonOptions;
+  private readonly Routing.ITopicRegistry? _topicRegistry = topicRegistry;
+  private readonly Routing.ITopicRoutingStrategy _topicRoutingStrategy = topicRoutingStrategy ?? Routing.PassthroughRoutingStrategy.Instance;
 
   /// <summary>
   /// Gets the service provider for receptor resolution.
@@ -622,56 +626,8 @@ public abstract class Dispatcher(
 
     var eventType = eventData.GetType();
 
-    // If this is an IEvent, write to Event Store FIRST
-    // Create a scope to resolve scoped services (IEventStore, IAggregateIdExtractor)
-    // IPerspectiveInvoker (if registered) will be automatically invoked when scope disposes
-    var scope = _scopeFactory.CreateScope();
-    try {
-      var eventStore = scope.ServiceProvider.GetService<IEventStore>();
-      var aggregateIdExtractor = scope.ServiceProvider.GetService<IAggregateIdExtractor>();
-
-      if (eventData is IEvent && eventStore != null) {
-        // Create envelope with event
-        var messageId = MessageId.New();
-        var envelope = new MessageEnvelope<TEvent> {
-          MessageId = messageId,
-          Payload = eventData,
-          Hops = []
-        };
-
-        // Add hop indicating message is being stored to event store
-        var hop = new MessageHop {
-          Type = HopType.Current,
-          ServiceInstance = _instanceProvider.ToInfo(),
-          Timestamp = DateTimeOffset.UtcNow
-        };
-        envelope.AddHop(hop);
-
-        // Determine stream ID: use aggregate ID if available, otherwise use message ID
-        // This ensures ALL events are persisted while maintaining proper streams for aggregates
-        Guid streamId;
-        if (aggregateIdExtractor != null) {
-          var aggregateId = aggregateIdExtractor.ExtractAggregateId(eventData, eventType);
-          streamId = aggregateId ?? messageId.Value;
-        } else {
-          streamId = messageId.Value;
-        }
-
-        // Write to Event Store (this queues event to IPerspectiveInvoker if registered)
-        await eventStore.AppendAsync(streamId, envelope);
-      }
-
-      // No need to manually dispose IPerspectiveInvoker - it will be disposed
-      // when the scope is disposed (scoped services are disposed in reverse order)
-    } finally {
-      // Dispose scope asynchronously to properly handle services that only implement IAsyncDisposable
-      // This will automatically invoke IPerspectiveInvoker.DisposeAsync if registered
-      if (scope is IAsyncDisposable asyncDisposable) {
-        await asyncDisposable.DisposeAsync();
-      } else {
-        scope.Dispose();
-      }
-    }
+    // Create MessageId once - used for outbox and will be used by process_work_batch for event storage
+    var messageId = MessageId.New();
 
     // Get strongly-typed delegate from generated code
     var publisher = GetReceptorPublisher(eventData, eventType);
@@ -680,7 +636,8 @@ public abstract class Dispatcher(
     await publisher(eventData);
 
     // Publish event for cross-service delivery if work coordinator strategy is available
-    await _publishToOutboxViaScopeAsync(eventData, eventType);
+    // process_work_batch will store events to wh_event_store and create perspective events atomically
+    await _publishToOutboxViaScopeAsync(eventData, eventType, messageId);
   }
 
   /// <summary>
@@ -689,7 +646,7 @@ public abstract class Dispatcher(
   /// Resolves IWorkCoordinatorStrategy from active scope (scoped service).
   /// Creates a complete MessageEnvelope with a hop indicating "stored to outbox".
   /// </summary>
-  private async Task _publishToOutboxViaScopeAsync<TEvent>(TEvent eventData, Type eventType) {
+  private async Task _publishToOutboxViaScopeAsync<TEvent>(TEvent eventData, Type eventType, MessageId messageId) {
     // Create scope to resolve scoped IWorkCoordinatorStrategy
     var scope = _scopeFactory.CreateScope();
     try {
@@ -700,12 +657,10 @@ public abstract class Dispatcher(
         return;
       }
 
-      // Determine destination topic from event type name
-      // TODO: Make this configurable via IEventRoutingConfiguration
-      var destination = _determineEventTopic(eventType);
+      // Resolve destination topic using registry and routing strategy
+      var destination = _resolveEventTopic(eventType);
 
-      // Create MessageEnvelope wrapping the event
-      var messageId = MessageId.New();
+      // Create MessageEnvelope wrapping the event (using SAME messageId as event store)
       var envelope = new MessageEnvelope<TEvent> {
         MessageId = messageId,
         Payload = eventData,
@@ -744,51 +699,69 @@ public abstract class Dispatcher(
   }
 
   /// <summary>
-  /// Determines the Service Bus topic for an event type.
-  /// Convention: ProductCreatedEvent → "products", InventoryRestockedEvent → "inventory"
+  /// Resolves the Service Bus topic for an event type using the topic registry and routing strategy.
+  /// First attempts registry lookup (source-generated or configured), then falls back to convention.
+  /// Finally applies routing strategy for transformations (e.g., pool suffix, tenant prefix).
   /// </summary>
-  private static string _determineEventTopic(Type eventType) {
-    var typeName = eventType.Name;
+  /// <param name="eventType">The event type to resolve topic for</param>
+  /// <param name="context">Optional routing context (tenant ID, region, etc.)</param>
+  /// <returns>The resolved topic name</returns>
+  private string _resolveEventTopic(Type eventType, IReadOnlyDictionary<string, object>? context = null) {
+    // 1. Try registry first (source-generated or configured)
+    var baseTopic = _topicRegistry?.GetBaseTopic(eventType);
 
-    // Convention-based routing: ProductXxxEvent → "products", InventoryXxxEvent → "inventory"
-    if (typeName.StartsWith("Product", StringComparison.Ordinal)) {
-      return "products";
+    // 2. Fallback to convention if not found in registry
+    if (baseTopic == null) {
+      var typeName = eventType.Name;
+
+      // Convention-based routing: ProductXxxEvent → "products", InventoryXxxEvent → "inventory"
+      if (typeName.StartsWith("Product", StringComparison.Ordinal)) {
+        baseTopic = "products";
+      } else if (typeName.StartsWith("Inventory", StringComparison.Ordinal)) {
+        baseTopic = "inventory";
+      } else if (typeName.StartsWith("Order", StringComparison.Ordinal)) {
+        baseTopic = "orders";
+      } else {
+        // Default: use lowercase type name without "Event" suffix
+        baseTopic = typeName.Replace("Event", "").ToLowerInvariant();
+      }
     }
 
-    if (typeName.StartsWith("Inventory", StringComparison.Ordinal)) {
-      return "inventory";
-    }
-
-    if (typeName.StartsWith("Order", StringComparison.Ordinal)) {
-      return "orders";
-    }
-
-    // Default: use lowercase type name without "Event" suffix
-    return typeName.Replace("Event", "").ToLowerInvariant();
+    // 3. Apply routing strategy (pool suffix, tenant prefix, etc.)
+    return _topicRoutingStrategy.ResolveTopic(eventType, baseTopic, context);
   }
 
   /// <summary>
-  /// Determines the Service Bus topic for a command type.
-  /// Convention: CreateProductCommand → "products", UpdateInventoryCommand → "inventory"
+  /// Resolves the Service Bus destination for a command type using the topic registry and routing strategy.
+  /// First attempts registry lookup (source-generated or configured), then falls back to convention.
+  /// Finally applies routing strategy for transformations (e.g., pool suffix, tenant prefix).
   /// </summary>
-  private static string _determineCommandDestination(Type messageType) {
-    var typeName = messageType.Name;
+  /// <param name="commandType">The command type to resolve destination for</param>
+  /// <param name="context">Optional routing context (tenant ID, region, etc.)</param>
+  /// <returns>The resolved destination name</returns>
+  private string _resolveCommandDestination(Type commandType, IReadOnlyDictionary<string, object>? context = null) {
+    // 1. Try registry first (source-generated or configured)
+    var baseTopic = _topicRegistry?.GetBaseTopic(commandType);
 
-    // Convention-based routing: ProductXxxCommand → "products", InventoryXxxCommand → "inventory"
-    if (typeName.StartsWith("Product", StringComparison.Ordinal) || typeName.StartsWith("CreateProduct", StringComparison.Ordinal)) {
-      return "products";
+    // 2. Fallback to convention if not found in registry
+    if (baseTopic == null) {
+      var typeName = commandType.Name;
+
+      // Convention-based routing: ProductXxxCommand → "products", InventoryXxxCommand → "inventory"
+      if (typeName.StartsWith("Product", StringComparison.Ordinal) || typeName.StartsWith("CreateProduct", StringComparison.Ordinal)) {
+        baseTopic = "products";
+      } else if (typeName.StartsWith("Inventory", StringComparison.Ordinal)) {
+        baseTopic = "inventory";
+      } else if (typeName.StartsWith("Order", StringComparison.Ordinal)) {
+        baseTopic = "orders";
+      } else {
+        // Default: use lowercase type name without "Command" suffix
+        baseTopic = typeName.Replace("Command", "").ToLowerInvariant();
+      }
     }
 
-    if (typeName.StartsWith("Inventory", StringComparison.Ordinal)) {
-      return "inventory";
-    }
-
-    if (typeName.StartsWith("Order", StringComparison.Ordinal)) {
-      return "orders";
-    }
-
-    // Default: use lowercase type name without "Command" suffix
-    return typeName.Replace("Command", "").ToLowerInvariant();
+    // 3. Apply routing strategy (pool suffix, tenant prefix, etc.)
+    return _topicRoutingStrategy.ResolveTopic(commandType, baseTopic, context);
   }
 
   /// <summary>
@@ -815,8 +788,8 @@ public abstract class Dispatcher(
         throw new HandlerNotFoundException(messageType);
       }
 
-      // Determine destination topic from message type name
-      var destination = _determineCommandDestination(messageType);
+      // Resolve destination using registry and routing strategy
+      var destination = _resolveCommandDestination(messageType);
 
       // Create envelope with hop for observability - generic version preserves type!
       var envelope = _createEnvelope<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
@@ -875,8 +848,8 @@ public abstract class Dispatcher(
         throw new HandlerNotFoundException(messageType);
       }
 
-      // Determine destination topic from message type name
-      var destination = _determineCommandDestination(messageType);
+      // Resolve destination using registry and routing strategy
+      var destination = _resolveCommandDestination(messageType);
 
       // Create envelope with hop for observability (returns IMessageEnvelope)
       // WARN: This creates MessageEnvelope<object> - type information is lost
@@ -936,7 +909,7 @@ public abstract class Dispatcher(
 
       // Queue ALL messages to the strategy
       foreach (var (message, messageType, context) in messages) {
-        var destination = _determineCommandDestination(messageType);
+        var destination = _resolveCommandDestination(messageType);
         var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
         var newOutboxMessage = _serializeToNewOutboxMessage(envelope, message, messageType, destination);
 

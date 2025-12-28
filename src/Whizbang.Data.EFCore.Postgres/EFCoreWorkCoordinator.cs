@@ -38,13 +38,15 @@ namespace Whizbang.Data.EFCore.Postgres;
 public class EFCoreWorkCoordinator<TDbContext>(
   TDbContext dbContext,
   JsonSerializerOptions jsonOptions,
-  ILogger<EFCoreWorkCoordinator<TDbContext>>? logger = null
+  ILogger<EFCoreWorkCoordinator<TDbContext>>? logger = null,
+  string? connectionString = null
 ) : IWorkCoordinator
   where TDbContext : DbContext {
   private readonly TDbContext _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<EFCoreWorkCoordinator<TDbContext>>? _logger = logger;
-  private readonly string _connectionString = dbContext.Database.GetConnectionString()
+  private readonly string _connectionString = connectionString
+    ?? dbContext.Database.GetConnectionString()
     ?? throw new InvalidOperationException("DbContext must have a connection string configured");
 
   public async Task<WorkBatch> ProcessWorkBatchAsync(

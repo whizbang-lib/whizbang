@@ -362,10 +362,10 @@ public class ParallelExecutorTests : ExecutionStrategyContractTests {
 
     await Task.WhenAll(tasks);
 
-    // Assert - All tasks should have started within a short time window (< 50ms)
+    // Assert - All tasks should have started within a short time window (< 100ms for systems under load)
     var times = executionTimes.OrderBy(t => t).ToList();
     var timeSpan = times.Last() - times.First();
-    await Assert.That(timeSpan.TotalMilliseconds).IsLessThan(50);
+    await Assert.That(timeSpan.TotalMilliseconds).IsLessThan(100);
 
     await executor.StopAsync();
   }

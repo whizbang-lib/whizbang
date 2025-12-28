@@ -11,6 +11,8 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Generator will discover this and create EF Core configuration for PerspectiveRow&lt;Order&gt;.
 /// </summary>
 public class OrderPerspective(IPerspectiveStore<Order> store) : IPerspectiveFor<Order, SampleOrderCreatedEvent> {
+  private readonly IPerspectiveStore<Order> _store = store;
+
   public Order Apply(Order currentData, SampleOrderCreatedEvent @event) {
     // Create new read model from the event (pure function - no I/O)
     return new Order {
@@ -19,12 +21,32 @@ public class OrderPerspective(IPerspectiveStore<Order> store) : IPerspectiveFor<
       Status = "Created"
     };
   }
+
+  public async Task Update(SampleOrderCreatedEvent @event, CancellationToken cancellationToken = default) {
+    // Get current model or create new one
+    var streamId = @event.OrderId.Value;
+    var current = await _store.GetByStreamIdAsync(streamId, cancellationToken) ?? new Order {
+      OrderId = @event.OrderId,
+      Amount = 0,
+      Status = "New"
+    };
+
+    // Apply the event
+    var updated = Apply(current, @event);
+
+    // Save the updated model
+    await _store.UpsertAsync(streamId, updated, cancellationToken);
+  }
 }
 
 /// <summary>
 /// Sample event for testing.
 /// </summary>
-public record SampleOrderCreatedEvent(TestOrderId OrderId, decimal Amount) : IEvent;
+public record SampleOrderCreatedEvent : IEvent {
+  [StreamKey]
+  public required TestOrderId OrderId { get; init; }
+  public required decimal Amount { get; init; }
+}
 
 /// <summary>
 /// Read model maintained by OrderPerspective.

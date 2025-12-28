@@ -307,7 +307,8 @@ BEGIN
   -- Phase 4.5: Event Storage
   -- ========================================
   -- Store events from newly created outbox/inbox messages to wh_event_store
-  -- with sequential versioning and optimistic concurrency control
+  -- with sequential versioning and optimistic concurrency control.
+  -- This is the authoritative event storage - all events flow through process_work_batch.
 
   -- Store events from outbox messages
   WITH outbox_events AS (
@@ -358,13 +359,7 @@ BEGIN
     bv.message_id as event_id,
     bv.stream_id,
     bv.stream_id as aggregate_id,
-    CASE
-      WHEN bv.event_type LIKE '%.%' THEN
-        split_part(bv.event_type, '.', -2)
-      WHEN bv.event_type LIKE '%Event' THEN
-        regexp_replace(bv.event_type, '([A-Z][a-z]+).*Event$', '\1')
-      ELSE 'Unknown'
-    END as aggregate_type,
+    SPLIT_PART(normalize_event_type(bv.event_type), ',', 1) as aggregate_type,
     normalize_event_type(bv.event_type),
     bv.event_data,
     bv.metadata,
@@ -424,13 +419,7 @@ BEGIN
     bv.message_id as event_id,
     bv.stream_id,
     bv.stream_id as aggregate_id,
-    CASE
-      WHEN bv.event_type LIKE '%.%' THEN
-        split_part(bv.event_type, '.', -2)
-      WHEN bv.event_type LIKE '%Event' THEN
-        regexp_replace(bv.event_type, '([A-Z][a-z]+).*Event$', '\1')
-      ELSE 'Unknown'
-    END as aggregate_type,
+    SPLIT_PART(normalize_event_type(bv.event_type), ',', 1) as aggregate_type,
     normalize_event_type(bv.event_type),
     bv.event_data,
     bv.metadata,

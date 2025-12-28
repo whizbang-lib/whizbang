@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
 using Aspire.Hosting;
 using Aspire.Hosting.Testing;
 using ECommerce.BFF.API.Lenses;
@@ -28,6 +29,7 @@ namespace ECommerce.Integration.Tests.Fixtures;
 /// </summary>
 public sealed class AspireIntegrationFixture : IAsyncDisposable {
   private DistributedApplication? _app;
+  private DirectServiceBusEmulatorFixture? _serviceBusFixture;
   private bool _isInitialized;
   private IHost? _inventoryHost;
   private IHost? _bffHost;
@@ -35,7 +37,6 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   private readonly Guid _bffInstanceId = Uuid7.NewUuid7().ToGuid(); // Unique ID for BFF partition claiming
   private readonly Guid _testPollerInstanceId = Uuid7.NewUuid7().ToGuid(); // Separate ID for test polling to avoid work conflicts
   private string? _postgresConnection;
-  private string? _serviceBusConnection;
   private IServiceScope? _inventoryScope;  // Long-lived scope for lens access
   private IServiceScope? _bffScope;  // Long-lived scope for lens access
 
@@ -81,6 +82,12 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     ?? throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
 
   /// <summary>
+  /// Gets the Azure Service Bus connection string for direct Service Bus operations.
+  /// </summary>
+  public string ServiceBusConnectionString => _serviceBusFixture?.ServiceBusConnectionString
+    ?? throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
+
+  /// <summary>
   /// Gets a logger instance for use in test scenarios.
   /// </summary>
   public ILogger<T> GetLogger<T>() {
@@ -99,41 +106,44 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       return;
     }
 
-    Console.WriteLine("[AspireFixture] Starting Aspire test infrastructure...");
+    Console.WriteLine("[AspireFixture] Starting Azure Service Bus Emulator via docker-compose...");
 
-    // Create and start the Aspire distributed application
-    // IMPORTANT: Service Bus emulator takes 60-90 seconds to start on ARM64 (see GitHub issue #8818)
-    // We need to give Aspire enough time to start the emulator before timing out
+    // Start Service Bus emulator FIRST (independent of Aspire)
+    // Using DirectServiceBusEmulatorFixture with Config-TrueFilter.json containing:
+    // - products topic with products-worker and products-bff subscriptions
+    // - inventory topic with inventory-worker and inventory-bff subscriptions
+    _serviceBusFixture = new DirectServiceBusEmulatorFixture("Config-TrueFilter.json");
+    await _serviceBusFixture.InitializeAsync(cancellationToken);
+
+    Console.WriteLine("[AspireFixture] Service Bus emulator ready!");
+    Console.WriteLine("[AspireFixture] Starting Aspire test infrastructure (PostgreSQL only)...");
+
+    // Create and start the Aspire distributed application (PostgreSQL only)
     var appHost = await DistributedApplicationTestingBuilder
       .CreateAsync<Projects.ECommerce_Integration_Tests_AppHost>(cancellationToken);
 
     _app = await appHost.BuildAsync(cancellationToken);
 
-    // Use a 3-minute timeout for starting containers (default is much shorter)
-    // Service Bus emulator needs ~60-90s to initialize SQL Server + create databases + provision topics
-    using var startupCts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+    // Use a 2-minute timeout for starting PostgreSQL container
+    using var startupCts = new CancellationTokenSource(TimeSpan.FromMinutes(2));
     await _app.StartAsync(startupCts.Token);
 
-    Console.WriteLine("[AspireFixture] Aspire app started. Getting connection strings...");
+    Console.WriteLine("[AspireFixture] Aspire app started. Getting PostgreSQL connection string...");
 
-    // Get connection strings from Aspire resources
+    // Get PostgreSQL connection string from Aspire
     _postgresConnection = await _app.GetConnectionStringAsync("whizbang-integration-test", cancellationToken)
       ?? throw new InvalidOperationException("Failed to get PostgreSQL connection string");
 
-    _serviceBusConnection = await _app.GetConnectionStringAsync("sbemulatorns", cancellationToken)
-      ?? throw new InvalidOperationException("Failed to get Service Bus connection string");
-
     Console.WriteLine($"[AspireFixture] PostgreSQL Connection: {_postgresConnection}");
-    Console.WriteLine($"[AspireFixture] Service Bus Connection: {_serviceBusConnection}");
+    Console.WriteLine($"[AspireFixture] Service Bus Connection: {_serviceBusFixture.ServiceBusConnectionString}");
 
     // Wait for PostgreSQL to be ready before proceeding
-    // Aspire starts containers but doesn't guarantee they're accepting connections
     Console.WriteLine("[AspireFixture] Waiting for PostgreSQL to be ready...");
     await _waitForPostgresReadyAsync(cancellationToken);
 
     // Create service hosts (but don't start them yet)
-    _inventoryHost = _createInventoryHost(_postgresConnection, _serviceBusConnection);
-    _bffHost = _createBffHost(_postgresConnection, _serviceBusConnection);
+    _inventoryHost = _createInventoryHost(_postgresConnection, _serviceBusFixture.ServiceBusConnectionString);
+    _bffHost = _createBffHost(_postgresConnection, _serviceBusFixture.ServiceBusConnectionString);
 
     Console.WriteLine("[AspireFixture] Service hosts created. Initializing schema...");
 
@@ -148,18 +158,8 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     await CleanupDatabaseAsync(cancellationToken);
     Console.WriteLine("[AspireFixture] Database cleaned.");
 
-    // WORKAROUND: Azure Service Bus Emulator reports ready before it can actually process messages
-    // Wait for the emulator to be truly ready BEFORE starting service hosts
-    // If we start hosts first, ServiceBusConsumerWorker will try to connect immediately and fail
-    // See: https://github.com/Azure/azure-service-bus-emulator-installer/issues/35
-    Console.WriteLine("[AspireFixture] Waiting for Azure Service Bus Emulator to be fully ready...");
-    await _waitForServiceBusEmulatorReadyAsync(cancellationToken);
-
-    // CRITICAL: Aspire does NOT automatically add $Default TrueFilter rules despite documentation claims
-    // We must manually add them to ensure messages are delivered to all subscriptions
-    Console.WriteLine("[AspireFixture] Manually adding $Default TrueFilter rules to all subscriptions...");
-    await _addServiceBusSubscriptionRulesAsync(cancellationToken);
-    Console.WriteLine("[AspireFixture] Subscription rules configured.");
+    // NOTE: Service Bus emulator is already ready (DirectServiceBusEmulatorFixture waits for it)
+    // Topics and subscriptions are pre-configured via Config-TrueFilter.json with TrueFilter rules
 
     Console.WriteLine("[AspireFixture] Starting service hosts...");
 
@@ -223,6 +223,25 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       .WithEFCore<ECommerce.InventoryWorker.InventoryDbContext>()
       .WithDriver.Postgres;
 
+    // WORKAROUND: Manually override IWorkCoordinator registration with full connection string
+    // When using NpgsqlDataSource, EF Core's GetConnectionString() returns a sanitized string without password
+    // But EFCoreWorkCoordinator needs the full connection string for direct database connections (Report*Async methods)
+    var existingWorkCoordinator = builder.Services.FirstOrDefault(d => d.ServiceType == typeof(IWorkCoordinator));
+    if (existingWorkCoordinator != null) {
+      builder.Services.Remove(existingWorkCoordinator);
+    }
+    builder.Services.AddScoped<IWorkCoordinator>(sp => {
+      var dbContext = sp.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+      var jsonOptions = sp.GetRequiredService<JsonSerializerOptions>();
+      var logger = sp.GetRequiredService<ILogger<EFCoreWorkCoordinator<ECommerce.InventoryWorker.InventoryDbContext>>>();
+      return new EFCoreWorkCoordinator<ECommerce.InventoryWorker.InventoryDbContext>(
+        dbContext,
+        jsonOptions,
+        logger,
+        postgresConnection  // Use full connection string with credentials
+      );
+    });
+
     // Register Whizbang generated services
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddReceptors(builder.Services);
     builder.Services.AddWhizbangAggregateIdExtractor();
@@ -256,10 +275,15 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     builder.Services.AddScoped<ECommerce.InventoryWorker.Perspectives.ProductCatalogPerspective>();
 
     // Register Service Bus consumer subscriptions for InventoryWorker's own perspectives
+    // Topics and subscriptions are pre-configured in Config-TrueFilter.json
     var consumerOptions = new ServiceBusConsumerOptions();
-    consumerOptions.Subscriptions.Add(new TopicSubscription("products", "products-inventory-worker"));
-    consumerOptions.Subscriptions.Add(new TopicSubscription("inventory", "inventory-inventory-worker"));
+    consumerOptions.Subscriptions.Add(new TopicSubscription("products", "products-worker"));
+    consumerOptions.Subscriptions.Add(new TopicSubscription("inventory", "inventory-worker"));
     builder.Services.AddSingleton(consumerOptions);
+
+    Console.WriteLine("[InventoryWorker] Configured subscriptions: products/products-worker, inventory/inventory-worker");
+
+    // NOTE: No topic routing strategy needed - using direct topic names from Config-TrueFilter.json
 
     // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
@@ -348,6 +372,25 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       .WithEFCore<ECommerce.BFF.API.BffDbContext>()
       .WithDriver.Postgres;
 
+    // WORKAROUND: Manually override IWorkCoordinator registration with full connection string
+    // When using NpgsqlDataSource, EF Core's GetConnectionString() returns a sanitized string without password
+    // But EFCoreWorkCoordinator needs the full connection string for direct database connections (Report*Async methods)
+    var existingBffWorkCoordinator = builder.Services.FirstOrDefault(d => d.ServiceType == typeof(IWorkCoordinator));
+    if (existingBffWorkCoordinator != null) {
+      builder.Services.Remove(existingBffWorkCoordinator);
+    }
+    builder.Services.AddScoped<IWorkCoordinator>(sp => {
+      var dbContext = sp.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
+      var jsonOptions = sp.GetRequiredService<JsonSerializerOptions>();
+      var logger = sp.GetRequiredService<ILogger<EFCoreWorkCoordinator<ECommerce.BFF.API.BffDbContext>>>();
+      return new EFCoreWorkCoordinator<ECommerce.BFF.API.BffDbContext>(
+        dbContext,
+        jsonOptions,
+        logger,
+        postgresConnection  // Use full connection string with credentials
+      );
+    });
+
     // Register SignalR (required by BFF lenses)
     builder.Services.AddSignalR();
 
@@ -374,6 +417,8 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Register lenses (readonly repositories)
     builder.Services.AddScoped<IProductCatalogLens, ProductCatalogLens>();
     builder.Services.AddScoped<IInventoryLevelsLens, InventoryLevelsLens>();
+
+    // NOTE: No topic routing strategy needed - using direct topic names from Config-TrueFilter.json
 
     // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
@@ -404,9 +449,10 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
 
     // Register Service Bus consumer to receive events
+    // Topics and subscriptions are pre-configured in Config-TrueFilter.json
     var consumerOptions = new ServiceBusConsumerOptions();
-    consumerOptions.Subscriptions.Add(new TopicSubscription("products", "products-bff-service"));
-    consumerOptions.Subscriptions.Add(new TopicSubscription("inventory", "inventory-bff-service"));
+    consumerOptions.Subscriptions.Add(new TopicSubscription("products", "products-bff"));
+    consumerOptions.Subscriptions.Add(new TopicSubscription("inventory", "inventory-bff"));
     builder.Services.AddSingleton(consumerOptions);
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
       new ServiceBusConsumerWorker(
@@ -512,194 +558,6 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     throw new TimeoutException($"PostgreSQL failed to accept connections after {maxAttempts} attempts");
   }
 
-  /// <summary>
-  /// Waits for the Azure Service Bus Emulator to be fully ready.
-  /// The emulator takes 60-90 seconds to initialize on ARM64 (start SQL Server, create databases, provision topics).
-  /// The pre-configured Config.json with $Default TrueFilter rules is mounted at container startup via Aspire.
-  /// </summary>
-  private async Task _waitForServiceBusEmulatorReadyAsync(CancellationToken cancellationToken = default) {
-    // WORKAROUND: Azure Service Bus Emulator takes significant time to initialize:
-    // 1. Start SQL Server (15s initial wait + retries)
-    // 2. Create databases (SbGatewayDatabase, SbMessageContainerDatabase00001)
-    // 3. Provision topics and subscriptions (using our pre-configured Config.json)
-    // 4. Report "Emulator Service is Successfully Up!"
-    //
-    // Total time: 60-90 seconds on ARM64, potentially longer under load
-    // User observed: "even with the sample app, aspire shows the services bus and all of it topics
-    // and subscriptions as unhealthy for 30-60 seconds on startup"
-    //
-    // See: https://github.com/Azure/azure-service-bus-emulator-installer/issues/35
-    // See: https://github.com/dotnet/aspire/issues/8818
-    Console.WriteLine("[AspireFixture] Waiting 120 seconds for Azure Service Bus Emulator to fully initialize...");
-    Console.WriteLine("[AspireFixture] (Emulator needs to: start SQL Server, create databases, provision topics/subscriptions from config file)");
-    await Task.Delay(120000, cancellationToken);
-    Console.WriteLine("[AspireFixture] Emulator should now be initialized with $Default TrueFilter rules from mounted config");
-  }
-
-  /// <summary>
-  /// Adds $Default TrueFilter rules to all Service Bus subscriptions by modifying the emulator's config file.
-  /// Uses Docker cp + C# JSON manipulation since ServiceBusAdministrationClient isn't supported by emulator.
-  /// </summary>
-  private async Task _addServiceBusSubscriptionRulesAsync(CancellationToken cancellationToken = default) {
-    // Find the Service Bus emulator container
-    // Create a shell script to execute docker commands with proper environment
-    var scriptPath = Path.Combine(Path.GetTempPath(), $"docker-{Guid.NewGuid()}.sh");
-    try {
-      await File.WriteAllTextAsync(scriptPath, @"#!/bin/bash
-export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
-docker ps --filter ""ancestor=mcr.microsoft.com/azure-messaging/servicebus-emulator"" --format ""{{.ID}}""
-", cancellationToken);
-
-      // Execute the script through bash
-      var findResult = await _runShellScriptAsync(scriptPath, cancellationToken);
-      var containerId = findResult.Trim();
-
-      if (string.IsNullOrEmpty(containerId)) {
-        throw new InvalidOperationException("Could not find Service Bus emulator container");
-      }
-
-      Console.WriteLine($"[AspireFixture] Found Service Bus emulator container: {containerId}");
-
-      // Create temp files
-      var tempConfigPath = Path.GetTempFileName();
-      var tempModifiedPath = Path.GetTempFileName();
-
-      // Copy config file from container to host using shell script
-      var copyFromScriptPath = Path.Combine(Path.GetTempPath(), $"docker-copy-from-{Guid.NewGuid()}.sh");
-      await File.WriteAllTextAsync(copyFromScriptPath, $@"#!/bin/bash
-export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
-docker cp {containerId}:/ServiceBus_Emulator/ConfigFiles/Config.json ""{tempConfigPath}""
-", cancellationToken);
-
-      await _runShellScriptAsync(copyFromScriptPath, cancellationToken);
-      File.Delete(copyFromScriptPath);
-      Console.WriteLine("[AspireFixture] Copied config from container");
-
-      // Read and modify JSON using System.Text.Json
-      var configJson = await File.ReadAllTextAsync(tempConfigPath, cancellationToken);
-      var config = System.Text.Json.JsonDocument.Parse(configJson);
-      var configDict = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(configJson);
-
-      if (configDict == null) {
-        throw new InvalidOperationException("Failed to parse Service Bus config JSON");
-      }
-
-      // Navigate to UserConfig.Namespaces and add rules
-      var modified = false;
-      if (configDict.TryGetValue("UserConfig", out var userConfigObj) && userConfigObj is System.Text.Json.JsonElement userConfigElem) {
-        var userConfigStr = userConfigElem.GetRawText();
-        var userConfig = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, object>>(userConfigStr);
-
-        if (userConfig != null && userConfig.TryGetValue("Namespaces", out var namespacesObj) && namespacesObj is System.Text.Json.JsonElement namespacesElem) {
-          var namespacesList = System.Text.Json.JsonSerializer.Deserialize<List<Dictionary<string, object>>>(namespacesElem.GetRawText());
-
-          if (namespacesList != null) {
-            foreach (var ns in namespacesList) {
-              if (ns.TryGetValue("Topics", out var topicsObj) && topicsObj is System.Text.Json.JsonElement topicsElem) {
-                var topicsList = System.Text.Json.JsonSerializer.Deserialize<List<Dictionary<string, object>>>(topicsElem.GetRawText());
-
-                if (topicsList != null) {
-                  foreach (var topic in topicsList) {
-                    var topicName = topic.TryGetValue("Name", out var tn) && tn is System.Text.Json.JsonElement tne ? tne.GetString() : "unknown";
-
-                    if (topic.TryGetValue("Subscriptions", out var subsObj) && subsObj is System.Text.Json.JsonElement subsElem) {
-                      var subsList = System.Text.Json.JsonSerializer.Deserialize<List<Dictionary<string, object>>>(subsElem.GetRawText());
-
-                      if (subsList != null) {
-                        foreach (var sub in subsList) {
-                          var subName = sub.TryGetValue("Name", out var sn) && sn is System.Text.Json.JsonElement sne ? sne.GetString() : "unknown";
-
-                          // Check if Rules array exists and is empty
-                          var hasRules = sub.TryGetValue("Rules", out var rulesObj) &&
-                                        rulesObj is System.Text.Json.JsonElement rulesElem &&
-                                        rulesElem.GetArrayLength() > 0;
-
-                          if (!hasRules) {
-                            // Add $Default TrueFilter rule
-                            var defaultRule = new Dictionary<string, object> {
-                              ["Name"] = "$Default",
-                              ["Properties"] = new Dictionary<string, object> {
-                                ["FilterType"] = 0,  // SqlFilter
-                                ["SqlFilter"] = new Dictionary<string, object> {
-                                  ["SqlExpression"] = "1=1"  // TrueFilter - matches all messages
-                                }
-                              }
-                            };
-                            sub["Rules"] = new List<object> { defaultRule };
-                            Console.WriteLine($"[AspireFixture] Added $Default rule to {topicName}/{subName}");
-                            modified = true;
-                          } else {
-                            Console.WriteLine($"[AspireFixture] Subscription {topicName}/{subName} already has rules, skipping");
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-
-      if (modified) {
-        // Serialize modified config back to JSON
-        var modifiedJson = System.Text.Json.JsonSerializer.Serialize(configDict, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
-        await File.WriteAllTextAsync(tempModifiedPath, modifiedJson, cancellationToken);
-
-        // Copy modified config back to container using shell script
-        var copyToScriptPath = Path.Combine(Path.GetTempPath(), $"docker-copy-to-{Guid.NewGuid()}.sh");
-        await File.WriteAllTextAsync(copyToScriptPath, $@"#!/bin/bash
-export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
-docker cp ""{tempModifiedPath}"" {containerId}:/ServiceBus_Emulator/ConfigFiles/Config.json
-", cancellationToken);
-
-        await _runShellScriptAsync(copyToScriptPath, cancellationToken);
-        File.Delete(copyToScriptPath);
-        Console.WriteLine("[AspireFixture] Copied modified config back to container");
-
-        Console.WriteLine("[AspireFixture] Successfully added $Default TrueFilter rules to all subscriptions");
-      } else {
-        Console.WriteLine("[AspireFixture] All subscriptions already have rules, no modifications needed");
-      }
-
-      // Clean up temp files
-      File.Delete(tempConfigPath);
-      if (File.Exists(tempModifiedPath)) {
-        File.Delete(tempModifiedPath);
-      }
-
-      // Verify the rules were added using shell script (non-fatal)
-      try {
-        var verifyScriptPath = Path.Combine(Path.GetTempPath(), $"docker-verify-{Guid.NewGuid()}.sh");
-        await File.WriteAllTextAsync(verifyScriptPath, $@"#!/bin/bash
-export PATH=/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin
-docker exec {containerId} cat /ServiceBus_Emulator/ConfigFiles/Config.json
-", cancellationToken);
-
-        var updatedConfig = await _runShellScriptAsync(verifyScriptPath, cancellationToken);
-        File.Delete(verifyScriptPath);
-
-        if (updatedConfig.Contains("\"Name\":\"$Default\"")) {
-          Console.WriteLine("[AspireFixture] Verified: $Default rules present in config");
-        } else {
-          Console.WriteLine("[AspireFixture] WARNING: $Default rules not found in updated config!");
-        }
-      } catch (Exception verifyEx) {
-        Console.WriteLine($"[AspireFixture] WARNING: Could not verify rules (non-fatal): {verifyEx.Message}");
-        Console.WriteLine("[AspireFixture] Rules were successfully added and copied to container, verification skipped");
-      }
-    } catch (Exception ex) {
-      Console.WriteLine($"[AspireFixture] ERROR adding subscription rules: {ex.Message}");
-      throw;
-    } finally {
-      // Clean up the initial find container script
-      if (File.Exists(scriptPath)) {
-        File.Delete(scriptPath);
-      }
-    }
-  }
-
   private async Task<string> _runShellScriptAsync(string scriptPath, CancellationToken cancellationToken = default) {
     // Execute script through bash explicitly instead of directly
     var processInfo = new System.Diagnostics.ProcessStartInfo {
@@ -733,11 +591,12 @@ docker exec {containerId} cat /ServiceBus_Emulator/ConfigFiles/Config.json
   /// Checks for any uncompleted outbox/inbox messages and perspective checkpoints.
   /// This is more reliable than using ProcessWorkBatchAsync which only shows available (not in-progress) work.
   /// </summary>
-  public async Task WaitForEventProcessingAsync(int timeoutMilliseconds = 60000) {
+  public async Task WaitForEventProcessingAsync(int timeoutMilliseconds = 180000) {
     var stopwatch = System.Diagnostics.Stopwatch.StartNew();
-    const int pollIntervalMs = 100;  // Poll every 100ms
+    var attempt = 0;
 
     while (stopwatch.ElapsedMilliseconds < timeoutMilliseconds) {
+      attempt++;
       using var scope = _inventoryHost!.Services.CreateScope();
       var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
@@ -760,18 +619,37 @@ docker exec {containerId} cat /ServiceBus_Emulator/ConfigFiles/Config.json
       cmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM wh_perspective_checkpoints WHERE (status & 2) = 0 AND (status & 4) = 0";
       var pendingPerspectives = (int)(await cmd.ExecuteScalarAsync() ?? 0);
 
+      // DIAGNOSTIC: Log checkpoint details on first attempt
+      if (attempt == 1) {
+        cmd.CommandText = @"
+          SELECT
+            perspective_name,
+            stream_id::text,
+            status,
+            last_event_id::text,
+            COALESCE(error, 'NULL') as error
+          FROM wh_perspective_checkpoints
+          LIMIT 10";
+        await using var reader = await cmd.ExecuteReaderAsync();
+        Console.WriteLine("[DIAGNOSTIC] Perspective checkpoints in database:");
+        while (await reader.ReadAsync()) {
+          Console.WriteLine($"  - {reader.GetString(0)}, stream={reader.GetString(1)}, status={reader.GetInt32(2)}, last_event={reader.GetString(3)}, error={reader.GetString(4)}");
+        }
+      }
+
       if (pendingOutbox == 0 && pendingInbox == 0 && pendingPerspectives == 0) {
-        Console.WriteLine($"[AspireFixture] Event processing complete - no pending work (checked database after {stopwatch.ElapsedMilliseconds}ms)");
+        Console.WriteLine($"[AspireFixture] Event processing complete - no pending work (checked database after {stopwatch.ElapsedMilliseconds}ms, {attempt} attempts)");
         return;
       }
 
-      // Log what's still pending
-      if (pendingOutbox > 0 || pendingInbox > 0 || pendingPerspectives > 0) {
-        Console.WriteLine($"[AspireFixture] Still processing: Outbox={pendingOutbox}, Inbox={pendingInbox}, Perspectives={pendingPerspectives} (elapsed: {stopwatch.ElapsedMilliseconds}ms)");
+      // Log progress every 10 attempts (~5-10 seconds depending on backoff)
+      if (attempt % 10 == 0) {
+        Console.WriteLine($"[WaitForEvents] Still waiting: Outbox={pendingOutbox}, Inbox={pendingInbox}, Perspectives={pendingPerspectives} (attempt {attempt}, elapsed: {stopwatch.ElapsedMilliseconds}ms)");
       }
 
-      // Wait before next poll
-      await Task.Delay(pollIntervalMs);
+      // Progressive backoff: start at 100ms, increase to 2000ms
+      var delay = Math.Min(100 + (attempt * 100), 2000);
+      await Task.Delay(delay);
     }
 
     // Timeout reached - log final state
@@ -923,11 +801,17 @@ docker exec {containerId} cat /ServiceBus_Emulator/ConfigFiles/Config.json
         _bffHost.Dispose();
       }
 
-      // Stop Aspire app (which will stop containers)
+      // Stop Aspire app (which will stop PostgreSQL container)
       if (_app != null) {
         await _app.StopAsync();
         await _app.DisposeAsync();
       }
+
+      // Stop Service Bus emulator (managed directly via docker-compose)
+      if (_serviceBusFixture != null) {
+        await _serviceBusFixture.DisposeAsync();
+      }
     }
   }
+
 }

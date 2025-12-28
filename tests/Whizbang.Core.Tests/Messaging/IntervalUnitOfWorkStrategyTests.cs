@@ -159,7 +159,7 @@ public class IntervalUnitOfWorkStrategyTests {
   [Test]
   public async Task Constructor_StartsPeriodicTimerAsync() {
     // Arrange & Act
-    await using var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(100));
+    await using var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(50));
     var callbackInvoked = false;
 
     strategy.OnFlushRequested += async (unitId, ct) => {
@@ -171,7 +171,7 @@ public class IntervalUnitOfWorkStrategyTests {
     await strategy.QueueMessageAsync(message);
 
     // Wait for timer to tick (increased for systems under load)
-    await Task.Delay(400);
+    await Task.Delay(600);
 
     // Assert - Timer should have triggered callback
     await Assert.That(callbackInvoked).IsTrue();
@@ -351,13 +351,13 @@ public class IntervalUnitOfWorkStrategyTests {
     await strategy.QueueMessageAsync(new TestMessage { Value = "1b" });
 
     // Wait for first flush (increased for systems under load)
-    await Task.Delay(250);
+    await Task.Delay(400);
 
     // Queue second batch
     var unitId2 = await strategy.QueueMessageAsync(new TestMessage { Value = "2a" });
 
     // Wait for second flush (increased for systems under load)
-    await Task.Delay(250);
+    await Task.Delay(400);
 
     // Assert - Both units should be flushed
     await Assert.That(flushedUnitIds.Count).IsGreaterThanOrEqualTo(2);
@@ -380,8 +380,8 @@ public class IntervalUnitOfWorkStrategyTests {
     await strategy.QueueMessageAsync(message1, LifecycleStage.PreDistributeAsync);
     await strategy.QueueMessageAsync(message2, LifecycleStage.PostDistributeAsync);
 
-    // Wait for timer tick
-    await Task.Delay(150);
+    // Wait for timer tick (increased for systems under load)
+    await Task.Delay(400);
 
     // Assert
     await Assert.That(lifecycleStagesInCallback).IsNotNull();

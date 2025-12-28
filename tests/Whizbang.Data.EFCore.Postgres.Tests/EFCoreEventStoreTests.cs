@@ -13,6 +13,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Sample event for testing event store functionality.
 /// </summary>
 public record OrderCreatedEvent : IEvent {
+  [StreamKey]
   public required Guid OrderId { get; init; }
   public required string CustomerName { get; init; }
 }

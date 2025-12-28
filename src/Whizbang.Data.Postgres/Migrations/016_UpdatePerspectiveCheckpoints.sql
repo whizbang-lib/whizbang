@@ -20,6 +20,11 @@ BEGIN
       elem->>'PerspectiveName' as perspective_name
     FROM jsonb_array_elements(p_completed_events) as elem
   LOOP
+    -- Reset variables for each checkpoint (prevent stale values from previous iteration)
+    v_last_sequence := NULL;
+    v_last_event_id := NULL;
+    v_is_complete := FALSE;
+
     -- Find highest sequence with no gaps before it
     -- This ensures we only advance the checkpoint to a safely completed position
     SELECT MAX(pe.sequence_number) INTO v_last_sequence

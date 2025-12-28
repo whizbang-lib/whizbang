@@ -194,6 +194,7 @@ public class CreateProductWorkflowTests {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
+    Console.WriteLine($"[TEST] Starting CreateProduct_NoImageUrl test with ProductId: {_testProdNoImage}");
 
     var command = new CreateProductCommand {
       ProductId = _testProdNoImage,
@@ -205,8 +206,15 @@ public class CreateProductWorkflowTests {
     };
 
     // Act
+    Console.WriteLine("[TEST] Sending CreateProductCommand...");
     await fixture.Dispatcher.SendAsync(command);
+    Console.WriteLine("[TEST] Command sent, waiting for event processing...");
+
+    // DIAGNOSTIC: Dump event types and associations
+    await fixture.DumpEventTypesAndAssociationsAsync();
+
     await fixture.WaitForEventProcessingAsync();
+    Console.WriteLine("[TEST] Event processing complete");
 
     // Assert - Verify product exists with null ImageUrl
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(command.ProductId);

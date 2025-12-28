@@ -31,6 +31,11 @@
   <ItemGroup>
     <None Include="servicebus-config.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="add-servicebus-rules.py" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Config.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Config-Default.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Config-Modified.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Config-TrueFilter.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="docker-compose.servicebus.yml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>
