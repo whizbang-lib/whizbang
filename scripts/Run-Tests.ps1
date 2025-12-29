@@ -27,6 +27,11 @@
 .PARAMETER Verbose
     Show detailed test output for each project
 
+.PARAMETER ExcludeIntegration
+    Exclude integration tests from the run (default: enabled for speed)
+    Integration tests include Docker containers, Service Bus emulators, and can take 5-10+ minutes
+    Use -ExcludeIntegration:$false to include them
+
 .PARAMETER AiMode
     Enable AI-optimized output with sparse progress updates and detailed error diagnostics
 
@@ -73,6 +78,14 @@
     ./Run-Tests.ps1 -AiMode -ProjectFilter "EFCore.Postgres"
     Runs EFCore.Postgres tests with AI-optimized output
 
+.EXAMPLE
+    ./Run-Tests.ps1 -ExcludeIntegration:$false
+    Runs ALL tests including slow integration tests (5-10+ minutes)
+
+.EXAMPLE
+    ./Run-Tests.ps1 -ProjectFilter "Integration" -AiMode
+    Runs ONLY integration tests with AI-optimized output
+
 .NOTES
     Technology Stack (as of December 2025):
     - .NET 10.0.1 (LTS release, November 2025)
@@ -110,6 +123,7 @@ param(
     [string]$ProjectFilter = "",
     [string]$TestFilter = "",
     [switch]$VerboseOutput,
+    [bool]$ExcludeIntegration = $true,  # Exclude slow integration tests by default
     [switch]$AiMode,
     [int]$ProgressInterval = 60,  # Progress update interval in seconds (AiMode only)
     [switch]$LiveUpdates  # Show progress immediately when counts change (AiMode only)
@@ -135,6 +149,9 @@ try {
         Write-Host "=====================================" -ForegroundColor Cyan
         Write-Host ""
         Write-Host "Parallel Test Execution: Up to $MaxParallel test modules concurrently" -ForegroundColor Yellow
+        if ($ExcludeIntegration) {
+            Write-Host "Integration Tests: Excluded (use -ExcludeIntegration:`$false to include)" -ForegroundColor Yellow
+        }
         if ($ProjectFilter) {
             Write-Host "Project Filter: $ProjectFilter" -ForegroundColor Yellow
         }
@@ -145,6 +162,9 @@ try {
     } else {
         Write-Host "[WHIZBANG TEST SUITE - AI MODE]" -ForegroundColor Cyan
         Write-Host "Max Parallel: $MaxParallel" -ForegroundColor Gray
+        if ($ExcludeIntegration) {
+            Write-Host "Integration Tests: Excluded" -ForegroundColor Gray
+        }
         if ($ProjectFilter) {
             Write-Host "Project Filter: $ProjectFilter" -ForegroundColor Gray
         }
@@ -174,6 +194,12 @@ try {
         # Native .NET 10 globbing: **/bin/**/Debug/net10.0/*{Filter}*.dll
         $testArgs += "--test-modules"
         $testArgs += "**/bin/**/Debug/net10.0/*$ProjectFilter*.dll"
+    } elseif ($ExcludeIntegration) {
+        # Exclude integration tests by default (they take 5-10+ minutes)
+        # Use explicit project patterns for fast unit/integration tests
+        $testArgs += "--test-modules"
+        # Pattern matches: Whizbang.*.Tests.dll but NOT *Integration.Tests.dll
+        $testArgs += "**/bin/**/Debug/net10.0/Whizbang.*.Tests.dll"
     } else {
         # Use the main solution file (already filtered to test projects via <IsTestProject>)
         $testArgs += "--solution"
