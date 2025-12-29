@@ -27,20 +27,27 @@
 .PARAMETER Verbose
     Show detailed test output for each project
 
-.PARAMETER ExcludeIntegration
-    Exclude integration tests from the run (default: enabled for speed)
-    Integration tests include Docker containers, Service Bus emulators, and can take 5-10+ minutes
-    Use -ExcludeIntegration:$false to include them
-
-.PARAMETER AiMode
-    Enable AI-optimized output with sparse progress updates and detailed error diagnostics
+.PARAMETER Mode
+    Test execution mode (default: Ai)
+    - Ai: AI-optimized sparse output + exclude integration tests (fast, token-efficient)
+    - Ci: Full output + exclude integration tests (for CI/CD pipelines)
+    - Full: Full output + include all tests (comprehensive validation)
+    - AiFull: AI-optimized output + include all tests (comprehensive but token-efficient)
+    - IntegrationsOnly: Full output + only integration tests
+    - AiIntegrations: AI-optimized output + only integration tests
 
 .PARAMETER ProgressInterval
-    Progress update interval in seconds for AiMode (default: 60)
+    Progress update interval in seconds for AI modes (default: 60)
 
 .PARAMETER LiveUpdates
-    Show progress immediately when test counts change (AiMode only)
+    Show progress immediately when test counts change (AI modes only)
     Without this flag, progress respects ProgressInterval for sparse updates
+
+.PARAMETER ExcludeIntegration
+    DEPRECATED: Use -Mode instead. Exclude integration tests from the run.
+
+.PARAMETER AiMode
+    DEPRECATED: Use -Mode instead. Enable AI-optimized output.
 
 .EXAMPLE
     ./Run-Tests.ps1
@@ -63,28 +70,36 @@
     Runs all tests with detailed output
 
 .EXAMPLE
-    ./Run-Tests.ps1 -AiMode
-    Runs all tests with AI-optimized output (sparse progress every 60s, detailed error diagnostics)
+    ./Run-Tests.ps1 -Mode Ai
+    Runs tests with AI-optimized output, excluding integration tests (default mode)
 
 .EXAMPLE
-    ./Run-Tests.ps1 -AiMode -ProgressInterval 30
+    ./Run-Tests.ps1 -Mode Ci
+    Runs tests with full output, excluding integration tests (for CI/CD)
+
+.EXAMPLE
+    ./Run-Tests.ps1 -Mode Full
+    Runs ALL tests including integration tests with full output (5-10+ minutes)
+
+.EXAMPLE
+    ./Run-Tests.ps1 -Mode AiFull
+    Runs ALL tests including integration tests with AI-optimized output
+
+.EXAMPLE
+    ./Run-Tests.ps1 -Mode IntegrationsOnly
+    Runs ONLY integration tests with full output
+
+.EXAMPLE
+    ./Run-Tests.ps1 -Mode AiIntegrations
+    Runs ONLY integration tests with AI-optimized output
+
+.EXAMPLE
+    ./Run-Tests.ps1 -Mode Ai -ProgressInterval 30
     Runs tests in AI mode with progress updates every 30 seconds
 
 .EXAMPLE
-    ./Run-Tests.ps1 -AiMode -LiveUpdates
-    Runs tests in AI mode with immediate progress updates when counts change
-
-.EXAMPLE
-    ./Run-Tests.ps1 -AiMode -ProjectFilter "EFCore.Postgres"
+    ./Run-Tests.ps1 -Mode Ai -ProjectFilter "EFCore.Postgres"
     Runs EFCore.Postgres tests with AI-optimized output
-
-.EXAMPLE
-    ./Run-Tests.ps1 -ExcludeIntegration:$false
-    Runs ALL tests including slow integration tests (5-10+ minutes)
-
-.EXAMPLE
-    ./Run-Tests.ps1 -ProjectFilter "Integration" -AiMode
-    Runs ONLY integration tests with AI-optimized output
 
 .NOTES
     Technology Stack (as of December 2025):
@@ -123,14 +138,37 @@ param(
     [string]$ProjectFilter = "",
     [string]$TestFilter = "",
     [switch]$VerboseOutput,
-    [bool]$ExcludeIntegration = $true,  # Exclude slow integration tests by default
-    [switch]$AiMode,
-    [int]$ProgressInterval = 60,  # Progress update interval in seconds (AiMode only)
-    [switch]$LiveUpdates  # Show progress immediately when counts change (AiMode only)
+    [ValidateSet("Ai", "Ci", "Full", "AiFull", "IntegrationsOnly", "AiIntegrations")]
+    [string]$Mode = "Ai",  # Test execution mode: Ai (default), Ci, Full, AiFull, IntegrationsOnly, AiIntegrations
+    [int]$ProgressInterval = 60,  # Progress update interval in seconds (Ai modes only)
+    [switch]$LiveUpdates,  # Show progress immediately when counts change (Ai modes only)
+
+    # Legacy parameters (deprecated, use -Mode instead)
+    [bool]$ExcludeIntegration,
+    [switch]$AiMode
 )
 
 $ErrorActionPreference = "Stop"
 Set-StrictMode -Version Latest
+
+# Handle legacy parameters (for backward compatibility)
+if ($PSBoundParameters.ContainsKey('AiMode') -or $PSBoundParameters.ContainsKey('ExcludeIntegration')) {
+    Write-Warning "Parameters -AiMode and -ExcludeIntegration are deprecated. Use -Mode instead."
+    if ($AiMode -and $PSBoundParameters.ContainsKey('ExcludeIntegration') -and -not $ExcludeIntegration) {
+        $Mode = "AiFull"
+    } elseif ($useAiOutput) {
+        $Mode = "Ai"
+    } elseif ($PSBoundParameters.ContainsKey('ExcludeIntegration') -and -not $ExcludeIntegration) {
+        $Mode = "Full"
+    } else {
+        $Mode = "Ci"
+    }
+}
+
+# Derive settings from Mode
+$useAiOutput = $Mode -in @("Ai", "AiFull", "AiIntegrations")
+$includeIntegrationTests = $Mode -in @("Full", "AiFull", "IntegrationsOnly", "AiIntegrations")
+$onlyIntegrationTests = $Mode -in @("IntegrationsOnly", "AiIntegrations")
 
 # Navigate to repo root
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -142,15 +180,18 @@ try {
         $MaxParallel = [Environment]::ProcessorCount
     }
 
-    if (-not $AiMode) {
+    if (-not $useAiOutput) {
         Write-Host "=====================================" -ForegroundColor Cyan
         Write-Host "  Whizbang Test Suite Runner" -ForegroundColor Cyan
         Write-Host "  (Parallel Execution via dotnet test)" -ForegroundColor Cyan
         Write-Host "=====================================" -ForegroundColor Cyan
         Write-Host ""
         Write-Host "Parallel Test Execution: Up to $MaxParallel test modules concurrently" -ForegroundColor Yellow
-        if ($ExcludeIntegration) {
-            Write-Host "Integration Tests: Excluded (use -ExcludeIntegration:`$false to include)" -ForegroundColor Yellow
+        Write-Host "Mode: $Mode" -ForegroundColor Yellow
+        if ($onlyIntegrationTests) {
+            Write-Host "Integration Tests: Only (other tests excluded)" -ForegroundColor Yellow
+        } elseif (-not $includeIntegrationTests) {
+            Write-Host "Integration Tests: Excluded (use -Mode Full or -Mode AiFull to include)" -ForegroundColor Yellow
         }
         if ($ProjectFilter) {
             Write-Host "Project Filter: $ProjectFilter" -ForegroundColor Yellow
@@ -162,7 +203,10 @@ try {
     } else {
         Write-Host "[WHIZBANG TEST SUITE - AI MODE]" -ForegroundColor Cyan
         Write-Host "Max Parallel: $MaxParallel" -ForegroundColor Gray
-        if ($ExcludeIntegration) {
+        Write-Host "Mode: $Mode" -ForegroundColor Gray
+        if ($onlyIntegrationTests) {
+            Write-Host "Integration Tests: Only" -ForegroundColor Gray
+        } elseif (-not $includeIntegrationTests) {
             Write-Host "Integration Tests: Excluded" -ForegroundColor Gray
         }
         if ($ProjectFilter) {
@@ -194,11 +238,14 @@ try {
         # Native .NET 10 globbing: **/bin/**/Debug/net10.0/*{Filter}*.dll
         $testArgs += "--test-modules"
         $testArgs += "**/bin/**/Debug/net10.0/*$ProjectFilter*.dll"
-    } elseif ($ExcludeIntegration) {
-        # Exclude integration tests by default (they take 5-10+ minutes)
-        # Use explicit project patterns for fast unit/integration tests
+    } elseif ($onlyIntegrationTests) {
+        # Run ONLY integration tests
         $testArgs += "--test-modules"
+        $testArgs += "**/bin/**/Debug/net10.0/*Integration.Tests.dll"
+    } elseif (-not $includeIntegrationTests) {
+        # Exclude integration tests (they take 5-10+ minutes)
         # Pattern matches: Whizbang.*.Tests.dll but NOT *Integration.Tests.dll
+        $testArgs += "--test-modules"
         $testArgs += "**/bin/**/Debug/net10.0/Whizbang.*.Tests.dll"
     } else {
         # Use the main solution file (already filtered to test projects via <IsTestProject>)
@@ -214,7 +261,7 @@ try {
     }
 
     # Run tests
-    if (-not $AiMode) {
+    if (-not $useAiOutput) {
         $cmdDisplay = "dotnet " + ($testArgs -join " ")
         if ($cmdDisplay.Length -gt 100) {
             $cmdDisplay = $cmdDisplay.Substring(0, 97) + "..."
@@ -227,7 +274,7 @@ try {
     }
 
     # Process output based on mode
-    if ($AiMode) {
+    if ($useAiOutput) {
         # AI mode: Stream and filter with smart progress updates
         $totalTests = 0
         $totalPassed = 0
@@ -530,13 +577,13 @@ try {
 
     # Check exit code (also consider projectErrors in AI mode since they may not affect LASTEXITCODE)
     $hasErrors = $LASTEXITCODE -ne 0
-    if ($AiMode) {
+    if ($useAiOutput) {
         # In AI mode, also check if we captured project errors (intermittent race conditions)
         $hasErrors = $hasErrors -or $projectErrors.Count -gt 0 -or $totalFailed -gt 0
     }
 
     if (-not $hasErrors) {
-        if ($AiMode) {
+        if ($useAiOutput) {
             Write-Host "=== STATUS: ALL TESTS PASSED ===" -ForegroundColor Green
         } else {
             Write-Host ""
@@ -546,7 +593,7 @@ try {
         }
         exit 0
     } else {
-        if ($AiMode) {
+        if ($useAiOutput) {
             Write-Host "=== STATUS: TESTS FAILED OR BUILD ERRORS ===" -ForegroundColor Red
         } else {
             Write-Host ""
