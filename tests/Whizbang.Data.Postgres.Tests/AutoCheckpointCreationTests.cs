@@ -685,7 +685,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         '{}'::jsonb,                       -- Empty metadata
         'null'::jsonb,                     -- No scope
         @streamId,
-        compute_partition(@streamId, 10000), -- Partition for load balancing
+        compute_partition(@streamId, 2), -- Partition for load balancing (matches test partition_count)
         true,                              -- is_event = true
         0,                                 -- Status = 0 (available for claiming)
         0,                                 -- Attempts = 0
