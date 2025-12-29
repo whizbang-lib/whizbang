@@ -1,12 +1,21 @@
 namespace Whizbang.Core.Lenses;
 
 /// <summary>
-/// Read-only LINQ abstraction for querying perspective data.
+/// Read-only LINQ abstraction for querying perspective data (scoped lifetime).
 /// Provides IQueryable access to full perspective rows (data, metadata, scope).
 /// Implementation translates LINQ to database-specific queries (JSONB for PostgreSQL, JSON for SQL Server, etc.).
+///
+/// <para>
+/// <strong>For web APIs and receptors:</strong> Use this interface (scoped lifetime).
+/// </para>
+/// <para>
+/// <strong>For singleton services:</strong> Use <see cref="IScopedLensQuery{TModel}"/> (auto-scoping)
+/// or <see cref="ILensQueryFactory{TModel}"/> (manual scope control for batch operations).
+/// </para>
 /// </summary>
 /// <typeparam name="TModel">The read model type to query</typeparam>
 /// <docs>core-concepts/lenses</docs>
+/// <docs>lenses/scoped-queries</docs>
 public interface ILensQuery<TModel> where TModel : class {
   /// <summary>
   /// Queryable access to full perspective rows.
