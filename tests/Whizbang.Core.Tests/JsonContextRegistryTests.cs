@@ -312,6 +312,9 @@ public partial class JsonContextRegistryTests {
     var envelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests]], Whizbang.Core";
     var resolver = TestEventJsonContext.Default;
 
+    // Register the resolver itself (needed for CreateCombinedOptions to include it)
+    JsonContextRegistry.RegisterContext(resolver);
+
     // Register payload type
     JsonContextRegistry.RegisterTypeName(payloadTypeName, typeof(TestEvent), resolver);
 
@@ -337,6 +340,9 @@ public partial class JsonContextRegistryTests {
     var payloadTypeName = "Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests";
     var envelopeTypeName = "Whizbang.Core.Observability.MessageEnvelope`1[[Whizbang.Core.Tests.JsonContextRegistryTests+TestEvent, Whizbang.Core.Tests]], Whizbang.Core";
     var resolver = TestEventJsonContext.Default;
+
+    // Register the resolver itself (needed for CreateCombinedOptions to include it)
+    JsonContextRegistry.RegisterContext(resolver);
 
     JsonContextRegistry.RegisterTypeName(payloadTypeName, typeof(TestEvent), resolver);
     JsonContextRegistry.RegisterTypeName(envelopeTypeName, typeof(MessageEnvelope<TestEvent>), resolver);
