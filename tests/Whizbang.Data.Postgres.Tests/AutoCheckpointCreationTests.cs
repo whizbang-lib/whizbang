@@ -31,14 +31,14 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
 
-    // Insert event into outbox (proper flow - will be stored in event store by process_work_batch)
-    await _insertOutboxEventAsync(
+    // Create outbox message JSON for process_work_batch parameter
+    var outboxMessages = _createOutboxEventJson(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
       eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}");
 
-    // Act - Call process_work_batch to trigger perspective association matching
+    // Act - Call process_work_batch with new outbox message (proper flow)
     var _ = await connection.QueryAsync(@"
       SELECT * FROM process_work_batch(
         p_instance_id := @instanceId::uuid,
@@ -48,9 +48,10 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_metadata := '{}'::jsonb,
         p_now := @now::timestamptz,
         p_lease_duration_seconds := 30,
-        p_partition_count := 2
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
       )",
-      new { instanceId, now });
+      new { instanceId, now, outboxMessages });
 
     // Check if perspective events were created (indicates match)
     var perspectiveEvents = await connection.QueryAsync<PerspectiveEventRow>(@"
@@ -640,60 +641,34 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
   }
 
   /// <summary>
-  /// Inserts an event into wh_outbox table (proper flow).
-  /// When process_work_batch() is called, Phase 4.5 will store it in wh_event_store
-  /// and add it to v_stored_outbox_events array, then Phase 4.6/4.7 will process it.
+  /// Creates an outbox message JSON structure for passing to process_work_batch.
+  /// This is the proper flow - messages are passed to process_work_batch which:
+  /// 1. Stores them in wh_outbox (Phase 4)
+  /// 2. Stores events in wh_event_store (Phase 4.5)
+  /// 3. Auto-creates perspective events/checkpoints (Phase 4.6/4.7)
   /// </summary>
-  private async Task _insertOutboxEventAsync(
+  private string _createOutboxEventJson(
     Guid streamId,
     Guid eventId,
     string eventType,
     string eventData) {
-    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    var outboxMessage = new {
+      MessageId = eventId,
+      Destination = (string?)null,  // Events don't have destinations
+      MessageType = eventType,
+      EnvelopeType = $"Whizbang.Core.Observability.MessageEnvelope`1[[{eventType}]], Whizbang.Core",
+      Envelope = new {
+        MessageId = eventId,
+        Payload = JsonSerializer.Deserialize<JsonElement>(eventData),
+        Hops = new object[0]
+      },
+      Metadata = new { },
+      Scope = (object?)null,
+      StreamId = streamId,
+      IsEvent = true
+    };
 
-    // Create MessageEnvelope<TPayload> JSON structure
-    var envelopeJson = $@"{{
-      ""MessageId"": ""{eventId}"",
-      ""Payload"": {eventData},
-      ""Hops"": []
-    }}";
-
-    // Insert into wh_outbox (Status=0 so process_work_batch can claim it)
-    await connection.ExecuteAsync(@"
-      INSERT INTO wh_outbox (
-        message_id,
-        destination,
-        event_type,
-        envelope_type,
-        event_data,
-        metadata,
-        scope,
-        stream_id,
-        partition_number,
-        is_event,
-        status,
-        attempts,
-        created_at,
-        instance_id,
-        lease_expiry
-      ) VALUES (
-        @eventId,
-        NULL,                              -- Events don't have destinations (column is nullable)
-        @eventType,                        -- Event type (payload type)
-        'Whizbang.Core.Observability.MessageEnvelope`1[[' || @eventType || ']], Whizbang.Core', -- Envelope type
-        @envelopeJson::jsonb,              -- Envelope data
-        '{}'::jsonb,                       -- Empty metadata
-        'null'::jsonb,                     -- No scope
-        @streamId,
-        compute_partition(@streamId, 2), -- Partition for load balancing (matches test partition_count)
-        true,                              -- is_event = true
-        0,                                 -- Status = 0 (available for claiming)
-        0,                                 -- Attempts = 0
-        NOW(),
-        NULL,                              -- No instance_id yet
-        NULL                               -- No lease yet
-      )",
-      new { eventId, streamId, eventType, envelopeJson });
+    return JsonSerializer.Serialize(new[] { outboxMessage });
   }
 
   /// <summary>
