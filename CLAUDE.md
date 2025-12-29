@@ -38,8 +38,10 @@ dotnet clean && dotnet build
 
 # Run tests (parallel execution)
 dotnet test --max-parallel-test-modules 8
-pwsh scripts/Run-Tests.ps1                    # Convenient wrapper with auto-detection
-pwsh scripts/Run-Tests.ps1 -AiMode            # Compact output for AI analysis
+pwsh scripts/Run-Tests.ps1                    # Convenient wrapper (default: Ai mode, excludes integration)
+pwsh scripts/Run-Tests.ps1 -Mode Ci           # Full output for CI
+pwsh scripts/Run-Tests.ps1 -Mode Full         # Include integration tests (slow!)
+pwsh scripts/Run-Tests.ps1 -Mode AiIntegrations  # Only integration tests, AI output
 pwsh scripts/Run-Tests.ps1 -ProjectFilter "EFCore.Postgres"
 pwsh scripts/Run-Tests.ps1 -TestFilter "ProcessWorkBatchAsync"
 
