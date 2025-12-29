@@ -30,7 +30,7 @@ public static class OutboxSchema {
         Name: "destination",
         DataType: WhizbangDataType.STRING,
         MaxLength: 500,
-        Nullable: false
+        Nullable: true  // Events don't have destinations, only commands do
       ),
       new ColumnDefinition(
         Name: "event_type",
