@@ -145,8 +145,9 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       "025_ClaimOrphanedInbox.sql",
       "026_ClaimOrphanedReceptorWork.sql",
       "027_ClaimOrphanedPerspectiveEvents.sql",
-      "028_ProcessWorkBatch.sql",
-      "029_DecompositionComplete.sql"
+      "028_EventStorageErrorTracking.sql",
+      "029_ProcessWorkBatch.sql",
+      "030_DecompositionComplete.sql"
     };
 
     foreach (var functionFile in functionFiles) {
