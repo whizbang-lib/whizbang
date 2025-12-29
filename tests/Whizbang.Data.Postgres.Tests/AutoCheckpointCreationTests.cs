@@ -678,7 +678,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         lease_expiry
       ) VALUES (
         @eventId,
-        NULL,                              -- No destination for events
+        '',                                -- Empty destination for events (column is NOT NULL)
         @eventType,                        -- Event type (payload type)
         'Whizbang.Core.Observability.MessageEnvelope`1[[' || @eventType || ']], Whizbang.Core', -- Envelope type
         @envelopeJson::jsonb,              -- Envelope data
