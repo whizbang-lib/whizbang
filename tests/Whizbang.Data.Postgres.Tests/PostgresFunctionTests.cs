@@ -594,7 +594,8 @@ public class PostgresFunctionTests : PostgresTestBase {
       new {
         MessageId = messageId,
         Destination = "test-destination",
-        EnvelopeType = "TestEvent",
+        MessageType = "TestEvent",
+        EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[TestEvent]], Whizbang.Core",
         EnvelopeData = "{}",
         Metadata = "{}",
         Scope = (string?)null,

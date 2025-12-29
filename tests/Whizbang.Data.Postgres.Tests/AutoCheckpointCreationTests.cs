@@ -101,16 +101,19 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     // Arrange - NO association registered (this is the key difference)
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
 
-    // Insert event into event store
-    await _insertOutboxEventAsync(
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Create outbox message JSON
+    var outboxMessages = _createOutboxEventJson(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
       eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}");
 
-    // Act - Call process_work_batch
-    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    // Act - Call process_work_batch with new outbox message
     await connection.ExecuteAsync(@"
       SELECT * FROM process_work_batch(
         p_instance_id := @instanceId::uuid,
@@ -118,9 +121,12 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_host_name := 'test-host',
         p_process_id := 12345,
         p_metadata := '{}'::jsonb,
-        p_now := NOW()
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
       )",
-      new { instanceId = _idProvider.NewGuid() });
+      new { instanceId, now, outboxMessages });
 
     // Assert - NO checkpoint should be created
     var checkpoints = await _getAllPerspectiveCheckpointsAsync(streamId);
@@ -145,16 +151,19 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
 
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
 
-    // Insert event into event store
-    await _insertOutboxEventAsync(
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Create outbox message JSON
+    var outboxMessages = _createOutboxEventJson(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
       eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}");
 
-    // Act - Call process_work_batch
-    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    // Act - Call process_work_batch with new outbox message
     await connection.ExecuteAsync(@"
       SELECT * FROM process_work_batch(
         p_instance_id := @instanceId::uuid,
@@ -162,9 +171,12 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_host_name := 'test-host',
         p_process_id := 12345,
         p_metadata := '{}'::jsonb,
-        p_now := NOW()
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
       )",
-      new { instanceId = _idProvider.NewGuid() });
+      new { instanceId, now, outboxMessages });
 
     // Assert - TWO checkpoints should be created
     var checkpoints = await _getAllPerspectiveCheckpointsAsync(streamId);
@@ -193,15 +205,19 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     // Manually insert checkpoint (simulating it already exists)
     await _insertPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
 
-    // Insert event into event store
-    await _insertOutboxEventAsync(
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Create outbox message JSON
+    var outboxMessages = _createOutboxEventJson(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
       eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}");
 
     // Act - Call process_work_batch (should NOT duplicate)
-    using var connection = await ConnectionFactory.CreateConnectionAsync();
     await connection.ExecuteAsync(@"
       SELECT * FROM process_work_batch(
         p_instance_id := @instanceId::uuid,
@@ -209,9 +225,12 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_host_name := 'test-host',
         p_process_id := 12345,
         p_metadata := '{}'::jsonb,
-        p_now := NOW()
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
       )",
-      new { instanceId = _idProvider.NewGuid() });
+      new { instanceId, now, outboxMessages });
 
     // Assert - Still only ONE checkpoint
     var checkpoints = await _getAllPerspectiveCheckpointsAsync(streamId);
@@ -230,16 +249,19 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
 
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
 
-    // Insert event into event store
-    await _insertOutboxEventAsync(
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Create outbox message JSON
+    var outboxMessages = _createOutboxEventJson(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
       eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}");
 
-    // Act - Call process_work_batch
-    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    // Act - Call process_work_batch with new outbox message
     await connection.ExecuteAsync(@"
       SELECT * FROM process_work_batch(
         p_instance_id := @instanceId::uuid,
@@ -247,9 +269,12 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_host_name := 'test-host',
         p_process_id := 12345,
         p_metadata := '{}'::jsonb,
-        p_now := NOW()
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
       )",
-      new { instanceId = _idProvider.NewGuid() });
+      new { instanceId, now, outboxMessages });
 
     // Assert - NO checkpoint should be created (receptors don't use checkpoints)
     var checkpoints = await _getAllPerspectiveCheckpointsAsync(streamId);
@@ -270,16 +295,19 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
 
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
 
-    // Act - Event has FULL AssemblyQualifiedName with Version/Culture/PublicKeyToken
-    await _insertOutboxEventAsync(
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Create outbox message JSON - Event has FULL AssemblyQualifiedName with Version/Culture/PublicKeyToken
+    var outboxMessages = _createOutboxEventJson(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
       eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}");
 
-    // Call process_work_batch
-    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    // Act - Call process_work_batch with new outbox message
     await connection.ExecuteAsync(@"
       SELECT * FROM process_work_batch(
         p_instance_id := @instanceId::uuid,
@@ -287,9 +315,12 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_host_name := 'test-host',
         p_process_id := 12345,
         p_metadata := '{}'::jsonb,
-        p_now := NOW()
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
       )",
-      new { instanceId = _idProvider.NewGuid() });
+      new { instanceId, now, outboxMessages });
 
     // Assert - Checkpoint SHOULD be created despite format difference
     var checkpoint = await _getPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
@@ -306,28 +337,34 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       targetName: "ProductListPerspective",
       serviceName: "ECommerce.ReadModels");
 
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
 
-    // Act - Event has short form "TypeName, AssemblyName"
-    await _insertOutboxEventAsync(
+    // Create outbox message JSON for process_work_batch parameter
+    // Event has short form "TypeName, AssemblyName"
+    var outboxMessages = _createOutboxEventJson(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
       eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}");
 
-    // Call process_work_batch
+    // Act - Call process_work_batch with new outbox message (proper flow)
     using var connection = await ConnectionFactory.CreateConnectionAsync();
-    await connection.ExecuteAsync(@"
+    var _ = await connection.QueryAsync(@"
       SELECT * FROM process_work_batch(
         p_instance_id := @instanceId::uuid,
         p_service_name := 'TestService',
         p_host_name := 'test-host',
         p_process_id := 12345,
         p_metadata := '{}'::jsonb,
-        p_now := NOW()
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
       )",
-      new { instanceId = _idProvider.NewGuid() });
+      new { instanceId, now, outboxMessages });
 
     // Assert - Checkpoint SHOULD be created despite format difference
     var checkpoint = await _getPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
@@ -344,28 +381,34 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       targetName: "ProductListPerspective",
       serviceName: "ECommerce.ReadModels");
 
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
 
-    // Act - Event has version 2.0.0.0 (different!)
-    await _insertOutboxEventAsync(
+    // Create outbox message JSON for process_work_batch parameter
+    // Event has version 2.0.0.0 (different!)
+    var outboxMessages = _createOutboxEventJson(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain, Version=2.0.0.0, Culture=neutral, PublicKeyToken=abc123",
       eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}");
 
-    // Call process_work_batch
+    // Act - Call process_work_batch with new outbox message (proper flow)
     using var connection = await ConnectionFactory.CreateConnectionAsync();
-    await connection.ExecuteAsync(@"
+    var _ = await connection.QueryAsync(@"
       SELECT * FROM process_work_batch(
         p_instance_id := @instanceId::uuid,
         p_service_name := 'TestService',
         p_host_name := 'test-host',
         p_process_id := 12345,
         p_metadata := '{}'::jsonb,
-        p_now := NOW()
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
       )",
-      new { instanceId = _idProvider.NewGuid() });
+      new { instanceId, now, outboxMessages });
 
     // Assert - Checkpoint SHOULD be created despite version difference
     var checkpoint = await _getPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
@@ -382,28 +425,34 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       targetName: "ProductListPerspective",
       serviceName: "ECommerce.ReadModels");
 
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
 
-    // Act - Event has ONLY TypeName (no assembly - this is too loose!)
-    await _insertOutboxEventAsync(
+    // Create outbox message JSON for process_work_batch parameter
+    // Event has ONLY TypeName (no assembly - this is too loose!)
+    var outboxMessages = _createOutboxEventJson(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent",
       eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}");
 
-    // Call process_work_batch
+    // Act - Call process_work_batch with new outbox message (proper flow)
     using var connection = await ConnectionFactory.CreateConnectionAsync();
-    await connection.ExecuteAsync(@"
+    var _ = await connection.QueryAsync(@"
       SELECT * FROM process_work_batch(
         p_instance_id := @instanceId::uuid,
         p_service_name := 'TestService',
         p_host_name := 'test-host',
         p_process_id := 12345,
         p_metadata := '{}'::jsonb,
-        p_now := NOW()
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
       )",
-      new { instanceId = _idProvider.NewGuid() });
+      new { instanceId, now, outboxMessages });
 
     // Assert - NO checkpoint should be created (TypeName alone is not enough)
     var checkpoints = await _getAllPerspectiveCheckpointsAsync(streamId);
@@ -420,28 +469,34 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       targetName: "ProductListPerspective",
       serviceName: "ECommerce.ReadModels");
 
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
 
-    // Act - Event from DIFFERENT assembly "ECommerce.Domain.V2"
-    await _insertOutboxEventAsync(
+    // Create outbox message JSON for process_work_batch parameter
+    // Event from DIFFERENT assembly "ECommerce.Domain.V2"
+    var outboxMessages = _createOutboxEventJson(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain.V2",
       eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}");
 
-    // Call process_work_batch
+    // Act - Call process_work_batch with new outbox message (proper flow)
     using var connection = await ConnectionFactory.CreateConnectionAsync();
-    await connection.ExecuteAsync(@"
+    var _ = await connection.QueryAsync(@"
       SELECT * FROM process_work_batch(
         p_instance_id := @instanceId::uuid,
         p_service_name := 'TestService',
         p_host_name := 'test-host',
         p_process_id := 12345,
         p_metadata := '{}'::jsonb,
-        p_now := NOW()
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
       )",
-      new { instanceId = _idProvider.NewGuid() });
+      new { instanceId, now, outboxMessages });
 
     // Assert - NO checkpoint (different assemblies = different types)
     var checkpoints = await _getAllPerspectiveCheckpointsAsync(streamId);
@@ -454,6 +509,8 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
   [Test]
   public async Task ProcessWorkBatch_WithPerspectiveCompletion_UpdatesCheckpointAsync() {
     // Arrange - Create a checkpoint that needs updating
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
     var streamId = _idProvider.NewGuid();
     var eventId1 = _idProvider.NewGuid();
     var eventId2 = _idProvider.NewGuid();
@@ -461,10 +518,33 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
 
     await _insertPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
 
-    // Insert some events into outbox (proper flow)
-    await _insertOutboxEventAsync(streamId, eventId1, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}");
-    await _insertOutboxEventAsync(streamId, eventId2, "ECommerce.Domain.Events.ProductUpdatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}");
-    await _insertOutboxEventAsync(streamId, eventId3, "ECommerce.Domain.Events.ProductUpdatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}");
+    // Create outbox messages JSON for process_work_batch parameter (3 events)
+    var event1Json = _createOutboxEventJson(streamId, eventId1, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}");
+    var event2Json = _createOutboxEventJson(streamId, eventId2, "ECommerce.Domain.Events.ProductUpdatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}");
+    var event3Json = _createOutboxEventJson(streamId, eventId3, "ECommerce.Domain.Events.ProductUpdatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}");
+
+    // Combine into array
+    var event1Array = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement[]>(event1Json)!;
+    var event2Array = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement[]>(event2Json)!;
+    var event3Array = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement[]>(event3Json)!;
+    var combinedEvents = new[] { event1Array[0], event2Array[0], event3Array[0] };
+    var outboxMessages = System.Text.Json.JsonSerializer.Serialize(combinedEvents);
+
+    // First call: Store events via process_work_batch (proper flow)
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    var _ = await connection.QueryAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
+      )",
+      new { instanceId, now, outboxMessages });
 
     // Act - Report perspective completion (processed up to eventId2)
     var perspectiveCompletions = new[] {
@@ -476,7 +556,6 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       }
     };
 
-    using var connection = await ConnectionFactory.CreateConnectionAsync();
     await connection.ExecuteAsync(@"
       SELECT * FROM process_work_batch(
         p_instance_id := @instanceId::uuid,
@@ -484,11 +563,12 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_host_name := 'test-host',
         p_process_id := 12345,
         p_metadata := '{}'::jsonb,
-        p_now := NOW(),
+        p_now := @now::timestamptz,
         p_perspective_completions := @completions::jsonb
       )",
       new {
-        instanceId = _idProvider.NewGuid(),
+        instanceId,
+        now,
         completions = System.Text.Json.JsonSerializer.Serialize(perspectiveCompletions)
       });
 
@@ -504,6 +584,8 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
   [Test]
   public async Task ProcessWorkBatch_WithMultiplePerspectiveCompletions_UpdatesAllCheckpointsAsync() {
     // Arrange - Create TWO checkpoints for different perspectives on same stream
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
     var streamId = _idProvider.NewGuid();
     var eventId1 = _idProvider.NewGuid();
     var eventId2 = _idProvider.NewGuid();
@@ -511,8 +593,31 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     await _insertPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
     await _insertPerspectiveCheckpointAsync(streamId, "ProductDetailsPerspective");
 
-    await _insertOutboxEventAsync(streamId, eventId1, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}");
-    await _insertOutboxEventAsync(streamId, eventId2, "ECommerce.Domain.Events.ProductUpdatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}");
+    // Create outbox messages JSON for process_work_batch parameter (2 events)
+    var event1Json = _createOutboxEventJson(streamId, eventId1, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}");
+    var event2Json = _createOutboxEventJson(streamId, eventId2, "ECommerce.Domain.Events.ProductUpdatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}");
+
+    // Combine into array
+    var event1Array = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement[]>(event1Json)!;
+    var event2Array = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement[]>(event2Json)!;
+    var combinedEvents = new[] { event1Array[0], event2Array[0] };
+    var outboxMessages = System.Text.Json.JsonSerializer.Serialize(combinedEvents);
+
+    // First call: Store events via process_work_batch (proper flow)
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    var _ = await connection.QueryAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
+      )",
+      new { instanceId, now, outboxMessages });
 
     // Act - Report completions for BOTH perspectives (but at different points)
     var perspectiveCompletions = new[] {
@@ -530,7 +635,6 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       }
     };
 
-    using var connection = await ConnectionFactory.CreateConnectionAsync();
     await connection.ExecuteAsync(@"
       SELECT * FROM process_work_batch(
         p_instance_id := @instanceId::uuid,
@@ -538,11 +642,12 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_host_name := 'test-host',
         p_process_id := 12345,
         p_metadata := '{}'::jsonb,
-        p_now := NOW(),
+        p_now := @now::timestamptz,
         p_perspective_completions := @completions::jsonb
       )",
       new {
-        instanceId = _idProvider.NewGuid(),
+        instanceId,
+        now,
         completions = System.Text.Json.JsonSerializer.Serialize(perspectiveCompletions)
       });
 
@@ -557,11 +662,35 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
   [Test]
   public async Task ProcessWorkBatch_WithPerspectiveFailure_UpdatesCheckpointWithErrorAsync() {
     // Arrange
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
 
     await _insertPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
-    await _insertOutboxEventAsync(streamId, eventId, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}");
+
+    // Create outbox message JSON for process_work_batch parameter
+    var outboxMessages = _createOutboxEventJson(
+      streamId: streamId,
+      eventId: eventId,
+      eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      eventData: "{\"productId\":\"123\"}");
+
+    // First call: Store event via process_work_batch (proper flow)
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+    var _ = await connection.QueryAsync(@"
+      SELECT * FROM process_work_batch(
+        p_instance_id := @instanceId::uuid,
+        p_service_name := 'TestService',
+        p_host_name := 'test-host',
+        p_process_id := 12345,
+        p_metadata := '{}'::jsonb,
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
+      )",
+      new { instanceId, now, outboxMessages });
 
     // Act - Report perspective FAILURE
     var perspectiveFailures = new[] {
@@ -574,7 +703,6 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       }
     };
 
-    using var connection = await ConnectionFactory.CreateConnectionAsync();
     await connection.ExecuteAsync(@"
       SELECT * FROM process_work_batch(
         p_instance_id := @instanceId::uuid,
@@ -582,11 +710,12 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
         p_host_name := 'test-host',
         p_process_id := 12345,
         p_metadata := '{}'::jsonb,
-        p_now := NOW(),
+        p_now := @now::timestamptz,
         p_perspective_failures := @failures::jsonb
       )",
       new {
-        instanceId = _idProvider.NewGuid(),
+        instanceId,
+        now,
         failures = System.Text.Json.JsonSerializer.Serialize(perspectiveFailures)
       });
 
@@ -601,24 +730,35 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
   [Test]
   public async Task ProcessWorkBatch_WithNoCompletions_DoesNotUpdateCheckpointAsync() {
     // Arrange
+    var instanceId = _idProvider.NewGuid();
+    var now = DateTimeOffset.UtcNow;
     var streamId = _idProvider.NewGuid();
     var eventId = _idProvider.NewGuid();
 
     await _insertPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
-    await _insertOutboxEventAsync(streamId, eventId, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}");
 
-    // Act - Call process_work_batch with NO completions/failures
+    // Create outbox message JSON for process_work_batch parameter
+    var outboxMessages = _createOutboxEventJson(
+      streamId: streamId,
+      eventId: eventId,
+      eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
+      eventData: "{\"productId\":\"123\"}");
+
+    // Act - Call process_work_batch with new outbox message but NO completions/failures
     using var connection = await ConnectionFactory.CreateConnectionAsync();
-    await connection.ExecuteAsync(@"
+    var _ = await connection.QueryAsync(@"
       SELECT * FROM process_work_batch(
         p_instance_id := @instanceId::uuid,
         p_service_name := 'TestService',
         p_host_name := 'test-host',
         p_process_id := 12345,
         p_metadata := '{}'::jsonb,
-        p_now := NOW()
+        p_now := @now::timestamptz,
+        p_lease_duration_seconds := 30,
+        p_partition_count := 2,
+        p_new_outbox_messages := @outboxMessages::jsonb
       )",
-      new { instanceId = _idProvider.NewGuid() });
+      new { instanceId, now, outboxMessages });
 
     // Assert - Checkpoint should remain unchanged (still NULL last_event_id)
     var checkpoint = await _getPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
@@ -660,7 +800,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       Envelope = new {
         MessageId = eventId,
         Payload = JsonSerializer.Deserialize<JsonElement>(eventData),
-        Hops = new object[0]
+        Hops = Array.Empty<object>()
       },
       Metadata = new { },
       Scope = (object?)null,
