@@ -29,7 +29,8 @@ namespace ECommerce.Integration.Tests.Fixtures;
 /// </summary>
 public sealed class AspireIntegrationFixture : IAsyncDisposable {
   private DistributedApplication? _app;
-  private DirectServiceBusEmulatorFixture? _serviceBusFixture;
+  private readonly DirectServiceBusEmulatorFixture _serviceBusFixture;
+  private readonly string _topicSuffix;
   private bool _isInitialized;
   private IHost? _inventoryHost;
   private IHost? _bffHost;
@@ -39,6 +40,17 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   private string? _postgresConnection;
   private IServiceScope? _inventoryScope;  // Long-lived scope for lens access
   private IServiceScope? _bffScope;  // Long-lived scope for lens access
+
+  /// <summary>
+  /// Creates a new fixture instance with a shared Service Bus emulator and unique topic suffix.
+  /// </summary>
+  /// <param name="sharedEmulator">The shared Service Bus emulator (with 25 topic sets pre-created)</param>
+  /// <param name="topicSuffix">Unique topic suffix (e.g., "00", "01", ... "24") for test isolation</param>
+  public AspireIntegrationFixture(DirectServiceBusEmulatorFixture sharedEmulator, string topicSuffix) {
+    _serviceBusFixture = sharedEmulator;
+    _topicSuffix = topicSuffix;
+    Console.WriteLine($"[AspireFixture] Created with topic suffix: {topicSuffix}");
+  }
 
   /// <summary>
   /// Gets the IDispatcher instance for sending commands (from InventoryWorker host).
@@ -84,8 +96,13 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Gets the Azure Service Bus connection string for direct Service Bus operations.
   /// </summary>
-  public string ServiceBusConnectionString => _serviceBusFixture?.ServiceBusConnectionString
-    ?? throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
+  public string ServiceBusConnectionString => _serviceBusFixture.ServiceBusConnectionString;
+
+  /// <summary>
+  /// Gets the topic suffix for this fixture (e.g., "00", "01", ... "24").
+  /// Used to isolate tests by using suffixed topics (products-00, inventory-00, etc.).
+  /// </summary>
+  public string TopicSuffix => _topicSuffix;
 
   /// <summary>
   /// Gets a logger instance for use in test scenarios.
@@ -106,16 +123,12 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       return;
     }
 
-    Console.WriteLine("[AspireFixture] Starting Azure Service Bus Emulator via docker-compose...");
+    Console.WriteLine($"[AspireFixture] Using shared Service Bus emulator with topic suffix: {_topicSuffix}");
+    Console.WriteLine($"[AspireFixture] Topics for this test: products-{_topicSuffix}, inventory-{_topicSuffix}");
 
-    // Start Service Bus emulator FIRST (independent of Aspire)
-    // Using DirectServiceBusEmulatorFixture with Config-TrueFilter.json containing:
-    // - products topic with products-worker and products-bff subscriptions
-    // - inventory topic with inventory-worker and inventory-bff subscriptions
-    _serviceBusFixture = new DirectServiceBusEmulatorFixture("Config-TrueFilter.json");
-    await _serviceBusFixture.InitializeAsync(cancellationToken);
+    // NOTE: Service Bus emulator is already initialized and shared across all test instances
+    // This fixture uses unique topic suffixes (00-24) for test isolation
 
-    Console.WriteLine("[AspireFixture] Service Bus emulator ready!");
     Console.WriteLine("[AspireFixture] Starting Aspire test infrastructure (PostgreSQL only)...");
 
     // Create and start the Aspire distributed application (PostgreSQL only)
@@ -141,7 +154,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     Console.WriteLine("[AspireFixture] Waiting for PostgreSQL to be ready...");
     await _waitForPostgresReadyAsync(cancellationToken);
 
-    // Create service hosts (but don't start them yet)
+    // Create service hosts (but don't start them yet) - topics will be suffixed
     _inventoryHost = _createInventoryHost(_postgresConnection, _serviceBusFixture.ServiceBusConnectionString);
     _bffHost = _createBffHost(_postgresConnection, _serviceBusFixture.ServiceBusConnectionString);
 
@@ -275,21 +288,22 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     builder.Services.AddScoped<ECommerce.InventoryWorker.Perspectives.ProductCatalogPerspective>();
 
     // Register Service Bus consumer subscriptions for InventoryWorker's own perspectives
-    // Topics and subscriptions are pre-configured in Config-TrueFilter.json
+    // Topics use suffixes for test isolation (e.g., products-00, inventory-00)
     var consumerOptions = new ServiceBusConsumerOptions();
-    consumerOptions.Subscriptions.Add(new TopicSubscription("products", "products-worker"));
-    consumerOptions.Subscriptions.Add(new TopicSubscription("inventory", "inventory-worker"));
+    consumerOptions.Subscriptions.Add(new TopicSubscription($"products-{_topicSuffix}", $"products-worker-{_topicSuffix}"));
+    consumerOptions.Subscriptions.Add(new TopicSubscription($"inventory-{_topicSuffix}", $"inventory-worker-{_topicSuffix}"));
     builder.Services.AddSingleton(consumerOptions);
 
-    Console.WriteLine("[InventoryWorker] Configured subscriptions: products/products-worker, inventory/inventory-worker");
+    Console.WriteLine($"[InventoryWorker] Configured subscriptions: products-{_topicSuffix}/products-worker-{_topicSuffix}, inventory-{_topicSuffix}/inventory-worker-{_topicSuffix}");
 
-    // NOTE: No topic routing strategy needed - using direct topic names from Config-TrueFilter.json
-
-    // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
+    // Register IMessagePublishStrategy - wraps with TestInstancePublishStrategy to add suffix
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
-      new TransportPublishStrategy(
-        sp.GetRequiredService<ITransport>(),
-        new DefaultTransportReadinessCheck()
+      new TestInstancePublishStrategy(
+        new TransportPublishStrategy(
+          sp.GetRequiredService<ITransport>(),
+          new DefaultTransportReadinessCheck()
+        ),
+        _topicSuffix  // Add suffix to published topics
       )
     );
 
@@ -418,13 +432,14 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     builder.Services.AddScoped<IProductCatalogLens, ProductCatalogLens>();
     builder.Services.AddScoped<IInventoryLevelsLens, InventoryLevelsLens>();
 
-    // NOTE: No topic routing strategy needed - using direct topic names from Config-TrueFilter.json
-
-    // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
+    // Register IMessagePublishStrategy - wraps with TestInstancePublishStrategy to add suffix
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
-      new TransportPublishStrategy(
-        sp.GetRequiredService<ITransport>(),
-        new DefaultTransportReadinessCheck()
+      new TestInstancePublishStrategy(
+        new TransportPublishStrategy(
+          sp.GetRequiredService<ITransport>(),
+          new DefaultTransportReadinessCheck()
+        ),
+        _topicSuffix  // Add suffix to published topics
       )
     );
 
@@ -449,10 +464,10 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
 
     // Register Service Bus consumer to receive events
-    // Topics and subscriptions are pre-configured in Config-TrueFilter.json
+    // Topics use suffixes for test isolation
     var consumerOptions = new ServiceBusConsumerOptions();
-    consumerOptions.Subscriptions.Add(new TopicSubscription("products", "products-bff"));
-    consumerOptions.Subscriptions.Add(new TopicSubscription("inventory", "inventory-bff"));
+    consumerOptions.Subscriptions.Add(new TopicSubscription($"products-{_topicSuffix}", $"products-bff-{_topicSuffix}"));
+    consumerOptions.Subscriptions.Add(new TopicSubscription($"inventory-{_topicSuffix}", $"inventory-bff-{_topicSuffix}"));
     builder.Services.AddSingleton(consumerOptions);
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
       new ServiceBusConsumerWorker(

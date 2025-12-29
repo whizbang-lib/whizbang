@@ -861,9 +861,16 @@ BEGIN
   FROM wh_perspective_events pe
   LEFT JOIN temp_new_perspective_events temp_new ON pe.event_work_id = temp_new.event_work_id
   LEFT JOIN temp_orphaned_perspective_events temp_orphaned ON pe.event_work_id = temp_orphaned.event_work_id
+  LEFT JOIN wh_perspective_checkpoints pc
+    ON pe.stream_id = pc.stream_id
+    AND pe.perspective_name = pc.perspective_name
   WHERE pe.instance_id = p_instance_id
     AND pe.lease_expiry > p_now
     AND pe.processed_at IS NULL
+    -- CRITICAL FIX: Don't claim events if checkpoint is already completed or failed
+    -- This prevents infinite re-processing when InstantCompletionStrategy reports completions
+    -- Status flags: Processing=1, Completed=2, Failed=4
+    AND (pc.status IS NULL OR (pc.status & 6) = 0)  -- Not completed (2) and not failed (4)
   ORDER BY pe.stream_id, pe.perspective_name, pe.sequence_number;
 END;
 $$ LANGUAGE plpgsql;

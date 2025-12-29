@@ -36,6 +36,14 @@ BEGIN
   WHERE stream_id = p_stream_id
     AND perspective_name = p_perspective_name;
 
+  -- CRITICAL: Mark perspective events as processed
+  -- Without this, events remain unprocessed forever and prevent new events from being claimed
+  UPDATE wh_perspective_events
+  SET processed_at = NOW()
+  WHERE stream_id = p_stream_id
+    AND perspective_name = p_perspective_name
+    AND processed_at IS NULL;
+
   -- If we were catching up and successfully completed, clear the CatchingUp flag
   IF v_is_catching_up AND (p_status & 2) = 2 THEN  -- Completed flag
     UPDATE wh_perspective_checkpoints

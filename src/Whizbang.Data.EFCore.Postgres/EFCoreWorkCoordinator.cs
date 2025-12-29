@@ -551,12 +551,65 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task ReportPerspectiveCompletionAsync(
     PerspectiveCheckpointCompletion completion,
     CancellationToken cancellationToken = default) {
-    // Use DbContext's ExecuteSqlRawAsync which properly manages the connection
-    // This works with both traditional connection strings and NpgsqlDataSource
-    await _dbContext.Database.ExecuteSqlRawAsync(
-      "SELECT complete_perspective_checkpoint_work({0}, {1}, {2}, {3}, {4})",
-      [completion.StreamId, completion.PerspectiveName, completion.LastEventId, (short)completion.Status, (object?)null ?? DBNull.Value],
-      cancellationToken);
+    // CRITICAL FIX: Use existing DbContext and commit transaction explicitly
+    // The DbContext's current transaction scope must be committed for changes to be visible
+    // to subsequent ProcessWorkBatchAsync calls that create new transactions
+    _logger?.LogInformation(
+      "[DIAGNOSTIC] ReportPerspectiveCompletionAsync called: stream={StreamId}, perspective={PerspectiveName}, lastEvent={LastEventId}, status={Status}",
+      completion.StreamId, completion.PerspectiveName, completion.LastEventId, completion.Status);
+
+    // Begin explicit transaction if one doesn't exist
+    var transaction = _dbContext.Database.CurrentTransaction;
+    var needsCommit = transaction == null;
+
+    if (needsCommit) {
+      transaction = await _dbContext.Database.BeginTransactionAsync(cancellationToken);
+    }
+
+    try {
+      await _dbContext.Database.ExecuteSqlRawAsync(
+        "SELECT complete_perspective_checkpoint_work({0}, {1}, {2}, {3}, {4})",
+        [completion.StreamId, completion.PerspectiveName, completion.LastEventId, (short)completion.Status, null!],
+        cancellationToken);
+
+      // Commit transaction IMMEDIATELY so changes are visible to next ProcessWorkBatchAsync
+      if (needsCommit && transaction != null) {
+        await transaction.CommitAsync(cancellationToken);
+        _logger?.LogInformation(
+          "[DIAGNOSTIC] Transaction committed for stream={StreamId}, perspective={PerspectiveName}",
+          completion.StreamId, completion.PerspectiveName);
+      }
+    } catch {
+      if (needsCommit && transaction != null) {
+        await transaction.RollbackAsync(cancellationToken);
+      }
+      throw;
+    } finally {
+      if (needsCommit && transaction != null) {
+        await transaction.DisposeAsync();
+      }
+    }
+
+    _logger?.LogInformation(
+      "[DIAGNOSTIC] complete_perspective_checkpoint_work completed for stream={StreamId}, perspective={PerspectiveName}",
+      completion.StreamId, completion.PerspectiveName);
+
+    // DIAGNOSTIC: Verify the checkpoint was actually updated
+    var checkpointState = await _dbContext.Database
+      .SqlQueryRaw<CheckpointDiagnostic>(
+        "SELECT stream_id, perspective_name, status, last_event_id, error FROM wh_perspective_checkpoints WHERE stream_id = {0} AND perspective_name = {1}",
+        completion.StreamId, completion.PerspectiveName)
+      .FirstOrDefaultAsync(cancellationToken);
+
+    if (checkpointState != null) {
+      _logger?.LogInformation(
+        "[DIAGNOSTIC] After update - checkpoint state: stream={StreamId}, perspective={PerspectiveName}, status={Status}, lastEvent={LastEventId}, error={Error}",
+        checkpointState.StreamId, checkpointState.PerspectiveName, checkpointState.Status, checkpointState.LastEventId, checkpointState.Error);
+    } else {
+      _logger?.LogWarning(
+        "[DIAGNOSTIC] Checkpoint not found after update: stream={StreamId}, perspective={PerspectiveName}",
+        completion.StreamId, completion.PerspectiveName);
+    }
   }
 
   /// <summary>
@@ -571,7 +624,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // This works with both traditional connection strings and NpgsqlDataSource
     await _dbContext.Database.ExecuteSqlRawAsync(
       "SELECT complete_perspective_checkpoint_work({0}, {1}, {2}, {3}, {4})",
-      [failure.StreamId, failure.PerspectiveName, failure.LastEventId, (short)failure.Status, failure.Error ?? (object)DBNull.Value],
+      [failure.StreamId, failure.PerspectiveName, failure.LastEventId, (short)failure.Status, failure.Error],
       cancellationToken);
   }
 
@@ -646,4 +699,25 @@ internal class WorkBatchRow {
 
   [Column("sequence_number")]
   public long? SequenceNumber { get; set; }  // NULL for non-perspective work
+}
+
+/// <summary>
+/// Diagnostic DTO for querying perspective checkpoint state.
+/// Used in ReportPerspectiveCompletionAsync to verify updates are persisting.
+/// </summary>
+internal class CheckpointDiagnostic {
+  [Column("stream_id")]
+  public Guid StreamId { get; set; }
+
+  [Column("perspective_name")]
+  public string PerspectiveName { get; set; } = string.Empty;
+
+  [Column("status")]
+  public short Status { get; set; }
+
+  [Column("last_event_id")]
+  public Guid? LastEventId { get; set; }
+
+  [Column("error")]
+  public string? Error { get; set; }
 }

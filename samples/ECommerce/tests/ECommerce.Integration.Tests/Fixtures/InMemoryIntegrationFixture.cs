@@ -32,6 +32,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   private IHost? _inventoryHost;
   private IHost? _bffHost;
   private readonly Guid _sharedInstanceId = Guid.CreateVersion7(); // Shared across both services for partition claiming
+  private readonly List<IServiceScope> _lensScopes = new(); // Track scopes for lens queries to dispose them properly
 
   public InMemoryIntegrationFixture() {
     _postgresContainer = new PostgreSqlBuilder()
@@ -54,27 +55,63 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
 
   /// <summary>
   /// Gets the IProductLens instance for querying product catalog (from InventoryWorker host).
+  /// Creates a new scope to ensure fresh DbContext and avoid stale cached data.
   /// </summary>
-  public IProductLens InventoryProductLens => _inventoryHost?.Services.GetRequiredService<IProductLens>()
-    ?? throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
+  public IProductLens InventoryProductLens {
+    get {
+      if (_inventoryHost == null) {
+        throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
+      }
+      var scope = _inventoryHost.Services.CreateScope();
+      _lensScopes.Add(scope);  // Track for disposal
+      return scope.ServiceProvider.GetRequiredService<IProductLens>();
+    }
+  }
 
   /// <summary>
   /// Gets the IInventoryLens instance for querying inventory levels (from InventoryWorker host).
+  /// Creates a new scope to ensure fresh DbContext and avoid stale cached data.
   /// </summary>
-  public IInventoryLens InventoryLens => _inventoryHost?.Services.GetRequiredService<IInventoryLens>()
-    ?? throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
+  public IInventoryLens InventoryLens {
+    get {
+      if (_inventoryHost == null) {
+        throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
+      }
+      var scope = _inventoryHost.Services.CreateScope();
+      _lensScopes.Add(scope);  // Track for disposal
+      return scope.ServiceProvider.GetRequiredService<IInventoryLens>();
+    }
+  }
 
   /// <summary>
   /// Gets the IProductCatalogLens instance for querying product catalog (from BFF host).
+  /// Creates a new scope to ensure fresh DbContext and avoid stale cached data.
   /// </summary>
-  public IProductCatalogLens BffProductLens => _bffHost?.Services.GetRequiredService<IProductCatalogLens>()
-    ?? throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
+  public IProductCatalogLens BffProductLens {
+    get {
+      if (_bffHost == null) {
+        throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
+      }
+      var scope = _bffHost.Services.CreateScope();
+      _lensScopes.Add(scope);  // Track for disposal
+      return scope.ServiceProvider.GetRequiredService<IProductCatalogLens>();
+    }
+  }
 
   /// <summary>
   /// Gets the IInventoryLevelsLens instance for querying inventory levels (from BFF host).
+  /// Creates a new scope to ensure fresh DbContext and avoid stale cached data.
   /// </summary>
-  public IInventoryLevelsLens BffInventoryLens => _bffHost?.Services.GetRequiredService<IInventoryLevelsLens>()
-    ?? throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
+  public IInventoryLevelsLens BffInventoryLens {
+    get {
+      if (_bffHost == null) {
+        throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
+      }
+      var scope = _bffHost.Services.CreateScope();
+      _lensScopes.Add(scope);  // Track for disposal
+      return scope.ServiceProvider.GetRequiredService<IInventoryLevelsLens>();
+    }
+  }
 
   /// <summary>
   /// Gets the PostgreSQL connection string for direct database operations.
@@ -844,6 +881,12 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
 
   public async ValueTask DisposeAsync() {
     if (_isInitialized) {
+      // Dispose all lens scopes first
+      foreach (var scope in _lensScopes) {
+        scope.Dispose();
+      }
+      _lensScopes.Clear();
+
       // Stop hosts
       if (_inventoryHost != null) {
         await _inventoryHost.StopAsync();
