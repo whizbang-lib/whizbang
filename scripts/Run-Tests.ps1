@@ -237,6 +237,7 @@ try {
         $testDetails = @{}  # Dictionary to store detailed error info per test
         $buildErrors = @()
         $buildWarnings = @()
+        $projectErrors = @()  # Track test project-level errors (not individual test failures)
         $currentFailedTest = $null
         $capturingStackTrace = $false
         $stackTraceLines = @()
@@ -378,6 +379,17 @@ try {
                     $testDetails[$currentFailedTest]["ErrorMessage"] = $lineStr.Trim()
                 }
             }
+            # Capture test project errors (e.g., "Whizbang.Data.Postgres.Tests.dll failed with 1 error(s)")
+            elseif ($lineStr -match "(\S+\.dll)\s+\(.*\)\s+failed with (\d+) error") {
+                $projectName = $matches[1]
+                $errorCount = $matches[2]
+                $projectErrors += "$projectName failed with $errorCount error(s)"
+            }
+            # Capture generic "error:" lines from test output
+            elseif ($lineStr -match "^\s*error:\s+(\d+)") {
+                # This catches the final "error: 1" summary line
+                # Don't add to projectErrors here as it's already captured above
+            }
             # Capture build errors
             elseif ($lineStr -match "error\s+(CS\d+|MSB\d+):") {
                 $buildErrors += $lineStr.Trim()
@@ -406,11 +418,23 @@ try {
             $testDetails[$currentFailedTest]["StackTrace"] = $stackTraceLines -join "`n"
         }
 
+        # Calculate elapsed time
+        $endTime = Get-Date
+        $totalElapsed = $endTime - $startTime
+        $elapsedString = if ($totalElapsed.TotalMinutes -ge 1) {
+            "{0:F0}m {1:F0}s" -f [Math]::Floor($totalElapsed.TotalMinutes), $totalElapsed.Seconds
+        } else {
+            "{0:F1}s" -f $totalElapsed.TotalSeconds
+        }
+
         # Display summary
         Write-Host ""
         Write-Host "=== TEST RESULTS SUMMARY ===" -ForegroundColor Cyan
+        Write-Host ""
+        Write-Host "Total Duration: $elapsedString" -ForegroundColor Cyan
 
         if ($totalTests -gt 0) {
+            Write-Host ""
             Write-Host "Total Tests: $totalTests" -ForegroundColor White
             Write-Host "Passed: $totalPassed" -ForegroundColor Green
             Write-Host "Failed: $totalFailed" -ForegroundColor $(if ($totalFailed -gt 0) { "Red" } else { "Green" })
@@ -429,6 +453,16 @@ try {
             Write-Host ""
             Write-Host "Try running without filters to see all tests:" -ForegroundColor Yellow
             Write-Host "  pwsh scripts/Run-Tests.ps1 -AiMode" -ForegroundColor Gray
+        }
+
+        if ($projectErrors.Count -gt 0) {
+            Write-Host ""
+            Write-Host "=== TEST PROJECT ERRORS ($($projectErrors.Count)) ===" -ForegroundColor Red
+            Write-Host ""
+            $projectErrors | ForEach-Object { Write-Host "  $_" -ForegroundColor Red }
+            Write-Host ""
+            Write-Host "Note: These are test project-level errors (setup/teardown failures, resource issues)" -ForegroundColor Yellow
+            Write-Host "      Run the specific project individually for more details" -ForegroundColor Yellow
         }
 
         if ($buildErrors.Count -gt 0) {
@@ -494,8 +528,14 @@ try {
         & dotnet @testArgs
     }
 
-    # Check exit code
-    if ($LASTEXITCODE -eq 0) {
+    # Check exit code (also consider projectErrors in AI mode since they may not affect LASTEXITCODE)
+    $hasErrors = $LASTEXITCODE -ne 0
+    if ($AiMode) {
+        # In AI mode, also check if we captured project errors (intermittent race conditions)
+        $hasErrors = $hasErrors -or $projectErrors.Count -gt 0 -or $totalFailed -gt 0
+    }
+
+    if (-not $hasErrors) {
         if ($AiMode) {
             Write-Host "=== STATUS: ALL TESTS PASSED ===" -ForegroundColor Green
         } else {

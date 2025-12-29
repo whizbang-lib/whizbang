@@ -107,6 +107,19 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
           AvailableWork.RemoveAll(w => w.MessageId == completion.MessageId);
           _claimedMessages.TryRemove(completion.MessageId, out _);
         }
+
+        // Unclaim failed messages so they can be retried on next poll
+        foreach (var failure in outboxFailures) {
+          _claimedMessages.TryRemove(failure.MessageId, out _);
+          // Message stays in AvailableWork for retry
+        }
+
+        // Handle lease renewals (for retryable failures like TransportException)
+        // The worker renews the lease instead of failing, allowing retry on next poll
+        foreach (var messageId in renewOutboxLeaseIds) {
+          _claimedMessages.TryRemove(messageId, out _);
+          // Message stays in AvailableWork for retry
+        }
       }
 
       return new WorkBatch {
@@ -134,10 +147,18 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
   /// </summary>
   private sealed class RealisticPublishStrategy : IMessagePublishStrategy {
     private readonly Random _random = new();
+    private readonly ConcurrentDictionary<Guid, int> _attemptCounts = new();
+    private readonly object _lock = new();
+
     public List<OutboxWork> PublishedWork { get; } = [];
     public TimeSpan MinLatency { get; set; } = TimeSpan.FromMilliseconds(100);
     public TimeSpan MaxLatency { get; set; } = TimeSpan.FromMilliseconds(500);
-    public double FailureRate { get; set; } // 0.0 = no failures, 0.1 = 10% failure
+
+    /// <summary>
+    /// Number of attempts that should fail before succeeding (0 = always succeed, 1 = fail once then succeed, etc.)
+    /// This makes failures deterministic and predictable.
+    /// </summary>
+    public int FailureAttemptsBeforeSuccess { get; set; }
 
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
       return Task.FromResult(true);
@@ -148,18 +169,22 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
       var latencyMs = _random.Next((int)MinLatency.TotalMilliseconds, (int)MaxLatency.TotalMilliseconds);
       await Task.Delay(latencyMs, cancellationToken);
 
-      // Simulate occasional failures
-      if (_random.NextDouble() < FailureRate) {
+      // Track attempt count for this message (deterministic failures)
+      var attemptNumber = _attemptCounts.AddOrUpdate(work.MessageId, 1, (_, count) => count + 1);
+
+      // Fail deterministically based on attempt number
+      if (attemptNumber <= FailureAttemptsBeforeSuccess) {
         return new MessagePublishResult {
           MessageId = work.MessageId,
           Success = false,
           CompletedStatus = work.Status,
-          Error = "Simulated transport failure",
+          Error = $"Simulated transport failure (attempt {attemptNumber}/{FailureAttemptsBeforeSuccess + 1})",
           Reason = MessageFailureReason.TransportException
         };
       }
 
-      lock (PublishedWork) {
+      // Success - add to published list
+      lock (_lock) {
         PublishedWork.Add(work);
       }
 
@@ -399,7 +424,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
   [Test]
   [Timeout(20000)] // 20 second timeout
   public async Task RaceCondition_TransportFailures_RetriesSuccessfullyAsync(CancellationToken cancellationToken) {
-    // Arrange - 30% transport failure rate
+    // Arrange - Deterministic failures: first 2 attempts fail, 3rd attempt succeeds
     var workCoordinator = new RealisticWorkCoordinator {
       MinLatency = TimeSpan.FromMilliseconds(50),
       MaxLatency = TimeSpan.FromMilliseconds(150)
@@ -408,7 +433,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     var publishStrategy = new RealisticPublishStrategy {
       MinLatency = TimeSpan.FromMilliseconds(100),
       MaxLatency = TimeSpan.FromMilliseconds(300),
-      FailureRate = 0.3 // 30% failure rate
+      FailureAttemptsBeforeSuccess = 2 // Fail first 2 attempts, succeed on 3rd (deterministic)
     };
 
     var databaseReadiness = new RealisticDatabaseReadinessCheck { IsReady = true };
@@ -434,8 +459,12 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     // Act
     var workerTask = worker.StartAsync(cts.Token);
 
-    // Wait long enough for retries
-    await Task.Delay(10000, cancellationToken); // 10 seconds
+    // Wait long enough for 3 retry cycles per message
+    // Each cycle: 50-150ms DB + 100-300ms transport + 200ms poll interval = ~550ms worst case
+    // 3 cycles * 550ms = 1650ms per message, but messages process sequentially (worker processes batches)
+    // Need enough time for all 10 messages × 3 attempts = 30 total publish calls
+    // 12 seconds provides buffer for parallel execution contention
+    await Task.Delay(12000, cancellationToken);
 
     cts.Cancel();
 
@@ -445,11 +474,12 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
       // Expected
     }
 
-    // Assert - most messages should eventually succeed (retries work)
-    // With 30% failure rate and 10 seconds of retries, we expect most to succeed
-    await Assert.That(publishStrategy.PublishedWork).Count().IsGreaterThanOrEqualTo(5);
+    // Assert - ALL messages should eventually succeed (deterministic retries)
+    // First 2 attempts fail, 3rd succeeds - no randomness
+    await Assert.That(publishStrategy.PublishedWork).Count().IsEqualTo(10)
+      .Because("All messages should succeed on 3rd attempt with deterministic retry logic");
 
-    // Verify multiple attempts were made
+    // Verify multiple coordinator calls happened (at least 3 rounds of retries)
     await Assert.That(workCoordinator.ProcessWorkBatchCallCount).IsGreaterThanOrEqualTo(3);
   }
 
