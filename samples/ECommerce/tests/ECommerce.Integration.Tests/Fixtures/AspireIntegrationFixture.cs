@@ -626,7 +626,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
             perspective_name,
             stream_id::text,
             status,
-            last_event_id::text,
+            COALESCE(last_event_id::text, 'NULL') as last_event_id,
             COALESCE(error, 'NULL') as error
           FROM wh_perspective_checkpoints
           LIMIT 10";

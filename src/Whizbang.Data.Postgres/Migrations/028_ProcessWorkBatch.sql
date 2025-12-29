@@ -362,8 +362,13 @@ BEGIN
     bv.stream_id as aggregate_id,
     SPLIT_PART(normalize_event_type(bv.event_type), ',', 1) as aggregate_type,
     normalize_event_type(bv.event_type),
-    bv.event_data,
-    bv.metadata,
+    -- Extract just the Payload from the envelope for event_data
+    (bv.event_data::jsonb -> 'Payload')::text as event_data,
+    -- Build EnvelopeMetadata structure (MessageId + Hops) for metadata
+    jsonb_build_object(
+      'MessageId', bv.event_data::jsonb ->> 'MessageId',
+      'Hops', COALESCE(bv.event_data::jsonb -> 'Hops', '[]'::jsonb)
+    )::text as metadata,
     bv.scope,
     nextval('wh_event_sequence'),
     bv.base_version + bv.row_num as version,
@@ -422,8 +427,13 @@ BEGIN
     bv.stream_id as aggregate_id,
     SPLIT_PART(normalize_event_type(bv.event_type), ',', 1) as aggregate_type,
     normalize_event_type(bv.event_type),
-    bv.event_data,
-    bv.metadata,
+    -- Extract just the Payload from the envelope for event_data
+    (bv.event_data::jsonb -> 'Payload')::text as event_data,
+    -- Build EnvelopeMetadata structure (MessageId + Hops) for metadata
+    jsonb_build_object(
+      'MessageId', bv.event_data::jsonb ->> 'MessageId',
+      'Hops', COALESCE(bv.event_data::jsonb -> 'Hops', '[]'::jsonb)
+    )::text as metadata,
     bv.scope,
     nextval('wh_event_sequence'),
     bv.base_version + bv.row_num as version,
