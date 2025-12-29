@@ -50,6 +50,12 @@ public enum MessageFailureReason {
   LeaseExpired = 6,
 
   /// <summary>
+  /// Event storage failed in wh_event_store.
+  /// Event could not be persisted to the event store (non-idempotent failure).
+  /// </summary>
+  EventStorageFailure = 7,
+
+  /// <summary>
   /// Unclassified error - reason not determined.
   /// </summary>
   Unknown = 99

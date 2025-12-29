@@ -18,7 +18,7 @@ CREATE OR REPLACE FUNCTION store_inbox_messages(
 DECLARE
   v_msg RECORD;
   v_partition INTEGER;
-  v_was_new BOOLEAN;
+  v_was_new INTEGER;  -- Changed from BOOLEAN - ROW_COUNT returns integer
 BEGIN
   FOR v_msg IN
     SELECT
@@ -32,15 +32,25 @@ BEGIN
       (elem->>'IsEvent')::BOOLEAN as is_event
     FROM jsonb_array_elements(p_messages) as elem
   LOOP
-    -- Calculate partition for stream-based load balancing
-    IF v_msg.stream_id IS NOT NULL THEN
-      v_partition := compute_partition(v_msg.stream_id, p_partition_count);
-    ELSE
-      v_partition := NULL;
-    END IF;
+    -- Deduplication: Try to insert into deduplication table first
+    -- If message_id already exists, this returns 0 rows and we skip the inbox insert
+    INSERT INTO wh_message_deduplication (message_id, first_seen_at)
+    VALUES (v_msg.msg_id, p_now)
+    ON CONFLICT ON CONSTRAINT wh_message_deduplication_pkey DO NOTHING;
 
-    -- Insert message with immediate lease (ON CONFLICT for idempotency)
-    INSERT INTO wh_inbox (
+    GET DIAGNOSTICS v_was_new = ROW_COUNT;
+
+    -- Only proceed if deduplication insert succeeded (message is new)
+    IF v_was_new = 1 THEN
+      -- Calculate partition for stream-based load balancing
+      IF v_msg.stream_id IS NOT NULL THEN
+        v_partition := compute_partition(v_msg.stream_id, p_partition_count);
+      ELSE
+        v_partition := NULL;
+      END IF;
+
+      -- Insert message with immediate lease (ON CONFLICT for idempotency)
+      INSERT INTO wh_inbox (
       message_id,
       handler_name,
       event_type,
@@ -73,31 +83,30 @@ BEGIN
     )
     ON CONFLICT ON CONSTRAINT wh_inbox_pkey DO NOTHING;
 
-    -- Check if insert succeeded (ROW_COUNT = 1 means new row)
-    GET DIAGNOSTICS v_was_new = ROW_COUNT;
+      -- Update active streams for stream ownership tracking
+      IF v_msg.stream_id IS NOT NULL THEN
+        INSERT INTO wh_active_streams (
+          stream_id,
+          assigned_instance_id,
+          lease_expiry,
+          partition_number,
+          last_activity_at
+        ) VALUES (
+          v_msg.stream_id,
+          p_instance_id,
+          p_lease_expiry,
+          v_partition,
+          p_now
+        )
+        ON CONFLICT ON CONSTRAINT wh_active_streams_pkey DO UPDATE SET
+          assigned_instance_id = p_instance_id,
+          lease_expiry = p_lease_expiry,
+          last_activity_at = p_now;
+      END IF;
 
-    -- Update active streams for stream ownership tracking
-    IF v_msg.stream_id IS NOT NULL THEN
-      INSERT INTO wh_active_streams (
-        stream_id,
-        assigned_instance_id,
-        lease_expiry,
-        partition_number,
-        last_activity_at
-      ) VALUES (
-        v_msg.stream_id,
-        p_instance_id,
-        p_lease_expiry,
-        v_partition,
-        p_now
-      )
-      ON CONFLICT ON CONSTRAINT wh_active_streams_pkey DO UPDATE SET
-        assigned_instance_id = p_instance_id,
-        lease_expiry = p_lease_expiry,
-        last_activity_at = p_now;
-    END IF;
-
-    RETURN QUERY SELECT v_msg.msg_id AS message_id, v_msg.stream_id AS stream_id, v_was_new AS was_newly_created;
+      -- Return message as newly created (deduplication succeeded)
+      RETURN QUERY SELECT v_msg.msg_id AS message_id, v_msg.stream_id AS stream_id, (v_was_new = 1) AS was_newly_created;
+    END IF;  -- Close IF v_was_new = 1 THEN
   END LOOP;
 END;
 $$ LANGUAGE plpgsql;

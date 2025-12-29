@@ -32,7 +32,8 @@
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
     <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)/generated</CompilerGeneratedFilesOutputPath>
     <!-- Suppress CA1707: Test method names use underscores for readability (Given_When_Then pattern) -->
-    <NoWarn>$(NoWarn);CA1707</NoWarn>
+    <!-- Suppress pre-existing code style warnings -->
+    <NoWarn>$(NoWarn);CA1707;IDE1006;CA1816;CA1822;CA1859;CA1860</NoWarn>
   </PropertyGroup>
 
 </Project>

@@ -1,17 +1,18 @@
--- Migration: 029_DecompositionComplete.sql
--- Date: 2025-12-25
+-- Migration: 030_DecompositionComplete.sql
+-- Date: 2025-12-28
 -- Description: Marks completion of process_work_batch decomposition.
 --              The monolithic function (migration 007) has been decomposed into 18 focused functions
---              (migrations 009-027) and reassembled into an orchestrator (migration 028).
--- Dependencies: 009-028 (complete decomposition chain)
+--              (migrations 009-027), error tracking infrastructure added (migration 028),
+--              and reassembled into an orchestrator (migration 029).
+-- Dependencies: 009-029 (complete decomposition chain)
 
 -- This migration serves as documentation of the completed refactor.
--- No actual changes needed - migration 028 already replaced the old function.
+-- No actual changes needed - migration 029 already replaced the old function.
 
 COMMENT ON FUNCTION process_work_batch IS
 'Orchestrator function that coordinates all work batch processing (v2 - decomposed architecture). Registers heartbeat, processes completions/failures, stores new work, claims orphaned work, renews leases, and returns aggregated work batch. All operations occur in a single transaction for atomicity.
 
-Decomposition (migrations 009-028):
+Decomposition (migrations 009-029):
 
 Foundation (Layer 0):
   - 009: create_message_association_registry
@@ -42,8 +43,11 @@ Claiming (Layer 4):
   - 026: claim_orphaned_receptor_work
   - 027: claim_orphaned_perspective_events
 
-Assembly (Layer 5):
-  - 028: process_work_batch (orchestrator)
+Error Tracking (Layer 5):
+  - 028: event_storage_error_tracking (wh_log table, wh_settings table, log_event function)
+
+Assembly (Layer 6):
+  - 029: process_work_batch (orchestrator)
 
 Benefits:
 - Single responsibility per function

@@ -22,6 +22,7 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
   }
 
   [Test]
+  [Obsolete("This test is obsolete and will be removed in a future version.")]
   public async Task MessagesStoredInOutbox_AreReturnedImmediately_InSameCallAsync() {
     // This is the CORE bug test:
     // When messages are stored with newOutboxMessages, they should be returned immediately
@@ -65,6 +66,7 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
   }
 
   [Test]
+  [Obsolete("This test is obsolete and will be removed in a future version.")]
   public async Task MessagesWithExpiredLease_AreReclaimed_InSubsequentCallAsync() {
     // Arrange - Store message with short lease
     var messageId = MessageId.New();
@@ -122,6 +124,7 @@ public class WorkCoordinatorMessageProcessingTests : EFCoreTestBase {
   }
 
   [Test]
+  [Obsolete("This test is obsolete and will be removed in a future version.")]
   public async Task MessagesWithValidLease_SameInstance_AreNotReturnedAgainAsync() {
     // This verifies we DON'T return already-leased messages (avoiding double-processing)
 

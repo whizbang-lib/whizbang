@@ -1,3 +1,4 @@
+#nullable disable
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -27,13 +28,13 @@ public class WhizbangPerspectiveBuilderTests {
   [Test]
   public async Task Constructor_WithNullServices_ThrowsArgumentNullExceptionAsync() {
     // Arrange
-    ServiceCollection? services = null;
+    ServiceCollection services = null;
 
     // Act & Assert
     var exception = await Assert.That(() => new WhizbangPerspectiveBuilder(services!))
         .Throws<ArgumentNullException>();
 
-    await Assert.That(exception.ParamName).IsEqualTo("services");
+    await Assert.That(exception.ParamName!).IsEqualTo("services");
   }
 
   [Test]

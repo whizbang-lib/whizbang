@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+#nullable disable
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -90,26 +91,26 @@ public class EFCoreDriverSelectorTests {
   [Test]
   public async Task Constructor_WithNullServices_ThrowsArgumentNullExceptionAsync() {
     // Arrange
-    ServiceCollection? services = null;
+    ServiceCollection services = null;
     var dbContextType = typeof(DriverSelectorTestDbContext);
 
     // Act & Assert
     var exception = await Assert.That(() => new EFCoreDriverSelector(services!, dbContextType))
         .Throws<ArgumentNullException>();
 
-    await Assert.That(exception.ParamName).IsEqualTo("services");
+    await Assert.That(exception.ParamName!).IsEqualTo("services");
   }
 
   [Test]
   public async Task Constructor_WithNullDbContextType_ThrowsArgumentNullExceptionAsync() {
     // Arrange
     var services = new ServiceCollection();
-    Type? dbContextType = null;
+    Type dbContextType = null;
 
     // Act & Assert
     var exception = await Assert.That(() => new EFCoreDriverSelector(services, dbContextType!))
         .Throws<ArgumentNullException>();
 
-    await Assert.That(exception.ParamName).IsEqualTo("dbContextType");
+    await Assert.That(exception.ParamName!).IsEqualTo("dbContextType");
   }
 }

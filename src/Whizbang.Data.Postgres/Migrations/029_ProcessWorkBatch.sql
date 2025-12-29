@@ -1,8 +1,9 @@
--- Migration: 028_ProcessWorkBatch.sql
--- Date: 2025-12-25
+-- Migration: 029_ProcessWorkBatch.sql
+-- Date: 2025-12-28
 -- Description: Orchestrator function that coordinates all work batch processing.
 --              Calls all decomposed functions in dependency order and returns aggregated results.
--- Dependencies: 009-027 (all foundation, completion, failure, storage, cleanup, and claiming functions)
+--              Uses log_event() function for tracking idempotent event conflicts.
+-- Dependencies: 009-028 (foundation, completion, failure, storage, cleanup, claiming functions, and error tracking)
 
 -- Drop old monolithic version from migration 007 (different signature)
 DROP FUNCTION IF EXISTS process_work_batch CASCADE;
@@ -69,6 +70,10 @@ CREATE OR REPLACE FUNCTION process_work_batch(
   is_newly_stored BOOLEAN,
   is_orphaned BOOLEAN,
 
+  -- Error tracking (for failed storage operations)
+  error TEXT,                   -- Error message (NULL if no error)
+  failure_reason INTEGER,       -- MessageFailureReason enum value (NULL if no failure)
+
   -- Perspective-specific fields (NULL for non-perspective work)
   perspective_name VARCHAR(200),
   sequence_number BIGINT
@@ -80,6 +85,16 @@ DECLARE
   v_count INTEGER;
   v_completed_events JSONB;
   v_completion RECORD;
+
+  -- Arrays to track successfully stored events (for Phase 4.6 and 4.7 filtering)
+  v_stored_outbox_events UUID[] := '{}';
+  v_stored_inbox_events UUID[] := '{}';
+
+  -- Conflict tracking for logging
+  v_outbox_conflict_count INTEGER := 0;
+  v_outbox_conflict_types TEXT[];
+  v_inbox_conflict_count INTEGER := 0;
+  v_inbox_conflict_types TEXT[];
 BEGIN
   -- Calculate lease expiry and stale cutoff
   v_lease_expiry := p_now + (p_lease_duration_seconds || ' seconds')::INTERVAL;
@@ -310,8 +325,9 @@ BEGIN
   -- Store events from newly created outbox/inbox messages to wh_event_store
   -- with sequential versioning and optimistic concurrency control.
   -- This is the authoritative event storage - all events flow through process_work_batch.
+  -- Uses array tracking to capture successfully stored events for Phase 4.6/4.7 filtering.
 
-  -- Store events from outbox messages
+  -- Phase 4.5A: Store events from outbox messages with tracking
   WITH outbox_events AS (
     SELECT
       o.message_id,
@@ -342,41 +358,81 @@ BEGIN
         0
       ) as base_version
     FROM outbox_events oe
-  )
-  INSERT INTO wh_event_store (
-    event_id,
-    stream_id,
-    aggregate_id,
-    aggregate_type,
-    event_type,
-    event_data,
-    metadata,
-    scope,
-    sequence_number,
-    version,
-    created_at
+  ),
+  stored_events AS (
+    INSERT INTO wh_event_store (
+      event_id,
+      stream_id,
+      aggregate_id,
+      aggregate_type,
+      event_type,
+      event_data,
+      metadata,
+      scope,
+      sequence_number,
+      version,
+      created_at
+    )
+    SELECT
+      bv.message_id as event_id,
+      bv.stream_id,
+      bv.stream_id as aggregate_id,
+      SPLIT_PART(normalize_event_type(bv.event_type), ',', 1) as aggregate_type,
+      normalize_event_type(bv.event_type),
+      -- Extract just the Payload from the envelope for event_data
+      (bv.event_data::jsonb -> 'Payload') as event_data,
+      -- Build EnvelopeMetadata structure (MessageId + Hops) for metadata
+      jsonb_build_object(
+        'MessageId', bv.event_data::jsonb -> 'MessageId',
+        'Hops', COALESCE(bv.event_data::jsonb -> 'Hops', '[]'::jsonb)
+      ) as metadata,
+      bv.scope,
+      nextval('wh_event_sequence'),
+      bv.base_version + bv.row_num as version,
+      p_now
+    FROM outbox_base_versions bv
+    ON CONFLICT (event_id) DO NOTHING
+    RETURNING event_id, event_type
+  ),
+  conflict_events AS (
+    -- Find events that conflicted (were skipped due to idempotency)
+    SELECT
+      bv.message_id,
+      bv.event_type
+    FROM outbox_base_versions bv
+    WHERE NOT EXISTS (
+      SELECT 1 FROM stored_events se WHERE se.event_id = bv.message_id
+    )
   )
   SELECT
-    bv.message_id as event_id,
-    bv.stream_id,
-    bv.stream_id as aggregate_id,
-    SPLIT_PART(normalize_event_type(bv.event_type), ',', 1) as aggregate_type,
-    normalize_event_type(bv.event_type),
-    -- Extract just the Payload from the envelope for event_data
-    (bv.event_data::jsonb -> 'Payload') as event_data,
-    -- Build EnvelopeMetadata structure (MessageId + Hops) for metadata
-    jsonb_build_object(
-      'MessageId', bv.event_data::jsonb -> 'MessageId',
-      'Hops', COALESCE(bv.event_data::jsonb -> 'Hops', '[]'::jsonb)
-    ) as metadata,
-    bv.scope,
-    nextval('wh_event_sequence'),
-    bv.base_version + bv.row_num as version,
-    p_now
-  FROM outbox_base_versions bv
-  ON CONFLICT (event_id) DO NOTHING;
+    array_agg(se.event_id),
+    (SELECT COUNT(*) FROM conflict_events),
+    (SELECT array_agg(DISTINCT ce.event_type) FROM conflict_events ce)
+  INTO v_stored_outbox_events, v_outbox_conflict_count, v_outbox_conflict_types
+  FROM stored_events se;
 
-  -- Store events from inbox messages
+  -- Ensure array is never NULL
+  v_stored_outbox_events := COALESCE(v_stored_outbox_events, '{}');
+
+  -- Log warnings for idempotent conflicts (if any)
+  IF v_outbox_conflict_count > 0 THEN
+    PERFORM log_event(
+      2,  -- Warning level
+      'process_work_batch',
+      format('Event already exists (idempotent): %s outbox events skipped', v_outbox_conflict_count),
+      NULL,  -- No specific event_id (multiple)
+      NULL,  -- No specific message_id
+      NULL,  -- No specific event_type
+      jsonb_build_object(
+        'phase', '4.5A',
+        'source', 'outbox',
+        'skipped_count', v_outbox_conflict_count,
+        'event_types', v_outbox_conflict_types
+      )
+    );
+  END IF;
+
+  -- Phase 4.5B: Store events from inbox messages with tracking
   WITH inbox_events AS (
     SELECT
       i.message_id,
@@ -407,39 +463,79 @@ BEGIN
         0
       ) as base_version
     FROM inbox_events ie
-  )
-  INSERT INTO wh_event_store (
-    event_id,
-    stream_id,
-    aggregate_id,
-    aggregate_type,
-    event_type,
-    event_data,
-    metadata,
-    scope,
-    sequence_number,
-    version,
-    created_at
+  ),
+  stored_events AS (
+    INSERT INTO wh_event_store (
+      event_id,
+      stream_id,
+      aggregate_id,
+      aggregate_type,
+      event_type,
+      event_data,
+      metadata,
+      scope,
+      sequence_number,
+      version,
+      created_at
+    )
+    SELECT
+      bv.message_id as event_id,
+      bv.stream_id,
+      bv.stream_id as aggregate_id,
+      SPLIT_PART(normalize_event_type(bv.event_type), ',', 1) as aggregate_type,
+      normalize_event_type(bv.event_type),
+      -- Extract just the Payload from the envelope for event_data
+      (bv.event_data::jsonb -> 'Payload') as event_data,
+      -- Build EnvelopeMetadata structure (MessageId + Hops) for metadata
+      jsonb_build_object(
+        'MessageId', bv.event_data::jsonb -> 'MessageId',
+        'Hops', COALESCE(bv.event_data::jsonb -> 'Hops', '[]'::jsonb)
+      ) as metadata,
+      bv.scope,
+      nextval('wh_event_sequence'),
+      bv.base_version + bv.row_num as version,
+      p_now
+    FROM inbox_base_versions bv
+    ON CONFLICT (event_id) DO NOTHING
+    RETURNING event_id, event_type
+  ),
+  conflict_events AS (
+    -- Find events that conflicted (were skipped due to idempotency)
+    SELECT
+      bv.message_id,
+      bv.event_type
+    FROM inbox_base_versions bv
+    WHERE NOT EXISTS (
+      SELECT 1 FROM stored_events se WHERE se.event_id = bv.message_id
+    )
   )
   SELECT
-    bv.message_id as event_id,
-    bv.stream_id,
-    bv.stream_id as aggregate_id,
-    SPLIT_PART(normalize_event_type(bv.event_type), ',', 1) as aggregate_type,
-    normalize_event_type(bv.event_type),
-    -- Extract just the Payload from the envelope for event_data
-    (bv.event_data::jsonb -> 'Payload') as event_data,
-    -- Build EnvelopeMetadata structure (MessageId + Hops) for metadata
-    jsonb_build_object(
-      'MessageId', bv.event_data::jsonb -> 'MessageId',
-      'Hops', COALESCE(bv.event_data::jsonb -> 'Hops', '[]'::jsonb)
-    ) as metadata,
-    bv.scope,
-    nextval('wh_event_sequence'),
-    bv.base_version + bv.row_num as version,
-    p_now
-  FROM inbox_base_versions bv
-  ON CONFLICT (event_id) DO NOTHING;
+    array_agg(se.event_id),
+    (SELECT COUNT(*) FROM conflict_events),
+    (SELECT array_agg(DISTINCT ce.event_type) FROM conflict_events ce)
+  INTO v_stored_inbox_events, v_inbox_conflict_count, v_inbox_conflict_types
+  FROM stored_events se;
+
+  -- Ensure array is never NULL
+  v_stored_inbox_events := COALESCE(v_stored_inbox_events, '{}');
+
+  -- Log warnings for idempotent conflicts (if any)
+  IF v_inbox_conflict_count > 0 THEN
+    PERFORM log_event(
+      2,  -- Warning level
+      'process_work_batch',
+      format('Event already exists (idempotent): %s inbox events skipped', v_inbox_conflict_count),
+      NULL,  -- No specific event_id (multiple)
+      NULL,  -- No specific message_id
+      NULL,  -- No specific event_type
+      jsonb_build_object(
+        'phase', '4.5B',
+        'source', 'inbox',
+        'skipped_count', v_inbox_conflict_count,
+        'event_types', v_inbox_conflict_types
+      )
+    );
+  END IF;
 
   -- ========================================
   -- Phase 4.6: Auto-Create Perspective Events
@@ -447,6 +543,7 @@ BEGIN
   -- When events are stored, automatically create perspective event work items for any events
   -- that match perspective associations. This ensures perspectives get notified of relevant events.
   -- Uses fuzzy type matching to handle different .NET type name formats.
+  -- CRITICAL: Only processes events that were successfully stored in Phase 4.5 (tracked via arrays).
   INSERT INTO wh_perspective_events (
     event_work_id,
     stream_id,
@@ -500,12 +597,13 @@ BEGIN
       )
     )
     AND ma.association_type = 'perspective'
-  WHERE NOT EXISTS (
-    SELECT 1 FROM wh_perspective_events pe_check
-    WHERE pe_check.stream_id = es.stream_id
-      AND pe_check.perspective_name = ma.target_name
-      AND pe_check.event_id = es.event_id
-  )
+  WHERE es.event_id = ANY(v_stored_outbox_events || v_stored_inbox_events)  -- Only process successfully stored events
+    AND NOT EXISTS (
+      SELECT 1 FROM wh_perspective_events pe_check
+      WHERE pe_check.stream_id = es.stream_id
+        AND pe_check.perspective_name = ma.target_name
+        AND pe_check.event_id = es.event_id
+    )
   ON CONFLICT ON CONSTRAINT uq_perspective_event DO NOTHING;  -- Idempotency
 
   -- ========================================
@@ -514,6 +612,7 @@ BEGIN
   -- When events are stored, automatically create checkpoint rows for any streams
   -- that have events matching perspective associations but don't have checkpoints yet.
   -- Uses fuzzy type matching to handle different .NET type name formats.
+  -- CRITICAL: Only processes events that were successfully stored in Phase 4.5 (tracked via arrays).
   INSERT INTO wh_perspective_checkpoints (
     stream_id,
     perspective_name,
@@ -558,11 +657,12 @@ BEGIN
       )
     )
     AND ma.association_type = 'perspective'
-  WHERE NOT EXISTS (
-    SELECT 1 FROM wh_perspective_checkpoints pc_check
-    WHERE pc_check.stream_id = es.stream_id
-      AND pc_check.perspective_name = ma.target_name
-  )
+  WHERE es.event_id = ANY(v_stored_outbox_events || v_stored_inbox_events)  -- Only process successfully stored events
+    AND NOT EXISTS (
+      SELECT 1 FROM wh_perspective_checkpoints pc_check
+      WHERE pc_check.stream_id = es.stream_id
+        AND pc_check.perspective_name = ma.target_name
+    )
   ON CONFLICT DO NOTHING;  -- Idempotency - relies on primary key (stream_id, perspective_name)
 
   -- ========================================
@@ -666,6 +766,8 @@ BEGIN
     o.attempts,
     CASE WHEN temp_new.message_id IS NOT NULL THEN true ELSE false END as is_newly_stored,
     CASE WHEN temp_orphaned.message_id IS NOT NULL THEN true ELSE false END as is_orphaned,
+    NULL::TEXT as error,
+    NULL::INTEGER as failure_reason,
     NULL::VARCHAR(200) as perspective_name,
     NULL::BIGINT as sequence_number
   FROM wh_outbox o
@@ -694,6 +796,8 @@ BEGIN
     i.attempts,
     CASE WHEN temp_new.message_id IS NOT NULL THEN true ELSE false END as is_newly_stored,
     CASE WHEN temp_orphaned.message_id IS NOT NULL THEN true ELSE false END as is_orphaned,
+    NULL::TEXT as error,
+    NULL::INTEGER as failure_reason,
     NULL::VARCHAR(200) as perspective_name,
     NULL::BIGINT as sequence_number
   FROM wh_inbox i
@@ -722,6 +826,8 @@ BEGIN
     rp.attempts,
     false as is_newly_stored,  -- Receptor work created out-of-band
     CASE WHEN temp_orphaned.processing_id IS NOT NULL THEN true ELSE false END as is_orphaned,
+    NULL::TEXT as error,
+    NULL::INTEGER as failure_reason,
     NULL::VARCHAR(200) as perspective_name,
     NULL::BIGINT as sequence_number
   FROM wh_receptor_processing rp
@@ -748,6 +854,8 @@ BEGIN
     pe.attempts,
     CASE WHEN temp_new.event_work_id IS NOT NULL THEN true ELSE false END as is_newly_stored,
     CASE WHEN temp_orphaned.event_work_id IS NOT NULL THEN true ELSE false END as is_orphaned,
+    NULL::TEXT as error,
+    NULL::INTEGER as failure_reason,
     pe.perspective_name,
     pe.sequence_number
   FROM wh_perspective_events pe

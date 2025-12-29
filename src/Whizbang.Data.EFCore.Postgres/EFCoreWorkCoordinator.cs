@@ -45,6 +45,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private readonly TDbContext _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<EFCoreWorkCoordinator<TDbContext>>? _logger = logger;
+
   private readonly string _connectionString = connectionString
     ?? dbContext.Database.GetConnectionString()
     ?? throw new InvalidOperationException("DbContext must have a connection string configured");
@@ -227,8 +228,33 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// </summary>
   private WorkBatch _processResults(List<WorkBatchRow> results) {
 
+    // Check for storage failure rows (error tracking from Phase 4.5)
+    var errorRows = results.Where(r => r.Error != null && r.FailureReason.HasValue).ToList();
+    if (errorRows.Count > 0) {
+      _logger?.LogError(
+        "Event storage failures detected: {FailureCount} rows with errors",
+        errorRows.Count
+      );
+
+      foreach (var errorRow in errorRows) {
+        _logger?.LogError(
+          "Event storage failure: WorkId={WorkId}, Source={Source}, Reason={Reason}, Error={Error}",
+          errorRow.WorkId,
+          errorRow.Source,
+          (MessageFailureReason)(errorRow.FailureReason ?? (int)MessageFailureReason.Unknown),
+          errorRow.Error
+        );
+      }
+
+      // Currently we don't throw - messages remain in tables with failed status
+      // Future: Could make this configurable (fail-fast vs. continue)
+    }
+
+    // Filter out error rows from further processing
+    var validResults = results.Where(r => r.Error == null).ToList();
+
     // Map results to WorkBatch - deserialize envelopes from database
-    var outboxWork = results
+    var outboxWork = validResults
       .Where(r => r.Source == "outbox")
       .Select(r => {
         var envelope = _deserializeEnvelope(r.MessageType!, r.MessageData!);
@@ -260,7 +286,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       })
       .ToList();
 
-    var inboxWork = results
+    var inboxWork = validResults
       .Where(r => r.Source == "inbox")
       .Select(r => {
         var envelope = _deserializeEnvelope(r.MessageType!, r.MessageData!);
@@ -290,7 +316,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
       })
       .ToList();
 
-    var perspectiveWork = results
+    var perspectiveWork = validResults
       .Where(r => r.Source == "perspective")
       .Select(r => {
         var flags = WorkBatchFlags.None;
@@ -525,38 +551,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task ReportPerspectiveCompletionAsync(
     PerspectiveCheckpointCompletion completion,
     CancellationToken cancellationToken = default) {
-    await using var connection = new NpgsqlConnection(_connectionString);
-    await connection.OpenAsync(cancellationToken);
-
-    await using var command = connection.CreateCommand();
-    command.CommandText = "SELECT complete_perspective_checkpoint_work(@p0, @p1, @p2, @p3, @p4)";
-
-    var p0 = command.CreateParameter();
-    p0.ParameterName = "@p0";
-    p0.Value = completion.StreamId;
-    command.Parameters.Add(p0);
-
-    var p1 = command.CreateParameter();
-    p1.ParameterName = "@p1";
-    p1.Value = completion.PerspectiveName;
-    command.Parameters.Add(p1);
-
-    var p2 = command.CreateParameter();
-    p2.ParameterName = "@p2";
-    p2.Value = completion.LastEventId;
-    command.Parameters.Add(p2);
-
-    var p3 = command.CreateParameter();
-    p3.ParameterName = "@p3";
-    p3.Value = (short)completion.Status;
-    command.Parameters.Add(p3);
-
-    var p4 = command.CreateParameter();
-    p4.ParameterName = "@p4";
-    p4.Value = (object?)null ?? DBNull.Value;
-    command.Parameters.Add(p4);
-
-    await command.ExecuteNonQueryAsync(cancellationToken);
+    // Use DbContext's ExecuteSqlRawAsync which properly manages the connection
+    // This works with both traditional connection strings and NpgsqlDataSource
+    await _dbContext.Database.ExecuteSqlRawAsync(
+      "SELECT complete_perspective_checkpoint_work({0}, {1}, {2}, {3}, {4})",
+      [completion.StreamId, completion.PerspectiveName, completion.LastEventId, (short)completion.Status, (object?)null ?? DBNull.Value],
+      cancellationToken);
   }
 
   /// <summary>
@@ -567,38 +567,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
   public async Task ReportPerspectiveFailureAsync(
     PerspectiveCheckpointFailure failure,
     CancellationToken cancellationToken = default) {
-    await using var connection = new NpgsqlConnection(_connectionString);
-    await connection.OpenAsync(cancellationToken);
-
-    await using var command = connection.CreateCommand();
-    command.CommandText = "SELECT complete_perspective_checkpoint_work(@p0, @p1, @p2, @p3, @p4)";
-
-    var p0 = command.CreateParameter();
-    p0.ParameterName = "@p0";
-    p0.Value = failure.StreamId;
-    command.Parameters.Add(p0);
-
-    var p1 = command.CreateParameter();
-    p1.ParameterName = "@p1";
-    p1.Value = failure.PerspectiveName;
-    command.Parameters.Add(p1);
-
-    var p2 = command.CreateParameter();
-    p2.ParameterName = "@p2";
-    p2.Value = failure.LastEventId;
-    command.Parameters.Add(p2);
-
-    var p3 = command.CreateParameter();
-    p3.ParameterName = "@p3";
-    p3.Value = (short)failure.Status;
-    command.Parameters.Add(p3);
-
-    var p4 = command.CreateParameter();
-    p4.ParameterName = "@p4";
-    p4.Value = (object?)failure.Error ?? DBNull.Value;
-    command.Parameters.Add(p4);
-
-    await command.ExecuteNonQueryAsync(cancellationToken);
+    // Use DbContext's ExecuteSqlRawAsync which properly manages the connection
+    // This works with both traditional connection strings and NpgsqlDataSource
+    await _dbContext.Database.ExecuteSqlRawAsync(
+      "SELECT complete_perspective_checkpoint_work({0}, {1}, {2}, {3}, {4})",
+      [failure.StreamId, failure.PerspectiveName, failure.LastEventId, (short)failure.Status, failure.Error ?? (object)DBNull.Value],
+      cancellationToken);
   }
 
   /// <summary>
@@ -660,6 +634,12 @@ internal class WorkBatchRow {
 
   [Column("is_orphaned")]
   public bool IsOrphaned { get; set; }
+
+  [Column("error")]
+  public string? Error { get; set; }  // Error message (NULL if no error)
+
+  [Column("failure_reason")]
+  public int? FailureReason { get; set; }  // MessageFailureReason enum value (NULL if no failure)
 
   [Column("perspective_name")]
   public string? PerspectiveName { get; set; }  // NULL for non-perspective work

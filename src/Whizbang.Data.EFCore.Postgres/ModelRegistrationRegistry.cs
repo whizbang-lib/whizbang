@@ -30,9 +30,10 @@ public static class ModelRegistrationRegistry {
   }
 
   /// <summary>
-  /// Invokes ALL registered model registration callbacks.
+  /// Invokes the LATEST registered model registration callback.
   /// Called by driver extensions (InMemory, Postgres) to register discovered models and infrastructure.
   /// If no registrars have been set (module initializers hasn't run or no DbContext found), does nothing gracefully.
+  /// Only the latest registrar is invoked to support hot reload and test scenarios where registrations can be replaced.
   /// Tracks which callbacks have been invoked for which DbContext to prevent duplicate service registrations.
   /// </summary>
   /// <param name="services">The service collection to register services in.</param>
@@ -55,13 +56,12 @@ public static class ModelRegistrationRegistry {
         return;
       }
 
-      // Invoke ALL registered callbacks from all assemblies
-      // Track which callbacks have been invoked for this DbContext to prevent duplicates
-      for (int i = 0; i < _registrars.Count; i++) {
-        var key = (dbContextType, i);
-        if (_invoked.Add(key)) {
-          _registrars[i](services, dbContextType, upsertStrategy);
-        }
+      // Invoke ONLY the latest registered callback
+      // This allows later registrations to override earlier ones (hot reload, test scenarios)
+      var latestIndex = _registrars.Count - 1;
+      var key = (dbContextType, latestIndex);
+      if (_invoked.Add(key)) {
+        _registrars[latestIndex](services, dbContextType, upsertStrategy);
       }
     }
   }

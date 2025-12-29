@@ -36,6 +36,16 @@ BEGIN
         AND ast.assigned_instance_id != p_instance_id
         AND ast.lease_expiry > p_now
     )
+    -- STREAM ORDERING CHECK: Don't claim if there's an earlier message in the same stream
+    -- that's scheduled for future retry (blocks later messages until retry time passes)
+    AND NOT EXISTS (
+      SELECT 1 FROM wh_outbox earlier
+      WHERE earlier.stream_id = o.stream_id
+        AND earlier.created_at < o.created_at
+        AND earlier.scheduled_for IS NOT NULL
+        AND earlier.scheduled_for > p_now
+        AND earlier.processed_at IS NULL
+    )
   RETURNING o.message_id AS message_id, o.stream_id AS stream_id;
 END;
 $$ LANGUAGE plpgsql;

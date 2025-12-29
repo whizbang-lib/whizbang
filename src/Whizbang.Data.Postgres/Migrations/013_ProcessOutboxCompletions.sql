@@ -38,6 +38,17 @@ BEGIN
 
     v_new_status := v_current_status | v_completion.status_flags;
 
+    -- Special case: status_flags = 0 means "release lease without completion"
+    -- Don't set processed_at so message remains claimable by other instances
+    IF v_completion.status_flags = 0 THEN
+      UPDATE wh_outbox o
+      SET instance_id = NULL,
+          lease_expiry = NULL
+      WHERE o.message_id = v_completion.msg_id;
+      RETURN QUERY SELECT v_completion.msg_id AS message_id, v_stream_id AS stream_id, FALSE AS was_deleted;
+      CONTINUE;
+    END IF;
+
     IF p_debug_mode THEN
       -- Debug mode: Retain message for troubleshooting
       UPDATE wh_outbox o

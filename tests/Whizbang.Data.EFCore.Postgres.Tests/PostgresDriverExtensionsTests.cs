@@ -1,3 +1,4 @@
+#nullable disable
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
@@ -80,8 +81,8 @@ public class PostgresDriverExtensionsTests {
     var exception = await Assert.That(() => fakeOptions.Postgres)
         .Throws<InvalidOperationException>();
 
-    await Assert.That(exception.Message).Contains("Postgres driver can only be used with EF Core storage");
-    await Assert.That(exception.Message).Contains("Call .WithEFCore<TDbContext>() before .WithDriver.Postgres");
+    await Assert.That(exception.Message!).Contains("Postgres driver can only be used with EF Core storage");
+    await Assert.That(exception.Message!).Contains("Call .WithEFCore<TDbContext>() before .WithDriver.Postgres");
   }
 
   /// <summary>
