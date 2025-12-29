@@ -125,10 +125,22 @@ public class EFCoreSnippets {
       return new Whizbang.Data.EFCore.Postgres.EFCorePostgresPerspectiveStore<__MODEL_TYPE__>(context, "__TABLE_NAME__", upsertStrategy);
     });
 
-    // Register ILensQuery<__MODEL_TYPE__> - AOT compatible
+    // Register ILensQuery<__MODEL_TYPE__> - scoped (for web APIs, receptors)
     services.AddScoped<Whizbang.Core.Lenses.ILensQuery<__MODEL_TYPE__>>(sp => {
       var context = sp.GetRequiredService<__DBCONTEXT_FQN__>();
       return new Whizbang.Data.EFCore.Postgres.EFCorePostgresLensQuery<__MODEL_TYPE__>(context, "__TABLE_NAME__");
+    });
+
+    // Register IScopedLensQuery<__MODEL_TYPE__> - singleton (auto-scoping for background services)
+    services.AddSingleton<Whizbang.Core.Lenses.IScopedLensQuery<__MODEL_TYPE__>>(sp => {
+      var scopeFactory = sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
+      return new Whizbang.Core.Lenses.ScopedLensQuery<__MODEL_TYPE__>(scopeFactory);
+    });
+
+    // Register ILensQueryFactory<__MODEL_TYPE__> - singleton (manual scope control for batch operations)
+    services.AddSingleton<Whizbang.Core.Lenses.ILensQueryFactory<__MODEL_TYPE__>>(sp => {
+      var scopeFactory = sp.GetRequiredService<Microsoft.Extensions.DependencyInjection.IServiceScopeFactory>();
+      return new Whizbang.Core.Lenses.LensQueryFactory<__MODEL_TYPE__>(scopeFactory);
     });
     #endregion
   }
