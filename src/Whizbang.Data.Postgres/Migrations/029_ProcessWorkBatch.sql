@@ -543,7 +543,7 @@ BEGIN
   -- When events are stored, automatically create perspective event work items for any events
   -- that match perspective associations. This ensures perspectives get notified of relevant events.
   -- Uses fuzzy type matching to handle different .NET type name formats.
-  -- CRITICAL: Only processes events that were successfully stored in Phase 4.5 (tracked via arrays).
+  -- Only processes events successfully stored in Phase 4.5 (tracked via arrays).
   INSERT INTO wh_perspective_events (
     event_work_id,
     stream_id,
@@ -597,7 +597,7 @@ BEGIN
       )
     )
     AND ma.association_type = 'perspective'
-  WHERE es.event_id = ANY(v_stored_outbox_events || v_stored_inbox_events)  -- Only process successfully stored events
+  WHERE es.event_id = ANY(v_stored_outbox_events || v_stored_inbox_events)
     AND NOT EXISTS (
       SELECT 1 FROM wh_perspective_events pe_check
       WHERE pe_check.stream_id = es.stream_id
@@ -612,7 +612,7 @@ BEGIN
   -- When events are stored, automatically create checkpoint rows for any streams
   -- that have events matching perspective associations but don't have checkpoints yet.
   -- Uses fuzzy type matching to handle different .NET type name formats.
-  -- CRITICAL: Only processes events that were successfully stored in Phase 4.5 (tracked via arrays).
+  -- Only processes events successfully stored in Phase 4.5 (tracked via arrays).
   INSERT INTO wh_perspective_checkpoints (
     stream_id,
     perspective_name,
@@ -657,7 +657,7 @@ BEGIN
       )
     )
     AND ma.association_type = 'perspective'
-  WHERE es.event_id = ANY(v_stored_outbox_events || v_stored_inbox_events)  -- Only process successfully stored events
+  WHERE es.event_id = ANY(v_stored_outbox_events || v_stored_inbox_events)
     AND NOT EXISTS (
       SELECT 1 FROM wh_perspective_checkpoints pc_check
       WHERE pc_check.stream_id = es.stream_id

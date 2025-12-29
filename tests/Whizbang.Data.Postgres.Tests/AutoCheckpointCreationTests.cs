@@ -31,13 +31,12 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
 
     using var connection = await ConnectionFactory.CreateConnectionAsync();
 
-    // Insert event into event store (simulating event being written)
-    await _insertEventStoreRecordAsync(
+    // Insert event into outbox (proper flow - will be stored in event store by process_work_batch)
+    await _insertOutboxEventAsync(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
-      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}",
-      version: 1);
+      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}");
 
     // Act - Call process_work_batch to trigger perspective association matching
     var _ = await connection.QueryAsync(@"
@@ -103,12 +102,11 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     var eventId = _idProvider.NewGuid();
 
     // Insert event into event store
-    await _insertEventStoreRecordAsync(
+    await _insertOutboxEventAsync(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
-      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}",
-      version: 1);
+      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}");
 
     // Act - Call process_work_batch
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -148,12 +146,11 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     var eventId = _idProvider.NewGuid();
 
     // Insert event into event store
-    await _insertEventStoreRecordAsync(
+    await _insertOutboxEventAsync(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
-      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}",
-      version: 1);
+      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}");
 
     // Act - Call process_work_batch
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -196,12 +193,11 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     await _insertPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
 
     // Insert event into event store
-    await _insertEventStoreRecordAsync(
+    await _insertOutboxEventAsync(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
-      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}",
-      version: 1);
+      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}");
 
     // Act - Call process_work_batch (should NOT duplicate)
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -235,12 +231,11 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     var eventId = _idProvider.NewGuid();
 
     // Insert event into event store
-    await _insertEventStoreRecordAsync(
+    await _insertOutboxEventAsync(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
-      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}",
-      version: 1);
+      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}");
 
     // Act - Call process_work_batch
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -276,12 +271,11 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     var eventId = _idProvider.NewGuid();
 
     // Act - Event has FULL AssemblyQualifiedName with Version/Culture/PublicKeyToken
-    await _insertEventStoreRecordAsync(
+    await _insertOutboxEventAsync(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null",
-      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}",
-      version: 1);
+      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}");
 
     // Call process_work_batch
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -315,12 +309,11 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     var eventId = _idProvider.NewGuid();
 
     // Act - Event has short form "TypeName, AssemblyName"
-    await _insertEventStoreRecordAsync(
+    await _insertOutboxEventAsync(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain",
-      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}",
-      version: 1);
+      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}");
 
     // Call process_work_batch
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -354,12 +347,11 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     var eventId = _idProvider.NewGuid();
 
     // Act - Event has version 2.0.0.0 (different!)
-    await _insertEventStoreRecordAsync(
+    await _insertOutboxEventAsync(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain, Version=2.0.0.0, Culture=neutral, PublicKeyToken=abc123",
-      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}",
-      version: 1);
+      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}");
 
     // Call process_work_batch
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -393,12 +385,11 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     var eventId = _idProvider.NewGuid();
 
     // Act - Event has ONLY TypeName (no assembly - this is too loose!)
-    await _insertEventStoreRecordAsync(
+    await _insertOutboxEventAsync(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent",
-      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}",
-      version: 1);
+      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}");
 
     // Call process_work_batch
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -432,12 +423,11 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     var eventId = _idProvider.NewGuid();
 
     // Act - Event from DIFFERENT assembly "ECommerce.Domain.V2"
-    await _insertEventStoreRecordAsync(
+    await _insertOutboxEventAsync(
       streamId: streamId,
       eventId: eventId,
       eventType: "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain.V2",
-      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}",
-      version: 1);
+      eventData: "{\"productId\":\"123\",\"name\":\"Widget\"}");
 
     // Call process_work_batch
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -470,10 +460,10 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
 
     await _insertPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
 
-    // Insert some events
-    await _insertEventStoreRecordAsync(streamId, eventId1, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 1);
-    await _insertEventStoreRecordAsync(streamId, eventId2, "ECommerce.Domain.Events.ProductUpdatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 2);
-    await _insertEventStoreRecordAsync(streamId, eventId3, "ECommerce.Domain.Events.ProductUpdatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 3);
+    // Insert some events into outbox (proper flow)
+    await _insertOutboxEventAsync(streamId, eventId1, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}");
+    await _insertOutboxEventAsync(streamId, eventId2, "ECommerce.Domain.Events.ProductUpdatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}");
+    await _insertOutboxEventAsync(streamId, eventId3, "ECommerce.Domain.Events.ProductUpdatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}");
 
     // Act - Report perspective completion (processed up to eventId2)
     var perspectiveCompletions = new[] {
@@ -520,8 +510,8 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     await _insertPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
     await _insertPerspectiveCheckpointAsync(streamId, "ProductDetailsPerspective");
 
-    await _insertEventStoreRecordAsync(streamId, eventId1, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 1);
-    await _insertEventStoreRecordAsync(streamId, eventId2, "ECommerce.Domain.Events.ProductUpdatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 2);
+    await _insertOutboxEventAsync(streamId, eventId1, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}");
+    await _insertOutboxEventAsync(streamId, eventId2, "ECommerce.Domain.Events.ProductUpdatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}");
 
     // Act - Report completions for BOTH perspectives (but at different points)
     var perspectiveCompletions = new[] {
@@ -570,7 +560,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     var eventId = _idProvider.NewGuid();
 
     await _insertPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
-    await _insertEventStoreRecordAsync(streamId, eventId, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 1);
+    await _insertOutboxEventAsync(streamId, eventId, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}");
 
     // Act - Report perspective FAILURE
     var perspectiveFailures = new[] {
@@ -614,7 +604,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     var eventId = _idProvider.NewGuid();
 
     await _insertPerspectiveCheckpointAsync(streamId, "ProductListPerspective");
-    await _insertEventStoreRecordAsync(streamId, eventId, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}", 1);
+    await _insertOutboxEventAsync(streamId, eventId, "ECommerce.Domain.Events.ProductCreatedEvent, ECommerce.Domain", "{\"productId\":\"123\"}");
 
     // Act - Call process_work_batch with NO completions/failures
     using var connection = await ConnectionFactory.CreateConnectionAsync();
@@ -649,6 +639,68 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
       new { messageType, associationType, targetName, serviceName });
   }
 
+  /// <summary>
+  /// Inserts an event into wh_outbox table (proper flow).
+  /// When process_work_batch() is called, Phase 4.5 will store it in wh_event_store
+  /// and add it to v_stored_outbox_events array, then Phase 4.6/4.7 will process it.
+  /// </summary>
+  private async Task _insertOutboxEventAsync(
+    Guid streamId,
+    Guid eventId,
+    string eventType,
+    string eventData) {
+    using var connection = await ConnectionFactory.CreateConnectionAsync();
+
+    // Create MessageEnvelope<TPayload> JSON structure
+    var envelopeJson = $@"{{
+      ""MessageId"": ""{eventId}"",
+      ""Payload"": {eventData},
+      ""Hops"": []
+    }}";
+
+    // Insert into wh_outbox (Status=0 so process_work_batch can claim it)
+    await connection.ExecuteAsync(@"
+      INSERT INTO wh_outbox (
+        message_id,
+        destination,
+        event_type,
+        envelope_type,
+        event_data,
+        metadata,
+        scope,
+        stream_id,
+        partition_number,
+        is_event,
+        status,
+        attempts,
+        created_at,
+        instance_id,
+        lease_expiry
+      ) VALUES (
+        @eventId,
+        NULL,                              -- No destination for events
+        @eventType,                        -- Event type (payload type)
+        'Whizbang.Core.Observability.MessageEnvelope`1[[' || @eventType || ']], Whizbang.Core', -- Envelope type
+        @envelopeJson::jsonb,              -- Envelope data
+        '{}'::jsonb,                       -- Empty metadata
+        'null'::jsonb,                     -- No scope
+        @streamId,
+        compute_partition(@streamId, 10000), -- Partition for load balancing
+        true,                              -- is_event = true
+        0,                                 -- Status = 0 (available for claiming)
+        0,                                 -- Attempts = 0
+        NOW(),
+        NULL,                              -- No instance_id yet
+        NULL                               -- No lease yet
+      )",
+      new { eventId, streamId, eventType, envelopeJson });
+  }
+
+  /// <summary>
+  /// LEGACY: Directly inserts into wh_event_store (bypasses proper flow).
+  /// DO NOT USE - use _insertOutboxEventAsync instead.
+  /// Kept for reference only.
+  /// </summary>
   private async Task _insertEventStoreRecordAsync(
     Guid streamId,
     Guid eventId,
