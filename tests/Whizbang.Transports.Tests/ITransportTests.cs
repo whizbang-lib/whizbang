@@ -66,53 +66,6 @@ public class ITransportTests {
     // Assert
     await Assert.That(subscription).IsNotNull();
   }
-
-  [Test]
-  [Skip("Comprehensive request-response test exists in InProcessTransportTests")]
-  public async Task ITransport_SendAsync_WithRequestResponse_ReturnsResponseEnvelopeAsync() {
-    // Arrange
-    var transport = _createTestTransport();
-    var requestEnvelope = _createTestEnvelope();
-    var destination = new TransportDestination("test-service");
-
-    // Setup responder
-    await transport.SubscribeAsync(
-      handler: async (env, ct) => {
-        // Simulate responder sending response
-        var responseEnvelope = new MessageEnvelope<TestResponse> {
-          MessageId = MessageId.New(),
-          Payload = new TestResponse { Result = "response" },
-          Hops = [
-            new MessageHop {
-              ServiceInstance = new ServiceInstanceInfo {
-                ServiceName = "TestService",
-                InstanceId = Guid.NewGuid(),
-                HostName = "test-host",
-                ProcessId = 12345
-              },
-              Timestamp = DateTimeOffset.UtcNow
-            }
-          ]
-        };
-        var responseDestination = new TransportDestination($"response-{env.MessageId.Value}");
-        await transport.PublishAsync(responseEnvelope, responseDestination, envelopeType: null, ct);
-      },
-      destination: destination
-    );
-
-    // Act
-    var responseEnvelope = await transport.SendAsync<TestMessage, TestResponse>(
-      requestEnvelope,
-      destination,
-      CancellationToken.None
-    );
-
-    // Assert
-    await Assert.That(responseEnvelope).IsNotNull();
-    // Note: IMessageEnvelope doesn't expose Payload, need to cast to get typed payload
-    // This test will be enhanced in InProcessTransport tests
-  }
-
   [Test]
   public async Task ITransport_SendAsync_WithTimeout_ThrowsTimeoutExceptionAsync() {
     // Arrange
