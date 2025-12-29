@@ -28,9 +28,10 @@ public class EFCoreSnippets {
       // Primary key
       entity.Property(e => e.Id).HasColumnName("id");
 
-      // JSONB columns (Npgsql JSONB mapping)
-      // Using HasColumnType("jsonb") tells Npgsql to store as JSONB
-      // Npgsql automatically handles JSON serialization for complex types
+      // JSONB columns (PostgreSQL with Npgsql)
+      // HasColumnType("jsonb") tells Npgsql to store as JSONB
+      // JSON serialization is configured via NpgsqlDataSourceBuilder.ConfigureJsonOptions()
+      // which uses our source-generated JSON converters (WhizbangJsonContext)
       entity.Property(e => e.Data)
         .HasColumnName("data")
         .HasColumnType("jsonb")

@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using Testcontainers.PostgreSql;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
@@ -20,6 +21,7 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
   }
 
   private PostgreSqlContainer? _postgresContainer;
+  private NpgsqlDataSource? _dataSource;
 
   protected string ConnectionString { get; private set; } = null!;
   protected DbContextOptions<WorkCoordinationDbContext> DbContextOptions { get; private set; } = null!;
@@ -44,9 +46,22 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
       // Add Include Error Detail=true to see detailed error messages for debugging
       ConnectionString = $"{baseConnectionString};Timezone=UTC;Include Error Detail=true";
 
-      // Configure DbContext options
+      // Configure Npgsql data source with JSON serializer options for Vogen value objects
+      var dataSourceBuilder = new NpgsqlDataSourceBuilder(ConnectionString);
+
+      // CRITICAL: ConfigureJsonOptions() must be called BEFORE EnableDynamicJson() due to Npgsql bug #5562
+      // Configure JSON options with Vogen value object converters
+      var jsonOptions = WhizbangJsonContext.CreateOptions();
+      dataSourceBuilder.ConfigureJsonOptions(jsonOptions);
+
+      // Enable dynamic JSON to allow any .NET type to be mapped to JSONB
+      dataSourceBuilder.EnableDynamicJson();
+
+      _dataSource = dataSourceBuilder.Build();
+
+      // Configure DbContext options to use the data source
       var optionsBuilder = new DbContextOptionsBuilder<WorkCoordinationDbContext>();
-      optionsBuilder.UseNpgsql(ConnectionString);
+      optionsBuilder.UseNpgsql(_dataSource);
       DbContextOptions = optionsBuilder.Options;
 
       // Initialize database schema
@@ -63,6 +78,11 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
 
   [After(Test)]
   public async Task TeardownAsync() {
+    if (_dataSource != null) {
+      await _dataSource.DisposeAsync();
+      _dataSource = null;
+    }
+
     if (_postgresContainer != null) {
       await _postgresContainer.StopAsync();
       await _postgresContainer.DisposeAsync();
