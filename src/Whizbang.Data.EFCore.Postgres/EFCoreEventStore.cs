@@ -56,7 +56,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     // Serialize envelope.Payload to JsonElement for type-erased storage
     var typeInfo = (JsonTypeInfo<TMessage>)_jsonOptions.GetTypeInfo(typeof(TMessage));
     var eventDataJson = JsonSerializer.Serialize(envelope.Payload, typeInfo);
-    var eventData = JsonSerializer.Deserialize<JsonElement>(eventDataJson);
+    var eventData = JsonDocument.Parse(eventDataJson).RootElement;
 
     // Create envelope metadata directly - EF Core will serialize via POCO mapping
     var metadata = new EnvelopeMetadata {
@@ -117,20 +117,15 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
 
     await foreach (var record in query.WithCancellation(cancellationToken)) {
       // Deserialize the event payload using JsonTypeInfo for AOT compatibility
-      var eventDataJson = record.EventData.RootElement.GetRawText();
+      var eventDataJson = record.EventData.GetRawText();
       var typeInfo = (JsonTypeInfo<TMessage>)_jsonOptions.GetTypeInfo(typeof(TMessage));
       var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo);
       if (eventData == null) {
         throw new InvalidOperationException($"Failed to deserialize event at sequence {record.Sequence}");
       }
 
-      // Deserialize metadata (MessageId + Hops) directly - no DTO mapping
-      var metadataJson = record.Metadata.RootElement.GetRawText();
-      var metadataTypeInfo = (JsonTypeInfo<EnvelopeMetadata>)_jsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
-      var metadata = JsonSerializer.Deserialize(metadataJson, metadataTypeInfo);
-      if (metadata == null) {
-        throw new InvalidOperationException($"Failed to deserialize metadata at sequence {record.Sequence}");
-      }
+      // Metadata is already strongly-typed EnvelopeMetadata - use directly
+      var metadata = record.Metadata;
 
       // Reconstruct the message envelope - ServiceInstanceInfo is already in the hops
       var envelope = new MessageEnvelope<TMessage> {
@@ -168,20 +163,15 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
 
     await foreach (var record in query.WithCancellation(cancellationToken)) {
       // Deserialize the event payload using JsonTypeInfo for AOT compatibility
-      var eventDataJson = record.EventData.RootElement.GetRawText();
+      var eventDataJson = record.EventData.GetRawText();
       var typeInfo = (JsonTypeInfo<TMessage>)_jsonOptions.GetTypeInfo(typeof(TMessage));
       var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo);
       if (eventData == null) {
         throw new InvalidOperationException($"Failed to deserialize event ID {record.Id}");
       }
 
-      // Deserialize metadata (MessageId + Hops) directly - no DTO mapping
-      var metadataJson = record.Metadata.RootElement.GetRawText();
-      var metadataTypeInfo = (JsonTypeInfo<EnvelopeMetadata>)_jsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
-      var metadata = JsonSerializer.Deserialize(metadataJson, metadataTypeInfo);
-      if (metadata == null) {
-        throw new InvalidOperationException($"Failed to deserialize metadata for event ID {record.Id}");
-      }
+      // Metadata is already strongly-typed EnvelopeMetadata - use directly
+      var metadata = record.Metadata;
 
       // Reconstruct the message envelope - ServiceInstanceInfo is already in the hops
       var envelope = new MessageEnvelope<TMessage> {
@@ -253,20 +243,15 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       }
 
       // Deserialize the event payload to the concrete type
-      var eventDataJson = record.EventData.RootElement.GetRawText();
+      var eventDataJson = record.EventData.GetRawText();
       var typeInfo = _jsonOptions.GetTypeInfo(concreteType);
       var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo);
       if (eventData == null) {
         throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
       }
 
-      // Deserialize metadata (MessageId + Hops) directly
-      var metadataJson = record.Metadata.RootElement.GetRawText();
-      var metadataTypeInfo = (JsonTypeInfo<EnvelopeMetadata>)_jsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
-      var metadata = JsonSerializer.Deserialize(metadataJson, metadataTypeInfo);
-      if (metadata == null) {
-        throw new InvalidOperationException($"Failed to deserialize metadata for event ID {record.Id}");
-      }
+      // Metadata is already strongly-typed EnvelopeMetadata - use directly
+      var metadata = record.Metadata;
 
       // Reconstruct the message envelope with the polymorphic payload cast to IEvent
       var envelope = new MessageEnvelope<IEvent> {
