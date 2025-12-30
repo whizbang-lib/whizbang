@@ -221,6 +221,12 @@ public record OutboxMessage {
   public required IMessageEnvelope<JsonElement> Envelope { get; init; }
 
   /// <summary>
+  /// Envelope metadata extracted for storage in separate metadata column.
+  /// Contains MessageId and Hops for observability and tracing.
+  /// </summary>
+  public required EnvelopeMetadata Metadata { get; init; }
+
+  /// <summary>
   /// Assembly-qualified name of the envelope type (e.g., "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.CreateProductCommand, MyApp]], Whizbang.Core").
   /// Required for proper deserialization of the envelope from the database.
   /// </summary>

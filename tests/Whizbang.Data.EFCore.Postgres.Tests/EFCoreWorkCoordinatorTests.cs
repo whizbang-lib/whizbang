@@ -2531,7 +2531,11 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       EnvelopeType = envelopeType,
       StreamId = productId,  // This should be extracted from [StreamKey] attribute
       IsEvent = true,        // Mark as event
-      MessageType = testEventType
+      MessageType = testEventType,
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(messageId),
+        Hops = new List<MessageHop>()
+      }
     };
 
     // Act

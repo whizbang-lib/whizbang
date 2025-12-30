@@ -5,6 +5,7 @@ using Testcontainers.PostgreSql;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 
@@ -53,12 +54,15 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
       // All entities (infrastructure + perspectives) now use custom POCO types with .HasColumnType("jsonb")
       // - Infrastructure: InboxMessageData, OutboxMessageData, EnvelopeMetadata, MessageScope, ServiceInstanceMetadata
       // - Perspectives: PerspectiveRow<T>.Data, Metadata, Scope
+      // - Test types: Order, SampleOrderCreatedEvent (registered via TestJsonContext)
       //
-      // ConfigureJsonOptions() provides source-generated converters for all custom types
+      // JsonContextRegistry.CreateCombinedOptions() provides source-generated converters for ALL registered contexts:
+      // - Whizbang.Core contexts (WhizbangIdJsonContext, InfrastructureJsonContext, MessageJsonContext)
+      // - Test contexts (TestJsonContext with Order, etc.)
       // EnableDynamicJson() enables POCO → JSONB mapping for properties with .HasColumnType("jsonb")
       //
       // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
-      var jsonOptions = WhizbangJsonContext.CreateOptions();
+      var jsonOptions = JsonContextRegistry.CreateCombinedOptions();
       dataSourceBuilder.ConfigureJsonOptions(jsonOptions);
       dataSourceBuilder.EnableDynamicJson();
 
@@ -133,6 +137,10 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
       MessageId = messageId,
       Destination = destination,
       Envelope = CreateTestEnvelope(messageId),
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(messageId),
+        Hops = new List<MessageHop>()
+      },
       EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
       MessageType = "TestMessage, TestAssembly",
       StreamId = streamId,

@@ -54,7 +54,11 @@ public class IntervalWorkCoordinatorStrategyTests {
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
       IsEvent = true,
-      MessageType = "TestMessage, TestAssembly"
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(messageId),
+        Hops = new List<MessageHop>()
+      }
     });
 
     // Act - Wait for timer to fire (give it 500ms = 5x the interval for reliability under load)
@@ -99,7 +103,11 @@ public class IntervalWorkCoordinatorStrategyTests {
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
       IsEvent = true,
-      MessageType = "TestMessage, TestAssembly"
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(messageId1),
+        Hops = new List<MessageHop>()
+      }
     });
 
     await Task.Delay(100);  // Delay between messages (still less than 1s interval)
@@ -112,7 +120,11 @@ public class IntervalWorkCoordinatorStrategyTests {
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
       IsEvent = true,
-      MessageType = "TestMessage, TestAssembly"
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(messageId2),
+        Hops = new List<MessageHop>()
+      }
     });
 
     // Wait for timer to fire (1s interval + buffer)
@@ -156,7 +168,11 @@ public class IntervalWorkCoordinatorStrategyTests {
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
       IsEvent = true,
-      MessageType = "TestMessage, TestAssembly"
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(messageId),
+        Hops = new List<MessageHop>()
+      }
     });
 
     // Act - Dispose before timer fires (within 1 second)
@@ -206,7 +222,11 @@ public class IntervalWorkCoordinatorStrategyTests {
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
       IsEvent = true,
-      MessageType = "TestMessage, TestAssembly"
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(messageId),
+        Hops = new List<MessageHop>()
+      }
     });
 
     // Act - Manual flush (should not wait for 5 second timer)

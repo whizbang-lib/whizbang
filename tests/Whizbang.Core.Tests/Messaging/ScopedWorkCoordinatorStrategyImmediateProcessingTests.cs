@@ -61,7 +61,11 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       Envelope = _createTestEnvelope(queuedMessageId),
       IsEvent = false,
-      MessageType = "TestMessage, TestAssembly"
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(queuedMessageId),
+        Hops = new List<MessageHop>()
+      }
     });
 
     // Act
@@ -92,7 +96,11 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       Envelope = _createTestEnvelope(queuedMessageId),
       IsEvent = false,
-      MessageType = "TestMessage, TestAssembly"
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(queuedMessageId),
+        Hops = new List<MessageHop>()
+      }
     });
 
     // Act
@@ -125,7 +133,11 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
       Envelope = _createTestEnvelope(queued1),
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       IsEvent = false,
-      MessageType = "TestMessage, TestAssembly"
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(queued1),
+        Hops = new List<MessageHop>()
+      }
     });
     await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
 
@@ -145,7 +157,11 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
       Envelope = _createTestEnvelope(queued2),
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       IsEvent = false,
-      MessageType = "TestMessage, TestAssembly"
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(queued2),
+        Hops = new List<MessageHop>()
+      }
     });
     await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
 
@@ -180,7 +196,11 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
       Envelope = _createTestEnvelope(queuedMessageId),
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       IsEvent = false,
-      MessageType = "TestMessage, TestAssembly"
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(queuedMessageId),
+        Hops = new List<MessageHop>()
+      }
     });
 
     // Act

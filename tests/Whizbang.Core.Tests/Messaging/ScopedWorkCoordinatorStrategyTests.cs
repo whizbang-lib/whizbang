@@ -76,7 +76,11 @@ public class ScopedWorkCoordinatorStrategyTests {
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
       IsEvent = true,
-      MessageType = "TestMessage, TestAssembly"
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(messageId1),
+        Hops = new List<MessageHop>()
+      }
     });
 
     var envelope2 = new MessageEnvelope<_testEvent2> {
@@ -172,7 +176,11 @@ public class ScopedWorkCoordinatorStrategyTests {
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
       IsEvent = true,
-      MessageType = "TestMessage, TestAssembly"
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(messageId),
+        Hops = new List<MessageHop>()
+      }
     });
 
     // Act - Manual flush before disposal
@@ -247,7 +255,11 @@ public class ScopedWorkCoordinatorStrategyTests {
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
       IsEvent = true,
-      MessageType = "TestMessage, TestAssembly"
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(outboxId1),
+        Hops = new List<MessageHop>()
+      }
     });
 
     var envelope2 = new MessageEnvelope<_testEvent2> {
@@ -276,7 +288,11 @@ public class ScopedWorkCoordinatorStrategyTests {
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
       IsEvent = true,
-      MessageType = "TestMessage, TestAssembly"
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(outboxId2),
+        Hops = new List<MessageHop>()
+      }
     });
 
     var envelope3 = new MessageEnvelope<_testEvent3> {

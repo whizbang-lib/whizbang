@@ -183,7 +183,11 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
             EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
             IsEvent = true,
             StreamId = streamId,
-            MessageType = "TestMessage, TestAssembly"
+            MessageType = "TestMessage, TestAssembly",
+            Metadata = new EnvelopeMetadata {
+              MessageId = messageId,
+              Hops = new List<MessageHop>()
+            }
           }
         ],
         newInboxMessages: [],
@@ -287,7 +291,11 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
             EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
             IsEvent = true,
             StreamId = streamId,
-            MessageType = "TestMessage, TestAssembly"
+            MessageType = "TestMessage, TestAssembly",
+            Metadata = new EnvelopeMetadata {
+              MessageId = messageId1,
+              Hops = new List<MessageHop>()
+            }
           },
           new OutboxMessage {
             MessageId = messageId2.Value,
@@ -296,7 +304,11 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
             EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
             IsEvent = true,
             StreamId = streamId,
-            MessageType = "TestMessage, TestAssembly"
+            MessageType = "TestMessage, TestAssembly",
+            Metadata = new EnvelopeMetadata {
+              MessageId = messageId2,
+              Hops = new List<MessageHop>()
+            }
           },
           new OutboxMessage {
             MessageId = messageId3.Value,
@@ -305,7 +317,11 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
             EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
             IsEvent = true,
             StreamId = streamId,
-            MessageType = "TestMessage, TestAssembly"
+            MessageType = "TestMessage, TestAssembly",
+            Metadata = new EnvelopeMetadata {
+              MessageId = messageId3,
+              Hops = new List<MessageHop>()
+            }
           }
         ],
         newInboxMessages: [],
@@ -382,7 +398,11 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
             EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
             IsEvent = true,
             StreamId = streamId,
-            MessageType = "TestMessage, TestAssembly"
+            MessageType = "TestMessage, TestAssembly",
+            Metadata = new EnvelopeMetadata {
+              MessageId = messageId,
+              Hops = new List<MessageHop>()
+            }
           }
         ],
         newInboxMessages: [],

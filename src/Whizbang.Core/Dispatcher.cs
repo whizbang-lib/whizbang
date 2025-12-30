@@ -1075,6 +1075,10 @@ public abstract class Dispatcher(
       MessageId = envelope.MessageId.Value,
       Destination = destination,
       Envelope = jsonEnvelope,  // MessageEnvelope<JsonElement>
+      Metadata = new EnvelopeMetadata {
+        MessageId = envelope.MessageId,
+        Hops = envelope.Hops.ToList()
+      },
       EnvelopeType = envelopeTypeName,
       StreamId = streamId,
       IsEvent = payload is IEvent,

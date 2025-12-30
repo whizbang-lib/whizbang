@@ -51,7 +51,7 @@ public class ScopedLensQueryIntegrationTests : EFCoreTestBase {
     decimal amount,
     string status) {
 
-    var id = _idProvider.NewGuid();
+    var id = orderId.Value;  // Use provided orderId as the PerspectiveRow.Id
     var order = new Order {
       OrderId = orderId,
       Amount = amount,

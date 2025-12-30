@@ -530,7 +530,11 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
       StreamId = streamId,
       IsEvent = true,
-      MessageType = "TestMessage, TestAssembly"
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(messageId),
+        Hops = new List<MessageHop>()
+      }
     };
 
     // Act
@@ -697,7 +701,11 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
       StreamId = streamId,
       IsEvent = true,
-      MessageType = "TestMessage, TestAssembly"
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(messageId),
+        Hops = new List<MessageHop>()
+      }
     };
 
     // Act
@@ -751,7 +759,11 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
       StreamId = streamId,
       IsEvent = true,
-      MessageType = "TestMessage, TestAssembly"
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(messageId),
+        Hops = new List<MessageHop>()
+      }
     };
 
     // Act - Create new outbox message with IsEvent=true
@@ -898,7 +910,11 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
         StreamId = streamId,
         IsEvent = true,
-        MessageType = "TestMessage, TestAssembly"
+        MessageType = "TestMessage, TestAssembly",
+        Metadata = new EnvelopeMetadata {
+          MessageId = MessageId.From(messageId1),
+          Hops = new List<MessageHop>()
+        }
       },
       new OutboxMessage {
         MessageId = messageId2,
@@ -907,7 +923,11 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
         StreamId = streamId,
         IsEvent = true,
-        MessageType = "TestMessage, TestAssembly"
+        MessageType = "TestMessage, TestAssembly",
+        Metadata = new EnvelopeMetadata {
+          MessageId = MessageId.From(messageId2),
+          Hops = new List<MessageHop>()
+        }
       },
       new OutboxMessage {
         MessageId = messageId3,
@@ -916,7 +936,11 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
         StreamId = streamId,
         IsEvent = true,
-        MessageType = "TestMessage, TestAssembly"
+        MessageType = "TestMessage, TestAssembly",
+        Metadata = new EnvelopeMetadata {
+          MessageId = MessageId.From(messageId3),
+          Hops = new List<MessageHop>()
+        }
       }
     };
 
@@ -964,7 +988,11 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
       StreamId = streamId,
       IsEvent = false,  // CRITICAL: IsEvent = false (command, not event)
-      MessageType = "TestMessage, TestAssembly"
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(messageId),
+        Hops = new List<MessageHop>()
+      }
     };
 
     // Act - Create new outbox message with IsEvent=false
@@ -1021,7 +1049,11 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
         StreamId = streamId,  // SAME stream_id for all
         IsEvent = true,
-        MessageType = "TestMessage, TestAssembly"
+        MessageType = "TestMessage, TestAssembly",
+        Metadata = new EnvelopeMetadata {
+          MessageId = MessageId.From(messageId),
+          Hops = new List<MessageHop>()
+        }
       };
 
       await _sut.ProcessWorkBatchAsync(
@@ -1076,7 +1108,11 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
         StreamId = streamId,
         IsEvent = true,
-        MessageType = "TestMessage, TestAssembly"
+        MessageType = "TestMessage, TestAssembly",
+        Metadata = new EnvelopeMetadata {
+          MessageId = MessageId.From(messageId),
+          Hops = new List<MessageHop>()
+        }
       };
 
       await _sut.ProcessWorkBatchAsync(
@@ -1453,7 +1489,11 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
       StreamId = _idProvider.NewGuid(),
       IsEvent = true,
-      MessageType = "TestMessage, TestAssembly"
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(newMessageId),
+        Hops = new List<MessageHop>()
+      }
     };
 
     // Act
@@ -1598,7 +1638,11 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
       StreamId = _idProvider.NewGuid(),
       IsEvent = true,  // CRITICAL: IsEvent = true
-      MessageType = "TestMessage, TestAssembly"
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(messageId),
+        Hops = new List<MessageHop>()
+      }
     };
 
     // Act
@@ -1640,7 +1684,11 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
       StreamId = _idProvider.NewGuid(),
       IsEvent = false,  // CRITICAL: IsEvent
-      MessageType = "TestMessage, TestAssembly"
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(messageId),
+        Hops = new List<MessageHop>()
+      }
     };
 
     // Act

@@ -61,7 +61,11 @@ public class ImmediateWorkCoordinatorStrategyTests {
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
       IsEvent = true,
-      MessageType = "TestMessage, TestAssembly"
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(messageId),
+        Hops = new List<MessageHop>()
+      }
     });
 
     // Act
@@ -113,7 +117,11 @@ public class ImmediateWorkCoordinatorStrategyTests {
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Object, System.Private.CoreLib]], Whizbang.Core",
       StreamId = _idProvider.NewGuid(),
       IsEvent = true,
-      MessageType = "TestMessage, TestAssembly"
+      MessageType = "TestMessage, TestAssembly",
+      Metadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(messageId),
+        Hops = new List<MessageHop>()
+      }
     };
 
     // Act
