@@ -49,14 +49,15 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
       // Configure Npgsql data source with JSON serializer options
       var dataSourceBuilder = new NpgsqlDataSourceBuilder(ConnectionString);
 
-      // CRITICAL CONFIGURATION ORDER:
-      // 1. JsonDocument properties (InboxRecord, OutboxRecord, EventStoreRecord) do NOT have .HasColumnType("jsonb")
-      //    - They use Npgsql's automatic JsonDocument handling (no configuration needed)
-      // 2. Custom POCO properties (PerspectiveRow<Order>.Data) DO have .HasColumnType("jsonb")
-      //    - They require EnableDynamicJson() + ConfigureJsonOptions() for POCO JSON mapping
-      // 3. ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
+      // CRITICAL CONFIGURATION FOR POCO JSON MAPPING:
+      // All entities (infrastructure + perspectives) now use custom POCO types with .HasColumnType("jsonb")
+      // - Infrastructure: InboxMessageData, OutboxMessageData, EnvelopeMetadata, MessageScope, ServiceInstanceMetadata
+      // - Perspectives: PerspectiveRow<T>.Data, Metadata, Scope
       //
-      // This configuration enables POCO mapping without interfering with JsonDocument's automatic handling
+      // ConfigureJsonOptions() provides source-generated converters for all custom types
+      // EnableDynamicJson() enables POCO → JSONB mapping for properties with .HasColumnType("jsonb")
+      //
+      // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
       var jsonOptions = WhizbangJsonContext.CreateOptions();
       dataSourceBuilder.ConfigureJsonOptions(jsonOptions);
       dataSourceBuilder.EnableDynamicJson();
