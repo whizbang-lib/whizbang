@@ -1,5 +1,7 @@
 using System.Collections.Generic;
 using System.Text.Json;
+using Whizbang.Core.Observability;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Messaging;
 
