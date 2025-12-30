@@ -22,11 +22,11 @@ public class SeedProductsWorkflowTests {
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
     // Get batch-specific fixture (shared with other tests in same batch)
-    var batchFixture = await SharedFixtureSource.GetBatchFixtureAsync(typeof(SeedProductsWorkflowTests));
+    var testIndex = GetTestIndex();
+    var batchFixture = await SharedFixtureSource.GetBatchFixtureAsync(testIndex);
     var connectionString = batchFixture.ConnectionString;
 
     // Derive topic suffix from test index within batch
-    var testIndex = GetTestIndex();
     var topicSuffix = (testIndex % 25).ToString("D2");
     var batchIndex = testIndex / 25;
 

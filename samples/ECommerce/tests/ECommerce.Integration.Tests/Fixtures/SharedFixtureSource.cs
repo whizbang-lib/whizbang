@@ -17,12 +17,12 @@ public static class SharedFixtureSource {
   /// Gets or initializes the batch-specific ServiceBus emulator fixture.
   /// Each batch of 25 tests shares one emulator instance.
   /// </summary>
-  public static async Task<ServiceBusBatchFixture> GetBatchFixtureAsync(Type testClassType) {
+  /// <param name="testIndex">The fixed test index (0-based) assigned to this test class.</param>
+  public static async Task<ServiceBusBatchFixture> GetBatchFixtureAsync(int testIndex) {
     // Determine which batch this test belongs to
-    var testIndex = GetTestIndex(testClassType); // 0-based index
     var batchIndex = testIndex / TESTS_PER_BATCH;
 
-    Console.WriteLine($"[SharedFixture] Test class '{testClassType.Name}' assigned index {testIndex} → Batch {batchIndex}");
+    Console.WriteLine($"[SharedFixture] Test index {testIndex} assigned to Batch {batchIndex}");
 
     // Get or create fixture for this batch
     var lazyFixture = _batchFixtures.GetOrAdd(batchIndex,
@@ -33,19 +33,6 @@ public static class SharedFixtureSource {
       }));
 
     return await lazyFixture.Value;
-  }
-
-  /// <summary>
-  /// Calculates a stable test index from the test class type.
-  /// Uses hash of test class name to ensure consistent batching across runs.
-  /// </summary>
-  private static int GetTestIndex(Type testClassType) {
-    // Assign stable index based on test class name
-    var testClassName = testClassType.FullName ?? testClassType.Name;
-
-    // Use stable hash to ensure consistent batching across runs
-    // Support up to 1000 tests (40 batches of 25 tests each)
-    return Math.Abs(testClassName.GetHashCode()) % 1000;
   }
 
   /// <summary>
