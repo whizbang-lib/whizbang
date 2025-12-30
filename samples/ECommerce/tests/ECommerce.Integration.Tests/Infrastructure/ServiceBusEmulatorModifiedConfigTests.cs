@@ -16,7 +16,7 @@ public class ServiceBusEmulatorModifiedConfigTests {
   [Test]
   public async Task ServiceBusEmulator_WithRenamedTopic_WorksAsync() {
     // Create fixture with the modified config
-    await using var fixture = new DirectServiceBusEmulatorFixture("Config-Modified.json");
+    await using var fixture = new DirectServiceBusEmulatorFixture(5672, "Config-Modified.json");
 
     Console.WriteLine("[MODIFIED] 🔥 CRITICAL TEST: Starting with renamed topic (products)...");
     await fixture.InitializeAsync();
@@ -86,7 +86,7 @@ public class ServiceBusEmulatorModifiedConfigTests {
   [Test]
   public async Task ServiceBusEmulator_WithTrueFilter_AcceptsAnyMessageAsync() {
     // Create fixture with TrueFilter config - should accept ANY message
-    await using var fixture = new DirectServiceBusEmulatorFixture("Config-TrueFilter.json");
+    await using var fixture = new DirectServiceBusEmulatorFixture(5672, "Config-TrueFilter.json");
 
     Console.WriteLine("[TRUEFILTER] 🔥 Testing TrueFilter with renamed entities...");
     await fixture.InitializeAsync();
@@ -148,7 +148,7 @@ public class ServiceBusEmulatorModifiedConfigTests {
   [Test]
   public async Task ServiceBusEmulator_WithTrueFilter_InventoryTopic_WorksAsync() {
     // Test the inventory topic with TrueFilter
-    await using var fixture = new DirectServiceBusEmulatorFixture("Config-TrueFilter.json");
+    await using var fixture = new DirectServiceBusEmulatorFixture(5672, "Config-TrueFilter.json");
 
     Console.WriteLine("[INVENTORY] 🔥 Testing inventory topic with TrueFilter...");
     await fixture.InitializeAsync();

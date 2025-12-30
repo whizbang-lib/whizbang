@@ -10,19 +10,22 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
   private readonly string _dockerComposeFile;
   private readonly string _configFile;
   private readonly string? _customConfigFile;
+  private readonly int _port;
   private bool _isInitialized;
 
   /// <summary>
   /// Creates a fixture using the emulator's default built-in configuration.
   /// </summary>
-  public DirectServiceBusEmulatorFixture() : this(null) {
+  public DirectServiceBusEmulatorFixture() : this(5672, null) {
   }
 
   /// <summary>
-  /// Creates a fixture with an optional custom config file.
+  /// Creates a fixture with a custom port and optional custom config file.
   /// </summary>
+  /// <param name="port">External port for the emulator (default: 5672)</param>
   /// <param name="configFileName">Optional config file name (e.g., "Config-Default.json"). If null, uses built-in config.</param>
-  public DirectServiceBusEmulatorFixture(string? configFileName) {
+  public DirectServiceBusEmulatorFixture(int port, string? configFileName) {
+    _port = port;
     // Store paths for docker-compose and Config.json
     var testDirectory = AppContext.BaseDirectory;
     _dockerComposeFile = Path.Combine(testDirectory, "docker-compose.servicebus.yml");
@@ -74,7 +77,8 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
       await Task.Delay(TimeSpan.FromSeconds(60), cancellationToken);
 
       // Verify emulator is up by checking docker logs
-      var logs = await _getDockerLogsAsync("servicebus-emulator", cancellationToken);
+      var containerName = $"servicebus-emulator-{_port}";
+      var logs = await _getDockerLogsAsync(containerName, cancellationToken);
       if (!logs.Contains("Emulator Service is Successfully Up!")) {
         throw new InvalidOperationException(
           $"Service Bus Emulator failed to start. Check logs:\n{logs}"
@@ -107,10 +111,10 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
   private string _generateDockerComposeContent() {
     var serviceBusSection = _customConfigFile != null
       ? $@"  servicebus-emulator:
-    container_name: servicebus-emulator
+    container_name: servicebus-emulator-{_port}
     image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
     ports:
-      - ""5672:5672""
+      - ""{_port}:5672""
     environment:
       - ACCEPT_EULA=Y
       - MSSQL_SA_PASSWORD=ServiceBus!Pass
@@ -121,11 +125,11 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
     depends_on:
       - mssql
     mem_limit: 4g"
-      : @"  servicebus-emulator:
-    container_name: servicebus-emulator
+      : $@"  servicebus-emulator:
+    container_name: servicebus-emulator-{_port}
     image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
     ports:
-      - ""5672:5672""
+      - ""{_port}:5672""
     environment:
       - ACCEPT_EULA=Y
       - MSSQL_SA_PASSWORD=ServiceBus!Pass
@@ -138,10 +142,10 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
 {serviceBusSection}
 
   mssql:
-    container_name: mssql-servicebus
+    container_name: mssql-servicebus-{_port}
     image: mcr.microsoft.com/mssql/server:2022-latest
     ports:
-      - ""1433:1433""
+      - ""{_port + 10000}:1433""
     environment:
       - ACCEPT_EULA=Y
       - MSSQL_SA_PASSWORD=ServiceBus!Pass

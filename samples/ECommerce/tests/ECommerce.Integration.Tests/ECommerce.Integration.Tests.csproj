@@ -6,6 +6,7 @@
     <Nullable>enable</Nullable>
     <IsTestProject>true</IsTestProject>
     <IsPackable>false</IsPackable>
+    <NoWarn>$(NoWarn);TUnit0015;TUnit0023</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>

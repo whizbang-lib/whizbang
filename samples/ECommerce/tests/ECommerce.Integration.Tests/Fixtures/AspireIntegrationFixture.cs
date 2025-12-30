@@ -29,8 +29,9 @@ namespace ECommerce.Integration.Tests.Fixtures;
 /// </summary>
 public sealed class AspireIntegrationFixture : IAsyncDisposable {
   private DistributedApplication? _app;
-  private readonly DirectServiceBusEmulatorFixture _serviceBusFixture;
+  private readonly string _serviceBusConnectionString;
   private readonly string _topicSuffix;
+  private readonly int _batchIndex;
   private bool _isInitialized;
   private IHost? _inventoryHost;
   private IHost? _bffHost;
@@ -42,14 +43,16 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   private IServiceScope? _bffScope;  // Long-lived scope for lens access
 
   /// <summary>
-  /// Creates a new fixture instance with a shared Service Bus emulator and unique topic suffix.
+  /// Creates a new fixture instance with a batch-specific Service Bus connection and unique topic suffix.
   /// </summary>
-  /// <param name="sharedEmulator">The shared Service Bus emulator (with 25 topic sets pre-created)</param>
+  /// <param name="serviceBusConnectionString">The Service Bus connection string for this batch's emulator</param>
   /// <param name="topicSuffix">Unique topic suffix (e.g., "00", "01", ... "24") for test isolation</param>
-  public AspireIntegrationFixture(DirectServiceBusEmulatorFixture sharedEmulator, string topicSuffix) {
-    _serviceBusFixture = sharedEmulator;
+  /// <param name="batchIndex">The batch index for diagnostic logging</param>
+  public AspireIntegrationFixture(string serviceBusConnectionString, string topicSuffix, int batchIndex) {
+    _serviceBusConnectionString = serviceBusConnectionString;
     _topicSuffix = topicSuffix;
-    Console.WriteLine($"[AspireFixture] Created with topic suffix: {topicSuffix}");
+    _batchIndex = batchIndex;
+    Console.WriteLine($"[AspireFixture] Created for Batch {batchIndex} with topic suffix: {topicSuffix}");
   }
 
   /// <summary>
@@ -96,7 +99,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Gets the Azure Service Bus connection string for direct Service Bus operations.
   /// </summary>
-  public string ServiceBusConnectionString => _serviceBusFixture.ServiceBusConnectionString;
+  public string ServiceBusConnectionString => _serviceBusConnectionString;
 
   /// <summary>
   /// Gets the topic suffix for this fixture (e.g., "00", "01", ... "24").
@@ -148,15 +151,15 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       ?? throw new InvalidOperationException("Failed to get PostgreSQL connection string");
 
     Console.WriteLine($"[AspireFixture] PostgreSQL Connection: {_postgresConnection}");
-    Console.WriteLine($"[AspireFixture] Service Bus Connection: {_serviceBusFixture.ServiceBusConnectionString}");
+    Console.WriteLine($"[AspireFixture] Service Bus Connection: {_serviceBusConnectionString}");
 
     // Wait for PostgreSQL to be ready before proceeding
     Console.WriteLine("[AspireFixture] Waiting for PostgreSQL to be ready...");
     await _waitForPostgresReadyAsync(cancellationToken);
 
     // Create service hosts (but don't start them yet) - topics will be suffixed
-    _inventoryHost = _createInventoryHost(_postgresConnection, _serviceBusFixture.ServiceBusConnectionString);
-    _bffHost = _createBffHost(_postgresConnection, _serviceBusFixture.ServiceBusConnectionString);
+    _inventoryHost = _createInventoryHost(_postgresConnection, _serviceBusConnectionString);
+    _bffHost = _createBffHost(_postgresConnection, _serviceBusConnectionString);
 
     Console.WriteLine("[AspireFixture] Service hosts created. Initializing schema...");
 
@@ -605,8 +608,9 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   /// Waits for all event processing to complete by querying database tables directly.
   /// Checks for any uncompleted outbox/inbox messages and perspective checkpoints.
   /// This is more reliable than using ProcessWorkBatchAsync which only shows available (not in-progress) work.
+  /// Default timeout reduced to 15s thanks to warmup eliminating cold starts.
   /// </summary>
-  public async Task WaitForEventProcessingAsync(int timeoutMilliseconds = 180000) {
+  public async Task WaitForEventProcessingAsync(int timeoutMilliseconds = 15000) {
     var stopwatch = System.Diagnostics.Stopwatch.StartNew();
     var attempt = 0;
 
@@ -667,8 +671,8 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       await Task.Delay(delay);
     }
 
-    // Timeout reached - log final state
-    Console.WriteLine($"[AspireFixture] WARNING: Event processing did not complete within {timeoutMilliseconds}ms timeout");
+    // Timeout reached - log final state with batch info
+    Console.WriteLine($"[AspireFixture] WARNING: Event processing did not complete within {timeoutMilliseconds}ms timeout (Batch {_batchIndex}, Topic Suffix {_topicSuffix})");
 
     using var finalScope = _inventoryHost!.Services.CreateScope();
     var finalDbContext = finalScope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
@@ -688,7 +692,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM wh_perspective_checkpoints WHERE (status & 2) = 0 AND (status & 4) = 0";
     var finalPerspectives = (int)(await finalCmd.ExecuteScalarAsync() ?? 0);
 
-    Console.WriteLine($"[AspireFixture] Final state: Outbox={finalOutbox}, Inbox={finalInbox}, Perspectives={finalPerspectives}");
+    Console.WriteLine($"[AspireFixture] Final state - Batch {_batchIndex}, TopicSuffix {_topicSuffix}: Outbox={finalOutbox}, Inbox={finalInbox}, Perspectives={finalPerspectives}");
   }
 
   /// <summary>
@@ -822,10 +826,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
         await _app.DisposeAsync();
       }
 
-      // Stop Service Bus emulator (managed directly via docker-compose)
-      if (_serviceBusFixture != null) {
-        await _serviceBusFixture.DisposeAsync();
-      }
+      // Note: Service Bus emulator disposal is managed by ServiceBusBatchFixture
     }
   }
 

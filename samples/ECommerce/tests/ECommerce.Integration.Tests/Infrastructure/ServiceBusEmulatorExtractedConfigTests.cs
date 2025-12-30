@@ -15,7 +15,7 @@ public class ServiceBusEmulatorExtractedConfigTests {
   [Before(Test)]
   public async Task SetupAsync() {
     if (_fixture == null) {
-      _fixture = new DirectServiceBusEmulatorFixture("Config-Default.json");
+      _fixture = new DirectServiceBusEmulatorFixture(5672, "Config-Default.json");
       await _fixture.InitializeAsync();
     }
   }
@@ -103,7 +103,7 @@ public class ServiceBusEmulatorExtractedConfigTests {
   [Test]
   public async Task ServiceBusEmulator_WithModifiedConfig_RenamedTopic_WorksAsync() {
     // Create a new fixture with the modified config
-    await using var modifiedFixture = new DirectServiceBusEmulatorFixture("Config-Modified.json");
+    await using var modifiedFixture = new DirectServiceBusEmulatorFixture(5672, "Config-Modified.json");
 
     Console.WriteLine("[MODIFIED CONFIG] 🔥 CRITICAL TEST: Starting with renamed topic (products)...");
     await modifiedFixture.InitializeAsync();

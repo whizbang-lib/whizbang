@@ -11,8 +11,9 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// <summary>
 /// End-to-end integration tests for the UpdateProduct workflow.
 /// Tests the complete flow: Command → Receptor → Event Store → Perspectives.
+/// Uses batch-aware ServiceBus emulator for parallel execution.
 /// </summary>
-[NotInParallel]
+[Timeout(20_000)]
 public class UpdateProductWorkflowTests {
   private static AspireIntegrationFixture? _fixture;
 
@@ -28,7 +29,23 @@ public class UpdateProductWorkflowTests {
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
-    _fixture = await SharedFixtureSource.GetFixtureAsync();
+    // Get batch-specific fixture (shared with other tests in same batch)
+    var batchFixture = await SharedFixtureSource.GetBatchFixtureAsync(typeof(UpdateProductWorkflowTests));
+    var connectionString = batchFixture.ConnectionString;
+
+    // Derive topic suffix from test index within batch
+    var testIndex = GetTestIndex();
+    var topicSuffix = (testIndex % 25).ToString("D2");
+    var batchIndex = testIndex / 25;
+
+    // Create fixture with batch-scoped connection string
+    _fixture = new AspireIntegrationFixture(connectionString, topicSuffix, batchIndex);
+    await _fixture.InitializeAsync();
+  }
+
+  private static int GetTestIndex() {
+    var testClassName = typeof(UpdateProductWorkflowTests).FullName!;
+    return Math.Abs(testClassName.GetHashCode()) % 1000;
   }
 
 

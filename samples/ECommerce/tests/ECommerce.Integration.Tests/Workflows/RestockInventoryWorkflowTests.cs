@@ -11,8 +11,9 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// <summary>
 /// End-to-end integration tests for the RestockInventory workflow.
 /// Tests the complete flow: Command → Receptor → Event Store → Perspectives.
+/// Uses batch-aware ServiceBus emulator for parallel execution.
 /// </summary>
-[NotInParallel]
+[Timeout(20_000)]
 public class RestockInventoryWorkflowTests {
   private static AspireIntegrationFixture? _fixture;
 
@@ -27,11 +28,27 @@ public class RestockInventoryWorkflowTests {
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
-    _fixture = await SharedFixtureSource.GetFixtureAsync();
+    // Get batch-specific fixture (shared with other tests in same batch)
+    var batchFixture = await SharedFixtureSource.GetBatchFixtureAsync(typeof(RestockInventoryWorkflowTests));
+    var connectionString = batchFixture.ConnectionString;
+
+    // Derive topic suffix from test index within batch
+    var testIndex = GetTestIndex();
+    var topicSuffix = (testIndex % 25).ToString("D2");
+    var batchIndex = testIndex / 25;
+
+    // Create fixture with batch-scoped connection string
+    _fixture = new AspireIntegrationFixture(connectionString, topicSuffix, batchIndex);
+    await _fixture.InitializeAsync();
 
     // Clean database before each test to ensure isolated state
     // This is critical for integration tests that check specific quantities
     await _fixture.CleanupDatabaseAsync();
+  }
+
+  private static int GetTestIndex() {
+    var testClassName = typeof(RestockInventoryWorkflowTests).FullName!;
+    return Math.Abs(testClassName.GetHashCode()) % 1000;
   }
 
 

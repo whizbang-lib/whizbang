@@ -10,8 +10,9 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// <summary>
 /// End-to-end integration tests for the product seeding workflow.
 /// Tests the complete flow: SeedMutations → CreateProductCommand → ProductCreatedEvent → Perspectives.
+/// Uses batch-aware ServiceBus emulator for parallel execution.
 /// </summary>
-[NotInParallel]
+[Timeout(20_000)]
 public class SeedProductsWorkflowTests {
   private static AspireIntegrationFixture? _fixture;
 
@@ -19,11 +20,27 @@ public class SeedProductsWorkflowTests {
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
-    _fixture = await SharedFixtureSource.GetFixtureAsync();
+    // Get batch-specific fixture (shared with other tests in same batch)
+    var batchFixture = await SharedFixtureSource.GetBatchFixtureAsync(typeof(SeedProductsWorkflowTests));
+    var connectionString = batchFixture.ConnectionString;
+
+    // Derive topic suffix from test index within batch
+    var testIndex = GetTestIndex();
+    var topicSuffix = (testIndex % 25).ToString("D2");
+    var batchIndex = testIndex / 25;
+
+    // Create fixture with batch-scoped connection string
+    _fixture = new AspireIntegrationFixture(connectionString, topicSuffix, batchIndex);
+    await _fixture.InitializeAsync();
 
     // Clean database before each test to ensure isolated state
     // This is critical for idempotency tests that check if seeding skips on second call
     await _fixture.CleanupDatabaseAsync();
+  }
+
+  private static int GetTestIndex() {
+    var testClassName = typeof(SeedProductsWorkflowTests).FullName!;
+    return Math.Abs(testClassName.GetHashCode()) % 1000;
   }
 
 
