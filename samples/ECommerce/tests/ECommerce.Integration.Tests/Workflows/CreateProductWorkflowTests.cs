@@ -71,7 +71,9 @@ public class CreateProductWorkflowTests {
     };
 
     // Act
+    Console.WriteLine($"[TEST] Sending CreateProductCommand for ProductId={_testProd1}");
     await fixture.Dispatcher.SendAsync(command);
+    Console.WriteLine($"[TEST] Command sent, waiting for event processing...");
 
     // Process events through perspectives (simulates Service Bus event processing)
     await fixture.WaitForEventProcessingAsync();

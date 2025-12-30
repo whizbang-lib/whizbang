@@ -611,6 +611,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   /// Default timeout reduced to 15s thanks to warmup eliminating cold starts.
   /// </summary>
   public async Task WaitForEventProcessingAsync(int timeoutMilliseconds = 15000) {
+    Console.WriteLine($"[WaitForEvents] Starting event processing wait (Batch {_batchIndex}, Topic Suffix {_topicSuffix}, timeout={timeoutMilliseconds}ms)");
     var stopwatch = System.Diagnostics.Stopwatch.StartNew();
     var attempt = 0;
 
@@ -638,8 +639,10 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       cmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM wh_perspective_checkpoints WHERE (status & 2) = 0 AND (status & 4) = 0";
       var pendingPerspectives = (int)(await cmd.ExecuteScalarAsync() ?? 0);
 
-      // DIAGNOSTIC: Log checkpoint details on first attempt
+      // DIAGNOSTIC: Log initial state and checkpoint details
       if (attempt == 1) {
+        Console.WriteLine($"[WaitForEvents] Initial state: Outbox={pendingOutbox}, Inbox={pendingInbox}, Perspectives={pendingPerspectives}");
+
         cmd.CommandText = @"
           SELECT
             perspective_name,
@@ -661,8 +664,8 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
         return;
       }
 
-      // Log progress every 10 attempts (~5-10 seconds depending on backoff)
-      if (attempt % 10 == 0) {
+      // Log progress every 3 attempts (~1-2 seconds) for faster feedback
+      if (attempt % 3 == 0) {
         Console.WriteLine($"[WaitForEvents] Still waiting: Outbox={pendingOutbox}, Inbox={pendingInbox}, Perspectives={pendingPerspectives} (attempt {attempt}, elapsed: {stopwatch.ElapsedMilliseconds}ms)");
       }
 
