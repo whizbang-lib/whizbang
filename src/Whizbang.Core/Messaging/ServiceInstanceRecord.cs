@@ -1,5 +1,3 @@
-using System.Text.Json;
-
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
@@ -65,5 +63,5 @@ public sealed class ServiceInstanceRecord {
   /// Schema: { "Version": "1.0.0", "Environment": "Production", "Region": "us-east-1", ... }
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_WithMetadata_StoresMetadataCorrectlyAsync</tests>
-  public JsonDocument? Metadata { get; set; }
+  public ServiceInstanceMetadata? Metadata { get; set; }
 }

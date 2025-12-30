@@ -1,4 +1,4 @@
-using System.Text.Json;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Messaging;
 
@@ -45,7 +45,7 @@ public sealed class InboxRecord {
   /// Schema matches the message type.
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:InsertInboxMessageAsync</tests>
-  public required JsonDocument MessageData { get; set; }
+  public required InboxMessageData MessageData { get; set; }
 
   /// <summary>
   /// Message metadata stored as JSON.
@@ -53,7 +53,7 @@ public sealed class InboxRecord {
   /// Schema: { "CorrelationId": "guid", "CausationId": "guid", "Timestamp": "ISO8601", "UserId": "...", "TenantId": "..." }
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:InsertInboxMessageAsync</tests>
-  public required JsonDocument Metadata { get; set; }
+  public required EnvelopeMetadata Metadata { get; set; }
 
   /// <summary>
   /// Scope information for multi-tenancy stored as JSON.
@@ -61,7 +61,7 @@ public sealed class InboxRecord {
   /// Schema: { "TenantId": "...", "UserId": "...", "PartitionKey": "..." }
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:InsertInboxMessageAsync</tests>
-  public JsonDocument? Scope { get; set; }
+  public MessageScope? Scope { get; set; }
 
 
   /// <summary>

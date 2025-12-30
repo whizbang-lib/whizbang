@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Messaging;
 
@@ -72,7 +73,7 @@ public sealed class EventStoreRecord {
   /// Serialized directly from MessageEnvelope.Payload.
   /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:InsertEventStoreRecordAsync</tests>
-  public required JsonDocument EventData { get; set; }
+  public required JsonElement EventData { get; set; }
 
   /// <summary>
   /// Event metadata stored as JSON.
@@ -80,7 +81,7 @@ public sealed class EventStoreRecord {
   /// Serialized directly from MessageEnvelope using System.Text.Json (no DTO mapping).
   /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:InsertEventStoreRecordAsync</tests>
-  public required JsonDocument Metadata { get; set; }
+  public required EnvelopeMetadata Metadata { get; set; }
 
   /// <summary>
   /// Scope information for multi-tenancy stored as JSON.
@@ -88,7 +89,7 @@ public sealed class EventStoreRecord {
   /// Schema: { "TenantId": "...", "UserId": "...", "PartitionKey": "..." }
   /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:InsertEventStoreRecordAsync</tests>
-  public JsonDocument? Scope { get; set; }
+  public MessageScope? Scope { get; set; }
 
   /// <summary>
   /// UTC timestamp when the event was persisted to the event store.
