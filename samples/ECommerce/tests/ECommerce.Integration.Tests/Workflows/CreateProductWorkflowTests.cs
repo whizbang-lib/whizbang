@@ -42,8 +42,8 @@ public class CreateProductWorkflowTests {
   }
 
   private static int GetTestIndex() {
-    var testClassName = typeof(CreateProductWorkflowTests).FullName!;
-    return Math.Abs(testClassName.GetHashCode()) % 1000;
+    // Assign fixed index for this test class (all 4 workflow test classes use batch 0)
+    return 0; // CreateProductWorkflowTests = index 0
   }
 
   // NOTE: Database cleanup happens at fixture initialization (AspireIntegrationFixture.cs:147)

@@ -48,8 +48,8 @@ public class RestockInventoryWorkflowTests {
   }
 
   private static int GetTestIndex() {
-    var testClassName = typeof(RestockInventoryWorkflowTests).FullName!;
-    return Math.Abs(testClassName.GetHashCode()) % 1000;
+    // Assign fixed index for this test class (all 4 workflow test classes use batch 0)
+    return 3; // RestockInventoryWorkflowTests = index 3
   }
 
 
