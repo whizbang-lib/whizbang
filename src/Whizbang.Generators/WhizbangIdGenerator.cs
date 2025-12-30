@@ -433,9 +433,9 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine("  public Guid Value => _value;");
     sb.AppendLine();
 
-    // Private constructor
-    sb.AppendLine("  /// <summary>Private constructor for creating instances.</summary>");
-    sb.AppendLine($"  private {id.TypeName}(Guid value) => _value = value;");
+    // Public constructor for EF Core compatibility
+    sb.AppendLine("  /// <summary>Creates an instance from a Guid value. Public for EF Core compatibility.</summary>");
+    sb.AppendLine($"  public {id.TypeName}(Guid value) => _value = value;");
     sb.AppendLine();
 
     // From factory method

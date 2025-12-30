@@ -46,15 +46,19 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
       // Add Include Error Detail=true to see detailed error messages for debugging
       ConnectionString = $"{baseConnectionString};Timezone=UTC;Include Error Detail=true";
 
-      // Configure Npgsql data source with JSON serializer options for Vogen value objects
+      // Configure Npgsql data source with JSON serializer options
       var dataSourceBuilder = new NpgsqlDataSourceBuilder(ConnectionString);
 
-      // CRITICAL: ConfigureJsonOptions() must be called BEFORE EnableDynamicJson() due to Npgsql bug #5562
-      // Configure JSON options with Vogen value object converters
+      // CRITICAL CONFIGURATION ORDER:
+      // 1. JsonDocument properties (InboxRecord, OutboxRecord, EventStoreRecord) do NOT have .HasColumnType("jsonb")
+      //    - They use Npgsql's automatic JsonDocument handling (no configuration needed)
+      // 2. Custom POCO properties (PerspectiveRow<Order>.Data) DO have .HasColumnType("jsonb")
+      //    - They require EnableDynamicJson() + ConfigureJsonOptions() for POCO JSON mapping
+      // 3. ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
+      //
+      // This configuration enables POCO mapping without interfering with JsonDocument's automatic handling
       var jsonOptions = WhizbangJsonContext.CreateOptions();
       dataSourceBuilder.ConfigureJsonOptions(jsonOptions);
-
-      // Enable dynamic JSON to allow any .NET type to be mapped to JSONB
       dataSourceBuilder.EnableDynamicJson();
 
       _dataSource = dataSourceBuilder.Build();
