@@ -14,16 +14,6 @@ using Whizbang.Data.EFCore.Postgres.Serialization;
 namespace Whizbang.Data.EFCore.Postgres;
 
 /// <summary>
-/// Metadata structure for serializing envelope metadata to JSONB.
-/// Contains MessageId and Hops - serialized directly by System.Text.Json.
-/// Public for AOT source generation, but not intended for external use.
-/// </summary>
-public sealed class EnvelopeMetadata {
-  public required MessageId MessageId { get; init; }
-  public required List<MessageHop> Hops { get; init; }
-}
-
-/// <summary>
 /// EF Core implementation of IEventStore using PostgreSQL with JSONB columns.
 /// Provides append-only event storage for event sourcing and streaming scenarios.
 /// Stores events with stream-based organization using sequence numbers.
@@ -63,19 +53,16 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     var lastSequence = await GetLastSequenceAsync(streamId, cancellationToken);
     var nextSequence = lastSequence + 1;
 
-    // Serialize envelope.Payload to EventData using JsonTypeInfo for AOT compatibility
+    // Serialize envelope.Payload to JsonElement for type-erased storage
     var typeInfo = (JsonTypeInfo<TMessage>)_jsonOptions.GetTypeInfo(typeof(TMessage));
     var eventDataJson = JsonSerializer.Serialize(envelope.Payload, typeInfo);
-    var eventData = JsonDocument.Parse(eventDataJson);
+    var eventData = JsonSerializer.Deserialize<JsonElement>(eventDataJson);
 
-    // Serialize envelope metadata (MessageId + Hops) directly - no DTO mapping
+    // Create envelope metadata directly - EF Core will serialize via POCO mapping
     var metadata = new EnvelopeMetadata {
       MessageId = envelope.MessageId,
       Hops = envelope.Hops.ToList()
     };
-    var metadataTypeInfo = (JsonTypeInfo<EnvelopeMetadata>)_jsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
-    var metadataJson = JsonSerializer.Serialize(metadata, metadataTypeInfo);
-    var metadataDoc = JsonDocument.Parse(metadataJson);
 
     var record = new EventStoreRecord {
       Id = envelope.MessageId.Value,  // Use MessageId from envelope as event_id (matches outbox message_id)
@@ -90,7 +77,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       // Fuzzy matching in migration 006 handles AssemblyQualifiedName (long form) differences
       EventType = TypeNameFormatter.Format(typeof(TMessage)),
       EventData = eventData,
-      Metadata = metadataDoc,
+      Metadata = metadata,
       CreatedAt = DateTime.UtcNow
     };
 
