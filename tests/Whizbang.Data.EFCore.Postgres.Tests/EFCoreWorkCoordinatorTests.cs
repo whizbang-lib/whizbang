@@ -712,24 +712,28 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       actualLeaseExpiry = DateTimeOffset.UtcNow.AddMinutes(5);
     }
 
-    // Create minimal envelope JSON for testing (MessageType → envelope type, MessageData → envelope JSON)
-    // The envelope structure is: { "MessageId": "guid", "Hops": [], "Payload": {} }
+    // Create envelope data for testing (MessageType → envelope type, MessageData → envelope structure)
+    // The envelope structure contains: MessageId, Hops, and Payload
     var envelopeTypeFullName = typeof(TestMessageEnvelope).AssemblyQualifiedName
       ?? throw new InvalidOperationException("Could not get envelope type name");
-    var envelopeJson = $$"""
-      {
-        "MessageId": "{{messageId}}",
-        "Hops": [],
-        "Payload": { "Data": "test" }
-      }
-      """;
+
+    var messageData = new OutboxMessageData {
+      MessageId = MessageId.From(messageId),
+      Payload = JsonSerializer.Deserialize<JsonElement>("""{"Data":"test"}"""),
+      Hops = new List<MessageHop>()
+    };
+
+    var envelopeMetadata = new EnvelopeMetadata {
+      MessageId = MessageId.From(messageId),
+      Hops = new List<MessageHop>()
+    };
 
     dbContext.Set<OutboxRecord>().Add(new OutboxRecord {
       MessageId = messageId,
       Destination = destination,
       MessageType = envelopeTypeFullName,  // Store envelope type (maps to event_type column)
-      MessageData = JsonDocument.Parse(envelopeJson),  // Store complete envelope (maps to event_data column)
-      Metadata = JsonDocument.Parse(metadata ?? "{}"),
+      MessageData = messageData,  // Store complete envelope (maps to event_data column)
+      Metadata = envelopeMetadata,
       Scope = null,
       StatusFlags = (MessageProcessingStatus)statusFlags,
       Attempts = 0,
@@ -798,24 +802,28 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       actualLeaseExpiry = DateTimeOffset.UtcNow.AddMinutes(5);
     }
 
-    // Create minimal envelope JSON for testing (MessageType → envelope type, MessageData → envelope JSON)
-    // The envelope structure is: { "MessageId": "guid", "Hops": [], "Payload": {} }
+    // Create envelope data for testing (MessageType → envelope type, MessageData → envelope structure)
+    // The envelope structure contains: MessageId, Hops, and Payload
     var envelopeTypeFullName = typeof(TestMessageEnvelope).AssemblyQualifiedName
       ?? throw new InvalidOperationException("Could not get envelope type name");
-    var envelopeJson = $$"""
-      {
-        "MessageId": "{{messageId}}",
-        "Hops": [],
-        "Payload": { "Data": "test" }
-      }
-      """;
+
+    var messageData = new InboxMessageData {
+      MessageId = MessageId.From(messageId),
+      Payload = JsonSerializer.Deserialize<JsonElement>("""{"Data":"test"}"""),
+      Hops = new List<MessageHop>()
+    };
+
+    var envelopeMetadata = new EnvelopeMetadata {
+      MessageId = MessageId.From(messageId),
+      Hops = new List<MessageHop>()
+    };
 
     dbContext.Set<InboxRecord>().Add(new InboxRecord {
       MessageId = messageId,
       HandlerName = handlerName,
       MessageType = envelopeTypeFullName,  // Store envelope type (maps to event_type column)
-      MessageData = JsonDocument.Parse(envelopeJson),  // Store complete envelope (maps to event_data column)
-      Metadata = JsonDocument.Parse("{}"),
+      MessageData = messageData,  // Store complete envelope (maps to event_data column)
+      Metadata = envelopeMetadata,
       Scope = null,
       StatusFlags = (MessageProcessingStatus)statusFlags,
       Attempts = 0,
