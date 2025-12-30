@@ -219,6 +219,9 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
     await Assert.That(published).IsNotNull()
       .Because($"Message {messageId} should have been published");
 
+    // Wait for database status update to commit (worker publishes THEN updates DB)
+    await Task.Delay(500);
+
     // Assert - Database status was updated
     using (var scope = _testHost.Services.CreateScope()) {
       var dbContext = scope.ServiceProvider.GetRequiredService<BffDbContext>();
