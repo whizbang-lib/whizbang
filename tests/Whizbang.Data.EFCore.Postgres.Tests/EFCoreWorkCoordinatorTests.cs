@@ -6,6 +6,7 @@ using Whizbang.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Schema;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -677,7 +678,9 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     await using var dbContext = CreateDbContext();
     var instance = await dbContext.Set<ServiceInstanceRecord>()
       .FirstOrDefaultAsync(i => i.InstanceId == instanceId);
-    return instance?.Metadata?.RootElement.GetRawText();
+    return instance?.Metadata != null
+      ? JsonSerializer.Serialize(instance.Metadata, JsonContextRegistry.CreateCombinedOptions())
+      : null;
   }
 
   private async Task InsertOutboxMessageAsync(
@@ -717,7 +720,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     var envelopeTypeFullName = typeof(TestMessageEnvelope).AssemblyQualifiedName
       ?? throw new InvalidOperationException("Could not get envelope type name");
 
-    var messageData = new OutboxMessageData {
+    var outboxMessageData = new OutboxMessageData {
       MessageId = MessageId.From(messageId),
       Payload = JsonSerializer.Deserialize<JsonElement>("""{"Data":"test"}"""),
       Hops = new List<MessageHop>()
@@ -732,7 +735,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       MessageId = messageId,
       Destination = destination,
       MessageType = envelopeTypeFullName,  // Store envelope type (maps to event_type column)
-      MessageData = messageData,  // Store complete envelope (maps to event_data column)
+      MessageData = outboxMessageData,  // Store complete envelope (maps to event_data column)
       Metadata = envelopeMetadata,
       Scope = null,
       StatusFlags = (MessageProcessingStatus)statusFlags,
@@ -807,7 +810,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     var envelopeTypeFullName = typeof(TestMessageEnvelope).AssemblyQualifiedName
       ?? throw new InvalidOperationException("Could not get envelope type name");
 
-    var messageData = new InboxMessageData {
+    var inboxMessageData = new InboxMessageData {
       MessageId = MessageId.From(messageId),
       Payload = JsonSerializer.Deserialize<JsonElement>("""{"Data":"test"}"""),
       Hops = new List<MessageHop>()
@@ -822,7 +825,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       MessageId = messageId,
       HandlerName = handlerName,
       MessageType = envelopeTypeFullName,  // Store envelope type (maps to event_type column)
-      MessageData = messageData,  // Store complete envelope (maps to event_data column)
+      MessageData = inboxMessageData,  // Store complete envelope (maps to event_data column)
       Metadata = envelopeMetadata,
       Scope = null,
       StatusFlags = (MessageProcessingStatus)statusFlags,
@@ -2306,12 +2309,23 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       var envelopeTypeFullName = typeof(TestMessageEnvelope).AssemblyQualifiedName
         ?? throw new InvalidOperationException("Could not get envelope type name");
 
+      var poisonOutboxMessageData = new OutboxMessageData {
+        MessageId = MessageId.From(poisonMessageId),
+        Payload = JsonSerializer.Deserialize<JsonElement>("{}"),
+        Hops = new List<MessageHop>()
+      };
+
+      var poisonEnvelopeMetadata = new EnvelopeMetadata {
+        MessageId = MessageId.From(poisonMessageId),
+        Hops = new List<MessageHop>()
+      };
+
       dbContext.Set<OutboxRecord>().Add(new OutboxRecord {
         MessageId = poisonMessageId,
         Destination = "topic",
         MessageType = envelopeTypeFullName,
-        MessageData = JsonDocument.Parse("{\"MessageId\":\"" + poisonMessageId + "\",\"Hops\":[],\"Payload\":{}}"),
-        Metadata = JsonDocument.Parse("{}"),
+        MessageData = poisonOutboxMessageData,
+        Metadata = poisonEnvelopeMetadata,
         Scope = null,
         StatusFlags = MessageProcessingStatus.Stored | MessageProcessingStatus.Failed,
         Attempts = 12, // High retry count
@@ -2380,20 +2394,24 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     // The envelope structure is: { "MessageId": "guid", "Hops": [], "Payload": {} }
     var envelopeTypeFullName = typeof(TestMessageEnvelope).AssemblyQualifiedName
       ?? throw new InvalidOperationException("Could not get envelope type name");
-    var envelopeJson = $$"""
-      {
-        "MessageId": "{{messageId}}",
-        "Hops": [],
-        "Payload": { "Data": "test" }
-      }
-      """;
+
+    var timestampOutboxMessageData = new OutboxMessageData {
+      MessageId = MessageId.From(messageId),
+      Payload = JsonSerializer.Deserialize<JsonElement>("""{"Data":"test"}"""),
+      Hops = new List<MessageHop>()
+    };
+
+    var timestampEnvelopeMetadata = new EnvelopeMetadata {
+      MessageId = MessageId.From(messageId),
+      Hops = new List<MessageHop>()
+    };
 
     dbContext.Set<OutboxRecord>().Add(new OutboxRecord {
       MessageId = messageId,
       Destination = destination,
       MessageType = envelopeTypeFullName,  // Store envelope type (maps to event_type column)
-      MessageData = JsonDocument.Parse(envelopeJson),  // Store complete envelope (maps to event_data column)
-      Metadata = JsonDocument.Parse("{}"),
+      MessageData = timestampOutboxMessageData,  // Store complete envelope (maps to event_data column)
+      Metadata = timestampEnvelopeMetadata,
       Scope = null,
       StatusFlags = (MessageProcessingStatus)statusFlags,
       Attempts = 0,
@@ -2435,20 +2453,24 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
 
     var envelopeTypeFullName = typeof(TestMessageEnvelope).AssemblyQualifiedName
       ?? throw new InvalidOperationException("Could not get envelope type name");
-    var envelopeJson = $$"""
-      {
-        "MessageId": "{{messageId}}",
-        "Hops": [],
-        "Payload": { "Data": "test" }
-      }
-      """;
+
+    var scheduledOutboxMessageData = new OutboxMessageData {
+      MessageId = MessageId.From(messageId),
+      Payload = JsonSerializer.Deserialize<JsonElement>("""{"Data":"test"}"""),
+      Hops = new List<MessageHop>()
+    };
+
+    var scheduledEnvelopeMetadata = new EnvelopeMetadata {
+      MessageId = MessageId.From(messageId),
+      Hops = new List<MessageHop>()
+    };
 
     dbContext.Set<OutboxRecord>().Add(new OutboxRecord {
       MessageId = messageId,
       Destination = destination,
       MessageType = envelopeTypeFullName,
-      MessageData = JsonDocument.Parse(envelopeJson),
-      Metadata = JsonDocument.Parse("{}"),
+      MessageData = scheduledOutboxMessageData,
+      Metadata = scheduledEnvelopeMetadata,
       Scope = null,
       StatusFlags = (MessageProcessingStatus)statusFlags,
       Attempts = 0,
