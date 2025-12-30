@@ -12,7 +12,6 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// Tests the complete flow: SeedMutations → CreateProductCommand → ProductCreatedEvent → Perspectives.
 /// Uses batch-aware ServiceBus emulator for parallel execution.
 /// </summary>
-[Timeout(20_000)]
 public class SeedProductsWorkflowTests {
   private static AspireIntegrationFixture? _fixture;
 

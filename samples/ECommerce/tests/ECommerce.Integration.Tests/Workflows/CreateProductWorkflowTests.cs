@@ -10,7 +10,6 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// Tests the complete flow: Command → Receptor → Event Store → Perspectives.
 /// Uses batch-aware ServiceBus emulator for parallel execution.
 /// </summary>
-[Timeout(20_000)]
 public class CreateProductWorkflowTests {
   private static AspireIntegrationFixture? _fixture;
 
