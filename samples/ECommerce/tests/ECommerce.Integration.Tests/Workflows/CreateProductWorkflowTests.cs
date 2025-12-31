@@ -10,10 +10,12 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// Tests the complete flow: Command → Receptor → Event Store → Perspectives.
 /// Uses ClassDataSource for ServiceBus emulator fixture injection.
 /// ServiceBus initialization happens BEFORE tests run via TUnit's fixture lifecycle.
-/// PostgreSQL and service hosts are created per-test (during timeout).
-/// All tests share topic-00 and topic-01; message draining provides isolation.
+/// PostgreSQL and service hosts are shared across all tests.
+/// Database cleanup between tests provides isolation.
+/// Tests run sequentially to avoid database interference with shared resources.
 /// </summary>
 [Timeout(60_000)]  // 60s timeout - includes PostgreSQL + host creation now
+[NotInParallel]  // Required with shared hosts to prevent database interference
 [ClassDataSource<ServiceBusBatchFixtureSource>(Shared = SharedType.PerAssembly)]
 public class CreateProductWorkflowTests(ServiceBusBatchFixtureSource fixtureSource) {
   private readonly ServiceBusBatchFixtureSource _fixtureSource = fixtureSource;
