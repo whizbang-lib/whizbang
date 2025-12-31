@@ -26,37 +26,37 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
   private bool _disposed;
   private bool _isInitialized;
 
+  /// <summary>
+  /// Initializes a new instance of AzureServiceBusTransport with a shared ServiceBusClient.
+  /// The transport does NOT dispose the injected client - the DI container manages its lifetime.
+  /// </summary>
+  /// <param name="client">Shared ServiceBusClient instance (managed by DI container)</param>
+  /// <param name="jsonOptions">JSON serialization options</param>
+  /// <param name="options">Optional transport configuration</param>
+  /// <param name="logger">Optional logger instance</param>
   public AzureServiceBusTransport(
-    string connectionString,
+    ServiceBusClient client,
     JsonSerializerOptions jsonOptions,
     AzureServiceBusOptions? options = null,
     ILogger<AzureServiceBusTransport>? logger = null
   ) {
     using var activity = WhizbangActivitySource.Transport.StartActivity("AzureServiceBusTransport.Initialize");
 
-    ArgumentException.ThrowIfNullOrWhiteSpace(connectionString);
+    ArgumentNullException.ThrowIfNull(client);
     ArgumentNullException.ThrowIfNull(jsonOptions);
 
-    // Detect if running against emulator (localhost/127.0.0.1)
-    _isEmulator = connectionString.Contains("localhost", StringComparison.OrdinalIgnoreCase) ||
-                  connectionString.Contains("127.0.0.1");
-
-    _client = new ServiceBusClient(connectionString);
+    _client = client;
     _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<AzureServiceBusTransport>.Instance;
 
-    // Create administration client for managing subscription rules (CorrelationFilter)
-    // Skip for emulator as it doesn't support the Admin API (REST on port 443)
-    if (!_isEmulator) {
-      try {
-        _adminClient = new ServiceBusAdministrationClient(connectionString);
-      } catch (Exception ex) {
-        _logger.LogWarning(ex, "Failed to create ServiceBusAdministrationClient. Filter provisioning will not be available.");
-        _adminClient = null;
-      }
-    } else {
-      _logger.LogInformation("Emulator detected. Administration client disabled. Filters must be provisioned by Aspire AppHost.");
-      _adminClient = null;
-    }
+    // Detect emulator from client endpoint
+    var endpoint = client.FullyQualifiedNamespace;
+    _isEmulator = endpoint.Contains("localhost", StringComparison.OrdinalIgnoreCase) ||
+                  endpoint.Contains("127.0.0.1");
+
+    // Admin client disabled in shared mode - limitation accepted for v0.1.0
+    // Admin operations (like rule provisioning) should be handled externally
+    _adminClient = null;
+    _logger.LogInformation("Shared ServiceBusClient mode: Admin operations disabled");
 
     _jsonOptions = jsonOptions;
     _options = options ?? new AzureServiceBusOptions();
@@ -64,7 +64,8 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
     // Add OTEL tags for observability
     activity?.SetTag("transport.type", "AzureServiceBus");
     activity?.SetTag("transport.emulator", _isEmulator);
-    activity?.SetTag("transport.admin_client_available", _adminClient != null);
+    activity?.SetTag("transport.admin_client_available", false);
+    activity?.SetTag("transport.shared_client", true);
   }
 
   /// <inheritdoc />
@@ -586,12 +587,10 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
     }
     _senders.Clear();
 
-    // Dispose client
-    await _client.DisposeAsync();
+    // DON'T dispose _client - it's injected and managed by DI container
+    _logger.LogInformation("Transport disposed (client managed by DI)");
 
     _senderLock.Dispose();
-
-    _logger.LogInformation("Azure Service Bus transport disposed");
 
     GC.SuppressFinalize(this);
   }
