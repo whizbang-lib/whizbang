@@ -1,4 +1,4 @@
-using ECommerce.InventoryWorker.Lenses;
+using ECommerce.Contracts.Lenses;
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Core.Lenses;
 

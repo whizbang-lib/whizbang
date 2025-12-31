@@ -1,5 +1,6 @@
 using ECommerce.Contracts.Commands;
 using ECommerce.Contracts.Events;
+using ECommerce.Contracts.Lenses;
 using ECommerce.InventoryWorker.Lenses;
 using ECommerce.InventoryWorker.Receptors;
 using Microsoft.Extensions.Logging;

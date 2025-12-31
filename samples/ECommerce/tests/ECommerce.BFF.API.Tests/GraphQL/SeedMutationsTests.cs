@@ -1,6 +1,7 @@
 using ECommerce.BFF.API.GraphQL;
 using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Commands;
+using ECommerce.Contracts.Lenses;
 using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;

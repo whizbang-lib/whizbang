@@ -30,7 +30,7 @@ public class EFCoreSnippets {
 
       // JSONB columns (PostgreSQL with Npgsql)
       // Property().HasColumnType("jsonb") enables POCO JSON mapping for custom types
-      // Requires EnableDynamicJson() and ConfigureJsonOptions() on NpgsqlDataSourceBuilder
+      // Requires ConfigureJsonOptions() THEN EnableDynamicJson() on NpgsqlDataSourceBuilder (order matters!)
       // JSON serialization uses source-generated converters (WhizbangJsonContext)
       entity.Property(e => e.Data)
         .HasColumnName("data")

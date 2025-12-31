@@ -8,6 +8,7 @@ namespace Whizbang.Generators;
 /// <param name="SimpleName">Simple type name without namespace (e.g., "CreateOrder")</param>
 /// <param name="IsCommand">True if type implements ICommand</param>
 /// <param name="IsEvent">True if type implements IEvent</param>
+/// <param name="IsSerializable">True if type is marked with [WhizbangSerializable] attribute</param>
 /// <param name="Properties">Array of property information (name and fully qualified type)</param>
 /// <param name="HasParameterizedConstructor">True if type has a public parameterized constructor matching properties</param>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs</tests>
@@ -16,6 +17,7 @@ internal sealed record JsonMessageTypeInfo(
     string SimpleName,
     bool IsCommand,
     bool IsEvent,
+    bool IsSerializable,
     PropertyInfo[] Properties,
     bool HasParameterizedConstructor
 );
@@ -25,11 +27,13 @@ internal sealed record JsonMessageTypeInfo(
 /// </summary>
 /// <param name="Name">Property name</param>
 /// <param name="Type">Fully qualified type name</param>
+/// <param name="IsValueType">True if the property's underlying type is a value type (struct, enum, primitive). Used to determine correct typeof() expression for nullable types.</param>
 /// <param name="IsInitOnly">True if property has init-only setter</param>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs</tests>
 internal sealed record PropertyInfo(
     string Name,
     string Type,
+    bool IsValueType,
     bool IsInitOnly
 );
 

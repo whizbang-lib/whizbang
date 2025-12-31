@@ -1,11 +1,14 @@
+using Whizbang;
 using Whizbang.Core;
 
-namespace ECommerce.BFF.API.Lenses;
+namespace ECommerce.Contracts.Lenses;
 
 /// <summary>
 /// Data transfer object for product catalog information.
-/// Maps to the bff.product_catalog table materialized by ProductCatalogPerspective.
+/// Shared lens model used by both BFF.API and InventoryWorker perspectives.
+/// Maps to perspective-specific tables (e.g., bff.product_catalog, inventory.product_catalog).
 /// </summary>
+[WhizbangSerializable]
 public record ProductDto {
   /// <summary>
   /// Unique product identifier

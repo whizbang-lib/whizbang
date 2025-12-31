@@ -216,8 +216,10 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton(jsonOptions);
 
     // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
-    // IMPORTANT: Npgsql 9.0+ requires EnableDynamicJson() for JSONB serialization of complex types
+    // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
+    // This registers WhizbangId JSON converters for JSONB serialization
     var inventoryDataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(postgresConnection);
+    inventoryDataSourceBuilder.ConfigureJsonOptions(jsonOptions);
     inventoryDataSourceBuilder.EnableDynamicJson();
     var inventoryDataSource = inventoryDataSourceBuilder.Build();
     builder.Services.AddSingleton(inventoryDataSource);
@@ -331,8 +333,10 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton(jsonOptions);
 
     // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
-    // IMPORTANT: Npgsql 9.0+ requires EnableDynamicJson() for JSONB serialization of complex types
+    // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
+    // This registers WhizbangId JSON converters for JSONB serialization
     var bffDataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(postgresConnection);
+    bffDataSourceBuilder.ConfigureJsonOptions(jsonOptions);
     bffDataSourceBuilder.EnableDynamicJson();
     var bffDataSource = bffDataSourceBuilder.Build();
     builder.Services.AddSingleton(bffDataSource);

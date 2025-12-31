@@ -1,4 +1,5 @@
 using ECommerce.Contracts.Commands;
+using ECommerce.Contracts.Lenses;
 using ECommerce.InventoryWorker.Lenses;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;

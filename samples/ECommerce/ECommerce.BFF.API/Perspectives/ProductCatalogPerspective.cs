@@ -1,5 +1,5 @@
-using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Events;
+using ECommerce.Contracts.Lenses;
 using Whizbang.Core.Perspectives;
 
 namespace ECommerce.BFF.API.Perspectives;

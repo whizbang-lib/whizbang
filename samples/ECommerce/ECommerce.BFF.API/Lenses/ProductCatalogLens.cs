@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using ECommerce.Contracts.Lenses;
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Core.Lenses;
 

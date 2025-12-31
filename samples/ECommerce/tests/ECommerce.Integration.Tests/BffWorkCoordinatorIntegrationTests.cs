@@ -66,8 +66,15 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
         // IMPORTANT: Explicitly call module initializer for test assemblies
         ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();
 
+        // Register JsonSerializerOptions (required by EFCoreWorkCoordinator constructor)
+        var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+        services.AddSingleton(jsonOptions);
+
         // Register NpgsqlDataSource (required for Npgsql 9.0+ with JSONB)
+        // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
+        // This registers WhizbangId JSON converters for JSONB serialization
         var dataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(_connectionString);
+        dataSourceBuilder.ConfigureJsonOptions(jsonOptions);
         dataSourceBuilder.EnableDynamicJson();
         var dataSource = dataSourceBuilder.Build();
         services.AddSingleton(dataSource);
@@ -76,10 +83,6 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
         services.AddDbContext<BffDbContext>(options => {
           options.UseNpgsql(dataSource);
         });
-
-        // Register JsonSerializerOptions (required by EFCoreWorkCoordinator constructor)
-        var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
-        services.AddSingleton(jsonOptions);
 
         // Register service instance provider (same as Program.cs)
         services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(_instanceId));

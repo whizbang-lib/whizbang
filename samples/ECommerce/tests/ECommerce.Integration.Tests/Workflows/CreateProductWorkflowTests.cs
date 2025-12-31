@@ -8,12 +8,16 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// <summary>
 /// End-to-end integration tests for the CreateProduct workflow.
 /// Tests the complete flow: Command → Receptor → Event Store → Perspectives.
-/// Uses batch-aware ServiceBus emulator. Tests within this class run sequentially
-/// to avoid topic conflicts, but different test classes run in parallel.
+/// Uses ClassDataSource for ServiceBus emulator fixture injection.
+/// ServiceBus initialization happens BEFORE tests run via TUnit's fixture lifecycle.
+/// PostgreSQL and service hosts are created per-test (during timeout).
+/// All tests share topic-00 and topic-01; message draining provides isolation.
 /// </summary>
-[NotInParallel]
-public class CreateProductWorkflowTests {
-  private static AspireIntegrationFixture? _fixture;
+[Timeout(60_000)]  // 60s timeout - includes PostgreSQL + host creation now
+[ClassDataSource<ServiceBusBatchFixtureSource>(Shared = SharedType.PerAssembly)]
+public class CreateProductWorkflowTests(ServiceBusBatchFixtureSource fixtureSource) {
+  private readonly ServiceBusBatchFixtureSource _fixtureSource = fixtureSource;
+  private AspireIntegrationFixture? _fixture;
 
   // Test product IDs (UUIDv7 for proper time-ordering and uniqueness across test runs)
   private static readonly ProductId _testProd1 = ProductId.From(Uuid7.NewUuid7().ToGuid());
@@ -27,23 +31,17 @@ public class CreateProductWorkflowTests {
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
-    // Get batch-specific fixture (shared with other tests in same batch)
-    var testIndex = GetTestIndex();
-    var batchFixture = await SharedFixtureSource.GetBatchFixtureAsync(testIndex);
-    var connectionString = batchFixture.ConnectionString;
+    // All tests use the same topics (topic-00 and topic-01)
+    // Message draining provides isolation
+    var connectionString = _fixtureSource.ServiceBusFixture.ConnectionString;
 
-    // Derive topic suffix from test index within batch
-    var topicSuffix = (testIndex % 25).ToString("D2");
-    var batchIndex = testIndex / 25;
+    // Create fixture (will create PostgreSQL + drain messages + create hosts per-test)
+    _fixture = new AspireIntegrationFixture(
+      connectionString,
+      0  // batchIndex always 0
+    );
 
-    // Create fixture with batch-scoped connection string
-    _fixture = new AspireIntegrationFixture(connectionString, topicSuffix, batchIndex);
     await _fixture.InitializeAsync();
-  }
-
-  private static int GetTestIndex() {
-    // Assign fixed index for this test class (all 4 workflow test classes use batch 0)
-    return 0; // CreateProductWorkflowTests = index 0
   }
 
   // NOTE: Database cleanup happens at fixture initialization (AspireIntegrationFixture.cs:147)

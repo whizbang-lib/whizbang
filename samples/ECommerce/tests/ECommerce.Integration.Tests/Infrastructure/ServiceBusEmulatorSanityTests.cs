@@ -8,33 +8,14 @@ namespace ECommerce.Integration.Tests.Infrastructure;
 /// Sanity tests for Azure Service Bus Emulator - verifies emulator is working correctly
 /// without any Whizbang library code. Uses only Azure SDK directly.
 ///
-/// These tests use DirectServiceBusEmulatorFixture which runs the emulator via docker-compose
-/// instead of Aspire, avoiding Aspire's memory/stability issues.
-///
-/// CRITICAL FINDING (2025-12-28): The Azure Service Bus Emulator has an OOM bug when using
-/// custom Config.json on ARM64 (Mac M-series). The emulator crashes during "Triggering Entity Sync"
-/// even with 4GB memory and just ONE topic/subscription. The default built-in configuration works
-/// reliably. This affects both Aspire and direct docker-compose setups.
+/// Uses ClassDataSource for ServiceBus emulator fixture injection.
+/// ServiceBus initialization happens BEFORE tests run via TUnit's fixture lifecycle.
+/// All tests use topic-00 and topic-01.
 /// </summary>
-[NotInParallel]
-public class ServiceBusEmulatorSanityTests {
-  private static DirectServiceBusEmulatorFixture? _fixture;
-
-  [Before(Test)]
-  public async Task SetupAsync() {
-    if (_fixture == null) {
-      _fixture = new DirectServiceBusEmulatorFixture();
-      await _fixture.InitializeAsync();
-    }
-  }
-
-  [After(Test)]
-  public async Task TeardownAsync() {
-    if (_fixture != null) {
-      await _fixture.DisposeAsync();
-      _fixture = null;
-    }
-  }
+[Timeout(20_000)]  // 20s timeout for fail-fast (ServiceBus pre-initialized via ClassDataSource)
+[ClassDataSource<ServiceBusBatchFixtureSource>(Shared = SharedType.PerAssembly)]
+public class ServiceBusEmulatorSanityTests(ServiceBusBatchFixtureSource fixtureSource) {
+  private readonly ServiceBusBatchFixture _serviceBusFixture = fixtureSource.ServiceBusFixture;
 
   /// <summary>
   /// Most basic test: Send a message to a topic and receive it from a subscription.
@@ -42,35 +23,44 @@ public class ServiceBusEmulatorSanityTests {
   /// </summary>
   [Test]
   public async Task ServiceBusEmulator_SendAndReceive_WorksAsync() {
-    var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    // All tests use the same topics (topic-00)
+    var topicName = "topic-00";
+    var subscriptionName = "sub-00-a";
+    var connectionString = _serviceBusFixture.ConnectionString;
 
     Console.WriteLine("[SANITY TEST] Starting Azure Service Bus Emulator sanity test...");
-
-    // Use the default topic from emulator's built-in Config.json
-    var topicName = "topic.1";
-    var subscriptionName = "subscription.1";
-
     Console.WriteLine($"[SANITY TEST] Using topic: {topicName}, subscription: {subscriptionName}");
 
     // Create Service Bus client directly from connection string
-    var connectionString = fixture.ServiceBusConnectionString;
     await using var client = new ServiceBusClient(connectionString);
+
+    // Drain stale messages before test (warmup messages remain from initialization)
+    Console.WriteLine("[SANITY TEST] Draining stale messages...");
+    var drainReceiver = client.CreateReceiver(topicName, subscriptionName);
+    var drained = 0;
+    for (var i = 0; i < 100; i++) {
+      var msg = await drainReceiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
+      if (msg == null) {
+        break;
+      }
+
+      await drainReceiver.CompleteMessageAsync(msg);
+      drained++;
+    }
+    await drainReceiver.DisposeAsync();
+    if (drained > 0) {
+      Console.WriteLine($"[SANITY TEST] Drained {drained} stale messages");
+    }
 
     // Create a sender
     Console.WriteLine("[SANITY TEST] Creating sender...");
     var sender = client.CreateSender(topicName);
 
-    // Create a test message with all required properties for subscription.1's CorrelationFilter
+    // Create a simple test message (TrueFilter accepts any message)
     var testMessageBody = $"Sanity test message at {DateTimeOffset.UtcNow:O}";
     var message = new ServiceBusMessage(testMessageBody) {
-      MessageId = "msgid1",
-      Subject = "subject1",
-      CorrelationId = "id1",
-      ContentType = "application/text",
-      ReplyTo = "someQueue",
-      SessionId = "session1",
-      ReplyToSessionId = "sessionId",
-      To = "xyz"
+      MessageId = Guid.NewGuid().ToString(),
+      ContentType = "application/json"
     };
 
     Console.WriteLine($"[SANITY TEST] Sending message: {message.MessageId}");
@@ -99,7 +89,6 @@ public class ServiceBusEmulatorSanityTests {
     Console.WriteLine($"[SANITY TEST] ✅ Received message: {receivedMessage!.MessageId}");
 
     await Assert.That(receivedMessage.MessageId).IsEqualTo(message.MessageId);
-    await Assert.That(receivedMessage.Subject).IsEqualTo("subject1");
     await Assert.That(receivedMessage.Body.ToString()).IsEqualTo(testMessageBody);
 
     // Complete the message
@@ -110,86 +99,57 @@ public class ServiceBusEmulatorSanityTests {
   }
 
   /// <summary>
-  /// Tests creating a NEW topic and subscription dynamically (not from pool).
-  /// Verifies emulator can handle dynamic provisioning.
+  /// Tests sending/receiving on a different generic topic (second topic set for this test index).
+  /// Verifies multiple generic topics work correctly.
   /// </summary>
   [Test]
-  public async Task ServiceBusEmulator_DynamicTopicCreation_WorksAsync() {
-    var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+  public async Task ServiceBusEmulator_InventoryTopic_WorksAsync() {
+    // All tests use the same topics (topic-01)
+    var topicName = "topic-01";
+    var subscriptionName = "sub-01-a";
+    var connectionString = _serviceBusFixture.ConnectionString;
 
-    Console.WriteLine("[SANITY TEST] Testing dynamic topic creation...");
+    Console.WriteLine("[SANITY TEST] Testing second generic topic...");
+    Console.WriteLine($"[SANITY TEST] Using topic: {topicName}, subscription: {subscriptionName}");
 
-    var connectionString = fixture.ServiceBusConnectionString;
-    var adminClient = new ServiceBusAdministrationClient(connectionString);
+    await using var client = new ServiceBusClient(connectionString);
 
-    // Create unique topic/subscription names
-    var testId = Guid.NewGuid().ToString("N")[..8];
-    var topicName = $"sanity-test-{testId}";
-    var subscriptionName = $"sanity-sub-{testId}";
-
-    Console.WriteLine($"[SANITY TEST] Creating topic: {topicName}");
-
-    try {
-      // Create topic
-      var createTopicTask = adminClient.CreateTopicAsync(topicName);
-      var timeoutTask = Task.Delay(TimeSpan.FromSeconds(30));
-      var completedTask = await Task.WhenAny(createTopicTask, timeoutTask);
-
-      if (completedTask == timeoutTask) {
-        Console.WriteLine("[SANITY TEST] ❌ CreateTopicAsync timed out after 30 seconds");
-        throw new TimeoutException("CreateTopicAsync timed out - emulator not responding");
+    // Drain stale messages before test (warmup messages remain from initialization)
+    Console.WriteLine("[SANITY TEST] Draining stale messages...");
+    var drainReceiver = client.CreateReceiver(topicName, subscriptionName);
+    var drained = 0;
+    for (var i = 0; i < 100; i++) {
+      var msg = await drainReceiver.ReceiveMessageAsync(TimeSpan.FromMilliseconds(100));
+      if (msg == null) {
+        break;
       }
 
-      await createTopicTask;
-      Console.WriteLine($"[SANITY TEST] ✅ Topic created: {topicName}");
-
-      // Create subscription with TrueFilter
-      Console.WriteLine($"[SANITY TEST] Creating subscription: {subscriptionName}");
-      var subscriptionOptions = new CreateSubscriptionOptions(topicName, subscriptionName);
-      var ruleOptions = new CreateRuleOptions("$Default", new TrueRuleFilter());
-
-      var createSubTask = adminClient.CreateSubscriptionAsync(subscriptionOptions, ruleOptions);
-      timeoutTask = Task.Delay(TimeSpan.FromSeconds(30));
-      completedTask = await Task.WhenAny(createSubTask, timeoutTask);
-
-      if (completedTask == timeoutTask) {
-        Console.WriteLine("[SANITY TEST] ❌ CreateSubscriptionAsync timed out after 30 seconds");
-        throw new TimeoutException("CreateSubscriptionAsync timed out - emulator not responding");
-      }
-
-      await createSubTask;
-      Console.WriteLine($"[SANITY TEST] ✅ Subscription created: {subscriptionName}");
-
-      // Now send and receive like the first test
-      await using var client = new ServiceBusClient(connectionString);
-      var sender = client.CreateSender(topicName);
-
-      var message = new ServiceBusMessage("Dynamic topic test") {
-        MessageId = Guid.NewGuid().ToString()
-      };
-
-      Console.WriteLine("[SANITY TEST] Sending message to dynamic topic...");
-      await sender.SendMessageAsync(message);
-      Console.WriteLine("[SANITY TEST] ✅ Message sent!");
-
-      var receiver = client.CreateReceiver(topicName, subscriptionName);
-      var receivedMessage = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(30));
-
-      await Assert.That(receivedMessage).IsNotNull();
-      await Assert.That(receivedMessage!.MessageId).IsEqualTo(message.MessageId);
-      await receiver.CompleteMessageAsync(receivedMessage);
-
-      Console.WriteLine("[SANITY TEST] ✅✅✅ Dynamic topic creation works!");
-
-    } finally {
-      // Cleanup
-      try {
-        Console.WriteLine("[SANITY TEST] Cleaning up test topic...");
-        await adminClient.DeleteTopicAsync(topicName);
-        Console.WriteLine("[SANITY TEST] Test topic deleted");
-      } catch (Exception ex) {
-        Console.WriteLine($"[SANITY TEST] Warning: Failed to delete test topic: {ex.Message}");
-      }
+      await drainReceiver.CompleteMessageAsync(msg);
+      drained++;
     }
+    await drainReceiver.DisposeAsync();
+    if (drained > 0) {
+      Console.WriteLine($"[SANITY TEST] Drained {drained} stale messages");
+    }
+
+    var sender = client.CreateSender(topicName);
+
+    var message = new ServiceBusMessage("Inventory topic test") {
+      MessageId = Guid.NewGuid().ToString(),
+      ContentType = "application/json"
+    };
+
+    Console.WriteLine("[SANITY TEST] Sending message to generic topic...");
+    await sender.SendMessageAsync(message);
+    Console.WriteLine("[SANITY TEST] ✅ Message sent!");
+
+    var receiver = client.CreateReceiver(topicName, subscriptionName);
+    var receivedMessage = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(30));
+
+    await Assert.That(receivedMessage).IsNotNull();
+    await Assert.That(receivedMessage!.MessageId).IsEqualTo(message.MessageId);
+    await receiver.CompleteMessageAsync(receivedMessage);
+
+    Console.WriteLine("[SANITY TEST] ✅✅✅ Generic topic works!");
   }
 }

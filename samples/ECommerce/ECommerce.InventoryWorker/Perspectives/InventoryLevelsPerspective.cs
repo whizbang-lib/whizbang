@@ -1,5 +1,5 @@
 using ECommerce.Contracts.Events;
-using ECommerce.InventoryWorker.Lenses;
+using ECommerce.Contracts.Lenses;
 using Whizbang.Core.Perspectives;
 
 namespace ECommerce.InventoryWorker.Perspectives;

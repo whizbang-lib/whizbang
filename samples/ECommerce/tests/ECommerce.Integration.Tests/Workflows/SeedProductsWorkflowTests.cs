@@ -10,38 +10,35 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// <summary>
 /// End-to-end integration tests for the product seeding workflow.
 /// Tests the complete flow: SeedMutations → CreateProductCommand → ProductCreatedEvent → Perspectives.
-/// Uses batch-aware ServiceBus emulator. Tests within this class run sequentially
-/// to avoid topic conflicts, but different test classes run in parallel.
+/// Uses ClassDataSource for ServiceBus emulator fixture injection.
+/// ServiceBus initialization happens BEFORE tests run via TUnit's fixture lifecycle.
+/// PostgreSQL and service hosts are created per-test (during timeout).
 /// </summary>
-[NotInParallel]
-public class SeedProductsWorkflowTests {
-  private static AspireIntegrationFixture? _fixture;
+[Timeout(60_000)]  // 60s timeout - includes PostgreSQL + host creation now
+[ClassDataSource<ServiceBusBatchFixtureSource>(Shared = SharedType.PerAssembly)]
+public class SeedProductsWorkflowTests(ServiceBusBatchFixtureSource fixtureSource) {
+  private readonly ServiceBusBatchFixtureSource _fixtureSource = fixtureSource;
+  private AspireIntegrationFixture? _fixture;
 
   [Before(Test)]
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
-    // Get batch-specific fixture (shared with other tests in same batch)
-    var testIndex = GetTestIndex();
-    var batchFixture = await SharedFixtureSource.GetBatchFixtureAsync(testIndex);
-    var connectionString = batchFixture.ConnectionString;
+    // All tests use the same topics (topic-00 and topic-01)
+    // Message draining provides isolation
+    var connectionString = _fixtureSource.ServiceBusFixture.ConnectionString;
 
-    // Derive topic suffix from test index within batch
-    var topicSuffix = (testIndex % 25).ToString("D2");
-    var batchIndex = testIndex / 25;
+    // Create fixture (will create PostgreSQL + drain messages + create hosts per-test)
+    _fixture = new AspireIntegrationFixture(
+      connectionString,
+      0  // batchIndex always 0
+    );
 
-    // Create fixture with batch-scoped connection string
-    _fixture = new AspireIntegrationFixture(connectionString, topicSuffix, batchIndex);
     await _fixture.InitializeAsync();
 
     // Clean database before each test to ensure isolated state
     // This is critical for idempotency tests that check if seeding skips on second call
     await _fixture.CleanupDatabaseAsync();
-  }
-
-  private static int GetTestIndex() {
-    // Assign fixed index for this test class (all 4 workflow test classes use batch 0)
-    return 1; // SeedProductsWorkflowTests = index 1
   }
 
 

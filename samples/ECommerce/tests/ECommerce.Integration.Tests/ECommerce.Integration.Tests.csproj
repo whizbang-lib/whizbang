@@ -37,6 +37,8 @@
     <None Include="Config-Modified.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Config-TrueFilter.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="Config-TopicPool.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Config-TopicPoolGeneric.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Config-Named.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="docker-compose.servicebus.yml" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 

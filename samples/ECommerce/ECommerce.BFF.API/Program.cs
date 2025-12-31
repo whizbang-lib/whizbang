@@ -7,6 +7,7 @@ using ECommerce.BFF.API.Lenses;
 using ECommerce.BFF.API.Perspectives;
 using ECommerce.Contracts.Events;
 using ECommerce.Contracts.Generated;
+using ECommerce.Contracts.Lenses;
 using FastEndpoints;
 using FastEndpoints.Swagger;
 using Microsoft.EntityFrameworkCore;
@@ -45,12 +46,7 @@ var angularUrl = builder.Configuration["services:ui:http:0"]
     ?? builder.Configuration.GetConnectionString("ui")
     ?? "http://localhost:4200";  // Fallback for local development without Aspire
 
-// Register ECommerce message types with JsonContextRegistry
-// This must be done before creating JsonSerializerOptions (below)
-ECommerce.Contracts.ECommerceJsonContext.Register();
-
 // Register combined JsonSerializerOptions in DI container for ServiceBusConsumerWorker
-// Must be registered AFTER registering ECommerceJsonContext (above)
 builder.Services.AddSingleton(Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 
 // Register Azure Service Bus transport

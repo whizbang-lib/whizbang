@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Text.Json.Serialization;
+using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
@@ -65,6 +66,8 @@ namespace Whizbang.Core.Generated;
 [JsonSerializable(typeof(PerspectiveCheckpointFailure))]
 [JsonSerializable(typeof(PerspectiveCheckpointFailure[]))]
 [JsonSerializable(typeof(Guid[]))]
+// Perspective types
+[JsonSerializable(typeof(PerspectiveMetadata))]
 [JsonSourceGenerationOptions(
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 public partial class InfrastructureJsonContext : JsonSerializerContext {

@@ -9,10 +9,11 @@ namespace ECommerce.Integration.Tests.Workflows.InMemory;
 /// Tests the complete flow: Command → Receptor → Event Store → Perspectives.
 /// Uses in-memory transport for fast, deterministic testing without Service Bus infrastructure.
 /// This isolates business logic testing from Azure Service Bus concerns.
+/// Each test gets its own isolated fixture and database for parallel execution.
 /// </summary>
-[NotInParallel]
+[Timeout(20_000)]  // 20s timeout per test
 public class CreateProductWorkflowTests {
-  private static InMemoryIntegrationFixture? _fixture;
+  private InMemoryIntegrationFixture? _fixture;
 
   // Test product IDs (deterministic GUIDs for reproducibility)
   private static readonly ProductId _testProd1 = ProductId.From(Guid.Parse("10000000-0000-0000-0000-000000000001"));
@@ -26,13 +27,15 @@ public class CreateProductWorkflowTests {
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
-    _fixture = await SharedInMemoryFixtureSource.GetFixtureAsync();
+    // Create isolated fixture for this test (not shared)
+    _fixture = new InMemoryIntegrationFixture();
+    await _fixture.InitializeAsync();
   }
 
-  [After(Class)]
-  public static async Task CleanupAsync() {
+  [After(Test)]
+  public async Task TeardownAsync() {
     if (_fixture != null) {
-      await _fixture.CleanupDatabaseAsync();
+      await _fixture.DisposeAsync();
     }
   }
 

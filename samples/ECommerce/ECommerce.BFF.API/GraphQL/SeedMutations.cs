@@ -1,5 +1,6 @@
 using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Commands;
+using ECommerce.Contracts.Lenses;
 using Whizbang.Core;
 using Whizbang.Core.ValueObjects;
 

@@ -1,11 +1,14 @@
+using Whizbang;
 using Whizbang.Core;
 
-namespace ECommerce.InventoryWorker.Lenses;
+namespace ECommerce.Contracts.Lenses;
 
 /// <summary>
 /// Data transfer object for inventory level information.
-/// Maps to the inventory_levels table materialized by InventoryLevelsPerspective.
+/// Shared lens model used by both BFF.API and InventoryWorker perspectives.
+/// Maps to perspective-specific tables (e.g., bff.inventory_levels, inventory.inventory_levels).
 /// </summary>
+[WhizbangSerializable]
 public record InventoryLevelDto {
   /// <summary>
   /// Product identifier

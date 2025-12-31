@@ -1,3 +1,5 @@
+using ECommerce.Contracts.Lenses;
+
 namespace ECommerce.BFF.API.Lenses;
 
 /// <summary>

@@ -1,3 +1,5 @@
+using ECommerce.Contracts.Lenses;
+
 namespace ECommerce.InventoryWorker.Lenses;
 
 /// <summary>

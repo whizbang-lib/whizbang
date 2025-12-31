@@ -131,11 +131,14 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
     builder.Services.AddSingleton<OrderedStreamProcessor>();
 
     // Register JsonSerializerOptions for Npgsql JSONB serialization
-    builder.Services.AddSingleton(ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions());
+    var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
+    builder.Services.AddSingleton(jsonOptions);
 
     // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
-    // IMPORTANT: Npgsql 9.0+ requires EnableDynamicJson() for JSONB serialization of complex types
+    // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
+    // This registers WhizbangId JSON converters for JSONB serialization
     var inventoryDataSourceBuilder = new NpgsqlDataSourceBuilder(postgresConnection);
+    inventoryDataSourceBuilder.ConfigureJsonOptions(jsonOptions);
     inventoryDataSourceBuilder.EnableDynamicJson();
     var inventoryDataSource = inventoryDataSourceBuilder.Build();
     builder.Services.AddSingleton(inventoryDataSource);
@@ -168,7 +171,6 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
     builder.Services.AddScoped<IInventoryLens, InventoryLens>();
 
     // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
-    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
     builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
       new TransportPublishStrategy(
         sp.GetRequiredService<ITransport>(),
@@ -207,11 +209,14 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
     builder.Services.AddSingleton<OrderedStreamProcessor>();
 
     // Register JsonSerializerOptions for Npgsql JSONB serialization
-    builder.Services.AddSingleton(ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions());
+    var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
+    builder.Services.AddSingleton(jsonOptions);
 
     // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
-    // IMPORTANT: Npgsql 9.0+ requires EnableDynamicJson() for JSONB serialization of complex types
+    // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
+    // This registers WhizbangId JSON converters for JSONB serialization
     var bffDataSourceBuilder = new NpgsqlDataSourceBuilder(postgresConnection);
+    bffDataSourceBuilder.ConfigureJsonOptions(jsonOptions);
     bffDataSourceBuilder.EnableDynamicJson();
     var bffDataSource = bffDataSourceBuilder.Build();
     builder.Services.AddSingleton(bffDataSource);

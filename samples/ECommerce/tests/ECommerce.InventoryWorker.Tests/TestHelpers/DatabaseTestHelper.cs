@@ -45,10 +45,16 @@ public sealed class DatabaseTestHelper : IAsyncDisposable {
 
       var services = new ServiceCollection();
 
+      // Register JsonSerializerOptions for Npgsql JSONB serialization
+      var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
+      services.AddSingleton(jsonOptions);
+
       // Register DbContext with NpgsqlDataSource
-      // IMPORTANT: Npgsql 9.0+ requires EnableDynamicJson() for JSONB serialization of complex types
+      // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
+      // This registers WhizbangId JSON converters for JSONB serialization
       var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
-      dataSourceBuilder.EnableDynamicJson();  // Required for JSONB serialization in Npgsql 9.0+
+      dataSourceBuilder.ConfigureJsonOptions(jsonOptions);
+      dataSourceBuilder.EnableDynamicJson();
       var dataSource = dataSourceBuilder.Build();
       services.AddSingleton(dataSource);
 

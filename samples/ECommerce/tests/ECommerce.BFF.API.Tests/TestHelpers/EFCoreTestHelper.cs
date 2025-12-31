@@ -44,13 +44,16 @@ public sealed class EFCoreTestHelper : IAsyncDisposable {
     services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
 
     // Register JsonSerializerOptions for Npgsql JSONB serialization
-    services.AddSingleton(ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions());
+    var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
+    services.AddSingleton(jsonOptions);
 
     // Add DbContext with PostgreSQL using NpgsqlDataSource
-    // IMPORTANT: Npgsql 9.0+ requires EnableDynamicJson() for JSONB serialization of complex types
+    // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
+    // This registers WhizbangId JSON converters for JSONB serialization
     var connectionString = _postgresContainer.GetConnectionString();
     var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
-    dataSourceBuilder.EnableDynamicJson();  // Required for JSONB serialization in Npgsql 9.0+
+    dataSourceBuilder.ConfigureJsonOptions(jsonOptions);
+    dataSourceBuilder.EnableDynamicJson();
     var dataSource = dataSourceBuilder.Build();
     services.AddSingleton(dataSource);
 

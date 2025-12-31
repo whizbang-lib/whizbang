@@ -1,5 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
-using ECommerce.BFF.API.Lenses;
+using ECommerce.Contracts.Lenses;
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Core.Lenses;
 using Whizbang.Data.EFCore.Custom;

@@ -1,4 +1,5 @@
 using ECommerce.BFF.API.Lenses;
+using ECommerce.Contracts.Lenses;
 using HotChocolate.Data;
 using Microsoft.EntityFrameworkCore;
 using Whizbang.Core.Lenses;

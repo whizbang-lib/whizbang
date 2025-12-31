@@ -1,4 +1,5 @@
 using ECommerce.BFF.API.Lenses;
+using ECommerce.Contracts.Lenses;
 using FastEndpoints;
 
 namespace ECommerce.BFF.API.Endpoints.Admin;

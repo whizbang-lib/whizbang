@@ -42,12 +42,14 @@ namespace Whizbang.Generators;
 public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string I_COMMAND = "Whizbang.Core.ICommand";
   private const string I_EVENT = "Whizbang.Core.IEvent";
+  private const string WHIZBANG_SERIALIZABLE = "Whizbang.WhizbangSerializableAttribute";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
-    // Discover message types (commands and events)
+    // Discover message types (commands, events, and types with [WhizbangSerializable])
     var messageTypes = context.SyntaxProvider.CreateSyntaxProvider(
-        predicate: static (node, _) => node is RecordDeclarationSyntax { BaseList.Types.Count: > 0 } ||
-                                       node is ClassDeclarationSyntax { BaseList.Types.Count: > 0 },
+        predicate: static (node, _) =>
+            (node is RecordDeclarationSyntax rec && (rec.BaseList?.Types.Count > 0 || rec.AttributeLists.Count > 0)) ||
+            (node is ClassDeclarationSyntax cls && (cls.BaseList?.Types.Count > 0 || cls.AttributeLists.Count > 0)),
         transform: static (ctx, ct) => _extractMessageTypeInfo(ctx, ct)
     ).Where(static info => info is not null);
 
@@ -77,19 +79,50 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
                             SymbolDisplayMiscellaneousOptions.UseSpecialTypes);
 
   /// <summary>
-  /// Strips nullable reference type annotation (?) from a type name for use in typeof() expressions.
-  /// Example: "global::System.String?" becomes "global::System.String"
-  /// Note: typeof(string?) is invalid C# syntax for nullable reference types.
-  /// Nullable value types like int? are NOT stripped as typeof(int?) is valid.
+  /// Gets the correct typeof() expression for a property based on its type and whether it's a value type.
+  /// For nullable value types (decimal?), keeps the '?' to get typeof(decimal?).
+  /// For nullable reference types (string?), strips the '?' to get typeof(string) since typeof(string?) is invalid C#.
   /// </summary>
-  private static string _stripNullableForTypeOf(string typeName) {
-    // Only strip '?' from reference types (not value types like int?, decimal?, etc.)
-    // For simplicity, we strip all trailing '?' as value types can use both typeof(int?) and typeof(int)
-    // The actual Type object is the same for both expressions.
-    if (typeName.EndsWith("?", StringComparison.Ordinal)) {
-      return typeName.Substring(0, typeName.Length - 1);
+  /// <param name="prop">Property information including type name and value type status</param>
+  /// <returns>Type name suitable for typeof() expression</returns>
+  private static string _getTypeOfExpression(PropertyInfo prop) {
+    // If the type has a nullable marker '?'
+    if (prop.Type.EndsWith("?", StringComparison.Ordinal)) {
+      if (prop.IsValueType) {
+        // Nullable value type: typeof(decimal?) is valid - keep the '?'
+        return prop.Type;
+      } else {
+        // Nullable reference type: typeof(string?) is invalid - strip the '?'
+        return prop.Type.Substring(0, prop.Type.Length - 1);
+      }
     }
-    return typeName;
+
+    // Non-nullable type - use as-is
+    return prop.Type;
+  }
+
+  /// <summary>
+  /// Determines if a type symbol represents a value type (struct, enum, primitive).
+  /// This includes Nullable&lt;T&gt; where T is a value type.
+  /// Used to determine correct typeof() expression for nullable types.
+  /// </summary>
+  /// <param name="typeSymbol">The type symbol to check</param>
+  /// <returns>True if the type is a value type or Nullable&lt;T&gt; where T is a value type</returns>
+  private static bool _isValueType(ITypeSymbol typeSymbol) {
+    // Check if the type itself is a value type
+    if (typeSymbol.IsValueType) {
+      return true;
+    }
+
+    // Check if this is Nullable<T> where T is a value type
+    // Nullable<T> is a struct (value type), but we want to know if the underlying type is a value type
+    if (typeSymbol is INamedTypeSymbol namedType &&
+        namedType.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T) {
+      // Nullable<T> is itself a value type, so return true
+      return true;
+    }
+
+    return false;
   }
 
   /// <summary>
@@ -117,7 +150,12 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     bool isEvent = typeSymbol.AllInterfaces.Any(i =>
         i.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{I_EVENT}");
 
-    if (!isCommand && !isEvent) {
+    // Check if marked with [WhizbangSerializable] attribute
+    bool isSerializable = typeSymbol.GetAttributes()
+        .Any(a => a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{WHIZBANG_SERIALIZABLE}");
+
+    // Type must be a command, event, or explicitly marked as serializable
+    if (!isCommand && !isEvent && !isSerializable) {
       return null;
     }
 
@@ -132,6 +170,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         .Select(p => new PropertyInfo(
             Name: p.Name,
             Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
+            IsValueType: _isValueType(p.Type),
             IsInitOnly: p.SetMethod?.IsInitOnly ?? false
         ))
         .ToArray();
@@ -150,6 +189,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         SimpleName: simpleName,
         IsCommand: isCommand,
         IsEvent: isEvent,
+        IsSerializable: isSerializable,
         Properties: properties,
         HasParameterizedConstructor: hasParameterizedConstructor
     );
@@ -180,7 +220,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // Report diagnostics for discovered message types
     foreach (var message in messages) {
-      var messageKind = message.IsCommand ? "command" : "event";
+      var messageKind = message.IsCommand ? "command" :
+                        message.IsEvent ? "event" :
+                        "serializable type";
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.JsonSerializableTypeDiscovered,
           Location.None,
@@ -571,7 +613,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
           var parameterCode = parameterInfoSnippet
               .Replace("__INDEX__", i.ToString(CultureInfo.InvariantCulture))
               .Replace("__PARAMETER_NAME__", prop.Name)
-              .Replace("__PROPERTY_TYPE__", _stripNullableForTypeOf(prop.Type));
+              .Replace("__PROPERTY_TYPE__", _getTypeOfExpression(prop));
 
           sb.AppendLine(parameterCode);
         }
@@ -599,7 +641,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
           var parameterCode = parameterInfoSnippet
               .Replace("__INDEX__", i.ToString(CultureInfo.InvariantCulture))
               .Replace("__PARAMETER_NAME__", prop.Name)
-              .Replace("__PROPERTY_TYPE__", _stripNullableForTypeOf(prop.Type));
+              .Replace("__PROPERTY_TYPE__", _getTypeOfExpression(prop));
 
           sb.AppendLine(parameterCode);
         }
@@ -688,19 +730,19 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       var messageIdParam = parameterInfoSnippet
           .Replace("__INDEX__", "0")
           .Replace("__PARAMETER_NAME__", "messageId")
-          .Replace("__PROPERTY_TYPE__", _stripNullableForTypeOf("MessageId"));
+          .Replace("__PROPERTY_TYPE__", "MessageId");
       sb.AppendLine(messageIdParam);
 
       var payloadParam = parameterInfoSnippet
           .Replace("__INDEX__", "1")
           .Replace("__PARAMETER_NAME__", "payload")
-          .Replace("__PROPERTY_TYPE__", _stripNullableForTypeOf(message.FullyQualifiedName));
+          .Replace("__PROPERTY_TYPE__", message.FullyQualifiedName);
       sb.AppendLine(payloadParam);
 
       var hopsParam = parameterInfoSnippet
           .Replace("__INDEX__", "2")
           .Replace("__PARAMETER_NAME__", "hops")
-          .Replace("__PROPERTY_TYPE__", _stripNullableForTypeOf("List<MessageHop>"));
+          .Replace("__PROPERTY_TYPE__", "List<MessageHop>");
       sb.AppendLine(hopsParam);
       sb.AppendLine();
 
@@ -837,6 +879,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
             .Select(p => new PropertyInfo(
                 Name: p.Name,
                 Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
+                IsValueType: _isValueType(p.Type),
                 IsInitOnly: p.SetMethod?.IsInitOnly ?? false
             ))
             .ToArray();
@@ -853,6 +896,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
             SimpleName: typeSymbol.Name,
             IsCommand: false,  // Nested types are not commands/events
             IsEvent: false,
+            IsSerializable: false,  // Nested types discovered through property analysis, not attribute
             Properties: nestedProperties,
             HasParameterizedConstructor: hasParameterizedConstructor
         );
