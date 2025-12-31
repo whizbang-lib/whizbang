@@ -304,6 +304,54 @@ public class EFCorePostgresLensQueryTests {
 
     await Assert.That(exception).IsTypeOf<ArgumentNullException>();
   }
+
+  /// <summary>
+  /// TDD RED Test: Verify that Query property uses AsNoTracking.
+  /// This test ensures readonly CQRS queries don't track entities.
+  /// </summary>
+  [Test]
+  public async Task Query_UsesNoTracking_DoesNotTrackEntitiesAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var lensQuery = new EFCorePostgresLensQuery<TestModel>(context, "test_perspective");
+    var testId = _idProvider.NewGuid();
+
+    await SeedPerspectiveAsync(context, testId, new TestModel { Name = "Test", Value = 123 });
+
+    // Act
+    var row = await lensQuery.Query.FirstOrDefaultAsync(r => r.Id == testId);
+
+    // Assert - Entity should not be tracked
+    var trackedEntries = context.ChangeTracker.Entries<PerspectiveRow<TestModel>>().ToList();
+    await Assert.That(trackedEntries).IsEmpty()
+        .Because("Query should use AsNoTracking() for readonly CQRS operations");
+    await Assert.That(row).IsNotNull()
+        .Because("Query should still return the entity data");
+  }
+
+  /// <summary>
+  /// TDD RED Test: Verify that GetByIdAsync uses AsNoTracking.
+  /// This test ensures readonly CQRS queries don't track entities.
+  /// </summary>
+  [Test]
+  public async Task GetByIdAsync_UsesNoTracking_DoesNotTrackEntityAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var lensQuery = new EFCorePostgresLensQuery<TestModel>(context, "test_perspective");
+    var testId = _idProvider.NewGuid();
+
+    await SeedPerspectiveAsync(context, testId, new TestModel { Name = "Test", Value = 123 });
+
+    // Act
+    var model = await lensQuery.GetByIdAsync(testId);
+
+    // Assert - Entity should not be tracked
+    var trackedEntries = context.ChangeTracker.Entries<PerspectiveRow<TestModel>>().ToList();
+    await Assert.That(trackedEntries).IsEmpty()
+        .Because("GetByIdAsync should use AsNoTracking() for readonly CQRS operations");
+    await Assert.That(model).IsNotNull()
+        .Because("GetByIdAsync should still return the model data");
+  }
 }
 
 /// <summary>
