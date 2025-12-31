@@ -46,14 +46,17 @@ public class EFCorePostgresLensQuery<TModel> : ILensQuery<TModel>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:Query_CanProjectAcrossColumns_ReturnsAnonymousTypeAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:Query_SupportsCombinedFilters_FromAllColumnsAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:Query_SupportsComplexLinqOperations_WithOrderByAndSkipTakeAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:Query_UsesNoTracking_DoesNotTrackEntitiesAsync</tests>
   public IQueryable<PerspectiveRow<TModel>> Query =>
-      _context.Set<PerspectiveRow<TModel>>();
+      _context.Set<PerspectiveRow<TModel>>().AsNoTracking();
 
   /// <inheritdoc/>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:GetByIdAsync_WhenModelExists_ReturnsModelAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:GetByIdAsync_WhenModelDoesNotExist_ReturnsNullAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:GetByIdAsync_UsesNoTracking_DoesNotTrackEntityAsync</tests>
   public async Task<TModel?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default) {
     var row = await _context.Set<PerspectiveRow<TModel>>()
+        .AsNoTracking()
         .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
 
     return row?.Data;

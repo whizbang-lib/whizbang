@@ -318,6 +318,9 @@ public class EFCorePostgresLensQueryTests {
 
     await SeedPerspectiveAsync(context, testId, new TestModel { Name = "Test", Value = 123 });
 
+    // Clear Change Tracker to simulate fresh query context
+    context.ChangeTracker.Clear();
+
     // Act
     var row = await lensQuery.Query.FirstOrDefaultAsync(r => r.Id == testId);
 
@@ -341,6 +344,9 @@ public class EFCorePostgresLensQueryTests {
     var testId = _idProvider.NewGuid();
 
     await SeedPerspectiveAsync(context, testId, new TestModel { Name = "Test", Value = 123 });
+
+    // Clear Change Tracker to simulate fresh query context
+    context.ChangeTracker.Clear();
 
     // Act
     var model = await lensQuery.GetByIdAsync(testId);
