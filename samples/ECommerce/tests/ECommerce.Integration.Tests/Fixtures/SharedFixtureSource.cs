@@ -70,17 +70,20 @@ public static class SharedFixtureSource {
   }
 
   /// <summary>
-  /// Final cleanup: disposes all batch fixtures when tests complete.
+  /// Final cleanup: disposes shared ServiceBus emulator and client when tests complete.
   /// </summary>
   public static async Task DisposeAsync() {
-    foreach (var lazyFixture in _batchFixtures.Values) {
-      if (lazyFixture.IsValueCreated) {
-        var fixture = await lazyFixture.Value;
-        await fixture.DisposeAsync();
-      }
+    if (_sharedServiceBusClient != null) {
+      await _sharedServiceBusClient.DisposeAsync();
+      Console.WriteLine("[SharedFixture] Disposed shared ServiceBusClient");
     }
 
-    _batchFixtures.Clear();
-    Console.WriteLine("[SharedFixture] All batch fixtures disposed.");
+    if (_sharedEmulator != null) {
+      await _sharedEmulator.DisposeAsync();
+      Console.WriteLine("[SharedFixture] Disposed shared emulator");
+    }
+
+    _initialized = false;
+    Console.WriteLine("[SharedFixture] All shared resources disposed.");
   }
 }
