@@ -740,7 +740,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     _inventoryScope?.Dispose();
     _bffScope?.Dispose();
 
-    // Stop and dispose hosts
+    // Stop and dispose hosts (this will close ServiceBus processors/receivers)
     if (_inventoryHost != null) {
       await _inventoryHost.StopAsync();
       _inventoryHost.Dispose();
@@ -756,7 +756,8 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       await _aspireApp.DisposeAsync();
     }
 
-    // Dispose shared ServiceBusClient
-    await _sharedServiceBusClient.DisposeAsync();
+    // DO NOT dispose shared ServiceBusClient here - it's owned by SharedFixtureSource
+    // and should only be disposed once when ALL tests complete
+    // Stopping the hosts above closes all ServiceBus processors/receivers properly
   }
 }
