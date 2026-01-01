@@ -751,6 +751,13 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       _bffHost.Dispose();
     }
 
+    // CRITICAL: Wait for AMQP connections to fully close
+    // ServiceBus processors dispose asynchronously, and connections need time to clean up
+    // Without this delay, connections accumulate and exceed emulator quota (~25)
+    Console.WriteLine("[AspireFixture] Waiting for ServiceBus connections to close...");
+    await Task.Delay(2000);  // 2 second delay for connection cleanup
+    Console.WriteLine("[AspireFixture] ServiceBus connections closed.");
+
     // Dispose Aspire app (stops PostgreSQL container)
     if (_aspireApp != null) {
       await _aspireApp.DisposeAsync();
