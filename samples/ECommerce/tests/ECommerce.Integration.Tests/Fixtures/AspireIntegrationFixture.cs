@@ -49,19 +49,21 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
 
   /// <summary>
   /// Creates a new fixture instance that will create PostgreSQL and service hosts per-test.
-  /// All tests share topic-00 and topic-01; message draining provides isolation.
+  /// Uses a SHARED ServiceBusClient that all tests and hosts reuse (to stay under connection quota).
   /// </summary>
   /// <param name="serviceBusConnectionString">The ServiceBus connection string (from pre-created emulator)</param>
+  /// <param name="sharedServiceBusClient">The SHARED ServiceBusClient that all hosts will reuse</param>
   /// <param name="batchIndex">The batch index for diagnostic logging (always 0)</param>
   public AspireIntegrationFixture(
     string serviceBusConnectionString,
+    ServiceBusClient sharedServiceBusClient,
     int batchIndex
   ) {
     _serviceBusConnection = serviceBusConnectionString;
+    _sharedServiceBusClient = sharedServiceBusClient ?? throw new ArgumentNullException(nameof(sharedServiceBusClient));
     _batchIndex = batchIndex;
-    _sharedServiceBusClient = new ServiceBusClient(serviceBusConnectionString);
     Console.WriteLine($"[AspireFixture] Using topics: {_topicA}, {_topicB}");
-    Console.WriteLine("[AspireFixture] Created shared ServiceBusClient for test operations");
+    Console.WriteLine("[AspireFixture] Using SHARED ServiceBusClient (reused by all hosts)");
   }
 
   /// <summary>
@@ -294,7 +296,13 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Register JsonSerializerOptions in DI for Azure Service Bus transport
     builder.Services.AddSingleton(jsonOptions);
 
-    // Register Azure Service Bus transport
+    // CRITICAL: Register SHARED ServiceBusClient BEFORE calling AddAzureServiceBusTransport
+    // This ensures AddAzureServiceBusTransport resolves the shared client instead of creating a new one
+    // Keeps us under the emulator's connection quota (~25 connections)
+    builder.Services.AddSingleton(_sharedServiceBusClient);
+    Console.WriteLine("[InventoryHost] Registered SHARED ServiceBusClient in DI");
+
+    // Register Azure Service Bus transport (will resolve shared client from DI)
     builder.Services.AddAzureServiceBusTransport(serviceBusConnectionString);
 
     // EF Core with PostgreSQL - simple UseNpgsql (matches real InventoryWorker Program.cs)
@@ -416,7 +424,13 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Register JsonSerializerOptions in DI for Azure Service Bus transport
     builder.Services.AddSingleton(jsonOptions);
 
-    // Register Azure Service Bus transport
+    // CRITICAL: Register SHARED ServiceBusClient BEFORE calling AddAzureServiceBusTransport
+    // This ensures AddAzureServiceBusTransport resolves the shared client instead of creating a new one
+    // Keeps us under the emulator's connection quota (~25 connections)
+    builder.Services.AddSingleton(_sharedServiceBusClient);
+    Console.WriteLine("[BFFHost] Registered SHARED ServiceBusClient in DI");
+
+    // Register Azure Service Bus transport (will resolve shared client from DI)
     builder.Services.AddAzureServiceBusTransport(serviceBusConnectionString);
 
     // Add trace store for observability

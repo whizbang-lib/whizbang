@@ -30,13 +30,12 @@ public class UpdateProductWorkflowTests {
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
-    // Get ServiceBus connection from batch fixture
+    // Get SHARED ServiceBus resources (emulator + single static ServiceBusClient)
     var testIndex = GetTestIndex();
-    var batchFixture = await SharedFixtureSource.GetBatchFixtureAsync(testIndex);
-    var connectionString = batchFixture.ConnectionString;
+    var (connectionString, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync(testIndex);
 
-    // Create fixture with connection string (topics are hardcoded in fixture)
-    _fixture = new AspireIntegrationFixture(connectionString, 0);
+    // Create fixture with shared client (per-test PostgreSQL + hosts, but shared ServiceBusClient)
+    _fixture = new AspireIntegrationFixture(connectionString, sharedClient, 0);
     await _fixture.InitializeAsync();
   }
 

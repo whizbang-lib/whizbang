@@ -1,38 +1,72 @@
 using System.Collections.Concurrent;
 using System.Diagnostics.CodeAnalysis;
+using Azure.Messaging.ServiceBus;
 using TUnit.Core;
 
 namespace ECommerce.Integration.Tests.Fixtures;
 
 /// <summary>
-/// Provides batch-aware Service Bus emulator management for parallel test execution.
-/// Each batch of 25 tests gets its own emulator instance on a unique port.
-/// Tests within a batch run in PARALLEL and are isolated by dedicated topic sets.
+/// Provides shared ServiceBus emulator and single static ServiceBusClient for all tests.
+/// Tests run SEQUENTIALLY with per-test PostgreSQL and hosts.
+/// All hosts reuse the same ServiceBusClient to stay under connection quota.
 /// </summary>
 public static class SharedFixtureSource {
-  private static readonly ConcurrentDictionary<int, Lazy<Task<ServiceBusBatchFixture>>> _batchFixtures = new();
-  private const int TESTS_PER_BATCH = 25;  // Each batch supports up to 25 tests
+  private static readonly SemaphoreSlim _initLock = new(1, 1);
+  private static ServiceBusBatchFixture? _sharedEmulator;
+  private static ServiceBusClient? _sharedServiceBusClient;
+  private static bool _initialized = false;
 
   /// <summary>
-  /// Gets or initializes the batch-specific ServiceBus emulator fixture.
-  /// Each batch of 25 tests shares one emulator instance.
+  /// Gets the single shared ServiceBusClient that all tests and hosts will reuse.
+  /// This keeps us under the emulator's connection quota (~25 connections).
   /// </summary>
-  /// <param name="testIndex">The fixed test index (0-based) assigned to this test class.</param>
-  public static async Task<ServiceBusBatchFixture> GetBatchFixtureAsync(int testIndex) {
-    // Determine which batch this test belongs to
-    var batchIndex = testIndex / TESTS_PER_BATCH;
+  public static ServiceBusClient SharedServiceBusClient =>
+    _sharedServiceBusClient ?? throw new InvalidOperationException("Shared ServiceBusClient not initialized. Call GetSharedResourcesAsync() first.");
 
-    Console.WriteLine($"[SharedFixture] Test index {testIndex} assigned to Batch {batchIndex}");
+  /// <summary>
+  /// Gets the shared ServiceBus emulator connection string.
+  /// </summary>
+  public static string ConnectionString =>
+    _sharedEmulator?.ConnectionString ?? throw new InvalidOperationException("Shared emulator not initialized. Call GetSharedResourcesAsync() first.");
 
-    // Get or create fixture for this batch
-    var lazyFixture = _batchFixtures.GetOrAdd(batchIndex,
-      idx => new Lazy<Task<ServiceBusBatchFixture>>(async () => {
-        var fixture = new ServiceBusBatchFixture(idx);
-        await fixture.InitializeAsync();
-        return fixture;
-      }));
+  /// <summary>
+  /// Initializes shared ServiceBus emulator and creates single static ServiceBusClient.
+  /// Called once before any tests run.
+  /// </summary>
+  /// <param name="testIndex">The test index (not used, kept for compatibility).</param>
+  public static async Task<(string ConnectionString, ServiceBusClient Client)> GetSharedResourcesAsync(int testIndex) {
+    if (_initialized) {
+      return (ConnectionString, SharedServiceBusClient);
+    }
 
-    return await lazyFixture.Value;
+    await _initLock.WaitAsync();
+    try {
+      if (_initialized) {
+        return (ConnectionString, SharedServiceBusClient);
+      }
+
+      Console.WriteLine("================================================================================");
+      Console.WriteLine("[SharedFixture] Initializing shared ServiceBus emulator and client...");
+      Console.WriteLine("================================================================================");
+
+      // Initialize single ServiceBus emulator
+      _sharedEmulator = new ServiceBusBatchFixture(0);
+      await _sharedEmulator.InitializeAsync();
+
+      // Create single static ServiceBusClient that ALL tests and hosts will reuse
+      _sharedServiceBusClient = new ServiceBusClient(ConnectionString);
+      Console.WriteLine("[SharedFixture] Created SINGLE shared ServiceBusClient (reused by all hosts)");
+
+      Console.WriteLine("================================================================================");
+      Console.WriteLine("[SharedFixture] ✅ Shared resources ready!");
+      Console.WriteLine("[SharedFixture] All tests will reuse the same ServiceBusClient");
+      Console.WriteLine("================================================================================");
+
+      _initialized = true;
+      return (ConnectionString, SharedServiceBusClient);
+    } finally {
+      _initLock.Release();
+    }
   }
 
   /// <summary>
