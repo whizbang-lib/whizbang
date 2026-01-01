@@ -27,17 +27,13 @@ public class CreateProductWorkflowTests {
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
-    // Get batch-specific fixture (shared with other tests in same batch)
+    // Get ServiceBus connection from batch fixture
     var testIndex = GetTestIndex();
     var batchFixture = await SharedFixtureSource.GetBatchFixtureAsync(testIndex);
     var connectionString = batchFixture.ConnectionString;
 
-    // Derive topic suffix from test index within batch
-    var topicSuffix = (testIndex % 25).ToString("D2");
-    var batchIndex = testIndex / 25;
-
-    // Create fixture with batch-scoped connection string
-    _fixture = new AspireIntegrationFixture(connectionString, topicSuffix, batchIndex);
+    // Create fixture with connection string (topics are hardcoded in fixture)
+    _fixture = new AspireIntegrationFixture(connectionString, 0);
     await _fixture.InitializeAsync();
   }
 
