@@ -11,18 +11,12 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// <summary>
 /// End-to-end integration tests for the RestockInventory workflow.
 /// Tests the complete flow: Command → Receptor → Event Store → Perspectives.
-/// Uses ClassDataSource for ServiceBus emulator fixture injection.
-/// ServiceBus initialization happens BEFORE tests run via TUnit's fixture lifecycle.
-/// PostgreSQL and service hosts are shared across all tests.
-/// Database cleanup between tests provides isolation.
-/// Tests run sequentially to avoid database interference with shared resources.
+/// Uses batch-aware ServiceBus emulator. Tests within this class run sequentially
+/// to avoid topic conflicts, but different test classes run in parallel.
 /// </summary>
-[Timeout(60_000)]  // 60s timeout - includes PostgreSQL + host creation now
-[NotInParallel]  // Required with shared hosts to prevent database interference
-[ClassDataSource<ServiceBusBatchFixtureSource>(Shared = SharedType.PerAssembly)]
-public class RestockInventoryWorkflowTests(ServiceBusBatchFixtureSource fixtureSource) {
-  private readonly ServiceBusBatchFixtureSource _fixtureSource = fixtureSource;
-  private AspireIntegrationFixture? _fixture;
+[NotInParallel]
+public class RestockInventoryWorkflowTests {
+  private static AspireIntegrationFixture? _fixture;
 
   // Test product IDs (UUIDv7 for proper time-ordering and uniqueness across test runs)
   private static readonly ProductId _testProdRestock1 = ProductId.From(Uuid7.NewUuid7().ToGuid());
@@ -35,21 +29,27 @@ public class RestockInventoryWorkflowTests(ServiceBusBatchFixtureSource fixtureS
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
-    // All tests use the same topics (topic-00 and topic-01)
-    // Message draining provides isolation
-    var connectionString = _fixtureSource.ServiceBusFixture.ConnectionString;
+    // Get batch-specific fixture (shared with other tests in same batch)
+    var testIndex = GetTestIndex();
+    var batchFixture = await SharedFixtureSource.GetBatchFixtureAsync(testIndex);
+    var connectionString = batchFixture.ConnectionString;
 
-    // Create fixture (will create PostgreSQL + drain messages + create hosts per-test)
-    _fixture = new AspireIntegrationFixture(
-      connectionString,
-      0  // batchIndex always 0
-    );
+    // Derive topic suffix from test index within batch
+    var topicSuffix = (testIndex % 25).ToString("D2");
+    var batchIndex = testIndex / 25;
 
+    // Create fixture with batch-scoped connection string
+    _fixture = new AspireIntegrationFixture(connectionString, topicSuffix, batchIndex);
     await _fixture.InitializeAsync();
 
     // Clean database before each test to ensure isolated state
     // This is critical for integration tests that check specific quantities
     await _fixture.CleanupDatabaseAsync();
+  }
+
+  private static int GetTestIndex() {
+    // Assign fixed index for this test class (all 4 workflow test classes use batch 0)
+    return 3; // RestockInventoryWorkflowTests = index 3
   }
 
 

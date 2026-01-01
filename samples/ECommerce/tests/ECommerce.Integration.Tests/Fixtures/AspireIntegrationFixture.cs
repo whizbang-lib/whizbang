@@ -25,35 +25,31 @@ using Whizbang.Transports.AzureServiceBus;
 namespace ECommerce.Integration.Tests.Fixtures;
 
 /// <summary>
-/// Integration test fixture that shares PostgreSQL and service hosts across ALL tests.
+/// Integration test fixture that creates PostgreSQL and service hosts per-test.
 /// ServiceBus emulator is pre-created and shared across tests.
-/// All tests share the same topics (products and inventory).
-/// Database cleanup between tests provides isolation.
+/// All tests share the same topics (topic-00 and topic-01).
+/// Message draining provides isolation between tests and test runs.
 /// </summary>
 public sealed class AspireIntegrationFixture : IAsyncDisposable {
-  // SHARED STATIC RESOURCES (initialized once, used by all tests)
-  private static DistributedApplication? _sharedAspireApp;
-  private static IHost? _sharedInventoryHost;
-  private static IHost? _sharedBffHost;
-  private static ServiceBusClient? _sharedServiceBusClient;
-  private static string? _sharedPostgresConnection;
-  private static readonly SemaphoreSlim _initLock = new(1, 1);
-  private static int _initializationCount = 0;
-
-  // PER-TEST RESOURCES (created during InitializeAsync)
   private readonly string _serviceBusConnection;
   private readonly string _topicA = "products";  // Topic names from real applications
   private readonly string _topicB = "inventory";
   private readonly int _batchIndex;
+  private bool _isInitialized;
   private readonly Guid _testPollerInstanceId = Uuid7.NewUuid7().ToGuid();
+  private readonly ServiceBusClient _sharedServiceBusClient;  // Shared client for test operations
+
+  // Per-test resources (created during InitializeAsync)
+  private DistributedApplication? _aspireApp;
+  private IHost? _inventoryHost;
+  private IHost? _bffHost;
   private IServiceScope? _inventoryScope;
   private IServiceScope? _bffScope;
-  private bool _isInitialized;
+  private string? _postgresConnection;
 
   /// <summary>
-  /// Creates a new fixture instance that will share PostgreSQL and service hosts across all tests.
-  /// All tests share the same topics (products and inventory).
-  /// Database cleanup between tests provides isolation.
+  /// Creates a new fixture instance that will create PostgreSQL and service hosts per-test.
+  /// All tests share topic-00 and topic-01; message draining provides isolation.
   /// </summary>
   /// <param name="serviceBusConnectionString">The ServiceBus connection string (from pre-created emulator)</param>
   /// <param name="batchIndex">The batch index for diagnostic logging (always 0)</param>
@@ -63,60 +59,62 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   ) {
     _serviceBusConnection = serviceBusConnectionString;
     _batchIndex = batchIndex;
+    _sharedServiceBusClient = new ServiceBusClient(serviceBusConnectionString);
+    Console.WriteLine($"[AspireFixture] Using topics: {_topicA}, {_topicB}");
+    Console.WriteLine("[AspireFixture] Created shared ServiceBusClient for test operations");
   }
 
   /// <summary>
-  /// Gets the IDispatcher instance for sending commands (from shared InventoryWorker host).
+  /// Gets the IDispatcher instance for sending commands (from InventoryWorker host).
   /// The Dispatcher creates its own scope internally when publishing events.
   /// </summary>
-  public IDispatcher Dispatcher => _sharedInventoryHost?.Services.GetRequiredService<IDispatcher>()
+  public IDispatcher Dispatcher => _inventoryHost?.Services.GetRequiredService<IDispatcher>()
     ?? throw new InvalidOperationException("Fixture not initialized");
 
   /// <summary>
   /// Gets the IProductLens instance for querying product catalog (from InventoryWorker host).
-  /// Resolves from a per-test scope that persists for the lifetime of the test.
+  /// Resolves from a long-lived scope that persists for the lifetime of the fixture.
   /// </summary>
   public IProductLens InventoryProductLens => _inventoryScope?.ServiceProvider.GetRequiredService<IProductLens>()
     ?? throw new InvalidOperationException("Fixture not initialized");
 
   /// <summary>
   /// Gets the IInventoryLens instance for querying inventory levels (from InventoryWorker host).
-  /// Resolves from a per-test scope that persists for the lifetime of the test.
+  /// Resolves from a long-lived scope that persists for the lifetime of the fixture.
   /// </summary>
   public IInventoryLens InventoryLens => _inventoryScope?.ServiceProvider.GetRequiredService<IInventoryLens>()
     ?? throw new InvalidOperationException("Fixture not initialized");
 
   /// <summary>
   /// Gets the IProductCatalogLens instance for querying product catalog (from BFF host).
-  /// Resolves from a per-test scope that persists for the lifetime of the test.
+  /// Resolves from a long-lived scope that persists for the lifetime of the fixture.
   /// </summary>
   public IProductCatalogLens BffProductLens => _bffScope?.ServiceProvider.GetRequiredService<IProductCatalogLens>()
     ?? throw new InvalidOperationException("Fixture not initialized");
 
   /// <summary>
   /// Gets the IInventoryLevelsLens instance for querying inventory levels (from BFF host).
-  /// Resolves from a per-test scope that persists for the lifetime of the test.
+  /// Resolves from a long-lived scope that persists for the lifetime of the fixture.
   /// </summary>
   public IInventoryLevelsLens BffInventoryLens => _bffScope?.ServiceProvider.GetRequiredService<IInventoryLevelsLens>()
     ?? throw new InvalidOperationException("Fixture not initialized");
 
   /// <summary>
-  /// Gets the shared PostgreSQL connection string for direct database operations.
+  /// Gets the PostgreSQL connection string for direct database operations.
   /// </summary>
-  public string ConnectionString => _sharedPostgresConnection
+  public string ConnectionString => _postgresConnection
     ?? throw new InvalidOperationException("Fixture not initialized");
 
   /// <summary>
   /// Gets a logger instance for use in test scenarios.
   /// </summary>
   public ILogger<T> GetLogger<T>() {
-    return _sharedInventoryHost?.Services.GetRequiredService<ILogger<T>>()
+    return _inventoryHost?.Services.GetRequiredService<ILogger<T>>()
       ?? throw new InvalidOperationException("Fixture not initialized");
   }
 
   /// <summary>
-  /// Initializes the test fixture by ensuring shared resources are created (once)
-  /// and preparing per-test resources (scopes and database cleanup).
+  /// Initializes the test fixture by creating PostgreSQL container and service hosts.
   /// ServiceBus emulator is already pre-created via ClassDataSource.
   /// </summary>
   [RequiresDynamicCode("EF Core in tests may use dynamic code")]
@@ -126,69 +124,54 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       return;
     }
 
-    // Initialize shared resources ONCE (thread-safe)
-    await _initLock.WaitAsync(cancellationToken);
-    try {
-      if (_initializationCount == 0) {
-        Console.WriteLine("[AspireFixture] First test - initializing shared resources...");
+    Console.WriteLine($"[AspireFixture] Initializing for topics: {_topicA}, {_topicB}");
 
-        // Create Aspire app (PostgreSQL container) - SHARED
-        Console.WriteLine("[AspireFixture] Creating shared PostgreSQL container...");
-        _sharedAspireApp = await CreateAspireAppAsync(cancellationToken);
-        _sharedPostgresConnection = await GetPostgresConnectionStringAsync(_sharedAspireApp, cancellationToken);
-        Console.WriteLine("[AspireFixture] Shared PostgreSQL ready.");
+    // Create Aspire app (PostgreSQL container)
+    Console.WriteLine("[AspireFixture] Creating PostgreSQL container...");
+    _aspireApp = await CreateAspireAppAsync(cancellationToken);
+    _postgresConnection = await GetPostgresConnectionStringAsync(_aspireApp, cancellationToken);
+    Console.WriteLine("[AspireFixture] PostgreSQL ready.");
 
-        // Create shared ServiceBusClient for test operations - SHARED
-        _sharedServiceBusClient = new ServiceBusClient(_serviceBusConnection);
-        Console.WriteLine("[AspireFixture] Created shared ServiceBusClient for test operations");
+    // Drain stale messages from ServiceBus subscriptions BEFORE starting hosts
+    Console.WriteLine("[AspireFixture] Draining stale messages from subscriptions...");
+    await DrainSubscriptionsAsync(cancellationToken);
+    Console.WriteLine("[AspireFixture] Subscriptions drained.");
 
-        // Drain stale messages from ServiceBus subscriptions BEFORE starting hosts
-        Console.WriteLine("[AspireFixture] Draining stale messages from subscriptions...");
-        await DrainSubscriptionsAsync(cancellationToken);
-        Console.WriteLine("[AspireFixture] Subscriptions drained.");
+    // Create service hosts (InventoryWorker + BFF)
+    Console.WriteLine("[AspireFixture] Creating service hosts...");
+    _inventoryHost = CreateInventoryHost(_postgresConnection, _serviceBusConnection, _topicA, _topicB);
+    _bffHost = CreateBffHost(_postgresConnection, _serviceBusConnection, _topicA, _topicB);
 
-        // Create service hosts (InventoryWorker + BFF) - SHARED
-        Console.WriteLine("[AspireFixture] Creating shared service hosts...");
-        _sharedInventoryHost = CreateInventoryHost(_sharedPostgresConnection, _serviceBusConnection, _topicA, _topicB);
-        _sharedBffHost = CreateBffHost(_sharedPostgresConnection, _serviceBusConnection, _topicA, _topicB);
+    // Start hosts
+    await _inventoryHost.StartAsync(cancellationToken);
+    await _bffHost.StartAsync(cancellationToken);
 
-        // Start hosts - SHARED
-        await _sharedInventoryHost.StartAsync(cancellationToken);
-        await _sharedBffHost.StartAsync(cancellationToken);
-
-        // Initialize Whizbang database schema (create tables, functions, etc.) - ONCE
-        Console.WriteLine("[AspireFixture] Initializing database schema...");
-        using (var initScope = _sharedInventoryHost.Services.CreateScope()) {
-          var inventoryDbContext = initScope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
-          var logger = initScope.ServiceProvider.GetRequiredService<ILogger<AspireIntegrationFixture>>();
-          await inventoryDbContext.EnsureWhizbangDatabaseInitializedAsync(logger, cancellationToken);
-        }
-        using (var initScope = _sharedBffHost.Services.CreateScope()) {
-          var bffDbContext = initScope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
-          var logger = initScope.ServiceProvider.GetRequiredService<ILogger<AspireIntegrationFixture>>();
-          await bffDbContext.EnsureWhizbangDatabaseInitializedAsync(logger, cancellationToken);
-        }
-        Console.WriteLine("[AspireFixture] Database schema initialized.");
-
-        Console.WriteLine("[AspireFixture] Shared resources initialized successfully!");
-      }
-
-      _initializationCount++;
-      Console.WriteLine($"[AspireFixture] Test #{_initializationCount} initializing (using shared resources)");
-    } finally {
-      _initLock.Release();
+    // Initialize Whizbang database schema (create tables, functions, etc.)
+    Console.WriteLine("[AspireFixture] Initializing database schema...");
+    using (var initScope = _inventoryHost.Services.CreateScope()) {
+      var inventoryDbContext = initScope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+      var logger = initScope.ServiceProvider.GetRequiredService<ILogger<AspireIntegrationFixture>>();
+      await inventoryDbContext.EnsureWhizbangDatabaseInitializedAsync(logger, cancellationToken);
     }
+    using (var initScope = _bffHost.Services.CreateScope()) {
+      var bffDbContext = initScope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
+      var logger = initScope.ServiceProvider.GetRequiredService<ILogger<AspireIntegrationFixture>>();
+      await bffDbContext.EnsureWhizbangDatabaseInitializedAsync(logger, cancellationToken);
+    }
+    Console.WriteLine("[AspireFixture] Database schema initialized.");
 
-    // PER-TEST: Clean database for test isolation
-    Console.WriteLine($"[AspireFixture] Test #{_initializationCount}: Cleaning database for test isolation...");
+    // Create long-lived scopes for lenses
+    _inventoryScope = _inventoryHost.Services.CreateScope();
+    _bffScope = _bffHost.Services.CreateScope();
+
+    Console.WriteLine("[AspireFixture] Service hosts ready.");
+
+    // Clean up any stale data
+    Console.WriteLine("[AspireFixture] Cleaning database for test isolation...");
     await CleanupDatabaseAsync(cancellationToken);
-    Console.WriteLine($"[AspireFixture] Test #{_initializationCount}: Database cleaned.");
+    Console.WriteLine("[AspireFixture] Database cleaned.");
 
-    // PER-TEST: Create scopes for lenses
-    _inventoryScope = _sharedInventoryHost!.Services.CreateScope();
-    _bffScope = _sharedBffHost!.Services.CreateScope();
-
-    Console.WriteLine($"[AspireFixture] Test #{_initializationCount} ready for execution!");
+    Console.WriteLine("[AspireFixture] Ready for test execution!");
 
     _isInitialized = true;
   }
@@ -196,14 +179,12 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Drains all messages from assigned subscriptions to ensure clean state for test.
   /// Critical for test isolation when using shared generic topics across test runs.
-  /// Uses the static shared ServiceBusClient to avoid creating extra connections.
+  /// Uses the shared ServiceBusClient to avoid creating extra connections.
   /// </summary>
   private async Task DrainSubscriptionsAsync(CancellationToken cancellationToken = default) {
-    if (_sharedServiceBusClient == null) {
-      throw new InvalidOperationException("Shared ServiceBusClient not initialized");
-    }
+    // Use shared client instead of creating a new one
+    // This reduces connection count and avoids ConnectionsQuotaExceeded errors
 
-    // Use shared client to reduce connection count and avoid ConnectionsQuotaExceeded errors
     // Drain subscriptions for both topics (products and inventory)
     var subscriptions = new[] {
       (_topicA, "sub-inventory-products"),
@@ -551,7 +532,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
 
     while (stopwatch.ElapsedMilliseconds < timeoutMilliseconds) {
       attempt++;
-      using var scope = _sharedInventoryHost!.Services.CreateScope();
+      using var scope = _inventoryHost!.Services.CreateScope();
       var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
       // Query database directly for any uncompleted work using ADO.NET
@@ -611,7 +592,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Timeout reached - log final state with batch info
     Console.WriteLine($"[AspireFixture] WARNING: Event processing did not complete within {timeoutMilliseconds}ms timeout (Batch {_batchIndex}, Topics {_topicA}/{_topicB})");
 
-    using var finalScope = _sharedInventoryHost!.Services.CreateScope();
+    using var finalScope = _inventoryHost!.Services.CreateScope();
     var finalDbContext = finalScope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
     var finalConnection = finalDbContext.Database.GetDbConnection();
@@ -646,7 +627,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Both InventoryWorker and BFF share the same database, so we only need to truncate once
     // Gracefully handle connection failures (container may have stopped after test completion)
     try {
-      using (var scope = _sharedInventoryHost!.Services.CreateScope()) {
+      using (var scope = _inventoryHost!.Services.CreateScope()) {
         var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
         // Truncate Whizbang core tables, perspective tables, and checkpoints
@@ -682,7 +663,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   /// Helps identify naming mismatches between event_type and message_type columns.
   /// </summary>
   public async Task DumpEventTypesAndAssociationsAsync(CancellationToken cancellationToken = default) {
-    using var scope = _sharedInventoryHost!.Services.GetRequiredService<IServiceScopeFactory>().CreateScope();
+    using var scope = _inventoryHost!.Services.GetRequiredService<IServiceScopeFactory>().CreateScope();
     var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
     var output = new System.Text.StringBuilder();
@@ -741,14 +722,27 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   }
 
   public async ValueTask DisposeAsync() {
-    // Dispose per-test scopes only
+    // Dispose scopes
     _inventoryScope?.Dispose();
     _bffScope?.Dispose();
 
-    // DON'T dispose shared resources - they're static and shared across all tests
-    // Shared resources (hosts, PostgreSQL, ServiceBusClient) will be cleaned up when the process exits
-    // This prevents disposing resources that other tests may still be using
+    // Stop and dispose hosts
+    if (_inventoryHost != null) {
+      await _inventoryHost.StopAsync();
+      _inventoryHost.Dispose();
+    }
 
-    await Task.CompletedTask;  // Satisfy async contract
+    if (_bffHost != null) {
+      await _bffHost.StopAsync();
+      _bffHost.Dispose();
+    }
+
+    // Dispose Aspire app (stops PostgreSQL container)
+    if (_aspireApp != null) {
+      await _aspireApp.DisposeAsync();
+    }
+
+    // Dispose shared ServiceBusClient
+    await _sharedServiceBusClient.DisposeAsync();
   }
 }
