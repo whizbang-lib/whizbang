@@ -43,11 +43,18 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton(jsonOptions);
 
     // Register ServiceBusClient as singleton (shared by transport and readiness check)
-    services.AddSingleton(sp => {
-      var logger = sp.GetService<ILogger<AzureServiceBusTransport>>();
-      logger?.LogInformation("Creating shared ServiceBusClient");
-      return new Azure.Messaging.ServiceBus.ServiceBusClient(connectionString);
-    });
+    // ONLY if not already registered (allows tests to provide shared client)
+    var existingRegistration = services.Any(sd => sd.ServiceType == typeof(Azure.Messaging.ServiceBus.ServiceBusClient));
+    if (!existingRegistration) {
+      Console.WriteLine("[AddAzureServiceBusTransport] No existing ServiceBusClient found, creating new one");
+      services.AddSingleton(sp => {
+        var logger = sp.GetService<ILogger<AzureServiceBusTransport>>();
+        logger?.LogInformation("Creating new ServiceBusClient from connection string");
+        return new Azure.Messaging.ServiceBus.ServiceBusClient(connectionString);
+      });
+    } else {
+      Console.WriteLine("[AddAzureServiceBusTransport] Found existing ServiceBusClient registration, reusing it");
+    }
 
     // Register transport as singleton, injecting shared client
     services.AddSingleton<ITransport>(sp => {

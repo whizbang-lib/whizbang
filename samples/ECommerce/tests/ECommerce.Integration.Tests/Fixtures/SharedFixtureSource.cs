@@ -49,17 +49,20 @@ public static class SharedFixtureSource {
       Console.WriteLine("[SharedFixture] Initializing shared ServiceBus emulator and client...");
       Console.WriteLine("================================================================================");
 
-      // Initialize single ServiceBus emulator
+      // Step 1: Create and start emulator (no warmup yet)
       _sharedEmulator = new ServiceBusBatchFixture(0);
-      await _sharedEmulator.InitializeAsync();
+      await _sharedEmulator.InitializeEmulatorAsync();
 
-      // Create single static ServiceBusClient that ALL tests and hosts will reuse
+      // Step 2: Create single static ServiceBusClient using the emulator's connection string
       _sharedServiceBusClient = new ServiceBusClient(ConnectionString);
-      Console.WriteLine("[SharedFixture] Created SINGLE shared ServiceBusClient (reused by all hosts)");
+      Console.WriteLine("[SharedFixture] Created SINGLE shared ServiceBusClient (will be reused by all hosts AND warmup)");
+
+      // Step 3: Warmup emulator using the shared client
+      await _sharedEmulator.WarmupWithClientAsync(_sharedServiceBusClient);
 
       Console.WriteLine("================================================================================");
       Console.WriteLine("[SharedFixture] ✅ Shared resources ready!");
-      Console.WriteLine("[SharedFixture] All tests will reuse the same ServiceBusClient");
+      Console.WriteLine("[SharedFixture] All tests and warmup use the SAME ServiceBusClient");
       Console.WriteLine("================================================================================");
 
       _initialized = true;

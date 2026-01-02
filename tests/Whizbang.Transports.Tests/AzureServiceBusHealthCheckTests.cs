@@ -124,7 +124,7 @@ public class AzureServiceBusHealthCheckTests {
 internal sealed class TestAzureServiceBusTransport : AzureServiceBusTransport {
   public TestAzureServiceBusTransport()
     : base(
-        connectionString: "Endpoint=sb://test.servicebus.windows.net/;SharedAccessKeyName=test;SharedAccessKey=dGVzdA==",
+        client: new Azure.Messaging.ServiceBus.ServiceBusClient("Endpoint=sb://test.servicebus.windows.net/;SharedAccessKeyName=test;SharedAccessKey=dGVzdA=="),
         jsonOptions: new System.Text.Json.JsonSerializerOptions()) {
     // Minimal valid constructor parameters for type checking
   }

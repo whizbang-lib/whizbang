@@ -140,15 +140,13 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     Console.WriteLine("[AspireFixture] Subscriptions drained.");
 
     // Create service hosts (InventoryWorker + BFF)
+    // IMPORTANT: Do NOT start hosts yet - schema must be initialized first!
     Console.WriteLine("[AspireFixture] Creating service hosts...");
     _inventoryHost = CreateInventoryHost(_postgresConnection, _serviceBusConnection, _topicA, _topicB);
     _bffHost = CreateBffHost(_postgresConnection, _serviceBusConnection, _topicA, _topicB);
 
-    // Start hosts
-    await _inventoryHost.StartAsync(cancellationToken);
-    await _bffHost.StartAsync(cancellationToken);
-
     // Initialize Whizbang database schema (create tables, functions, etc.)
+    // CRITICAL: Must run BEFORE starting hosts, otherwise workers fail trying to call process_work_batch
     Console.WriteLine("[AspireFixture] Initializing database schema...");
     using (var initScope = _inventoryHost.Services.CreateScope()) {
       var inventoryDbContext = initScope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
@@ -161,6 +159,12 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       await bffDbContext.EnsureWhizbangDatabaseInitializedAsync(logger, cancellationToken);
     }
     Console.WriteLine("[AspireFixture] Database schema initialized.");
+
+    // Start hosts AFTER schema is ready
+    Console.WriteLine("[AspireFixture] Starting service hosts...");
+    await _inventoryHost.StartAsync(cancellationToken);
+    await _bffHost.StartAsync(cancellationToken);
+    Console.WriteLine("[AspireFixture] Service hosts started.");
 
     // Create long-lived scopes for lenses
     _inventoryScope = _inventoryHost.Services.CreateScope();
@@ -556,8 +560,9 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       }
       await using var cmd = connection.CreateCommand();
 
-      // Check outbox: any messages not marked as Sent (status & 2 = 0)
-      cmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM wh_outbox WHERE (status & 2) = 0";
+      // Check outbox: any messages not marked as Published (status & 4 = 0)
+      // Outbox uses MessageProcessingStatus.Published (bit 2, value 4) to indicate completion
+      cmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM wh_outbox WHERE (status & 4) = 0";
       var pendingOutbox = (int)(await cmd.ExecuteScalarAsync() ?? 0);
 
       // Check inbox: any messages not marked as Completed (status & 2 = 0)
@@ -615,7 +620,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     }
     await using var finalCmd = finalConnection.CreateCommand();
 
-    finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM wh_outbox WHERE (status & 2) = 0";
+    finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM wh_outbox WHERE (status & 4) = 0";
     var finalOutbox = (int)(await finalCmd.ExecuteScalarAsync() ?? 0);
 
     finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM wh_inbox WHERE (status & 2) = 0";
