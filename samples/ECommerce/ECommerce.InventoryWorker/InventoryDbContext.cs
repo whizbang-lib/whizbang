@@ -11,7 +11,7 @@ namespace ECommerce.InventoryWorker;
 /// core Inbox/Outbox/EventStore entities.
 /// AOT-compatible: All configuration is done via source generators, no reflection needed.
 /// </summary>
-[WhizbangDbContext]
+[WhizbangDbContext(Schema = "inventory")]
 public partial class InventoryDbContext : DbContext {
 #pragma warning disable IL2026 // EF Core uses reflection internally - AOT support experimental in EF10, stable in EF12
 #pragma warning disable IL2046 // EF Core uses reflection internally - AOT support experimental in EF10, stable in EF12

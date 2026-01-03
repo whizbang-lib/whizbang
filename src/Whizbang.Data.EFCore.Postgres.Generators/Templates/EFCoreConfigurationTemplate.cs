@@ -27,7 +27,8 @@ public static class WhizbangModelBuilderExtensions {
   public static ModelBuilder ConfigureWhizbang(this ModelBuilder modelBuilder) {
 
     // Configure infrastructure entities (static configuration from library)
-    modelBuilder.ConfigureWhizbangInfrastructure();
+    // Schema qualification ensures all infrastructure tables are created in the correct schema
+    modelBuilder.ConfigureWhizbangInfrastructure("__SCHEMA__");
 
     #region PERSPECTIVE_CONFIGURATIONS
     // ===== Discovered Perspective Entities =====

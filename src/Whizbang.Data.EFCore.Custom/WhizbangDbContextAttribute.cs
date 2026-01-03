@@ -102,6 +102,31 @@ public sealed class WhizbangDbContextAttribute : Attribute {
   public string[] Keys { get; }
 
   /// <summary>
+  /// Gets or sets the PostgreSQL schema name for this DbContext's tables.
+  /// If not specified, schema is derived from the DbContext's namespace.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <strong>Schema Naming Convention:</strong>
+  /// </para>
+  /// <list type="bullet">
+  /// <item>Should match the service name (e.g., "inventory" for InventoryWorker, "bff" for BFF)</item>
+  /// <item>Use lowercase for consistency</item>
+  /// <item>If not specified, generator derives schema from namespace (e.g., "ECommerce.InventoryWorker" → "inventory")</item>
+  /// </list>
+  /// </remarks>
+  /// <example>
+  /// <code>
+  /// [WhizbangDbContext(Schema = "inventory")]
+  /// public partial class InventoryDbContext : DbContext { }
+  ///
+  /// [WhizbangDbContext(Schema = "bff")]
+  /// public partial class BffDbContext : DbContext { }
+  /// </code>
+  /// </example>
+  public string? Schema { get; set; }
+
+  /// <summary>
   /// Initializes a new instance of the <see cref="WhizbangDbContextAttribute"/> class
   /// with the default unnamed key.
   /// </summary>

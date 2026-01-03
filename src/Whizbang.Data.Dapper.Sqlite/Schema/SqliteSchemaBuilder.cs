@@ -44,13 +44,14 @@ public class SqliteSchemaBuilder : ISchemaBuilder {
   /// </summary>
   /// <param name="table">Table definition to convert to SQL</param>
   /// <param name="prefix">Table name prefix (e.g., "wb_" or "wb_per_")</param>
+  /// <param name="schema">Optional schema name (not used in SQLite, parameter included for interface compatibility)</param>
   /// <returns>Complete CREATE TABLE statement with all columns and constraints</returns>
   /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteSchemaBuilderTests.cs:BuildCreateTable_SimpleTable_GeneratesCreateStatementAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteSchemaBuilderTests.cs:BuildCreateTable_WithMultipleColumns_GeneratesAllColumnsAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteSchemaBuilderTests.cs:BuildCreateTable_WithDefaultValue_GeneratesDefaultClauseAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteSchemaBuilderTests.cs:BuildCreateTable_WithUniqueColumn_GeneratesUniqueConstraintAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteSchemaBuilderTests.cs:BuildCreateTable_PerspectivePrefix_UsesPerspectivePrefixAsync</tests>
-  public string BuildCreateTable(TableDefinition table, string prefix) {
+  public string BuildCreateTable(TableDefinition table, string prefix, string? schema = null) {
     var sb = new StringBuilder();
     var tableName = $"{prefix}{table.Name}";
 
@@ -105,11 +106,12 @@ public class SqliteSchemaBuilder : ISchemaBuilder {
   /// <param name="index">Index definition to convert to SQL</param>
   /// <param name="tableName">Table name (without prefix)</param>
   /// <param name="prefix">Table name prefix (e.g., "wb_")</param>
+  /// <param name="schema">Optional schema name (not used in SQLite, parameter included for interface compatibility)</param>
   /// <returns>Complete CREATE INDEX statement</returns>
   /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteSchemaBuilderTests.cs:BuildCreateIndex_SimpleIndex_GeneratesCreateIndexAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteSchemaBuilderTests.cs:BuildCreateIndex_CompositeIndex_GeneratesMultiColumnIndexAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/SqliteSchemaBuilderTests.cs:BuildCreateIndex_UniqueIndex_GeneratesUniqueIndexAsync</tests>
-  public string BuildCreateIndex(IndexDefinition index, string tableName, string prefix) {
+  public string BuildCreateIndex(IndexDefinition index, string tableName, string prefix, string? schema = null) {
     var fullTableName = $"{prefix}{tableName}";
     var unique = index.Unique ? "UNIQUE " : "";
     var columns = string.Join(", ", index.Columns);
@@ -183,8 +185,9 @@ public class SqliteSchemaBuilder : ISchemaBuilder {
   /// </summary>
   /// <param name="sequence">Sequence definition (ignored for SQLite)</param>
   /// <param name="prefix">Sequence name prefix (ignored for SQLite)</param>
+  /// <param name="schema">Optional schema name (not used in SQLite, parameter included for interface compatibility)</param>
   /// <returns>Empty string (SQLite doesn't support sequences)</returns>
-  public string BuildCreateSequence(SequenceDefinition sequence, string prefix) {
+  public string BuildCreateSequence(SequenceDefinition sequence, string prefix, string? schema = null) {
     // SQLite doesn't support CREATE SEQUENCE - use AUTOINCREMENT instead
     return string.Empty;
   }

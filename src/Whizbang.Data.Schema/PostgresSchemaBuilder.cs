@@ -36,17 +36,19 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
   /// </summary>
   /// <param name="table">Table definition to convert to SQL</param>
   /// <param name="prefix">Table name prefix (e.g., "wb_" or "wb_per_")</param>
+  /// <param name="schema">Optional schema name (e.g., "inventory", "bff"). If null, no schema qualification is used.</param>
   /// <returns>Complete CREATE TABLE statement with all columns and constraints</returns>
   /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_SimpleTable_GeneratesCreateStatementAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_WithMultipleColumns_GeneratesAllColumnsAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_WithDefaultValue_GeneratesDefaultClauseAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_WithUniqueColumn_GeneratesUniqueConstraintAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateTable_PerspectivePrefix_UsesPerspectivePrefixAsync</tests>
-  public string BuildCreateTable(TableDefinition table, string prefix) {
+  public string BuildCreateTable(TableDefinition table, string prefix, string? schema = null) {
     var sb = new StringBuilder();
     var tableName = $"{prefix}{table.Name}";
+    var qualifiedTableName = string.IsNullOrEmpty(schema) ? tableName : $"{schema}.{tableName}";
 
-    sb.AppendLine($"CREATE TABLE IF NOT EXISTS {tableName} (");
+    sb.AppendLine($"CREATE TABLE IF NOT EXISTS {qualifiedTableName} (");
 
     // Collect primary key columns for composite PK detection
     var primaryKeyColumns = table.Columns.Where(c => c.PrimaryKey).Select(c => c.Name).ToList();
@@ -121,17 +123,19 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
   /// <param name="index">Index definition to convert to SQL</param>
   /// <param name="tableName">Table name (without prefix)</param>
   /// <param name="prefix">Table name prefix (e.g., "wb_")</param>
+  /// <param name="schema">Optional schema name (e.g., "inventory", "bff"). If null, no schema qualification is used.</param>
   /// <returns>Complete CREATE INDEX statement with optional WHERE clause for partial indexes</returns>
   /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateIndex_SimpleIndex_GeneratesCreateIndexAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateIndex_CompositeIndex_GeneratesMultiColumnIndexAsync</tests>
   /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateIndex_UniqueIndex_GeneratesUniqueIndexAsync</tests>
-  public string BuildCreateIndex(IndexDefinition index, string tableName, string prefix) {
+  public string BuildCreateIndex(IndexDefinition index, string tableName, string prefix, string? schema = null) {
     var fullTableName = $"{prefix}{tableName}";
+    var qualifiedTableName = string.IsNullOrEmpty(schema) ? fullTableName : $"{schema}.{fullTableName}";
     var unique = index.Unique ? "UNIQUE " : "";
     var columns = string.Join(", ", index.Columns);
     var whereClause = index.WhereClause != null ? $" WHERE {index.WhereClause}" : "";
 
-    return $"CREATE {unique}INDEX IF NOT EXISTS {index.Name} ON {fullTableName} ({columns}){whereClause};";
+    return $"CREATE {unique}INDEX IF NOT EXISTS {index.Name} ON {qualifiedTableName} ({columns}){whereClause};";
   }
 
   /// <summary>
@@ -139,10 +143,12 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
   /// </summary>
   /// <param name="sequence">Sequence definition to convert to SQL</param>
   /// <param name="prefix">Sequence name prefix (e.g., "wh_")</param>
+  /// <param name="schema">Optional schema name (e.g., "inventory", "bff"). If null, no schema qualification is used.</param>
   /// <returns>Complete CREATE SEQUENCE statement</returns>
-  public string BuildCreateSequence(SequenceDefinition sequence, string prefix) {
+  public string BuildCreateSequence(SequenceDefinition sequence, string prefix, string? schema = null) {
     var sequenceName = $"{prefix}{sequence.Name}";
-    return $"CREATE SEQUENCE IF NOT EXISTS {sequenceName} START WITH {sequence.StartValue} INCREMENT BY {sequence.IncrementBy};";
+    var qualifiedSequenceName = string.IsNullOrEmpty(schema) ? sequenceName : $"{schema}.{sequenceName}";
+    return $"CREATE SEQUENCE IF NOT EXISTS {qualifiedSequenceName} START WITH {sequence.StartValue} INCREMENT BY {sequence.IncrementBy};";
   }
 
   /// <summary>
@@ -164,7 +170,15 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
     sb.AppendLine($"-- Generated: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
     sb.AppendLine($"-- Infrastructure Prefix: {config.InfrastructurePrefix}");
     sb.AppendLine($"-- Perspective Prefix: {config.PerspectivePrefix}");
+    sb.AppendLine($"-- Schema: {config.SchemaName}");
     sb.AppendLine();
+
+    // Create schema if not using default "public" schema
+    if (!string.IsNullOrEmpty(config.SchemaName) && config.SchemaName != "public") {
+      sb.AppendLine($"-- Create schema for service isolation");
+      sb.AppendLine($"CREATE SCHEMA IF NOT EXISTS {config.SchemaName};");
+      sb.AppendLine();
+    }
 
     // Build all infrastructure tables from C# schema definitions
     var tables = new[] {
@@ -185,11 +199,11 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
 
     foreach (var (table, description) in tables) {
       sb.AppendLine($"-- {description}");
-      sb.AppendLine(BuildCreateTable(table, config.InfrastructurePrefix));
+      sb.AppendLine(BuildCreateTable(table, config.InfrastructurePrefix, config.SchemaName));
 
       // Build indexes for this table
       foreach (var index in table.Indexes) {
-        sb.AppendLine(BuildCreateIndex(index, table.Name, config.InfrastructurePrefix));
+        sb.AppendLine(BuildCreateIndex(index, table.Name, config.InfrastructurePrefix, config.SchemaName));
       }
 
       sb.AppendLine();
@@ -202,7 +216,7 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
 
     foreach (var (sequence, description) in sequences) {
       sb.AppendLine($"-- {description}");
-      sb.AppendLine(BuildCreateSequence(sequence, config.InfrastructurePrefix));
+      sb.AppendLine(BuildCreateSequence(sequence, config.InfrastructurePrefix, config.SchemaName));
       sb.AppendLine();
     }
 

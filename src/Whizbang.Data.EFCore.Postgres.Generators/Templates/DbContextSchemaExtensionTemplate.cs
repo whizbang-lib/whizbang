@@ -74,7 +74,8 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     // Generate schema SQL at runtime from C# definitions
     var schemaConfig = new SchemaConfiguration(
       InfrastructurePrefix: "wh_",
-      PerspectivePrefix: "wh_per_"
+      PerspectivePrefix: "wh_per_",
+      SchemaName: "__SCHEMA__"
     );
     var coreInfrastructureSchema = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(schemaConfig);
 
@@ -141,34 +142,34 @@ BEGIN
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'fk_receptor_processing_event'
   ) THEN
-    ALTER TABLE wh_receptor_processing
+    ALTER TABLE __SCHEMA__.wh_receptor_processing
       ADD CONSTRAINT fk_receptor_processing_event
-      FOREIGN KEY (event_id) REFERENCES wh_event_store(event_id) ON DELETE CASCADE;
+      FOREIGN KEY (event_id) REFERENCES __SCHEMA__.wh_event_store(event_id) ON DELETE CASCADE;
   END IF;
 
   -- FK: perspective_checkpoints.last_event_id -> event_store.event_id
   IF NOT EXISTS (
     SELECT 1 FROM pg_constraint WHERE conname = 'fk_perspective_checkpoints_event'
   ) THEN
-    ALTER TABLE wh_perspective_checkpoints
+    ALTER TABLE __SCHEMA__.wh_perspective_checkpoints
       ADD CONSTRAINT fk_perspective_checkpoints_event
-      FOREIGN KEY (last_event_id) REFERENCES wh_event_store(event_id) ON DELETE RESTRICT;
+      FOREIGN KEY (last_event_id) REFERENCES __SCHEMA__.wh_event_store(event_id) ON DELETE RESTRICT;
   END IF;
 END $$;
 
 -- Unique constraint for receptor_processing (event_id, receptor_name)
 CREATE UNIQUE INDEX IF NOT EXISTS uq_receptor_processing_event_receptor
-  ON wh_receptor_processing(event_id, receptor_name);
+  ON __SCHEMA__.wh_receptor_processing(event_id, receptor_name);
 
 -- Partial indexes for status-based queries
 CREATE INDEX IF NOT EXISTS idx_receptor_processing_status_failed
-  ON wh_receptor_processing(status) WHERE (status & 4) = 4; -- Failed flag
+  ON __SCHEMA__.wh_receptor_processing(status) WHERE (status & 4) = 4; -- Failed flag
 
 CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_catching_up
-  ON wh_perspective_checkpoints(status) WHERE (status & 8) = 8; -- CatchingUp flag
+  ON __SCHEMA__.wh_perspective_checkpoints(status) WHERE (status & 8) = 8; -- CatchingUp flag
 
 CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
-  ON wh_perspective_checkpoints(status) WHERE (status & 4) = 4; -- Failed flag
+  ON __SCHEMA__.wh_perspective_checkpoints(status) WHERE (status & 4) = 4; -- Failed flag
 ";
 
     try {
@@ -198,7 +199,12 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
     foreach (var (name, sql) in migrations) {
       try {
         logger?.LogInformation("Executing migration: {Migration}", name);
-        await dbContext.Database.ExecuteSqlRawAsync(sql, cancellationToken);
+
+        // Transform migration SQL to include schema qualification
+        // Replace all unqualified table names (e.g., "wh_inbox", "wh_outbox") with schema-qualified names (e.g., "inventory.wh_inbox")
+        var transformedSql = _transformMigrationSql(sql, "__SCHEMA__");
+
+        await dbContext.Database.ExecuteSqlRawAsync(transformedSql, cancellationToken);
         logger?.LogInformation("Migration {Migration} completed successfully", name);
       } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42723") {
         // 42723 = duplicate_function - function already exists, safe to ignore
@@ -220,6 +226,58 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
       // Migration scripts will be embedded here by the source generator
       #endregion
     };
+  }
+
+  /// <summary>
+  /// Transforms migration SQL to include schema qualification for all Whizbang infrastructure tables.
+  /// Replaces patterns like "wh_inbox", "wh_outbox", etc. with "schema.wh_inbox", "schema.wh_outbox".
+  /// Uses word boundaries to avoid replacing partial matches (e.g., won't replace "wh_inbox_id" column names).
+  /// </summary>
+  /// <param name="sql">Original migration SQL</param>
+  /// <param name="schema">Schema name to prepend (e.g., "inventory", "bff")</param>
+  /// <returns>Transformed SQL with schema-qualified table names</returns>
+  private static string _transformMigrationSql(string sql, string schema) {
+    // If schema is empty or "public", return SQL unchanged
+    if (string.IsNullOrEmpty(schema) || schema == "public") {
+      return sql;
+    }
+
+    // List of Whizbang infrastructure table names to qualify
+    var tableNames = new[] {
+      "wh_inbox",
+      "wh_outbox",
+      "wh_event_store",
+      "wh_events", // Alias for wh_event_store
+      "wh_receptor_processing",
+      "wh_perspective_checkpoints",
+      "wh_perspective_events",
+      "wh_message_associations",
+      "wh_request_response",
+      "wh_service_instances",
+      "wh_partition_assignments",
+      "wh_message_deduplication",
+      "wh_sequences",
+      "wh_active_streams",
+      "wh_event_sequence" // Sequence name
+    };
+
+    var transformedSql = sql;
+
+    // Replace each table name with schema-qualified version
+    // Use word boundaries (\b) to avoid replacing column names or partial matches
+    foreach (var tableName in tableNames) {
+      // Pattern: tableName NOT preceded by period (to avoid replacing already-qualified names)
+      // Matches: "FROM wh_inbox", "ALTER TABLE wh_inbox", etc.
+      // Does NOT match: "inventory.wh_inbox", "wh_inbox_id" (column name)
+      transformedSql = System.Text.RegularExpressions.Regex.Replace(
+        transformedSql,
+        $@"(?<!\.)(\b{System.Text.RegularExpressions.Regex.Escape(tableName)}\b)",
+        $"{schema}.$1",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase
+      );
+    }
+
+    return transformedSql;
   }
 
 }

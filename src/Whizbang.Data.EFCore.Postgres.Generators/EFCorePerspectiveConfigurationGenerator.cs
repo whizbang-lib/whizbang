@@ -40,15 +40,23 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         transform: static (ctx, ct) => _extractPerspectiveInfo(ctx, ct)
     ).Where(static info => info is not null);
 
-    //  Combine with compilation to check assembly name
-    var perspectivesWithCompilation = perspectiveClasses.Collect()
+    // Discover DbContexts with [WhizbangDbContext] attribute to extract schema
+    var dbContextClasses = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) => node is ClassDeclarationSyntax { AttributeLists.Count: > 0, BaseList.Types.Count: > 0 },
+        transform: static (ctx, ct) => _extractDbContextSchema(ctx, ct)
+    ).Where(static schema => schema is not null);
+
+    //  Combine perspectives and DbContext schema with compilation
+    var perspectivesWithDbContextAndCompilation = perspectiveClasses.Collect()
+        .Combine(dbContextClasses.Collect())
         .Combine(context.CompilationProvider);
 
     // Generate ModelBuilder extension method with all Whizbang entities
     context.RegisterSourceOutput(
-        perspectivesWithCompilation,
+        perspectivesWithDbContextAndCompilation,
         static (ctx, data) => {
-          var perspectives = data.Left;
+          var perspectives = data.Left.Left;
+          var dbContextSchemas = data.Left.Right;
           var compilation = data.Right;
 
           // Skip generation if this IS the library project itself
@@ -57,9 +65,101 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
             return;
           }
 
-          _generateModelBuilderExtension(ctx, perspectives!);
+          // Extract schema from first DbContext (typically one per project)
+          // If no DbContext found or no schema specified, defaults to null and generator will derive from namespace
+          string? schema = dbContextSchemas.IsEmpty ? null : dbContextSchemas[0];
+
+          _generateModelBuilderExtension(ctx, perspectives!, schema);
         }
     );
+  }
+
+  /// <summary>
+  /// Extracts schema name from a DbContext class with [WhizbangDbContext] attribute.
+  /// Returns the Schema property value if specified, otherwise derives from namespace.
+  /// Returns null if the class doesn't have [WhizbangDbContext] attribute.
+  /// </summary>
+  private static string? _extractDbContextSchema(
+      GeneratorSyntaxContext context,
+      CancellationToken ct) {
+
+    var classDecl = (ClassDeclarationSyntax)context.Node;
+    var symbol = context.SemanticModel.GetDeclaredSymbol(classDecl, ct) as INamedTypeSymbol;
+
+    if (symbol is null) {
+      return null;
+    }
+
+    // Check if class inherits from DbContext
+    var baseType = symbol.BaseType;
+    bool inheritsDbContext = false;
+    while (baseType != null) {
+      if (baseType.ToDisplayString() == "Microsoft.EntityFrameworkCore.DbContext") {
+        inheritsDbContext = true;
+        break;
+      }
+      baseType = baseType.BaseType;
+    }
+
+    if (!inheritsDbContext) {
+      return null;
+    }
+
+    // Check for [WhizbangDbContext] attribute
+    var attribute = symbol.GetAttributes()
+        .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Data.EFCore.Custom.WhizbangDbContextAttribute");
+
+    if (attribute is null) {
+      return null;  // No attribute = not discovered
+    }
+
+    // Extract Schema property from attribute
+    var schemaProp = attribute.NamedArguments
+        .FirstOrDefault(kvp => kvp.Key == "Schema");
+
+    if (schemaProp.Key == "Schema" && schemaProp.Value.Value is string schemaValue) {
+      return schemaValue;
+    }
+
+    // No Schema property set, derive from namespace
+    var namespaceName = symbol.ContainingNamespace.ToDisplayString();
+    return _deriveSchemaFromNamespace(namespaceName);
+  }
+
+  /// <summary>
+  /// Derives PostgreSQL schema name from namespace.
+  /// Examples:
+  /// - "ECommerce.InventoryWorker" → "inventory"
+  /// - "ECommerce.BFF.API" → "bff"
+  /// - "MyApp.OrderService" → "order"
+  /// </summary>
+  private static string _deriveSchemaFromNamespace(string namespaceName) {
+    if (string.IsNullOrEmpty(namespaceName)) {
+      return "public"; // Default PostgreSQL schema
+    }
+
+    // Split namespace into segments
+    var segments = namespaceName.Split('.');
+
+    // Take the last segment (e.g., "InventoryWorker", "API")
+    var lastSegment = segments[segments.Length - 1];
+
+    // If last segment is generic (API, Service, etc.), take second-to-last
+    if (lastSegment.Equals("API", StringComparison.OrdinalIgnoreCase) ||
+        lastSegment.Equals("Service", StringComparison.OrdinalIgnoreCase) ||
+        lastSegment.Equals("Worker", StringComparison.OrdinalIgnoreCase)) {
+      if (segments.Length > 1) {
+        lastSegment = segments[segments.Length - 2];
+      }
+    }
+
+    // Remove common suffixes (case-insensitive)
+    // Use regex for case-insensitive replacement (netstandard2.0 doesn't have String.Replace with StringComparison)
+    lastSegment = System.Text.RegularExpressions.Regex.Replace(lastSegment, "Worker", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    lastSegment = System.Text.RegularExpressions.Regex.Replace(lastSegment, "Service", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    // Convert to lowercase
+    return lastSegment.ToLowerInvariant();
   }
 
   /// <summary>
@@ -152,7 +252,8 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:GeneratedDiagnostics_DeduplicatesPerspectivesAsync</tests>
   private static void _generateModelBuilderExtension(
       SourceProductionContext context,
-      ImmutableArray<PerspectiveInfo> perspectives) {
+      ImmutableArray<PerspectiveInfo> perspectives,
+      string? schema) {
 
     // Report perspective discovery for diagnostics
     var debugDescriptor = new DiagnosticDescriptor(
@@ -215,9 +316,12 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         );
 
         // Replace placeholders
+        // Use provided schema, or default to "public" if not specified
+        var effectiveSchema = schema ?? "public";
         var config = snippet
             .Replace("__MODEL_TYPE__", perspective.ModelTypeName)
-            .Replace("__TABLE_NAME__", perspective.TableName);
+            .Replace("__TABLE_NAME__", perspective.TableName)
+            .Replace("__SCHEMA__", effectiveSchema);
 
         perspectiveConfigs.AppendLine(TemplateUtilities.IndentCode(config, "  "));
         perspectiveConfigs.AppendLine();

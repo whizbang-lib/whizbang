@@ -219,12 +219,71 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       keys = new[] { "" };  // Default to unnamed key
     }
 
+    // Extract schema from attribute's Schema property, or derive from namespace if not specified
+    var schema = _extractSchemaFromAttribute(attribute);
+    if (string.IsNullOrEmpty(schema)) {
+      schema = _deriveSchemaFromNamespace(symbol.ContainingNamespace.ToDisplayString());
+    }
+
     return new DbContextInfo(
         ClassName: symbol.Name,
         FullyQualifiedName: symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
         Namespace: symbol.ContainingNamespace.ToDisplayString(),
+        Schema: schema ?? "public", // Should never be null, but satisfy compiler
         Keys: keys
     );
+  }
+
+  /// <summary>
+  /// Extracts the Schema property from [WhizbangDbContext] attribute.
+  /// Returns null if Schema property is not set.
+  /// </summary>
+  private static string? _extractSchemaFromAttribute(AttributeData attribute) {
+    // Look for Schema named property
+    var schemaProp = attribute.NamedArguments
+        .FirstOrDefault(kvp => kvp.Key == "Schema");
+
+    if (schemaProp.Key == "Schema" && schemaProp.Value.Value is string schemaValue) {
+      return schemaValue;
+    }
+
+    return null;
+  }
+
+  /// <summary>
+  /// Derives PostgreSQL schema name from DbContext namespace.
+  /// Examples:
+  /// - "ECommerce.InventoryWorker" → "inventory"
+  /// - "ECommerce.BFF.API" → "bff"
+  /// - "MyApp.OrderService" → "order"
+  /// </summary>
+  private static string _deriveSchemaFromNamespace(string namespaceName) {
+    if (string.IsNullOrEmpty(namespaceName)) {
+      return "public"; // Default PostgreSQL schema
+    }
+
+    // Split namespace into segments
+    var segments = namespaceName.Split('.');
+
+    // Take the last segment (e.g., "InventoryWorker", "API")
+    var lastSegment = segments[segments.Length - 1];
+
+    // If last segment is generic (API, Service, etc.), take second-to-last
+    if (lastSegment.Equals("API", StringComparison.OrdinalIgnoreCase) ||
+        lastSegment.Equals("Service", StringComparison.OrdinalIgnoreCase) ||
+        lastSegment.Equals("Worker", StringComparison.OrdinalIgnoreCase)) {
+      if (segments.Length > 1) {
+        lastSegment = segments[segments.Length - 2];
+      }
+    }
+
+    // Remove common suffixes (case-insensitive)
+    // Use regex for case-insensitive replacement (netstandard2.0 doesn't have String.Replace with StringComparison)
+    lastSegment = System.Text.RegularExpressions.Regex.Replace(lastSegment, "Worker", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    lastSegment = System.Text.RegularExpressions.Regex.Replace(lastSegment, "Service", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    // Convert to lowercase
+    return lastSegment.ToLowerInvariant();
   }
 
   /// <summary>
@@ -685,7 +744,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
               .ToList();
 
       // Generate perspective tables schema SQL (specific to this DbContext)
-      string perspectiveTablesSchema = _generatePerspectiveTablesSchema(context, matchingPerspectives);
+      string perspectiveTablesSchema = _generatePerspectiveTablesSchema(context, matchingPerspectives, dbContext.Schema);
 
       var template = templateBase;
 
@@ -716,6 +775,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       template = template.Replace("__DBCONTEXT_NAMESPACE__", dbContext.Namespace);
       template = template.Replace("__DBCONTEXT_CLASS__", dbContext.ClassName);
       template = template.Replace("__DBCONTEXT_FQN__", dbContext.FullyQualifiedName);
+      template = template.Replace("__SCHEMA__", dbContext.Schema);
 
       context.AddSource($"{dbContext.ClassName}_SchemaExtensions.g.cs", template);
 
@@ -826,7 +886,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesSchemaExtensionsAsync</tests>
   private static string _generatePerspectiveTablesSchema(
     SourceProductionContext context,
-    List<PerspectiveModelInfo> perspectives
+    List<PerspectiveModelInfo> perspectives,
+    string schema
   ) {
     if (perspectives.Count == 0) {
       return "\"\""; // Empty string - no perspective tables
@@ -835,6 +896,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     var sb = new StringBuilder();
     sb.AppendLine("-- Perspective Tables (auto-generated from PerspectiveRow<TModel> types)");
     sb.AppendLine($"-- Generated: {DateTime.UtcNow:yyyy-MM-dd HH:mm:ss} UTC");
+    sb.AppendLine($"-- Schema: {schema}");
+    sb.AppendLine();
+
+    // Create schema if it doesn't exist
+    sb.AppendLine($"CREATE SCHEMA IF NOT EXISTS {schema};");
     sb.AppendLine();
 
     // Get unique tables (same table might be referenced by multiple perspectives)
@@ -846,8 +912,8 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     foreach (var perspective in uniqueTables) {
       // PerspectiveRow<TModel> has fixed schema defined in Whizbang.Core
-      sb.AppendLine($"-- {perspective.TableName} (model: {_extractSimpleName(perspective.ModelTypeName)})");
-      sb.AppendLine($"CREATE TABLE IF NOT EXISTS {perspective.TableName} (");
+      sb.AppendLine($"-- {schema}.{perspective.TableName} (model: {_extractSimpleName(perspective.ModelTypeName)})");
+      sb.AppendLine($"CREATE TABLE IF NOT EXISTS {schema}.{perspective.TableName} (");
       sb.AppendLine($"  id UUID NOT NULL PRIMARY KEY,");
       sb.AppendLine($"  data JSONB NOT NULL,");
       sb.AppendLine($"  metadata JSONB NOT NULL,");
@@ -860,7 +926,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
       // Add index on created_at for time-based queries (matches EF Core configuration)
       sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{perspective.TableName.Replace("wh_per_", "")}_created_at");
-      sb.AppendLine($"  ON {perspective.TableName} (created_at);");
+      sb.AppendLine($"  ON {schema}.{perspective.TableName} (created_at);");
       sb.AppendLine();
     }
 
@@ -891,11 +957,13 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 /// <param name="ClassName">Simple class name (e.g., "BffDbContext")</param>
 /// <param name="FullyQualifiedName">Fully qualified class name with global:: prefix</param>
 /// <param name="Namespace">Containing namespace</param>
+/// <param name="Schema">PostgreSQL schema name derived from namespace (e.g., "inventory", "bff")</param>
 /// <param name="Keys">Array of keys that identify which perspectives should be included. Default: [""]</param>
 internal sealed record DbContextInfo(
     string ClassName,
     string FullyQualifiedName,
     string Namespace,
+    string Schema,
     string[] Keys);
 
 /// <summary>

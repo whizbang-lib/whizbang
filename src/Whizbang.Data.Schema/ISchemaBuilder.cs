@@ -28,8 +28,9 @@ public interface ISchemaBuilder {
   /// </summary>
   /// <param name="table">Table definition (database-agnostic)</param>
   /// <param name="prefix">Table name prefix (e.g., "wh_" or "wh_per_")</param>
+  /// <param name="schema">Optional schema name (e.g., "inventory", "bff"). If null, no schema qualification is used.</param>
   /// <returns>Complete CREATE TABLE statement with all columns and inline constraints</returns>
-  string BuildCreateTable(TableDefinition table, string prefix);
+  string BuildCreateTable(TableDefinition table, string prefix, string? schema = null);
 
   /// <summary>
   /// Builds CREATE INDEX DDL for a single index.
@@ -37,16 +38,18 @@ public interface ISchemaBuilder {
   /// <param name="index">Index definition (database-agnostic)</param>
   /// <param name="tableName">Table name without prefix</param>
   /// <param name="prefix">Table name prefix</param>
+  /// <param name="schema">Optional schema name (e.g., "inventory", "bff"). If null, no schema qualification is used.</param>
   /// <returns>Complete CREATE INDEX statement</returns>
-  string BuildCreateIndex(IndexDefinition index, string tableName, string prefix);
+  string BuildCreateIndex(IndexDefinition index, string tableName, string prefix, string? schema = null);
 
   /// <summary>
   /// Builds CREATE SEQUENCE DDL for a single sequence.
   /// </summary>
   /// <param name="sequence">Sequence definition</param>
   /// <param name="prefix">Sequence name prefix</param>
+  /// <param name="schema">Optional schema name (e.g., "inventory", "bff"). If null, no schema qualification is used.</param>
   /// <returns>Complete CREATE SEQUENCE statement</returns>
-  string BuildCreateSequence(SequenceDefinition sequence, string prefix);
+  string BuildCreateSequence(SequenceDefinition sequence, string prefix, string? schema = null);
 
   /// <summary>
   /// Builds complete infrastructure schema DDL.

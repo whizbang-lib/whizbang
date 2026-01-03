@@ -16,24 +16,26 @@ public static class WhizbangModelBuilderExtensions {
     /// Configures Whizbang infrastructure entities (Inbox, Outbox, EventStore, ServiceInstance).
     /// Call this from your DbContext.OnModelCreating() before adding perspective configurations.
     /// </summary>
+    /// <param name="schema">Optional schema name for table qualification (e.g., "inventory", "bff"). If null, uses "public" (default schema).</param>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs:ConfigureWhizbangInfrastructure_ConfiguresInboxEntityAsync</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs:ConfigureWhizbangInfrastructure_ConfiguresOutboxEntityAsync</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs:ConfigureWhizbangInfrastructure_ConfiguresEventStoreEntityAsync</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs:ConfigureWhizbangInfrastructure_ConfiguresServiceInstanceEntityAsync</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs:ConfigureWhizbangInfrastructure_ConfiguresMessageDeduplicationEntityAsync</tests>
-    public ModelBuilder ConfigureWhizbangInfrastructure() {
-      _configureInbox(modelBuilder);
-      _configureOutbox(modelBuilder);
-      _configureEventStore(modelBuilder);
-      _configureServiceInstance(modelBuilder);
-      _configureMessageDeduplication(modelBuilder);
+    public ModelBuilder ConfigureWhizbangInfrastructure(string? schema = null) {
+      _configureInbox(modelBuilder, schema);
+      _configureOutbox(modelBuilder, schema);
+      _configureEventStore(modelBuilder, schema);
+      _configureServiceInstance(modelBuilder, schema);
+      _configureMessageDeduplication(modelBuilder, schema);
+      _configureMessageAssociations(modelBuilder, schema);
       return modelBuilder;
     }
   }
 
-  private static void _configureInbox(ModelBuilder modelBuilder) {
+  private static void _configureInbox(ModelBuilder modelBuilder, string? schema) {
     modelBuilder.Entity<InboxRecord>(entity => {
-      entity.ToTable("wh_inbox");
+      entity.ToTable("wh_inbox", schema);
       entity.HasKey(e => e.MessageId);
 
       entity.Property(e => e.MessageId).HasColumnName("message_id").IsRequired();
@@ -59,9 +61,9 @@ public static class WhizbangModelBuilderExtensions {
     });
   }
 
-  private static void _configureOutbox(ModelBuilder modelBuilder) {
+  private static void _configureOutbox(ModelBuilder modelBuilder, string? schema) {
     modelBuilder.Entity<OutboxRecord>(entity => {
-      entity.ToTable("wh_outbox");
+      entity.ToTable("wh_outbox", schema);
       entity.HasKey(e => e.MessageId);
 
       entity.Property(e => e.MessageId).HasColumnName("message_id").IsRequired();
@@ -89,9 +91,9 @@ public static class WhizbangModelBuilderExtensions {
     });
   }
 
-  private static void _configureEventStore(ModelBuilder modelBuilder) {
+  private static void _configureEventStore(ModelBuilder modelBuilder, string? schema) {
     modelBuilder.Entity<EventStoreRecord>(entity => {
-      entity.ToTable("wh_event_store");
+      entity.ToTable("wh_event_store", schema);
       entity.HasKey(e => e.Id);
 
       entity.Property(e => e.Id).HasColumnName("event_id");
@@ -114,9 +116,9 @@ public static class WhizbangModelBuilderExtensions {
     });
   }
 
-  private static void _configureServiceInstance(ModelBuilder modelBuilder) {
+  private static void _configureServiceInstance(ModelBuilder modelBuilder, string? schema) {
     modelBuilder.Entity<ServiceInstanceRecord>(entity => {
-      entity.ToTable("wh_service_instances");
+      entity.ToTable("wh_service_instances", schema);
       entity.HasKey(e => e.InstanceId);
 
       entity.Property(e => e.InstanceId).HasColumnName("instance_id").IsRequired();
@@ -133,15 +135,37 @@ public static class WhizbangModelBuilderExtensions {
   }
 
 
-  private static void _configureMessageDeduplication(ModelBuilder modelBuilder) {
+  private static void _configureMessageDeduplication(ModelBuilder modelBuilder, string? schema) {
     modelBuilder.Entity<MessageDeduplicationRecord>(entity => {
-      entity.ToTable("wh_message_deduplication");
+      entity.ToTable("wh_message_deduplication", schema);
       entity.HasKey(e => e.MessageId);
 
       entity.Property(e => e.MessageId).HasColumnName("message_id").IsRequired();
       entity.Property(e => e.FirstSeenAt).HasColumnName("first_seen_at").IsRequired();
 
       entity.HasIndex(e => e.FirstSeenAt).HasDatabaseName("idx_message_dedup_first_seen");
+    });
+  }
+
+  private static void _configureMessageAssociations(ModelBuilder modelBuilder, string? schema) {
+    modelBuilder.Entity<MessageAssociationRecord>(entity => {
+      entity.ToTable("wh_message_associations", schema);
+      entity.HasKey(e => e.Id);
+
+      entity.Property(e => e.Id).HasColumnName("id").IsRequired();
+      entity.Property(e => e.MessageType).HasColumnName("message_type").IsRequired().HasMaxLength(500);
+      entity.Property(e => e.AssociationType).HasColumnName("association_type").IsRequired().HasMaxLength(50);
+      entity.Property(e => e.TargetName).HasColumnName("target_name").IsRequired().HasMaxLength(500);
+      entity.Property(e => e.ServiceName).HasColumnName("service_name").IsRequired().HasMaxLength(500);
+      entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
+      entity.Property(e => e.UpdatedAt).HasColumnName("updated_at").IsRequired();
+
+      // Indexes
+      entity.HasIndex(e => e.MessageType).HasDatabaseName("idx_message_associations_message_type");
+      entity.HasIndex(e => e.AssociationType).HasDatabaseName("idx_message_associations_association_type");
+      entity.HasIndex(e => e.TargetName).HasDatabaseName("idx_message_associations_target_name");
+      entity.HasIndex(e => e.ServiceName).HasDatabaseName("idx_message_associations_service_name");
+      entity.HasIndex(e => new { e.AssociationType, e.TargetName, e.ServiceName }).HasDatabaseName("idx_message_associations_target_lookup");
     });
   }
 }
