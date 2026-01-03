@@ -5,25 +5,36 @@ namespace Whizbang.Core.Workers;
 /// Controls how long completions remain in 'Sent' status before being retried as 'Pending'.
 /// </summary>
 /// <remarks>
+/// <para>
 /// When ProcessWorkBatchAsync fails or doesn't acknowledge completions, items remain in 'Sent' status.
-/// After the retry timeout, they're moved back to 'Pending' with exponential backoff:
-/// - 1st retry: 5 minutes
-/// - 2nd retry: 10 minutes (5 * 2^1)
-/// - 3rd retry: 20 minutes (5 * 2^2)
-/// - 4th retry: 40 minutes (5 * 2^3)
-/// - 5th+ retry: 60 minutes (max timeout)
+/// After the retry timeout, they're moved back to 'Pending' with exponential backoff.
+/// </para>
+/// <para>
+/// IMPORTANT: Fast retries are critical because messages in the same stream MUST process in order (by UUIDv7).
+/// A single failing message blocks ALL later messages in that stream until it completes.
+/// </para>
+/// <para>
+/// Default exponential backoff progression:
+/// - 1st retry: 1 second
+/// - 2nd retry: 2 seconds (1 * 2^1)
+/// - 3rd retry: 4 seconds (1 * 2^2)
+/// - 4th retry: 8 seconds (1 * 2^3)
+/// - 5th retry: 16 seconds (1 * 2^4)
+/// - 6th retry: 32 seconds (1 * 2^5)
+/// - 7th+ retry: 60 seconds (max timeout)
+/// </para>
 /// </remarks>
 public class WorkerRetryOptions {
   /// <summary>
-  /// Base retry timeout in minutes. Default: 5 minutes.
+  /// Base retry timeout in seconds. Default: 1 second.
   /// First retry occurs after this duration.
   /// </summary>
-  public int RetryTimeoutMinutes { get; set; } = 5;
+  public int RetryTimeoutSeconds { get; set; } = 1;
 
   /// <summary>
   /// Enable exponential backoff for retries. Default: true.
-  /// When enabled, timeout increases: 5min → 10min → 20min → 40min → 60min (max).
-  /// When disabled, uses fixed RetryTimeoutMinutes for all retries.
+  /// When enabled, timeout increases: 1s → 2s → 4s → 8s → 16s → 32s → 60s (max).
+  /// When disabled, uses fixed RetryTimeoutSeconds for all retries.
   /// </summary>
   public bool EnableExponentialBackoff { get; set; } = true;
 
@@ -35,8 +46,9 @@ public class WorkerRetryOptions {
   public double BackoffMultiplier { get; set; } = 2.0;
 
   /// <summary>
-  /// Maximum retry timeout in minutes. Default: 60 minutes.
+  /// Maximum retry timeout in seconds. Default: 60 seconds (1 minute).
   /// Prevents exponential backoff from growing indefinitely.
+  /// IMPORTANT: Keep this low - failing messages block entire streams!
   /// </summary>
-  public int MaxBackoffMinutes { get; set; } = 60;
+  public int MaxBackoffSeconds { get; set; } = 60;
 }

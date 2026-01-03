@@ -32,11 +32,11 @@ public partial class PerspectiveWorker(
   private readonly ILogger<PerspectiveWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PerspectiveWorker>.Instance;
   private readonly PerspectiveWorkerOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
   private readonly IPerspectiveCompletionStrategy _completionStrategy = completionStrategy ?? new BatchedCompletionStrategy(
-    retryTimeout: TimeSpan.FromMinutes((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.RetryTimeoutMinutes),
+    retryTimeout: TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.RetryTimeoutSeconds),
     backoffMultiplier: (options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.EnableExponentialBackoff
       ? (options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.BackoffMultiplier
       : 1.0,
-    maxTimeout: TimeSpan.FromMinutes((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.MaxBackoffMinutes)
+    maxTimeout: TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.MaxBackoffSeconds)
   );
 
   // Metrics tracking

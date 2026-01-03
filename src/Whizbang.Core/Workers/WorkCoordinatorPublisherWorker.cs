@@ -70,27 +70,27 @@ public partial class WorkCoordinatorPublisherWorker(
   private readonly WorkCoordinatorPublisherOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
 
   // Completion trackers for acknowledgement-before-clear pattern
-  // Initialize with retry configuration from options
+  // Initialize with retry configuration from options (default: 1s → 2s → 4s → 8s → 16s → 32s → 60s max)
   private readonly CompletionTracker<MessageCompletion> _completions = new(
-    baseTimeout: TimeSpan.FromMinutes((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.RetryTimeoutMinutes),
+    baseTimeout: TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.RetryTimeoutSeconds),
     backoffMultiplier: (options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.EnableExponentialBackoff
       ? (options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.BackoffMultiplier
       : 1.0,
-    maxTimeout: TimeSpan.FromMinutes((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.MaxBackoffMinutes)
+    maxTimeout: TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.MaxBackoffSeconds)
   );
   private readonly CompletionTracker<MessageFailure> _failures = new(
-    baseTimeout: TimeSpan.FromMinutes((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.RetryTimeoutMinutes),
+    baseTimeout: TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.RetryTimeoutSeconds),
     backoffMultiplier: (options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.EnableExponentialBackoff
       ? (options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.BackoffMultiplier
       : 1.0,
-    maxTimeout: TimeSpan.FromMinutes((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.MaxBackoffMinutes)
+    maxTimeout: TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.MaxBackoffSeconds)
   );
   private readonly CompletionTracker<Guid> _leaseRenewals = new(
-    baseTimeout: TimeSpan.FromMinutes((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.RetryTimeoutMinutes),
+    baseTimeout: TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.RetryTimeoutSeconds),
     backoffMultiplier: (options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.EnableExponentialBackoff
       ? (options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.BackoffMultiplier
       : 1.0,
-    maxTimeout: TimeSpan.FromMinutes((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.MaxBackoffMinutes)
+    maxTimeout: TimeSpan.FromSeconds((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.MaxBackoffSeconds)
   );
 
   // Metrics tracking
