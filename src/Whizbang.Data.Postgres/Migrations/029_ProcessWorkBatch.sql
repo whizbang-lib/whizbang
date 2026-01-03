@@ -283,6 +283,27 @@ BEGIN
   END IF;
 
   -- ========================================
+  -- Phase 2.5: Calculate Acknowledgement Counts
+  -- ========================================
+  -- Count how many completions/failures were processed
+  -- These counts are returned in metadata to C# for acknowledgement tracking
+
+  DECLARE
+    v_ack_counts JSONB;
+  BEGIN
+    v_ack_counts := jsonb_build_object(
+      'outbox_completions_processed', jsonb_array_length(COALESCE(p_outbox_completions, '[]'::JSONB)),
+      'outbox_failures_processed', jsonb_array_length(COALESCE(p_outbox_failures, '[]'::JSONB)),
+      'inbox_completions_processed', jsonb_array_length(COALESCE(p_inbox_completions, '[]'::JSONB)),
+      'inbox_failures_processed', jsonb_array_length(COALESCE(p_inbox_failures, '[]'::JSONB)),
+      'perspective_completions_processed', jsonb_array_length(COALESCE(p_perspective_completions, '[]'::JSONB)),
+      'perspective_failures_processed', jsonb_array_length(COALESCE(p_perspective_failures, '[]'::JSONB)),
+      'outbox_lease_renewals_processed', jsonb_array_length(COALESCE(p_renew_outbox_lease_ids, '[]'::JSONB)),
+      'inbox_lease_renewals_processed', jsonb_array_length(COALESCE(p_renew_inbox_lease_ids, '[]'::JSONB))
+    );
+  END;
+
+  -- ========================================
   -- Phase 4: Storage (New Work)
   -- ========================================
 
@@ -750,8 +771,22 @@ BEGIN
   -- Phase 7: Return Results
   -- ========================================
 
-  -- Return outbox work
+  -- Return outbox work (first row includes acknowledgement counts)
   RETURN QUERY
+  WITH ordered_outbox AS (
+    SELECT
+      o.*,
+      temp_new.message_id as new_message_id,
+      temp_orphaned.message_id as orphaned_message_id,
+      ROW_NUMBER() OVER (ORDER BY o.message_id) as row_num
+    FROM wh_outbox o
+    LEFT JOIN temp_new_outbox temp_new ON o.message_id = temp_new.message_id
+    LEFT JOIN temp_orphaned_outbox temp_orphaned ON o.message_id = temp_orphaned.message_id
+    WHERE (temp_new.message_id IS NOT NULL OR temp_orphaned.message_id IS NOT NULL)
+      AND o.instance_id = p_instance_id
+      AND o.lease_expiry > p_now
+      AND o.processed_at IS NULL
+  )
   SELECT
     v_rank as instance_rank,
     v_count as active_instance_count,
@@ -763,25 +798,43 @@ BEGIN
     o.event_type as message_type,
     o.envelope_type as envelope_type,
     o.event_data::TEXT as message_data,
-    o.metadata,
+    -- CRITICAL: First row includes acknowledgement counts in metadata
+    CASE WHEN o.row_num = 1 THEN COALESCE(o.metadata, '{}'::JSONB) || v_ack_counts ELSE o.metadata END as metadata,
     o.status,
     o.attempts,
-    CASE WHEN temp_new.message_id IS NOT NULL THEN true ELSE false END as is_newly_stored,
-    CASE WHEN temp_orphaned.message_id IS NOT NULL THEN true ELSE false END as is_orphaned,
+    CASE WHEN o.new_message_id IS NOT NULL THEN true ELSE false END as is_newly_stored,
+    CASE WHEN o.orphaned_message_id IS NOT NULL THEN true ELSE false END as is_orphaned,
     NULL::TEXT as error,
     NULL::INTEGER as failure_reason,
     NULL::VARCHAR(200) as perspective_name,
     NULL::BIGINT as sequence_number
-  FROM wh_outbox o
-  LEFT JOIN temp_new_outbox temp_new ON o.message_id = temp_new.message_id
-  LEFT JOIN temp_orphaned_outbox temp_orphaned ON o.message_id = temp_orphaned.message_id
-  WHERE (temp_new.message_id IS NOT NULL OR temp_orphaned.message_id IS NOT NULL)
-    AND o.instance_id = p_instance_id
-    AND o.lease_expiry > p_now
-    AND o.processed_at IS NULL;
+  FROM ordered_outbox o;
 
-  -- Return inbox work
+  -- Return inbox work (first row includes acknowledgement counts if no outbox work)
   RETURN QUERY
+  WITH has_outbox AS (
+    SELECT EXISTS(SELECT 1 FROM wh_outbox o
+      LEFT JOIN temp_new_outbox temp_new ON o.message_id = temp_new.message_id
+      LEFT JOIN temp_orphaned_outbox temp_orphaned ON o.message_id = temp_orphaned.message_id
+      WHERE (temp_new.message_id IS NOT NULL OR temp_orphaned.message_id IS NOT NULL)
+        AND o.instance_id = p_instance_id
+        AND o.lease_expiry > p_now
+        AND o.processed_at IS NULL) as exists
+  ),
+  ordered_inbox AS (
+    SELECT
+      i.*,
+      temp_new.message_id as new_message_id,
+      temp_orphaned.message_id as orphaned_message_id,
+      ROW_NUMBER() OVER (ORDER BY i.message_id) as row_num
+    FROM wh_inbox i
+    LEFT JOIN temp_new_inbox temp_new ON i.message_id = temp_new.message_id
+    LEFT JOIN temp_orphaned_inbox temp_orphaned ON i.message_id = temp_orphaned.message_id
+    WHERE (temp_new.message_id IS NOT NULL OR temp_orphaned.message_id IS NOT NULL)
+      AND i.instance_id = p_instance_id
+      AND i.lease_expiry > p_now
+      AND i.processed_at IS NULL
+  )
   SELECT
     v_rank as instance_rank,
     v_count as active_instance_count,
@@ -793,22 +846,19 @@ BEGIN
     i.event_type as message_type,
     NULL::VARCHAR(500) as envelope_type,
     i.event_data::TEXT as message_data,
-    i.metadata,
+    -- CRITICAL: First row includes ack counts if no outbox work
+    CASE WHEN i.row_num = 1 AND NOT (SELECT exists FROM has_outbox)
+      THEN COALESCE(i.metadata, '{}'::JSONB) || v_ack_counts
+      ELSE i.metadata END as metadata,
     i.status,
     i.attempts,
-    CASE WHEN temp_new.message_id IS NOT NULL THEN true ELSE false END as is_newly_stored,
-    CASE WHEN temp_orphaned.message_id IS NOT NULL THEN true ELSE false END as is_orphaned,
+    CASE WHEN i.new_message_id IS NOT NULL THEN true ELSE false END as is_newly_stored,
+    CASE WHEN i.orphaned_message_id IS NOT NULL THEN true ELSE false END as is_orphaned,
     NULL::TEXT as error,
     NULL::INTEGER as failure_reason,
     NULL::VARCHAR(200) as perspective_name,
     NULL::BIGINT as sequence_number
-  FROM wh_inbox i
-  LEFT JOIN temp_new_inbox temp_new ON i.message_id = temp_new.message_id
-  LEFT JOIN temp_orphaned_inbox temp_orphaned ON i.message_id = temp_orphaned.message_id
-  WHERE (temp_new.message_id IS NOT NULL OR temp_orphaned.message_id IS NOT NULL)
-    AND i.instance_id = p_instance_id
-    AND i.lease_expiry > p_now
-    AND i.processed_at IS NULL;
+  FROM ordered_inbox i;
 
   -- Return receptor work
   RETURN QUERY
@@ -838,8 +888,47 @@ BEGIN
     AND rp.lease_expiry > p_now
     AND rp.completed_at IS NULL;
 
-  -- Return perspective work
+  -- Return perspective work (first row includes acknowledgement counts if no outbox/inbox work)
   RETURN QUERY
+  WITH has_outbox_or_inbox AS (
+    SELECT EXISTS(
+      SELECT 1 FROM wh_outbox o
+      LEFT JOIN temp_new_outbox temp_new ON o.message_id = temp_new.message_id
+      LEFT JOIN temp_orphaned_outbox temp_orphaned ON o.message_id = temp_orphaned.message_id
+      WHERE (temp_new.message_id IS NOT NULL OR temp_orphaned.message_id IS NOT NULL)
+        AND o.instance_id = p_instance_id
+        AND o.lease_expiry > p_now
+        AND o.processed_at IS NULL
+      UNION ALL
+      SELECT 1 FROM wh_inbox i
+      LEFT JOIN temp_new_inbox temp_new ON i.message_id = temp_new.message_id
+      LEFT JOIN temp_orphaned_inbox temp_orphaned ON i.message_id = temp_orphaned.message_id
+      WHERE (temp_new.message_id IS NOT NULL OR temp_orphaned.message_id IS NOT NULL)
+        AND i.instance_id = p_instance_id
+        AND i.lease_expiry > p_now
+        AND i.processed_at IS NULL
+    ) as exists
+  ),
+  ordered_perspective AS (
+    SELECT
+      pe.*,
+      temp_new.event_work_id as new_event_work_id,
+      temp_orphaned.event_work_id as orphaned_event_work_id,
+      ROW_NUMBER() OVER (ORDER BY pe.stream_id, pe.perspective_name, pe.sequence_number) as row_num
+    FROM wh_perspective_events pe
+    LEFT JOIN temp_new_perspective_events temp_new ON pe.event_work_id = temp_new.event_work_id
+    LEFT JOIN temp_orphaned_perspective_events temp_orphaned ON pe.event_work_id = temp_orphaned.event_work_id
+    LEFT JOIN wh_perspective_checkpoints pc
+      ON pe.stream_id = pc.stream_id
+      AND pe.perspective_name = pc.perspective_name
+    WHERE pe.instance_id = p_instance_id
+      AND pe.lease_expiry > p_now
+      AND pe.processed_at IS NULL
+      -- CRITICAL FIX: Don't claim events if checkpoint is already completed or failed
+      -- This prevents infinite re-processing when InstantCompletionStrategy reports completions
+      -- Status flags: Processing=1, Completed=2, Failed=4
+      AND (pc.status IS NULL OR (pc.status & 6) = 0)  -- Not completed (2) and not failed (4)
+  )
   SELECT
     v_rank as instance_rank,
     v_count as active_instance_count,
@@ -851,31 +940,22 @@ BEGIN
     NULL::VARCHAR(500) as message_type,  -- Event type comes from wh_event_store
     NULL::VARCHAR(500) as envelope_type, -- Event envelope type comes from wh_event_store
     NULL::TEXT as message_data,          -- Event data comes from wh_event_store
-    NULL::JSONB as metadata,             -- Event metadata comes from wh_event_store
+    -- CRITICAL: First row includes ack counts if no outbox/inbox work
+    CASE WHEN pe.row_num = 1 AND NOT (SELECT exists FROM has_outbox_or_inbox)
+      THEN v_ack_counts
+      ELSE NULL::JSONB END as metadata,
     pe.status,
     pe.attempts,
-    CASE WHEN temp_new.event_work_id IS NOT NULL THEN true ELSE false END as is_newly_stored,
-    CASE WHEN temp_orphaned.event_work_id IS NOT NULL THEN true ELSE false END as is_orphaned,
+    CASE WHEN pe.new_event_work_id IS NOT NULL THEN true ELSE false END as is_newly_stored,
+    CASE WHEN pe.orphaned_event_work_id IS NOT NULL THEN true ELSE false END as is_orphaned,
     NULL::TEXT as error,
     NULL::INTEGER as failure_reason,
     pe.perspective_name,
     pe.sequence_number
-  FROM wh_perspective_events pe
-  LEFT JOIN temp_new_perspective_events temp_new ON pe.event_work_id = temp_new.event_work_id
-  LEFT JOIN temp_orphaned_perspective_events temp_orphaned ON pe.event_work_id = temp_orphaned.event_work_id
-  LEFT JOIN wh_perspective_checkpoints pc
-    ON pe.stream_id = pc.stream_id
-    AND pe.perspective_name = pc.perspective_name
-  WHERE pe.instance_id = p_instance_id
-    AND pe.lease_expiry > p_now
-    AND pe.processed_at IS NULL
-    -- CRITICAL FIX: Don't claim events if checkpoint is already completed or failed
-    -- This prevents infinite re-processing when InstantCompletionStrategy reports completions
-    -- Status flags: Processing=1, Completed=2, Failed=4
-    AND (pc.status IS NULL OR (pc.status & 6) = 0)  -- Not completed (2) and not failed (4)
+  FROM ordered_perspective pe
   ORDER BY pe.stream_id, pe.perspective_name, pe.sequence_number;
 END;
 $$ LANGUAGE plpgsql;
 
 COMMENT ON FUNCTION process_work_batch IS
-'Orchestrator function that coordinates all work batch processing. Registers heartbeat, processes completions/failures, stores new work, claims orphaned work, renews leases, and returns aggregated work batch. All operations occur in a single transaction for atomicity.';
+'Orchestrator function that coordinates all work batch processing. Returns acknowledgement counts in first result row metadata for C# completion tracking. Registers heartbeat, processes completions/failures, stores new work, claims orphaned work, renews leases, and returns aggregated work batch. All operations occur in a single transaction for atomicity.';
