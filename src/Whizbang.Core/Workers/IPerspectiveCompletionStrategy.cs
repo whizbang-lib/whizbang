@@ -63,29 +63,43 @@ public interface IPerspectiveCompletionStrategy {
   /// <summary>
   /// Gets all pending completions that have been collected but not yet reported.
   /// </summary>
-  /// <returns>Array of pending completions</returns>
+  /// <returns>Array of tracked completions with status information</returns>
   /// <remarks>
   /// Batched strategies return collected completions awaiting the next poll cycle.
   /// Instant strategies always return an empty array (nothing is pending).
   /// </remarks>
-  PerspectiveCheckpointCompletion[] GetPendingCompletions();
+  TrackedCompletion<PerspectiveCheckpointCompletion>[] GetPendingCompletions();
 
   /// <summary>
   /// Gets all pending failures that have been collected but not yet reported.
   /// </summary>
-  /// <returns>Array of pending failures</returns>
+  /// <returns>Array of tracked failures with status information</returns>
   /// <remarks>
   /// Batched strategies return collected failures awaiting the next poll cycle.
   /// Instant strategies always return an empty array (nothing is pending).
   /// </remarks>
-  PerspectiveCheckpointFailure[] GetPendingFailures();
+  TrackedCompletion<PerspectiveCheckpointFailure>[] GetPendingFailures();
 
   /// <summary>
-  /// Clears all pending completions and failures.
+  /// Mark items as sent to ProcessWorkBatchAsync.
   /// </summary>
-  /// <remarks>
-  /// Called by PerspectiveWorker after successfully reporting a batch to the coordinator.
-  /// Prevents duplicate reporting of the same completions/failures.
-  /// </remarks>
-  void ClearPending();
+  void MarkAsSent(
+    TrackedCompletion<PerspectiveCheckpointCompletion>[] completions,
+    TrackedCompletion<PerspectiveCheckpointFailure>[] failures,
+    DateTimeOffset sentAt);
+
+  /// <summary>
+  /// Mark oldest N items as acknowledged based on counts from ProcessWorkBatchAsync.
+  /// </summary>
+  void MarkAsAcknowledged(int completionCount, int failureCount);
+
+  /// <summary>
+  /// Clear all acknowledged items.
+  /// </summary>
+  void ClearAcknowledged();
+
+  /// <summary>
+  /// Reset stale items back to pending with exponential backoff.
+  /// </summary>
+  void ResetStale(DateTimeOffset now);
 }

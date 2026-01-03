@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Workers;
@@ -9,11 +8,13 @@ namespace Whizbang.Core.Workers;
 /// </summary>
 /// <remarks>
 /// <para>
-/// This strategy implements the two-phase completion pattern:
+/// This strategy implements the two-phase completion pattern with acknowledgement tracking:
 /// </para>
 /// <list type="number">
 /// <item><description><strong>Cycle N</strong>: Process perspectives, collect completions/failures in memory via ReportCompletionAsync/ReportFailureAsync</description></item>
-/// <item><description><strong>Cycle N+1</strong>: PerspectiveWorker calls GetPendingCompletions/GetPendingFailures, reports to coordinator via ProcessWorkBatchAsync</description></item>
+/// <item><description><strong>Cycle N+1</strong>: PerspectiveWorker calls GetPendingCompletions/GetPendingFailures, marks as Sent, reports to coordinator via ProcessWorkBatchAsync</description></item>
+/// <item><description><strong>Acknowledgement</strong>: Coordinator returns counts, worker marks as Acknowledged, clears only acknowledged items</description></item>
+/// <item><description><strong>Retry</strong>: Stale items (sent but not acknowledged) reset to Pending with exponential backoff</description></item>
 /// </list>
 /// <para>
 /// This approach trades immediate consistency for reduced database load. For test environments requiring
@@ -24,8 +25,21 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:BatchedStrategy_ReportCompletionAsync_DoesNotCallCoordinatorImmediately_Async</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:BatchedStrategy_GetPendingCompletions_ReturnsCollectedCompletions_Async</tests>
 public sealed class BatchedCompletionStrategy : IPerspectiveCompletionStrategy {
-  private readonly ConcurrentBag<PerspectiveCheckpointCompletion> _completions = [];
-  private readonly ConcurrentBag<PerspectiveCheckpointFailure> _failures = [];
+  private readonly CompletionTracker<PerspectiveCheckpointCompletion> _completions;
+  private readonly CompletionTracker<PerspectiveCheckpointFailure> _failures;
+
+  public BatchedCompletionStrategy(
+    TimeSpan? retryTimeout = null,
+    double backoffMultiplier = 2.0,
+    TimeSpan? maxTimeout = null
+  ) {
+    _completions = new CompletionTracker<PerspectiveCheckpointCompletion>(
+      retryTimeout, backoffMultiplier, maxTimeout
+    );
+    _failures = new CompletionTracker<PerspectiveCheckpointFailure>(
+      retryTimeout, backoffMultiplier, maxTimeout
+    );
+  }
 
   /// <inheritdoc />
   /// <remarks>
@@ -55,29 +69,46 @@ public sealed class BatchedCompletionStrategy : IPerspectiveCompletionStrategy {
 
   /// <inheritdoc />
   /// <remarks>
-  /// Returns all completions collected since the last ClearPending() call.
+  /// Returns all completions with status = Pending (not yet sent to coordinator).
   /// PerspectiveWorker will pass these to ProcessWorkBatchAsync on the next poll cycle.
   /// </remarks>
-  public PerspectiveCheckpointCompletion[] GetPendingCompletions() {
-    return _completions.ToArray();
+  public TrackedCompletion<PerspectiveCheckpointCompletion>[] GetPendingCompletions() {
+    return _completions.GetPending();
   }
 
   /// <inheritdoc />
   /// <remarks>
-  /// Returns all failures collected since the last ClearPending() call.
+  /// Returns all failures with status = Pending (not yet sent to coordinator).
   /// PerspectiveWorker will pass these to ProcessWorkBatchAsync on the next poll cycle.
   /// </remarks>
-  public PerspectiveCheckpointFailure[] GetPendingFailures() {
-    return _failures.ToArray();
+  public TrackedCompletion<PerspectiveCheckpointFailure>[] GetPendingFailures() {
+    return _failures.GetPending();
   }
 
   /// <inheritdoc />
-  /// <remarks>
-  /// Clears both completion and failure collections.
-  /// Called by PerspectiveWorker after successfully reporting to the coordinator.
-  /// </remarks>
-  public void ClearPending() {
-    _completions.Clear();
-    _failures.Clear();
+  public void MarkAsSent(
+    TrackedCompletion<PerspectiveCheckpointCompletion>[] completions,
+    TrackedCompletion<PerspectiveCheckpointFailure>[] failures,
+    DateTimeOffset sentAt) {
+    _completions.MarkAsSent(completions, sentAt);
+    _failures.MarkAsSent(failures, sentAt);
+  }
+
+  /// <inheritdoc />
+  public void MarkAsAcknowledged(int completionCount, int failureCount) {
+    _completions.MarkAsAcknowledged(completionCount);
+    _failures.MarkAsAcknowledged(failureCount);
+  }
+
+  /// <inheritdoc />
+  public void ClearAcknowledged() {
+    _completions.ClearAcknowledged();
+    _failures.ClearAcknowledged();
+  }
+
+  /// <inheritdoc />
+  public void ResetStale(DateTimeOffset now) {
+    _completions.ResetStale(now);
+    _failures.ResetStale(now);
   }
 }

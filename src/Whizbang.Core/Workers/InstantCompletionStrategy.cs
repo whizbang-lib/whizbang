@@ -65,7 +65,7 @@ public sealed class InstantCompletionStrategy : IPerspectiveCompletionStrategy {
   /// Always returns an empty array because completions are reported immediately.
   /// Nothing is ever pending with the instant strategy.
   /// </remarks>
-  public PerspectiveCheckpointCompletion[] GetPendingCompletions() {
+  public TrackedCompletion<PerspectiveCheckpointCompletion>[] GetPendingCompletions() {
     return [];
   }
 
@@ -74,7 +74,7 @@ public sealed class InstantCompletionStrategy : IPerspectiveCompletionStrategy {
   /// Always returns an empty array because failures are reported immediately.
   /// Nothing is ever pending with the instant strategy.
   /// </remarks>
-  public PerspectiveCheckpointFailure[] GetPendingFailures() {
+  public TrackedCompletion<PerspectiveCheckpointFailure>[] GetPendingFailures() {
     return [];
   }
 
@@ -82,7 +82,34 @@ public sealed class InstantCompletionStrategy : IPerspectiveCompletionStrategy {
   /// <remarks>
   /// No-op for instant strategy since nothing is ever stored.
   /// </remarks>
-  public void ClearPending() {
+  public void MarkAsSent(
+    TrackedCompletion<PerspectiveCheckpointCompletion>[] completions,
+    TrackedCompletion<PerspectiveCheckpointFailure>[] failures,
+    DateTimeOffset sentAt) {
+    // No-op - nothing to mark since we report immediately
+  }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// No-op for instant strategy since nothing is ever stored.
+  /// </remarks>
+  public void MarkAsAcknowledged(int completionCount, int failureCount) {
+    // No-op - nothing to acknowledge since we report immediately
+  }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// No-op for instant strategy since nothing is ever stored.
+  /// </remarks>
+  public void ClearAcknowledged() {
     // No-op - nothing to clear since we report immediately
+  }
+
+  /// <inheritdoc />
+  /// <remarks>
+  /// No-op for instant strategy since nothing is ever stored.
+  /// </remarks>
+  public void ResetStale(DateTimeOffset now) {
+    // No-op - no stale items since we report immediately
   }
 }
