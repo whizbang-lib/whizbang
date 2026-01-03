@@ -116,6 +116,7 @@ public sealed class CompletionTracker<T> where T : notnull {
   /// Formula: baseTimeout * (backoffMultiplier ^ retryCount), capped at maxTimeout.
   /// Example with defaults: 5min → 10min → 20min → 40min → 60min (max)
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE1006:Naming Styles", Justification = "Local variable in private method - standard naming acceptable")]
   private TimeSpan CalculateTimeout(int retryCount) {
     var timeout = TimeSpan.FromMinutes(
       _baseTimeout.TotalMinutes * Math.Pow(_backoffMultiplier, retryCount)
