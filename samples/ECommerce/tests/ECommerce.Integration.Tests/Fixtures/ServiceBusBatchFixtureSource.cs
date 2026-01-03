@@ -29,6 +29,7 @@ public sealed class ServiceBusBatchFixtureSource {
   /// Initializes the shared ServiceBus emulator fixture once per assembly.
   /// PostgreSQL and service hosts are created per-test, not here.
   /// </summary>
+  [Obsolete]
   private async Task InitializeAsync() {
     if (_initialized) {
       return;

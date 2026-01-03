@@ -26,5 +26,4 @@ public partial class BffDbContext : DbContext {
 
   // DbSet properties auto-generated in BffDbContext.Generated.g.cs
   // OnModelCreating override auto-generated with ConfigureWhizbang() call
-  // Implement OnModelCreatingExtended() for custom configurations (optional)
 }

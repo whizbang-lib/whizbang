@@ -787,9 +787,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     // Generate type name registration code for ModuleInitializer (no reflection - AOT compatible!)
-    // Register only actual message types (commands/events), not nested types
+    // Register message types (commands/events) AND serializable types (lens DTOs) for cross-assembly resolution
     // This enables cross-assembly type resolution via JsonContextRegistry.GetTypeInfoByName()
-    var messageTypes = messages.Where(m => m.IsCommand || m.IsEvent).ToList();
+    var messageTypes = messages.Where(m => m.IsCommand || m.IsEvent || m.IsSerializable).ToList();
     if (messageTypes.Count > 0) {
       converterRegistrations.AppendLine();
       converterRegistrations.AppendLine("  // Register type name mappings for cross-assembly resolution");

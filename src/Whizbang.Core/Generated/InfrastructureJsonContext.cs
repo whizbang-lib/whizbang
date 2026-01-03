@@ -68,6 +68,7 @@ namespace Whizbang.Core.Generated;
 [JsonSerializable(typeof(Guid[]))]
 // Perspective types
 [JsonSerializable(typeof(PerspectiveMetadata))]
+[JsonSerializable(typeof(PerspectiveScope))]
 [JsonSourceGenerationOptions(
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 public partial class InfrastructureJsonContext : JsonSerializerContext {

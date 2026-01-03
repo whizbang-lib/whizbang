@@ -440,22 +440,15 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   }
 
   /// <summary>
-  /// Initializes the PostgreSQL schema: Whizbang core tables + InventoryWorker schema + BFF schema.
+  /// Initializes the PostgreSQL schema: Whizbang core tables + perspective tables.
+  /// Both services share the same database tables (no schema isolation).
   /// </summary>
   private async Task _initializeSchemaAsync(CancellationToken cancellationToken = default) {
-    // Initialize InventoryWorker schema using EFCore
-    // Creates Inbox/Outbox/EventStore + PostgreSQL functions + perspective tables for InventoryWorker
-    using (var scope = _inventoryHost!.Services.CreateScope()) {
-      var inventoryDbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
-      await ECommerce.InventoryWorker.Generated.InventoryDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(inventoryDbContext, logger: null, cancellationToken);
-    }
-
-    // Initialize BFF schema using EFCore
-    // Creates Inbox/Outbox/EventStore + PostgreSQL functions + perspective tables for BFF
-    using (var scope = _bffHost!.Services.CreateScope()) {
-      var bffDbContext = scope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
-      await ECommerce.BFF.API.Generated.BffDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(bffDbContext, logger: null, cancellationToken);
-    }
+    // Initialize database using InventoryWorker context (BFF will share the same tables)
+    using var scope = _inventoryHost!.Services.CreateScope();
+    var inventoryDbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+    await ECommerce.InventoryWorker.Generated.InventoryDbContextSchemaExtensions.EnsureWhizbangDatabaseInitializedAsync(inventoryDbContext, logger: null, cancellationToken);
+    Console.WriteLine("[InMemoryFixture] Schema initialized - database tables created");
   }
 
   /// <summary>
@@ -509,7 +502,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
         ('ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.BFF.API', NOW(), NOW()),
         ('ECommerce.Contracts.Events.InventoryRestockedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.BFF.API', NOW(), NOW()),
         ('ECommerce.Contracts.Events.InventoryReservedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.BFF.API', NOW(), NOW()),
-        ('ECommerce.Contracts.Events.InventoryAdjustedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.BFF.API', NOW(), NOW())
+        ('ECommerce.Contracts.Events.InventoryAdjustedEvent, ECommerce.Contracts', 'perspective', 'InventoryAdjustedEvent', 'ECommerce.BFF.API', NOW(), NOW())
       ON CONFLICT (message_type, association_type, target_name, service_name) DO NOTHING
     ", cancellationToken);
 
@@ -694,6 +687,10 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       ).WaitAsync(cts.Token);
 
       Console.WriteLine("[InMemoryFixture] Event processing idle - all workers have no pending work (2 publishers + 2 perspective workers)");
+
+      // Give database operations time to complete and commit
+      // The workers report idle before transactions fully commit
+      await Task.Delay(500, CancellationToken.None);
     } catch (OperationCanceledException) {
       Console.WriteLine($"[InMemoryFixture] WARNING: Event processing did not reach idle state within {timeoutMilliseconds}ms timeout");
       Console.WriteLine($"[InMemoryFixture] InventoryWorker Publisher idle: {inventoryPublisher?.IsIdle ?? true}, PerspectiveWorker idle: {inventoryPerspectiveWorker?.IsIdle ?? true}");
