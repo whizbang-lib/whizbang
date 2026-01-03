@@ -97,6 +97,9 @@ DECLARE
   v_outbox_conflict_types TEXT[];
   v_inbox_conflict_count INTEGER := 0;
   v_inbox_conflict_types TEXT[];
+
+  -- Acknowledgement counts for completion tracking
+  v_ack_counts JSONB;
 BEGIN
   -- Calculate lease expiry and stale cutoff
   v_lease_expiry := p_now + (p_lease_duration_seconds || ' seconds')::INTERVAL;
@@ -288,20 +291,16 @@ BEGIN
   -- Count how many completions/failures were processed
   -- These counts are returned in metadata to C# for acknowledgement tracking
 
-  DECLARE
-    v_ack_counts JSONB;
-  BEGIN
-    v_ack_counts := jsonb_build_object(
-      'outbox_completions_processed', jsonb_array_length(COALESCE(p_outbox_completions, '[]'::JSONB)),
-      'outbox_failures_processed', jsonb_array_length(COALESCE(p_outbox_failures, '[]'::JSONB)),
-      'inbox_completions_processed', jsonb_array_length(COALESCE(p_inbox_completions, '[]'::JSONB)),
-      'inbox_failures_processed', jsonb_array_length(COALESCE(p_inbox_failures, '[]'::JSONB)),
-      'perspective_completions_processed', jsonb_array_length(COALESCE(p_perspective_completions, '[]'::JSONB)),
-      'perspective_failures_processed', jsonb_array_length(COALESCE(p_perspective_failures, '[]'::JSONB)),
-      'outbox_lease_renewals_processed', jsonb_array_length(COALESCE(p_renew_outbox_lease_ids, '[]'::JSONB)),
-      'inbox_lease_renewals_processed', jsonb_array_length(COALESCE(p_renew_inbox_lease_ids, '[]'::JSONB))
-    );
-  END;
+  v_ack_counts := jsonb_build_object(
+    'outbox_completions_processed', jsonb_array_length(COALESCE(p_outbox_completions, '[]'::JSONB)),
+    'outbox_failures_processed', jsonb_array_length(COALESCE(p_outbox_failures, '[]'::JSONB)),
+    'inbox_completions_processed', jsonb_array_length(COALESCE(p_inbox_completions, '[]'::JSONB)),
+    'inbox_failures_processed', jsonb_array_length(COALESCE(p_inbox_failures, '[]'::JSONB)),
+    'perspective_completions_processed', jsonb_array_length(COALESCE(p_perspective_completions, '[]'::JSONB)),
+    'perspective_failures_processed', jsonb_array_length(COALESCE(p_perspective_failures, '[]'::JSONB)),
+    'outbox_lease_renewals_processed', jsonb_array_length(COALESCE(p_renew_outbox_lease_ids, '[]'::JSONB)),
+    'inbox_lease_renewals_processed', jsonb_array_length(COALESCE(p_renew_inbox_lease_ids, '[]'::JSONB))
+  );
 
   -- ========================================
   -- Phase 4: Storage (New Work)
