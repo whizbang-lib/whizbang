@@ -39,6 +39,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   private IHost? _inventoryHost;
   private IHost? _bffHost;
   private readonly Guid _sharedInstanceId = Guid.CreateVersion7(); // Shared across both services for partition claiming
+  private Azure.Messaging.ServiceBus.ServiceBusClient? _sharedServiceBusClient; // CRITICAL: Single shared client across both hosts
 
   public SharedIntegrationFixture() {
     _postgresContainer = new PostgreSqlBuilder()
@@ -159,9 +160,15 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     // Wait for PostgreSQL to be ready to accept connections
     await _waitForPostgresReadyAsync(postgresConnection, cancellationToken);
 
-    Console.WriteLine("[SharedFixture] PostgreSQL ready. Creating service hosts...");
+    Console.WriteLine("[SharedFixture] PostgreSQL ready. Creating SHARED ServiceBusClient...");
+
+    // CRITICAL: Create single shared ServiceBusClient BEFORE creating hosts
+    // This client will be registered in both hosts' DI containers to avoid connection quota issues
+    _sharedServiceBusClient = new Azure.Messaging.ServiceBus.ServiceBusClient(serviceBusConnection);
+    Console.WriteLine("[SharedFixture] Shared ServiceBusClient created. Creating service hosts...");
 
     // Create service hosts (but don't start them yet)
+    // Both hosts will use the shared ServiceBusClient instance
     _inventoryHost = _createInventoryHost(postgresConnection, serviceBusConnection);
     _bffHost = _createBffHost(postgresConnection, serviceBusConnection);
 
@@ -200,7 +207,11 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     // Register service instance provider (uses shared instance ID for partition claiming compatibility)
     builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(_sharedInstanceId, "InventoryWorker"));
 
-    // Register Azure Service Bus transport
+    // CRITICAL: Register SHARED ServiceBusClient BEFORE calling AddAzureServiceBusTransport
+    // This prevents creating multiple clients and hitting connection quota
+    builder.Services.AddSingleton(_sharedServiceBusClient ?? throw new InvalidOperationException("Shared ServiceBusClient not initialized"));
+
+    // Register Azure Service Bus transport (will reuse the shared client registered above)
     var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
     builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
 
@@ -329,7 +340,11 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
 
     var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
 
-    // Register Azure Service Bus transport
+    // CRITICAL: Register SHARED ServiceBusClient BEFORE calling AddAzureServiceBusTransport
+    // This prevents creating multiple clients and hitting connection quota
+    builder.Services.AddSingleton(_sharedServiceBusClient ?? throw new InvalidOperationException("Shared ServiceBusClient not initialized"));
+
+    // Register Azure Service Bus transport (will reuse the shared client registered above)
     builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
 
     // Add trace store for observability
@@ -731,6 +746,14 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       if (_bffHost != null) {
         await _bffHost.StopAsync();
         _bffHost.Dispose();
+      }
+
+      // Dispose shared ServiceBusClient AFTER hosts are stopped
+      // The transport in each host is configured to NOT dispose the client (line 590 of AzureServiceBusTransport.cs)
+      // so we're responsible for disposing it here
+      if (_sharedServiceBusClient != null) {
+        await _sharedServiceBusClient.DisposeAsync();
+        Console.WriteLine("[SharedFixture] Shared ServiceBusClient disposed");
       }
 
       // Stop and dispose containers
