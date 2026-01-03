@@ -131,36 +131,97 @@ public partial class PerspectiveWorker(
     await using var scope = _scopeFactory.CreateAsyncScope();
     var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
-    // Collect accumulated results from perspective processing via strategy
-    var perspectiveCompletions = _completionStrategy.GetPendingCompletions();
-    var perspectiveFailures = _completionStrategy.GetPendingFailures();
-    _completionStrategy.ClearPending();
+    // 1. Get pending items (status = Pending, not yet sent)
+    var pendingCompletions = _completionStrategy.GetPendingCompletions();
+    var pendingFailures = _completionStrategy.GetPendingFailures();
 
-    // Get work batch (heartbeat, claim perspective work, return for processing)
-    var workBatch = await workCoordinator.ProcessWorkBatchAsync(
-      _instanceProvider.InstanceId,
-      _instanceProvider.ServiceName,
-      _instanceProvider.HostName,
-      _instanceProvider.ProcessId,
-      metadata: _options.InstanceMetadata,
-      outboxCompletions: [],
-      outboxFailures: [],
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: perspectiveCompletions,
-      perspectiveFailures: perspectiveFailures,
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
-      flags: _options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None,
-      partitionCount: _options.PartitionCount,
-      leaseSeconds: _options.LeaseSeconds,
-      staleThresholdSeconds: _options.StaleThresholdSeconds,
-      cancellationToken: cancellationToken
-    );
+    // 2. Extract actual completion data for ProcessWorkBatchAsync
+    var completionsToSend = pendingCompletions.Select(tc => tc.Completion).ToArray();
+    var failuresToSend = pendingFailures.Select(tc => tc.Completion).ToArray();
+
+    // 3. Mark as Sent BEFORE calling ProcessWorkBatchAsync
+    var sentAt = DateTimeOffset.UtcNow;
+    _completionStrategy.MarkAsSent(pendingCompletions, pendingFailures, sentAt);
+
+    // 4. Call ProcessWorkBatchAsync (may throw or return partial acknowledgement)
+    WorkBatch workBatch;
+    try {
+      workBatch = await workCoordinator.ProcessWorkBatchAsync(
+        _instanceProvider.InstanceId,
+        _instanceProvider.ServiceName,
+        _instanceProvider.HostName,
+        _instanceProvider.ProcessId,
+        metadata: _options.InstanceMetadata,
+        outboxCompletions: [],
+        outboxFailures: [],
+        inboxCompletions: [],
+        inboxFailures: [],
+        receptorCompletions: [],
+        receptorFailures: [],
+        perspectiveCompletions: completionsToSend,
+        perspectiveFailures: failuresToSend,
+        newOutboxMessages: [],
+        newInboxMessages: [],
+        renewOutboxLeaseIds: [],
+        renewInboxLeaseIds: [],
+        flags: _options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None,
+        partitionCount: _options.PartitionCount,
+        leaseSeconds: _options.LeaseSeconds,
+        staleThresholdSeconds: _options.StaleThresholdSeconds,
+        cancellationToken: cancellationToken
+      );
+    } catch (Exception ex) {
+      // Database failure: Completions remain in 'Sent' status
+      // ResetStale() will move them back to 'Pending' after timeout
+      LogErrorProcessingWorkBatch(_logger, ex);
+      return; // Exit early, retry on next cycle
+    }
+
+    // 5. Extract acknowledgement counts from workBatch metadata (from first row)
+    var completionsProcessed = 0;
+    var failuresProcessed = 0;
+
+    // Check perspective work first
+    var perspectiveFirstRow = workBatch.PerspectiveWork.FirstOrDefault();
+    if (perspectiveFirstRow?.Metadata != null) {
+      if (perspectiveFirstRow.Metadata.TryGetValue("perspective_completions_processed", out var compCount)) {
+        completionsProcessed = compCount.GetInt32();
+      }
+      if (perspectiveFirstRow.Metadata.TryGetValue("perspective_failures_processed", out var failCount)) {
+        failuresProcessed = failCount.GetInt32();
+      }
+    } else {
+      // Check outbox work if no perspective work
+      var outboxFirstRow = workBatch.OutboxWork.FirstOrDefault();
+      if (outboxFirstRow?.Metadata != null) {
+        if (outboxFirstRow.Metadata.TryGetValue("perspective_completions_processed", out var compCount)) {
+          completionsProcessed = compCount.GetInt32();
+        }
+        if (outboxFirstRow.Metadata.TryGetValue("perspective_failures_processed", out var failCount)) {
+          failuresProcessed = failCount.GetInt32();
+        }
+      } else {
+        // Check inbox work if no outbox work
+        var inboxFirstRow = workBatch.InboxWork.FirstOrDefault();
+        if (inboxFirstRow?.Metadata != null) {
+          if (inboxFirstRow.Metadata.TryGetValue("perspective_completions_processed", out var compCount)) {
+            completionsProcessed = compCount.GetInt32();
+          }
+          if (inboxFirstRow.Metadata.TryGetValue("perspective_failures_processed", out var failCount)) {
+            failuresProcessed = failCount.GetInt32();
+          }
+        }
+      }
+    }
+
+    // 6. Mark as Acknowledged based on counts from SQL
+    _completionStrategy.MarkAsAcknowledged(completionsProcessed, failuresProcessed);
+
+    // 7. Clear only Acknowledged items
+    _completionStrategy.ClearAcknowledged();
+
+    // 8. Reset stale items (sent but not acknowledged for > timeout) back to Pending
+    _completionStrategy.ResetStale(DateTimeOffset.UtcNow);
 
     // Process perspective work using IPerspectiveRunner
     foreach (var perspectiveWork in workBatch.PerspectiveWork) {
@@ -209,9 +270,9 @@ public partial class PerspectiveWorker(
     }
 
     // Log a summary of perspective processing activity
-    int totalActivity = perspectiveCompletions.Length + perspectiveFailures.Length + workBatch.PerspectiveWork.Count;
+    int totalActivity = completionsToSend.Length + failuresToSend.Length + workBatch.PerspectiveWork.Count;
     if (totalActivity > 0) {
-      LogPerspectiveBatchSummary(_logger, workBatch.PerspectiveWork.Count, perspectiveCompletions.Length, perspectiveFailures.Length);
+      LogPerspectiveBatchSummary(_logger, workBatch.PerspectiveWork.Count, completionsToSend.Length, failuresToSend.Length);
     } else {
       LogNoWorkClaimed(_logger);
     }
@@ -368,6 +429,13 @@ public partial class PerspectiveWorker(
     Message = "Perspective processing idle (active → idle) after {EmptyPolls} empty polls"
   )]
   static partial void LogPerspectiveProcessingIdle(ILogger logger, int emptyPolls);
+
+  [LoggerMessage(
+    EventId = 19,
+    Level = LogLevel.Error,
+    Message = "Error processing work batch (database failure - completions will retry)"
+  )]
+  static partial void LogErrorProcessingWorkBatch(ILogger logger, Exception ex);
 }
 
 /// <summary>

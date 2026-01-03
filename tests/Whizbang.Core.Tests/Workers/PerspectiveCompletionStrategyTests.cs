@@ -84,8 +84,8 @@ public class PerspectiveCompletionStrategyTests {
 
     // Assert
     await Assert.That(pending).Count().IsEqualTo(2);
-    await Assert.That(pending).Contains(completion1);
-    await Assert.That(pending).Contains(completion2);
+    await Assert.That(pending.Select(tc => tc.Completion)).Contains(completion1);
+    await Assert.That(pending.Select(tc => tc.Completion)).Contains(completion2);
   }
 
   [Test]
@@ -117,12 +117,12 @@ public class PerspectiveCompletionStrategyTests {
 
     // Assert
     await Assert.That(pending).Count().IsEqualTo(2);
-    await Assert.That(pending).Contains(failure1);
-    await Assert.That(pending).Contains(failure2);
+    await Assert.That(pending.Select(tc => tc.Completion)).Contains(failure1);
+    await Assert.That(pending.Select(tc => tc.Completion)).Contains(failure2);
   }
 
   [Test]
-  public async Task BatchedStrategy_ClearPending_RemovesAllCollectedItems_Async() {
+  public async Task BatchedStrategy_AcknowledgementFlow_RemovesAcknowledgedItems_Async() {
     // Arrange
     var coordinator = new FakeWorkCoordinator();
     var completion = new PerspectiveCheckpointCompletion {
@@ -143,8 +143,12 @@ public class PerspectiveCompletionStrategyTests {
     await strategy.ReportCompletionAsync(completion, coordinator, CancellationToken.None);
     await strategy.ReportFailureAsync(failure, coordinator, CancellationToken.None);
 
-    // Act
-    strategy.ClearPending();
+    // Act - mark as sent, acknowledge, then clear
+    var pendingCompletions = strategy.GetPendingCompletions();
+    var pendingFailures = strategy.GetPendingFailures();
+    strategy.MarkAsSent(pendingCompletions, pendingFailures, DateTimeOffset.UtcNow);
+    strategy.MarkAsAcknowledged(1, 1);
+    strategy.ClearAcknowledged();
 
     // Assert
     await Assert.That(strategy.GetPendingCompletions()).IsEmpty();

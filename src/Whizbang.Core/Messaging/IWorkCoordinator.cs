@@ -437,6 +437,13 @@ public record OutboxWork {
   /// Epoch milliseconds from created_at timestamp.
   /// </summary>
   public long SequenceOrder { get; init; }
+
+  /// <summary>
+  /// JSONB metadata from database.
+  /// First row includes acknowledgement counts for completion tracking.
+  /// Contains keys like outbox_completions_processed, outbox_failures_processed, etc.
+  /// </summary>
+  public Dictionary<string, JsonElement>? Metadata { get; init; }
 }
 
 /// <summary>
@@ -493,6 +500,13 @@ public record InboxWork {
   /// Epoch milliseconds from received_at timestamp.
   /// </summary>
   public long SequenceOrder { get; init; }
+
+  /// <summary>
+  /// JSONB metadata from database.
+  /// First row includes acknowledgement counts if no outbox work exists.
+  /// Contains keys like inbox_completions_processed, inbox_failures_processed, etc.
+  /// </summary>
+  public Dictionary<string, JsonElement>? Metadata { get; init; }
 }
 
 /// <summary>
@@ -639,4 +653,11 @@ public record PerspectiveWork {
   /// Examples: NewCheckpoint (first time processing stream), CatchingUp, Orphaned.
   /// </summary>
   public WorkBatchFlags Flags { get; init; }
+
+  /// <summary>
+  /// JSONB metadata from database.
+  /// First row includes acknowledgement counts if no outbox/inbox work exists.
+  /// Contains keys like perspective_completions_processed, perspective_failures_processed, etc.
+  /// </summary>
+  public Dictionary<string, JsonElement>? Metadata { get; init; }
 }

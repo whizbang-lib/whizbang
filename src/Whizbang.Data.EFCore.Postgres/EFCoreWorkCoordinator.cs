@@ -271,6 +271,18 @@ public class EFCoreWorkCoordinator<TDbContext>(
           flags |= WorkBatchFlags.Orphaned;
         }
 
+        // Deserialize metadata if present
+        Dictionary<string, JsonElement>? metadata = null;
+        if (!string.IsNullOrWhiteSpace(r.Metadata)) {
+          try {
+            var metadataDoc = JsonDocument.Parse(r.Metadata);
+            metadata = metadataDoc.RootElement.EnumerateObject()
+              .ToDictionary(p => p.Name, p => p.Value.Clone());
+          } catch (JsonException ex) {
+            _logger?.LogWarning(ex, "Failed to parse metadata JSON for work item {WorkId}", r.WorkId);
+          }
+        }
+
         return new OutboxWork {
           MessageId = r.WorkId,
           Destination = r.Destination!,
@@ -281,7 +293,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
           Attempts = r.Attempts,
           Status = (MessageProcessingStatus)r.Status,
           Flags = flags,
-          SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()  // Use current time for ordering
+          SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),  // Use current time for ordering
+          Metadata = metadata
         };
       })
       .ToList();
@@ -303,6 +316,18 @@ public class EFCoreWorkCoordinator<TDbContext>(
           flags |= WorkBatchFlags.Orphaned;
         }
 
+        // Deserialize metadata if present
+        Dictionary<string, JsonElement>? metadata = null;
+        if (!string.IsNullOrWhiteSpace(r.Metadata)) {
+          try {
+            var metadataDoc = JsonDocument.Parse(r.Metadata);
+            metadata = metadataDoc.RootElement.EnumerateObject()
+              .ToDictionary(p => p.Name, p => p.Value.Clone());
+          } catch (JsonException ex) {
+            _logger?.LogWarning(ex, "Failed to parse metadata JSON for work item {WorkId}", r.WorkId);
+          }
+        }
+
         return new InboxWork {
           MessageId = r.WorkId,
           Envelope = jsonEnvelope,
@@ -311,7 +336,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
           PartitionNumber = r.PartitionNumber,
           Status = (MessageProcessingStatus)r.Status,
           Flags = flags,
-          SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()  // Use current time for ordering
+          SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),  // Use current time for ordering
+          Metadata = metadata
         };
       })
       .ToList();
@@ -328,13 +354,26 @@ public class EFCoreWorkCoordinator<TDbContext>(
           flags |= WorkBatchFlags.Orphaned;
         }
 
+        // Deserialize metadata if present
+        Dictionary<string, JsonElement>? metadata = null;
+        if (!string.IsNullOrWhiteSpace(r.Metadata)) {
+          try {
+            var metadataDoc = JsonDocument.Parse(r.Metadata);
+            metadata = metadataDoc.RootElement.EnumerateObject()
+              .ToDictionary(p => p.Name, p => p.Value.Clone());
+          } catch (JsonException ex) {
+            _logger?.LogWarning(ex, "Failed to parse metadata JSON for work item {WorkId}", r.WorkId);
+          }
+        }
+
         return new PerspectiveWork {
           StreamId = r.StreamId ?? throw new InvalidOperationException($"Perspective work must have StreamId"),
           PerspectiveName = r.PerspectiveName ?? throw new InvalidOperationException($"Perspective work must have PerspectiveName"),
           LastProcessedEventId = null,  // No longer returned by process_work_batch
           Status = (PerspectiveProcessingStatus)r.Status,
           PartitionNumber = r.PartitionNumber,
-          Flags = flags
+          Flags = flags,
+          Metadata = metadata
         };
       })
       .ToList();
