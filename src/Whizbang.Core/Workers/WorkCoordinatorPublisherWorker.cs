@@ -69,10 +69,23 @@ public partial class WorkCoordinatorPublisherWorker(
   private readonly ILogger<WorkCoordinatorPublisherWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<WorkCoordinatorPublisherWorker>.Instance;
   private readonly WorkCoordinatorPublisherOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
 
-  // Bags for collecting publish results (completions, failures, lease renewals)
-  private readonly ConcurrentBag<MessageCompletion> _completions = new();
-  private readonly ConcurrentBag<MessageFailure> _failures = new();
-  private readonly ConcurrentBag<Guid> _leaseRenewals = new();
+  // Completion trackers for acknowledgement-before-clear pattern
+  // Initialize with default retry configuration (5min timeout, 2.0 multiplier, 60min max)
+  private readonly CompletionTracker<MessageCompletion> _completions = new(
+    baseTimeout: TimeSpan.FromMinutes(5),
+    backoffMultiplier: 2.0,
+    maxTimeout: TimeSpan.FromMinutes(60)
+  );
+  private readonly CompletionTracker<MessageFailure> _failures = new(
+    baseTimeout: TimeSpan.FromMinutes(5),
+    backoffMultiplier: 2.0,
+    maxTimeout: TimeSpan.FromMinutes(60)
+  );
+  private readonly CompletionTracker<Guid> _leaseRenewals = new(
+    baseTimeout: TimeSpan.FromMinutes(5),
+    backoffMultiplier: 2.0,
+    maxTimeout: TimeSpan.FromMinutes(60)
+  );
 
   // Metrics tracking
   private int _consecutiveNotReadyChecks;
@@ -293,55 +306,134 @@ public partial class WorkCoordinatorPublisherWorker(
     using var scope = _scopeFactory.CreateScope();
     var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
-    // Collect accumulated results from publisher loop
-    var outboxCompletions = _completions.ToArray();
-    var outboxFailures = _failures.ToArray();
-    var renewOutboxLeaseIds = _leaseRenewals.ToArray();
-    _completions.Clear();
-    _failures.Clear();
-    _leaseRenewals.Clear();
+    // 1. Get pending items (status = Pending, not yet sent)
+    var pendingCompletions = _completions.GetPending();
+    var pendingFailures = _failures.GetPending();
+    var pendingLeaseRenewals = _leaseRenewals.GetPending();
 
-    // Get work batch (heartbeat, claim work, return for processing)
-    // Each call:
-    // - Reports previous results (if any)
-    // - Registers/updates instance + heartbeat
-    // - Cleans up stale instances
-    // - Claims orphaned work via modulo-based partition distribution
-    // - Renews leases for buffered messages awaiting transport readiness
-    // - Returns work for this instance to process
-    var workBatch = await workCoordinator.ProcessWorkBatchAsync(
-      _instanceProvider.InstanceId,
-      _instanceProvider.ServiceName,
-      _instanceProvider.HostName,
-      _instanceProvider.ProcessId,
-      metadata: _options.InstanceMetadata,
-      outboxCompletions: outboxCompletions,
-      outboxFailures: outboxFailures,
-      inboxCompletions: [],
-      inboxFailures: [],
-      receptorCompletions: [],  // TODO: Add receptor processing support
-      receptorFailures: [],
-      perspectiveCompletions: [],  // TODO: Add perspective checkpoint support
-      perspectiveFailures: [],
-      newOutboxMessages: [],  // Not used in publisher worker (dispatcher handles new messages)
-      newInboxMessages: [],   // Not used in publisher worker (consumer handles new messages)
-      renewOutboxLeaseIds: renewOutboxLeaseIds,
-      renewInboxLeaseIds: [],
-      flags: _options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None,
-      partitionCount: _options.PartitionCount,
-      leaseSeconds: _options.LeaseSeconds,
-      staleThresholdSeconds: _options.StaleThresholdSeconds,
-      cancellationToken: cancellationToken
-    );
+    // 2. Extract actual completion data for ProcessWorkBatchAsync
+    var completionsToSend = pendingCompletions.Select(tc => tc.Completion).ToArray();
+    var failuresToSend = pendingFailures.Select(tc => tc.Completion).ToArray();
+    var leaseRenewalsToSend = pendingLeaseRenewals.Select(tc => tc.Completion).ToArray();
+
+    // 3. Mark as Sent BEFORE calling ProcessWorkBatchAsync
+    var sentAt = DateTimeOffset.UtcNow;
+    _completions.MarkAsSent(pendingCompletions, sentAt);
+    _failures.MarkAsSent(pendingFailures, sentAt);
+    _leaseRenewals.MarkAsSent(pendingLeaseRenewals, sentAt);
+
+    // 4. Call ProcessWorkBatchAsync (may throw or return partial acknowledgement)
+    WorkBatch workBatch;
+    try {
+      // Get work batch (heartbeat, claim work, return for processing)
+      // Each call:
+      // - Reports previous results (if any)
+      // - Registers/updates instance + heartbeat
+      // - Cleans up stale instances
+      // - Claims orphaned work via modulo-based partition distribution
+      // - Renews leases for buffered messages awaiting transport readiness
+      // - Returns work for this instance to process
+      workBatch = await workCoordinator.ProcessWorkBatchAsync(
+        _instanceProvider.InstanceId,
+        _instanceProvider.ServiceName,
+        _instanceProvider.HostName,
+        _instanceProvider.ProcessId,
+        metadata: _options.InstanceMetadata,
+        outboxCompletions: completionsToSend,
+        outboxFailures: failuresToSend,
+        inboxCompletions: [],
+        inboxFailures: [],
+        receptorCompletions: [],  // TODO: Add receptor processing support
+        receptorFailures: [],
+        perspectiveCompletions: [],  // TODO: Add perspective checkpoint support
+        perspectiveFailures: [],
+        newOutboxMessages: [],  // Not used in publisher worker (dispatcher handles new messages)
+        newInboxMessages: [],   // Not used in publisher worker (consumer handles new messages)
+        renewOutboxLeaseIds: leaseRenewalsToSend,
+        renewInboxLeaseIds: [],
+        flags: _options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None,
+        partitionCount: _options.PartitionCount,
+        leaseSeconds: _options.LeaseSeconds,
+        staleThresholdSeconds: _options.StaleThresholdSeconds,
+        cancellationToken: cancellationToken
+      );
+    } catch (Exception ex) {
+      // Database failure: Completions remain in 'Sent' status
+      // ResetStale() will move them back to 'Pending' after timeout
+      LogErrorProcessingWorkBatch(_logger, ex);
+      return; // Exit early, retry on next cycle
+    }
+
+    // 5. Extract acknowledgement counts from workBatch metadata (from first row)
+    var completionsProcessed = 0;
+    var failuresProcessed = 0;
+    var leaseRenewalsProcessed = 0;
+
+    // Check outbox work first (priority for publisher worker)
+    var outboxFirstRow = workBatch.OutboxWork.FirstOrDefault();
+    if (outboxFirstRow?.Metadata != null) {
+      if (outboxFirstRow.Metadata.TryGetValue("outbox_completions_processed", out var compCount)) {
+        completionsProcessed = compCount.GetInt32();
+      }
+      if (outboxFirstRow.Metadata.TryGetValue("outbox_failures_processed", out var failCount)) {
+        failuresProcessed = failCount.GetInt32();
+      }
+      if (outboxFirstRow.Metadata.TryGetValue("outbox_lease_renewals_processed", out var renewCount)) {
+        leaseRenewalsProcessed = renewCount.GetInt32();
+      }
+    } else {
+      // Check inbox work if no outbox work
+      var inboxFirstRow = workBatch.InboxWork.FirstOrDefault();
+      if (inboxFirstRow?.Metadata != null) {
+        if (inboxFirstRow.Metadata.TryGetValue("outbox_completions_processed", out var compCount)) {
+          completionsProcessed = compCount.GetInt32();
+        }
+        if (inboxFirstRow.Metadata.TryGetValue("outbox_failures_processed", out var failCount)) {
+          failuresProcessed = failCount.GetInt32();
+        }
+        if (inboxFirstRow.Metadata.TryGetValue("outbox_lease_renewals_processed", out var renewCount)) {
+          leaseRenewalsProcessed = renewCount.GetInt32();
+        }
+      } else {
+        // Check perspective work if no outbox/inbox work
+        var perspectiveFirstRow = workBatch.PerspectiveWork.FirstOrDefault();
+        if (perspectiveFirstRow?.Metadata != null) {
+          if (perspectiveFirstRow.Metadata.TryGetValue("outbox_completions_processed", out var compCount)) {
+            completionsProcessed = compCount.GetInt32();
+          }
+          if (perspectiveFirstRow.Metadata.TryGetValue("outbox_failures_processed", out var failCount)) {
+            failuresProcessed = failCount.GetInt32();
+          }
+          if (perspectiveFirstRow.Metadata.TryGetValue("outbox_lease_renewals_processed", out var renewCount)) {
+            leaseRenewalsProcessed = renewCount.GetInt32();
+          }
+        }
+      }
+    }
+
+    // 6. Mark as Acknowledged based on counts from SQL
+    _completions.MarkAsAcknowledged(completionsProcessed);
+    _failures.MarkAsAcknowledged(failuresProcessed);
+    _leaseRenewals.MarkAsAcknowledged(leaseRenewalsProcessed);
+
+    // 7. Clear only Acknowledged items
+    _completions.ClearAcknowledged();
+    _failures.ClearAcknowledged();
+    _leaseRenewals.ClearAcknowledged();
+
+    // 8. Reset stale items (sent but not acknowledged for > timeout) back to Pending
+    _completions.ResetStale(DateTimeOffset.UtcNow);
+    _failures.ResetStale(DateTimeOffset.UtcNow);
+    _leaseRenewals.ResetStale(DateTimeOffset.UtcNow);
 
     // Log a summary of message processing activity
-    int totalActivity = outboxCompletions.Length + outboxFailures.Length + renewOutboxLeaseIds.Length + workBatch.OutboxWork.Count + workBatch.InboxWork.Count;
+    int totalActivity = completionsToSend.Length + failuresToSend.Length + leaseRenewalsToSend.Length + workBatch.OutboxWork.Count + workBatch.InboxWork.Count;
     if (totalActivity > 0) {
       LogMessageBatchSummary(
         _logger,
-        outboxCompletions.Length,
-        outboxFailures.Length,
-        renewOutboxLeaseIds.Length,
+        completionsToSend.Length,
+        failuresToSend.Length,
+        leaseRenewalsToSend.Length,
         workBatch.OutboxWork.Count,
         workBatch.InboxWork.Count,
         workBatch.InboxWork.Count  // All inbox currently marked as failed (not yet implemented)
