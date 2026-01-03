@@ -359,6 +359,10 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     var totalEntityCount = uniquePerspectives.Length + 4; // perspectives + inbox + outbox + eventstore + serviceinstance
     template = template.Replace("__TOTAL_ENTITY_COUNT__", totalEntityCount.ToString(CultureInfo.InvariantCulture));
 
+    // CRITICAL: Replace __SCHEMA__ placeholder for infrastructure configuration call
+    // Without this, ConfigureWhizbangInfrastructure receives literal "__SCHEMA__" string
+    template = template.Replace("__SCHEMA__", schema ?? "public");
+
     context.AddSource("WhizbangModelBuilderExtensions.g.cs", template);
   }
 }

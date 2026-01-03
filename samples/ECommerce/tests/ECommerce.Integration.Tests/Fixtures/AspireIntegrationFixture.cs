@@ -558,6 +558,13 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       if (connection.State != System.Data.ConnectionState.Open) {
         await connection.OpenAsync();
       }
+
+      // CRITICAL: Set search_path to match DbContext schema (inventory) so unqualified table names resolve correctly
+      // Without this, queries fail with "relation wh_outbox does not exist" because tables are in inventory schema
+      await using var searchPathCmd = connection.CreateCommand();
+      searchPathCmd.CommandText = "SET search_path TO inventory";
+      await searchPathCmd.ExecuteNonQueryAsync();
+
       await using var cmd = connection.CreateCommand();
 
       // Check outbox: any messages not marked as Published (status & 4 = 0)
@@ -618,6 +625,12 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     if (finalConnection.State != System.Data.ConnectionState.Open) {
       await finalConnection.OpenAsync();
     }
+
+    // Set search_path for final diagnostic queries
+    await using var finalSearchPathCmd = finalConnection.CreateCommand();
+    finalSearchPathCmd.CommandText = "SET search_path TO inventory";
+    await finalSearchPathCmd.ExecuteNonQueryAsync();
+
     await using var finalCmd = finalConnection.CreateCommand();
 
     finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM wh_outbox WHERE (status & 4) = 0";
@@ -693,6 +706,12 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     var connection = dbContext.Database.GetDbConnection();
     if (connection.State != System.Data.ConnectionState.Open) {
       await connection.OpenAsync(cancellationToken);
+    }
+
+    // Set search_path for diagnostic queries
+    await using (var searchPathCmd = connection.CreateCommand()) {
+      searchPathCmd.CommandText = "SET search_path TO inventory";
+      await searchPathCmd.ExecuteNonQueryAsync(cancellationToken);
     }
 
     // Query actual event types in event store
