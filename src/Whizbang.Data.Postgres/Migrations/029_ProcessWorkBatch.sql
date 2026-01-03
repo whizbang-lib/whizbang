@@ -1,6 +1,8 @@
 -- Migration: 029_ProcessWorkBatch.sql
 -- Date: 2025-12-28
--- Description: Orchestrator function that coordinates all work batch processing.
+-- Description: Creates process_work_batch orchestrator function.
+--              This is the single authoritative creation of process_work_batch.
+--              (Migration 007 removed per pre-v1.0 consolidation rule)
 --              Calls all decomposed functions in dependency order and returns aggregated results.
 --              Uses log_event() function for tracking idempotent event conflicts.
 -- Dependencies: 009-028 (foundation, completion, failure, storage, cleanup, claiming functions, and error tracking)
