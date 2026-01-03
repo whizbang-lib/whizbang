@@ -31,7 +31,13 @@ public partial class PerspectiveWorker(
   private readonly IDatabaseReadinessCheck _databaseReadinessCheck = databaseReadinessCheck ?? new DefaultDatabaseReadinessCheck();
   private readonly ILogger<PerspectiveWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PerspectiveWorker>.Instance;
   private readonly PerspectiveWorkerOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
-  private readonly IPerspectiveCompletionStrategy _completionStrategy = completionStrategy ?? new BatchedCompletionStrategy();
+  private readonly IPerspectiveCompletionStrategy _completionStrategy = completionStrategy ?? new BatchedCompletionStrategy(
+    retryTimeout: TimeSpan.FromMinutes((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.RetryTimeoutMinutes),
+    backoffMultiplier: (options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.EnableExponentialBackoff
+      ? (options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.BackoffMultiplier
+      : 1.0,
+    maxTimeout: TimeSpan.FromMinutes((options ?? throw new ArgumentNullException(nameof(options))).Value.RetryOptions.MaxBackoffMinutes)
+  );
 
   // Metrics tracking
   private int _consecutiveDatabaseNotReadyChecks;
@@ -494,4 +500,10 @@ public class PerspectiveWorkerOptions {
   /// Default: 100
   /// </summary>
   public int PerspectiveBatchSize { get; set; } = 100;
+
+  /// <summary>
+  /// Retry configuration for completion acknowledgement.
+  /// Controls exponential backoff when ProcessWorkBatchAsync fails.
+  /// </summary>
+  public WorkerRetryOptions RetryOptions { get; set; } = new();
 }
