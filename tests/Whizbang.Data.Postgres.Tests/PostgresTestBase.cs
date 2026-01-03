@@ -123,7 +123,6 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       "004_CreateAcquirePerspectiveCheckpointFunction.sql",
       "005_CreateCompletePerspectiveCheckpointFunction.sql",
       "006_CreateNormalizeEventTypeFunction.sql",
-      "007_CreateProcessWorkBatchFunction.sql",
       "008_CreateMessageAssociationRegistry.sql",
       "008_1_CreateActiveStreamsTable.sql",
       "009_CreatePerspectiveEventsTable.sql",

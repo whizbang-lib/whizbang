@@ -4,7 +4,7 @@
 --              across event store insertions and perspective checkpoint matching.
 --              Extracts "TypeName, AssemblyName" format from various .NET type name formats.
 -- Dependencies: None
--- Used By: 007_CreateProcessWorkBatchFunction.sql
+-- Used By: 029_ProcessWorkBatch.sql
 
 -- ======================================================================================
 -- normalize_event_type Function - Defensive Type Name Normalization
