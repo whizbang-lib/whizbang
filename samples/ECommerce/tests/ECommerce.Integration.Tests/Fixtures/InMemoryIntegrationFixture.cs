@@ -699,9 +699,44 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
 
       Console.WriteLine("[InMemoryFixture] Event processing idle - all workers have no pending work (2 publishers + 2 perspective workers)");
 
-      // Give database operations time to complete and commit
-      // The workers report idle before transactions fully commit
-      await Task.Delay(500, CancellationToken.None);
+      // CRITICAL: Wait for perspective rows to exist in database
+      // Workers report idle before transactions are visible to other connections
+      // Poll database until perspective rows exist (with timeout)
+      var dbWaitStopwatch = System.Diagnostics.Stopwatch.StartNew();
+      var maxDbWait = TimeSpan.FromSeconds(10);
+      var perspectiveRowsExist = false;
+
+      while (dbWaitStopwatch.Elapsed < maxDbWait && !perspectiveRowsExist) {
+        using var scope = _inventoryHost!.Services.CreateScope();
+        var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+        var connection = dbContext.Database.GetDbConnection();
+
+        if (connection.State != System.Data.ConnectionState.Open) {
+          await connection.OpenAsync();
+        }
+
+        await using var cmd = connection.CreateCommand();
+        cmd.CommandText = @"
+          SELECT CAST(COUNT(*) AS INTEGER) FROM (
+            SELECT id FROM inventory.wh_per_product_dto
+            UNION ALL
+            SELECT id FROM inventory.wh_per_inventory_level_dto
+          ) AS all_perspective_rows";
+
+        var rowCount = (int)(await cmd.ExecuteScalarAsync() ?? 0);
+
+        if (rowCount > 0) {
+          Console.WriteLine($"[InMemoryFixture] Perspective rows verified: {rowCount} rows exist (waited {dbWaitStopwatch.ElapsedMilliseconds}ms)");
+          perspectiveRowsExist = true;
+          break;
+        }
+
+        await Task.Delay(100);
+      }
+
+      if (!perspectiveRowsExist) {
+        Console.WriteLine($"[InMemoryFixture] WARNING: No perspective rows found after {maxDbWait.TotalSeconds}s wait");
+      }
     } catch (OperationCanceledException) {
       Console.WriteLine($"[InMemoryFixture] WARNING: Event processing did not reach idle state within {timeoutMilliseconds}ms timeout");
       Console.WriteLine($"[InMemoryFixture] InventoryWorker Publisher idle: {inventoryPublisher?.IsIdle ?? true}, PerspectiveWorker idle: {inventoryPerspectiveWorker?.IsIdle ?? true}");

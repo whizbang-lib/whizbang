@@ -342,10 +342,17 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Register Azure Service Bus transport (will resolve shared client from DI)
     builder.Services.AddAzureServiceBusTransport(serviceBusConnectionString);
 
-    // EF Core with PostgreSQL - simple UseNpgsql (matches real InventoryWorker Program.cs)
-    // Whizbang's EF Core integration handles JSON serialization for JSONB columns
+    // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
+    // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
+    // This registers JSON converters for JSONB serialization (including EnvelopeMetadata, MessageScope)
+    var inventoryDataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(postgresConnectionString);
+    inventoryDataSourceBuilder.ConfigureJsonOptions(jsonOptions);
+    inventoryDataSourceBuilder.EnableDynamicJson();
+    var inventoryDataSource = inventoryDataSourceBuilder.Build();
+    builder.Services.AddSingleton(inventoryDataSource);
+
     builder.Services.AddDbContext<ECommerce.InventoryWorker.InventoryDbContext>(options => {
-      options.UseNpgsql(postgresConnectionString);
+      options.UseNpgsql(inventoryDataSource);
     });
 
     // Register Whizbang with EFCore infrastructure
@@ -476,10 +483,17 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     // Register OrderedStreamProcessor for message ordering
     builder.Services.AddSingleton<OrderedStreamProcessor>();
 
-    // EF Core with PostgreSQL - simple UseNpgsql (matches real applications)
-    // Whizbang's EF Core integration handles JSON serialization for JSONB columns
+    // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
+    // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
+    // This registers JSON converters for JSONB serialization (including EnvelopeMetadata, MessageScope)
+    var bffDataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(postgresConnectionString);
+    bffDataSourceBuilder.ConfigureJsonOptions(jsonOptions);
+    bffDataSourceBuilder.EnableDynamicJson();
+    var bffDataSource = bffDataSourceBuilder.Build();
+    builder.Services.AddSingleton(bffDataSource);
+
     builder.Services.AddDbContext<ECommerce.BFF.API.BffDbContext>(options =>
-      options.UseNpgsql(postgresConnectionString));
+      options.UseNpgsql(bffDataSource));
 
     // Register Whizbang with EFCore infrastructure
 
@@ -607,9 +621,19 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       cmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_perspective_checkpoints WHERE (status & 2) = 0 AND (status & 4) = 0";
       var pendingPerspectives = (int)(await cmd.ExecuteScalarAsync() ?? 0);
 
+      // CRITICAL: Also check that perspective ROWS exist in materialized tables
+      // This ensures we don't return before perspective transactions are visible
+      cmd.CommandText = @"
+        SELECT CAST(COUNT(*) AS INTEGER) FROM (
+          SELECT id FROM inventory.wh_per_product_dto
+          UNION ALL
+          SELECT id FROM inventory.wh_per_inventory_level_dto
+        ) AS all_perspective_rows";
+      var perspectiveRowCount = (int)(await cmd.ExecuteScalarAsync() ?? 0);
+
       // DIAGNOSTIC: Log initial state and checkpoint details
       if (attempt == 1) {
-        Console.WriteLine($"[WaitForEvents] Initial state: Outbox={pendingOutbox}, Inbox={pendingInbox}, Perspectives={pendingPerspectives}");
+        Console.WriteLine($"[WaitForEvents] Initial state: Outbox={pendingOutbox}, Inbox={pendingInbox}, Perspectives={pendingPerspectives}, PerspectiveRows={perspectiveRowCount}");
 
         cmd.CommandText = @"
           SELECT
@@ -627,14 +651,16 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
         }
       }
 
-      if (pendingOutbox == 0 && pendingInbox == 0 && pendingPerspectives == 0) {
-        Console.WriteLine($"[AspireFixture] Event processing complete - no pending work (checked database after {stopwatch.ElapsedMilliseconds}ms, {attempt} attempts)");
+      // CRITICAL: Wait for all work to complete AND for perspective rows to exist
+      // This prevents returning before perspective transactions are visible to lens queries
+      if (pendingOutbox == 0 && pendingInbox == 0 && pendingPerspectives == 0 && perspectiveRowCount > 0) {
+        Console.WriteLine($"[AspireFixture] Event processing complete - no pending work, {perspectiveRowCount} perspective rows exist (checked database after {stopwatch.ElapsedMilliseconds}ms, {attempt} attempts)");
         return;
       }
 
       // Log progress every 3 attempts (~1-2 seconds) for faster feedback
       if (attempt % 3 == 0) {
-        Console.WriteLine($"[WaitForEvents] Still waiting: Outbox={pendingOutbox}, Inbox={pendingInbox}, Perspectives={pendingPerspectives} (attempt {attempt}, elapsed: {stopwatch.ElapsedMilliseconds}ms)");
+        Console.WriteLine($"[WaitForEvents] Still waiting: Outbox={pendingOutbox}, Inbox={pendingInbox}, Perspectives={pendingPerspectives}, PerspectiveRows={perspectiveRowCount} (attempt {attempt}, elapsed: {stopwatch.ElapsedMilliseconds}ms)");
       }
 
       // Progressive backoff: start at 100ms, increase to 2000ms
