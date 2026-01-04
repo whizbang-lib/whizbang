@@ -79,6 +79,23 @@ public static class __DBCONTEXT_CLASS__SchemaExtensions {
     );
     var coreInfrastructureSchema = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(schemaConfig);
 
+    // DIAGNOSTIC: Log whether message_associations table is in the generated SQL
+    if (coreInfrastructureSchema.Contains("wh_message_associations")) {
+      logger?.LogInformation("DIAGNOSTIC: wh_message_associations table SQL is present in schema");
+
+      // CRITICAL: Check if it's schema-qualified correctly
+      var expectedTable = string.IsNullOrEmpty("__SCHEMA__") || "__SCHEMA__" == "public"
+        ? "wh_message_associations"
+        : "__SCHEMA__.wh_message_associations";
+      if (coreInfrastructureSchema.Contains(expectedTable)) {
+        logger?.LogInformation("DIAGNOSTIC: Table is correctly schema-qualified as '{Table}'", expectedTable);
+      } else {
+        logger?.LogError("DIAGNOSTIC: Table is NOT schema-qualified! Expected '{Expected}' but SQL contains unqualified 'wh_message_associations'", expectedTable);
+      }
+    } else {
+      logger?.LogWarning("DIAGNOSTIC: wh_message_associations table SQL is MISSING from schema!");
+    }
+
     try {
       await dbContext.Database.ExecuteSqlRawAsync(coreInfrastructureSchema, cancellationToken);
       logger?.LogInformation("Core infrastructure tables created successfully");
@@ -204,6 +221,20 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
         // Replace all unqualified table names (e.g., "wh_inbox", "wh_outbox") with schema-qualified names (e.g., "inventory.wh_inbox")
         var transformedSql = _transformMigrationSql(sql, "__SCHEMA__");
 
+        // DIAGNOSTIC: Log sample of transformed SQL to verify schema qualification
+        if (name.Contains("ProcessWorkBatch") || name.Contains("process_work_batch")) {
+          var sampleLines = string.Join("\n", transformedSql.Split('\n').Take(50));
+          logger?.LogInformation("DIAGNOSTIC: Sample of transformed SQL for {Migration}:\n{Sample}", name, sampleLines);
+
+          // Check if transformation worked
+          if (!string.IsNullOrEmpty("__SCHEMA__") && "__SCHEMA__" != "public") {
+            var hasQualified = transformedSql.Contains("__SCHEMA__.wh_outbox") || transformedSql.Contains("__SCHEMA__.wh_inbox");
+            var hasUnqualified = System.Text.RegularExpressions.Regex.IsMatch(transformedSql, @"(?<!\.)(\bwh_outbox\b|\bwh_inbox\b)");
+            logger?.LogInformation("DIAGNOSTIC: Transformation check - HasQualified={HasQualified}, HasUnqualified={HasUnqualified}",
+              hasQualified, hasUnqualified);
+          }
+        }
+
         await dbContext.Database.ExecuteSqlRawAsync(transformedSql, cancellationToken);
         logger?.LogInformation("Migration {Migration} completed successfully", name);
       } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42723") {
@@ -273,6 +304,55 @@ CREATE INDEX IF NOT EXISTS idx_perspective_checkpoints_failed
         transformedSql,
         $@"(?<!\.)(\b{System.Text.RegularExpressions.Regex.Escape(tableName)}\b)",
         $"{schema}.$1",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase
+      );
+    }
+
+    // List of Whizbang PostgreSQL function names to qualify
+    // CRITICAL: Functions are database-wide in PostgreSQL. When multiple schemas share the same database,
+    // they must have schema-qualified function names to avoid overwriting each other's functions.
+    var functionNames = new[] {
+      "register_message_associations",
+      "process_work_batch",
+      "process_inbox_batch",
+      "process_outbox_batch",
+      "process_perspectives_batch"
+    };
+
+    // Replace function names in CREATE/DROP/CALL statements
+    // This ensures each schema has its own function instance (e.g., inventory.register_message_associations)
+    foreach (var functionName in functionNames) {
+      // Pattern 1: "CREATE [OR REPLACE] FUNCTION functionName(" → "CREATE [OR REPLACE] FUNCTION schema.functionName("
+      transformedSql = System.Text.RegularExpressions.Regex.Replace(
+        transformedSql,
+        $@"(CREATE\s+(?:OR\s+REPLACE\s+)?FUNCTION\s+)(?<!\.)\b{System.Text.RegularExpressions.Regex.Escape(functionName)}\b(\s*\()",
+        $"$1{schema}.{functionName}$2",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase
+      );
+
+      // Pattern 2: "DROP FUNCTION [IF EXISTS] functionName" → "DROP FUNCTION [IF EXISTS] schema.functionName"
+      transformedSql = System.Text.RegularExpressions.Regex.Replace(
+        transformedSql,
+        $@"(DROP\s+FUNCTION\s+(?:IF\s+EXISTS\s+)?)(?<!\.)\b{System.Text.RegularExpressions.Regex.Escape(functionName)}\b",
+        $"$1{schema}.{functionName}",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase
+      );
+
+      // Pattern 3: "GRANT ... ON FUNCTION functionName" → "GRANT ... ON FUNCTION schema.functionName"
+      // This handles GRANT/REVOKE statements for function permissions
+      transformedSql = System.Text.RegularExpressions.Regex.Replace(
+        transformedSql,
+        $@"((?:GRANT|REVOKE)\s+.*\s+ON\s+FUNCTION\s+)(?<!\.)\b{System.Text.RegularExpressions.Regex.Escape(functionName)}\b",
+        $"$1{schema}.{functionName}",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase
+      );
+
+      // Pattern 4: "COMMENT ON FUNCTION functionName" → "COMMENT ON FUNCTION schema.functionName"
+      // This handles COMMENT statements for function documentation
+      transformedSql = System.Text.RegularExpressions.Regex.Replace(
+        transformedSql,
+        $@"(COMMENT\s+ON\s+FUNCTION\s+)(?<!\.)\b{System.Text.RegularExpressions.Regex.Escape(functionName)}\b",
+        $"$1{schema}.{functionName}",
         System.Text.RegularExpressions.RegexOptions.IgnoreCase
       );
     }

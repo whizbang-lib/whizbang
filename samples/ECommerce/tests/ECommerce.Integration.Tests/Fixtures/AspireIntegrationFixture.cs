@@ -559,25 +559,19 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
         await connection.OpenAsync();
       }
 
-      // CRITICAL: Set search_path to match DbContext schema (inventory) so unqualified table names resolve correctly
-      // Without this, queries fail with "relation wh_outbox does not exist" because tables are in inventory schema
-      await using var searchPathCmd = connection.CreateCommand();
-      searchPathCmd.CommandText = "SET search_path TO inventory";
-      await searchPathCmd.ExecuteNonQueryAsync();
-
       await using var cmd = connection.CreateCommand();
 
       // Check outbox: any messages not marked as Published (status & 4 = 0)
       // Outbox uses MessageProcessingStatus.Published (bit 2, value 4) to indicate completion
-      cmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM wh_outbox WHERE (status & 4) = 0";
+      cmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_outbox WHERE (status & 4) = 0";
       var pendingOutbox = (int)(await cmd.ExecuteScalarAsync() ?? 0);
 
       // Check inbox: any messages not marked as Completed (status & 2 = 0)
-      cmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM wh_inbox WHERE (status & 2) = 0";
+      cmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_inbox WHERE (status & 2) = 0";
       var pendingInbox = (int)(await cmd.ExecuteScalarAsync() ?? 0);
 
       // Check perspective checkpoints: any not marked as Completed (status & 2 = 0) AND not Failed (status & 4 = 0)
-      cmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM wh_perspective_checkpoints WHERE (status & 2) = 0 AND (status & 4) = 0";
+      cmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_perspective_checkpoints WHERE (status & 2) = 0 AND (status & 4) = 0";
       var pendingPerspectives = (int)(await cmd.ExecuteScalarAsync() ?? 0);
 
       // DIAGNOSTIC: Log initial state and checkpoint details
@@ -591,7 +585,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
             status,
             COALESCE(last_event_id::text, 'NULL') as last_event_id,
             COALESCE(error, 'NULL') as error
-          FROM wh_perspective_checkpoints
+          FROM inventory.wh_perspective_checkpoints
           LIMIT 10";
         await using var reader = await cmd.ExecuteReaderAsync();
         Console.WriteLine("[DIAGNOSTIC] Perspective checkpoints in database:");
@@ -626,20 +620,15 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       await finalConnection.OpenAsync();
     }
 
-    // Set search_path for final diagnostic queries
-    await using var finalSearchPathCmd = finalConnection.CreateCommand();
-    finalSearchPathCmd.CommandText = "SET search_path TO inventory";
-    await finalSearchPathCmd.ExecuteNonQueryAsync();
-
     await using var finalCmd = finalConnection.CreateCommand();
 
-    finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM wh_outbox WHERE (status & 4) = 0";
+    finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_outbox WHERE (status & 4) = 0";
     var finalOutbox = (int)(await finalCmd.ExecuteScalarAsync() ?? 0);
 
-    finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM wh_inbox WHERE (status & 2) = 0";
+    finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_inbox WHERE (status & 2) = 0";
     var finalInbox = (int)(await finalCmd.ExecuteScalarAsync() ?? 0);
 
-    finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM wh_perspective_checkpoints WHERE (status & 2) = 0 AND (status & 4) = 0";
+    finalCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM inventory.wh_perspective_checkpoints WHERE (status & 2) = 0 AND (status & 4) = 0";
     var finalPerspectives = (int)(await finalCmd.ExecuteScalarAsync() ?? 0);
 
     Console.WriteLine($"[AspireFixture] Final state - Batch {_batchIndex}, Topics {_topicA}/{_topicB}: Outbox={finalOutbox}, Inbox={finalInbox}, Perspectives={finalPerspectives}");
@@ -669,13 +658,13 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
           DO $$
           BEGIN
             -- Truncate core infrastructure tables
-            TRUNCATE TABLE wh_event_store, wh_outbox, wh_inbox, wh_perspective_checkpoints, wh_receptor_processing CASCADE;
+            TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_checkpoints, inventory.wh_receptor_processing CASCADE;
 
             -- Truncate all perspective tables (pattern: wh_per_*)
             -- This clears materialized views from both InventoryWorker and BFF
-            TRUNCATE TABLE wh_per_inventory_level_dto CASCADE;
-            TRUNCATE TABLE wh_per_order_read_model CASCADE;
-            TRUNCATE TABLE wh_per_product_dto CASCADE;
+            TRUNCATE TABLE inventory.wh_per_inventory_level_dto CASCADE;
+            TRUNCATE TABLE inventory.wh_per_order_read_model CASCADE;
+            TRUNCATE TABLE inventory.wh_per_product_dto CASCADE;
           EXCEPTION
             WHEN undefined_table THEN
               -- Tables don't exist, nothing to clean up
@@ -708,15 +697,9 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       await connection.OpenAsync(cancellationToken);
     }
 
-    // Set search_path for diagnostic queries
-    await using (var searchPathCmd = connection.CreateCommand()) {
-      searchPathCmd.CommandText = "SET search_path TO inventory";
-      await searchPathCmd.ExecuteNonQueryAsync(cancellationToken);
-    }
-
     // Query actual event types in event store
     await using (var cmd = connection.CreateCommand()) {
-      cmd.CommandText = "SELECT DISTINCT event_type FROM wh_event_store ORDER BY event_type LIMIT 20";
+      cmd.CommandText = "SELECT DISTINCT event_type FROM inventory.wh_event_store ORDER BY event_type LIMIT 20";
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
       var count = 0;
       while (await reader.ReadAsync(cancellationToken)) {
@@ -731,7 +714,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
 
     // Query message associations
     await using (var cmd = connection.CreateCommand()) {
-      cmd.CommandText = "SELECT DISTINCT message_type FROM wh_message_associations WHERE association_type = 'perspective' ORDER BY message_type LIMIT 20";
+      cmd.CommandText = "SELECT DISTINCT message_type FROM inventory.wh_message_associations WHERE association_type = 'perspective' ORDER BY message_type LIMIT 20";
       await using var reader = await cmd.ExecuteReaderAsync(cancellationToken);
       var count = 0;
       while (await reader.ReadAsync(cancellationToken)) {
@@ -746,7 +729,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
 
     // Query perspective checkpoints created
     await using (var cmd = connection.CreateCommand()) {
-      cmd.CommandText = "SELECT COUNT(*)::int FROM wh_perspective_checkpoints";
+      cmd.CommandText = "SELECT COUNT(*)::int FROM inventory.wh_perspective_checkpoints";
       var checkpointCount = (int)(await cmd.ExecuteScalarAsync(cancellationToken) ?? 0);
       output.AppendLine($"[DIAGNOSTIC] Found {checkpointCount} perspective checkpoints in wh_perspective_checkpoints");
       Console.WriteLine($"[DIAGNOSTIC] Found {checkpointCount} perspective checkpoints in wh_perspective_checkpoints");

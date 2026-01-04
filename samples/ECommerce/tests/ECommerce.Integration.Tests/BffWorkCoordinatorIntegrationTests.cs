@@ -230,7 +230,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
       var dbContext = scope.ServiceProvider.GetRequiredService<BffDbContext>();
 
       var outboxRecord = await dbContext.Database
-        .SqlQueryRaw<OutboxMessageRecord>("SELECT * FROM wh_outbox WHERE message_id = {0}", messageId.Value)
+        .SqlQueryRaw<OutboxMessageRecord>("SELECT * FROM bff.wh_outbox WHERE message_id = {0}", messageId.Value)
         .FirstOrDefaultAsync();
 
       await Assert.That(outboxRecord).IsNotNull();

@@ -21,8 +21,9 @@ public class EFCoreSnippets {
   public void PerspectiveEntityConfiguration(ModelBuilder modelBuilder) {
     #region PERSPECTIVE_ENTITY_CONFIG_SNIPPET
     // PerspectiveRow<__MODEL_TYPE__>
+    // Schema is set via HasDefaultSchema() - do NOT pass schema parameter to ToTable()
     modelBuilder.Entity<PerspectiveRow<__MODEL_TYPE__>>(entity => {
-      entity.ToTable("__TABLE_NAME__", "__SCHEMA__");
+      entity.ToTable("__TABLE_NAME__");
       entity.HasKey(e => e.Id);
 
       // Primary key

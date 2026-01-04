@@ -150,9 +150,17 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     var now = DateTimeOffset.UtcNow;
 
+    // CRITICAL: Get schema from DbContext model to schema-qualify the function call
+    // Functions are database-wide in PostgreSQL - multiple schemas sharing a database
+    // must use schema-qualified function names to avoid calling the wrong function
+    var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? "public";
+    var functionName = string.IsNullOrEmpty(schema) || schema == "public"
+      ? "process_work_batch"
+      : $"{schema}.process_work_batch";
+
     // Execute the process_work_batch function (new signature after decomposition)
-    var sql = @"
-      SELECT * FROM process_work_batch(
+    var sql = $@"
+      SELECT * FROM {functionName}(
         @p_instance_id,
         @p_service_name,
         @p_host_name,

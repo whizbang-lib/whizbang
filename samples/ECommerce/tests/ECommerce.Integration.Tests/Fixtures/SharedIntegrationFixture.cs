@@ -719,13 +719,13 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
         DO $$
         BEGIN
           -- Truncate core infrastructure tables
-          TRUNCATE TABLE wh_event_store, wh_outbox, wh_inbox, wh_perspective_checkpoints, wh_receptor_processing CASCADE;
+          TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_checkpoints, inventory.wh_receptor_processing CASCADE;
 
           -- Truncate all perspective tables (pattern: wh_per_*)
           -- This clears materialized views from both InventoryWorker and BFF
-          TRUNCATE TABLE wh_per_inventory_level_dto CASCADE;
-          TRUNCATE TABLE wh_per_order_read_model CASCADE;
-          TRUNCATE TABLE wh_per_product_dto CASCADE;
+          TRUNCATE TABLE inventory.wh_per_inventory_level_dto CASCADE;
+          TRUNCATE TABLE inventory.wh_per_order_read_model CASCADE;
+          TRUNCATE TABLE inventory.wh_per_product_dto CASCADE;
         EXCEPTION
           WHEN undefined_table THEN
             -- Tables don't exist, nothing to clean up

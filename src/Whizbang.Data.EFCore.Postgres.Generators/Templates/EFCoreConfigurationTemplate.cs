@@ -26,9 +26,16 @@ public static class WhizbangModelBuilderExtensions {
   /// <returns>The ModelBuilder for method chaining</returns>
   public static ModelBuilder ConfigureWhizbang(this ModelBuilder modelBuilder) {
 
+    // CRITICAL: Set default schema to instruct EF Core to generate schema-qualified SQL queries
+    // Without this, EF Core generates unqualified queries like "SELECT * FROM wh_outbox" which fail
+    // With this, EF Core generates "SELECT * FROM __SCHEMA__.wh_outbox" which works correctly
+    if (!string.IsNullOrEmpty("__SCHEMA__") && "__SCHEMA__" != "public") {
+      modelBuilder.HasDefaultSchema("__SCHEMA__");
+    }
+
     // Configure infrastructure entities (static configuration from library)
-    // Schema qualification ensures all infrastructure tables are created in the correct schema
-    modelBuilder.ConfigureWhizbangInfrastructure("__SCHEMA__");
+    // Pass null for schema since HasDefaultSchema() handles schema qualification
+    modelBuilder.ConfigureWhizbangInfrastructure(null);
 
     #region PERSPECTIVE_CONFIGURATIONS
     // ===== Discovered Perspective Entities =====

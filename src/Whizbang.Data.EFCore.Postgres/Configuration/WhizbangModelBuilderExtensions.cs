@@ -35,7 +35,8 @@ public static class WhizbangModelBuilderExtensions {
 
   private static void _configureInbox(ModelBuilder modelBuilder, string? schema) {
     modelBuilder.Entity<InboxRecord>(entity => {
-      entity.ToTable("wh_inbox", schema);
+      // Schema is set via HasDefaultSchema() in generated code - do NOT pass schema here
+      entity.ToTable("wh_inbox");
       entity.HasKey(e => e.MessageId);
 
       entity.Property(e => e.MessageId).HasColumnName("message_id").IsRequired();
@@ -63,7 +64,8 @@ public static class WhizbangModelBuilderExtensions {
 
   private static void _configureOutbox(ModelBuilder modelBuilder, string? schema) {
     modelBuilder.Entity<OutboxRecord>(entity => {
-      entity.ToTable("wh_outbox", schema);
+      // Schema is set via HasDefaultSchema() in generated code - do NOT pass schema here
+      entity.ToTable("wh_outbox");
       entity.HasKey(e => e.MessageId);
 
       entity.Property(e => e.MessageId).HasColumnName("message_id").IsRequired();
@@ -93,7 +95,8 @@ public static class WhizbangModelBuilderExtensions {
 
   private static void _configureEventStore(ModelBuilder modelBuilder, string? schema) {
     modelBuilder.Entity<EventStoreRecord>(entity => {
-      entity.ToTable("wh_event_store", schema);
+      // Schema is set via HasDefaultSchema() in generated code - do NOT pass schema here
+      entity.ToTable("wh_event_store");
       entity.HasKey(e => e.Id);
 
       entity.Property(e => e.Id).HasColumnName("event_id");
@@ -118,7 +121,8 @@ public static class WhizbangModelBuilderExtensions {
 
   private static void _configureServiceInstance(ModelBuilder modelBuilder, string? schema) {
     modelBuilder.Entity<ServiceInstanceRecord>(entity => {
-      entity.ToTable("wh_service_instances", schema);
+      // Schema is set via HasDefaultSchema() in generated code - do NOT pass schema here
+      entity.ToTable("wh_service_instances");
       entity.HasKey(e => e.InstanceId);
 
       entity.Property(e => e.InstanceId).HasColumnName("instance_id").IsRequired();
@@ -137,7 +141,8 @@ public static class WhizbangModelBuilderExtensions {
 
   private static void _configureMessageDeduplication(ModelBuilder modelBuilder, string? schema) {
     modelBuilder.Entity<MessageDeduplicationRecord>(entity => {
-      entity.ToTable("wh_message_deduplication", schema);
+      // Schema is set via HasDefaultSchema() in generated code - do NOT pass schema here
+      entity.ToTable("wh_message_deduplication");
       entity.HasKey(e => e.MessageId);
 
       entity.Property(e => e.MessageId).HasColumnName("message_id").IsRequired();
@@ -149,7 +154,8 @@ public static class WhizbangModelBuilderExtensions {
 
   private static void _configureMessageAssociations(ModelBuilder modelBuilder, string? schema) {
     modelBuilder.Entity<MessageAssociationRecord>(entity => {
-      entity.ToTable("wh_message_associations", schema);
+      // Schema is set via HasDefaultSchema() in generated code - do NOT pass schema here
+      entity.ToTable("wh_message_associations");
       entity.HasKey(e => e.Id);
 
       entity.Property(e => e.Id).HasColumnName("id").IsRequired();
