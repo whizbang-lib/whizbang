@@ -11,7 +11,7 @@ DROP FUNCTION IF EXISTS __SCHEMA__.complete_perspective_checkpoint_work(UUID, VA
 
 CREATE OR REPLACE FUNCTION __SCHEMA__.complete_perspective_checkpoint_work(
   p_stream_id UUID,
-  p_perspective_name VARCHAR(200),
+  p_perspective_name TEXT,
   p_last_event_id UUID,
   p_status SMALLINT,
   p_error_message TEXT DEFAULT NULL

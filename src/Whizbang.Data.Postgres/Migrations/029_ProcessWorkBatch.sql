@@ -246,7 +246,7 @@ BEGIN
         v_completion.perspective_name,
         v_completion.last_event_id,
         v_completion.status,
-        NULL
+        NULL::TEXT
       );
     END LOOP;
   END IF;

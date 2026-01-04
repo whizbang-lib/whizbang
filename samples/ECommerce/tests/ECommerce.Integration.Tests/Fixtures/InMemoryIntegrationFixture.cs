@@ -467,73 +467,46 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   }
 
   /// <summary>
-  /// Seeds message associations for perspective auto-checkpoint creation.
+  /// Registers message associations for perspective auto-checkpoint creation.
   /// Maps event types to perspectives so process_work_batch can auto-create checkpoint rows.
-  /// PHASE 3 (Option A): Manual seeding - will be replaced by generator automation in Phase 3 (Option B).
-  /// CRITICAL: Each service has its own schema, so we must seed associations using the correct DbContext.
+  /// Uses generated RegisterPerspectiveAssociationsAsync from PerspectiveDiscoveryGenerator.
+  /// CRITICAL: Each service has its own schema, so we must register associations using the correct DbContext.
   /// InventoryDbContext (schema="inventory") for InventoryWorker associations.
   /// BffDbContext (schema="bff") for BFF associations.
   /// </summary>
   private async Task _seedMessageAssociationsAsync(CancellationToken cancellationToken = default) {
-    // CRITICAL: Seed InventoryWorker associations using InventoryDbContext (schema="inventory")
+    // CRITICAL: Register InventoryWorker associations using generated method (schema="inventory")
     using (var scope = _inventoryHost!.Services.CreateScope()) {
       var inventoryDbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+      var logger = scope.ServiceProvider.GetRequiredService<ILogger<InMemoryIntegrationFixture>>();
 
-      // Seed associations for InventoryWorker.ProductCatalogPerspective
-      // Handles: ProductCreatedEvent, ProductUpdatedEvent, ProductDeletedEvent
-      // CRITICAL: Schema-qualify the table name since connection search_path may not be set correctly
-      await inventoryDbContext.Database.ExecuteSqlRawAsync(@"
-        INSERT INTO inventory.wh_message_associations (message_type, association_type, target_name, service_name, created_at, updated_at)
-        VALUES
-          ('ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts', 'perspective', 'ProductCatalogPerspective', 'ECommerce.InventoryWorker', NOW(), NOW()),
-          ('ECommerce.Contracts.Events.ProductUpdatedEvent, ECommerce.Contracts', 'perspective', 'ProductCatalogPerspective', 'ECommerce.InventoryWorker', NOW(), NOW()),
-          ('ECommerce.Contracts.Events.ProductDeletedEvent, ECommerce.Contracts', 'perspective', 'ProductCatalogPerspective', 'ECommerce.InventoryWorker', NOW(), NOW())
-        ON CONFLICT (message_type, association_type, target_name, service_name) DO NOTHING
-      ", cancellationToken);
+      // Use generated RegisterPerspectiveAssociationsAsync from PerspectiveDiscoveryGenerator
+      await ECommerce.InventoryWorker.Generated.PerspectiveRegistrationExtensions.RegisterPerspectiveAssociationsAsync(
+        inventoryDbContext,
+        schema: "inventory",
+        serviceName: "ECommerce.InventoryWorker",
+        logger: logger,
+        cancellationToken: cancellationToken
+      );
 
-      // Seed associations for InventoryWorker.InventoryLevelsPerspective
-      // Handles: ProductCreatedEvent (initial), InventoryRestockedEvent, InventoryReservedEvent, InventoryAdjustedEvent
-      await inventoryDbContext.Database.ExecuteSqlRawAsync(@"
-        INSERT INTO inventory.wh_message_associations (message_type, association_type, target_name, service_name, created_at, updated_at)
-        VALUES
-          ('ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.InventoryWorker', NOW(), NOW()),
-          ('ECommerce.Contracts.Events.InventoryRestockedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.InventoryWorker', NOW(), NOW()),
-          ('ECommerce.Contracts.Events.InventoryReservedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.InventoryWorker', NOW(), NOW()),
-          ('ECommerce.Contracts.Events.InventoryAdjustedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.InventoryWorker', NOW(), NOW())
-        ON CONFLICT (message_type, association_type, target_name, service_name) DO NOTHING
-      ", cancellationToken);
-
-      Console.WriteLine("[InMemoryFixture] InventoryWorker message associations seeded (inventory schema)");
+      Console.WriteLine("[InMemoryFixture] InventoryWorker message associations registered (inventory schema)");
     }
 
-    // CRITICAL: Seed BFF associations using BffDbContext (schema="bff")
+    // CRITICAL: Register BFF associations using generated method (schema="bff")
     using (var scope = _bffHost!.Services.CreateScope()) {
       var bffDbContext = scope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
+      var logger = scope.ServiceProvider.GetRequiredService<ILogger<InMemoryIntegrationFixture>>();
 
-      // Seed associations for BFF.ProductCatalogPerspective
-      // Handles: ProductCreatedEvent, ProductUpdatedEvent, ProductDeletedEvent
-      await bffDbContext.Database.ExecuteSqlRawAsync(@"
-        INSERT INTO bff.wh_message_associations (message_type, association_type, target_name, service_name, created_at, updated_at)
-        VALUES
-          ('ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts', 'perspective', 'ProductCatalogPerspective', 'ECommerce.BFF.API', NOW(), NOW()),
-          ('ECommerce.Contracts.Events.ProductUpdatedEvent, ECommerce.Contracts', 'perspective', 'ProductCatalogPerspective', 'ECommerce.BFF.API', NOW(), NOW()),
-          ('ECommerce.Contracts.Events.ProductDeletedEvent, ECommerce.Contracts', 'perspective', 'ProductCatalogPerspective', 'ECommerce.BFF.API', NOW(), NOW())
-        ON CONFLICT (message_type, association_type, target_name, service_name) DO NOTHING
-      ", cancellationToken);
+      // Use generated RegisterPerspectiveAssociationsAsync from PerspectiveDiscoveryGenerator
+      await ECommerce.BFF.API.Generated.PerspectiveRegistrationExtensions.RegisterPerspectiveAssociationsAsync(
+        bffDbContext,
+        schema: "bff",
+        serviceName: "ECommerce.BFF.API",
+        logger: logger,
+        cancellationToken: cancellationToken
+      );
 
-      // Seed associations for BFF.InventoryLevelsPerspective
-      // Handles: ProductCreatedEvent (initial), InventoryRestockedEvent, InventoryReservedEvent, InventoryAdjustedEvent
-      await bffDbContext.Database.ExecuteSqlRawAsync(@"
-        INSERT INTO bff.wh_message_associations (message_type, association_type, target_name, service_name, created_at, updated_at)
-        VALUES
-          ('ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.BFF.API', NOW(), NOW()),
-          ('ECommerce.Contracts.Events.InventoryRestockedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.BFF.API', NOW(), NOW()),
-          ('ECommerce.Contracts.Events.InventoryReservedEvent, ECommerce.Contracts', 'perspective', 'InventoryLevelsPerspective', 'ECommerce.BFF.API', NOW(), NOW()),
-          ('ECommerce.Contracts.Events.InventoryAdjustedEvent, ECommerce.Contracts', 'perspective', 'InventoryAdjustedEvent', 'ECommerce.BFF.API', NOW(), NOW())
-        ON CONFLICT (message_type, association_type, target_name, service_name) DO NOTHING
-      ", cancellationToken);
-
-      Console.WriteLine("[InMemoryFixture] BFF message associations seeded (bff schema)");
+      Console.WriteLine("[InMemoryFixture] BFF message associations registered (bff schema)");
     }
 
     // DIAGNOSTIC: Query message associations from InventoryWorker schema to verify seeding

@@ -313,15 +313,89 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       totalRegistrations++;
     }
 
+    // Generate message associations JSON for database registration
+    var associations = new StringBuilder();
+    int associationCount = 0;
+    bool isFirstAssociation = true;
+
+    foreach (var perspective in perspectives) {
+      // Extract perspective class name (without namespace)
+      var perspectiveClassName = _getSimpleName(perspective.ClassName);
+
+      // Each event type creates one association
+      foreach (var eventType in perspective.EventTypes) {
+        // Add comma separator (except for first item)
+        if (!isFirstAssociation) {
+          associations.AppendLine("    json.AppendLine(\",\");");
+        }
+        isFirstAssociation = false;
+
+        // Format event type using TypeNameFormatter conventions (TypeName, AssemblyName)
+        // Strip "global::" prefix if present
+        var typeName = eventType.StartsWith("global::", StringComparison.Ordinal)
+            ? eventType["global::".Length..]
+            : eventType;
+
+        // Extract assembly name from type name
+        // For "ECommerce.Contracts.Events.ProductCreatedEvent", assembly is "ECommerce.Contracts"
+        // Pattern: Find the first part before ".Events" or ".Commands" or take first two segments
+        var eventAssemblyName = _extractAssemblyName(typeName);
+        var formattedEventType = $"{typeName}, {eventAssemblyName}";
+
+        // Generate C# code that appends JSON object
+        associations.AppendLine($"    json.Append(\"    {{\");");
+        associations.AppendLine($"    json.Append($\"\\\"MessageType\\\": \\\"{formattedEventType}\\\", \");");
+        associations.AppendLine("    json.Append(\"\\\"AssociationType\\\": \\\"perspective\\\", \");");
+        associations.AppendLine($"    json.Append($\"\\\"TargetName\\\": \\\"{perspectiveClassName}\\\", \");");
+        associations.AppendLine("    json.Append(\"\\\"ServiceName\\\": \\\"\");");
+        associations.AppendLine("    json.Append(serviceName);");
+        associations.AppendLine("    json.Append(\"\\\"\");");
+        associations.AppendLine("    json.Append(\"}\");");
+
+        associationCount++;
+      }
+    }
+
     // Replace template markers
     var result = template;
     result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName};");
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(PerspectiveDiscoveryGenerator).Assembly, result);
     result = result.Replace("{{PERSPECTIVE_CLASS_COUNT}}", perspectives.Length.ToString(CultureInfo.InvariantCulture));
     result = result.Replace("{{REGISTRATION_COUNT}}", totalRegistrations.ToString(CultureInfo.InvariantCulture));
+    result = result.Replace("{{ASSOCIATION_COUNT}}", associationCount.ToString(CultureInfo.InvariantCulture));
     result = TemplateUtilities.ReplaceRegion(result, "PERSPECTIVE_REGISTRATIONS", registrations.ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "MESSAGE_ASSOCIATIONS_JSON", associations.ToString());
 
     return result;
+  }
+
+  /// <summary>
+  /// Extracts the assembly name from a fully qualified type name.
+  /// Uses convention: for "Namespace.Events.TypeName" or "Namespace.Commands.TypeName",
+  /// assembly name is "Namespace.Contracts" (assuming contracts assembly naming).
+  /// For other patterns, takes first two segments of namespace.
+  /// E.g., "ECommerce.Contracts.Events.ProductCreatedEvent" -> "ECommerce.Contracts"
+  /// </summary>
+  private static string _extractAssemblyName(string fullyQualifiedName) {
+    // Split by dots to extract namespace segments
+    var parts = fullyQualifiedName.Split('.');
+
+    // For patterns like "Namespace.Contracts.Events.TypeName", return "Namespace.Contracts"
+    if (parts.Length >= 3 && (parts[2] == "Events" || parts[2] == "Commands")) {
+      return $"{parts[0]}.{parts[1]}";
+    }
+
+    // For patterns like "Namespace.Events.TypeName", return "Namespace"
+    if (parts.Length >= 2 && (parts[1] == "Events" || parts[1] == "Commands")) {
+      return parts[0];
+    }
+
+    // Fallback: return first two segments if available, otherwise first segment
+    if (parts.Length >= 2) {
+      return $"{parts[0]}.{parts[1]}";
+    }
+
+    return parts[0];
   }
 
   /// <summary>

@@ -160,6 +160,39 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
     }
     Console.WriteLine("[AspireFixture] Database schema initialized.");
 
+    // Register message associations for perspective auto-checkpoint creation
+    // CRITICAL: Must run AFTER schema initialization (tables exist) and BEFORE starting hosts (workers need associations)
+    Console.WriteLine("[AspireFixture] Registering message associations...");
+    using (var initScope = _inventoryHost.Services.CreateScope()) {
+      var inventoryDbContext = initScope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+      var logger = initScope.ServiceProvider.GetRequiredService<ILogger<AspireIntegrationFixture>>();
+
+      await ECommerce.InventoryWorker.Generated.PerspectiveRegistrationExtensions.RegisterPerspectiveAssociationsAsync(
+        inventoryDbContext,
+        schema: "inventory",
+        serviceName: "ECommerce.InventoryWorker",
+        logger: logger,
+        cancellationToken: cancellationToken
+      );
+
+      Console.WriteLine("[AspireFixture] InventoryWorker message associations registered (inventory schema)");
+    }
+    using (var initScope = _bffHost.Services.CreateScope()) {
+      var bffDbContext = initScope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
+      var logger = initScope.ServiceProvider.GetRequiredService<ILogger<AspireIntegrationFixture>>();
+
+      await ECommerce.BFF.API.Generated.PerspectiveRegistrationExtensions.RegisterPerspectiveAssociationsAsync(
+        bffDbContext,
+        schema: "bff",
+        serviceName: "ECommerce.BFF.API",
+        logger: logger,
+        cancellationToken: cancellationToken
+      );
+
+      Console.WriteLine("[AspireFixture] BFF message associations registered (bff schema)");
+    }
+    Console.WriteLine("[AspireFixture] Message associations registered.");
+
     // Start hosts AFTER schema is ready
     Console.WriteLine("[AspireFixture] Starting service hosts...");
     await _inventoryHost.StartAsync(cancellationToken);
