@@ -614,8 +614,12 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     try {
+      // Get schema from DbContext configuration for schema-qualified function call
+      var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? "public";
+      var sql = string.Format(System.Globalization.CultureInfo.InvariantCulture, "SELECT {0}.complete_perspective_checkpoint_work({{0}}, {{1}}, {{2}}, {{3}}, {{4}}::text)", schema);
+
       await _dbContext.Database.ExecuteSqlRawAsync(
-        "SELECT complete_perspective_checkpoint_work({0}, {1}, {2}, {3}, {4})",
+        sql,
         [completion.StreamId, completion.PerspectiveName, completion.LastEventId, (short)completion.Status, null!],
         cancellationToken);
 
@@ -669,8 +673,13 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
     // Use DbContext's ExecuteSqlRawAsync which properly manages the connection
     // This works with both traditional connection strings and NpgsqlDataSource
+
+    // Get schema from DbContext configuration for schema-qualified function call
+    var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? "public";
+    var sql = string.Format(System.Globalization.CultureInfo.InvariantCulture, "SELECT {0}.complete_perspective_checkpoint_work({{0}}, {{1}}, {{2}}, {{3}}, {{4}}::text)", schema);
+
     await _dbContext.Database.ExecuteSqlRawAsync(
-      "SELECT complete_perspective_checkpoint_work({0}, {1}, {2}, {3}, {4})",
+      sql,
       [failure.StreamId, failure.PerspectiveName, failure.LastEventId, (short)failure.Status, failure.Error],
       cancellationToken);
   }
