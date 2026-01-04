@@ -39,9 +39,20 @@ builder.Services.AddSingleton<IServiceInstanceProvider, ServiceInstanceProvider>
 // Register OrderedStreamProcessor for message ordering in ServiceBusConsumerWorker
 builder.Services.AddSingleton<OrderedStreamProcessor>();
 
-// Register EF Core DbContext for Inbox/Outbox/EventStore
+// Create JsonSerializerOptions from global registry (MUST be registered before data source)
+var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+
+// Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
+// IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
+// This registers JSON converters for JSONB serialization (including EnvelopeMetadata, MessageScope)
+var dataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(postgresConnection);
+dataSourceBuilder.ConfigureJsonOptions(jsonOptions);
+dataSourceBuilder.EnableDynamicJson();
+var dataSource = dataSourceBuilder.Build();
+builder.Services.AddSingleton(dataSource);
+
 builder.Services.AddDbContext<InventoryDbContext>(options =>
-  options.UseNpgsql(postgresConnection));
+  options.UseNpgsql(dataSource));
 
 // Register unified Whizbang API with EF Core Postgres driver
 // This automatically registers ALL infrastructure:
@@ -79,9 +90,6 @@ builder.Services.AddWhizbangDispatcher();
 // Register lenses (readonly repositories using EF Core ILensQuery)
 builder.Services.AddScoped<IProductLens, ProductLens>();
 builder.Services.AddScoped<IInventoryLens, InventoryLens>();
-
-// Create JsonSerializerOptions from global registry (required by workers)
-var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
 
 // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
 builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>

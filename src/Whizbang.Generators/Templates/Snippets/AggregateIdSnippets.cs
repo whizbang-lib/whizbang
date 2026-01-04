@@ -14,12 +14,24 @@ namespace Whizbang.Generators.Templates.Snippets;
 public class AggregateIdSnippets {
 
   /// <summary>
-  /// Example method showing snippet structure for aggregate ID extraction.
+  /// Example method showing snippet structure for aggregate ID extraction (direct Guid access).
   /// The actual snippet is extracted from the #region block.
   /// </summary>
   public Guid? ExtractorExample() {
     #region EXTRACTOR
     if (messageType == typeof(__MESSAGE_TYPE__)) { var typed = (__MESSAGE_TYPE__)message; return typed.__PROPERTY_NAME__; }
+    #endregion
+
+    return null;
+  }
+
+  /// <summary>
+  /// Example method showing snippet structure for aggregate ID extraction (via .Value property).
+  /// Used for WhizbangId types that wrap Guid with a .Value property.
+  /// </summary>
+  public Guid? ExtractorWithValueExample() {
+    #region EXTRACTOR_WITH_VALUE
+    if (messageType == typeof(__MESSAGE_TYPE__)) { var typed = (__MESSAGE_TYPE__)message; return typed.__PROPERTY_NAME__.Value; }
     #endregion
 
     return null;

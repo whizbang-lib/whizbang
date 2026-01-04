@@ -29,6 +29,7 @@ public static class WhizbangModelBuilderExtensions {
       _configureServiceInstance(modelBuilder, schema);
       _configureMessageDeduplication(modelBuilder, schema);
       _configureMessageAssociations(modelBuilder, schema);
+      _configurePerspectiveCheckpoints(modelBuilder, schema);
       return modelBuilder;
     }
   }
@@ -172,6 +173,25 @@ public static class WhizbangModelBuilderExtensions {
       entity.HasIndex(e => e.TargetName).HasDatabaseName("idx_message_associations_target_name");
       entity.HasIndex(e => e.ServiceName).HasDatabaseName("idx_message_associations_service_name");
       entity.HasIndex(e => new { e.AssociationType, e.TargetName, e.ServiceName }).HasDatabaseName("idx_message_associations_target_lookup");
+    });
+  }
+
+  private static void _configurePerspectiveCheckpoints(ModelBuilder modelBuilder, string? schema) {
+    modelBuilder.Entity<PerspectiveCheckpointRecord>(entity => {
+      // Schema is set via HasDefaultSchema() in generated code - do NOT pass schema here
+      entity.ToTable("wh_perspective_checkpoints");
+      entity.HasKey(e => new { e.StreamId, e.PerspectiveName });
+
+      entity.Property(e => e.StreamId).HasColumnName("stream_id").IsRequired();
+      entity.Property(e => e.PerspectiveName).HasColumnName("perspective_name").IsRequired().HasMaxLength(500);
+      entity.Property(e => e.LastEventId).HasColumnName("last_event_id").IsRequired();
+      entity.Property(e => e.Status).HasColumnName("status").IsRequired();
+      entity.Property(e => e.ProcessedAt).HasColumnName("processed_at").IsRequired();
+      entity.Property(e => e.Error).HasColumnName("error");
+
+      // Indexes
+      entity.HasIndex(e => e.Status).HasDatabaseName("idx_perspective_checkpoints_status");
+      entity.HasIndex(e => e.ProcessedAt).HasDatabaseName("idx_perspective_checkpoints_processed_at");
     });
   }
 }

@@ -64,16 +64,16 @@ public static class DiagnosticDescriptors {
   );
 
   /// <summary>
-  /// WHIZ005: Error - [AggregateId] must be on Guid property.
+  /// WHIZ005: Error - [AggregateId] must be on Guid property or type with .Value property.
   /// </summary>
   public static readonly DiagnosticDescriptor AggregateIdMustBeGuid = new(
       id: "WHIZ005",
       title: "Aggregate ID Must Be Guid",
-      messageFormat: "[AggregateId] on {0}.{1} must be of type Guid or Guid?",
+      messageFormat: "[AggregateId] on {0}.{1} must be of type Guid, Guid?, or a type with a .Value property returning Guid",
       category: CATEGORY,
       defaultSeverity: DiagnosticSeverity.Error,
       isEnabledByDefault: true,
-      description: "The [AggregateId] attribute can only be applied to properties of type Guid or Guid?."
+      description: "The [AggregateId] attribute can only be applied to properties of type Guid, Guid?, or types with a .Value property that returns Guid (such as WhizbangId types)."
   );
 
   /// <summary>

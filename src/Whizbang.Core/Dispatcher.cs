@@ -48,7 +48,8 @@ public abstract class Dispatcher(
   ITransport? transport = null,
   JsonSerializerOptions? jsonOptions = null,
   Routing.ITopicRegistry? topicRegistry = null,
-  Routing.ITopicRoutingStrategy? topicRoutingStrategy = null
+  Routing.ITopicRoutingStrategy? topicRoutingStrategy = null,
+  IAggregateIdExtractor? aggregateIdExtractor = null
   ) : IDispatcher {
   private readonly IServiceProvider _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -58,6 +59,7 @@ public abstract class Dispatcher(
   private readonly JsonSerializerOptions? _jsonOptions = jsonOptions;
   private readonly Routing.ITopicRegistry? _topicRegistry = topicRegistry;
   private readonly Routing.ITopicRoutingStrategy _topicRoutingStrategy = topicRoutingStrategy ?? Routing.PassthroughRoutingStrategy.Instance;
+  private readonly IAggregateIdExtractor? _aggregateIdExtractor = aggregateIdExtractor;
 
   /// <summary>
   /// Gets the service provider for receptor resolution.
@@ -559,6 +561,9 @@ public abstract class Dispatcher(
       Hops = []
     };
 
+    // Extract aggregate ID and add to hop metadata (for streamId extraction)
+    var hopMetadata = _createHopMetadata(message!, typeof(TMessage));
+
     var hop = new MessageHop {
       Type = HopType.Current,
       ServiceInstance = _instanceProvider.ToInfo(),
@@ -567,7 +572,8 @@ public abstract class Dispatcher(
       CausationId = context.CausationId,
       CallerMemberName = callerMemberName,
       CallerFilePath = callerFilePath,
-      CallerLineNumber = callerLineNumber
+      CallerLineNumber = callerLineNumber,
+      Metadata = hopMetadata
     };
 
     envelope.AddHop(hop);
@@ -593,6 +599,10 @@ public abstract class Dispatcher(
       Hops = []
     };
 
+    // Extract aggregate ID and add to hop metadata (for streamId extraction)
+    var messageType = message.GetType();
+    var hopMetadata = _createHopMetadata(message, messageType);
+
     var hop = new MessageHop {
       Type = HopType.Current,
       ServiceInstance = _instanceProvider.ToInfo(),
@@ -601,7 +611,8 @@ public abstract class Dispatcher(
       CausationId = context.CausationId,
       CallerMemberName = callerMemberName,
       CallerFilePath = callerFilePath,
-      CallerLineNumber = callerLineNumber
+      CallerLineNumber = callerLineNumber,
+      Metadata = hopMetadata
     };
 
     envelope.AddHop(hop);
@@ -667,12 +678,16 @@ public abstract class Dispatcher(
         Hops = []
       };
 
+      // Extract aggregate ID and add to hop metadata (for streamId extraction)
+      var hopMetadata = _createHopMetadata(eventData!, eventType);
+
       // Add hop indicating message is being stored to outbox
       var hop = new MessageHop {
         Type = HopType.Current,
         ServiceInstance = _instanceProvider.ToInfo(),
         Topic = destination,
-        Timestamp = DateTimeOffset.UtcNow
+        Timestamp = DateTimeOffset.UtcNow,
+        Metadata = hopMetadata
       };
       envelope.AddHop(hop);
 
@@ -1140,6 +1155,31 @@ public abstract class Dispatcher(
 
     // Fall back to message ID (ensures all messages have a stream)
     return envelope.MessageId.Value;
+  }
+
+  /// <summary>
+  /// Creates hop metadata with AggregateId extracted from the message.
+  /// Returns null if no aggregate ID extractor is configured or no ID found.
+  /// </summary>
+  private Dictionary<string, JsonElement>? _createHopMetadata(object message, Type messageType) {
+    if (_aggregateIdExtractor == null) {
+      return null;
+    }
+
+    var aggregateId = _aggregateIdExtractor.ExtractAggregateId(message, messageType);
+    if (aggregateId == null) {
+      return null;
+    }
+
+    // Create JsonElement for aggregate ID (AOT-safe approach using JsonDocument.Parse)
+    // Wrap GUID string in quotes for valid JSON string value
+    var jsonString = $"\"{aggregateId.Value}\"";
+    using var doc = JsonDocument.Parse(jsonString);
+    var aggregateIdElement = doc.RootElement.Clone(); // Clone to survive disposal
+
+    return new Dictionary<string, JsonElement> {
+      ["AggregateId"] = aggregateIdElement
+    };
   }
 
   /// <summary>

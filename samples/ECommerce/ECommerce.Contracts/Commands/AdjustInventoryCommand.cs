@@ -6,6 +6,7 @@ namespace ECommerce.Contracts.Commands;
 /// Command to manually adjust inventory (corrections, damages)
 /// </summary>
 public record AdjustInventoryCommand : ICommand {
+  [AggregateId]
   public required Guid ProductId { get; init; }
   public int QuantityChange { get; init; }
   public required string Reason { get; init; }

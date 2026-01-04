@@ -241,13 +241,17 @@ BEGIN
         (elem->>'Status')::SMALLINT as status
       FROM jsonb_array_elements(p_perspective_completions) as elem
     LOOP
-      PERFORM __SCHEMA__.complete_perspective_checkpoint_work(
-        v_completion.stream_id,
-        v_completion.perspective_name,
-        v_completion.last_event_id,
-        v_completion.status,
-        NULL::TEXT
-      );
+      -- CRITICAL: Skip if no events were processed (LastEventId = 00000000-0000-0000-0000-000000000000)
+      -- This prevents FK constraint violation when event doesn't exist in wh_event_store
+      IF v_completion.last_event_id != '00000000-0000-0000-0000-000000000000'::UUID THEN
+        PERFORM __SCHEMA__.complete_perspective_checkpoint_work(
+          v_completion.stream_id,
+          v_completion.perspective_name,
+          v_completion.last_event_id,
+          v_completion.status,
+          NULL::TEXT
+        );
+      END IF;
     END LOOP;
   END IF;
 
@@ -275,13 +279,17 @@ BEGIN
         elem->>'Error' as error_message
       FROM jsonb_array_elements(p_perspective_failures) as elem
     LOOP
-      PERFORM __SCHEMA__.complete_perspective_checkpoint_work(
-        v_completion.stream_id,
-        v_completion.perspective_name,
-        v_completion.last_event_id,
-        v_completion.status,
-        v_completion.error_message
-      );
+      -- CRITICAL: Skip if no events were processed (LastEventId = 00000000-0000-0000-0000-000000000000)
+      -- This prevents FK constraint violation when event doesn't exist in wh_event_store
+      IF v_completion.last_event_id != '00000000-0000-0000-0000-000000000000'::UUID THEN
+        PERFORM __SCHEMA__.complete_perspective_checkpoint_work(
+          v_completion.stream_id,
+          v_completion.perspective_name,
+          v_completion.last_event_id,
+          v_completion.status,
+          v_completion.error_message
+        );
+      END IF;
     END LOOP;
   END IF;
 
@@ -641,7 +649,7 @@ BEGIN
   -- that have events matching perspective associations but don't have checkpoints yet.
   -- Uses fuzzy type matching to handle different .NET type name formats.
   -- Only processes events successfully stored in Phase 4.5 (tracked via arrays).
-  INSERT INTO wh_perspective_checkpoints (
+  INSERT INTO __SCHEMA__.wh_perspective_checkpoints (
     stream_id,
     perspective_name,
     last_event_id,
@@ -687,7 +695,7 @@ BEGIN
     AND ma.association_type = 'perspective'
   WHERE es.event_id = ANY(v_stored_outbox_events || v_stored_inbox_events)
     AND NOT EXISTS (
-      SELECT 1 FROM wh_perspective_checkpoints pc_check
+      SELECT 1 FROM __SCHEMA__.wh_perspective_checkpoints pc_check
       WHERE pc_check.stream_id = es.stream_id
         AND pc_check.perspective_name = ma.target_name
     )
@@ -932,7 +940,7 @@ BEGIN
     FROM wh_perspective_events pe
     LEFT JOIN temp_new_perspective_events temp_new ON pe.event_work_id = temp_new.event_work_id
     LEFT JOIN temp_orphaned_perspective_events temp_orphaned ON pe.event_work_id = temp_orphaned.event_work_id
-    LEFT JOIN wh_perspective_checkpoints pc
+    LEFT JOIN __SCHEMA__.wh_perspective_checkpoints pc
       ON pe.stream_id = pc.stream_id
       AND pe.perspective_name = pc.perspective_name
     WHERE pe.instance_id = p_instance_id

@@ -6,6 +6,7 @@ namespace ECommerce.Contracts.Commands;
 /// Command to create a new order
 /// </summary>
 public record CreateOrderCommand : ICommand {
+  [AggregateId]
   public required OrderId OrderId { get; init; }
   public required CustomerId CustomerId { get; init; }
   public required List<OrderLineItem> LineItems { get; init; }

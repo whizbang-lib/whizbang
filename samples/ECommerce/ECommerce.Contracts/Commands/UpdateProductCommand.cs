@@ -6,6 +6,7 @@ namespace ECommerce.Contracts.Commands;
 /// Command to update product details
 /// </summary>
 public record UpdateProductCommand : ICommand {
+  [AggregateId]
   public required Guid ProductId { get; init; }
   public string? Name { get; init; }
   public string? Description { get; init; }

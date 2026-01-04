@@ -68,9 +68,19 @@ builder.Services.AddSingleton<OrderedStreamProcessor>();
 builder.Services.AddOptions<WorkCoordinatorPublisherOptions>()
   .Bind(builder.Configuration.GetSection("WorkCoordinatorPublisher"));
 
-// Register EF Core DbContext for perspectives with PostgreSQL
+// Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
+// IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
+// This registers JSON converters for JSONB serialization (including EnvelopeMetadata, MessageScope)
+// Use the jsonOptions already created and registered at line 49
+var bffJsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+var dataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(postgresConnection);
+dataSourceBuilder.ConfigureJsonOptions(bffJsonOptions);
+dataSourceBuilder.EnableDynamicJson();
+var dataSource = dataSourceBuilder.Build();
+builder.Services.AddSingleton(dataSource);
+
 builder.Services.AddDbContext<BffDbContext>(options =>
-  options.UseNpgsql(postgresConnection));
+  options.UseNpgsql(dataSource));
 
 // Register unified Whizbang API with EF Core Postgres driver
 // This automatically registers ALL infrastructure:

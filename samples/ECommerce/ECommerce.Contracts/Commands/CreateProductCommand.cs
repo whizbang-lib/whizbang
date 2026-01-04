@@ -6,6 +6,7 @@ namespace ECommerce.Contracts.Commands;
 /// Command to create a new product in the catalog
 /// </summary>
 public record CreateProductCommand : ICommand {
+  [AggregateId]
   public required ProductId ProductId { get; init; }
   public required string Name { get; init; }
   public required string Description { get; init; }

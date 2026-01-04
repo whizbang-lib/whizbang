@@ -22,13 +22,13 @@ BEGIN
   -- Check if this perspective is in CatchingUp mode (status & 8 = 8)
   SELECT (status & 8) = 8
   INTO v_is_catching_up
-  FROM wh_perspective_checkpoints
+  FROM __SCHEMA__.wh_perspective_checkpoints
   WHERE stream_id = p_stream_id
     AND perspective_name = p_perspective_name;
 
   -- Update checkpoint with results from perspective runner
   -- Includes error message for failed runs, clears error for successful runs
-  UPDATE wh_perspective_checkpoints
+  UPDATE __SCHEMA__.wh_perspective_checkpoints
   SET last_event_id = p_last_event_id,
       status = p_status,
       processed_at = NOW(),
@@ -38,7 +38,7 @@ BEGIN
 
   -- CRITICAL: Mark perspective events as processed
   -- Without this, events remain unprocessed forever and prevent new events from being claimed
-  UPDATE wh_perspective_events
+  UPDATE __SCHEMA__.wh_perspective_events
   SET processed_at = NOW()
   WHERE stream_id = p_stream_id
     AND perspective_name = p_perspective_name
@@ -46,7 +46,7 @@ BEGIN
 
   -- If we were catching up and successfully completed, clear the CatchingUp flag
   IF v_is_catching_up AND (p_status & 2) = 2 THEN  -- Completed flag
-    UPDATE wh_perspective_checkpoints
+    UPDATE __SCHEMA__.wh_perspective_checkpoints
     SET status = status & ~8  -- Clear CatchingUp flag (bitwise AND NOT)
     WHERE stream_id = p_stream_id
       AND perspective_name = p_perspective_name;

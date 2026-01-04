@@ -128,8 +128,10 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       var metadata = record.Metadata;
 
       // Reconstruct the message envelope - ServiceInstanceInfo is already in the hops
+      // CRITICAL: Use record.Id (event_id column) as MessageId, NOT metadata.MessageId
+      // This ensures the MessageId matches the event_id in wh_event_store for FK constraint integrity
       var envelope = new MessageEnvelope<TMessage> {
-        MessageId = metadata.MessageId,
+        MessageId = MessageId.From(record.Id),
         Payload = eventData,
         Hops = metadata.Hops
       };
@@ -174,8 +176,10 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       var metadata = record.Metadata;
 
       // Reconstruct the message envelope - ServiceInstanceInfo is already in the hops
+      // CRITICAL: Use record.Id (event_id column) as MessageId, NOT metadata.MessageId
+      // This ensures the MessageId matches the event_id in wh_event_store for FK constraint integrity
       var envelope = new MessageEnvelope<TMessage> {
-        MessageId = metadata.MessageId,
+        MessageId = MessageId.From(record.Id),
         Payload = eventData,
         Hops = metadata.Hops
       };
@@ -235,10 +239,10 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
         if (!string.IsNullOrEmpty(typeAndAssembly) && typeMap.TryGetValue(typeAndAssembly, out concreteType)) {
           // Found via simplified name
         } else {
-          throw new InvalidOperationException(
-              $"Event type '{record.EventType}' in event {record.Id} is not in the provided event types list. " +
-              $"Available types: {string.Join(", ", eventTypes.Select(TypeNameFormatter.Format))}"
-          );
+          // Event type not in the requested list - skip it
+          // This allows perspectives to materialize subsets of events from shared streams
+          // (e.g., ProductCatalogPerspective skips InventoryRestockedEvent in product streams)
+          continue;
         }
       }
 

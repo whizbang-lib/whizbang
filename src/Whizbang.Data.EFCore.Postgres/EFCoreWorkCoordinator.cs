@@ -605,6 +605,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
       "[DIAGNOSTIC] ReportPerspectiveCompletionAsync called: stream={StreamId}, perspective={PerspectiveName}, lastEvent={LastEventId}, status={Status}",
       completion.StreamId, completion.PerspectiveName, completion.LastEventId, completion.Status);
 
+    // CRITICAL: Skip if no events were processed (LastEventId = Guid.Empty)
+    // This prevents FK constraint violation when event doesn't exist in wh_event_store
+    if (completion.LastEventId == Guid.Empty) {
+      _logger?.LogDebug(
+        "[DIAGNOSTIC] Skipping checkpoint update for stream={StreamId}, perspective={PerspectiveName} - no events processed (LastEventId is Empty)",
+        completion.StreamId, completion.PerspectiveName);
+      return;
+    }
+
     // Begin explicit transaction if one doesn't exist
     var transaction = _dbContext.Database.CurrentTransaction;
     var needsCommit = transaction == null;
@@ -673,6 +682,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
     // Use DbContext's ExecuteSqlRawAsync which properly manages the connection
     // This works with both traditional connection strings and NpgsqlDataSource
+
+    // CRITICAL: Skip if no events were processed (LastEventId = Guid.Empty)
+    // This prevents FK constraint violation when event doesn't exist in wh_event_store
+    if (failure.LastEventId == Guid.Empty) {
+      _logger?.LogDebug(
+        "[DIAGNOSTIC] Skipping checkpoint update for failure on stream={StreamId}, perspective={PerspectiveName} - no events processed (LastEventId is Empty)",
+        failure.StreamId, failure.PerspectiveName);
+      return;
+    }
 
     // Get schema from DbContext configuration for schema-qualified function call
     var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? "public";

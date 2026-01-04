@@ -50,8 +50,8 @@ namespace Whizbang.Core.Generated {
 
     /// <summary>
     /// Registers the generated zero-reflection dispatcher.
-    /// Automatically resolves optional Singleton dependencies: ITraceStore, ITransport, JsonSerializerOptions, ITopicRegistry, ITopicRoutingStrategy.
-    /// NOTE: IEventStore, IAggregateIdExtractor, and IWorkCoordinatorStrategy are resolved per-call from the active scope, not captured in constructor.
+    /// Automatically resolves optional Singleton dependencies: ITraceStore, ITransport, JsonSerializerOptions, ITopicRegistry, ITopicRoutingStrategy, IAggregateIdExtractor.
+    /// NOTE: IEventStore and IWorkCoordinatorStrategy are resolved per-call from the active scope, not captured in constructor.
     /// This is required because they may be registered as Scoped (e.g., EF Core implementations).
     /// </summary>
     [ExcludeFromCodeCoverage]
@@ -64,10 +64,11 @@ namespace Whizbang.Core.Generated {
         var jsonOptions = sp.GetService<JsonSerializerOptions>();
         var topicRegistry = sp.GetService<Whizbang.Core.Routing.ITopicRegistry>();
         var topicRoutingStrategy = sp.GetService<Whizbang.Core.Routing.ITopicRoutingStrategy>();
+        var aggregateIdExtractor = sp.GetService<IAggregateIdExtractor>();
 
-        // Do NOT resolve IEventStore, IAggregateIdExtractor, or IWorkCoordinatorStrategy here - they may be Scoped
+        // Do NOT resolve IEventStore or IWorkCoordinatorStrategy here - they may be Scoped
         // The Dispatcher will resolve them per-call from the active service provider
-        return new GeneratedDispatcher(sp, instanceProvider, traceStore, transport, jsonOptions, topicRegistry, topicRoutingStrategy);
+        return new GeneratedDispatcher(sp, instanceProvider, traceStore, transport, jsonOptions, topicRegistry, topicRoutingStrategy, aggregateIdExtractor);
       });
       services.AddSingleton<global::Whizbang.Core.Dispatcher>(sp => (GeneratedDispatcher)sp.GetRequiredService<IDispatcher>());
       return services;
