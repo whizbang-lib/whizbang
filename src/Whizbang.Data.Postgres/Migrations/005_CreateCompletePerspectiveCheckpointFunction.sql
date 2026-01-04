@@ -6,10 +6,10 @@
 -- Dependencies: 001-004 (requires wh_perspective_checkpoints table)
 -- Used by: 006 (process_work_batch calls this function)
 
-DROP FUNCTION IF EXISTS complete_perspective_checkpoint_work(UUID, TEXT, UUID, SMALLINT, TEXT);
-DROP FUNCTION IF EXISTS complete_perspective_checkpoint_work(UUID, VARCHAR(200), UUID, SMALLINT, TEXT);
+DROP FUNCTION IF EXISTS __SCHEMA__.complete_perspective_checkpoint_work(UUID, TEXT, UUID, SMALLINT, TEXT);
+DROP FUNCTION IF EXISTS __SCHEMA__.complete_perspective_checkpoint_work(UUID, VARCHAR(200), UUID, SMALLINT, TEXT);
 
-CREATE OR REPLACE FUNCTION complete_perspective_checkpoint_work(
+CREATE OR REPLACE FUNCTION __SCHEMA__.complete_perspective_checkpoint_work(
   p_stream_id UUID,
   p_perspective_name VARCHAR(200),
   p_last_event_id UUID,
@@ -54,4 +54,4 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION complete_perspective_checkpoint_work IS 'Updates perspective checkpoint with completion/failure results from perspective runner. Supports CatchingUp status for time-travel/replay scenarios.';
+COMMENT ON FUNCTION __SCHEMA__.complete_perspective_checkpoint_work IS 'Updates perspective checkpoint with completion/failure results from perspective runner. Supports CatchingUp status for time-travel/replay scenarios.';

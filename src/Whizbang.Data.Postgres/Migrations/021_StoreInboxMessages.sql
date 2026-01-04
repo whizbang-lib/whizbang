@@ -4,7 +4,7 @@
 --              Returns message IDs for marking as "NewlyStored" in orchestrator response.
 -- Dependencies: 001-020 (requires wh_inbox, wh_active_streams tables, compute_partition function)
 
-CREATE OR REPLACE FUNCTION store_inbox_messages(
+CREATE OR REPLACE FUNCTION __SCHEMA__.store_inbox_messages(
   p_messages JSONB,
   p_instance_id UUID,
   p_lease_expiry TIMESTAMPTZ,
@@ -44,7 +44,7 @@ BEGIN
     IF v_was_new = 1 THEN
       -- Calculate partition for stream-based load balancing
       IF v_msg.stream_id IS NOT NULL THEN
-        v_partition := compute_partition(v_msg.stream_id, p_partition_count);
+        v_partition := __SCHEMA__.compute_partition(v_msg.stream_id, p_partition_count);
       ELSE
         v_partition := NULL;
       END IF;
@@ -111,5 +111,5 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION store_inbox_messages IS
+COMMENT ON FUNCTION __SCHEMA__.store_inbox_messages IS
 'Stores new inbox messages with immediate lease to current instance. Calculates partition for load balancing, updates active streams for ownership tracking. Returns message IDs for NewlyStored flag in orchestrator response.';

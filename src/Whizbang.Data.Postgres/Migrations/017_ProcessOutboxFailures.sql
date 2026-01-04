@@ -4,7 +4,7 @@
 --              Implements exponential backoff retry with scheduled_for timestamp.
 -- Dependencies: 001-016 (requires wh_outbox table)
 
-CREATE OR REPLACE FUNCTION process_outbox_failures(
+CREATE OR REPLACE FUNCTION __SCHEMA__.process_outbox_failures(
   p_failures JSONB,
   p_now TIMESTAMPTZ
 ) RETURNS VOID AS $$
@@ -34,5 +34,5 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION process_outbox_failures IS
+COMMENT ON FUNCTION __SCHEMA__.process_outbox_failures IS
 'Processes outbox message failures. Sets Failed flag, records error details, increments attempts, and schedules retry with exponential backoff. Releases lease for reclaiming by other instances.';

@@ -2,7 +2,7 @@
 -- Date: 2025-12-07
 -- Description: Helper function to compute partition number from stream_id using consistent hashing
 
-CREATE OR REPLACE FUNCTION compute_partition(p_stream_id UUID, p_partition_count INTEGER DEFAULT 10000)
+CREATE OR REPLACE FUNCTION __SCHEMA__.compute_partition(p_stream_id UUID, p_partition_count INTEGER DEFAULT 10000)
 RETURNS INTEGER AS $$
 BEGIN
   -- Use hashtext on UUID string for consistent hashing

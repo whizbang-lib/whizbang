@@ -4,7 +4,7 @@
 --              Returns event work IDs for marking as "NewlyStored" in orchestrator response.
 -- Dependencies: 001-021 (requires wh_perspective_events table from migration 009)
 
-CREATE OR REPLACE FUNCTION store_perspective_events(
+CREATE OR REPLACE FUNCTION __SCHEMA__.store_perspective_events(
   p_events JSONB,
   p_instance_id UUID,
   p_lease_expiry TIMESTAMPTZ,
@@ -74,5 +74,5 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION store_perspective_events IS
+COMMENT ON FUNCTION __SCHEMA__.store_perspective_events IS
 'Stores new perspective events with immediate lease to current instance. Unique constraint on (stream_id, perspective_name, event_id) prevents duplicates. Returns event work IDs for NewlyStored flag in orchestrator response.';

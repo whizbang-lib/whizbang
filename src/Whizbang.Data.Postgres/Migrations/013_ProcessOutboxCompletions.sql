@@ -4,7 +4,7 @@
 --              Returns stream IDs for downstream stream cleanup. Supports debug mode retention.
 -- Dependencies: 001-012 (requires wh_outbox table)
 
-CREATE OR REPLACE FUNCTION process_outbox_completions(
+CREATE OR REPLACE FUNCTION __SCHEMA__.process_outbox_completions(
   p_completions JSONB,
   p_now TIMESTAMPTZ,
   p_debug_mode BOOLEAN DEFAULT FALSE
@@ -82,5 +82,5 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION process_outbox_completions IS
+COMMENT ON FUNCTION __SCHEMA__.process_outbox_completions IS
 'Processes outbox message completions. In production mode, deletes messages with Published flag (ephemeral). In debug mode, retains all messages for troubleshooting. Returns stream IDs for cleanup orchestration.';

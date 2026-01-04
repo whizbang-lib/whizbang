@@ -4,7 +4,7 @@
 --              Uses partition-based load balancing to distribute work across instances.
 -- Dependencies: 001-023 (requires wh_outbox, wh_active_streams tables, compute_partition function)
 
-CREATE OR REPLACE FUNCTION claim_orphaned_outbox(
+CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_outbox(
   p_instance_id UUID,
   p_instance_rank INTEGER,
   p_active_instance_count INTEGER,
@@ -50,5 +50,5 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION claim_orphaned_outbox IS
+COMMENT ON FUNCTION __SCHEMA__.claim_orphaned_outbox IS
 'Claims orphaned outbox messages with expired or null leases. Uses partition-based load balancing to distribute work. Respects stream ownership for stream-based messages. Returns claimed message IDs for Orphaned flag in orchestrator response.';

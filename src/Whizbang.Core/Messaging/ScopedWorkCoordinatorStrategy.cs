@@ -135,6 +135,7 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
     // Log a summary of what's being flushed to the database
     if (_logger != null) {
       LogFlushSummary(_logger, _queuedOutboxMessages.Count, _queuedInboxMessages.Count);
+      LogFlushingWithInstanceId(_logger, _instanceProvider.InstanceId, _instanceProvider.ServiceName, _queuedOutboxMessages.Count);
     }
 
     // Call process_work_batch with all queued operations
@@ -162,6 +163,20 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
       staleThresholdSeconds: _options.StaleThresholdSeconds,
       cancellationToken: ct
     );
+
+    // DIAGNOSTIC: Log what was returned from ProcessWorkBatchAsync
+    if (_logger != null) {
+      LogProcessWorkBatchResult(_logger, workBatch.OutboxWork.Count, workBatch.InboxWork.Count, workBatch.PerspectiveWork.Count);
+      if (workBatch.OutboxWork.Count > 0) {
+        foreach (var work in workBatch.OutboxWork.Take(3)) {
+          var isNewlyStored = (work.Flags & WorkBatchFlags.NewlyStored) != 0;
+          LogReturnedOutboxWork(_logger, work.MessageId, work.Destination, isNewlyStored);
+        }
+      } else if (_queuedOutboxMessages.Count > 0) {
+        // CRITICAL: We queued messages but got 0 back - this is the bug!
+        LogNoWorkReturned(_logger, _queuedOutboxMessages.Count, _instanceProvider.InstanceId);
+      }
+    }
 
     // Clear queues after successful flush
     _queuedOutboxMessages.Clear();
@@ -304,4 +319,32 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
     Message = "Error flushing scoped strategy on disposal"
   )]
   static partial void LogErrorFlushingOnDisposal(ILogger logger, Exception ex);
+
+  [LoggerMessage(
+    EventId = 12,
+    Level = LogLevel.Warning,
+    Message = "DIAGNOSTIC: Flushing {Count} outbox messages with InstanceId={InstanceId}, Service={ServiceName}"
+  )]
+  static partial void LogFlushingWithInstanceId(ILogger logger, Guid instanceId, string serviceName, int count);
+
+  [LoggerMessage(
+    EventId = 13,
+    Level = LogLevel.Warning,
+    Message = "DIAGNOSTIC: ProcessWorkBatchAsync returned: Outbox={OutboxCount}, Inbox={InboxCount}, Perspective={PerspectiveCount}"
+  )]
+  static partial void LogProcessWorkBatchResult(ILogger logger, int outboxCount, int inboxCount, int perspectiveCount);
+
+  [LoggerMessage(
+    EventId = 14,
+    Level = LogLevel.Warning,
+    Message = "DIAGNOSTIC: Returned outbox work: MessageId={MessageId}, Destination={Destination}, IsNewlyStored={IsNewlyStored}"
+  )]
+  static partial void LogReturnedOutboxWork(ILogger logger, Guid messageId, string destination, bool isNewlyStored);
+
+  [LoggerMessage(
+    EventId = 15,
+    Level = LogLevel.Error,
+    Message = "CRITICAL BUG: Queued {QueuedCount} outbox messages but ProcessWorkBatchAsync returned 0! InstanceId={InstanceId}"
+  )]
+  static partial void LogNoWorkReturned(ILogger logger, int queuedCount, Guid instanceId);
 }

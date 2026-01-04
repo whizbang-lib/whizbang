@@ -9,7 +9,7 @@
 -- This migration serves as documentation of the completed refactor.
 -- No actual changes needed - migration 029 already replaced the old function.
 
-COMMENT ON FUNCTION process_work_batch IS
+COMMENT ON FUNCTION __SCHEMA__.process_work_batch IS
 'Orchestrator function that coordinates all work batch processing (v2 - decomposed architecture). Registers heartbeat, processes completions/failures, stores new work, claims orphaned work, renews leases, and returns aggregated work batch. All operations occur in a single transaction for atomicity.
 
 Decomposition (migrations 009-029):

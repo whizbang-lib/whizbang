@@ -4,7 +4,7 @@
 --              Finds highest completed sequence with no gaps, updates checkpoint atomically.
 -- Dependencies: 001-015 (requires wh_perspective_events and wh_perspective_checkpoints tables)
 
-CREATE OR REPLACE FUNCTION update_perspective_checkpoints(
+CREATE OR REPLACE FUNCTION __SCHEMA__.update_perspective_checkpoints(
   p_completed_events JSONB,  -- [{StreamId, PerspectiveName}]
   p_debug_mode BOOLEAN DEFAULT FALSE
 ) RETURNS VOID AS $$
@@ -83,5 +83,5 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION update_perspective_checkpoints IS
+COMMENT ON FUNCTION __SCHEMA__.update_perspective_checkpoints IS
 'Updates persistent perspective checkpoints based on completed events. Finds highest completed sequence with no gaps, ensuring sequential consistency. Updates or creates checkpoint records atomically.';

@@ -4,7 +4,7 @@
 --              Returns message IDs for marking as "NewlyStored" in orchestrator response.
 -- Dependencies: 001-019 (requires wh_outbox, wh_active_streams tables, compute_partition function)
 
-CREATE OR REPLACE FUNCTION store_outbox_messages(
+CREATE OR REPLACE FUNCTION __SCHEMA__.store_outbox_messages(
   p_messages JSONB,
   p_instance_id UUID,
   p_lease_expiry TIMESTAMPTZ,
@@ -35,7 +35,7 @@ BEGIN
   LOOP
     -- Calculate partition for stream-based load balancing
     IF v_msg.stream_id IS NOT NULL THEN
-      v_partition := compute_partition(v_msg.stream_id, p_partition_count);
+      v_partition := __SCHEMA__.compute_partition(v_msg.stream_id, p_partition_count);
     ELSE
       v_partition := NULL;
     END IF;
@@ -105,5 +105,5 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION store_outbox_messages IS
+COMMENT ON FUNCTION __SCHEMA__.store_outbox_messages IS
 'Stores new outbox messages with immediate lease to current instance. Calculates partition for load balancing, updates active streams for ownership tracking. Returns message IDs for NewlyStored flag in orchestrator response.';

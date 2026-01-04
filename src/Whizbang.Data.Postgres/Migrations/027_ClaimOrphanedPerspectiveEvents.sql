@@ -4,7 +4,7 @@
 --              Ensures sequential ordering within stream/perspective. Respects stream ownership.
 -- Dependencies: 001-026 (requires wh_perspective_events, wh_active_streams tables from migration 009)
 
-CREATE OR REPLACE FUNCTION claim_orphaned_perspective_events(
+CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_perspective_events(
   p_instance_id UUID,
   p_lease_expiry TIMESTAMPTZ,
   p_now TIMESTAMPTZ
@@ -46,5 +46,5 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION claim_orphaned_perspective_events IS
+COMMENT ON FUNCTION __SCHEMA__.claim_orphaned_perspective_events IS
 'Claims orphaned perspective events with expired or null leases. Ensures sequential ordering within stream/perspective by checking for earlier uncompleted events. Respects stream ownership. Returns claimed work IDs for Orphaned flag in orchestrator response.';

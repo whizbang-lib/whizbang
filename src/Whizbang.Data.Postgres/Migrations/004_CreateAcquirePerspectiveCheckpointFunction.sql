@@ -4,7 +4,7 @@
 -- Uses UPSERT pattern: insert new checkpoint or update existing one
 -- =============================================
 
-CREATE OR REPLACE FUNCTION acquire_perspective_checkpoint_work(
+CREATE OR REPLACE FUNCTION __SCHEMA__.acquire_perspective_checkpoint_work(
   p_stream_id UUID,
   p_perspective_names TEXT[],
   p_event_id UUID

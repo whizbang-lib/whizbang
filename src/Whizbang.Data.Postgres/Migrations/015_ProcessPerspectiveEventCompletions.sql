@@ -4,7 +4,7 @@
 --              Returns stream/perspective pairs for checkpoint updates. Supports debug mode retention.
 -- Dependencies: 001-014 (requires wh_perspective_events table from migration 009)
 
-CREATE OR REPLACE FUNCTION process_perspective_event_completions(
+CREATE OR REPLACE FUNCTION __SCHEMA__.process_perspective_event_completions(
   p_completions JSONB,
   p_now TIMESTAMPTZ,
   p_debug_mode BOOLEAN DEFAULT FALSE
@@ -58,5 +58,5 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION process_perspective_event_completions IS
+COMMENT ON FUNCTION __SCHEMA__.process_perspective_event_completions IS
 'Processes perspective event completions. In production mode, deletes events (ephemeral). In debug mode, retains events for troubleshooting. Returns stream/perspective pairs for checkpoint update orchestration.';

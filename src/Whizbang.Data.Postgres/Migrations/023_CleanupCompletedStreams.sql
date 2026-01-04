@@ -4,7 +4,7 @@
 --              Checks outbox (unpublished), inbox (unstored), and perspective events (unprocessed).
 -- Dependencies: 001-022 (requires wh_active_streams, wh_outbox, wh_inbox, wh_perspective_events tables)
 
-CREATE OR REPLACE FUNCTION cleanup_completed_streams(
+CREATE OR REPLACE FUNCTION __SCHEMA__.cleanup_completed_streams(
   p_now TIMESTAMPTZ
 ) RETURNS VOID AS $$
 DECLARE
@@ -49,5 +49,5 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION cleanup_completed_streams IS
+COMMENT ON FUNCTION __SCHEMA__.cleanup_completed_streams IS
 'Removes streams from wh_active_streams when all work is complete. Checks for unpublished outbox messages, unstored inbox messages, and unprocessed perspective events. Called by orchestrator after processing completions.';

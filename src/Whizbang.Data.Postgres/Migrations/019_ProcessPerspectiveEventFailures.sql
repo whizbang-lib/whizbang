@@ -4,7 +4,7 @@
 --              Implements exponential backoff retry with scheduled_for timestamp.
 -- Dependencies: 001-018 (requires wh_perspective_events table from migration 009)
 
-CREATE OR REPLACE FUNCTION process_perspective_event_failures(
+CREATE OR REPLACE FUNCTION __SCHEMA__.process_perspective_event_failures(
   p_failures JSONB,
   p_now TIMESTAMPTZ
 ) RETURNS VOID AS $$
@@ -34,5 +34,5 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION process_perspective_event_failures IS
+COMMENT ON FUNCTION __SCHEMA__.process_perspective_event_failures IS
 'Processes perspective event failures. Sets Failed flag, records error details, increments attempts, and schedules retry with exponential backoff. Releases lease for reclaiming by other instances.';

@@ -4,7 +4,7 @@
 --              Uses partition-based load balancing to distribute work across instances.
 -- Dependencies: 001-025 (requires wh_receptor_processing, wh_active_streams tables)
 
-CREATE OR REPLACE FUNCTION claim_orphaned_receptor_work(
+CREATE OR REPLACE FUNCTION __SCHEMA__.claim_orphaned_receptor_work(
   p_instance_id UUID,
   p_instance_rank INTEGER,
   p_active_instance_count INTEGER,
@@ -38,5 +38,5 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION claim_orphaned_receptor_work IS
+COMMENT ON FUNCTION __SCHEMA__.claim_orphaned_receptor_work IS
 'Claims orphaned receptor processing work with expired or null leases. Uses partition-based load balancing. Respects stream ownership. Returns claimed processing IDs for Orphaned flag in orchestrator response.';

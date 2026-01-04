@@ -71,7 +71,7 @@ ON CONFLICT (setting_key) DO NOTHING;
 -- Only logs if p_log_level >= configured minimum level
 -- =====================================================================================
 
-CREATE OR REPLACE FUNCTION log_event(
+CREATE OR REPLACE FUNCTION __SCHEMA__.log_event(
   p_log_level INTEGER,
   p_source VARCHAR(50),
   p_message TEXT,
@@ -115,4 +115,4 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION log_event IS 'Conditionally logs events based on configured log level';
+COMMENT ON FUNCTION __SCHEMA__.log_event IS 'Conditionally logs events based on configured log level';

@@ -4,7 +4,7 @@
 --              Used by process_work_batch orchestrator to maintain instance liveness tracking.
 -- Dependencies: 001-009 (requires wh_service_instances table)
 
-CREATE OR REPLACE FUNCTION register_instance_heartbeat(
+CREATE OR REPLACE FUNCTION __SCHEMA__.register_instance_heartbeat(
   p_instance_id UUID,
   p_service_name VARCHAR(200),
   p_host_name VARCHAR(200),
@@ -39,5 +39,5 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION register_instance_heartbeat IS
+COMMENT ON FUNCTION __SCHEMA__.register_instance_heartbeat IS
 'Updates service instance heartbeat timestamp. Inserts new instance if not exists, updates last_heartbeat_at if exists. Called by process_work_batch orchestrator.';

@@ -30,7 +30,7 @@
 --   updated_count INT - Number of existing associations updated
 --   deleted_count INT - Number of orphaned associations deleted
 
-CREATE OR REPLACE FUNCTION register_message_associations(
+CREATE OR REPLACE FUNCTION __SCHEMA__.register_message_associations(
   p_associations JSONB
 )
 RETURNS TABLE (

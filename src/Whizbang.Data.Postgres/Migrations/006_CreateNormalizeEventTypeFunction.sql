@@ -25,9 +25,9 @@
 --   normalize_event_type('ECommerce.Events.ProductCreated, ECommerce.Contracts, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null')
 --     => 'ECommerce.Events.ProductCreated, ECommerce.Contracts'
 -- ======================================================================================
-DROP FUNCTION IF EXISTS normalize_event_type;
+DROP FUNCTION IF EXISTS __SCHEMA__.normalize_event_type;
 
-CREATE OR REPLACE FUNCTION normalize_event_type(type_name TEXT)
+CREATE OR REPLACE FUNCTION __SCHEMA__.normalize_event_type(type_name TEXT)
 RETURNS TEXT AS $$
 BEGIN
   -- Defensive normalization: Extract "TypeName, AssemblyName" from any format
@@ -45,4 +45,4 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql IMMUTABLE;
 
-COMMENT ON FUNCTION normalize_event_type IS 'Defensively normalizes .NET type names to "TypeName, AssemblyName" format by truncating Version/Culture/PublicKeyToken metadata. Matches TypeNameFormatter.Parse() in C#. Used in event store insertions and perspective checkpoint matching for consistent type identification.';
+COMMENT ON FUNCTION __SCHEMA__.normalize_event_type IS 'Defensively normalizes .NET type names to "TypeName, AssemblyName" format by truncating Version/Culture/PublicKeyToken metadata. Matches TypeNameFormatter.Parse() in C#. Used in event store insertions and perspective checkpoint matching for consistent type identification.';

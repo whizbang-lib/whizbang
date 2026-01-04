@@ -4,7 +4,7 @@
 --              Returns deleted instance IDs for logging. Releases work from deleted instances.
 -- Dependencies: 001-010 (requires wh_service_instances, wh_outbox, wh_inbox, wh_perspective_events)
 
-CREATE OR REPLACE FUNCTION cleanup_stale_instances(
+CREATE OR REPLACE FUNCTION __SCHEMA__.cleanup_stale_instances(
   p_stale_cutoff TIMESTAMPTZ
 ) RETURNS TABLE(deleted_instance_id UUID) AS $$
 DECLARE
@@ -48,5 +48,5 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION cleanup_stale_instances IS
+COMMENT ON FUNCTION __SCHEMA__.cleanup_stale_instances IS
 'Removes stale service instances (with last_heartbeat_at < p_stale_cutoff) and releases their work items. Returns deleted instance IDs for logging. Called by process_work_batch orchestrator.';

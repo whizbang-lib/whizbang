@@ -4,7 +4,7 @@
 --              Returns instance rank and active count for use in claim_orphaned_* functions.
 -- Dependencies: 001-011 (requires wh_service_instances table)
 
-CREATE OR REPLACE FUNCTION calculate_instance_rank(
+CREATE OR REPLACE FUNCTION __SCHEMA__.calculate_instance_rank(
   p_instance_id UUID,
   p_stale_cutoff TIMESTAMPTZ
 ) RETURNS TABLE(
@@ -34,5 +34,5 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION calculate_instance_rank IS
+COMMENT ON FUNCTION __SCHEMA__.calculate_instance_rank IS
 'Calculates partition rank for an instance based on active instances. Used for partition-based load balancing in orphaned work claiming. Raises exception if instance not found.';

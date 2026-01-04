@@ -4,7 +4,7 @@
 --              Returns stream IDs for downstream stream cleanup. Supports debug mode retention.
 -- Dependencies: 001-013 (requires wh_inbox table)
 
-CREATE OR REPLACE FUNCTION process_inbox_completions(
+CREATE OR REPLACE FUNCTION __SCHEMA__.process_inbox_completions(
   p_completions JSONB,
   p_now TIMESTAMPTZ,
   p_debug_mode BOOLEAN DEFAULT FALSE
@@ -69,5 +69,5 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-COMMENT ON FUNCTION process_inbox_completions IS
+COMMENT ON FUNCTION __SCHEMA__.process_inbox_completions IS
 'Processes inbox message completions. In production mode, deletes messages with EventStored flag (ephemeral). In debug mode, retains all messages for troubleshooting. Returns stream IDs for cleanup orchestration.';
