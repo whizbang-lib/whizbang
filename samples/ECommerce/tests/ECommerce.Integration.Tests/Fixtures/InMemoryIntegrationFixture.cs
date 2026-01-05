@@ -25,14 +25,34 @@ namespace ECommerce.Integration.Tests.Fixtures;
 /// Uses PostgreSQL (Testcontainers) for real database but InProcessTransport for synchronous message delivery.
 /// This isolates business logic testing from Azure Service Bus infrastructure concerns.
 /// </summary>
+/// <remarks>
+/// <para><strong>CRITICAL LIMITATION:</strong> InProcessTransport delivers events to only ONE service, not both.
+/// In production with Azure Service Bus, each service has its own subscription and receives events independently.
+/// This architectural limitation means some multi-service integration tests may fail in InMemory mode but work
+/// correctly in production or with Aspire tests using real Service Bus.</para>
+///
+/// <para><strong>Instance ID Isolation:</strong> Each service MUST have a unique instance ID. Shared instance IDs
+/// cause the work coordinator to treat multiple services as a single instance, resulting in only one service
+/// claiming and processing work while the other remains idle.</para>
+/// </remarks>
 public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   private readonly PostgreSqlContainer _postgresContainer;
   private readonly InProcessTransport _transport;  // Shared singleton across both hosts
   private bool _isInitialized;
   private IHost? _inventoryHost;
   private IHost? _bffHost;
-  private readonly Guid _inventoryInstanceId = Guid.CreateVersion7(); // Unique instance ID for InventoryWorker
-  private readonly Guid _bffInstanceId = Guid.CreateVersion7(); // Unique instance ID for BFF
+
+  /// <summary>
+  /// Unique instance ID for InventoryWorker service.
+  /// CRITICAL: Must be different from BFF instance ID to ensure work coordinator treats them as separate instances.
+  /// </summary>
+  private readonly Guid _inventoryInstanceId = Guid.CreateVersion7();
+
+  /// <summary>
+  /// Unique instance ID for BFF service.
+  /// CRITICAL: Must be different from InventoryWorker instance ID to ensure work coordinator treats them as separate instances.
+  /// </summary>
+  private readonly Guid _bffInstanceId = Guid.CreateVersion7();
   private readonly List<IServiceScope> _lensScopes = new(); // Track scopes for lens queries to dispose them properly
 
   public InMemoryIntegrationFixture() {

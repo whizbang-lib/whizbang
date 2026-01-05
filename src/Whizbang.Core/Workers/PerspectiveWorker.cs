@@ -449,6 +449,11 @@ public partial class PerspectiveWorker(
   )]
   static partial void LogErrorProcessingWorkBatch(ILogger logger, Exception ex);
 
+  /// <summary>
+  /// Diagnostic log entry for tracing runner registry resolution.
+  /// Used to debug DI container isolation issues where multiple services share the same host.
+  /// HashCode helps verify that each service resolves its own registry instance.
+  /// </summary>
   [LoggerMessage(
     EventId = 20,
     Level = LogLevel.Debug,
@@ -456,6 +461,11 @@ public partial class PerspectiveWorker(
   )]
   static partial void LogRunnerRegistryResolved(ILogger logger, string perspectiveName, string registryType, int registryHashCode);
 
+  /// <summary>
+  /// Diagnostic log entry for tracing runner instance resolution.
+  /// Used to debug scenarios where the wrong service's runner is used for perspective processing.
+  /// HashCode helps verify that the correct runner instance is resolved for the current service.
+  /// </summary>
   [LoggerMessage(
     EventId = 21,
     Level = LogLevel.Debug,
