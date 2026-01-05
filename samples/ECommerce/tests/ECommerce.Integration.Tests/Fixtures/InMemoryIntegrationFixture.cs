@@ -357,6 +357,9 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     // Register SignalR (required by BFF lenses)
     builder.Services.AddSignalR();
 
+    // Register perspective invoker for scoped event processing (use BFF's generated invoker)
+    ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangPerspectiveInvoker(builder.Services);
+
     // Register perspective runners for AOT-compatible lookup (replaces reflection)
     ECommerce.BFF.API.Generated.PerspectiveRunnerRegistryExtensions.AddPerspectiveRunners(builder.Services);
 

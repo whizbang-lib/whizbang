@@ -241,11 +241,17 @@ public partial class PerspectiveWorker(
           continue;
         }
 
+        // DIAGNOSTIC: Log registry resolution details
+        LogRunnerRegistryResolved(_logger, perspectiveWork.PerspectiveName, registry.GetType().FullName ?? "unknown", registry.GetHashCode());
+
         var runner = registry.GetRunner(perspectiveWork.PerspectiveName, scope.ServiceProvider);
         if (runner == null) {
           LogNoPerspectiveRunnerFound(_logger, perspectiveWork.PerspectiveName);
           continue;
         }
+
+        // DIAGNOSTIC: Log runner resolution details
+        LogRunnerInstanceResolved(_logger, perspectiveWork.PerspectiveName, runner.GetType().FullName ?? "unknown", runner.GetHashCode());
 
         // Invoke runner to process events
         var result = await runner.RunAsync(
@@ -442,6 +448,20 @@ public partial class PerspectiveWorker(
     Message = "Error processing work batch (database failure - completions will retry)"
   )]
   static partial void LogErrorProcessingWorkBatch(ILogger logger, Exception ex);
+
+  [LoggerMessage(
+    EventId = 20,
+    Level = LogLevel.Debug,
+    Message = "DIAGNOSTIC: Resolved runner registry for perspective '{PerspectiveName}': Type={RegistryType}, HashCode={RegistryHashCode}"
+  )]
+  static partial void LogRunnerRegistryResolved(ILogger logger, string perspectiveName, string registryType, int registryHashCode);
+
+  [LoggerMessage(
+    EventId = 21,
+    Level = LogLevel.Debug,
+    Message = "DIAGNOSTIC: Resolved runner instance for perspective '{PerspectiveName}': Type={RunnerType}, HashCode={RunnerHashCode}"
+  )]
+  static partial void LogRunnerInstanceResolved(ILogger logger, string perspectiveName, string runnerType, int runnerHashCode);
 }
 
 /// <summary>
