@@ -23,7 +23,7 @@ BEGIN
     AND pe.processed_at IS NULL
     -- Respect stream ownership
     AND EXISTS (
-      SELECT 1 FROM wh_active_streams ast
+      SELECT 1 FROM __SCHEMA__.wh_active_streams ast
       WHERE ast.stream_id = pe.stream_id
         AND ast.assigned_instance_id = p_instance_id
         AND ast.lease_expiry > p_now

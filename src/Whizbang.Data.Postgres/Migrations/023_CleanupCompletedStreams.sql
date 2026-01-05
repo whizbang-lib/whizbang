@@ -42,7 +42,7 @@ BEGIN
 
     -- Remove stream from active_streams if no pending work
     IF NOT v_has_pending_work THEN
-      DELETE FROM wh_active_streams a
+      DELETE FROM __SCHEMA__.wh_active_streams a
       WHERE a.stream_id = v_stream_id;
     END IF;
   END LOOP;

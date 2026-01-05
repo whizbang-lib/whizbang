@@ -26,10 +26,11 @@ namespace ECommerce.Integration.Tests.Fixtures;
 /// This isolates business logic testing from Azure Service Bus infrastructure concerns.
 /// </summary>
 /// <remarks>
-/// <para><strong>CRITICAL LIMITATION:</strong> InProcessTransport delivers events to only ONE service, not both.
-/// In production with Azure Service Bus, each service has its own subscription and receives events independently.
-/// This architectural limitation means some multi-service integration tests may fail in InMemory mode but work
-/// correctly in production or with Aspire tests using real Service Bus.</para>
+/// <para><strong>Multi-Service Event Processing:</strong> InProcessTransport delivers events to ALL services
+/// subscribing to the same address, mimicking Azure Service Bus topic fanout. Each service maintains independent
+/// stream ownership in its own schema (inventory.wh_active_streams, bff.wh_active_streams), allowing both services
+/// to process the same streams concurrently. This matches production behavior where each service has its own
+/// Azure Service Bus subscription.</para>
 ///
 /// <para><strong>Instance ID Isolation:</strong> Each service MUST have a unique instance ID. Shared instance IDs
 /// cause the work coordinator to treat multiple services as a single instance, resulting in only one service
