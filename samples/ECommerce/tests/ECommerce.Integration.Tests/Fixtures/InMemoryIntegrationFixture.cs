@@ -259,6 +259,10 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       .WithEFCore<ECommerce.InventoryWorker.InventoryDbContext>()
       .WithDriver.Postgres;
 
+    // DIAGNOSTIC: Verify IWorkCoordinatorStrategy is registered
+    var strategyDescriptor = builder.Services.FirstOrDefault(sd => sd.ServiceType == typeof(IWorkCoordinatorStrategy));
+    Console.WriteLine($"[InMemoryFixture] InventoryWorker IWorkCoordinatorStrategy registered: {strategyDescriptor != null} (Lifetime: {strategyDescriptor?.Lifetime})");
+
     // Register Whizbang generated services
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddReceptors(builder.Services);
     builder.Services.AddWhizbangAggregateIdExtractor();
@@ -323,20 +327,8 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
 
-    // CRITICAL: ServiceBusConsumerWorker IS needed to process inbox messages!
-    // InProcessTransport writes to inbox, but inbox needs to be processed to dispatch to handlers and create events
-    var consumerOptions = new ServiceBusConsumerOptions();
-    builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
-      new ServiceBusConsumerWorker(
-        sp.GetRequiredService<IServiceInstanceProvider>(),
-        sp.GetRequiredService<ITransport>(),
-        sp.GetRequiredService<IServiceScopeFactory>(),
-        jsonOptions,  // Pass JSON options for event deserialization
-        sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
-        sp.GetRequiredService<OrderedStreamProcessor>(),
-        consumerOptions
-      )
-    );
+    // NOTE: No ServiceBusConsumerWorker - fixture handles message processing directly in _handleMessageForHostAsync
+    // This processes inbox work (dispatches to handlers, stores events) synchronously when messages arrive
 
     return builder.Build();
   }
@@ -388,6 +380,10 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       .AddWhizbang()
       .WithEFCore<ECommerce.BFF.API.BffDbContext>()
       .WithDriver.Postgres;
+
+    // DIAGNOSTIC: Verify IWorkCoordinatorStrategy is registered
+    var strategyDescriptor = builder.Services.FirstOrDefault(sd => sd.ServiceType == typeof(IWorkCoordinatorStrategy));
+    Console.WriteLine($"[InMemoryFixture] BFF IWorkCoordinatorStrategy registered: {strategyDescriptor != null} (Lifetime: {strategyDescriptor?.Lifetime})");
 
     // Register SignalR (required by BFF lenses)
     builder.Services.AddSignalR();
@@ -451,20 +447,8 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
 
-    // CRITICAL: ServiceBusConsumerWorker IS needed to process inbox messages!
-    // InProcessTransport writes to inbox, but inbox needs to be processed to dispatch to handlers and create events
-    var consumerOptions = new ServiceBusConsumerOptions();
-    builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
-      new ServiceBusConsumerWorker(
-        sp.GetRequiredService<IServiceInstanceProvider>(),
-        sp.GetRequiredService<ITransport>(),
-        sp.GetRequiredService<IServiceScopeFactory>(),
-        jsonOptions,  // Pass JSON options for event deserialization
-        sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
-        sp.GetRequiredService<OrderedStreamProcessor>(),
-        consumerOptions
-      )
-    );
+    // NOTE: No ServiceBusConsumerWorker - fixture handles message processing directly in _handleMessageForHostAsync
+    // This processes inbox work (dispatches to handlers, stores events) synchronously when messages arrive
 
     return builder.Build();
   }
@@ -892,8 +876,9 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   }
 
   /// <summary>
-  /// Handles incoming messages from transport and writes them to inbox (simplified for InProcessTransport).
-  /// Just writes to inbox table and lets PerspectiveWorker poll and process naturally.
+  /// Handles incoming messages from transport - full processing flow.
+  /// CRITICAL: Must process inbox work (dispatch to handlers, store events) - not just write to inbox!
+  /// This creates events which trigger perspective checkpoints for PerspectiveWorker to process.
   /// </summary>
   private async Task _handleMessageForHostAsync(IHost host, IMessageEnvelope envelope, CancellationToken ct) {
     try {
@@ -901,6 +886,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       await using var scope = host.Services.CreateAsyncScope();
       var strategy = scope.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
       var jsonOptions = scope.ServiceProvider.GetRequiredService<JsonSerializerOptions>();
+      var orderedProcessor = host.Services.GetRequiredService<OrderedStreamProcessor>();
 
       // 1. Serialize envelope to InboxMessage
       var newInboxMessage = _serializeToNewInboxMessage(envelope, jsonOptions);
@@ -909,10 +895,51 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       strategy.QueueInboxMessage(newInboxMessage);
 
       // 3. Flush - calls process_work_batch with atomic INSERT ... ON CONFLICT DO NOTHING
-      // This writes the message to inbox table, and PerspectiveWorker will poll and process it
-      await strategy.FlushAsync(WorkBatchFlags.None, ct);
+      var workBatch = await strategy.FlushAsync(WorkBatchFlags.None, ct);
+
+      // 4. Check if work was returned - empty means duplicate (already processed)
+      var myWork = workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value).ToList();
+
+      if (myWork.Count == 0) {
+        Console.WriteLine($"[InMemoryFixture] Message {envelope.MessageId} already processed (duplicate)");
+        return;
+      }
 
       Console.WriteLine($"[InMemoryFixture] Message {envelope.MessageId} written to inbox for {host.Services.GetRequiredService<IServiceInstanceProvider>().ServiceName}");
+
+      // 5. CRITICAL: Process inbox work - dispatch to handlers (InventoryWorker) or mark events (BFF)
+      // process_work_batch automatically:
+      // - Stores events from inbox (Phase 4.5B) if is_event=true
+      // - Creates perspective events (Phase 4.6)
+      // - Creates perspective checkpoints (Phase 4.7)
+      await orderedProcessor.ProcessInboxWorkAsync(
+        myWork,
+        processor: async (work) => {
+          // Deserialize event from work item
+          var @event = _deserializeEvent(work, jsonOptions);
+
+          // Mark as EventStored - process_work_batch will store it and create perspective checkpoints
+          // The is_event flag (set in _serializeToNewInboxMessage) tells process_work_batch to store it
+          if (@event is IEvent) {
+            return MessageProcessingStatus.EventStored;
+          }
+
+          // Non-event messages - just mark as stored
+          return MessageProcessingStatus.EventStored;
+        },
+        completionHandler: (msgId, status) => {
+          strategy.QueueInboxCompletion(msgId, status);
+        },
+        failureHandler: (msgId, status, error) => {
+          strategy.QueueInboxFailure(msgId, status, error);
+        },
+        ct
+      );
+
+      // 6. Report completions/failures back to database
+      await strategy.FlushAsync(WorkBatchFlags.None, ct);
+
+      Console.WriteLine($"[InMemoryFixture] Successfully processed message {envelope.MessageId}");
     } catch (Exception ex) {
       Console.WriteLine($"[InMemoryFixture] Error processing message {envelope.MessageId}: {ex.Message}");
       throw;
