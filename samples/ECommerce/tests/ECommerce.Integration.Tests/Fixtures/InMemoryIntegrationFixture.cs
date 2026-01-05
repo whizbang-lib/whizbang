@@ -31,7 +31,8 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   private bool _isInitialized;
   private IHost? _inventoryHost;
   private IHost? _bffHost;
-  private readonly Guid _sharedInstanceId = Guid.CreateVersion7(); // Shared across both services for partition claiming
+  private readonly Guid _inventoryInstanceId = Guid.CreateVersion7(); // Unique instance ID for InventoryWorker
+  private readonly Guid _bffInstanceId = Guid.CreateVersion7(); // Unique instance ID for BFF
   private readonly List<IServiceScope> _lensScopes = new(); // Track scopes for lens queries to dispose them properly
 
   public InMemoryIntegrationFixture() {
@@ -199,8 +200,8 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   private IHost _createInventoryHost(string postgresConnection) {
     var builder = Host.CreateApplicationBuilder();
 
-    // Register service instance provider (uses shared instance ID for partition claiming compatibility)
-    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(_sharedInstanceId, "InventoryWorker"));
+    // Register service instance provider with unique instance ID
+    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(_inventoryInstanceId, "InventoryWorker"));
 
     // Register SHARED InProcessTransport (same instance used by both hosts)
     builder.Services.AddSingleton<ITransport>(_transport);
@@ -315,8 +316,8 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   private IHost _createBffHost(string postgresConnection) {
     var builder = Host.CreateApplicationBuilder();
 
-    // Register service instance provider (uses shared instance ID for partition claiming compatibility)
-    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(_sharedInstanceId, "BFF.API"));
+    // Register service instance provider with unique instance ID
+    builder.Services.AddSingleton<IServiceInstanceProvider>(sp => new TestServiceInstanceProvider(_bffInstanceId, "BFF.API"));
 
     var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
 
