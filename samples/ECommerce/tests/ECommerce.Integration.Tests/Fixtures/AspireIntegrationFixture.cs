@@ -713,17 +713,25 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
         // Truncate Whizbang core tables, perspective tables, and checkpoints
         // CASCADE ensures all dependent data is cleared
         // Use DO block to gracefully handle case where tables don't exist
+        // CRITICAL: Truncate BOTH inventory AND bff schemas since each has independent tables
         await dbContext.Database.ExecuteSqlRawAsync(@"
           DO $$
           BEGIN
-            -- Truncate core infrastructure tables
-            TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_checkpoints, inventory.wh_receptor_processing CASCADE;
+            -- Truncate core infrastructure tables (INVENTORY schema)
+            TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_checkpoints, inventory.wh_receptor_processing, inventory.wh_active_streams CASCADE;
 
-            -- Truncate all perspective tables (pattern: wh_per_*)
-            -- This clears materialized views from both InventoryWorker and BFF
+            -- Truncate all perspective tables (INVENTORY schema)
             TRUNCATE TABLE inventory.wh_per_inventory_level_dto CASCADE;
             TRUNCATE TABLE inventory.wh_per_order_read_model CASCADE;
             TRUNCATE TABLE inventory.wh_per_product_dto CASCADE;
+
+            -- Truncate core infrastructure tables (BFF schema)
+            TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_checkpoints, bff.wh_receptor_processing, bff.wh_active_streams CASCADE;
+
+            -- Truncate all perspective tables (BFF schema)
+            TRUNCATE TABLE bff.wh_per_inventory_level_dto CASCADE;
+            TRUNCATE TABLE bff.wh_per_order_read_model CASCADE;
+            TRUNCATE TABLE bff.wh_per_product_dto CASCADE;
           EXCEPTION
             WHEN undefined_table THEN
               -- Tables don't exist, nothing to clean up
