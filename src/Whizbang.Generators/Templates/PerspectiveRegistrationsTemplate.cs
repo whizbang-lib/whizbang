@@ -1,5 +1,7 @@
 using System;
+using System.Linq;
 using System.Text;
+using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
@@ -15,6 +17,21 @@ namespace Whizbang.Core.Generated;
 #region HEADER
 // This region gets replaced with generated header + timestamp
 #endregion
+
+/// <summary>
+/// Represents a message-to-perspective association discovered during source generation.
+/// Used for querying which perspectives handle which events.
+/// </summary>
+/// <param name="MessageType">Fully qualified message type name (e.g., "MyApp.Events.OrderCreated, MyApp")</param>
+/// <param name="AssociationType">Association type (e.g., "perspective")</param>
+/// <param name="TargetName">Name of the perspective (e.g., "OrderPerspective")</param>
+/// <param name="ServiceName">Service name (assembly name)</param>
+public sealed record MessageAssociation(
+  string MessageType,
+  string AssociationType,
+  string TargetName,
+  string ServiceName
+);
 
 /// <summary>
 /// Extension methods for registering {{PERSPECTIVE_CLASS_COUNT}} discovered perspective(s) with {{REGISTRATION_COUNT}} event handler(s).
@@ -82,5 +99,114 @@ public static class PerspectiveRegistrationExtensions {
       logger?.LogError(ex, "Failed to register perspective message associations in schema '{Schema}'", schema);
       throw;
     }
+  }
+
+  /// <summary>
+  /// Gets all message associations for the specified service.
+  /// Returns associations between event types and perspectives.
+  /// </summary>
+  /// <param name="serviceName">The service name (assembly name)</param>
+  /// <returns>Read-only list of message associations</returns>
+  public static System.Collections.Generic.IReadOnlyList<MessageAssociation> GetMessageAssociations(string serviceName) {
+    #region MESSAGE_ASSOCIATIONS_ARRAY
+    // This region gets replaced with generated association array
+    #endregion
+  }
+
+  /// <summary>
+  /// Gets all perspectives that handle the specified event type.
+  /// </summary>
+  /// <param name="eventType">Fully qualified event type name</param>
+  /// <param name="serviceName">The service name (assembly name)</param>
+  /// <returns>Enumerable of perspective names</returns>
+  public static System.Collections.Generic.IEnumerable<string> GetPerspectivesForEvent(string eventType, string serviceName) {
+    return GetMessageAssociations(serviceName)
+      .Where(a => a.MessageType == eventType && a.AssociationType == "perspective")
+      .Select(a => a.TargetName);
+  }
+
+  /// <summary>
+  /// Gets all events handled by the specified perspective.
+  /// </summary>
+  /// <param name="perspectiveName">Name of the perspective</param>
+  /// <param name="serviceName">The service name (assembly name)</param>
+  /// <returns>Enumerable of event type names</returns>
+  public static System.Collections.Generic.IEnumerable<string> GetEventsForPerspective(string perspectiveName, string serviceName) {
+    return GetMessageAssociations(serviceName)
+      .Where(a => a.TargetName == perspectiveName && a.AssociationType == "perspective")
+      .Select(a => a.MessageType);
+  }
+
+  /// <summary>
+  /// Gets all perspectives that handle the specified event type with fuzzy matching support.
+  /// </summary>
+  /// <param name="eventType">Event type name (can be simple, namespace-qualified, or fully-qualified)</param>
+  /// <param name="serviceName">The service name (assembly name)</param>
+  /// <param name="strictness">Flags controlling matching behavior (IgnoreCase, IgnoreVersion, IgnoreAssembly, IgnoreNamespace)</param>
+  /// <returns>Enumerable of perspective names that handle events matching the specified type</returns>
+  /// <remarks>
+  /// This overload enables flexible type matching. Examples:
+  /// - MatchStrictness.SimpleName: Match "ProductCreatedEvent" against any namespace
+  /// - MatchStrictness.IgnoreCase: Case-insensitive matching
+  /// - MatchStrictness.SimpleNameCaseInsensitive: Match simple name, case-insensitive
+  /// Multiple flags can be combined using bitwise OR.
+  /// </remarks>
+  public static System.Collections.Generic.IEnumerable<string> GetPerspectivesForEvent(
+      string eventType,
+      string serviceName,
+      MatchStrictness strictness) {
+    return GetMessageAssociations(serviceName)
+      .Where(a => a.AssociationType == "perspective" && TypeMatcher.Matches(a.MessageType, eventType, strictness))
+      .Select(a => a.TargetName);
+  }
+
+  /// <summary>
+  /// Gets all perspectives that handle events matching the specified regex pattern.
+  /// </summary>
+  /// <param name="eventPattern">Regex pattern to match event type names</param>
+  /// <param name="serviceName">The service name (assembly name)</param>
+  /// <returns>Enumerable of perspective names that handle events matching the pattern</returns>
+  /// <remarks>
+  /// This overload enables pattern-based matching. Examples:
+  /// - new Regex(".*Product.*") : Match any event type containing "Product"
+  /// - new Regex(".*Event$") : Match any event type ending with "Event"
+  /// - new Regex("^ECommerce\..*") : Match any event type starting with "ECommerce."
+  /// </remarks>
+  public static System.Collections.Generic.IEnumerable<string> GetPerspectivesForEvent(
+      Regex eventPattern,
+      string serviceName) {
+    return GetMessageAssociations(serviceName)
+      .Where(a => a.AssociationType == "perspective" && TypeMatcher.Matches(a.MessageType, eventPattern))
+      .Select(a => a.TargetName);
+  }
+
+  /// <summary>
+  /// Gets all events handled by the specified perspective with fuzzy matching support.
+  /// </summary>
+  /// <param name="perspectiveName">Perspective name (can be simple or fully-qualified)</param>
+  /// <param name="serviceName">The service name (assembly name)</param>
+  /// <param name="strictness">Flags controlling matching behavior</param>
+  /// <returns>Enumerable of event type names</returns>
+  public static System.Collections.Generic.IEnumerable<string> GetEventsForPerspective(
+      string perspectiveName,
+      string serviceName,
+      MatchStrictness strictness) {
+    return GetMessageAssociations(serviceName)
+      .Where(a => a.AssociationType == "perspective" && TypeMatcher.Matches(a.TargetName, perspectiveName, strictness))
+      .Select(a => a.MessageType);
+  }
+
+  /// <summary>
+  /// Gets all events for perspectives matching the specified regex pattern.
+  /// </summary>
+  /// <param name="perspectivePattern">Regex pattern to match perspective names</param>
+  /// <param name="serviceName">The service name (assembly name)</param>
+  /// <returns>Enumerable of event type names</returns>
+  public static System.Collections.Generic.IEnumerable<string> GetEventsForPerspective(
+      Regex perspectivePattern,
+      string serviceName) {
+    return GetMessageAssociations(serviceName)
+      .Where(a => a.AssociationType == "perspective" && TypeMatcher.Matches(a.TargetName, perspectivePattern))
+      .Select(a => a.MessageType);
   }
 }
