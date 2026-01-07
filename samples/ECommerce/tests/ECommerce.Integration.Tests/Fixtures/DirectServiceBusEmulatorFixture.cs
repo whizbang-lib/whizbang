@@ -38,9 +38,10 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
 
   /// <summary>
   /// Gets the Service Bus connection string for the emulator.
+  /// IMPORTANT: Must include port number or defaults to port 80!
   /// </summary>
   public string ServiceBusConnectionString =>
-    "Endpoint=sb://localhost;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;";
+    $"Endpoint=sb://localhost:{_port};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;";
 
   /// <summary>
   /// Initializes the emulator by starting docker-compose containers.

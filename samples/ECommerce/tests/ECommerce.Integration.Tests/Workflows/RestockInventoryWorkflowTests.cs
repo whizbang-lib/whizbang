@@ -16,7 +16,7 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// </summary>
 [NotInParallel]
 public class RestockInventoryWorkflowTests {
-  private static AspireIntegrationFixture? _fixture;
+  private static ServiceBusIntegrationFixture? _fixture;
 
   // Test product IDs (UUIDv7 for proper time-ordering and uniqueness across test runs)
   private static readonly ProductId _testProdRestock1 = ProductId.From(Uuid7.NewUuid7().ToGuid());
@@ -34,7 +34,7 @@ public class RestockInventoryWorkflowTests {
     var (connectionString, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync(testIndex);
 
     // Create fixture with shared client (per-test PostgreSQL + hosts, but shared ServiceBusClient)
-    _fixture = new AspireIntegrationFixture(connectionString, sharedClient, 0);
+    _fixture = new ServiceBusIntegrationFixture(connectionString, sharedClient, 0);
     await _fixture.InitializeAsync();
 
     // Clean database before each test to ensure isolated state

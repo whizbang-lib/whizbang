@@ -15,7 +15,7 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// </summary>
 [NotInParallel]
 public class SeedProductsWorkflowTests {
-  private static AspireIntegrationFixture? _fixture;
+  private static ServiceBusIntegrationFixture? _fixture;
 
   [Before(Test)]
   [RequiresUnreferencedCode("Test code - reflection allowed")]
@@ -26,7 +26,7 @@ public class SeedProductsWorkflowTests {
     var (connectionString, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync(testIndex);
 
     // Create fixture with shared client (per-test PostgreSQL + hosts, but shared ServiceBusClient)
-    _fixture = new AspireIntegrationFixture(connectionString, sharedClient, 0);
+    _fixture = new ServiceBusIntegrationFixture(connectionString, sharedClient, 0);
     await _fixture.InitializeAsync();
 
     // Clean database before each test to ensure isolated state
