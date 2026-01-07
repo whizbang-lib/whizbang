@@ -798,4 +798,439 @@ namespace TestNamespace {
     }
     return count;
   }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_MessageAssociation_IsGeneratedAsync() {
+    // Arrange - Tests that MessageAssociation record is generated
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    public string OrderId { get; init; } = """";
+  }
+
+  public record OrderModel {
+    public string OrderId { get; set; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData;
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    // Assert - MessageAssociation record should be generated
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource!).Contains("public sealed record MessageAssociation");
+    await Assert.That(generatedSource!).Contains("string MessageType");
+    await Assert.That(generatedSource!).Contains("string AssociationType");
+    await Assert.That(generatedSource!).Contains("string TargetName");
+    await Assert.That(generatedSource!).Contains("string ServiceName");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_GetMessageAssociations_ReturnsCorrectAssociationsAsync() {
+    // Arrange - Tests that GetMessageAssociations() method is generated and returns correct data
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    public string OrderId { get; init; } = """";
+  }
+
+  public record OrderUpdatedEvent : IEvent {
+    public string OrderId { get; init; } = """";
+  }
+
+  public record OrderModel {
+    public string OrderId { get; set; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent, OrderUpdatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) => currentData;
+    public OrderModel Apply(OrderModel currentData, OrderUpdatedEvent @event) => currentData;
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    // Assert - GetMessageAssociations() should exist and return associations
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource!).Contains("public static System.Collections.Generic.IReadOnlyList<MessageAssociation> GetMessageAssociations(string serviceName)");
+
+    // Should return array with 2 associations (OrderCreated and OrderUpdated)
+    await Assert.That(generatedSource!).Contains("new MessageAssociation");
+    await Assert.That(generatedSource!).Contains("TestNamespace.OrderCreatedEvent, ");
+    await Assert.That(generatedSource!).Contains("TestNamespace.OrderUpdatedEvent, ");
+    await Assert.That(generatedSource!).Contains("\"perspective\"");
+    await Assert.That(generatedSource!).Contains("\"OrderPerspective\"");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_GetPerspectivesForEvent_HelperMethodGeneratedAsync() {
+    // Arrange - Tests that GetPerspectivesForEvent() helper is generated
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    public string OrderId { get; init; } = """";
+  }
+
+  public record OrderModel {
+    public string OrderId { get; set; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) => currentData;
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    // Assert - GetPerspectivesForEvent() should be generated
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource!).Contains("public static System.Collections.Generic.IEnumerable<string> GetPerspectivesForEvent(string eventType, string serviceName)");
+    await Assert.That(generatedSource!).Contains("Where(a => a.MessageType == eventType && a.AssociationType == \"perspective\")");
+    await Assert.That(generatedSource!).Contains("Select(a => a.TargetName)");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_GetEventsForPerspective_HelperMethodGeneratedAsync() {
+    // Arrange - Tests that GetEventsForPerspective() helper is generated
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    public string OrderId { get; init; } = """";
+  }
+
+  public record OrderModel {
+    public string OrderId { get; set; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) => currentData;
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    // Assert - GetEventsForPerspective() should be generated
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource!).Contains("public static System.Collections.Generic.IEnumerable<string> GetEventsForPerspective(string perspectiveName, string serviceName)");
+    await Assert.That(generatedSource!).Contains("Where(a => a.TargetName == perspectiveName && a.AssociationType == \"perspective\")");
+    await Assert.That(generatedSource!).Contains("Select(a => a.MessageType)");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_MultiplePerspectives_AllAssociationsReturnedAsync() {
+    // Arrange - Tests that all associations from multiple perspectives are returned
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    public string OrderId { get; init; } = """";
+  }
+
+  public record PaymentProcessedEvent : IEvent {
+    public string PaymentId { get; init; } = """";
+  }
+
+  public record OrderModel {
+    public string OrderId { get; set; } = """";
+  }
+
+  public record PaymentModel {
+    public string PaymentId { get; set; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) => currentData;
+  }
+
+  public class PaymentPerspective : IPerspectiveFor<PaymentModel, PaymentProcessedEvent> {
+    public PaymentModel Apply(PaymentModel currentData, PaymentProcessedEvent @event) => currentData;
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    // Assert - Should have 2 associations (one per perspective)
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+
+    // Count MessageAssociation instantiations - should be 2
+    var associationCount = _countOccurrences(generatedSource!, "new MessageAssociation(");
+    await Assert.That(associationCount).IsEqualTo(2);
+
+    // Verify both perspectives are represented
+    await Assert.That(generatedSource!).Contains("\"OrderPerspective\"");
+    await Assert.That(generatedSource!).Contains("\"PaymentPerspective\"");
+  }
+
+  /// <summary>
+  /// Phase 3 Tests: PerspectiveAssociationInfo with Delegates
+  /// </summary>
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_GeneratesGetPerspectiveAssociationsMethodAsync() {
+    // Arrange
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    public string OrderId { get; init; } = """";
+  }
+
+  public record OrderModel {
+    public string OrderId { get; set; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return new OrderModel { OrderId = @event.OrderId };
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    // Assert - Should generate GetPerspectiveAssociations<TModel, TEvent>() method
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource!).Contains("GetPerspectiveAssociations<TModel, TEvent>");
+    await Assert.That(generatedSource!).Contains("PerspectiveAssociationInfo<TModel, TEvent>");
+    await Assert.That(generatedSource!).Contains("where TEvent : IEvent");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_GeneratesPerspectiveAssociationInfoRecordAsync() {
+    // Arrange
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record ProductCreatedEvent : IEvent {
+    public string ProductId { get; init; } = """";
+  }
+
+  public record ProductModel {
+    public string ProductId { get; set; } = """";
+  }
+
+  public class ProductPerspective : IPerspectiveFor<ProductModel, ProductCreatedEvent> {
+    public ProductModel Apply(ProductModel currentData, ProductCreatedEvent @event) {
+      return new ProductModel { ProductId = @event.ProductId };
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    // Assert - Should generate PerspectiveAssociationInfo record definition
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource!).Contains("public sealed record PerspectiveAssociationInfo<TModel, TEvent>");
+    await Assert.That(generatedSource!).Contains("string MessageType");
+    await Assert.That(generatedSource!).Contains("string TargetName");
+    await Assert.That(generatedSource!).Contains("string ServiceName");
+    await Assert.That(generatedSource!).Contains("Func<TModel, TEvent, TModel> ApplyDelegate");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_GeneratesDelegateWithTypeCheckAsync() {
+    // Arrange
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record InventoryReservedEvent : IEvent {
+    public int Quantity { get; init; }
+  }
+
+  public record InventoryModel {
+    public int AvailableQuantity { get; set; }
+  }
+
+  public class InventoryPerspective : IPerspectiveFor<InventoryModel, InventoryReservedEvent> {
+    public InventoryModel Apply(InventoryModel currentData, InventoryReservedEvent @event) {
+      return new InventoryModel { AvailableQuantity = currentData.AvailableQuantity - @event.Quantity };
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    // Assert - Should generate typeof() checks for compile-time type matching
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource!).Contains("typeof(TModel)");
+    await Assert.That(generatedSource!).Contains("typeof(TEvent)");
+    await Assert.That(generatedSource!).Contains("InventoryModel");
+    await Assert.That(generatedSource!).Contains("InventoryReservedEvent");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_MultiplePerspectives_GeneratesSeparateDelegatesAsync() {
+    // Arrange
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    public string OrderId { get; init; } = """";
+  }
+
+  public record PaymentProcessedEvent : IEvent {
+    public string PaymentId { get; init; } = """";
+  }
+
+  public record OrderModel {
+    public string OrderId { get; set; } = """";
+  }
+
+  public record PaymentModel {
+    public string PaymentId { get; set; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return new OrderModel { OrderId = @event.OrderId };
+    }
+  }
+
+  public class PaymentPerspective : IPerspectiveFor<PaymentModel, PaymentProcessedEvent> {
+    public PaymentModel Apply(PaymentModel currentData, PaymentProcessedEvent @event) {
+      return new PaymentModel { PaymentId = @event.PaymentId };
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    // Assert - Should generate separate type checks for each perspective
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+
+    // Both perspective types should be checked
+    await Assert.That(generatedSource!).Contains("OrderModel");
+    await Assert.That(generatedSource!).Contains("OrderCreatedEvent");
+    await Assert.That(generatedSource!).Contains("PaymentModel");
+    await Assert.That(generatedSource!).Contains("PaymentProcessedEvent");
+
+    // Both perspectives should have delegate instantiation
+    await Assert.That(generatedSource!).Contains("OrderPerspective");
+    await Assert.That(generatedSource!).Contains("PaymentPerspective");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_EmptyResult_ForNonMatchingTypesAsync() {
+    // Arrange
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    public string OrderId { get; init; } = """";
+  }
+
+  public record OrderModel {
+    public string OrderId { get; set; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData;
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    // Assert - Should return empty array when types don't match
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource!).Contains("return Array.Empty<PerspectiveAssociationInfo<TModel, TEvent>>();");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_GeneratesAOTCompatibleDelegatesAsync() {
+    // Arrange
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record ShipmentSentEvent : IEvent {
+    public string TrackingNumber { get; init; } = """";
+  }
+
+  public record ShipmentModel {
+    public string TrackingNumber { get; set; } = """";
+  }
+
+  public class ShipmentPerspective : IPerspectiveFor<ShipmentModel, ShipmentSentEvent> {
+    public ShipmentModel Apply(ShipmentModel currentData, ShipmentSentEvent @event) {
+      return new ShipmentModel { TrackingNumber = @event.TrackingNumber };
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    // Assert - Should use 'new' keyword (AOT-compatible), not Activator.CreateInstance
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource!).DoesNotContain("Activator.CreateInstance");
+    await Assert.That(generatedSource!).DoesNotContain("MethodInfo");
+    await Assert.That(generatedSource!).DoesNotContain("Invoke(");
+
+    // Should use compile-time instantiation with global:: prefix
+    await Assert.That(generatedSource!).Contains("new global::TestNamespace.ShipmentPerspective()");
+  }
 }

@@ -356,6 +356,36 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       }
     }
 
+    // Generate message associations array for C# querying
+    var associationsArray = new StringBuilder();
+    associationsArray.AppendLine("    return new MessageAssociation[] {");
+    bool isFirst = true;
+
+    foreach (var perspective in perspectives) {
+      var perspectiveClassName = _getSimpleName(perspective.ClassName);
+
+      foreach (var eventType in perspective.EventTypes) {
+        // Add comma separator (except for first item)
+        if (!isFirst) {
+          associationsArray.AppendLine(",");
+        }
+        isFirst = false;
+
+        // Format event type (same logic as JSON generation)
+        var typeName = eventType.StartsWith("global::", StringComparison.Ordinal)
+            ? eventType["global::".Length..]
+            : eventType;
+        var eventAssemblyName = _extractAssemblyName(typeName);
+        var formattedEventType = $"{typeName}, {eventAssemblyName}";
+
+        // Generate MessageAssociation instantiation
+        associationsArray.Append($"      new MessageAssociation(\"{formattedEventType}\", \"perspective\", \"{perspectiveClassName}\", serviceName)");
+      }
+    }
+
+    associationsArray.AppendLine();
+    associationsArray.AppendLine("    };");
+
     // Replace template markers
     var result = template;
     result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName};");
@@ -365,8 +395,66 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     result = result.Replace("{{ASSOCIATION_COUNT}}", associationCount.ToString(CultureInfo.InvariantCulture));
     result = TemplateUtilities.ReplaceRegion(result, "PERSPECTIVE_REGISTRATIONS", registrations.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "MESSAGE_ASSOCIATIONS_JSON", associations.ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "MESSAGE_ASSOCIATIONS_ARRAY", associationsArray.ToString());
+
+    // Generate PERSPECTIVE_ASSOCIATIONS_TYPED region (Phase 3: Delegates)
+    var typedAssociations = _generateTypedAssociations(perspectives, assemblyName);
+    result = TemplateUtilities.ReplaceRegion(result, "PERSPECTIVE_ASSOCIATIONS_TYPED", typedAssociations);
 
     return result;
+  }
+
+  /// <summary>
+  /// Generates the GetPerspectiveAssociations<TModel, TEvent>() method body with AOT-compatible delegates.
+  /// Uses compile-time type checking (typeof) to match TModel and TEvent, then instantiates
+  /// perspective classes directly (no reflection) and creates lambda delegates to Apply methods.
+  /// </summary>
+  private static string _generateTypedAssociations(
+      ImmutableArray<PerspectiveInfo> perspectives,
+      string serviceName) {
+
+    if (perspectives.IsEmpty) {
+      return "return Array.Empty<PerspectiveAssociationInfo<TModel, TEvent>>();";
+    }
+
+    var sb = new StringBuilder();
+
+    // Generate type checks for each model/event combination
+    foreach (var perspective in perspectives) {
+      var modelType = perspective.InterfaceTypeArguments[0]; // TModel
+
+      // Each perspective can handle multiple event types
+      foreach (var eventType in perspective.EventTypes) {
+        // Strip "global::" prefix if present for consistency
+        var cleanEventType = eventType.StartsWith("global::", StringComparison.Ordinal)
+            ? eventType["global::".Length..]
+            : eventType;
+
+        // Generate: if (typeof(TModel) == typeof(global::ModelType) && typeof(TEvent) == typeof(global::EventType)) {
+        sb.AppendLine($"    if (typeof(TModel) == typeof({modelType}) && typeof(TEvent) == typeof({eventType})) {{");
+        sb.AppendLine($"      return new[] {{");
+        sb.AppendLine($"        new PerspectiveAssociationInfo<TModel, TEvent>(");
+        sb.AppendLine($"          \"{cleanEventType}\",");
+        sb.AppendLine($"          \"{perspective.ClassName.Split('.').Last()}\",");
+        sb.AppendLine($"          \"{serviceName}\",");
+        sb.AppendLine($"          (model, evt) => {{");
+        sb.AppendLine($"            var perspective = new {perspective.ClassName}();");
+        sb.AppendLine($"            var typedModel = ({modelType})((object)model);");
+        sb.AppendLine($"            var typedEvent = ({eventType})((object)evt);");
+        sb.AppendLine($"            var result = perspective.Apply(typedModel, typedEvent);");
+        sb.AppendLine($"            return (TModel)((object)result);");
+        sb.AppendLine($"          }}");
+        sb.AppendLine($"        )");
+        sb.AppendLine($"      }};");
+        sb.AppendLine($"    }}");
+        sb.AppendLine();
+      }
+    }
+
+    // Default: return empty array
+    sb.AppendLine("    return Array.Empty<PerspectiveAssociationInfo<TModel, TEvent>>();");
+
+    return sb.ToString();
   }
 
   /// <summary>
@@ -390,8 +478,14 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       return parts[0];
     }
 
-    // Fallback: return first two segments if available, otherwise first segment
-    if (parts.Length >= 2) {
+    // For patterns like "Namespace.TypeName" (only 2 parts), return first segment only
+    // The second part is the type name itself, not a namespace segment
+    if (parts.Length == 2) {
+      return parts[0];
+    }
+
+    // Fallback: for longer namespaces without Events/Commands, return first two segments
+    if (parts.Length >= 3) {
       return $"{parts[0]}.{parts[1]}";
     }
 
