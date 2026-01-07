@@ -329,9 +329,6 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // Register Azure Service Bus transport (will resolve shared client from DI)
     builder.Services.AddAzureServiceBusTransport(serviceBusConnectionString);
 
-    // Register OrderedStreamProcessor for message ordering (required by ServiceBusConsumerWorker)
-    builder.Services.AddSingleton<OrderedStreamProcessor>();
-
     // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
     // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
     // This registers JSON converters for JSONB serialization (including EnvelopeMetadata, MessageScope)
@@ -414,27 +411,9 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
 
-    // Azure Service Bus consumer with generic topic subscriptions (emulator compatibility)
-    // InventoryWorker subscribes to generic topics to receive events it publishes
-    // (Events go: InventoryWorker → Service Bus → back to InventoryWorker inbox → perspectives)
-    var inventoryConsumerOptions = new ServiceBusConsumerOptions {
-      Mode = SubscriptionMode.Processor,
-      PollingInterval = TimeSpan.FromMilliseconds(100)  // Only used if Polling mode
-    };
-    inventoryConsumerOptions.Subscriptions.Add(new TopicSubscription(topicA, "sub-00-b"));  // topic-00 subscription
-    inventoryConsumerOptions.Subscriptions.Add(new TopicSubscription(topicB, "sub-01-b"));  // topic-01 subscription
-    builder.Services.AddSingleton(inventoryConsumerOptions);
-    builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
-      new ServiceBusConsumerWorker(
-        sp.GetRequiredService<IServiceInstanceProvider>(),
-        sp.GetRequiredService<ITransport>(),
-        sp.GetRequiredService<IServiceScopeFactory>(),
-        jsonOptions,  // Pass JSON options for event deserialization
-        sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
-        sp.GetRequiredService<OrderedStreamProcessor>(),
-        inventoryConsumerOptions
-      )
-    );
+    // NOTE: InventoryWorker does NOT use ServiceBusConsumerWorker
+    // InventoryWorker perspectives read directly from inventory.wh_event_store (event sourcing pattern)
+    // Only BFF uses ServiceBusConsumerWorker to receive events via Service Bus topics
 
     // Logging
     builder.Services.AddLogging(logging => {
@@ -562,10 +541,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
 
     // Azure Service Bus consumer with generic topic subscriptions (emulator compatibility)
     // BFF subscribes to generic topics with generic subscriptions (sub-00-a, sub-01-a)
-    var consumerOptions = new ServiceBusConsumerOptions {
-      Mode = SubscriptionMode.Processor,
-      PollingInterval = TimeSpan.FromMilliseconds(100)  // Only used if Polling mode
-    };
+    var consumerOptions = new ServiceBusConsumerOptions();
     consumerOptions.Subscriptions.Add(new TopicSubscription(topicA, "sub-00-a"));  // topic-00 subscription
     consumerOptions.Subscriptions.Add(new TopicSubscription(topicB, "sub-01-a"));  // topic-01 subscription
     builder.Services.AddSingleton(consumerOptions);
@@ -652,7 +628,12 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       bffCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM bff.wh_perspective_checkpoints WHERE (status & 2) = 0 AND (status & 4) = 0";
       var bffPendingPerspectives = (int)(await bffCmd.ExecuteScalarAsync() ?? 0);
 
-      bffCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM bff.wh_per_product_dto";
+      bffCmd.CommandText = @"
+        SELECT CAST(COUNT(*) AS INTEGER) FROM (
+          SELECT id FROM bff.wh_per_product_dto
+          UNION ALL
+          SELECT id FROM bff.wh_per_inventory_level_dto
+        ) AS all_perspective_rows";
       var bffPerspectiveRowCount = (int)(await bffCmd.ExecuteScalarAsync() ?? 0);
 
       // Aggregate totals
@@ -694,12 +675,137 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         while (await bffReader.ReadAsync()) {
           Console.WriteLine($"  - {bffReader.GetString(0)}, stream={bffReader.GetString(1)}, status={bffReader.GetInt32(2)}, last_event={bffReader.GetString(3)}, error={bffReader.GetString(4)}");
         }
+        await bffReader.CloseAsync();
+
+        // DIAGNOSTIC: Check BFF inbox messages (after they should have been processed)
+        // Wait a bit for messages to arrive
+        await Task.Delay(500);
+
+        bffCmd.CommandText = @"
+          SELECT
+            message_id::text,
+            handler_name,
+            event_type,
+            is_event,
+            COALESCE(stream_id::text, 'NULL') as stream_id,
+            status,
+            processed_at IS NOT NULL as is_processed
+          FROM bff.wh_inbox
+          ORDER BY received_at DESC
+          LIMIT 5";
+        await using var bffInboxReader = await bffCmd.ExecuteReaderAsync();
+        Console.WriteLine("[DIAGNOSTIC] BFF inbox messages:");
+        var inboxCount = 0;
+        while (await bffInboxReader.ReadAsync()) {
+          inboxCount++;
+          var msgId = bffInboxReader.GetString(0);
+          var eventType = bffInboxReader.GetString(2);
+          var isEvent = bffInboxReader.GetBoolean(3);
+          var streamId = bffInboxReader.GetString(4);
+          var status = bffInboxReader.GetInt32(5);
+          Console.WriteLine($"  - msg={msgId[..8]}..., event_type={eventType}, is_event={isEvent}, stream_id={streamId[..8]}..., status={status}");
+        }
+        if (inboxCount == 0) {
+          Console.WriteLine("  (no messages found)");
+        }
+        await bffInboxReader.CloseAsync();
+
+        // DIAGNOSTIC: Check BFF event store
+        bffCmd.CommandText = @"
+          SELECT CAST(COUNT(*) AS INTEGER) FROM bff.wh_event_store";
+        var bffEventCount = (int)(await bffCmd.ExecuteScalarAsync() ?? 0);
+        Console.WriteLine($"[DIAGNOSTIC] BFF event store: {bffEventCount} events");
+
+        // DIAGNOSTIC: Check what event types are in the BFF event store
+        if (bffEventCount > 0) {
+          bffCmd.CommandText = @"
+            SELECT
+              event_id::text,
+              event_type,
+              aggregate_type
+            FROM bff.wh_event_store
+            ORDER BY sequence_number
+            LIMIT 5";
+          await using var bffEventReader = await bffCmd.ExecuteReaderAsync();
+          Console.WriteLine("[DIAGNOSTIC] BFF event store event types:");
+          while (await bffEventReader.ReadAsync()) {
+            var eventId = bffEventReader.GetString(0);
+            var eventType = bffEventReader.GetString(1);
+            var aggregateType = bffEventReader.GetString(2);
+            Console.WriteLine($"  - event_id={eventId[..8]}..., event_type={eventType}, aggregate_type={aggregateType}");
+          }
+          await bffEventReader.CloseAsync();
+        }
+
+        // DIAGNOSTIC: Check BFF message associations using C# API (NEW!)
+        var bffAssociations = ECommerce.BFF.API.Generated.PerspectiveRegistrationExtensions
+          .GetMessageAssociations("ECommerce.BFF.API");
+        Console.WriteLine("[DIAGNOSTIC] BFF message associations (from C# API):");
+        foreach (var assoc in bffAssociations.OrderBy(a => a.TargetName).ThenBy(a => a.MessageType)) {
+          Console.WriteLine($"  - {assoc.MessageType} → {assoc.TargetName}");
+        }
+        Console.WriteLine($"[DIAGNOSTIC] Total BFF associations: {bffAssociations.Count}");
+
+        // DIAGNOSTIC: Show fuzzy matching with new API features
+        Console.WriteLine();
+        Console.WriteLine("[DIAGNOSTIC] === NEW FUZZY MATCHING API FEATURES ===");
+
+        // Example 1: Simple name matching (ignore namespace/assembly)
+        var perspectivesSimpleName = ECommerce.BFF.API.Generated.PerspectiveRegistrationExtensions
+          .GetPerspectivesForEvent("ProductCreatedEvent", "ECommerce.BFF.API", Whizbang.Core.MatchStrictness.SimpleName);
+        Console.WriteLine($"[DIAGNOSTIC] Simple name 'ProductCreatedEvent' → {string.Join(", ", perspectivesSimpleName)}");
+
+        // Example 2: Case-insensitive simple name matching
+        var perspectivesCaseInsensitive = ECommerce.BFF.API.Generated.PerspectiveRegistrationExtensions
+          .GetPerspectivesForEvent("productcreatedevent", "ECommerce.BFF.API", Whizbang.Core.MatchStrictness.SimpleNameCaseInsensitive);
+        Console.WriteLine($"[DIAGNOSTIC] Case-insensitive 'productcreatedevent' → {string.Join(", ", perspectivesCaseInsensitive)}");
+
+        // Example 3: Regex pattern matching (any event with "Product" in the name)
+        var perspectivesPattern = ECommerce.BFF.API.Generated.PerspectiveRegistrationExtensions
+          .GetPerspectivesForEvent(new System.Text.RegularExpressions.Regex(".*Product.*"), "ECommerce.BFF.API");
+        Console.WriteLine($"[DIAGNOSTIC] Regex pattern '.*Product.*' → {string.Join(", ", perspectivesPattern)}");
+
+        // Example 4: Get events handled by a perspective (fuzzy)
+        var eventsForInventory = ECommerce.BFF.API.Generated.PerspectiveRegistrationExtensions
+          .GetEventsForPerspective("InventoryPerspective", "ECommerce.BFF.API", Whizbang.Core.MatchStrictness.SimpleName);
+        Console.WriteLine($"[DIAGNOSTIC] Events handled by InventoryPerspective: {string.Join(", ", eventsForInventory)}");
+
+        Console.WriteLine("[DIAGNOSTIC] === END FUZZY MATCHING DEMO ===");
+        Console.WriteLine();
+
+        // DIAGNOSTIC: Show which perspectives handle ProductCreatedEvent (exact match - original)
+        var perspectivesForProduct = ECommerce.BFF.API.Generated.PerspectiveRegistrationExtensions
+          .GetPerspectivesForEvent("ECommerce.Contracts.Events.ProductCreatedEvent, ECommerce.Contracts", "ECommerce.BFF.API");
+        Console.WriteLine($"[DIAGNOSTIC] Perspectives handling ProductCreatedEvent (exact): {string.Join(", ", perspectivesForProduct)}");
+
+        // DIAGNOSTIC: Check which perspective checkpoints exist in BFF
+        bffCmd.CommandText = @"
+          SELECT perspective_name, status, last_event_id::text
+          FROM bff.wh_perspective_checkpoints
+          ORDER BY perspective_name";
+        await using var bffCheckpointReader = await bffCmd.ExecuteReaderAsync();
+        Console.WriteLine("[DIAGNOSTIC] BFF perspective checkpoints:");
+        while (await bffCheckpointReader.ReadAsync()) {
+          var perspName = bffCheckpointReader.GetString(0);
+          var status = bffCheckpointReader.GetInt32(1);
+          var lastEventId = bffCheckpointReader.IsDBNull(2) ? "null" : bffCheckpointReader.GetString(2);
+          Console.WriteLine($"  - {perspName}: status={status}, last_event_id={lastEventId[..8]}...");
+        }
+        await bffCheckpointReader.CloseAsync();
+
+        // DIAGNOSTIC: Check row counts for each BFF perspective table
+        bffCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM bff.wh_per_product_dto";
+        var bffProductRows = (int)(await bffCmd.ExecuteScalarAsync() ?? 0);
+        bffCmd.CommandText = "SELECT CAST(COUNT(*) AS INTEGER) FROM bff.wh_per_inventory_level_dto";
+        var bffInventoryRows = (int)(await bffCmd.ExecuteScalarAsync() ?? 0);
+        Console.WriteLine($"[DIAGNOSTIC] BFF perspective rows: ProductDto={bffProductRows}, InventoryLevelDto={bffInventoryRows}");
       }
 
       // CRITICAL: Wait for all work to complete AND for perspective rows to exist
       // This prevents returning before perspective transactions are visible to lens queries
       if (pendingOutbox == 0 && pendingInbox == 0 && pendingPerspectives == 0 && perspectiveRowCount > 0) {
         Console.WriteLine($"[ServiceBusFixture] Event processing complete - no pending work, {perspectiveRowCount} perspective rows exist (checked database after {stopwatch.ElapsedMilliseconds}ms, {attempt} attempts)");
+        Console.WriteLine($"[DIAGNOSTIC-FINAL] BFF: Rows={bffPerspectiveRowCount}, Inventory: Rows={invPerspectiveRowCount}");
         return;
       }
 
