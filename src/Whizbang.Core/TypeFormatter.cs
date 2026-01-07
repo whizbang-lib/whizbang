@@ -12,6 +12,7 @@ namespace Whizbang.Core;
 /// This class offers flexible type name formatting based on individual component flags,
 /// allowing precise control over how type names appear in generated code, logs, and diagnostics.
 /// </remarks>
+/// <docs>core-concepts/type-formatting</docs>
 public static class TypeFormatter {
   /// <summary>
   /// Formats a type name according to the specified qualification flags.

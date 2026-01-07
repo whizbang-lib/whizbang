@@ -11,6 +11,7 @@ namespace Whizbang.Core;
 /// using bitwise OR operations. Composite presets are provided for common combinations.
 /// Each flag instructs the matcher to ignore a specific aspect of the type name during comparison.
 /// </remarks>
+/// <docs>core-concepts/fuzzy-matching</docs>
 [Flags]
 public enum MatchStrictness {
   /// <summary>

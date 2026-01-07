@@ -10,6 +10,7 @@ namespace Whizbang.Core;
 /// This enum uses the [Flags] attribute, allowing individual components to be combined
 /// using bitwise OR operations. Composite presets are provided for common combinations.
 /// </remarks>
+/// <docs>core-concepts/type-qualification</docs>
 [Flags]
 public enum TypeQualification {
   /// <summary>

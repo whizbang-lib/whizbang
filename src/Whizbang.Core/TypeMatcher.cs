@@ -12,6 +12,7 @@ namespace Whizbang.Core;
 /// allowing you to ignore specific components (assembly, namespace, version, case)
 /// when comparing type names. It also supports regex pattern matching.
 /// </remarks>
+/// <docs>core-concepts/type-matching</docs>
 public static class TypeMatcher {
   /// <summary>
   /// Determines whether two type name strings match according to the specified strictness flags.
