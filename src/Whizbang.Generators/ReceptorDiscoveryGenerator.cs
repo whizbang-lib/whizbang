@@ -75,6 +75,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// Extracts receptor information from a class declaration.
   /// Returns null if the class doesn't implement IReceptor.
   /// Supports both IReceptor&lt;TMessage, TResponse&gt; and IReceptor&lt;TMessage&gt; (void) patterns.
+  /// Enhanced in Phase 2 to extract [FireAt] attributes for lifecycle stage discovery.
   /// </summary>
   private static ReceptorInfo? _extractReceptorInfo(
       GeneratorSyntaxContext context,
@@ -87,6 +88,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // See RoslynGuards.cs for rationale - no branch created, eliminates coverage gap
     var classSymbol = RoslynGuards.GetClassSymbolOrThrow(classDeclaration, semanticModel, cancellationToken);
 
+    // Extract lifecycle stages from [FireAt] attributes
+    var lifecycleStages = _extractLifecycleStages(classSymbol);
+
     // Look for IReceptor<TMessage, TResponse> interface (2 type arguments)
     var receptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
         i.OriginalDefinition.ToDisplayString() == RECEPTOR_INTERFACE_NAME + "<TMessage, TResponse>");
@@ -96,7 +100,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       return new ReceptorInfo(
           ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
           MessageType: receptorInterface.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-          ResponseType: receptorInterface.TypeArguments[1].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+          ResponseType: receptorInterface.TypeArguments[1].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          LifecycleStages: lifecycleStages
       );
     }
 
@@ -109,12 +114,57 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       return new ReceptorInfo(
           ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
           MessageType: voidReceptorInterface.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-          ResponseType: null  // Void receptor - no response type
+          ResponseType: null,  // Void receptor - no response type
+          LifecycleStages: lifecycleStages
       );
     }
 
     // No IReceptor interface found
     return null;
+  }
+
+  /// <summary>
+  /// Extracts lifecycle stages from [FireAt] attributes on a receptor class.
+  /// Returns an array of fully qualified lifecycle stage enum names (e.g., "Whizbang.Core.LifecycleStage.PostPerspectiveAsync").
+  /// Returns empty array if no [FireAt] attributes found (receptor will default to ImmediateAsync).
+  /// Supports multiple [FireAt] attributes on a single receptor.
+  /// </summary>
+  private static string[] _extractLifecycleStages(INamedTypeSymbol classSymbol) {
+    const string FIRE_AT_ATTRIBUTE = "Whizbang.Core.Messaging.FireAtAttribute";
+
+    var stages = new System.Collections.Generic.List<string>();
+
+    foreach (var attribute in classSymbol.GetAttributes()) {
+      if (attribute.AttributeClass?.ToDisplayString() != FIRE_AT_ATTRIBUTE) {
+        continue;
+      }
+
+      // [FireAt(LifecycleStage.PostPerspectiveAsync)]
+      // Constructor argument is LifecycleStage enum value
+      if (attribute.ConstructorArguments.Length > 0) {
+        var stageArg = attribute.ConstructorArguments[0];
+        if (stageArg.Value is int stageValue) {
+          // Get the enum type to convert int to enum name
+          var stageType = attribute.AttributeClass.GetMembers().OfType<IMethodSymbol>()
+              .FirstOrDefault(m => m.MethodKind == MethodKind.Constructor)
+              ?.Parameters.FirstOrDefault()?.Type;
+
+          if (stageType is INamedTypeSymbol enumType) {
+            // Find the enum member with this value
+            var enumMember = enumType.GetMembers().OfType<IFieldSymbol>()
+                .FirstOrDefault(f => f.ConstantValue is int val && val == stageValue);
+
+            if (enumMember is not null) {
+              // Store fully qualified enum value (e.g., "Whizbang.Core.LifecycleStage.PostPerspectiveAsync")
+              var fullyQualifiedStage = $"{enumType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)}.{enumMember.Name}";
+              stages.Add(fullyQualifiedStage);
+            }
+          }
+        }
+      }
+    }
+
+    return stages.ToArray();
   }
 
   /// <summary>
