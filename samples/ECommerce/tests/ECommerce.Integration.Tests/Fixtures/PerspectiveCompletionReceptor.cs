@@ -1,3 +1,4 @@
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 
 namespace ECommerce.Integration.Tests.Fixtures;

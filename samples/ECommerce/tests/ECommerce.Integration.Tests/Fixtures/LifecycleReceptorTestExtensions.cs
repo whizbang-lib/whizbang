@@ -1,5 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using Whizbang.Core;
 using Whizbang.Core.Messaging;
 
 namespace ECommerce.Integration.Tests.Fixtures;
