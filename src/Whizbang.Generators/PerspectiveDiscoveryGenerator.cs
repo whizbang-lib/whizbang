@@ -439,10 +439,10 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
         sb.AppendLine($"          \"{serviceName}\",");
         sb.AppendLine($"          (model, evt) => {{");
         sb.AppendLine($"            var perspective = new {perspective.ClassName}();");
-        sb.AppendLine($"            var typedModel = ({modelType})((object)model);");
-        sb.AppendLine($"            var typedEvent = ({eventType})((object)evt);");
+        sb.AppendLine($"            var typedModel = ({modelType})((object)model!);");
+        sb.AppendLine($"            var typedEvent = ({eventType})((object)evt!);");
         sb.AppendLine($"            var result = perspective.Apply(typedModel, typedEvent);");
-        sb.AppendLine($"            return (TModel)((object)result);");
+        sb.AppendLine($"            return (TModel)((object)result!);");
         sb.AppendLine($"          }}");
         sb.AppendLine($"        )");
         sb.AppendLine($"      }};");
