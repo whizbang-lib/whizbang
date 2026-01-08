@@ -1,3 +1,6 @@
+using System;
+using Whizbang.Core.Observability;
+
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
