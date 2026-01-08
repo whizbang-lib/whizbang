@@ -13,12 +13,14 @@ public class ReceptorInfoTests {
     var info1 = new ReceptorInfo(
       "MyApp.Receptors.OrderReceptor",
       "MyApp.Commands.CreateOrder",
-      "MyApp.Events.OrderCreated"
+      "MyApp.Events.OrderCreated",
+      Array.Empty<string>()
     );
     var info2 = new ReceptorInfo(
       "MyApp.Receptors.OrderReceptor",
       "MyApp.Commands.CreateOrder",
-      "MyApp.Events.OrderCreated"
+      "MyApp.Events.OrderCreated",
+      Array.Empty<string>()
     );
 
     // Act & Assert - Records use value equality
@@ -31,7 +33,8 @@ public class ReceptorInfoTests {
     var info = new ReceptorInfo(
       "MyApp.Receptors.ProductReceptor",
       "MyApp.Commands.UpdateProduct",
-      "MyApp.Events.ProductUpdated"
+      "MyApp.Events.ProductUpdated",
+      Array.Empty<string>()
     );
 
     // Assert - Verify all properties are set correctly
@@ -46,7 +49,8 @@ public class ReceptorInfoTests {
     var voidReceptor = new ReceptorInfo(
       "MyApp.Receptors.NotificationReceptor",
       "MyApp.Commands.SendEmail",
-      null  // No response type
+      null,  // No response type
+      Array.Empty<string>()
     );
 
     // Assert
@@ -59,7 +63,8 @@ public class ReceptorInfoTests {
     var nonVoidReceptor = new ReceptorInfo(
       "MyApp.Receptors.OrderReceptor",
       "MyApp.Commands.CreateOrder",
-      "MyApp.Events.OrderCreated"
+      "MyApp.Events.OrderCreated",
+      Array.Empty<string>()
     );
 
     // Assert
@@ -69,11 +74,11 @@ public class ReceptorInfoTests {
   [Test]
   public async Task ReceptorInfo_Equality_WithDifferentValues_NotEqualAsync() {
     // Arrange - Create instances with different values
-    var info1 = new ReceptorInfo("Class1", "Message1", "Response1");
-    var info2 = new ReceptorInfo("Class2", "Message1", "Response1");  // Different ClassName
-    var info3 = new ReceptorInfo("Class1", "Message2", "Response1");  // Different MessageType
-    var info4 = new ReceptorInfo("Class1", "Message1", "Response2");  // Different ResponseType
-    var info5 = new ReceptorInfo("Class1", "Message1", null);         // Different ResponseType (null)
+    var info1 = new ReceptorInfo("Class1", "Message1", "Response1", Array.Empty<string>());
+    var info2 = new ReceptorInfo("Class2", "Message1", "Response1", Array.Empty<string>());  // Different ClassName
+    var info3 = new ReceptorInfo("Class1", "Message2", "Response1", Array.Empty<string>());  // Different MessageType
+    var info4 = new ReceptorInfo("Class1", "Message1", "Response2", Array.Empty<string>());  // Different ResponseType
+    var info5 = new ReceptorInfo("Class1", "Message1", null, Array.Empty<string>());         // Different ResponseType (null)
 
     // Act & Assert - Instances with different values are not equal
     await Assert.That(info1).IsNotEqualTo(info2);
@@ -85,8 +90,8 @@ public class ReceptorInfoTests {
   [Test]
   public async Task ReceptorInfo_GetHashCode_SameForEqualInstancesAsync() {
     // Arrange - Create two equal instances
-    var info1 = new ReceptorInfo("MyClass", "MyMessage", "MyResponse");
-    var info2 = new ReceptorInfo("MyClass", "MyMessage", "MyResponse");
+    var info1 = new ReceptorInfo("MyClass", "MyMessage", "MyResponse", Array.Empty<string>());
+    var info2 = new ReceptorInfo("MyClass", "MyMessage", "MyResponse", Array.Empty<string>());
 
     // Act
     var hash1 = info1.GetHashCode();

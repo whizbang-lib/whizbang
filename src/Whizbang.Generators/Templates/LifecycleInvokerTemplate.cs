@@ -54,58 +54,12 @@ internal sealed class GeneratedLifecycleInvoker : global::Whizbang.Core.Messagin
     // This region will be replaced with generated lifecycle routing code
     #endregion
 
-    // Check for runtime-registered receptors
+    // Check for runtime-registered receptors (AOT-compatible via delegates)
     var registry = _serviceProvider.GetService<ILifecycleReceptorRegistry>();
     if (registry is not null) {
-      var dynamicReceptors = registry.GetReceptors(messageType, stage);
-      foreach (var receptor in dynamicReceptors) {
-        await _invokeReceptorAsync(receptor, message, cancellationToken);
-      }
-    }
-  }
-
-  /// <summary>
-  /// Invokes a dynamically registered receptor.
-  /// Determines if receptor is IReceptor&lt;TMessage&gt; or IReceptor&lt;TMessage, TResponse&gt; and invokes appropriately.
-  /// </summary>
-  private static async ValueTask _invokeReceptorAsync(
-      object receptor,
-      object message,
-      CancellationToken cancellationToken) {
-
-    // Try to invoke as void receptor first (IReceptor<TMessage>)
-    var receptorType = receptor.GetType();
-    var voidInterface = Array.Find(
-        receptorType.GetInterfaces(),
-        i => i.IsGenericType &&
-             i.GetGenericTypeDefinition().FullName == "Whizbang.Core.IReceptor`1"
-    );
-
-    if (voidInterface is not null) {
-      var handleMethod = voidInterface.GetMethod("HandleAsync");
-      if (handleMethod is not null) {
-        var task = handleMethod.Invoke(receptor, new[] { message, cancellationToken });
-        if (task is ValueTask valueTask) {
-          await valueTask;
-          return;
-        }
-      }
-    }
-
-    // Try to invoke as receptor with response (IReceptor<TMessage, TResponse>)
-    var responseInterface = Array.Find(
-        receptorType.GetInterfaces(),
-        i => i.IsGenericType &&
-             i.GetGenericTypeDefinition().FullName == "Whizbang.Core.IReceptor`2"
-    );
-
-    if (responseInterface is not null) {
-      var handleMethod = responseInterface.GetMethod("HandleAsync");
-      if (handleMethod is not null) {
-        var task = handleMethod.Invoke(receptor, new[] { message, cancellationToken });
-        if (task is ValueTask valueTask) {
-          await valueTask;
-        }
+      var handlers = registry.GetHandlers(messageType, stage);
+      foreach (var handler in handlers) {
+        await handler(message, cancellationToken);
       }
     }
   }

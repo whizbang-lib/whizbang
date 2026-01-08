@@ -65,4 +65,19 @@ public interface ILifecycleReceptorRegistry {
   /// <param name="stage">The lifecycle stage to query.</param>
   /// <returns>List of registered receptor instances (empty if none registered).</returns>
   IReadOnlyList<object> GetReceptors(Type messageType, LifecycleStage stage);
+
+  /// <summary>
+  /// Gets AOT-compatible invocation delegates for all registered receptors.
+  /// This method eliminates reflection at invocation time by returning pre-compiled delegates.
+  /// </summary>
+  /// <param name="messageType">The message type to query.</param>
+  /// <param name="stage">The lifecycle stage to query.</param>
+  /// <returns>List of invocation delegates (empty if none registered).</returns>
+  /// <remarks>
+  /// <para>
+  /// Delegates are created at registration time using reflection, but invocation is reflection-free.
+  /// This makes the runtime registry AOT-compatible for Native AOT scenarios.
+  /// </para>
+  /// </remarks>
+  IReadOnlyList<Func<object, CancellationToken, ValueTask>> GetHandlers(Type messageType, LifecycleStage stage);
 }
