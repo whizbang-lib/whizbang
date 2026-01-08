@@ -220,7 +220,200 @@ public class ServiceBusIntegrationFixtureSanityTests {
   }
 
   /// <summary>
-  /// Sanity Test 6: Verify Service Bus topics and subscriptions are configured correctly.
+  /// Sanity Test 6: Verify events are stored with CORRECT DATA in event store.
+  /// This tests that when we send InitialStock=15, the event in wh_event_store contains 15.
+  /// </summary>
+  [Test]
+  [Timeout(30_000)]
+  public async Task EventStore_ContainsCorrectEventDataAsync() {
+    // Arrange
+    var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    var testProductId = ProductId.From(Uuid7.NewUuid7().ToGuid());
+    var expectedStock = 42;  // Use distinctive value to find in logs
+
+    var command = new CreateProductCommand {
+      ProductId = testProductId,
+      Name = "Event Data Test",
+      Description = "Testing event data correctness",
+      Price = 99.99m,
+      ImageUrl = "/images/data-test.png",
+      InitialStock = expectedStock
+    };
+
+    // Act - Send command and wait for processing
+    Console.WriteLine($"[SANITY-DATA] Sending command with InitialStock={expectedStock}");
+    await fixture.Dispatcher.SendAsync(command);
+    await fixture.WaitForEventProcessingAsync();
+
+    // Assert - Check InventoryRestockedEvent in event store has correct data
+    await using var connection = new NpgsqlConnection(fixture.ConnectionString);
+    await connection.OpenAsync();
+
+    await using var cmd = connection.CreateCommand();
+    cmd.CommandText = @"
+      SELECT event_data::text
+      FROM inventory.wh_event_store
+      WHERE stream_id = @streamId
+        AND event_type = 'ECommerce.Contracts.Events.InventoryRestockedEvent, ECommerce.Contracts'
+      ORDER BY version DESC
+      LIMIT 1";
+    cmd.Parameters.AddWithValue("streamId", testProductId.Value);
+
+    var eventDataJson = await cmd.ExecuteScalarAsync() as string;
+    Console.WriteLine($"[SANITY-DATA] Event JSON from wh_event_store: {eventDataJson}");
+
+    await Assert.That(eventDataJson).IsNotNull();
+
+    // Verify event contains correct QuantityAdded value
+    if (!eventDataJson!.Contains($"\"QuantityAdded\":{expectedStock}")) {
+      Console.WriteLine($"[SANITY-DATA] ❌ Event missing QuantityAdded={expectedStock}");
+    }
+    await Assert.That(eventDataJson.Contains($"\"QuantityAdded\":{expectedStock}")).IsTrue();
+
+    // Verify event contains correct NewTotalQuantity value
+    if (!eventDataJson.Contains($"\"NewTotalQuantity\":{expectedStock}")) {
+      Console.WriteLine($"[SANITY-DATA] ❌ Event missing NewTotalQuantity={expectedStock}");
+    }
+    await Assert.That(eventDataJson.Contains($"\"NewTotalQuantity\":{expectedStock}")).IsTrue();
+
+    Console.WriteLine($"[SANITY-DATA] ✅ Event stored with correct data (QuantityAdded={expectedStock})");
+  }
+
+  /// <summary>
+  /// Sanity Test 7: Verify perspective DTO has CORRECT DATA after materialization.
+  /// This tests the END-TO-END data flow from command to materialized perspective.
+  /// </summary>
+  [Test]
+  [Timeout(30_000)]
+  public async Task Perspective_ContainsCorrectDataAfterMaterializationAsync() {
+    // Arrange
+    var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    var testProductId = ProductId.From(Uuid7.NewUuid7().ToGuid());
+    var expectedStock = 88;  // Distinctive value
+    var expectedPrice = 123.45m;
+
+    var command = new CreateProductCommand {
+      ProductId = testProductId,
+      Name = "Data Propagation Test",
+      Description = "Testing data propagation to perspectives",
+      Price = expectedPrice,
+      ImageUrl = "/images/propagation-test.png",
+      InitialStock = expectedStock
+    };
+
+    // Act
+    Console.WriteLine($"[SANITY-PROPAGATION] Sending command: Stock={expectedStock}, Price={expectedPrice}");
+    await fixture.Dispatcher.SendAsync(command);
+    await fixture.WaitForEventProcessingAsync();
+
+    // Assert - Check InventoryWorker perspective has correct data
+    var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(testProductId);
+    await Assert.That(inventoryProduct).IsNotNull();
+    await Assert.That(inventoryProduct!.Name).IsEqualTo("Data Propagation Test");
+    await Assert.That(inventoryProduct.Price).IsEqualTo(expectedPrice);
+
+    var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(testProductId);
+    await Assert.That(inventoryLevel).IsNotNull();
+
+    Console.WriteLine($"[SANITY-PROPAGATION] InventoryWorker perspective: Quantity={inventoryLevel!.Quantity} (expected {expectedStock})");
+
+    if (inventoryLevel.Quantity != expectedStock) {
+      Console.WriteLine($"[SANITY-PROPAGATION] ❌ FOUND THE BUG: Expected quantity {expectedStock}, got {inventoryLevel.Quantity}");
+
+      // Dump event store data for diagnostics
+      await using var connection = new NpgsqlConnection(fixture.ConnectionString);
+      await connection.OpenAsync();
+
+      // Diagnostic 0: Check event count
+      await using var countCmd = connection.CreateCommand();
+      countCmd.CommandText = @"
+        SELECT COUNT(*)
+        FROM inventory.wh_event_store
+        WHERE stream_id = @streamId";
+      countCmd.Parameters.AddWithValue("streamId", testProductId.Value);
+      var eventCount = (long)(await countCmd.ExecuteScalarAsync() ?? 0L);
+      Console.WriteLine($"[SANITY-PROPAGATION-DEBUG] Event store has {eventCount} events for stream {testProductId.Value}");
+
+      // Diagnostic 1: Events in wh_event_store
+      await using var cmd = connection.CreateCommand();
+      cmd.CommandText = @"
+        SELECT version, event_type, event_data::text
+        FROM inventory.wh_event_store
+        WHERE stream_id = @streamId
+        ORDER BY version";
+      cmd.Parameters.AddWithValue("streamId", testProductId.Value);
+
+      await using var reader = await cmd.ExecuteReaderAsync();
+      Console.WriteLine($"[SANITY-PROPAGATION] Events in store for stream {testProductId}:");
+      while (await reader.ReadAsync()) {
+        var version = reader.GetInt32(0);
+        var eventType = reader.GetString(1);
+        var eventData = reader.GetString(2);
+        Console.WriteLine($"  Event #{version}: {eventType}");
+        Console.WriteLine($"    Data: {eventData}");
+      }
+      await reader.CloseAsync();
+
+      // Diagnostic 2: Perspective work items created
+      await using var cmd2 = connection.CreateCommand();
+      cmd2.CommandText = @"
+        SELECT
+          pe.event_work_id,
+          pe.perspective_name,
+          pe.event_id,
+          pe.sequence_number,
+          pe.status,
+          pe.processed_at,
+          es.event_type
+        FROM inventory.wh_perspective_events pe
+        INNER JOIN inventory.wh_event_store es ON pe.event_id = es.event_id
+        WHERE pe.stream_id = @streamId
+        ORDER BY pe.sequence_number";
+      cmd2.Parameters.AddWithValue("streamId", testProductId.Value);
+
+      await using var reader2 = await cmd2.ExecuteReaderAsync();
+      Console.WriteLine($"[SANITY-PROPAGATION] Perspective work items for stream {testProductId}:");
+      while (await reader2.ReadAsync()) {
+        var workId = reader2.GetGuid(0);
+        var perspectiveName = reader2.GetString(1);
+        var eventId = reader2.GetGuid(2);
+        var sequenceNumber = reader2.GetInt64(3);
+        var status = reader2.GetInt32(4);
+        var processedAt = reader2.IsDBNull(5) ? "NULL" : reader2.GetDateTime(5).ToString("O");
+        var eventType = reader2.GetString(6);
+        Console.WriteLine($"  Work Item {workId}:");
+        Console.WriteLine($"    Perspective: {perspectiveName}");
+        Console.WriteLine($"    Event Type: {eventType}");
+        Console.WriteLine($"    Sequence: {sequenceNumber}, Status: {status}, Processed: {processedAt}");
+      }
+      await reader2.CloseAsync();
+
+      // Diagnostic 3: Message associations
+      await using var cmd3 = connection.CreateCommand();
+      cmd3.CommandText = @"
+        SELECT message_type, association_type, target_name, service_name
+        FROM inventory.wh_message_associations
+        WHERE association_type = 'perspective'
+        ORDER BY message_type, target_name";
+
+      await using var reader3 = await cmd3.ExecuteReaderAsync();
+      Console.WriteLine($"[SANITY-PROPAGATION] Perspective associations in inventory schema:");
+      while (await reader3.ReadAsync()) {
+        var messageType = reader3.GetString(0);
+        var associationType = reader3.GetString(1);
+        var targetName = reader3.GetString(2);
+        var serviceName = reader3.GetString(3);
+        Console.WriteLine($"  {messageType} -> {targetName} ({serviceName})");
+      }
+    }
+
+    await Assert.That(inventoryLevel.Quantity).IsEqualTo(expectedStock);
+
+    Console.WriteLine($"[SANITY-PROPAGATION] ✅ Perspective has correct data (Quantity={expectedStock}, Price={expectedPrice})");
+  }
+
+  /// <summary>
+  /// Sanity Test 8: Verify Service Bus topics and subscriptions are configured correctly.
   /// Tests that the emulator has the expected topic/subscription structure.
   /// </summary>
   [Test]

@@ -59,6 +59,8 @@ public partial class WorkCoordinatorPublisherWorker(
   IWorkChannelWriter workChannelWriter,
   IOptions<WorkCoordinatorPublisherOptions> options,
   IDatabaseReadinessCheck? databaseReadinessCheck = null,
+  ILifecycleInvoker? lifecycleInvoker = null,
+  ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
   ILogger<WorkCoordinatorPublisherWorker>? logger = null
 ) : BackgroundService {
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -66,6 +68,8 @@ public partial class WorkCoordinatorPublisherWorker(
   private readonly IMessagePublishStrategy _publishStrategy = publishStrategy ?? throw new ArgumentNullException(nameof(publishStrategy));
   private readonly IWorkChannelWriter _workChannelWriter = workChannelWriter ?? throw new ArgumentNullException(nameof(workChannelWriter));
   private readonly IDatabaseReadinessCheck _databaseReadinessCheck = databaseReadinessCheck ?? new DefaultDatabaseReadinessCheck();
+  private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
+  private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
   private readonly ILogger<WorkCoordinatorPublisherWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<WorkCoordinatorPublisherWorker>.Instance;
   private readonly WorkCoordinatorPublisherOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
 
@@ -264,10 +268,46 @@ public partial class WorkCoordinatorPublisherWorker(
         // Transport is ready - reset consecutive counter
         Interlocked.Exchange(ref _consecutiveNotReadyChecks, 0);
 
+        // PreOutbox lifecycle stages (before publishing to transport)
+        if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
+          var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(work.Envelope, work.EnvelopeType);
+
+          var lifecycleContext = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.PreOutboxAsync,
+            EventId = null,
+            StreamId = null,
+            PerspectiveName = null,
+            LastProcessedEventId = null
+          };
+
+          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreOutboxAsync, lifecycleContext, stoppingToken);
+
+          lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreOutboxInline };
+          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreOutboxInline, lifecycleContext, stoppingToken);
+        }
+
         // Publish via strategy
         LogAboutToPublishMessage(_logger, work.MessageId, work.Destination);
         var result = await _publishStrategy.PublishAsync(work, stoppingToken);
         LogPublishResult(_logger, work.MessageId, result.Success, result.CompletedStatus);
+
+        // PostOutbox lifecycle stages (after publishing to transport)
+        if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
+          var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(work.Envelope, work.EnvelopeType);
+
+          var lifecycleContext = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.PostOutboxAsync,
+            EventId = null,
+            StreamId = null,
+            PerspectiveName = null,
+            LastProcessedEventId = null
+          };
+
+          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostOutboxAsync, lifecycleContext, stoppingToken);
+
+          lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostOutboxInline };
+          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostOutboxInline, lifecycleContext, stoppingToken);
+        }
 
         // Collect results
         if (result.Success) {

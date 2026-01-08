@@ -267,6 +267,15 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddReceptors(builder.Services);
     builder.Services.AddWhizbangAggregateIdExtractor();
 
+    // Register TopicRegistry to provide base topic names for events
+    var topicRegistryInstance = new ECommerce.Contracts.Generated.TopicRegistry();
+    builder.Services.AddSingleton<Whizbang.Core.Routing.ITopicRegistry>(topicRegistryInstance);
+
+    // Register GenericTopicRoutingStrategy for test topic routing
+    // This distributes events across generic topics (topic-00, topic-01) for Azure Service Bus emulator compatibility
+    var routingStrategyInstance = new GenericTopicRoutingStrategy(topicCount: 2);
+    builder.Services.AddSingleton<Whizbang.Core.Routing.ITopicRoutingStrategy>(routingStrategyInstance);
+
     // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
     builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
       options.PollingIntervalMilliseconds = 100;  // Fast polling for tests
@@ -380,6 +389,15 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       .AddWhizbang()
       .WithEFCore<ECommerce.BFF.API.BffDbContext>()
       .WithDriver.Postgres;
+
+    // Register TopicRegistry to provide base topic names for events
+    var topicRegistryInstance = new ECommerce.Contracts.Generated.TopicRegistry();
+    builder.Services.AddSingleton<Whizbang.Core.Routing.ITopicRegistry>(topicRegistryInstance);
+
+    // Register GenericTopicRoutingStrategy for test topic routing
+    // This distributes events across generic topics (topic-00, topic-01) for Azure Service Bus emulator compatibility
+    var routingStrategyInstance = new GenericTopicRoutingStrategy(topicCount: 2);
+    builder.Services.AddSingleton<Whizbang.Core.Routing.ITopicRoutingStrategy>(routingStrategyInstance);
 
     // DIAGNOSTIC: Verify IWorkCoordinatorStrategy is registered
     var strategyDescriptor = builder.Services.FirstOrDefault(sd => sd.ServiceType == typeof(IWorkCoordinatorStrategy));
@@ -859,20 +877,21 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
 
     Console.WriteLine("[InMemoryFixture] InventoryWorker subscribed to 'products' and 'inventory' topics");
 
-    // Subscribe BFF to "products" and "inventory" topics
+    // Subscribe BFF to generic topics (topic-00, topic-01) to match GenericTopicRoutingStrategy
+    // The routing strategy maps all events to these generic topics for Azure Service Bus emulator compatibility
     await _transport.SubscribeAsync(
       async (envelope, ct) => await _handleMessageForHostAsync(_bffHost!, envelope, ct),
-      new TransportDestination("products", "bff-service"),
+      new TransportDestination("topic-00", "bff-service"),
       cancellationToken
     );
 
     await _transport.SubscribeAsync(
       async (envelope, ct) => await _handleMessageForHostAsync(_bffHost!, envelope, ct),
-      new TransportDestination("inventory", "bff-service"),
+      new TransportDestination("topic-01", "bff-service"),
       cancellationToken
     );
 
-    Console.WriteLine("[InMemoryFixture] BFF subscribed to 'products' and 'inventory' topics");
+    Console.WriteLine("[InMemoryFixture] BFF subscribed to 'topic-00' and 'topic-01' (generic topics via routing strategy)");
   }
 
   /// <summary>

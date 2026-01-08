@@ -296,6 +296,10 @@ public class DapperSqliteEventStore(
     FROM whizbang_event_store
     WHERE stream_id = @StreamId";
 
+  protected override string GetEventsBetweenSql() {
+    throw new NotImplementedException();
+  }
+
   /// <summary>
   /// Internal row structure for Dapper mapping.
   /// </summary>

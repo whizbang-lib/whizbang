@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -21,6 +22,8 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly WorkCoordinatorOptions _options;
   private readonly ILogger<ImmediateWorkCoordinatorStrategy>? _logger;
+  private readonly ILifecycleInvoker? _lifecycleInvoker;
+  private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
 
   // Immediate strategy queues for single flush cycle
   private readonly List<OutboxMessage> _queuedOutboxMessages = [];
@@ -34,12 +37,16 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     IWorkCoordinator coordinator,
     IServiceInstanceProvider instanceProvider,
     WorkCoordinatorOptions options,
-    ILogger<ImmediateWorkCoordinatorStrategy>? logger = null
+    ILogger<ImmediateWorkCoordinatorStrategy>? logger = null,
+    ILifecycleInvoker? lifecycleInvoker = null,
+    ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null
   ) {
     _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _options = options ?? throw new ArgumentNullException(nameof(options));
     _logger = logger;
+    _lifecycleInvoker = lifecycleInvoker;
+    _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
   }
 
   /// <summary>
@@ -134,6 +141,40 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
       );
     }
 
+    // PreDistribute lifecycle stages (before ProcessWorkBatchAsync)
+    if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
+      var lifecycleContext = new LifecycleExecutionContext {
+        CurrentStage = LifecycleStage.PreDistributeAsync,
+        EventId = null,
+        StreamId = null,
+        PerspectiveName = null,
+        LastProcessedEventId = null
+      };
+
+      // Invoke PreDistributeAsync for all messages
+      foreach (var outboxMsg in _queuedOutboxMessages) {
+        var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(outboxMsg.Envelope, outboxMsg.EnvelopeType);
+        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreDistributeAsync, lifecycleContext, ct);
+      }
+
+      foreach (var inboxMsg in _queuedInboxMessages) {
+        var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(inboxMsg.Envelope, inboxMsg.EnvelopeType);
+        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreDistributeAsync, lifecycleContext, ct);
+      }
+
+      // Invoke PreDistributeInline for all messages
+      lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreDistributeInline };
+      foreach (var outboxMsg in _queuedOutboxMessages) {
+        var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(outboxMsg.Envelope, outboxMsg.EnvelopeType);
+        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreDistributeInline, lifecycleContext, ct);
+      }
+
+      foreach (var inboxMsg in _queuedInboxMessages) {
+        var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(inboxMsg.Envelope, inboxMsg.EnvelopeType);
+        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreDistributeInline, lifecycleContext, ct);
+      }
+    }
+
     var workBatch = await _coordinator.ProcessWorkBatchAsync(
       _instanceProvider.InstanceId,
       _instanceProvider.ServiceName,
@@ -158,6 +199,40 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
       staleThresholdSeconds: _options.StaleThresholdSeconds,
       cancellationToken: ct
     );
+
+    // PostDistribute lifecycle stages (after ProcessWorkBatchAsync)
+    if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
+      var lifecycleContext = new LifecycleExecutionContext {
+        CurrentStage = LifecycleStage.PostDistributeAsync,
+        EventId = null,
+        StreamId = null,
+        PerspectiveName = null,
+        LastProcessedEventId = null
+      };
+
+      // Invoke PostDistributeAsync for all messages
+      foreach (var outboxMsg in _queuedOutboxMessages) {
+        var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(outboxMsg.Envelope, outboxMsg.EnvelopeType);
+        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostDistributeAsync, lifecycleContext, ct);
+      }
+
+      foreach (var inboxMsg in _queuedInboxMessages) {
+        var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(inboxMsg.Envelope, inboxMsg.EnvelopeType);
+        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostDistributeAsync, lifecycleContext, ct);
+      }
+
+      // Invoke PostDistributeInline for all messages
+      lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostDistributeInline };
+      foreach (var outboxMsg in _queuedOutboxMessages) {
+        var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(outboxMsg.Envelope, outboxMsg.EnvelopeType);
+        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostDistributeInline, lifecycleContext, ct);
+      }
+
+      foreach (var inboxMsg in _queuedInboxMessages) {
+        var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(inboxMsg.Envelope, inboxMsg.EnvelopeType);
+        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostDistributeInline, lifecycleContext, ct);
+      }
+    }
 
     // Clear queues after flush
     _queuedOutboxMessages.Clear();

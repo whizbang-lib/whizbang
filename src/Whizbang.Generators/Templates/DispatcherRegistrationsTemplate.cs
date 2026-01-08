@@ -86,5 +86,20 @@ namespace Whizbang.Core.Generated {
       services.AddSingleton<ILifecycleInvoker, GeneratedLifecycleInvoker>();
       return services;
     }
+
+    /// <summary>
+    /// Registers the lifecycle message deserializer for reconstructing messages at Distribute/Outbox/Inbox stages.
+    /// Deserializes messages from JsonElement payloads in OutboxMessage/InboxMessage records.
+    /// Registered as Singleton since it's stateless (JsonSerializerOptions resolved from DI).
+    /// </summary>
+    [ExcludeFromCodeCoverage]
+    [DebuggerNonUserCode]
+    public static IServiceCollection AddWhizbangLifecycleMessageDeserializer(this IServiceCollection services) {
+      services.AddSingleton<ILifecycleMessageDeserializer>(sp => {
+        var jsonOptions = sp.GetService<JsonSerializerOptions>();
+        return new JsonLifecycleMessageDeserializer(jsonOptions);
+      });
+      return services;
+    }
   }
 }

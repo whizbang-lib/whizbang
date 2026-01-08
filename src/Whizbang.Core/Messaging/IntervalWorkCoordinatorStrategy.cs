@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
@@ -21,6 +22,8 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   private readonly IServiceInstanceProvider _instanceProvider;
   private readonly WorkCoordinatorOptions _options;
   private readonly ILogger<IntervalWorkCoordinatorStrategy>? _logger;
+  private readonly ILifecycleInvoker? _lifecycleInvoker;
+  private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
   private readonly Timer _flushTimer;
 
   // Queues for batching operations within the interval
@@ -46,12 +49,16 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
     IWorkCoordinator coordinator,
     IServiceInstanceProvider instanceProvider,
     WorkCoordinatorOptions options,
-    ILogger<IntervalWorkCoordinatorStrategy>? logger = null
+    ILogger<IntervalWorkCoordinatorStrategy>? logger = null,
+    ILifecycleInvoker? lifecycleInvoker = null,
+    ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null
   ) {
     _coordinator = coordinator ?? throw new ArgumentNullException(nameof(coordinator));
     _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
     _options = options ?? throw new ArgumentNullException(nameof(options));
     _logger = logger;
+    _lifecycleInvoker = lifecycleInvoker;
+    _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
 
     // Start the timer for periodic flushing
     _flushTimer = new Timer(
@@ -243,6 +250,40 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         LogIntervalFlush(_logger, outboxMessages.Length, inboxMessages.Length, outboxCompletions.Length, outboxFailures.Length, inboxCompletions.Length, inboxFailures.Length);
       }
 
+      // PreDistribute lifecycle stages (before ProcessWorkBatchAsync)
+      if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
+        var lifecycleContext = new LifecycleExecutionContext {
+          CurrentStage = LifecycleStage.PreDistributeAsync,
+          EventId = null,
+          StreamId = null,
+          PerspectiveName = null,
+          LastProcessedEventId = null
+        };
+
+        // Invoke PreDistributeAsync for all messages
+        foreach (var outboxMsg in outboxMessages) {
+          var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(outboxMsg.Envelope, outboxMsg.EnvelopeType);
+          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreDistributeAsync, lifecycleContext, ct);
+        }
+
+        foreach (var inboxMsg in inboxMessages) {
+          var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(inboxMsg.Envelope, inboxMsg.EnvelopeType);
+          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreDistributeAsync, lifecycleContext, ct);
+        }
+
+        // Invoke PreDistributeInline for all messages
+        lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreDistributeInline };
+        foreach (var outboxMsg in outboxMessages) {
+          var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(outboxMsg.Envelope, outboxMsg.EnvelopeType);
+          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreDistributeInline, lifecycleContext, ct);
+        }
+
+        foreach (var inboxMsg in inboxMessages) {
+          var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(inboxMsg.Envelope, inboxMsg.EnvelopeType);
+          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreDistributeInline, lifecycleContext, ct);
+        }
+      }
+
       // Call process_work_batch with snapshot
       var workBatch = await _coordinator.ProcessWorkBatchAsync(
         _instanceProvider.InstanceId,
@@ -271,6 +312,40 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
 
       if (_logger != null) {
         LogIntervalFlushCompleted(_logger, workBatch.OutboxWork.Count, workBatch.InboxWork.Count);
+      }
+
+      // PostDistribute lifecycle stages (after ProcessWorkBatchAsync)
+      if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
+        var lifecycleContext = new LifecycleExecutionContext {
+          CurrentStage = LifecycleStage.PostDistributeAsync,
+          EventId = null,
+          StreamId = null,
+          PerspectiveName = null,
+          LastProcessedEventId = null
+        };
+
+        // Invoke PostDistributeAsync for all messages
+        foreach (var outboxMsg in outboxMessages) {
+          var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(outboxMsg.Envelope, outboxMsg.EnvelopeType);
+          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostDistributeAsync, lifecycleContext, ct);
+        }
+
+        foreach (var inboxMsg in inboxMessages) {
+          var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(inboxMsg.Envelope, inboxMsg.EnvelopeType);
+          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostDistributeAsync, lifecycleContext, ct);
+        }
+
+        // Invoke PostDistributeInline for all messages
+        lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostDistributeInline };
+        foreach (var outboxMsg in outboxMessages) {
+          var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(outboxMsg.Envelope, outboxMsg.EnvelopeType);
+          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostDistributeInline, lifecycleContext, ct);
+        }
+
+        foreach (var inboxMsg in inboxMessages) {
+          var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(inboxMsg.Envelope, inboxMsg.EnvelopeType);
+          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostDistributeInline, lifecycleContext, ct);
+        }
       }
 
       return workBatch;

@@ -29,35 +29,34 @@ public class AzureServiceBusSubscription(ServiceBusProcessor processor, ILogger 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_Pause_SetsIsActiveFalseAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_PauseWhenPaused_DoesNotThrowAsync</tests>
-  public async Task PauseAsync() {
+  public Task PauseAsync() {
     if (!IsActive) {
-      return;
+      return Task.CompletedTask;
     }
 
     IsActive = false;
 
-    // Stop the processor (messages will remain in queue)
-    if (_processor.IsProcessing) {
-      await _processor.StopProcessingAsync();
-      _logger.LogInformation("Paused Service Bus subscription");
-    }
+    // IMPORTANT: Do NOT stop the processor - just set IsActive = false
+    // The transport's message handler checks IsActive and abandons messages when paused
+    // Stopping and restarting the processor causes message handler re-registration issues
+    _logger.LogInformation("Paused Service Bus subscription (handler will abandon messages)");
+    return Task.CompletedTask;
   }
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_Resume_SetsIsActiveTrueAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/ISubscriptionTests.cs:ISubscription_ResumeWhenActive_DoesNotThrowAsync</tests>
-  public async Task ResumeAsync() {
+  public Task ResumeAsync() {
     if (IsActive) {
-      return;
+      return Task.CompletedTask;
     }
 
     IsActive = true;
 
-    // Restart the processor
-    if (!_processor.IsProcessing) {
-      await _processor.StartProcessingAsync();
-      _logger.LogInformation("Resumed Service Bus subscription");
-    }
+    // IMPORTANT: Do NOT restart the processor - just set IsActive = true
+    // The transport's message handler checks IsActive and processes messages when active
+    _logger.LogInformation("Resumed Service Bus subscription (handler will process messages)");
+    return Task.CompletedTask;
   }
 
   /// <inheritdoc />

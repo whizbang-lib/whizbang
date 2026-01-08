@@ -25,6 +25,7 @@ BEGIN
       (elem->>'MessageId')::UUID as msg_id,
       elem->>'HandlerName' as handler_name,
       elem->>'EnvelopeType' as envelope_type,
+      elem->>'MessageType' as message_type,
       elem->'Envelope' as envelope_data,
       elem->'Metadata' as metadata,
       elem->'Scope' as scope,
@@ -68,7 +69,7 @@ BEGIN
     ) VALUES (
       v_msg.msg_id,
       v_msg.handler_name,
-      v_msg.envelope_type,
+      v_msg.message_type,  -- FIXED: Use message_type instead of envelope_type
       COALESCE(v_msg.envelope_data, '{}'::jsonb),
       COALESCE(v_msg.metadata, '{}'::jsonb),
       COALESCE(v_msg.scope, 'null'::jsonb),

@@ -52,6 +52,13 @@ public class WorkBatchCoordinatorTests {
       CancellationToken cancellationToken = default) {
       return Task.CompletedTask;
     }
+
+    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+      Guid streamId,
+      string perspectiveName,
+      CancellationToken cancellationToken = default) {
+      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+    }
   }
 
   private sealed class TestServiceInstanceProvider : IServiceInstanceProvider {

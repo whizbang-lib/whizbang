@@ -174,6 +174,50 @@ public interface IWorkCoordinator {
   Task ReportPerspectiveFailureAsync(
     PerspectiveCheckpointFailure failure,
     CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Gets the current checkpoint for a perspective stream.
+  /// Returns the last processed event ID for the perspective, or null if no checkpoint exists.
+  /// </summary>
+  /// <param name="streamId">Stream ID to query</param>
+  /// <param name="perspectiveName">Perspective name to query</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>Perspective checkpoint info, or null if no checkpoint exists</returns>
+  /// <remarks>
+  /// Used by PerspectiveWorker to determine where to start reading events when processing
+  /// grouped work items for a stream/perspective pair.
+  /// </remarks>
+  Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+    Guid streamId,
+    string perspectiveName,
+    CancellationToken cancellationToken = default);
+}
+
+/// <summary>
+/// Information about a perspective checkpoint.
+/// Used by PerspectiveWorker to determine where to start reading events.
+/// </summary>
+public record PerspectiveCheckpointInfo {
+  /// <summary>
+  /// Stream ID for the checkpoint.
+  /// </summary>
+  public required Guid StreamId { get; init; }
+
+  /// <summary>
+  /// Name of the perspective.
+  /// </summary>
+  public required string PerspectiveName { get; init; }
+
+  /// <summary>
+  /// Last event ID that was successfully processed.
+  /// NULL if perspective has never processed this stream.
+  /// </summary>
+  public Guid? LastEventId { get; init; }
+
+  /// <summary>
+  /// Current processing status.
+  /// </summary>
+  public PerspectiveProcessingStatus Status { get; init; }
 }
 
 /// <summary>

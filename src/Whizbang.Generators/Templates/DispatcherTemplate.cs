@@ -36,8 +36,9 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
     JsonSerializerOptions? jsonOptions = null,
     global::Whizbang.Core.Routing.ITopicRegistry? topicRegistry = null,
     global::Whizbang.Core.Routing.ITopicRoutingStrategy? topicRoutingStrategy = null,
-    IAggregateIdExtractor? aggregateIdExtractor = null
-  ) : base(serviceProvider, instanceProvider, traceStore, transport, jsonOptions, topicRegistry, topicRoutingStrategy, aggregateIdExtractor) {
+    IAggregateIdExtractor? aggregateIdExtractor = null,
+    ILifecycleInvoker? lifecycleInvoker = null
+  ) : base(serviceProvider, instanceProvider, traceStore, transport, jsonOptions, topicRegistry, topicRoutingStrategy, aggregateIdExtractor, lifecycleInvoker) {
   }
 
   /// <summary>

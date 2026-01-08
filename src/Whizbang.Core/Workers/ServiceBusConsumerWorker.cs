@@ -22,7 +22,9 @@ public partial class ServiceBusConsumerWorker(
   JsonSerializerOptions jsonOptions,
   ILogger<ServiceBusConsumerWorker> logger,
   OrderedStreamProcessor orderedProcessor,
-  ServiceBusConsumerOptions? options = null
+  ServiceBusConsumerOptions? options = null,
+  ILifecycleInvoker? lifecycleInvoker = null,
+  ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null
   ) : BackgroundService {
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
@@ -30,8 +32,29 @@ public partial class ServiceBusConsumerWorker(
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<ServiceBusConsumerWorker> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
   private readonly OrderedStreamProcessor _orderedProcessor = orderedProcessor ?? throw new ArgumentNullException(nameof(orderedProcessor));
+  private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
+  private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
   private readonly List<ISubscription> _subscriptions = [];
   private readonly ServiceBusConsumerOptions _options = options ?? new ServiceBusConsumerOptions();
+
+  /// <summary>
+  /// Pauses all subscriptions to temporarily stop receiving messages.
+  /// Useful for test cleanup scenarios where draining is needed without competing consumers.
+  /// </summary>
+  public async Task PauseAllSubscriptionsAsync() {
+    foreach (var subscription in _subscriptions) {
+      await subscription.PauseAsync();
+    }
+  }
+
+  /// <summary>
+  /// Resumes all subscriptions to continue receiving messages.
+  /// </summary>
+  public async Task ResumeAllSubscriptionsAsync() {
+    foreach (var subscription in _subscriptions) {
+      await subscription.ResumeAsync();
+    }
+  }
 
   /// <summary>
   /// Starts the worker and creates all subscriptions BEFORE background processing begins.
@@ -132,6 +155,26 @@ public partial class ServiceBusConsumerWorker(
       // 2. PerspectiveWorker picks up checkpoints and processes them asynchronously
       // This provides better reliability, scalability, and separation of concerns.
 
+      // PreInbox lifecycle stages (before local receptor invocation)
+      if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
+        foreach (var work in myWork) {
+          var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(work.Envelope, work.MessageType);
+
+          var lifecycleContext = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.PreInboxAsync,
+            EventId = null,
+            StreamId = null,
+            PerspectiveName = null,
+            LastProcessedEventId = null
+          };
+
+          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreInboxAsync, lifecycleContext, ct);
+
+          lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreInboxInline };
+          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreInboxInline, lifecycleContext, ct);
+        }
+      }
+
       await _orderedProcessor.ProcessInboxWorkAsync(
         myWork,
         processor: async (work) => {
@@ -157,6 +200,26 @@ public partial class ServiceBusConsumerWorker(
         },
         ct
       );
+
+      // PostInbox lifecycle stages (after local receptor invocation)
+      if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
+        foreach (var work in myWork) {
+          var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(work.Envelope, work.MessageType);
+
+          var lifecycleContext = new LifecycleExecutionContext {
+            CurrentStage = LifecycleStage.PostInboxAsync,
+            EventId = null,
+            StreamId = null,
+            PerspectiveName = null,
+            LastProcessedEventId = null
+          };
+
+          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostInboxAsync, lifecycleContext, ct);
+
+          lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostInboxInline };
+          await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostInboxInline, lifecycleContext, ct);
+        }
+      }
 
       // 6. Report completions/failures back to database
       await strategy.FlushAsync(WorkBatchFlags.None, ct);
@@ -205,13 +268,17 @@ public partial class ServiceBusConsumerWorker(
     var jsonEnvelope = JsonSerializer.Deserialize(envelopeJson, jsonEnvelopeTypeInfo)
       ?? throw new InvalidOperationException($"Failed to deserialize envelope as MessageEnvelope<JsonElement> for message {envelope.MessageId}");
 
+    var isEvent = payload is IEvent;
+
+    LogSerializeInboxMessage(_logger, envelope.MessageId.Value, payloadType.Name, isEvent, streamId);
+
     return new InboxMessage {
       MessageId = envelope.MessageId.Value,
       HandlerName = handlerName,
       Envelope = jsonEnvelope,  // MessageEnvelope<JsonElement>
       EnvelopeType = envelopeTypeName,
       StreamId = streamId,
-      IsEvent = payload is IEvent,
+      IsEvent = isEvent,
       MessageType = messageTypeName
     };
   }
@@ -343,6 +410,13 @@ public partial class ServiceBusConsumerWorker(
     Message = "ServiceBusConsumerWorker subscriptions ready ({Count} subscriptions)"
   )]
   static partial void LogSubscriptionsReady(ILogger logger, int count);
+
+  [LoggerMessage(
+    EventId = 19,
+    Level = LogLevel.Warning,
+    Message = "[ServiceBusConsumer DIAGNOSTIC] _serializeToNewInboxMessage: MessageId={MessageId}, PayloadType={PayloadType}, IsEvent={IsEvent}, StreamId={StreamId}"
+  )]
+  static partial void LogSerializeInboxMessage(ILogger logger, Guid messageId, string payloadType, bool isEvent, Guid streamId);
 
   [LoggerMessage(
     EventId = 4,

@@ -471,6 +471,33 @@ public class DapperWorkCoordinator(
   }
 
   /// <summary>
+  /// Gets the current checkpoint for a perspective stream.
+  /// Returns null if no checkpoint exists yet.
+  /// </summary>
+  public async Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+    Guid streamId,
+    string perspectiveName,
+    CancellationToken cancellationToken = default) {
+    await using var connection = new NpgsqlConnection(_connectionString);
+    await connection.OpenAsync(cancellationToken);
+
+    var result = await connection.QueryFirstOrDefaultAsync<CheckpointQueryResult>(
+      "SELECT stream_id, perspective_name, last_event_id, status FROM wh_perspective_checkpoints WHERE stream_id = @StreamId AND perspective_name = @PerspectiveName",
+      new { StreamId = streamId, PerspectiveName = perspectiveName });
+
+    if (result == null) {
+      return null;
+    }
+
+    return new PerspectiveCheckpointInfo {
+      StreamId = result.stream_id,
+      PerspectiveName = result.perspective_name,
+      LastEventId = result.last_event_id,
+      Status = (PerspectiveProcessingStatus)result.status
+    };
+  }
+
+  /// <summary>
   /// Handles PostgreSQL RAISE NOTICE messages by logging them at Debug level.
   /// Notices are only generated when WorkBatchFlags.DebugMode is set in the SQL function.
   /// </summary>
@@ -503,5 +530,16 @@ internal class WorkBatchRow {
   public bool is_orphaned { get; set; }
   public string? perspective_name { get; set; }
   public long? sequence_number { get; set; }
+}
+
+/// <summary>
+/// DTO for querying perspective checkpoint info.
+/// Uses snake_case to match PostgreSQL column names.
+/// </summary>
+internal class CheckpointQueryResult {
+  public Guid stream_id { get; set; }
+  public string perspective_name { get; set; } = string.Empty;
+  public Guid? last_event_id { get; set; }
+  public short status { get; set; }
 }
 

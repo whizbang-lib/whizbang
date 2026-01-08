@@ -655,10 +655,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
       completion.StreamId, completion.PerspectiveName);
 
     // DIAGNOSTIC: Verify the checkpoint was actually updated
+    // Get schema from OutboxRecord entity (all Whizbang tables share the same schema)
+    var diagnosticSchema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? "public";
+    var diagnosticSql = string.Format(System.Globalization.CultureInfo.InvariantCulture,
+      "SELECT stream_id, perspective_name, status, last_event_id, error FROM {0}.wh_perspective_checkpoints WHERE stream_id = {{0}} AND perspective_name = {{1}}",
+      diagnosticSchema);
+
     var checkpointState = await _dbContext.Database
-      .SqlQueryRaw<CheckpointDiagnostic>(
-        "SELECT stream_id, perspective_name, status, last_event_id, error FROM wh_perspective_checkpoints WHERE stream_id = {0} AND perspective_name = {1}",
-        completion.StreamId, completion.PerspectiveName)
+      .SqlQueryRaw<CheckpointDiagnostic>(diagnosticSql, completion.StreamId, completion.PerspectiveName)
       .FirstOrDefaultAsync(cancellationToken);
 
     if (checkpointState != null) {
@@ -700,6 +704,37 @@ public class EFCoreWorkCoordinator<TDbContext>(
       sql,
       [failure.StreamId, failure.PerspectiveName, failure.LastEventId, (short)failure.Status, failure.Error],
       cancellationToken);
+  }
+
+  /// <summary>
+  /// Gets the current checkpoint for a perspective stream.
+  /// Returns null if no checkpoint exists yet.
+  /// </summary>
+  public async Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+    Guid streamId,
+    string perspectiveName,
+    CancellationToken cancellationToken = default) {
+
+    // Get schema from OutboxRecord entity (all Whizbang tables share the same schema)
+    var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? "public";
+    var sql = string.Format(System.Globalization.CultureInfo.InvariantCulture,
+      "SELECT stream_id, perspective_name, last_event_id, status FROM {0}.wh_perspective_checkpoints WHERE stream_id = {{0}} AND perspective_name = {{1}}",
+      schema);
+
+    var result = await _dbContext.Database
+      .SqlQueryRaw<CheckpointQueryResult>(sql, streamId, perspectiveName)
+      .FirstOrDefaultAsync(cancellationToken);
+
+    if (result == null) {
+      return null;
+    }
+
+    return new PerspectiveCheckpointInfo {
+      StreamId = result.StreamId,
+      PerspectiveName = result.PerspectiveName,
+      LastEventId = result.LastEventId,
+      Status = (PerspectiveProcessingStatus)result.Status
+    };
   }
 
   /// <summary>
@@ -794,4 +829,22 @@ internal class CheckpointDiagnostic {
 
   [Column("error")]
   public string? Error { get; set; }
+}
+
+/// <summary>
+/// DTO for querying perspective checkpoint info.
+/// Used by GetPerspectiveCheckpointAsync.
+/// </summary>
+internal class CheckpointQueryResult {
+  [Column("stream_id")]
+  public Guid StreamId { get; set; }
+
+  [Column("perspective_name")]
+  public string PerspectiveName { get; set; } = string.Empty;
+
+  [Column("status")]
+  public short Status { get; set; }
+
+  [Column("last_event_id")]
+  public Guid? LastEventId { get; set; }
 }

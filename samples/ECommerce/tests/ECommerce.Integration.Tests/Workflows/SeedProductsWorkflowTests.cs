@@ -39,6 +39,25 @@ public class SeedProductsWorkflowTests {
     return 1; // SeedProductsWorkflowTests = index 1
   }
 
+  [After(Test)]
+  public async Task CleanupAsync() {
+    // CRITICAL: Drain Service Bus messages BEFORE disposing fixture
+    // Service Bus subscriptions (sub-00-a, sub-01-a) are PERSISTENT - messages remain after hosts stop
+    // Without draining, Test 2's BFF receives Test 1's old messages, causing assertion failures
+    if (_fixture != null) {
+      try {
+        // Drain any remaining messages from Service Bus subscriptions
+        await _fixture.CleanupDatabaseAsync();
+      } catch (Exception ex) {
+        Console.WriteLine($"[After(Test)] Warning: Cleanup encountered error (non-critical): {ex.Message}");
+      }
+
+      // Dispose fixture to stop hosts and close connections
+      await _fixture.DisposeAsync();
+      _fixture = null;
+    }
+  }
+
 
   /// <summary>
   /// Tests that calling SeedProducts mutation results in:
