@@ -5,11 +5,12 @@ namespace Whizbang.Core.Messaging;
 /// about lifecycle stage invocations.
 /// </summary>
 /// <remarks>
-/// This class is typically instantiated by infrastructure code (e.g., PerspectiveWorker, Dispatcher)
+/// This record is typically instantiated by infrastructure code (e.g., PerspectiveWorker, Dispatcher)
 /// when invoking lifecycle receptors. User code rarely needs to create instances directly.
+/// Uses record type for convenient 'with' syntax when updating context properties.
 /// </remarks>
 /// <docs>core-concepts/lifecycle-receptors</docs>
-public sealed class LifecycleExecutionContext : ILifecycleContext {
+public sealed record LifecycleExecutionContext : ILifecycleContext {
   /// <inheritdoc/>
   public required LifecycleStage CurrentStage { get; init; }
 

@@ -24,11 +24,15 @@ public partial class PerspectiveWorker(
   IOptions<PerspectiveWorkerOptions> options,
   IPerspectiveCompletionStrategy? completionStrategy = null,
   IDatabaseReadinessCheck? databaseReadinessCheck = null,
+  ILifecycleInvoker? lifecycleInvoker = null,
+  IEventStore? eventStore = null,
   ILogger<PerspectiveWorker>? logger = null
 ) : BackgroundService {
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly IDatabaseReadinessCheck _databaseReadinessCheck = databaseReadinessCheck ?? new DefaultDatabaseReadinessCheck();
+  private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
+  private readonly IEventStore? _eventStore = eventStore;
   private readonly ILogger<PerspectiveWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PerspectiveWorker>.Instance;
   private readonly PerspectiveWorkerOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
   private readonly IPerspectiveCompletionStrategy _completionStrategy = completionStrategy ?? new BatchedCompletionStrategy(
@@ -229,49 +233,83 @@ public partial class PerspectiveWorker(
     // 8. Reset stale items (sent but not acknowledged for > timeout) back to Pending
     _completionStrategy.ResetStale(DateTimeOffset.UtcNow);
 
-    // Process perspective work using IPerspectiveRunner
-    foreach (var perspectiveWork in workBatch.PerspectiveWork) {
+    // Group perspective work items by (StreamId, PerspectiveName)
+    // Each work item represents a single event, but the runner processes ALL events for a stream
+    // So we only call RunAsync() ONCE per (stream, perspective) pair
+    var groupedWork = workBatch.PerspectiveWork
+      .GroupBy(w => new { w.StreamId, w.PerspectiveName })
+      .ToList();
+
+    // Process perspective work using IPerspectiveRunner (once per stream/perspective group)
+    foreach (var group in groupedWork) {
+      var streamId = group.Key.StreamId;
+      var perspectiveName = group.Key.PerspectiveName;
+      var workItems = group.ToList();
+
       try {
-        LogProcessingPerspectiveCheckpoint(_logger, perspectiveWork.PerspectiveName, perspectiveWork.StreamId, perspectiveWork.LastProcessedEventId?.ToString() ?? "null (never processed)");
+        // Look up the checkpoint to get the LastProcessedEventId
+        // This tells the runner where to start reading events from
+        var checkpoint = await workCoordinator.GetPerspectiveCheckpointAsync(
+          streamId,
+          perspectiveName,
+          cancellationToken
+        );
+
+        var lastProcessedEventId = checkpoint?.LastEventId;
+
+        LogProcessingPerspectiveCheckpoint(_logger, perspectiveName, streamId, lastProcessedEventId?.ToString() ?? "null (never processed)");
 
         // Resolve the generated IPerspectiveRunner for this perspective
         var registry = scope.ServiceProvider.GetService<IPerspectiveRunnerRegistry>();
         if (registry == null) {
-          LogPerspectiveRunnerRegistryNotRegistered(_logger, perspectiveWork.PerspectiveName);
+          LogPerspectiveRunnerRegistryNotRegistered(_logger, perspectiveName);
           continue;
         }
 
         // DIAGNOSTIC: Log registry resolution details
-        LogRunnerRegistryResolved(_logger, perspectiveWork.PerspectiveName, registry.GetType().FullName ?? "unknown", registry.GetHashCode());
+        LogRunnerRegistryResolved(_logger, perspectiveName, registry.GetType().FullName ?? "unknown", registry.GetHashCode());
 
-        var runner = registry.GetRunner(perspectiveWork.PerspectiveName, scope.ServiceProvider);
+        var runner = registry.GetRunner(perspectiveName, scope.ServiceProvider);
         if (runner == null) {
-          LogNoPerspectiveRunnerFound(_logger, perspectiveWork.PerspectiveName);
+          LogNoPerspectiveRunnerFound(_logger, perspectiveName);
           continue;
         }
 
         // DIAGNOSTIC: Log runner resolution details
-        LogRunnerInstanceResolved(_logger, perspectiveWork.PerspectiveName, runner.GetType().FullName ?? "unknown", runner.GetHashCode());
+        LogRunnerInstanceResolved(_logger, perspectiveName, runner.GetType().FullName ?? "unknown", runner.GetHashCode());
 
-        // Invoke runner to process events
+        // Invoke runner to process ALL events for this stream/perspective
+        // The runner will read from lastProcessedEventId onwards and process all available events
         var result = await runner.RunAsync(
-          perspectiveWork.StreamId,
-          perspectiveWork.PerspectiveName,
-          perspectiveWork.LastProcessedEventId,
+          streamId,
+          perspectiveName,
+          lastProcessedEventId,
           cancellationToken
         );
+
+        // Phase 3: Invoke lifecycle receptors after perspective processing completes
+        // This enables deterministic test synchronization and eliminates race conditions
+        if (_lifecycleInvoker is not null && _eventStore is not null && result.Status == PerspectiveProcessingStatus.Completed) {
+          await _invokeLifecycleReceptorsAsync(
+            streamId,
+            perspectiveName,
+            lastProcessedEventId,
+            result.LastEventId,
+            cancellationToken
+          );
+        }
 
         // Report completion via strategy
         await _completionStrategy.ReportCompletionAsync(result, workCoordinator, cancellationToken);
 
-        LogPerspectiveCheckpointCompleted(_logger, perspectiveWork.PerspectiveName, perspectiveWork.StreamId, result.LastEventId);
+        LogPerspectiveCheckpointCompleted(_logger, perspectiveName, streamId, result.LastEventId);
       } catch (Exception ex) {
-        LogErrorProcessingPerspectiveCheckpoint(_logger, ex, perspectiveWork.PerspectiveName, perspectiveWork.StreamId);
+        LogErrorProcessingPerspectiveCheckpoint(_logger, ex, perspectiveName, streamId);
 
         var failure = new PerspectiveCheckpointFailure {
-          StreamId = perspectiveWork.StreamId,
-          PerspectiveName = perspectiveWork.PerspectiveName,
-          LastEventId = perspectiveWork.LastProcessedEventId ?? Guid.Empty,
+          StreamId = streamId,
+          PerspectiveName = perspectiveName,
+          LastEventId = Guid.Empty, // We don't know which event failed
           Status = PerspectiveProcessingStatus.Failed,
           Error = ex.Message
         };
@@ -312,6 +350,76 @@ public partial class PerspectiveWorker(
         OnWorkProcessingIdle?.Invoke();
         LogPerspectiveProcessingIdle(_logger, _consecutiveEmptyPolls);
       }
+    }
+  }
+
+  /// <summary>
+  /// Invokes lifecycle receptors after perspective processing completes successfully.
+  /// Loads events that were just processed and notifies receptors at PostPerspectiveAsync
+  /// and PostPerspectiveInline stages for deterministic test synchronization.
+  /// </summary>
+  private async Task _invokeLifecycleReceptorsAsync(
+      Guid streamId,
+      string perspectiveName,
+      Guid? lastProcessedEventId,
+      Guid currentEventId,
+      CancellationToken cancellationToken) {
+
+    if (_eventStore is null || _lifecycleInvoker is null) {
+      return; // Guards against nullability - should never happen if called from RunAsync
+    }
+
+    try {
+      // Load all events that were just processed by this perspective run
+      // Use polymorphic read since we don't know the concrete event types
+      var processedEvents = await _eventStore.GetEventsBetweenAsync<IEvent>(
+        streamId,
+        lastProcessedEventId,  // Exclusive start
+        currentEventId,        // Inclusive end
+        cancellationToken
+      );
+
+      if (processedEvents.Count == 0) {
+        return; // No events to process
+      }
+
+      // Create lifecycle context with stream and perspective information
+      var context = new LifecycleExecutionContext {
+        CurrentStage = LifecycleStage.PostPerspectiveAsync, // Will be updated per stage
+        StreamId = streamId,
+        PerspectiveName = perspectiveName,
+        LastProcessedEventId = currentEventId
+      };
+
+      // Phase 1: PostPerspectiveAsync (non-blocking, informational)
+      // Receptors at this stage should not block perspective processing
+      context = context with { CurrentStage = LifecycleStage.PostPerspectiveAsync };
+      foreach (var envelope in processedEvents) {
+        await _lifecycleInvoker.InvokeAsync(
+          envelope.Payload,
+          LifecycleStage.PostPerspectiveAsync,
+          context,
+          cancellationToken
+        );
+      }
+
+      // Phase 2: PostPerspectiveInline (blocking, for test synchronization)
+      // Receptors at this stage fire BEFORE checkpoint completion is reported
+      // This enables deterministic test synchronization without polling
+      context = context with { CurrentStage = LifecycleStage.PostPerspectiveInline };
+      foreach (var envelope in processedEvents) {
+        await _lifecycleInvoker.InvokeAsync(
+          envelope.Payload,
+          LifecycleStage.PostPerspectiveInline,
+          context,
+          cancellationToken
+        );
+      }
+
+    } catch (Exception ex) {
+      // Log error but don't fail the entire perspective processing
+      // Lifecycle receptor failures shouldn't prevent checkpoint progress
+      LogErrorInvokingLifecycleReceptors(_logger, ex, perspectiveName, streamId);
     }
   }
 
@@ -472,6 +580,17 @@ public partial class PerspectiveWorker(
     Message = "DIAGNOSTIC: Resolved runner instance for perspective '{PerspectiveName}': Type={RunnerType}, HashCode={RunnerHashCode}"
   )]
   static partial void LogRunnerInstanceResolved(ILogger logger, string perspectiveName, string runnerType, int runnerHashCode);
+
+  /// <summary>
+  /// Error invoking lifecycle receptors after perspective processing.
+  /// Lifecycle receptor failures are logged but don't prevent checkpoint progress.
+  /// </summary>
+  [LoggerMessage(
+    EventId = 22,
+    Level = LogLevel.Error,
+    Message = "Error invoking lifecycle receptors for perspective {PerspectiveName} on stream {StreamId}"
+  )]
+  static partial void LogErrorInvokingLifecycleReceptors(ILogger logger, Exception ex, string perspectiveName, Guid streamId);
 }
 
 /// <summary>
