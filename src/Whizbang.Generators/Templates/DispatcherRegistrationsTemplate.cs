@@ -73,5 +73,17 @@ namespace Whizbang.Core.Generated {
       services.AddSingleton<global::Whizbang.Core.Dispatcher>(sp => (GeneratedDispatcher)sp.GetRequiredService<IDispatcher>());
       return services;
     }
+
+    /// <summary>
+    /// Registers the generated zero-reflection lifecycle invoker.
+    /// Stateless routing component registered as Singleton for optimal performance.
+    /// Routes lifecycle invocations based on message type and lifecycle stage from [FireAt] attributes.
+    /// </summary>
+    [ExcludeFromCodeCoverage]
+    [DebuggerNonUserCode]
+    public static IServiceCollection AddWhizbangLifecycleInvoker(this IServiceCollection services) {
+      services.AddSingleton<ILifecycleInvoker, GeneratedLifecycleInvoker>();
+      return services;
+    }
   }
 }

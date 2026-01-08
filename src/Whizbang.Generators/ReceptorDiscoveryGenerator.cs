@@ -238,6 +238,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var dispatcherSource = _generateDispatcherSource(compilation, receptors);
     context.AddSource("Dispatcher.g.cs", dispatcherSource);
 
+    var lifecycleInvokerSource = _generateLifecycleInvokerSource(compilation, receptors);
+    context.AddSource("LifecycleInvoker.g.cs", lifecycleInvokerSource);
+
     var diagnosticsSource = _generateDiagnosticsSource(compilation, receptors);
     context.AddSource("ReceptorDiscoveryDiagnostics.g.cs", diagnosticsSource);
   }
@@ -416,6 +419,82 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "SEND_ROUTING", sendRouting.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "VOID_SEND_ROUTING", voidSendRouting.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "PUBLISH_ROUTING", publishRouting.ToString());
+
+    return result;
+  }
+
+  /// <summary>
+  /// Generates a complete LifecycleInvoker implementation with zero-reflection routing.
+  /// Routes lifecycle invocations based on message type and lifecycle stage from [FireAt] attributes.
+  /// Also checks ILifecycleReceptorRegistry for runtime-registered receptors.
+  /// Uses assembly-specific namespace to avoid conflicts when multiple assemblies use Whizbang.
+  /// </summary>
+  private static string _generateLifecycleInvokerSource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
+    // Determine namespace from assembly name
+    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var namespaceName = $"{assemblyName}.Generated";
+
+    // Read template from embedded resource
+    var template = TemplateUtilities.GetEmbeddedTemplate(
+        typeof(ReceptorDiscoveryGenerator).Assembly,
+        "LifecycleInvokerTemplate.cs"
+    );
+
+    // Load snippets for lifecycle routing
+    var voidSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(ReceptorDiscoveryGenerator).Assembly,
+        "DispatcherSnippets.cs",
+        "LIFECYCLE_ROUTING_VOID_SNIPPET"
+    );
+
+    var responseSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(ReceptorDiscoveryGenerator).Assembly,
+        "DispatcherSnippets.cs",
+        "LIFECYCLE_ROUTING_RESPONSE_SNIPPET"
+    );
+
+    // Build list of (receptor, stage) pairs from all receptors
+    var routingPairs = new System.Collections.Generic.List<(ReceptorInfo Receptor, string Stage)>();
+    foreach (var receptor in receptors) {
+      if (receptor.HasDefaultStage) {
+        // No [FireAt] attributes - defaults to ImmediateAsync, not handled by lifecycle invoker
+        continue;
+      }
+
+      foreach (var stage in receptor.LifecycleStages) {
+        routingPairs.Add((receptor, stage));
+      }
+    }
+
+    // Generate routing code for each (receptor, stage) pair
+    var routingCode = new StringBuilder();
+    foreach (var (receptor, stage) in routingPairs) {
+      string generatedCode;
+
+      if (receptor.IsVoid) {
+        // Void receptor: IReceptor<TMessage>
+        generatedCode = voidSnippet
+            .Replace("__RECEPTOR_INTERFACE__", RECEPTOR_INTERFACE_NAME)
+            .Replace("__MESSAGE_TYPE__", receptor.MessageType)
+            .Replace("__LIFECYCLE_STAGE__", stage);
+      } else {
+        // Regular receptor: IReceptor<TMessage, TResponse>
+        generatedCode = responseSnippet
+            .Replace("__RECEPTOR_INTERFACE__", RECEPTOR_INTERFACE_NAME)
+            .Replace("__MESSAGE_TYPE__", receptor.MessageType)
+            .Replace("__RESPONSE_TYPE__", receptor.ResponseType!)
+            .Replace("__LIFECYCLE_STAGE__", stage);
+      }
+
+      routingCode.AppendLine(TemplateUtilities.IndentCode(generatedCode, "    "));
+    }
+
+    // Replace template markers
+    var result = template;
+    result = TemplateUtilities.ReplaceHeaderRegion(typeof(ReceptorDiscoveryGenerator).Assembly, result);
+    result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName};");
+    result = result.Replace("{{RECEPTOR_COUNT}}", receptors.Length.ToString(CultureInfo.InvariantCulture));
+    result = TemplateUtilities.ReplaceRegion(result, "LIFECYCLE_ROUTING", routingCode.ToString());
 
     return result;
   }

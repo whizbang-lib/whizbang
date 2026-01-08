@@ -150,4 +150,37 @@ public class DispatcherSnippets {
 #nullable enable
     #endregion
   }
+
+  /// <summary>
+  /// Example method showing snippet structure for lifecycle routing with void receptors.
+  /// </summary>
+  protected async ValueTask LifecycleRoutingVoidExample(
+      object message,
+      LifecycleStage stage,
+      CancellationToken cancellationToken) {
+    #region LIFECYCLE_ROUTING_VOID_SNIPPET
+    if (messageType == typeof(__MESSAGE_TYPE__) && stage == __LIFECYCLE_STAGE__) {
+      var receptor = _serviceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
+      await receptor.HandleAsync((__MESSAGE_TYPE__)message, cancellationToken);
+    }
+    #endregion
+  }
+
+  /// <summary>
+  /// Example method showing snippet structure for lifecycle routing with response receptors.
+  /// </summary>
+  protected async ValueTask LifecycleRoutingResponseExample(
+      object message,
+      LifecycleStage stage,
+      CancellationToken cancellationToken) {
+    #region LIFECYCLE_ROUTING_RESPONSE_SNIPPET
+    if (messageType == typeof(__MESSAGE_TYPE__) && stage == __LIFECYCLE_STAGE__) {
+      var receptor = _serviceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
+      await receptor.HandleAsync((__MESSAGE_TYPE__)message, cancellationToken);
+    }
+    #endregion
+  }
+
+  // Placeholder field to allow snippets to compile (used by lifecycle routing)
+  protected IServiceProvider _serviceProvider => null!;
 }
