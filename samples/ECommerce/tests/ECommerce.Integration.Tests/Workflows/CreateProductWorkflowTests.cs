@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
+using ECommerce.Contracts.Events;
 using ECommerce.Integration.Tests.Fixtures;
 using Medo;
 
@@ -41,6 +42,25 @@ public class CreateProductWorkflowTests {
     return 0; // CreateProductWorkflowTests = index 0
   }
 
+  [After(Test)]
+  public async Task CleanupAsync() {
+    // CRITICAL: Drain Service Bus messages BEFORE disposing fixture
+    // Service Bus subscriptions (sub-00-a, sub-01-a) are PERSISTENT - messages remain after hosts stop
+    // Without draining, Test 2's BFF receives Test 1's old messages, causing assertion failures
+    if (_fixture != null) {
+      try {
+        // Drain any remaining messages from Service Bus subscriptions
+        await _fixture.CleanupDatabaseAsync();
+      } catch (Exception ex) {
+        Console.WriteLine($"[After(Test)] Warning: Cleanup encountered error (non-critical): {ex.Message}");
+      }
+
+      // Dispose fixture to stop hosts and close connections
+      await _fixture.DisposeAsync();
+      _fixture = null;
+    }
+  }
+
   // NOTE: Database cleanup happens at fixture initialization (AspireIntegrationFixture.cs:147)
   // No need for [After(Class)] cleanup - the container may be stopped by then
 
@@ -68,10 +88,10 @@ public class CreateProductWorkflowTests {
     // Act
     Console.WriteLine($"[TEST] Sending CreateProductCommand for ProductId={_testProd1}");
     await fixture.Dispatcher.SendAsync(command);
-    Console.WriteLine($"[TEST] Command sent, waiting for event processing...");
+    Console.WriteLine($"[TEST] Command sent, waiting for perspective processing...");
 
-    // Process events through perspectives (simulates Service Bus event processing)
-    await fixture.WaitForEventProcessingAsync();
+    // Wait for perspective processing to complete (deterministic, no race condition!)
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>();
 
     // Assert - Verify in InventoryWorker perspective
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(command.ProductId);
@@ -136,11 +156,11 @@ public class CreateProductWorkflowTests {
       }
     };
 
-    // Act - Create each product and wait for event processing
+    // Act - Create each product and wait for perspective processing
     // This ensures events are processed in order and perspectives are updated before the next product
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
-      await fixture.WaitForEventProcessingAsync();
+      await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>();
     }
 
     // Assert - Verify all products materialized in InventoryWorker perspective
@@ -187,7 +207,7 @@ public class CreateProductWorkflowTests {
 
     // Act
     await fixture.Dispatcher.SendAsync(command);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>();
 
     // Assert - Verify product exists with zero inventory
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(command.ProductId);
@@ -227,8 +247,8 @@ public class CreateProductWorkflowTests {
     // DIAGNOSTIC: Dump event types and associations
     await fixture.DumpEventTypesAndAssociationsAsync();
 
-    await fixture.WaitForEventProcessingAsync();
-    Console.WriteLine("[TEST] Event processing complete");
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>();
+    Console.WriteLine("[TEST] Perspective processing complete");
 
     // Assert - Verify product exists with null ImageUrl
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(command.ProductId);

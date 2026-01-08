@@ -3,6 +3,7 @@
 
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
+using ECommerce.Contracts.Events;
 using ECommerce.Integration.Tests.Fixtures;
 using Medo;
 
@@ -47,6 +48,25 @@ public class RestockInventoryWorkflowTests {
     return 3; // RestockInventoryWorkflowTests = index 3
   }
 
+  [After(Test)]
+  public async Task CleanupAsync() {
+    // CRITICAL: Drain Service Bus messages BEFORE disposing fixture
+    // Service Bus subscriptions (sub-00-a, sub-01-a) are PERSISTENT - messages remain after hosts stop
+    // Without draining, Test 2's BFF receives Test 1's old messages, causing assertion failures
+    if (_fixture != null) {
+      try {
+        // Drain any remaining messages from Service Bus subscriptions
+        await _fixture.CleanupDatabaseAsync();
+      } catch (Exception ex) {
+        Console.WriteLine($"[After(Test)] Warning: Cleanup encountered error (non-critical): {ex.Message}");
+      }
+
+      // Dispose fixture to stop hosts and close connections
+      await _fixture.DisposeAsync();
+      _fixture = null;
+    }
+  }
+
 
   /// <summary>
   /// Tests that restocking inventory via IDispatcher results in:
@@ -71,7 +91,7 @@ public class RestockInventoryWorkflowTests {
       InitialStock = 10
     };
     await fixture.Dispatcher.SendAsync(createCommand);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>();
 
     // Act - Restock inventory
     var restockCommand = new RestockInventoryCommand {
@@ -79,7 +99,7 @@ public class RestockInventoryWorkflowTests {
       QuantityToAdd = 50
     };
     await fixture.Dispatcher.SendAsync(restockCommand);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<InventoryRestockedEvent>();
 
     // Assert - Verify InventoryWorker perspective updated
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);
@@ -112,7 +132,7 @@ public class RestockInventoryWorkflowTests {
       InitialStock = 5
     };
     await fixture.Dispatcher.SendAsync(createCommand);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>();
 
     // Act - Perform multiple restock operations
     // Wait between each restock to ensure events are processed and perspectives are updated
@@ -124,7 +144,7 @@ public class RestockInventoryWorkflowTests {
 
     foreach (var restockCommand in restockCommands) {
       await fixture.Dispatcher.SendAsync(restockCommand);
-      await fixture.WaitForEventProcessingAsync();
+      await fixture.WaitForPerspectiveCompletionAsync<InventoryRestockedEvent>();
     }
 
     // Assert - Verify total quantity = 5 + 10 + 20 + 15 = 50
@@ -157,7 +177,7 @@ public class RestockInventoryWorkflowTests {
       InitialStock = 0
     };
     await fixture.Dispatcher.SendAsync(createCommand);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>();
 
     // Act - Restock from zero
     var restockCommand = new RestockInventoryCommand {
@@ -165,7 +185,7 @@ public class RestockInventoryWorkflowTests {
       QuantityToAdd = 100
     };
     await fixture.Dispatcher.SendAsync(restockCommand);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<InventoryRestockedEvent>();
 
     // Assert - Verify quantity increased from 0 to 100
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);
@@ -196,7 +216,7 @@ public class RestockInventoryWorkflowTests {
       InitialStock = 25
     };
     await fixture.Dispatcher.SendAsync(createCommand);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>();
 
     // Act - Restock with zero quantity
     var restockCommand = new RestockInventoryCommand {
@@ -204,7 +224,7 @@ public class RestockInventoryWorkflowTests {
       QuantityToAdd = 0
     };
     await fixture.Dispatcher.SendAsync(restockCommand);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<InventoryRestockedEvent>();
 
     // Assert - Verify quantity unchanged
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);
@@ -235,7 +255,7 @@ public class RestockInventoryWorkflowTests {
       InitialStock = 50
     };
     await fixture.Dispatcher.SendAsync(createCommand);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>();
 
     // Act - Restock with large quantity
     var restockCommand = new RestockInventoryCommand {
@@ -243,7 +263,7 @@ public class RestockInventoryWorkflowTests {
       QuantityToAdd = 10000
     };
     await fixture.Dispatcher.SendAsync(restockCommand);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<InventoryRestockedEvent>();
 
     // Assert - Verify large quantity handled
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);

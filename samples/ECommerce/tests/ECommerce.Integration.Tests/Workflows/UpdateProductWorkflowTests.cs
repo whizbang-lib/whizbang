@@ -3,6 +3,7 @@
 
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
+using ECommerce.Contracts.Events;
 using ECommerce.Integration.Tests.Fixtures;
 using Medo;
 
@@ -44,6 +45,25 @@ public class UpdateProductWorkflowTests {
     return 2; // UpdateProductWorkflowTests = index 2
   }
 
+  [After(Test)]
+  public async Task CleanupAsync() {
+    // CRITICAL: Drain Service Bus messages BEFORE disposing fixture
+    // Service Bus subscriptions (sub-00-a, sub-01-a) are PERSISTENT - messages remain after hosts stop
+    // Without draining, Test 2's BFF receives Test 1's old messages, causing assertion failures
+    if (_fixture != null) {
+      try {
+        // Drain any remaining messages from Service Bus subscriptions
+        await _fixture.CleanupDatabaseAsync();
+      } catch (Exception ex) {
+        Console.WriteLine($"[After(Test)] Warning: Cleanup encountered error (non-critical): {ex.Message}");
+      }
+
+      // Dispose fixture to stop hosts and close connections
+      await _fixture.DisposeAsync();
+      _fixture = null;
+    }
+  }
+
 
   /// <summary>
   /// Tests that updating a product's name via IDispatcher results in:
@@ -68,7 +88,7 @@ public class UpdateProductWorkflowTests {
       InitialStock = 10
     };
     await fixture.Dispatcher.SendAsync(createCommand);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>();
 
     // Act - Update product name
     var updateCommand = new UpdateProductCommand {
@@ -79,7 +99,7 @@ public class UpdateProductWorkflowTests {
       ImageUrl = null
     };
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductUpdatedEvent>();
 
     // Assert - Verify InventoryWorker perspective updated
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId);
@@ -114,7 +134,7 @@ public class UpdateProductWorkflowTests {
       InitialStock = 20
     };
     await fixture.Dispatcher.SendAsync(createCommand);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>();
 
     // Act - Update all fields
     var updateCommand = new UpdateProductCommand {
@@ -125,7 +145,7 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/updated.png"
     };
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductUpdatedEvent>();
 
     // Assert - Verify InventoryWorker perspective fully updated
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId);
@@ -163,7 +183,7 @@ public class UpdateProductWorkflowTests {
       InitialStock = 15
     };
     await fixture.Dispatcher.SendAsync(createCommand);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>();
 
     // Act - Update only price
     var updateCommand = new UpdateProductCommand {
@@ -174,7 +194,7 @@ public class UpdateProductWorkflowTests {
       ImageUrl = null
     };
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductUpdatedEvent>();
 
     // Assert - Verify only price changed
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId);
@@ -208,7 +228,7 @@ public class UpdateProductWorkflowTests {
       InitialStock = 30
     };
     await fixture.Dispatcher.SendAsync(createCommand);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>();
 
     // Act - Update description and image
     var updateCommand = new UpdateProductCommand {
@@ -219,7 +239,7 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/new-and-improved.png"
     };
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductUpdatedEvent>();
 
     // Assert - Verify description and image updated
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId);
@@ -254,7 +274,7 @@ public class UpdateProductWorkflowTests {
       InitialStock = 5
     };
     await fixture.Dispatcher.SendAsync(createCommand);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>();
 
     // Act - Update name
     var update1 = new UpdateProductCommand {
@@ -265,7 +285,7 @@ public class UpdateProductWorkflowTests {
       ImageUrl = null
     };
     await fixture.Dispatcher.SendAsync(update1);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductUpdatedEvent>();
 
     // Act - Update price
     var update2 = new UpdateProductCommand {
@@ -276,7 +296,7 @@ public class UpdateProductWorkflowTests {
       ImageUrl = null
     };
     await fixture.Dispatcher.SendAsync(update2);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductUpdatedEvent>();
 
     // Act - Update description and image
     var update3 = new UpdateProductCommand {
@@ -287,7 +307,7 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/v3.png"
     };
     await fixture.Dispatcher.SendAsync(update3);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductUpdatedEvent>();
 
     // Assert - Verify all changes accumulated
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId);
@@ -324,7 +344,7 @@ public class UpdateProductWorkflowTests {
       InitialStock = 75
     };
     await fixture.Dispatcher.SendAsync(createCommand);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>();
 
     // Verify initial inventory
     var initialInventory = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);
@@ -340,7 +360,7 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/updated-isolation.png"
     };
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductUpdatedEvent>();
 
     // Assert - Verify inventory unchanged
     var updatedInventory = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);

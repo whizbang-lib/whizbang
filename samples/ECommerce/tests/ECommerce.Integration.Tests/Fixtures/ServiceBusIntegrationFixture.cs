@@ -359,11 +359,25 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     builder.Services.AddScoped<ECommerce.InventoryWorker.Perspectives.InventoryLevelsPerspective>();
     builder.Services.AddScoped<ECommerce.InventoryWorker.Perspectives.ProductCatalogPerspective>();
 
+    // Register TopicRegistry to provide base topic names for events
+    // Register as singleton INSTANCE instead of type registration
+    var topicRegistryInstance = new ECommerce.Contracts.Generated.TopicRegistry();
+    builder.Services.AddSingleton<Whizbang.Core.Routing.ITopicRegistry>(topicRegistryInstance);
+
+    var testTopic = topicRegistryInstance.GetBaseTopic(typeof(ECommerce.Contracts.Events.ProductCreatedEvent));
+    if (testTopic != "products") {
+      throw new InvalidOperationException($"CRITICAL: TopicRegistry test failed - expected 'products', got '{testTopic}'");
+    }
+
     // Register topic routing strategy for Azure Service Bus emulator compatibility
     // Maps all events to generic topics (topic-00, topic-01) instead of named topics (products, inventory)
-    builder.Services.AddSingleton<Whizbang.Core.Routing.ITopicRoutingStrategy>(
-      new GenericTopicRoutingStrategy(topicCount: 2)
-    );
+    var routingStrategyInstance = new GenericTopicRoutingStrategy(topicCount: 2);
+    builder.Services.AddSingleton<Whizbang.Core.Routing.ITopicRoutingStrategy>(routingStrategyInstance);
+
+    var testRouted = routingStrategyInstance.ResolveTopic(typeof(ECommerce.Contracts.Events.ProductCreatedEvent), "products", null);
+    if (!testRouted.StartsWith("topic-")) {
+      throw new InvalidOperationException($"CRITICAL: GenericTopicRoutingStrategy test failed - expected 'topic-XX', got '{testRouted}'");
+    }
 
     // Register dispatcher
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangDispatcher(builder.Services);
@@ -482,6 +496,15 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       .AddWhizbang()
       .WithEFCore<ECommerce.BFF.API.BffDbContext>()
       .WithDriver.Postgres;
+
+    // Register TopicRegistry to provide base topic names for events
+    var topicRegistryInstance = new ECommerce.Contracts.Generated.TopicRegistry();
+    builder.Services.AddSingleton<Whizbang.Core.Routing.ITopicRegistry>(topicRegistryInstance);
+
+    // Register GenericTopicRoutingStrategy for test topic routing
+    // This distributes events across generic topics (topic-00, topic-01) for Azure Service Bus emulator compatibility
+    var routingStrategyInstance = new GenericTopicRoutingStrategy(topicCount: 2);
+    builder.Services.AddSingleton<Whizbang.Core.Routing.ITopicRoutingStrategy>(routingStrategyInstance);
 
     // Register SignalR (required by BFF lenses)
     builder.Services.AddSignalR();
@@ -801,9 +824,11 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         Console.WriteLine($"[DIAGNOSTIC] BFF perspective rows: ProductDto={bffProductRows}, InventoryLevelDto={bffInventoryRows}");
       }
 
-      // CRITICAL: Wait for all work to complete AND for perspective rows to exist
+      // CRITICAL: Wait for all work to complete AND for perspective rows to exist IN BOTH SCHEMAS
       // This prevents returning before perspective transactions are visible to lens queries
-      if (pendingOutbox == 0 && pendingInbox == 0 && pendingPerspectives == 0 && perspectiveRowCount > 0) {
+      // IMPORTANT: Check BOTH hosts individually - prevents false completion when only InventoryWorker has rows
+      // but BFF is still waiting for Service Bus message delivery
+      if (pendingOutbox == 0 && pendingInbox == 0 && pendingPerspectives == 0 && invPerspectiveRowCount > 0 && bffPerspectiveRowCount > 0) {
         Console.WriteLine($"[ServiceBusFixture] Event processing complete - no pending work, {perspectiveRowCount} perspective rows exist (checked database after {stopwatch.ElapsedMilliseconds}ms, {attempt} attempts)");
         Console.WriteLine($"[DIAGNOSTIC-FINAL] BFF: Rows={bffPerspectiveRowCount}, Inventory: Rows={invPerspectiveRowCount}");
         return;
@@ -864,6 +889,51 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   }
 
   /// <summary>
+  /// Waits for perspective processing to complete for a specific event type using lifecycle receptor synchronization.
+  /// This eliminates race conditions by waiting for the actual perspective processing to complete instead of polling database tables.
+  /// Uses PostPerspectiveInline lifecycle stage which guarantees perspective data is persisted before returning.
+  /// </summary>
+  /// <typeparam name="TEvent">The event type to wait for.</typeparam>
+  /// <param name="perspectiveName">Optional perspective name to filter by (null = any perspective).</param>
+  /// <param name="timeoutMilliseconds">Maximum time to wait in milliseconds (default: 15000ms).</param>
+  /// <exception cref="TimeoutException">Thrown if perspective processing doesn't complete within timeout.</exception>
+  /// <remarks>
+  /// <para>
+  /// <strong>Recommended usage:</strong> Replace <see cref="WaitForEventProcessingAsync"/> with this method for deterministic synchronization.
+  /// </para>
+  /// <para>
+  /// <strong>Example:</strong>
+  /// </para>
+  /// <code>
+  /// // Dispatch command that triggers perspective update
+  /// await Dispatcher.SendAsync(createProductCommand);
+  ///
+  /// // Wait for perspective processing to complete (no race condition!)
+  /// await WaitForPerspectiveCompletionAsync&lt;ProductCreatedEvent&gt;(
+  ///   perspectiveName: "ProductCatalog",
+  ///   timeoutMilliseconds: 15000
+  /// );
+  ///
+  /// // Now verify perspective data - guaranteed to be saved
+  /// var product = await InventoryProductLens.GetByIdAsync(createProductCommand.ProductId);
+  /// Assert.That(product).IsNotNull();
+  /// </code>
+  /// </remarks>
+  /// <docs>testing/lifecycle-synchronization</docs>
+  public async Task WaitForPerspectiveCompletionAsync<TEvent>(
+    string? perspectiveName = null,
+    int timeoutMilliseconds = 15000)
+    where TEvent : IEvent {
+
+    Console.WriteLine($"[WaitForPerspective] Waiting for {typeof(TEvent).Name} processing (perspective={perspectiveName ?? "any"}, timeout={timeoutMilliseconds}ms)");
+
+    // Use extension method to wait for completion
+    await _inventoryHost!.WaitForPerspectiveCompletionAsync<TEvent>(perspectiveName, timeoutMilliseconds);
+
+    Console.WriteLine($"[WaitForPerspective] {typeof(TEvent).Name} processing complete!");
+  }
+
+  /// <summary>
   /// Cleans up all test data from the database (truncates all tables).
   /// Also drains Service Bus subscriptions to prevent cross-contamination.
   /// Call this between test classes to ensure isolation.
@@ -874,10 +944,31 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       return;
     }
 
-    // Drain Service Bus subscriptions FIRST to prevent cross-contamination
+    // CRITICAL: Pause BFF ServiceBusConsumerWorker BEFORE draining to prevent competing consumers
+    // This ensures the processor's receivers are inactive while we drain stale messages
+    Console.WriteLine("[ServiceBusFixture] Pausing BFF ServiceBusConsumerWorker before draining...");
+    var bffConsumerWorker = _bffHost!.Services.GetService<Microsoft.Extensions.Hosting.IHostedService>()
+      ?.GetType().Name.Contains("ServiceBusConsumerWorker") == true
+      ? _bffHost.Services.GetService<Microsoft.Extensions.Hosting.IHostedService>() as Whizbang.Core.Workers.ServiceBusConsumerWorker
+      : _bffHost.Services.GetServices<Microsoft.Extensions.Hosting.IHostedService>()
+        .OfType<Whizbang.Core.Workers.ServiceBusConsumerWorker>()
+        .FirstOrDefault();
+
+    if (bffConsumerWorker != null) {
+      await bffConsumerWorker.PauseAllSubscriptionsAsync();
+      Console.WriteLine("[ServiceBusFixture] BFF consumer paused.");
+    }
+
+    // Drain Service Bus subscriptions to prevent cross-contamination between tests
     Console.WriteLine("[ServiceBusFixture] Draining subscriptions between tests...");
     await DrainSubscriptionsAsync(cancellationToken);
     Console.WriteLine("[ServiceBusFixture] Subscriptions drained.");
+
+    // Resume BFF ServiceBusConsumerWorker after draining
+    if (bffConsumerWorker != null) {
+      await bffConsumerWorker.ResumeAllSubscriptionsAsync();
+      Console.WriteLine("[ServiceBusFixture] BFF consumer resumed.");
+    }
 
     // Truncate all Whizbang tables in the shared database
     // Both InventoryWorker and BFF share the same database, so we only need to truncate once
@@ -984,6 +1075,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   private async Task WaitForPendingWorkAsync(int timeoutMilliseconds = 5000) {
     var stopwatch = System.Diagnostics.Stopwatch.StartNew();
     var attempt = 0;
+    var consecutiveEmptyChecks = 0;  // Track consecutive checks with 0 pending work
 
     while (stopwatch.ElapsedMilliseconds < timeoutMilliseconds) {
       attempt++;
@@ -1030,13 +1122,23 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
 
       var totalPending = invOutbox + invInbox + invPerspectives + bffOutbox + bffInbox + bffPerspectives;
 
+      // CRITICAL: Require 3 consecutive checks with 0 pending to prevent race conditions
+      // Without this, work might complete momentarily (pending=0), we return immediately,
+      // then event cascades trigger new work (e.g., perspective → outbox → ServiceBus → BFF)
+      // and disposal happens while new work is in-flight, causing "Query was cancelled" errors
       if (totalPending == 0) {
-        Console.WriteLine($"[ServiceBusFixture] All pending work completed after {stopwatch.ElapsedMilliseconds}ms ({attempt} attempts)");
-        return;
+        consecutiveEmptyChecks++;
+        if (consecutiveEmptyChecks >= 3) {
+          Console.WriteLine($"[ServiceBusFixture] All pending work completed after {stopwatch.ElapsedMilliseconds}ms ({attempt} attempts, {consecutiveEmptyChecks} consecutive empty checks)");
+          return;
+        }
+        // Still at 0, but need more checks to confirm system is truly idle
+      } else {
+        consecutiveEmptyChecks = 0;  // Reset counter when work is detected
       }
 
-      if (attempt % 2 == 0) {
-        Console.WriteLine($"[ServiceBusFixture] Waiting for work: Inventory(O={invOutbox},I={invInbox},P={invPerspectives}), BFF(O={bffOutbox},I={bffInbox},P={bffPerspectives}) - {stopwatch.ElapsedMilliseconds}ms elapsed");
+      if (attempt % 2 == 0 || consecutiveEmptyChecks > 0) {
+        Console.WriteLine($"[ServiceBusFixture] Waiting for work: Inventory(O={invOutbox},I={invInbox},P={invPerspectives}), BFF(O={bffOutbox},I={bffInbox},P={bffPerspectives}) - {stopwatch.ElapsedMilliseconds}ms elapsed (empty checks: {consecutiveEmptyChecks}/3)");
       }
 
       await Task.Delay(200);  // Check every 200ms
@@ -1081,6 +1183,8 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     Console.WriteLine("[ServiceBusFixture] ServiceBus connections closed.");
 
     // Dispose TestContainers PostgreSQL (instead of Aspire app)
+    // The 3 consecutive empty checks in WaitForPendingWorkAsync ensure all database work is complete
+    // before we reach this point, so no additional delay is needed
     if (_postgresContainer != null) {
       await _postgresContainer.DisposeAsync();
     }
