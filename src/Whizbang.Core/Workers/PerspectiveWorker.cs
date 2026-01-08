@@ -278,6 +278,52 @@ public partial class PerspectiveWorker(
         // DIAGNOSTIC: Log runner resolution details
         LogRunnerInstanceResolved(_logger, perspectiveName, runner.GetType().FullName ?? "unknown", runner.GetHashCode());
 
+        // Phase 3.1: Invoke PrePerspective lifecycle receptors before perspective processing
+        // This allows receptors to prepare or validate before perspective updates
+        if (_lifecycleInvoker is not null && _eventStore is not null) {
+          try {
+            // Load events that will be processed to invoke PrePerspective receptors
+            var upcomingEvents = await _eventStore.GetEventsBetweenAsync<IEvent>(
+              streamId,
+              lastProcessedEventId,
+              Guid.Empty, // Read all events after lastProcessedEventId
+              cancellationToken
+            );
+
+            if (upcomingEvents.Count > 0) {
+              var context = new LifecycleExecutionContext {
+                CurrentStage = LifecycleStage.PrePerspectiveAsync,
+                StreamId = streamId,
+                PerspectiveName = perspectiveName,
+                LastProcessedEventId = lastProcessedEventId
+              };
+
+              // PrePerspectiveAsync (non-blocking)
+              foreach (var envelope in upcomingEvents) {
+                await _lifecycleInvoker.InvokeAsync(
+                  envelope.Payload,
+                  LifecycleStage.PrePerspectiveAsync,
+                  context,
+                  cancellationToken
+                );
+              }
+
+              // PrePerspectiveInline (blocking)
+              context = context with { CurrentStage = LifecycleStage.PrePerspectiveInline };
+              foreach (var envelope in upcomingEvents) {
+                await _lifecycleInvoker.InvokeAsync(
+                  envelope.Payload,
+                  LifecycleStage.PrePerspectiveInline,
+                  context,
+                  cancellationToken
+                );
+              }
+            }
+          } catch (Exception ex) {
+            LogErrorInvokingLifecycleReceptors(_logger, ex, perspectiveName, streamId);
+          }
+        }
+
         // Invoke runner to process ALL events for this stream/perspective
         // The runner will read from lastProcessedEventId onwards and process all available events
         var result = await runner.RunAsync(

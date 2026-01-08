@@ -65,10 +65,11 @@ namespace Whizbang.Core.Generated {
         var topicRegistry = sp.GetService<Whizbang.Core.Routing.ITopicRegistry>();
         var topicRoutingStrategy = sp.GetService<Whizbang.Core.Routing.ITopicRoutingStrategy>();
         var aggregateIdExtractor = sp.GetService<IAggregateIdExtractor>();
+        var lifecycleInvoker = sp.GetService<ILifecycleInvoker>();
 
         // Do NOT resolve IEventStore or IWorkCoordinatorStrategy here - they may be Scoped
         // The Dispatcher will resolve them per-call from the active service provider
-        return new GeneratedDispatcher(sp, instanceProvider, traceStore, transport, jsonOptions, topicRegistry, topicRoutingStrategy, aggregateIdExtractor);
+        return new GeneratedDispatcher(sp, instanceProvider, traceStore, transport, jsonOptions, topicRegistry, topicRoutingStrategy, aggregateIdExtractor, lifecycleInvoker);
       });
       services.AddSingleton<global::Whizbang.Core.Dispatcher>(sp => (GeneratedDispatcher)sp.GetRequiredService<IDispatcher>());
       return services;

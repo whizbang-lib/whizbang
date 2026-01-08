@@ -49,7 +49,8 @@ public abstract class Dispatcher(
   JsonSerializerOptions? jsonOptions = null,
   Routing.ITopicRegistry? topicRegistry = null,
   Routing.ITopicRoutingStrategy? topicRoutingStrategy = null,
-  IAggregateIdExtractor? aggregateIdExtractor = null
+  IAggregateIdExtractor? aggregateIdExtractor = null,
+  ILifecycleInvoker? lifecycleInvoker = null
   ) : IDispatcher {
   private readonly IServiceProvider _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -60,6 +61,7 @@ public abstract class Dispatcher(
   private readonly Routing.ITopicRegistry? _topicRegistry = topicRegistry;
   private readonly Routing.ITopicRoutingStrategy _topicRoutingStrategy = topicRoutingStrategy ?? Routing.PassthroughRoutingStrategy.Instance;
   private readonly IAggregateIdExtractor? _aggregateIdExtractor = aggregateIdExtractor;
+  private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
 
   /// <summary>
   /// Gets the service provider for receptor resolution.
@@ -147,6 +149,18 @@ public abstract class Dispatcher(
     // Invoke using delegate - zero reflection, strongly typed
     await invoker(message);
 
+    // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
+    if (_lifecycleInvoker is not null) {
+      var lifecycleContext = new LifecycleExecutionContext {
+        CurrentStage = LifecycleStage.ImmediateAsync,
+        EventId = null,
+        StreamId = null,
+        PerspectiveName = null,
+        LastProcessedEventId = null
+      };
+      await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+    }
+
     // Return delivery receipt
     var destination = messageType.Name; // Will be enhanced with actual receptor name in future
     return DeliveryReceipt.Delivered(
@@ -198,6 +212,18 @@ public abstract class Dispatcher(
 
     // Invoke using delegate - zero reflection, strongly typed
     await invoker(message);
+
+    // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
+    if (_lifecycleInvoker is not null) {
+      var lifecycleContext = new LifecycleExecutionContext {
+        CurrentStage = LifecycleStage.ImmediateAsync,
+        EventId = null,
+        StreamId = null,
+        PerspectiveName = null,
+        LastProcessedEventId = null
+      };
+      await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+    }
 
     // Return delivery receipt
     var destination = messageType.Name; // Will be enhanced with actual receptor name in future
@@ -293,11 +319,11 @@ public abstract class Dispatcher(
 
     // OPTIMIZATION: Skip envelope creation when trace store is null
     // This achieves zero allocation for high-throughput scenarios
-    if (_traceStore != null) {
+    if (_traceStore != null || _lifecycleInvoker != null) {
       return _localInvokeWithTracingAsync(message, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
     }
 
-    // FAST PATH: Zero allocation when no tracing
+    // FAST PATH: Zero allocation when no tracing and no lifecycle invoker
     // Invoke using delegate - zero reflection, strongly typed
     // Avoid async/await state machine allocation by returning task directly
     return invoker(message);
@@ -320,6 +346,19 @@ public abstract class Dispatcher(
 
     // Invoke using delegate - zero reflection, strongly typed
     var result = await invoker(message);
+
+    // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
+    if (_lifecycleInvoker is not null) {
+      var lifecycleContext = new LifecycleExecutionContext {
+        CurrentStage = LifecycleStage.ImmediateAsync,
+        EventId = null,
+        StreamId = null,
+        PerspectiveName = null,
+        LastProcessedEventId = null
+      };
+      await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+    }
+
     return result;
   }
 
@@ -348,11 +387,11 @@ public abstract class Dispatcher(
 
     // OPTIMIZATION: Skip envelope creation when trace store is null
     // This achieves zero allocation for high-throughput scenarios
-    if (_traceStore != null) {
+    if (_traceStore != null || _lifecycleInvoker != null) {
       return _localInvokeWithTracingAsyncInternalAsync<TMessage, TResult>(message, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
     }
 
-    // FAST PATH: Zero allocation when no tracing
+    // FAST PATH: Zero allocation when no tracing and no lifecycle invoker
     // Invoke using delegate - zero reflection, strongly typed
     // Avoid async/await state machine allocation by returning task directly
     return invoker(message);
@@ -376,6 +415,19 @@ public abstract class Dispatcher(
 
     // Invoke using delegate - zero reflection, strongly typed
     var result = await invoker(message!);
+
+    // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
+    if (_lifecycleInvoker is not null) {
+      var lifecycleContext = new LifecycleExecutionContext {
+        CurrentStage = LifecycleStage.ImmediateAsync,
+        EventId = null,
+        StreamId = null,
+        PerspectiveName = null,
+        LastProcessedEventId = null
+      };
+      await _lifecycleInvoker.InvokeAsync(message!, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+    }
+
     return result;
   }
 
@@ -670,6 +722,7 @@ public abstract class Dispatcher(
 
       // Resolve destination topic using registry and routing strategy
       var destination = _resolveEventTopic(eventType);
+      Console.WriteLine($"[DISPATCHER-DIAGNOSTIC] _publishToOutboxViaScopeAsync: destination='{destination}' for event {eventType.Name}");
 
       // Create MessageEnvelope wrapping the event (using SAME messageId as event store)
       var envelope = new MessageEnvelope<TEvent> {
@@ -692,9 +745,11 @@ public abstract class Dispatcher(
       envelope.AddHop(hop);
 
       System.Diagnostics.Debug.WriteLine($"[Dispatcher] Queueing event {eventType.Name} to work coordinator with destination '{destination}'");
+      Console.WriteLine($"[DISPATCHER-DIAGNOSTIC] MessageHop.Topic set to: '{hop.Topic}'");
 
       // Serialize envelope to OutboxMessage
       var newOutboxMessage = _serializeToNewOutboxMessage(envelope, eventData!, eventType, destination);
+      Console.WriteLine($"[DISPATCHER-DIAGNOSTIC] OutboxMessage created with Destination: '{newOutboxMessage.Destination}'");
 
       // Queue event for batched processing
       strategy.QueueOutboxMessage(newOutboxMessage);
@@ -722,8 +777,13 @@ public abstract class Dispatcher(
   /// <param name="context">Optional routing context (tenant ID, region, etc.)</param>
   /// <returns>The resolved topic name</returns>
   private string _resolveEventTopic(Type eventType, IReadOnlyDictionary<string, object>? context = null) {
+    Console.WriteLine($"[DISPATCHER-DIAGNOSTIC] _resolveEventTopic called for {eventType.Name}");
+    Console.WriteLine($"[DISPATCHER-DIAGNOSTIC] _topicRegistry is {(_topicRegistry == null ? "NULL" : "registered")}");
+    Console.WriteLine($"[DISPATCHER-DIAGNOSTIC] _topicRoutingStrategy is {(_topicRoutingStrategy == null ? "NULL" : _topicRoutingStrategy.GetType().Name)}");
+
     // 1. Try registry first (source-generated or configured)
     var baseTopic = _topicRegistry?.GetBaseTopic(eventType);
+    Console.WriteLine($"[DISPATCHER-DIAGNOSTIC] Base topic from registry: {baseTopic ?? "NULL"}");
 
     // 2. Fallback to convention if not found in registry
     if (baseTopic == null) {
@@ -740,10 +800,21 @@ public abstract class Dispatcher(
         // Default: use lowercase type name without "Event" suffix
         baseTopic = typeName.Replace("Event", "").ToLowerInvariant();
       }
+      Console.WriteLine($"[DISPATCHER-DIAGNOSTIC] Base topic from convention fallback: {baseTopic}");
+    }
+
+    Console.WriteLine($"[DISPATCHER-DIAGNOSTIC] Final base topic before routing strategy: '{baseTopic}'");
+
+    // baseTopic should never be null here due to convention fallback, but add defensive check
+    if (baseTopic == null) {
+      throw new InvalidOperationException($"Unable to resolve base topic for event type {eventType.Name}");
     }
 
     // 3. Apply routing strategy (pool suffix, tenant prefix, etc.)
-    return _topicRoutingStrategy.ResolveTopic(eventType, baseTopic, context);
+    // _topicRoutingStrategy is never null (defaults to PassthroughRoutingStrategy if not provided)
+    var resolvedTopic = _topicRoutingStrategy!.ResolveTopic(eventType, baseTopic, context);
+    Console.WriteLine($"[DISPATCHER-DIAGNOSTIC] Topic after routing strategy: '{resolvedTopic}'");
+    return resolvedTopic;
   }
 
   /// <summary>
