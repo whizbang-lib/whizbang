@@ -11,7 +11,7 @@ namespace Whizbang.Core.Tests;
 /// </summary>
 public class TypeFormatterTests {
   // Test type for formatting
-  private class TestEvent : IEvent { }
+  internal sealed class TestEvent : IEvent { }
 
   [Test]
   public async Task FormatType_Simple_ReturnsTypeNameOnlyAsync() {

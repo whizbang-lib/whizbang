@@ -116,6 +116,55 @@ public abstract class DapperEventStoreBase : IEventStore {
     CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Database-specific SQL for querying events between two checkpoint IDs (exclusive start, inclusive end).
+  /// </summary>
+  protected abstract string GetEventsBetweenSql();
+
+  /// <inheritdoc />
+  public async Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(
+      Guid streamId,
+      Guid? afterEventId,
+      Guid upToEventId,
+      CancellationToken cancellationToken = default) {
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+
+    var sql = GetEventsBetweenSql();
+    var parameters = new {
+      StreamId = streamId,
+      AfterEventId = afterEventId,
+      UpToEventId = upToEventId
+    };
+
+    var rows = await Executor.QueryAsync<EventRow>(connection, sql, parameters, cancellationToken: cancellationToken);
+    var envelopes = new List<MessageEnvelope<TMessage>>();
+
+    var eventTypeInfo = JsonOptions.GetTypeInfo(typeof(TMessage));
+    var metadataTypeInfo = JsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
+
+    foreach (var row in rows) {
+      var eventData = JsonSerializer.Deserialize(row.EventData, eventTypeInfo);
+      if (eventData == null) {
+        throw new InvalidOperationException($"Failed to deserialize event of type {row.EventType}");
+      }
+
+      var metadata = JsonSerializer.Deserialize(row.Metadata, metadataTypeInfo);
+      if (metadata == null) {
+        throw new InvalidOperationException($"Failed to deserialize metadata for event type {row.EventType}");
+      }
+
+      envelopes.Add(new MessageEnvelope<TMessage> {
+        MessageId = ((EnvelopeMetadata)metadata).MessageId,
+        Payload = (TMessage)eventData,
+        Hops = ((EnvelopeMetadata)metadata).Hops
+      });
+    }
+
+    return envelopes;
+  }
+
+  /// <summary>
   /// Gets the last sequence number for a stream. Returns -1 if stream doesn't exist.
   /// </summary>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:GetLastSequenceAsync_EmptyStream_ShouldReturnMinusOneAsync</tests>

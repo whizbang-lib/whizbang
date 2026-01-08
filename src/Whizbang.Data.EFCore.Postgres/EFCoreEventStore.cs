@@ -269,6 +269,57 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
   }
 
   /// <summary>
+  /// Gets events between two checkpoint positions (exclusive start, inclusive end).
+  /// Used by lifecycle receptors to load events that were just processed by a perspective.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenAsync_WithEventsInRange_ReturnsEventsBetweenCheckpointsAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenAsync_NullAfterEventId_ReturnsFromStartAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenAsync_NoEventsInRange_ReturnsEmptyListAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenAsync_MultipleEvents_ReturnsInUuidV7OrderAsync</tests>
+  public async Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(
+      Guid streamId,
+      Guid? afterEventId,
+      Guid upToEventId,
+      CancellationToken cancellationToken = default) {
+
+    // Build query: after afterEventId (exclusive), up to upToEventId (inclusive)
+    IQueryable<EventStoreRecord> query = _context.Set<EventStoreRecord>()
+      .Where(e => e.StreamId == streamId && e.Id <= upToEventId);
+
+    if (afterEventId != null) {
+      query = query.Where(e => e.Id > afterEventId.Value);
+    }
+
+    // Order by UUID v7 (time-ordered)
+    var records = await query
+      .OrderBy(e => e.Id)
+      .ToListAsync(cancellationToken);
+
+    // Deserialize to message envelopes
+    var envelopes = new List<MessageEnvelope<TMessage>>(records.Count);
+
+    foreach (var record in records) {
+      var eventDataJson = record.EventData.GetRawText();
+      var typeInfo = _jsonOptions.GetTypeInfo(typeof(TMessage));
+      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo);
+
+      if (eventData == null) {
+        throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
+      }
+
+      var envelope = new MessageEnvelope<TMessage> {
+        MessageId = record.Metadata.MessageId,
+        Payload = (TMessage)eventData,
+        Hops = record.Metadata.Hops
+      };
+
+      envelopes.Add(envelope);
+    }
+
+    return envelopes;
+  }
+
+  /// <summary>
   /// Gets the last (highest) sequence number for a stream.
   /// Returns -1 if the stream doesn't exist or is empty.
   /// </summary>

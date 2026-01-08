@@ -9,5 +9,5 @@ namespace Whizbang.Core;
 /// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:Generator_WithPropertyAttribute_GeneratesExtractorAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:Generator_WithMultipleEvents_GeneratesAllExtractorsAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/StreamKeyGeneratorTests.cs:Generator_ReportsDiagnostic_ForEventWithNoStreamKeyAsync</tests>
-public interface IEvent {
+public interface IEvent : IMessage {
 }

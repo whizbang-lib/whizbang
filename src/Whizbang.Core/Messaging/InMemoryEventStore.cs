@@ -136,6 +136,24 @@ public class InMemoryEventStore(
   }
 
   /// <inheritdoc />
+  public Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(
+      Guid streamId,
+      Guid? afterEventId,
+      Guid upToEventId,
+      CancellationToken cancellationToken = default) {
+
+    if (!_streams.TryGetValue(streamId, out var stream)) {
+      return Task.FromResult(new List<MessageEnvelope<TMessage>>());
+    }
+
+    var envelopes = stream.ReadBetween(afterEventId, upToEventId)
+      .OfType<MessageEnvelope<TMessage>>()
+      .ToList();
+
+    return Task.FromResult(envelopes);
+  }
+
+  /// <inheritdoc />
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:GetLastSequenceAsync_EmptyStream_ShouldReturnMinusOneAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:GetLastSequenceAsync_AfterAppends_ShouldReturnCorrectSequenceAsync</tests>
   public Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) {
@@ -181,6 +199,20 @@ public class InMemoryEventStore(
 
         return [.. _events
           .Where(e => e.EventId.CompareTo(fromEventId.Value) > 0)
+          .OrderBy(e => e.EventId)
+          .Select(e => e.Envelope)];
+      }
+    }
+
+    public IEnumerable<IMessageEnvelope> ReadBetween(Guid? afterEventId, Guid upToEventId) {
+      lock (_lock) {
+        var query = _events.Where(e => e.EventId.CompareTo(upToEventId) <= 0);
+
+        if (afterEventId != null) {
+          query = query.Where(e => e.EventId.CompareTo(afterEventId.Value) > 0);
+        }
+
+        return [.. query
           .OrderBy(e => e.EventId)
           .Select(e => e.Envelope)];
       }

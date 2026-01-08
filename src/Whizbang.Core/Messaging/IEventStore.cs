@@ -82,6 +82,29 @@ public interface IEventStore {
   IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(Guid streamId, Guid? fromEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Gets events between two checkpoint positions (exclusive start, inclusive end).
+  /// Used by lifecycle receptors to load events that were just processed by a perspective.
+  /// Events are ordered by UUID v7 (time-ordered).
+  /// </summary>
+  /// <typeparam name="TMessage">The message type to deserialize (must match stored event types)</typeparam>
+  /// <param name="streamId">The stream identifier (aggregate ID as UUID)</param>
+  /// <param name="afterEventId">The event ID to start reading after (exclusive). Null means start from beginning.</param>
+  /// <param name="upToEventId">The event ID to read up to (inclusive).</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>List of message envelopes between the two checkpoints, ordered by event ID (UUID v7)</returns>
+  /// <remarks>
+  /// This method is primarily used by lifecycle receptors at PostPerspective stages to load
+  /// the events that were just processed. The PerspectiveWorker tracks lastProcessedEventId
+  /// (before) and result.LastEventId (after), then calls this method to get the events in between.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenAsync_WithEventsInRange_ReturnsEventsBetweenCheckpointsAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenAsync_NullAfterEventId_ReturnsFromStartAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenAsync_NoEventsInRange_ReturnsEmptyListAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenAsync_MultipleEvents_ReturnsInUuidV7OrderAsync</tests>
+  /// <docs>core-concepts/lifecycle-receptors</docs>
+  Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default);
+
+  /// <summary>
   /// Gets the last (highest) sequence number for a stream.
   /// Returns -1 if the stream doesn't exist or is empty.
   /// </summary>

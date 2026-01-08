@@ -8,5 +8,5 @@ namespace Whizbang.Core;
 /// <tests>tests/Whizbang.Generators.Tests/MessageRegistryGeneratorTests.cs:MessageRegistryGenerator_WithCommandAndEventMessages_GeneratesCorrectRegistryAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:MessageJsonContextGenerator_WithSingleCommand_GeneratesValidJsonContextAsync</tests>
 /// <tests>tests/Whizbang.Generators.Tests/ReceptorDiscoveryGeneratorTests.cs:ReceptorDiscoveryGenerator_WithSingleReceptorAndCommand_GeneratesValidDispatcherAsync</tests>
-public interface ICommand {
+public interface ICommand : IMessage {
 }
