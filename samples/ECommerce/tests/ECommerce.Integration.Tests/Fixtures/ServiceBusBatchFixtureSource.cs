@@ -28,7 +28,7 @@ public sealed class ServiceBusBatchFixtureSource {
 
   /// <summary>
   /// Initializes the shared ServiceBus emulator fixture once per assembly.
-  /// PostgreSQL and service hosts are created per-test, not here.
+  /// Reuses the emulator from SharedFixtureSource instead of starting a new one.
   /// </summary>
   [Obsolete]
   private async Task InitializeAsync() {
@@ -43,16 +43,19 @@ public sealed class ServiceBusBatchFixtureSource {
       }
 
       Console.WriteLine("================================================================================");
-      Console.WriteLine("[FIXTURE SOURCE] Initializing shared test infrastructure...");
+      Console.WriteLine("[BATCH FIXTURE SOURCE] Reusing shared ServiceBus emulator...");
       Console.WriteLine("================================================================================");
-      Console.WriteLine("[FIXTURE SOURCE] Starting single ServiceBus emulator on port 5672...");
 
-      // Initialize single ServiceBus emulator
+      // Reuse the emulator from SharedFixtureSource (already running on port 5672)
+      // This avoids Docker container name conflicts
+      var (connectionString, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync(0);
+
+      // Create a lightweight fixture wrapper that doesn't start its own emulator
       _serviceBusFixture = new ServiceBusBatchFixture(0);
-      await _serviceBusFixture.InitializeAsync();
+      await _serviceBusFixture.InitializeWithSharedEmulatorAsync(connectionString, sharedClient);
 
       Console.WriteLine("================================================================================");
-      Console.WriteLine("[FIXTURE SOURCE] ✅ Emulator ready!");
+      Console.WriteLine("[BATCH FIXTURE SOURCE] ✅ Shared emulator ready!");
       Console.WriteLine("================================================================================");
 
       _initialized = true;

@@ -19,6 +19,15 @@ public record OrderCreatedEvent : IEvent {
 }
 
 /// <summary>
+/// Second sample event for testing polymorphic event loading.
+/// </summary>
+public record OrderShippedEvent : IEvent {
+  [StreamKey]
+  public required Guid OrderId { get; init; }
+  public required string TrackingNumber { get; init; }
+}
+
+/// <summary>
 /// Tests for EFCoreEventStore.
 /// Verifies append-only event storage with stream-based organization and sequence numbers.
 /// Uses PostgreSQL Testcontainers for real database testing with JsonDocument support.
@@ -410,4 +419,212 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
       await Assert.That(events[i].MessageId.Value).IsGreaterThanOrEqualTo(events[i - 1].MessageId.Value);
     }
   }
+
+  /// <summary>
+  /// Tests that GetEventsBetweenPolymorphicAsync returns mixed event types between two checkpoint positions.
+  /// This method is used by lifecycle receptors to load events that were just processed by a perspective
+  /// when the perspective handles multiple event types.
+  /// </summary>
+  [Test]
+  public async Task GetEventsBetweenPolymorphicAsync_WithMixedEventTypes_ReturnsAllEventsAsync() {
+    // Arrange
+    await using var context = CreateDbContext();
+    var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(context);
+
+    var streamId = Guid.NewGuid();
+    var orderId = Guid.NewGuid();
+    var eventIds = new List<Guid>();
+
+    // Append mixed events: Created, Shipped, Created, Shipped, Created
+    var events = new List<IEvent> {
+      new OrderCreatedEvent { OrderId = orderId, CustomerName = "Customer 1" },
+      new OrderShippedEvent { OrderId = orderId, TrackingNumber = "TRACK001" },
+      new OrderCreatedEvent { OrderId = orderId, CustomerName = "Customer 2" },
+      new OrderShippedEvent { OrderId = orderId, TrackingNumber = "TRACK002" },
+      new OrderCreatedEvent { OrderId = orderId, CustomerName = "Customer 3" }
+    };
+
+    foreach (var evt in events) {
+      var envelope = evt switch {
+        OrderCreatedEvent created => new MessageEnvelope<OrderCreatedEvent> {
+          MessageId = MessageId.New(),
+          Payload = created,
+          Hops = new List<MessageHop> { CreateTestHop() }
+        } as object,
+        OrderShippedEvent shipped => new MessageEnvelope<OrderShippedEvent> {
+          MessageId = MessageId.New(),
+          Payload = shipped,
+          Hops = new List<MessageHop> { CreateTestHop() }
+        } as object,
+        _ => throw new InvalidOperationException("Unknown event type")
+      };
+
+      if (envelope is MessageEnvelope<OrderCreatedEvent> createdEnv) {
+        await eventStore.AppendAsync(streamId, createdEnv);
+        eventIds.Add(createdEnv.MessageId.Value);
+      } else if (envelope is MessageEnvelope<OrderShippedEvent> shippedEnv) {
+        await eventStore.AppendAsync(streamId, shippedEnv);
+        eventIds.Add(shippedEnv.MessageId.Value);
+      }
+    }
+
+    // Act - Get events between indices 1 and 3 (Shipped, Created, Shipped)
+    var eventTypes = new List<Type> { typeof(OrderCreatedEvent), typeof(OrderShippedEvent) };
+    var resultEvents = await eventStore.GetEventsBetweenPolymorphicAsync(
+      streamId,
+      afterEventId: eventIds[0],  // Exclusive (OrderCreated)
+      upToEventId: eventIds[3],   // Inclusive (OrderShipped)
+      eventTypes,
+      CancellationToken.None
+    );
+
+    // Assert
+    await Assert.That(resultEvents.Count).IsEqualTo(3);
+    await Assert.That(resultEvents[0].Payload).IsTypeOf<OrderShippedEvent>();
+    await Assert.That(resultEvents[1].Payload).IsTypeOf<OrderCreatedEvent>();
+    await Assert.That(resultEvents[2].Payload).IsTypeOf<OrderShippedEvent>();
+
+    // Verify concrete values
+    var shippedEvent1 = (OrderShippedEvent)resultEvents[0].Payload;
+    await Assert.That(shippedEvent1.TrackingNumber).IsEqualTo("TRACK001");
+
+    var createdEvent2 = (OrderCreatedEvent)resultEvents[1].Payload;
+    await Assert.That(createdEvent2.CustomerName).IsEqualTo("Customer 2");
+  }
+
+  /// <summary>
+  /// Tests that GetEventsBetweenPolymorphicAsync with null afterEventId returns events from start.
+  /// </summary>
+  [Test]
+  public async Task GetEventsBetweenPolymorphicAsync_NullAfterEventId_ReturnsFromStartAsync() {
+    // Arrange
+    await using var context = CreateDbContext();
+    var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(context);
+
+    var streamId = Guid.NewGuid();
+    var orderId = Guid.NewGuid();
+    var eventIds = new List<Guid>();
+
+    // Append 3 mixed events
+    var created1 = new MessageEnvelope<OrderCreatedEvent> {
+      MessageId = MessageId.New(),
+      Payload = new OrderCreatedEvent { OrderId = orderId, CustomerName = "Customer 1" },
+      Hops = new List<MessageHop> { CreateTestHop() }
+    };
+    await eventStore.AppendAsync(streamId, created1);
+    eventIds.Add(created1.MessageId.Value);
+
+    var shipped1 = new MessageEnvelope<OrderShippedEvent> {
+      MessageId = MessageId.New(),
+      Payload = new OrderShippedEvent { OrderId = orderId, TrackingNumber = "TRACK001" },
+      Hops = new List<MessageHop> { CreateTestHop() }
+    };
+    await eventStore.AppendAsync(streamId, shipped1);
+    eventIds.Add(shipped1.MessageId.Value);
+
+    // Act - Query from start
+    var eventTypes = new List<Type> { typeof(OrderCreatedEvent), typeof(OrderShippedEvent) };
+    var events = await eventStore.GetEventsBetweenPolymorphicAsync(
+      streamId,
+      afterEventId: null,         // Start from beginning
+      upToEventId: eventIds[1],   // Inclusive
+      eventTypes,
+      CancellationToken.None
+    );
+
+    // Assert
+    await Assert.That(events.Count).IsEqualTo(2);
+    await Assert.That(events[0].Payload).IsTypeOf<OrderCreatedEvent>();
+    await Assert.That(events[1].Payload).IsTypeOf<OrderShippedEvent>();
+  }
+
+  /// <summary>
+  /// Tests that GetEventsBetweenPolymorphicAsync returns empty list when no events in range.
+  /// </summary>
+  [Test]
+  public async Task GetEventsBetweenPolymorphicAsync_NoEventsInRange_ReturnsEmptyListAsync() {
+    // Arrange
+    await using var context = CreateDbContext();
+    var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(context);
+
+    var streamId = Guid.NewGuid();
+    var firstEvent = new MessageEnvelope<OrderCreatedEvent> {
+      MessageId = MessageId.New(),
+      Payload = new OrderCreatedEvent {
+        OrderId = Guid.NewGuid(),
+        CustomerName = "Customer 0"
+      },
+      Hops = new List<MessageHop> { CreateTestHop() }
+    };
+    await eventStore.AppendAsync(streamId, firstEvent);
+
+    // Act - Query for events between same checkpoint (no events in range)
+    var eventTypes = new List<Type> { typeof(OrderCreatedEvent), typeof(OrderShippedEvent) };
+    var events = await eventStore.GetEventsBetweenPolymorphicAsync(
+      streamId,
+      afterEventId: firstEvent.MessageId.Value,
+      upToEventId: firstEvent.MessageId.Value,
+      eventTypes,
+      CancellationToken.None
+    );
+
+    // Assert
+    await Assert.That(events.Count).IsEqualTo(0);
+  }
+
+  /// <summary>
+  /// Tests that GetEventsBetweenPolymorphicAsync throws when event type is not in provided list.
+  /// </summary>
+  [Test]
+  public async Task GetEventsBetweenPolymorphicAsync_UnknownEventType_ThrowsInvalidOperationExceptionAsync() {
+    // Arrange
+    await using var context = CreateDbContext();
+    var eventStore = new EFCoreEventStore<WorkCoordinationDbContext>(context);
+
+    var streamId = Guid.NewGuid();
+
+    // Append a Created event
+    var created = new MessageEnvelope<OrderCreatedEvent> {
+      MessageId = MessageId.New(),
+      Payload = new OrderCreatedEvent { OrderId = Guid.NewGuid(), CustomerName = "Test" },
+      Hops = new List<MessageHop> { CreateTestHop() }
+    };
+    await eventStore.AppendAsync(streamId, created);
+
+    // Append a Shipped event
+    var shipped = new MessageEnvelope<OrderShippedEvent> {
+      MessageId = MessageId.New(),
+      Payload = new OrderShippedEvent { OrderId = Guid.NewGuid(), TrackingNumber = "TRACK001" },
+      Hops = new List<MessageHop> { CreateTestHop() }
+    };
+    await eventStore.AppendAsync(streamId, shipped);
+
+    // Act & Assert - Query with only OrderCreatedEvent type (missing OrderShippedEvent)
+    var eventTypes = new List<Type> { typeof(OrderCreatedEvent) };
+
+    // Should throw InvalidOperationException for unknown event type
+    var exception = await Assert.ThrowsAsync<InvalidOperationException>(async () => {
+      await eventStore.GetEventsBetweenPolymorphicAsync(
+        streamId,
+        afterEventId: null,
+        upToEventId: shipped.MessageId.Value,
+        eventTypes,
+        CancellationToken.None
+      );
+    });
+
+    // Verify exception message contains expected text
+    await Assert.That(exception!.Message).Contains("Unknown event type");
+  }
+
+  private static MessageHop CreateTestHop() => new MessageHop {
+    Type = HopType.Current,
+    Timestamp = DateTime.UtcNow,
+    ServiceInstance = new ServiceInstanceInfo {
+      InstanceId = Guid.NewGuid(),
+      ServiceName = "test-service",
+      HostName = "test-host",
+      ProcessId = 123
+    }
+  };
 }

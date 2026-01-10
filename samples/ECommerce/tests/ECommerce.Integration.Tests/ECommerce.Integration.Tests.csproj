@@ -27,8 +27,9 @@
     <ProjectReference Include="..\..\..\..\src\Whizbang.Core\Whizbang.Core.csproj" />
     <ProjectReference Include="..\..\..\..\src\Whizbang.Data.EFCore.Postgres\Whizbang.Data.EFCore.Postgres.csproj" />
     <ProjectReference Include="..\ECommerce.Integration.Tests.AppHost\ECommerce.Integration.Tests.AppHost.csproj" />
+    <!-- Source generators for runtime receptor registration support -->
+    <ProjectReference Include="..\..\..\..\src\Whizbang.Generators\Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
-
   <ItemGroup>
     <None Include="servicebus-config.json" CopyToOutputDirectory="PreserveNewest" />
     <None Include="add-servicebus-rules.py" CopyToOutputDirectory="PreserveNewest" />

@@ -53,6 +53,10 @@ public static class LifecycleReceptorTestExtensions {
 
     ArgumentNullException.ThrowIfNull(host);
 
+    // NOTE: For multi-host scenarios (e.g., Inventory + BFF), each host has its own registry.
+    // This helper only registers in ONE host's registry. For multi-host tests, manually register
+    // the receptor in each host's registry. See ServiceBusIntegrationFixtureSanityTests.cs for example.
+
     // Create completion source for signaling
     var completionSource = new TaskCompletionSource<bool>();
 

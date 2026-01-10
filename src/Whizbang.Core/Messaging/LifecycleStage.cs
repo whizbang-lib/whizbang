@@ -5,6 +5,7 @@ namespace Whizbang.Core.Messaging;
 /// Controls timing of receptor execution relative to database operations and message processing.
 /// Stages fall into pairs: Async (non-blocking) and Inline (blocks per unit of work).
 /// </summary>
+/// <docs>core-concepts/lifecycle-stages</docs>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/IUnitOfWorkStrategyContractTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ImmediateUnitOfWorkStrategyTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Messaging/ScopedUnitOfWorkStrategyTests.cs</tests>

@@ -12,13 +12,11 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// <summary>
 /// End-to-end integration tests for the RestockInventory workflow.
 /// Tests the complete flow: Command → Receptor → Event Store → Perspectives.
-/// Uses batch-aware ServiceBus emulator. Tests within this class run sequentially
-/// to avoid topic conflicts, but different test classes run in parallel.
+/// Each test gets its own PostgreSQL + hosts. ServiceBus emulator is shared via SharedFixtureSource.
 /// </summary>
 [NotInParallel]
 public class RestockInventoryWorkflowTests {
   private static ServiceBusIntegrationFixture? _fixture;
-
   // Test product IDs (UUIDv7 for proper time-ordering and uniqueness across test runs)
   private static readonly ProductId _testProdRestock1 = ProductId.From(Uuid7.NewUuid7().ToGuid());
   private static readonly ProductId _testProdMultiRestock = ProductId.From(Uuid7.NewUuid7().ToGuid());
@@ -30,38 +28,20 @@ public class RestockInventoryWorkflowTests {
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
-    // Get SHARED ServiceBus resources (emulator + single static ServiceBusClient)
-    var testIndex = GetTestIndex();
+    var testIndex = 3;
     var (connectionString, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync(testIndex);
-
-    // Create fixture with shared client (per-test PostgreSQL + hosts, but shared ServiceBusClient)
     _fixture = new ServiceBusIntegrationFixture(connectionString, sharedClient, 0);
     await _fixture.InitializeAsync();
-
-    // Clean database before each test to ensure isolated state
-    // This is critical for integration tests that check specific quantities
-    await _fixture.CleanupDatabaseAsync();
-  }
-
-  private static int GetTestIndex() {
-    // Assign fixed index for this test class (all 4 workflow test classes use batch 0)
-    return 3; // RestockInventoryWorkflowTests = index 3
   }
 
   [After(Test)]
   public async Task CleanupAsync() {
-    // CRITICAL: Drain Service Bus messages BEFORE disposing fixture
-    // Service Bus subscriptions (sub-00-a, sub-01-a) are PERSISTENT - messages remain after hosts stop
-    // Without draining, Test 2's BFF receives Test 1's old messages, causing assertion failures
     if (_fixture != null) {
       try {
-        // Drain any remaining messages from Service Bus subscriptions
         await _fixture.CleanupDatabaseAsync();
       } catch (Exception ex) {
         Console.WriteLine($"[After(Test)] Warning: Cleanup encountered error (non-critical): {ex.Message}");
       }
-
-      // Dispose fixture to stop hosts and close connections
       await _fixture.DisposeAsync();
       _fixture = null;
     }
@@ -76,9 +56,11 @@ public class RestockInventoryWorkflowTests {
   /// 4. Updated inventory is queryable via lenses
   /// </summary>
   [Test]
+  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task RestockInventory_PublishesEvent_UpdatesPerspectivesAsync() {
-    // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    // Arrange
+    
 
 
     // First, create a product with initial stock
@@ -91,7 +73,7 @@ public class RestockInventoryWorkflowTests {
       InitialStock = 10
     };
     await fixture.Dispatcher.SendAsync(createCommand);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 45000);
 
     // Act - Restock inventory
     var restockCommand = new RestockInventoryCommand {
@@ -99,7 +81,7 @@ public class RestockInventoryWorkflowTests {
       QuantityToAdd = 50
     };
     await fixture.Dispatcher.SendAsync(restockCommand);
-    await fixture.WaitForPerspectiveCompletionAsync<InventoryRestockedEvent>();
+    await fixture.WaitForPerspectiveCompletionAsync<InventoryRestockedEvent>(expectedPerspectiveCount: 2, timeoutMilliseconds: 45000);
 
     // Assert - Verify InventoryWorker perspective updated
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);
@@ -117,9 +99,11 @@ public class RestockInventoryWorkflowTests {
   /// Tests that multiple restock operations accumulate correctly.
   /// </summary>
   [Test]
+  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task RestockInventory_MultipleRestocks_AccumulatesCorrectlyAsync() {
-    // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    // Arrange
+    
 
 
     // Create product with initial stock of 5
@@ -132,7 +116,7 @@ public class RestockInventoryWorkflowTests {
       InitialStock = 5
     };
     await fixture.Dispatcher.SendAsync(createCommand);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 45000);
 
     // Act - Perform multiple restock operations
     // Wait between each restock to ensure events are processed and perspectives are updated
@@ -144,7 +128,7 @@ public class RestockInventoryWorkflowTests {
 
     foreach (var restockCommand in restockCommands) {
       await fixture.Dispatcher.SendAsync(restockCommand);
-      await fixture.WaitForPerspectiveCompletionAsync<InventoryRestockedEvent>();
+      await fixture.WaitForPerspectiveCompletionAsync<InventoryRestockedEvent>(expectedPerspectiveCount: 2, timeoutMilliseconds: 45000);
     }
 
     // Assert - Verify total quantity = 5 + 10 + 20 + 15 = 50
@@ -162,9 +146,11 @@ public class RestockInventoryWorkflowTests {
   /// Tests that restocking from zero inventory works correctly.
   /// </summary>
   [Test]
+  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task RestockInventory_FromZeroStock_IncreasesCorrectlyAsync() {
-    // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    // Arrange
+    
 
 
     // Create product with zero initial stock
@@ -177,7 +163,7 @@ public class RestockInventoryWorkflowTests {
       InitialStock = 0
     };
     await fixture.Dispatcher.SendAsync(createCommand);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 45000);
 
     // Act - Restock from zero
     var restockCommand = new RestockInventoryCommand {
@@ -185,7 +171,7 @@ public class RestockInventoryWorkflowTests {
       QuantityToAdd = 100
     };
     await fixture.Dispatcher.SendAsync(restockCommand);
-    await fixture.WaitForPerspectiveCompletionAsync<InventoryRestockedEvent>();
+    await fixture.WaitForPerspectiveCompletionAsync<InventoryRestockedEvent>(expectedPerspectiveCount: 2, timeoutMilliseconds: 45000);
 
     // Assert - Verify quantity increased from 0 to 100
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);
@@ -201,9 +187,11 @@ public class RestockInventoryWorkflowTests {
   /// Tests that restocking with zero quantity is handled correctly (edge case).
   /// </summary>
   [Test]
+  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task RestockInventory_ZeroQuantity_NoChangeAsync() {
-    // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    // Arrange
+    
 
 
     // Create product with initial stock
@@ -216,7 +204,7 @@ public class RestockInventoryWorkflowTests {
       InitialStock = 25
     };
     await fixture.Dispatcher.SendAsync(createCommand);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 45000);
 
     // Act - Restock with zero quantity
     var restockCommand = new RestockInventoryCommand {
@@ -224,7 +212,7 @@ public class RestockInventoryWorkflowTests {
       QuantityToAdd = 0
     };
     await fixture.Dispatcher.SendAsync(restockCommand);
-    await fixture.WaitForPerspectiveCompletionAsync<InventoryRestockedEvent>();
+    await fixture.WaitForPerspectiveCompletionAsync<InventoryRestockedEvent>(expectedPerspectiveCount: 2, timeoutMilliseconds: 45000);
 
     // Assert - Verify quantity unchanged
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);
@@ -240,9 +228,11 @@ public class RestockInventoryWorkflowTests {
   /// Tests that restocking large quantities works correctly.
   /// </summary>
   [Test]
+  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task RestockInventory_LargeQuantity_HandlesCorrectlyAsync() {
-    // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    // Arrange
+    
 
 
     // Create product with small initial stock
@@ -255,7 +245,7 @@ public class RestockInventoryWorkflowTests {
       InitialStock = 50
     };
     await fixture.Dispatcher.SendAsync(createCommand);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 45000);
 
     // Act - Restock with large quantity
     var restockCommand = new RestockInventoryCommand {
@@ -263,7 +253,7 @@ public class RestockInventoryWorkflowTests {
       QuantityToAdd = 10000
     };
     await fixture.Dispatcher.SendAsync(restockCommand);
-    await fixture.WaitForPerspectiveCompletionAsync<InventoryRestockedEvent>();
+    await fixture.WaitForPerspectiveCompletionAsync<InventoryRestockedEvent>(expectedPerspectiveCount: 2, timeoutMilliseconds: 45000);
 
     // Assert - Verify large quantity handled
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);

@@ -88,6 +88,12 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // See RoslynGuards.cs for rationale - no branch created, eliminates coverage gap
     var classSymbol = RoslynGuards.GetClassSymbolOrThrow(classDeclaration, semanticModel, cancellationToken);
 
+    // Skip generic open types (e.g., MyReceptor<T> where T is unbound)
+    // These are used for runtime registration in tests but can't be routed at compile-time
+    if (classSymbol.IsGenericType && classSymbol.TypeParameters.Length > 0) {
+      return null;
+    }
+
     // Extract lifecycle stages from [FireAt] attributes
     var lifecycleStages = _extractLifecycleStages(classSymbol);
 
@@ -206,15 +212,26 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       ImmutableArray<ReceptorInfo> receptors,
       ImmutableArray<bool> hasPerspectives) {
 
-    // Only warn and skip generation if BOTH IReceptor and IPerspectiveFor implementations are missing
+    var assemblyName = compilation.AssemblyName ?? "";
+
+    // Only warn if BOTH IReceptor and IPerspectiveFor implementations are missing
     // Example: BFF with 5 IPerspectiveFor but no IReceptor should NOT warn
-    // Example: Whizbang.Core with 0 receptors and 0 perspectives should skip generation
     if (receptors.IsEmpty && hasPerspectives.IsEmpty) {
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.NoReceptorsFound,
           Location.None
       ));
-      return;  // Skip generation - no receptors AND no perspectives
+
+      // Only continue generation for test projects that need runtime receptor registration
+      // Test projects use generic receptors like GenericLifecycleCompletionReceptor<TMessage>
+      // which cannot be discovered at compile-time (source generators can't see type parameters)
+      var isTestProject = assemblyName.Contains("Test", StringComparison.OrdinalIgnoreCase);
+
+      if (!isTestProject) {
+        return;  // Skip generation - not a test project and no receptors/perspectives
+      }
+
+      // Test project: continue generation to enable runtime receptor registration
     }
 
     // If we have perspectives but no receptors, generate empty dispatcher for outbox fallback routing

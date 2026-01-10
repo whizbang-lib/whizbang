@@ -65,4 +65,16 @@ public interface IPerspectiveStore<TModel> where TModel : class {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertByPartitionKeyAsync_IncrementsVersionNumber_OnEachUpdateAsync</tests>
   Task UpsertByPartitionKeyAsync<TPartitionKey>(TPartitionKey partitionKey, TModel model, CancellationToken cancellationToken = default)
     where TPartitionKey : notnull;
+
+  /// <summary>
+  /// Ensures all pending changes are committed to the database.
+  /// This is critical for PostPerspectiveInline lifecycle stage, which guarantees
+  /// that perspective data is persisted and queryable before receptors fire.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <remarks>
+  /// For EF Core implementations, this calls SaveChangesAsync() to commit the transaction.
+  /// For other implementations (Dapper, raw SQL), this may be a no-op if changes are already committed.
+  /// </remarks>
+  Task FlushAsync(CancellationToken cancellationToken = default);
 }

@@ -564,13 +564,13 @@ public abstract class Dispatcher(
     // Get strongly-typed void delegate from generated code
     var invoker = GetVoidReceptorInvoker(message, messageType) ?? throw new HandlerNotFoundException(messageType);
 
-    // OPTIMIZATION: Skip envelope creation when trace store is null
+    // OPTIMIZATION: Skip envelope creation when trace store AND lifecycle invoker are null
     // This achieves zero allocation for high-throughput scenarios
-    if (_traceStore != null) {
+    if (_traceStore != null || _lifecycleInvoker != null) {
       return _localInvokeVoidWithTracingAsyncInternalAsync<TMessage>(message, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
     }
 
-    // FAST PATH: Zero allocation when no tracing
+    // FAST PATH: Zero allocation when no tracing and no lifecycle invoker
     // Invoke using delegate - zero reflection, strongly typed
     // Avoid async/await state machine allocation by returning task directly
     return invoker(message);
@@ -590,10 +590,24 @@ public abstract class Dispatcher(
     int callerLineNumber
   ) {
     var envelope = _createEnvelope<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
-    await _traceStore!.StoreAsync(envelope);
+    if (_traceStore != null) {
+      await _traceStore.StoreAsync(envelope);
+    }
 
     // Invoke using delegate - zero reflection, strongly typed
     await invoker(message!);
+
+    // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
+    if (_lifecycleInvoker is not null) {
+      var lifecycleContext = new LifecycleExecutionContext {
+        CurrentStage = LifecycleStage.ImmediateAsync,
+        EventId = null,
+        StreamId = null,
+        PerspectiveName = null,
+        LastProcessedEventId = null
+      };
+      await _lifecycleInvoker.InvokeAsync(message!, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+    }
   }
 
   /// <summary>

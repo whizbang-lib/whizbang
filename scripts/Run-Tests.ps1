@@ -101,6 +101,41 @@
     ./Run-Tests.ps1 -Mode Ai -ProjectFilter "EFCore.Postgres"
     Runs EFCore.Postgres tests with AI-optimized output
 
+.EXAMPLE
+    ./Run-Tests.ps1 -TestFilter "Lifecycle"
+    Runs all tests with "Lifecycle" in the class or test name
+    Pattern: /*/*/*/*Lifecycle*
+
+.EXAMPLE
+    ./Run-Tests.ps1 -ProjectFilter "Integration.Tests" -TestFilter "/*/*/*LifecycleTests/*"
+    Runs all tests in classes ending with "LifecycleTests" in Integration.Tests project
+    Pattern: /Assembly/Namespace/ClassName/TestName
+    Example: /*/ECommerce.Integration.Tests.Lifecycle.*/OutboxLifecycleTests/*
+
+.EXAMPLE
+    ./Run-Tests.ps1 -TestFilter "/*/*/*/PostPerspective*"
+    Runs all tests starting with "PostPerspective" across all projects
+
+.EXAMPLE
+    ./Run-Tests.ps1 -TestFilter "/*/Whizbang.Core.Tests/*/*"
+    Runs all tests in the Whizbang.Core.Tests assembly
+
+.NOTES
+    TUnit TreeNode Filter Syntax:
+    - Format: /Assembly/Namespace/ClassName/TestName
+    - Wildcards: Use * to match any segment
+    - Examples:
+      * /*/*/*/*SomeTest* - Tests with "SomeTest" anywhere in name
+      * /*/*/*Tests/* - All tests in classes ending with "Tests"
+      * /*/MyNamespace.*/*/* - All tests in namespace starting with "MyNamespace."
+      * /*/*/*/SpecificTest - Only tests named exactly "SpecificTest"
+
+    Common Patterns:
+    - Lifecycle tests: -TestFilter "/*/*/*LifecycleTests/*"
+    - Integration tests: -ProjectFilter "Integration.Tests"
+    - Single class: -TestFilter "/*/YourNamespace/YourClass/*"
+    - Single test: -TestFilter "/*/*/*/YourTestName"
+
 .NOTES
     Technology Stack (as of December 2025):
     - .NET 10.0.1 (LTS release, November 2025)

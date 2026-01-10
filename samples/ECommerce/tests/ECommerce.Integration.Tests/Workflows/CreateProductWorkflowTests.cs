@@ -9,8 +9,7 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// <summary>
 /// End-to-end integration tests for the CreateProduct workflow.
 /// Tests the complete flow: Command → Receptor → Event Store → Perspectives.
-/// Uses batch-aware ServiceBus emulator. Tests within this class run sequentially
-/// to avoid topic conflicts, but different test classes run in parallel.
+/// Each test gets its own PostgreSQL + hosts. ServiceBus emulator is shared via SharedFixtureSource.
 /// </summary>
 [NotInParallel]
 public class CreateProductWorkflowTests {
@@ -28,41 +27,24 @@ public class CreateProductWorkflowTests {
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
-    // Get SHARED ServiceBus resources (emulator + single static ServiceBusClient)
-    var testIndex = GetTestIndex();
+    var testIndex = 0;
     var (connectionString, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync(testIndex);
-
-    // Create fixture with shared client (per-test PostgreSQL + hosts, but shared ServiceBusClient)
     _fixture = new ServiceBusIntegrationFixture(connectionString, sharedClient, 0);
     await _fixture.InitializeAsync();
   }
 
-  private static int GetTestIndex() {
-    // Assign fixed index for this test class (all 4 workflow test classes use batch 0)
-    return 0; // CreateProductWorkflowTests = index 0
-  }
-
   [After(Test)]
   public async Task CleanupAsync() {
-    // CRITICAL: Drain Service Bus messages BEFORE disposing fixture
-    // Service Bus subscriptions (sub-00-a, sub-01-a) are PERSISTENT - messages remain after hosts stop
-    // Without draining, Test 2's BFF receives Test 1's old messages, causing assertion failures
     if (_fixture != null) {
       try {
-        // Drain any remaining messages from Service Bus subscriptions
         await _fixture.CleanupDatabaseAsync();
       } catch (Exception ex) {
         Console.WriteLine($"[After(Test)] Warning: Cleanup encountered error (non-critical): {ex.Message}");
       }
-
-      // Dispose fixture to stop hosts and close connections
       await _fixture.DisposeAsync();
       _fixture = null;
     }
   }
-
-  // NOTE: Database cleanup happens at fixture initialization (AspireIntegrationFixture.cs:147)
-  // No need for [After(Class)] cleanup - the container may be stopped by then
 
   /// <summary>
   /// Tests that creating a product via IDispatcher results in:
@@ -72,6 +54,7 @@ public class CreateProductWorkflowTests {
   /// 4. Product is queryable via lenses
   /// </summary>
   [Test]
+  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task CreateProduct_PublishesEvent_MaterializesInBothPerspectivesAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -91,7 +74,8 @@ public class CreateProductWorkflowTests {
     Console.WriteLine($"[TEST] Command sent, waiting for perspective processing...");
 
     // Wait for perspective processing to complete (deterministic, no race condition!)
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>();
+    // Longer timeout for workflow tests (45s) due to per-test container initialization
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 45000);
 
     // Assert - Verify in InventoryWorker perspective
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(command.ProductId);
@@ -124,11 +108,10 @@ public class CreateProductWorkflowTests {
   /// Tests that creating multiple products in sequence works correctly.
   /// </summary>
   [Test]
+  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task CreateProduct_MultipleProducts_AllMaterializeCorrectlyAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-
-
     var commands = new[] {
       new CreateProductCommand {
         ProductId = _testProdMulti1,
@@ -160,7 +143,7 @@ public class CreateProductWorkflowTests {
     // This ensures events are processed in order and perspectives are updated before the next product
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
-      await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>();
+      await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 45000);
     }
 
     // Assert - Verify all products materialized in InventoryWorker perspective
@@ -191,11 +174,10 @@ public class CreateProductWorkflowTests {
   /// Tests that creating a product with zero initial stock works correctly.
   /// </summary>
   [Test]
+  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task CreateProduct_ZeroInitialStock_MaterializesWithZeroQuantityAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-
-
     var command = new CreateProductCommand {
       ProductId = _testProdZeroStock,
       Name = "Zero Stock Product",
@@ -207,7 +189,7 @@ public class CreateProductWorkflowTests {
 
     // Act
     await fixture.Dispatcher.SendAsync(command);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 45000);
 
     // Assert - Verify product exists with zero inventory
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(command.ProductId);
@@ -224,10 +206,10 @@ public class CreateProductWorkflowTests {
   /// Tests that creating a product without an image URL works correctly (nullable field).
   /// </summary>
   [Test]
+  [Timeout(60000)] // 60 seconds: container init (~15s) + perspective processing (45s)
   public async Task CreateProduct_NoImageUrl_MaterializesWithNullImageAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
-
     Console.WriteLine($"[TEST] Starting CreateProduct_NoImageUrl test with ProductId: {_testProdNoImage}");
 
     var command = new CreateProductCommand {
@@ -247,7 +229,7 @@ public class CreateProductWorkflowTests {
     // DIAGNOSTIC: Dump event types and associations
     await fixture.DumpEventTypesAndAssociationsAsync();
 
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 45000);
     Console.WriteLine("[TEST] Perspective processing complete");
 
     // Assert - Verify product exists with null ImageUrl

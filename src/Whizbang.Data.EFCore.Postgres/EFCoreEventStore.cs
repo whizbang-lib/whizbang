@@ -320,6 +320,78 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
   }
 
   /// <summary>
+  /// Gets events between two checkpoint positions, deserializing each event to its concrete type.
+  /// Uses the EventType column to determine which concrete type to deserialize to.
+  /// This is the polymorphic version of GetEventsBetweenAsync for perspectives that handle multiple event types.
+  /// Used by lifecycle receptors to load events that were just processed by a perspective.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_WithMixedEventTypes_ReturnsAllEventsAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_NullAfterEventId_ReturnsFromStartAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_NoEventsInRange_ReturnsEmptyListAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_UnknownEventType_ThrowsInvalidOperationExceptionAsync</tests>
+  public async Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
+      Guid streamId,
+      Guid? afterEventId,
+      Guid upToEventId,
+      IReadOnlyList<Type> eventTypes,
+      CancellationToken cancellationToken = default) {
+
+    ArgumentNullException.ThrowIfNull(eventTypes);
+
+    // Build query: after afterEventId (exclusive), up to upToEventId (inclusive)
+    IQueryable<EventStoreRecord> query = _context.Set<EventStoreRecord>()
+      .Where(e => e.StreamId == streamId && e.Id <= upToEventId);
+
+    if (afterEventId != null) {
+      query = query.Where(e => e.Id > afterEventId.Value);
+    }
+
+    // Order by UUID v7 (time-ordered)
+    var records = await query
+      .OrderBy(e => e.Id)
+      .ToListAsync(cancellationToken);
+
+    // Build type lookup dictionary for fast O(1) lookups (AOT-compatible)
+    var typeLookup = new Dictionary<string, Type>(eventTypes.Count);
+    foreach (var type in eventTypes) {
+      typeLookup[type.FullName ?? type.Name] = type;
+    }
+
+    // Deserialize to message envelopes with polymorphic payloads
+    var envelopes = new List<MessageEnvelope<IEvent>>(records.Count);
+
+    foreach (var record in records) {
+      // Look up the concrete type based on EventType column
+      if (!typeLookup.TryGetValue(record.EventType, out var concreteType)) {
+        throw new InvalidOperationException(
+          $"Unknown event type '{record.EventType}' for event ID {record.Id}. " +
+          $"Provided event types: [{string.Join(", ", eventTypes.Select(t => t.FullName ?? t.Name))}]"
+        );
+      }
+
+      // Deserialize to concrete type using JSON source generation
+      var eventDataJson = record.EventData.GetRawText();
+      var typeInfo = _jsonOptions.GetTypeInfo(concreteType);
+      var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo);
+
+      if (eventData == null) {
+        throw new InvalidOperationException($"Failed to deserialize event ID {record.Id} of type {record.EventType}");
+      }
+
+      // Cast to IEvent (safe because all event types implement IEvent)
+      var envelope = new MessageEnvelope<IEvent> {
+        MessageId = record.Metadata.MessageId,
+        Payload = (IEvent)eventData,
+        Hops = record.Metadata.Hops
+      };
+
+      envelopes.Add(envelope);
+    }
+
+    return envelopes;
+  }
+
+  /// <summary>
   /// Gets the last (highest) sequence number for a stream.
   /// Returns -1 if the stream doesn't exist or is empty.
   /// </summary>

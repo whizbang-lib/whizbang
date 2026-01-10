@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Policies;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Core.Messaging;
 
@@ -151,6 +152,53 @@ public class InMemoryEventStore(
       .ToList();
 
     return Task.FromResult(envelopes);
+  }
+
+  /// <inheritdoc />
+  [SuppressMessage("Trimming", "IL2075:UnrecognizedReflectionPattern", Justification = "InMemoryEventStore is for testing only, not production. Reflection is acceptable here.")]
+  public Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
+      Guid streamId,
+      Guid? afterEventId,
+      Guid upToEventId,
+      IReadOnlyList<Type> eventTypes,
+      CancellationToken cancellationToken = default) {
+
+    ArgumentNullException.ThrowIfNull(eventTypes);
+
+    if (!_streams.TryGetValue(streamId, out var stream)) {
+      return Task.FromResult(new List<MessageEnvelope<IEvent>>());
+    }
+
+    // Get all envelopes in range, regardless of type
+    var allEnvelopes = stream.ReadBetween(afterEventId, upToEventId);
+
+    // Extract IEvent payloads from envelopes
+    var eventEnvelopes = new List<MessageEnvelope<IEvent>>();
+
+    foreach (var envelope in allEnvelopes) {
+      // InMemoryEventStore stores envelopes as objects
+      // Extract the payload and check if it's an IEvent
+      var payloadProperty = envelope.GetType().GetProperty("Payload");
+      if (payloadProperty != null) {
+        var payload = payloadProperty.GetValue(envelope);
+        if (payload is IEvent eventPayload) {
+          // Create a new envelope with IEvent payload
+          var messageIdProperty = envelope.GetType().GetProperty("MessageId");
+          var hopsProperty = envelope.GetType().GetProperty("Hops");
+
+          var messageId = (MessageId?)messageIdProperty?.GetValue(envelope) ?? MessageId.New();
+          var hops = (List<MessageHop>?)hopsProperty?.GetValue(envelope) ?? new List<MessageHop>();
+
+          eventEnvelopes.Add(new MessageEnvelope<IEvent> {
+            MessageId = messageId,
+            Payload = eventPayload,
+            Hops = hops
+          });
+        }
+      }
+    }
+
+    return Task.FromResult(eventEnvelopes);
   }
 
   /// <inheritdoc />

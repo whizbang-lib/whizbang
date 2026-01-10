@@ -1,9 +1,12 @@
 using System.Diagnostics.CodeAnalysis;
 using Azure.Messaging.ServiceBus;
 using ECommerce.Contracts.Commands;
+using ECommerce.Contracts.Events;
 using ECommerce.Integration.Tests.Fixtures;
 using Medo;
+using Microsoft.Extensions.DependencyInjection;
 using Npgsql;
+using Whizbang.Core.Messaging;
 
 namespace ECommerce.Integration.Tests.Infrastructure;
 
@@ -134,7 +137,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
     // Act - Send command and wait for event processing
     Console.WriteLine($"[SANITY] Sending command for InventoryWorker perspective test: {testProductId}");
     await fixture.Dispatcher.SendAsync(command);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 15000);
 
     // Assert - Verify product materialized in InventoryWorker perspective
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(testProductId);
@@ -176,7 +179,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
     await fixture.Dispatcher.SendAsync(command);
 
     // Wait for both InventoryWorker (from event store) AND BFF (from Service Bus)
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 15000);
 
     // Dump diagnostics to understand what's happening
     await fixture.DumpEventTypesAndAssociationsAsync();
@@ -224,7 +227,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
   /// This tests that when we send InitialStock=15, the event in wh_event_store contains 15.
   /// </summary>
   [Test]
-  [Timeout(30_000)]
+  [Timeout(90_000)]  // TUnit includes fixture initialization in test timeout (~60s setup + ~5s test)
   public async Task EventStore_ContainsCorrectEventDataAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -240,10 +243,10 @@ public class ServiceBusIntegrationFixtureSanityTests {
       InitialStock = expectedStock
     };
 
-    // Act - Send command and wait for processing
+    // Act - Send command and wait for event processing
     Console.WriteLine($"[SANITY-DATA] Sending command with InitialStock={expectedStock}");
     await fixture.Dispatcher.SendAsync(command);
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 15000);
 
     // Assert - Check InventoryRestockedEvent in event store has correct data
     await using var connection = new NpgsqlConnection(fixture.ConnectionString);
@@ -264,17 +267,23 @@ public class ServiceBusIntegrationFixtureSanityTests {
 
     await Assert.That(eventDataJson).IsNotNull();
 
+    // Parse JSON and verify values (handles any whitespace formatting)
+    var eventJson = System.Text.Json.JsonDocument.Parse(eventDataJson!);
+    var root = eventJson.RootElement;
+
     // Verify event contains correct QuantityAdded value
-    if (!eventDataJson!.Contains($"\"QuantityAdded\":{expectedStock}")) {
-      Console.WriteLine($"[SANITY-DATA] ❌ Event missing QuantityAdded={expectedStock}");
+    var quantityAdded = root.GetProperty("QuantityAdded").GetInt32();
+    if (quantityAdded != expectedStock) {
+      Console.WriteLine($"[SANITY-DATA] ❌ Event has wrong QuantityAdded: expected {expectedStock}, got {quantityAdded}");
     }
-    await Assert.That(eventDataJson.Contains($"\"QuantityAdded\":{expectedStock}")).IsTrue();
+    await Assert.That(quantityAdded).IsEqualTo(expectedStock);
 
     // Verify event contains correct NewTotalQuantity value
-    if (!eventDataJson.Contains($"\"NewTotalQuantity\":{expectedStock}")) {
-      Console.WriteLine($"[SANITY-DATA] ❌ Event missing NewTotalQuantity={expectedStock}");
+    var newTotalQuantity = root.GetProperty("NewTotalQuantity").GetInt32();
+    if (newTotalQuantity != expectedStock) {
+      Console.WriteLine($"[SANITY-DATA] ❌ Event has wrong NewTotalQuantity: expected {expectedStock}, got {newTotalQuantity}");
     }
-    await Assert.That(eventDataJson.Contains($"\"NewTotalQuantity\":{expectedStock}")).IsTrue();
+    await Assert.That(newTotalQuantity).IsEqualTo(expectedStock);
 
     Console.WriteLine($"[SANITY-DATA] ✅ Event stored with correct data (QuantityAdded={expectedStock})");
   }
@@ -284,7 +293,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
   /// This tests the END-TO-END data flow from command to materialized perspective.
   /// </summary>
   [Test]
-  [Timeout(30_000)]
+  [Timeout(90_000)]  // TUnit includes fixture initialization in test timeout (~60s setup + ~5s test)
   public async Task Perspective_ContainsCorrectDataAfterMaterializationAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -301,10 +310,16 @@ public class ServiceBusIntegrationFixtureSanityTests {
       InitialStock = expectedStock
     };
 
-    // Act
+    // Act - Send command and wait for perspectives to process
     Console.WriteLine($"[SANITY-PROPAGATION] Sending command: Stock={expectedStock}, Price={expectedPrice}");
     await fixture.Dispatcher.SendAsync(command);
-    await fixture.WaitForEventProcessingAsync();
+
+    // Wait for all event processing to complete (all perspectives across both hosts)
+    Console.WriteLine($"[SANITY-PROPAGATION] Waiting for event processing...");
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 15000);
+    Console.WriteLine($"[SANITY-PROPAGATION] Event processing completed!");
+
+    Console.WriteLine($"[SANITY-PROPAGATION] Starting assertions...");
 
     // Assert - Check InventoryWorker perspective has correct data
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(testProductId);

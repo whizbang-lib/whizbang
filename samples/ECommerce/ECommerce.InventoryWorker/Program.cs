@@ -89,6 +89,10 @@ builder.Services.AddWhizbangDispatcher();
 
 // Register lifecycle invoker for lifecycle receptor invocation
 builder.Services.AddWhizbangLifecycleInvoker();
+builder.Services.AddWhizbangLifecycleMessageDeserializer();
+
+// Register lifecycle receptor registry for runtime receptor registration (used in tests)
+builder.Services.AddSingleton<ILifecycleReceptorRegistry, DefaultLifecycleReceptorRegistry>();
 
 // Register lenses (readonly repositories using EF Core ILensQuery)
 builder.Services.AddScoped<IProductLens, ProductLens>();
@@ -133,6 +137,10 @@ builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
 // Options configured via appsettings.json "PerspectiveWorker" section
 builder.Services.AddOptions<PerspectiveWorkerOptions>()
   .Bind(builder.Configuration.GetSection("PerspectiveWorker"));
+
+// Register event type provider for AOT-compatible polymorphic event deserialization
+builder.Services.AddSingleton<IEventTypeProvider, ECommerce.Contracts.ECommerceEventTypeProvider>();
+
 builder.Services.AddHostedService<PerspectiveWorker>();
 
 builder.Services.AddHostedService<Worker>();

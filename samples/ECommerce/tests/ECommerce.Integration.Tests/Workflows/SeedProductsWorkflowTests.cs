@@ -3,6 +3,7 @@
 
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.BFF.API.GraphQL;
+using ECommerce.Contracts.Events;
 using ECommerce.Integration.Tests.Fixtures;
 
 namespace ECommerce.Integration.Tests.Workflows;
@@ -10,8 +11,7 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// <summary>
 /// End-to-end integration tests for the product seeding workflow.
 /// Tests the complete flow: SeedMutations → CreateProductCommand → ProductCreatedEvent → Perspectives.
-/// Uses batch-aware ServiceBus emulator. Tests within this class run sequentially
-/// to avoid topic conflicts, but different test classes run in parallel.
+/// Each test gets its own PostgreSQL + hosts. ServiceBus emulator is shared via SharedFixtureSource.
 /// </summary>
 [NotInParallel]
 public class SeedProductsWorkflowTests {
@@ -21,38 +21,20 @@ public class SeedProductsWorkflowTests {
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
-    // Get SHARED ServiceBus resources (emulator + single static ServiceBusClient)
-    var testIndex = GetTestIndex();
+    var testIndex = 1;
     var (connectionString, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync(testIndex);
-
-    // Create fixture with shared client (per-test PostgreSQL + hosts, but shared ServiceBusClient)
     _fixture = new ServiceBusIntegrationFixture(connectionString, sharedClient, 0);
     await _fixture.InitializeAsync();
-
-    // Clean database before each test to ensure isolated state
-    // This is critical for idempotency tests that check if seeding skips on second call
-    await _fixture.CleanupDatabaseAsync();
-  }
-
-  private static int GetTestIndex() {
-    // Assign fixed index for this test class (all 4 workflow test classes use batch 0)
-    return 1; // SeedProductsWorkflowTests = index 1
   }
 
   [After(Test)]
   public async Task CleanupAsync() {
-    // CRITICAL: Drain Service Bus messages BEFORE disposing fixture
-    // Service Bus subscriptions (sub-00-a, sub-01-a) are PERSISTENT - messages remain after hosts stop
-    // Without draining, Test 2's BFF receives Test 1's old messages, causing assertion failures
     if (_fixture != null) {
       try {
-        // Drain any remaining messages from Service Bus subscriptions
         await _fixture.CleanupDatabaseAsync();
       } catch (Exception ex) {
         Console.WriteLine($"[After(Test)] Warning: Cleanup encountered error (non-critical): {ex.Message}");
       }
-
-      // Dispose fixture to stop hosts and close connections
       await _fixture.DisposeAsync();
       _fixture = null;
     }
@@ -68,9 +50,11 @@ public class SeedProductsWorkflowTests {
   /// 5. Products queryable via lenses
   /// </summary>
   [Test]
+  [Timeout(180000)] // 180 seconds: container init (~15s) + bulk event processing (12 products)
   public async Task SeedProducts_CreatesAllProducts_MaterializesInAllPerspectivesAsync() {
-    // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    // Arrange
+    
 
     // Create SeedMutations instance with test dependencies
     var seedMutations = new SeedMutations(
@@ -81,8 +65,11 @@ public class SeedProductsWorkflowTests {
     // Act - Call seed mutation
     var seededCount = await seedMutations.SeedProductsAsync();
 
-    // Wait for event processing
-    await fixture.WaitForEventProcessingAsync();
+    // Wait for all perspectives to complete (12 products × 4 perspectives each = 48)
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(
+      expectedPerspectiveCount: 48,
+      timeoutMilliseconds: 45000
+    );
 
     // Assert - Verify seeding result
     await Assert.That(seededCount).IsEqualTo(12);
@@ -117,9 +104,11 @@ public class SeedProductsWorkflowTests {
   /// Tests that SeedProducts is idempotent - calling it twice doesn't duplicate products.
   /// </summary>
   [Test]
+  [Timeout(180000)] // 180 seconds: container init (~15s) + bulk event processing (12 products)
   public async Task SeedProducts_CalledTwice_DoesNotDuplicateProductsAsync() {
-    // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    // Arrange
+    
 
     var seedMutations = new SeedMutations(
       fixture.Dispatcher,
@@ -128,10 +117,13 @@ public class SeedProductsWorkflowTests {
 
     // Act - Call seed mutation TWICE
     var firstSeedCount = await seedMutations.SeedProductsAsync();
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(
+      expectedPerspectiveCount: 48,  // 12 products × 4 perspectives each
+      timeoutMilliseconds: 120000  // 120s timeout for bulk operations
+    );
 
     var secondSeedCount = await seedMutations.SeedProductsAsync();
-    await fixture.WaitForEventProcessingAsync();
+    // No wait needed - second call is idempotent and returns 0 (no events published)
 
     // Assert - First call should seed 12 products
     await Assert.That(firstSeedCount).IsEqualTo(12);
@@ -162,9 +154,11 @@ public class SeedProductsWorkflowTests {
   /// Tests that seeded products have correct stock levels in both perspectives.
   /// </summary>
   [Test]
+  [Timeout(180000)] // 180 seconds: container init (~15s) + bulk event processing (12 products)
   public async Task SeedProducts_CreatesInventoryLevels_WithCorrectStockAsync() {
-    // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    // Arrange
+    
 
     var seedMutations = new SeedMutations(
       fixture.Dispatcher,
@@ -173,7 +167,10 @@ public class SeedProductsWorkflowTests {
 
     // Act
     await seedMutations.SeedProductsAsync();
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(
+      expectedPerspectiveCount: 48,  // 12 products × 4 perspectives each
+      timeoutMilliseconds: 120000  // 120s timeout for bulk operations
+    );
 
     // Assert - Verify specific product stock levels
     var products = await fixture.BffProductLens.GetAllAsync();
@@ -207,9 +204,11 @@ public class SeedProductsWorkflowTests {
   /// Tests that seeded products are properly synchronized across both worker and BFF perspectives.
   /// </summary>
   [Test]
+  [Timeout(180000)] // 180 seconds: container init (~15s) + bulk event processing (12 products)
   public async Task SeedProducts_SynchronizesPerspectives_AcrossBFFAndInventoryWorkerAsync() {
-    // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
+    // Arrange
+    
 
     var seedMutations = new SeedMutations(
       fixture.Dispatcher,
@@ -218,7 +217,10 @@ public class SeedProductsWorkflowTests {
 
     // Act
     await seedMutations.SeedProductsAsync();
-    await fixture.WaitForEventProcessingAsync();
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(
+      expectedPerspectiveCount: 48,  // 12 products × 4 perspectives each
+      timeoutMilliseconds: 120000  // 120s timeout for bulk operations
+    );
 
     // Assert - Get all products from both perspectives
     var bffProducts = await fixture.BffProductLens.GetAllAsync();

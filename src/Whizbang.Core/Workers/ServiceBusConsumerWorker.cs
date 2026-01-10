@@ -158,7 +158,7 @@ public partial class ServiceBusConsumerWorker(
       // PreInbox lifecycle stages (before local receptor invocation)
       if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
         foreach (var work in myWork) {
-          var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(work.Envelope, work.MessageType);
+          var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
 
           var lifecycleContext = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.PreInboxAsync,
@@ -204,7 +204,7 @@ public partial class ServiceBusConsumerWorker(
       // PostInbox lifecycle stages (after local receptor invocation)
       if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
         foreach (var work in myWork) {
-          var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(work.Envelope, work.MessageType);
+          var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
 
           var lifecycleContext = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.PostInboxAsync,

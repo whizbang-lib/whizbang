@@ -105,6 +105,37 @@ public interface IEventStore {
   Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(Guid streamId, Guid? afterEventId, Guid upToEventId, CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Gets events between two checkpoint positions, deserializing each event to its concrete type.
+  /// Uses the EventType column to determine which concrete type to deserialize to.
+  /// This is the polymorphic version of GetEventsBetweenAsync for perspectives that handle multiple event types.
+  /// Used by lifecycle receptors to load events that were just processed by a perspective.
+  /// </summary>
+  /// <param name="streamId">The stream identifier (aggregate ID as UUID)</param>
+  /// <param name="afterEventId">The event ID to start reading after (exclusive). Null means start from beginning.</param>
+  /// <param name="upToEventId">The event ID to read up to (inclusive).</param>
+  /// <param name="eventTypes">The concrete event types to deserialize (must be registered in JsonSerializerContext)</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>List of message envelopes with polymorphic payloads between the two checkpoints, ordered by event ID (UUID v7)</returns>
+  /// <remarks>
+  /// <para>
+  /// This method is primarily used by lifecycle receptors at PostPerspective stages when a perspective
+  /// handles multiple event types. The PerspectiveWorker needs to load the actual events to invoke
+  /// lifecycle receptors with concrete event payloads.
+  /// </para>
+  /// <para>
+  /// Unlike GetEventsBetweenAsync&lt;TMessage&gt;, this method can handle mixed event types by looking
+  /// up the EventType column and deserializing to the appropriate concrete type. All event types must
+  /// be provided in the eventTypes parameter for AOT compatibility.
+  /// </para>
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_WithMixedEventTypes_ReturnsAllEventsAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_NullAfterEventId_ReturnsFromStartAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_NoEventsInRange_ReturnsEmptyListAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreEventStoreTests.cs:GetEventsBetweenPolymorphicAsync_UnknownEventType_ThrowsInvalidOperationExceptionAsync</tests>
+  /// <docs>core-concepts/lifecycle-receptors</docs>
+  Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(Guid streamId, Guid? afterEventId, Guid upToEventId, IReadOnlyList<Type> eventTypes, CancellationToken cancellationToken = default);
+
+  /// <summary>
   /// Gets the last (highest) sequence number for a stream.
   /// Returns -1 if the stream doesn't exist or is empty.
   /// </summary>

@@ -66,6 +66,8 @@ public sealed class PerspectiveCompletionReceptor<TEvent> : IReceptor<TEvent>
     _completionSource = completionSource ?? throw new ArgumentNullException(nameof(completionSource));
     _perspectiveName = perspectiveName;
     _lifecycleContext = lifecycleContext;
+
+    Console.WriteLine($"[TestReceptor.ctor] Created receptor with TCS hash={completionSource.GetHashCode()}");
   }
 
   /// <summary>
@@ -73,15 +75,20 @@ public sealed class PerspectiveCompletionReceptor<TEvent> : IReceptor<TEvent>
   /// Filters by perspective name if specified.
   /// </summary>
   public ValueTask HandleAsync(TEvent message, CancellationToken cancellationToken = default) {
+    Console.WriteLine($"[TestReceptor.HandleAsync] INVOKED! Event={typeof(TEvent).Name}, Perspective={_lifecycleContext?.PerspectiveName ?? "null"}");
+
     // Filter by perspective if specified
     if (_lifecycleContext is not null && _perspectiveName is not null) {
       if (_lifecycleContext.PerspectiveName != _perspectiveName) {
+        Console.WriteLine($"[TestReceptor] Skipping - waiting for '{_perspectiveName}', got '{_lifecycleContext.PerspectiveName}'");
         return ValueTask.CompletedTask;  // Not the perspective we're waiting for
       }
     }
 
     // Signal completion (use TrySetResult to handle multiple events)
-    _completionSource.TrySetResult(true);
+    Console.WriteLine($"[TestReceptor] SIGNALING COMPLETION!");
+    var result = _completionSource.TrySetResult(true);
+    Console.WriteLine($"[TestReceptor] TrySetResult returned: {result}");
     return ValueTask.CompletedTask;
   }
 }

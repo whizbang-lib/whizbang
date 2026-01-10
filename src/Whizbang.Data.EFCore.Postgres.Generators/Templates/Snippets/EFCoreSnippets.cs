@@ -104,12 +104,16 @@ public class EFCoreSnippets {
       var channelWriter = sp.GetRequiredService<Whizbang.Core.Messaging.IWorkChannelWriter>();
       var options = sp.GetRequiredService<Whizbang.Core.Messaging.WorkCoordinatorOptions>();
       var logger = sp.GetService<Microsoft.Extensions.Logging.ILogger<Whizbang.Core.Messaging.ScopedWorkCoordinatorStrategy>>();
+      var lifecycleInvoker = sp.GetService<Whizbang.Core.Messaging.ILifecycleInvoker>();
+      var lifecycleMessageDeserializer = sp.GetService<Whizbang.Core.Messaging.ILifecycleMessageDeserializer>();
       return new Whizbang.Core.Messaging.ScopedWorkCoordinatorStrategy(
         coordinator,
         instanceProvider,
         channelWriter,
         options,
-        logger
+        logger,
+        lifecycleInvoker,
+        lifecycleMessageDeserializer
       );
     });
     #endregion

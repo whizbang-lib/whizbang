@@ -26,6 +26,7 @@ public partial class PerspectiveWorker(
   IDatabaseReadinessCheck? databaseReadinessCheck = null,
   ILifecycleInvoker? lifecycleInvoker = null,
   IEventStore? eventStore = null,
+  IEventTypeProvider? eventTypeProvider = null,
   ILogger<PerspectiveWorker>? logger = null
 ) : BackgroundService {
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
@@ -33,6 +34,7 @@ public partial class PerspectiveWorker(
   private readonly IDatabaseReadinessCheck _databaseReadinessCheck = databaseReadinessCheck ?? new DefaultDatabaseReadinessCheck();
   private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
   private readonly IEventStore? _eventStore = eventStore;
+  private readonly IEventTypeProvider? _eventTypeProvider = eventTypeProvider;
   private readonly ILogger<PerspectiveWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PerspectiveWorker>.Instance;
   private readonly PerspectiveWorkerOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
   private readonly IPerspectiveCompletionStrategy _completionStrategy = completionStrategy ?? new BatchedCompletionStrategy(
@@ -280,44 +282,51 @@ public partial class PerspectiveWorker(
 
         // Phase 3.1: Invoke PrePerspective lifecycle receptors before perspective processing
         // This allows receptors to prepare or validate before perspective updates
-        if (_lifecycleInvoker is not null && _eventStore is not null) {
+        if (_lifecycleInvoker is not null && _eventStore is not null && _eventTypeProvider is not null) {
           try {
-            // Load events that will be processed to invoke PrePerspective receptors
-            var upcomingEvents = await _eventStore.GetEventsBetweenAsync<IEvent>(
-              streamId,
-              lastProcessedEventId,
-              Guid.Empty, // Read all events after lastProcessedEventId
-              cancellationToken
-            );
+            // Get all known event types from the provider (required for AOT-compatible polymorphic deserialization)
+            var eventTypes = _eventTypeProvider.GetEventTypes();
+            if (eventTypes.Count > 0) {
+              // Load events that will be processed to invoke PrePerspective receptors
+              var upcomingEvents = await _eventStore.GetEventsBetweenPolymorphicAsync(
+                streamId,
+                lastProcessedEventId,
+                Guid.Empty, // Read all events after lastProcessedEventId
+                eventTypes,
+                cancellationToken
+              );
 
-            if (upcomingEvents.Count > 0) {
-              var context = new LifecycleExecutionContext {
-                CurrentStage = LifecycleStage.PrePerspectiveAsync,
-                StreamId = streamId,
-                PerspectiveName = perspectiveName,
-                LastProcessedEventId = lastProcessedEventId
-              };
+              if (upcomingEvents.Count > 0) {
+                var context = new LifecycleExecutionContext {
+                  CurrentStage = LifecycleStage.PrePerspectiveAsync,
+                  StreamId = streamId,
+                  PerspectiveName = perspectiveName,
+                  LastProcessedEventId = lastProcessedEventId
+                };
 
-              // PrePerspectiveAsync (non-blocking)
-              foreach (var envelope in upcomingEvents) {
-                await _lifecycleInvoker.InvokeAsync(
-                  envelope.Payload,
-                  LifecycleStage.PrePerspectiveAsync,
-                  context,
-                  cancellationToken
-                );
+                // PrePerspectiveAsync (non-blocking)
+                foreach (var envelope in upcomingEvents) {
+                  await _lifecycleInvoker.InvokeAsync(
+                    envelope.Payload,
+                    LifecycleStage.PrePerspectiveAsync,
+                    context,
+                    cancellationToken
+                  );
+                }
+
+                // PrePerspectiveInline (blocking)
+                context = context with { CurrentStage = LifecycleStage.PrePerspectiveInline };
+                foreach (var envelope in upcomingEvents) {
+                  await _lifecycleInvoker.InvokeAsync(
+                    envelope.Payload,
+                    LifecycleStage.PrePerspectiveInline,
+                    context,
+                    cancellationToken
+                  );
+                }
               }
-
-              // PrePerspectiveInline (blocking)
-              context = context with { CurrentStage = LifecycleStage.PrePerspectiveInline };
-              foreach (var envelope in upcomingEvents) {
-                await _lifecycleInvoker.InvokeAsync(
-                  envelope.Payload,
-                  LifecycleStage.PrePerspectiveInline,
-                  context,
-                  cancellationToken
-                );
-              }
+            } else {
+              LogWarningNoEventTypes(_logger, perspectiveName, streamId);
             }
           } catch (Exception ex) {
             LogErrorInvokingLifecycleReceptors(_logger, ex, perspectiveName, streamId);
@@ -411,17 +420,25 @@ public partial class PerspectiveWorker(
       Guid currentEventId,
       CancellationToken cancellationToken) {
 
-    if (_eventStore is null || _lifecycleInvoker is null) {
-      return; // Guards against nullability - should never happen if called from RunAsync
+    if (_eventStore is null || _lifecycleInvoker is null || _eventTypeProvider is null) {
+      return; // Guards against nullability - skip lifecycle invocation if dependencies missing
     }
 
     try {
+      // Get all known event types from the provider (required for AOT-compatible polymorphic deserialization)
+      var eventTypes = _eventTypeProvider.GetEventTypes();
+      if (eventTypes.Count == 0) {
+        LogWarningNoEventTypes(_logger, perspectiveName, streamId);
+        return; // Cannot load events without type information
+      }
+
       // Load all events that were just processed by this perspective run
-      // Use polymorphic read since we don't know the concrete event types
-      var processedEvents = await _eventStore.GetEventsBetweenAsync<IEvent>(
+      // Use polymorphic read since we don't know the concrete event types ahead of time
+      var processedEvents = await _eventStore.GetEventsBetweenPolymorphicAsync(
         streamId,
         lastProcessedEventId,  // Exclusive start
         currentEventId,        // Inclusive end
+        eventTypes,            // All known event types for deserialization
         cancellationToken
       );
 
@@ -637,6 +654,13 @@ public partial class PerspectiveWorker(
     Message = "Error invoking lifecycle receptors for perspective {PerspectiveName} on stream {StreamId}"
   )]
   static partial void LogErrorInvokingLifecycleReceptors(ILogger logger, Exception ex, string perspectiveName, Guid streamId);
+
+  [LoggerMessage(
+    EventId = 23,
+    Level = LogLevel.Warning,
+    Message = "No event types available from IEventTypeProvider for perspective {PerspectiveName} on stream {StreamId}. Skipping lifecycle receptor invocation."
+  )]
+  static partial void LogWarningNoEventTypes(ILogger logger, string perspectiveName, Guid streamId);
 }
 
 /// <summary>

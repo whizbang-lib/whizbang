@@ -161,4 +161,12 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
     var hashOther = System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(stringValue));
     return new Guid(hashOther);
   }
+
+  /// <inheritdoc/>
+  public async Task FlushAsync(CancellationToken cancellationToken = default) {
+    // For EF Core, ensure all tracked changes are committed to the database
+    // This is critical for PostPerspectiveInline lifecycle stage which guarantees
+    // data is persisted and queryable before receptors fire
+    await _context.SaveChangesAsync(cancellationToken);
+  }
 }

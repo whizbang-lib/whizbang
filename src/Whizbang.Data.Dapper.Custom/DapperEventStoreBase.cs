@@ -3,6 +3,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using Whizbang.Core;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
@@ -157,6 +158,67 @@ public abstract class DapperEventStoreBase : IEventStore {
       envelopes.Add(new MessageEnvelope<TMessage> {
         MessageId = ((EnvelopeMetadata)metadata).MessageId,
         Payload = (TMessage)eventData,
+        Hops = ((EnvelopeMetadata)metadata).Hops
+      });
+    }
+
+    return envelopes;
+  }
+
+  /// <inheritdoc />
+  public async Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
+      Guid streamId,
+      Guid? afterEventId,
+      Guid upToEventId,
+      IReadOnlyList<Type> eventTypes,
+      CancellationToken cancellationToken = default) {
+
+    ArgumentNullException.ThrowIfNull(eventTypes);
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+
+    var sql = GetEventsBetweenSql();
+    var parameters = new {
+      StreamId = streamId,
+      AfterEventId = afterEventId,
+      UpToEventId = upToEventId
+    };
+
+    var rows = await Executor.QueryAsync<EventRow>(connection, sql, parameters, cancellationToken: cancellationToken);
+    var envelopes = new List<MessageEnvelope<IEvent>>();
+
+    // Build type lookup dictionary for fast O(1) lookups (AOT-compatible)
+    var typeLookup = new Dictionary<string, JsonTypeInfo>(eventTypes.Count);
+    foreach (var type in eventTypes) {
+      var typeInfo = JsonOptions.GetTypeInfo(type);
+      typeLookup[type.FullName ?? type.Name] = typeInfo;
+    }
+
+    var metadataTypeInfo = JsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
+
+    foreach (var row in rows) {
+      // Look up the concrete type based on EventType column
+      if (!typeLookup.TryGetValue(row.EventType, out var eventTypeInfo)) {
+        throw new InvalidOperationException(
+          $"Unknown event type '{row.EventType}'. " +
+          $"Provided event types: [{string.Join(", ", eventTypes.Select(t => t.FullName ?? t.Name))}]"
+        );
+      }
+
+      var eventData = JsonSerializer.Deserialize(row.EventData, eventTypeInfo);
+      if (eventData == null) {
+        throw new InvalidOperationException($"Failed to deserialize event of type {row.EventType}");
+      }
+
+      var metadata = JsonSerializer.Deserialize(row.Metadata, metadataTypeInfo);
+      if (metadata == null) {
+        throw new InvalidOperationException($"Failed to deserialize metadata for event type {row.EventType}");
+      }
+
+      envelopes.Add(new MessageEnvelope<IEvent> {
+        MessageId = ((EnvelopeMetadata)metadata).MessageId,
+        Payload = (IEvent)eventData,
         Hops = ((EnvelopeMetadata)metadata).Hops
       });
     }

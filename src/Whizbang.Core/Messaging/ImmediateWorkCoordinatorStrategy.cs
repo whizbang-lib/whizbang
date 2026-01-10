@@ -142,38 +142,27 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     }
 
     // PreDistribute lifecycle stages (before ProcessWorkBatchAsync)
-    if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
-      var lifecycleContext = new LifecycleExecutionContext {
-        CurrentStage = LifecycleStage.PreDistributeAsync,
-        EventId = null,
-        StreamId = null,
-        PerspectiveName = null,
-        LastProcessedEventId = null
-      };
+    await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
+      LifecycleStage.PreDistributeAsync,
+      LifecycleStage.PreDistributeInline,
+      _queuedOutboxMessages,
+      _queuedInboxMessages,
+      _lifecycleInvoker,
+      _lifecycleMessageDeserializer,
+      _logger,
+      ct
+    );
 
-      // Invoke PreDistributeAsync for all messages
-      foreach (var outboxMsg in _queuedOutboxMessages) {
-        var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(outboxMsg.Envelope, outboxMsg.EnvelopeType);
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreDistributeAsync, lifecycleContext, ct);
-      }
-
-      foreach (var inboxMsg in _queuedInboxMessages) {
-        var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(inboxMsg.Envelope, inboxMsg.EnvelopeType);
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreDistributeAsync, lifecycleContext, ct);
-      }
-
-      // Invoke PreDistributeInline for all messages
-      lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PreDistributeInline };
-      foreach (var outboxMsg in _queuedOutboxMessages) {
-        var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(outboxMsg.Envelope, outboxMsg.EnvelopeType);
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreDistributeInline, lifecycleContext, ct);
-      }
-
-      foreach (var inboxMsg in _queuedInboxMessages) {
-        var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(inboxMsg.Envelope, inboxMsg.EnvelopeType);
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreDistributeInline, lifecycleContext, ct);
-      }
-    }
+    // DistributeAsync lifecycle stage (fire in parallel with ProcessWorkBatchAsync, non-blocking)
+    LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
+      LifecycleStage.DistributeAsync,
+      _queuedOutboxMessages,
+      _queuedInboxMessages,
+      _lifecycleInvoker,
+      _lifecycleMessageDeserializer,
+      _logger,
+      ct
+    );
 
     var workBatch = await _coordinator.ProcessWorkBatchAsync(
       _instanceProvider.InstanceId,
@@ -201,38 +190,16 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
     );
 
     // PostDistribute lifecycle stages (after ProcessWorkBatchAsync)
-    if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
-      var lifecycleContext = new LifecycleExecutionContext {
-        CurrentStage = LifecycleStage.PostDistributeAsync,
-        EventId = null,
-        StreamId = null,
-        PerspectiveName = null,
-        LastProcessedEventId = null
-      };
-
-      // Invoke PostDistributeAsync for all messages
-      foreach (var outboxMsg in _queuedOutboxMessages) {
-        var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(outboxMsg.Envelope, outboxMsg.EnvelopeType);
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostDistributeAsync, lifecycleContext, ct);
-      }
-
-      foreach (var inboxMsg in _queuedInboxMessages) {
-        var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(inboxMsg.Envelope, inboxMsg.EnvelopeType);
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostDistributeAsync, lifecycleContext, ct);
-      }
-
-      // Invoke PostDistributeInline for all messages
-      lifecycleContext = lifecycleContext with { CurrentStage = LifecycleStage.PostDistributeInline };
-      foreach (var outboxMsg in _queuedOutboxMessages) {
-        var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(outboxMsg.Envelope, outboxMsg.EnvelopeType);
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostDistributeInline, lifecycleContext, ct);
-      }
-
-      foreach (var inboxMsg in _queuedInboxMessages) {
-        var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(inboxMsg.Envelope, inboxMsg.EnvelopeType);
-        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostDistributeInline, lifecycleContext, ct);
-      }
-    }
+    await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(
+      LifecycleStage.PostDistributeAsync,
+      LifecycleStage.PostDistributeInline,
+      _queuedOutboxMessages,
+      _queuedInboxMessages,
+      _lifecycleInvoker,
+      _lifecycleMessageDeserializer,
+      _logger,
+      ct
+    );
 
     // Clear queues after flush
     _queuedOutboxMessages.Clear();
