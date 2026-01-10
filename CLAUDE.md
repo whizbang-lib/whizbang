@@ -48,6 +48,16 @@ pwsh scripts/Run-Tests.ps1 -TestFilter "ProcessWorkBatchAsync"
 # Run specific test project
 cd tests/Whizbang.Core.Tests && dotnet run
 
+# Run specific test using treenode-filter
+# Syntax: /<Assembly>/<Namespace>/<ClassName>/<TestMethodName>
+cd tests/Whizbang.Core.Tests && dotnet run -- --treenode-filter "/Whizbang.Core.Tests/Whizbang.Core.Tests/DispatcherTests/Dispatch_SendsMessageToCorrectReceptorAsync"
+
+# Filter by wildcards (all tests in a class)
+dotnet run -- --treenode-filter "/Whizbang.Core.Tests/Whizbang.Core.Tests/DispatcherTests/*"
+
+# Filter by category attribute
+dotnet run -- --treenode-filter "/*/*/*/*[Category=Integration]"
+
 # Format code (MANDATORY before commit)
 dotnet format
 

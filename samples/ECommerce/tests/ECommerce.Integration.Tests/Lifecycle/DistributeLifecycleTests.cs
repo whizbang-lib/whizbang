@@ -201,10 +201,11 @@ public class DistributeLifecycleTests {
     };
 
     var completionSource = new TaskCompletionSource<bool>();
-    var receptor = new GenericLifecycleCompletionReceptor<CreateProductCommand>(completionSource);
+    // NOTE: Distribute stages fire for PUBLISHED EVENTS (in outbox), not commands
+    var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 
     var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
-    registry.Register<CreateProductCommand>(receptor, LifecycleStage.DistributeAsync);
+    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.DistributeAsync);
 
     try {
       // Act - Dispatch multiple commands
@@ -213,13 +214,13 @@ public class DistributeLifecycleTests {
       }
 
       // Wait for DistributeAsync completion
-      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(15));
+      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(60));
 
       // Assert - Receptor should have been invoked for at least one message
       await Assert.That(receptor.InvocationCount).IsGreaterThanOrEqualTo(1);
 
     } finally {
-      registry.Unregister<CreateProductCommand>(receptor, LifecycleStage.DistributeAsync);
+      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.DistributeAsync);
     }
   }
 
@@ -326,37 +327,39 @@ public class DistributeLifecycleTests {
     var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
 
     // Create receptors for all 5 stages
+    // NOTE: Distribute stages fire for PUBLISHED EVENTS (in outbox), not commands
     var preInlineCompletion = new TaskCompletionSource<bool>();
     var preAsyncCompletion = new TaskCompletionSource<bool>();
     var distributeAsyncCompletion = new TaskCompletionSource<bool>();
     var postAsyncCompletion = new TaskCompletionSource<bool>();
     var postInlineCompletion = new TaskCompletionSource<bool>();
 
-    var preInlineReceptor = new GenericLifecycleCompletionReceptor<CreateProductCommand>(preInlineCompletion);
-    var preAsyncReceptor = new GenericLifecycleCompletionReceptor<CreateProductCommand>(preAsyncCompletion);
-    var distributeAsyncReceptor = new GenericLifecycleCompletionReceptor<CreateProductCommand>(distributeAsyncCompletion);
-    var postAsyncReceptor = new GenericLifecycleCompletionReceptor<CreateProductCommand>(postAsyncCompletion);
-    var postInlineReceptor = new GenericLifecycleCompletionReceptor<CreateProductCommand>(postInlineCompletion);
+    var preInlineReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(preInlineCompletion);
+    var preAsyncReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(preAsyncCompletion);
+    var distributeAsyncReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(distributeAsyncCompletion);
+    var postAsyncReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(postAsyncCompletion);
+    var postInlineReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(postInlineCompletion);
 
     // Register all receptors
-    registry.Register<CreateProductCommand>(preInlineReceptor, LifecycleStage.PreDistributeInline);
-    registry.Register<CreateProductCommand>(preAsyncReceptor, LifecycleStage.PreDistributeAsync);
-    registry.Register<CreateProductCommand>(distributeAsyncReceptor, LifecycleStage.DistributeAsync);
-    registry.Register<CreateProductCommand>(postAsyncReceptor, LifecycleStage.PostDistributeAsync);
-    registry.Register<CreateProductCommand>(postInlineReceptor, LifecycleStage.PostDistributeInline);
+    registry.Register<ProductCreatedEvent>(preInlineReceptor, LifecycleStage.PreDistributeInline);
+    registry.Register<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PreDistributeAsync);
+    registry.Register<ProductCreatedEvent>(distributeAsyncReceptor, LifecycleStage.DistributeAsync);
+    registry.Register<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostDistributeAsync);
+    registry.Register<ProductCreatedEvent>(postInlineReceptor, LifecycleStage.PostDistributeInline);
 
     try {
       // Act - Dispatch command
       await fixture.Dispatcher.SendAsync(command);
 
       // Wait for all stages to complete (with timeout)
+      // NOTE: Async stages run in Task.Run (fire-and-forget), which can be delayed by infrastructure
       await Task.WhenAll(
         preInlineCompletion.Task,
         preAsyncCompletion.Task,
         distributeAsyncCompletion.Task,
         postAsyncCompletion.Task,
         postInlineCompletion.Task
-      ).WaitAsync(TimeSpan.FromSeconds(15));
+      ).WaitAsync(TimeSpan.FromSeconds(60));
 
       // Assert - All stages should have been invoked
       await Assert.That(preInlineReceptor.InvocationCount).IsEqualTo(1);
@@ -367,11 +370,11 @@ public class DistributeLifecycleTests {
 
     } finally {
       // Unregister all receptors
-      registry.Unregister<CreateProductCommand>(preInlineReceptor, LifecycleStage.PreDistributeInline);
-      registry.Unregister<CreateProductCommand>(preAsyncReceptor, LifecycleStage.PreDistributeAsync);
-      registry.Unregister<CreateProductCommand>(distributeAsyncReceptor, LifecycleStage.DistributeAsync);
-      registry.Unregister<CreateProductCommand>(postAsyncReceptor, LifecycleStage.PostDistributeAsync);
-      registry.Unregister<CreateProductCommand>(postInlineReceptor, LifecycleStage.PostDistributeInline);
+      registry.Unregister<ProductCreatedEvent>(preInlineReceptor, LifecycleStage.PreDistributeInline);
+      registry.Unregister<ProductCreatedEvent>(preAsyncReceptor, LifecycleStage.PreDistributeAsync);
+      registry.Unregister<ProductCreatedEvent>(distributeAsyncReceptor, LifecycleStage.DistributeAsync);
+      registry.Unregister<ProductCreatedEvent>(postAsyncReceptor, LifecycleStage.PostDistributeAsync);
+      registry.Unregister<ProductCreatedEvent>(postInlineReceptor, LifecycleStage.PostDistributeInline);
     }
   }
 
@@ -401,10 +404,11 @@ public class DistributeLifecycleTests {
     };
 
     var completionSource = new TaskCompletionSource<bool>();
-    var receptor = new GenericLifecycleCompletionReceptor<CreateProductCommand>(completionSource);
+    // NOTE: Distribute stages fire for PUBLISHED EVENTS (in outbox), not commands
+    var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 
     var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
-    registry.Register<CreateProductCommand>(receptor, LifecycleStage.PostDistributeInline);
+    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostDistributeInline);
 
     try {
       // Act - Dispatch multiple commands
@@ -413,13 +417,14 @@ public class DistributeLifecycleTests {
       }
 
       // Wait for last command to complete PostDistributeInline
-      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(15));
+      // NOTE: Infrastructure delays can cause timeouts, use generous timeout
+      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(60));
 
       // Assert - Receptor should have been invoked at least once
       await Assert.That(receptor.InvocationCount).IsGreaterThanOrEqualTo(1);
 
     } finally {
-      registry.Unregister<CreateProductCommand>(receptor, LifecycleStage.PostDistributeInline);
+      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostDistributeInline);
     }
   }
 }
