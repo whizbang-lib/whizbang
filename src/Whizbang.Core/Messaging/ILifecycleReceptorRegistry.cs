@@ -78,6 +78,9 @@ public interface ILifecycleReceptorRegistry {
   /// Delegates are created at registration time using reflection, but invocation is reflection-free.
   /// This makes the runtime registry AOT-compatible for Native AOT scenarios.
   /// </para>
+  /// <para>
+  /// The ILifecycleContext parameter allows receptors to filter by perspective name, stream ID, etc.
+  /// </para>
   /// </remarks>
-  IReadOnlyList<Func<object, CancellationToken, ValueTask>> GetHandlers(Type messageType, LifecycleStage stage);
+  IReadOnlyList<Func<object, ILifecycleContext?, CancellationToken, ValueTask>> GetHandlers(Type messageType, LifecycleStage stage);
 }

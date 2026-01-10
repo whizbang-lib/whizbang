@@ -19,7 +19,7 @@ namespace Whizbang.Core.Messaging;
 /// <docs>testing/lifecycle-synchronization</docs>
 public sealed class DefaultLifecycleReceptorRegistry : ILifecycleReceptorRegistry {
   // Key: (MessageType, LifecycleStage), Value: List of (receptor instance, invocation delegate) pairs
-  private readonly ConcurrentDictionary<(Type MessageType, LifecycleStage Stage), List<(object Receptor, Func<object, CancellationToken, ValueTask> Handler)>> _receptors = new();
+  private readonly ConcurrentDictionary<(Type MessageType, LifecycleStage Stage), List<(object Receptor, Func<object, ILifecycleContext?, CancellationToken, ValueTask> Handler)>> _receptors = new();
 
   /// <inheritdoc/>
   public void Register<TMessage>(object receptor, LifecycleStage stage) where TMessage : IMessage {
@@ -32,7 +32,7 @@ public sealed class DefaultLifecycleReceptorRegistry : ILifecycleReceptorRegistr
 
     _receptors.AddOrUpdate(
       key,
-      _ => new List<(object, Func<object, CancellationToken, ValueTask>)> { (receptor, handler) },
+      _ => new List<(object, Func<object, ILifecycleContext?, CancellationToken, ValueTask>)> { (receptor, handler) },
       (_, existingList) => {
         lock (existingList) {
           existingList.Add((receptor, handler));
@@ -79,7 +79,7 @@ public sealed class DefaultLifecycleReceptorRegistry : ILifecycleReceptorRegistr
   }
 
   /// <inheritdoc/>
-  public IReadOnlyList<Func<object, CancellationToken, ValueTask>> GetHandlers(Type messageType, LifecycleStage stage) {
+  public IReadOnlyList<Func<object, ILifecycleContext?, CancellationToken, ValueTask>> GetHandlers(Type messageType, LifecycleStage stage) {
     ArgumentNullException.ThrowIfNull(messageType);
 
     var key = (messageType, stage);
@@ -91,7 +91,7 @@ public sealed class DefaultLifecycleReceptorRegistry : ILifecycleReceptorRegistr
       }
     }
 
-    return Array.Empty<Func<object, CancellationToken, ValueTask>>();
+    return Array.Empty<Func<object, ILifecycleContext?, CancellationToken, ValueTask>>();
   }
 
   /// <summary>
@@ -117,7 +117,7 @@ public sealed class DefaultLifecycleReceptorRegistry : ILifecycleReceptorRegistr
   /// rather than reflection (runtime), making it safe for Native AOT scenarios.
   /// </para>
   /// </remarks>
-  private static Func<object, CancellationToken, ValueTask> _createHandler<TMessage>(object receptor)
+  private static Func<object, ILifecycleContext?, CancellationToken, ValueTask> _createHandler<TMessage>(object receptor)
     where TMessage : IMessage {
 
     // Pattern matching is compile-time, not reflection - fully AOT-compatible!
@@ -131,6 +131,14 @@ public sealed class DefaultLifecycleReceptorRegistry : ILifecycleReceptorRegistr
     }
 
     // Return a delegate that invokes the receptor - zero reflection!
-    return async (msg, ct) => await voidReceptor.HandleAsync((TMessage)msg, ct);
+    // If receptor implements IAcceptsLifecycleContext, call SetLifecycleContext before HandleAsync
+    return async (msg, context, ct) => {
+      // If receptor accepts context and context is provided, set it
+      if (receptor is IAcceptsLifecycleContext contextAware && context is not null) {
+        contextAware.SetLifecycleContext(context);
+      }
+
+      await voidReceptor.HandleAsync((TMessage)msg, ct);
+    };
   }
 }

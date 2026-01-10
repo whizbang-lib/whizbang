@@ -59,7 +59,7 @@ internal sealed class GeneratedLifecycleInvoker : global::Whizbang.Core.Messagin
     if (registry is not null) {
       var handlers = registry.GetHandlers(messageType, stage);
       foreach (var handler in handlers) {
-        await handler(message, cancellationToken);
+        await handler(message, context, cancellationToken);
       }
     }
   }
