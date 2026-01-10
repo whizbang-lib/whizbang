@@ -54,7 +54,7 @@ public class SeedProductsWorkflowTests {
   public async Task SeedProducts_CreatesAllProducts_MaterializesInAllPerspectivesAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
-    
+
 
     // Create SeedMutations instance with test dependencies
     var seedMutations = new SeedMutations(
@@ -108,7 +108,7 @@ public class SeedProductsWorkflowTests {
   public async Task SeedProducts_CalledTwice_DoesNotDuplicateProductsAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
-    
+
 
     var seedMutations = new SeedMutations(
       fixture.Dispatcher,
@@ -158,7 +158,7 @@ public class SeedProductsWorkflowTests {
   public async Task SeedProducts_CreatesInventoryLevels_WithCorrectStockAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
-    
+
 
     var seedMutations = new SeedMutations(
       fixture.Dispatcher,
@@ -208,7 +208,7 @@ public class SeedProductsWorkflowTests {
   public async Task SeedProducts_SynchronizesPerspectives_AcrossBFFAndInventoryWorkerAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
-    
+
 
     var seedMutations = new SeedMutations(
       fixture.Dispatcher,

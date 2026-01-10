@@ -60,7 +60,7 @@ public class RestockInventoryWorkflowTests {
   public async Task RestockInventory_PublishesEvent_UpdatesPerspectivesAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
-    
+
 
 
     // First, create a product with initial stock
@@ -103,7 +103,7 @@ public class RestockInventoryWorkflowTests {
   public async Task RestockInventory_MultipleRestocks_AccumulatesCorrectlyAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
-    
+
 
 
     // Create product with initial stock of 5
@@ -150,7 +150,7 @@ public class RestockInventoryWorkflowTests {
   public async Task RestockInventory_FromZeroStock_IncreasesCorrectlyAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
-    
+
 
 
     // Create product with zero initial stock
@@ -191,7 +191,7 @@ public class RestockInventoryWorkflowTests {
   public async Task RestockInventory_ZeroQuantity_NoChangeAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
-    
+
 
 
     // Create product with initial stock
@@ -232,7 +232,7 @@ public class RestockInventoryWorkflowTests {
   public async Task RestockInventory_LargeQuantity_HandlesCorrectlyAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
-    
+
 
 
     // Create product with small initial stock

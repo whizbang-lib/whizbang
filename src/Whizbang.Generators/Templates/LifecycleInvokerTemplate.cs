@@ -24,7 +24,7 @@ namespace Whizbang.Core.Generated;
 /// </summary>
 [ExcludeFromCodeCoverage]
 [DebuggerNonUserCode]
-internal sealed class GeneratedLifecycleInvoker : global::Whizbang.Core.Messaging.ILifecycleInvoker {
+public sealed class GeneratedLifecycleInvoker : global::Whizbang.Core.Messaging.ILifecycleInvoker {
   private readonly IServiceProvider _serviceProvider;
 
   public GeneratedLifecycleInvoker(IServiceProvider serviceProvider) {

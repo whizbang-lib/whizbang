@@ -25,7 +25,6 @@ public partial class PerspectiveWorker(
   IPerspectiveCompletionStrategy? completionStrategy = null,
   IDatabaseReadinessCheck? databaseReadinessCheck = null,
   ILifecycleInvoker? lifecycleInvoker = null,
-  IEventStore? eventStore = null,
   IEventTypeProvider? eventTypeProvider = null,
   ILogger<PerspectiveWorker>? logger = null
 ) : BackgroundService {
@@ -33,7 +32,6 @@ public partial class PerspectiveWorker(
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly IDatabaseReadinessCheck _databaseReadinessCheck = databaseReadinessCheck ?? new DefaultDatabaseReadinessCheck();
   private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
-  private readonly IEventStore? _eventStore = eventStore;
   private readonly IEventTypeProvider? _eventTypeProvider = eventTypeProvider;
   private readonly ILogger<PerspectiveWorker> _logger = logger ?? Microsoft.Extensions.Logging.Abstractions.NullLogger<PerspectiveWorker>.Instance;
   private readonly PerspectiveWorkerOptions _options = (options ?? throw new ArgumentNullException(nameof(options))).Value;
@@ -280,15 +278,18 @@ public partial class PerspectiveWorker(
         // DIAGNOSTIC: Log runner resolution details
         LogRunnerInstanceResolved(_logger, perspectiveName, runner.GetType().FullName ?? "unknown", runner.GetHashCode());
 
+        // Resolve IEventStore from scope (it's registered as scoped, not singleton)
+        var eventStore = scope.ServiceProvider.GetService<IEventStore>();
+
         // Phase 3.1: Invoke PrePerspective lifecycle receptors before perspective processing
         // This allows receptors to prepare or validate before perspective updates
-        if (_lifecycleInvoker is not null && _eventStore is not null && _eventTypeProvider is not null) {
+        if (_lifecycleInvoker is not null && eventStore is not null && _eventTypeProvider is not null) {
           try {
             // Get all known event types from the provider (required for AOT-compatible polymorphic deserialization)
             var eventTypes = _eventTypeProvider.GetEventTypes();
             if (eventTypes.Count > 0) {
               // Load events that will be processed to invoke PrePerspective receptors
-              var upcomingEvents = await _eventStore.GetEventsBetweenPolymorphicAsync(
+              var upcomingEvents = await eventStore.GetEventsBetweenPolymorphicAsync(
                 streamId,
                 lastProcessedEventId,
                 Guid.Empty, // Read all events after lastProcessedEventId
@@ -344,8 +345,9 @@ public partial class PerspectiveWorker(
 
         // Phase 3: Invoke lifecycle receptors after perspective processing completes
         // This enables deterministic test synchronization and eliminates race conditions
-        if (_lifecycleInvoker is not null && _eventStore is not null && result.Status == PerspectiveProcessingStatus.Completed) {
+        if (_lifecycleInvoker is not null && eventStore is not null && result.Status == PerspectiveProcessingStatus.Completed) {
           await _invokeLifecycleReceptorsAsync(
+            eventStore,
             streamId,
             perspectiveName,
             lastProcessedEventId,
@@ -414,13 +416,14 @@ public partial class PerspectiveWorker(
   /// and PostPerspectiveInline stages for deterministic test synchronization.
   /// </summary>
   private async Task _invokeLifecycleReceptorsAsync(
+      IEventStore eventStore,
       Guid streamId,
       string perspectiveName,
       Guid? lastProcessedEventId,
       Guid currentEventId,
       CancellationToken cancellationToken) {
 
-    if (_eventStore is null || _lifecycleInvoker is null || _eventTypeProvider is null) {
+    if (_lifecycleInvoker is null || _eventTypeProvider is null) {
       return; // Guards against nullability - skip lifecycle invocation if dependencies missing
     }
 
@@ -434,7 +437,7 @@ public partial class PerspectiveWorker(
 
       // Load all events that were just processed by this perspective run
       // Use polymorphic read since we don't know the concrete event types ahead of time
-      var processedEvents = await _eventStore.GetEventsBetweenPolymorphicAsync(
+      var processedEvents = await eventStore.GetEventsBetweenPolymorphicAsync(
         streamId,
         lastProcessedEventId,  // Exclusive start
         currentEventId,        // Inclusive end

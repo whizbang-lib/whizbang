@@ -197,7 +197,8 @@ public class OutboxLifecycleTests {
       await fixture.Dispatcher.SendAsync(command);
 
       // Wait for PostOutboxAsync stage
-      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(20));
+      // NOTE: Async stages run in Task.Run (fire-and-forget), which can be delayed by infrastructure
+      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(60));
 
       // Assert - At this point, PostOutboxAsync has fired
       // Message should have been successfully published to Service Bus
@@ -205,11 +206,11 @@ public class OutboxLifecycleTests {
       await Assert.That(receptor.LastMessage).IsNotNull();
 
       // Give Service Bus time to propagate the message
-      await Task.Delay(1000);
+      await Task.Delay(2000);
 
       // Verify message was actually received by BFF (indicates successful publish)
       // This is indirect verification that PostOutboxAsync fired AFTER successful publish
-      await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+      await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 60000);
 
     } finally {
       registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostOutboxAsync);

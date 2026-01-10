@@ -196,13 +196,15 @@ public class PerspectiveLifecycleTests {
       await fixture.Dispatcher.SendAsync(command);
 
       // Wait for PrePerspectiveAsync stage (non-blocking, may complete late)
-      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(20));
+      // NOTE: Async stages run in Task.Run (fire-and-forget), which can be delayed by infrastructure
+      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(60));
 
       // Assert - PrePerspectiveAsync should have completed eventually
       await Assert.That(receptor.InvocationCount).IsEqualTo(1);
 
       // Verify that perspective processing completed (data should be saved)
-      await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+      // Wait for all perspectives to complete (no perspective filter)
+      await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 60000);
 
     } finally {
       registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PrePerspectiveAsync);

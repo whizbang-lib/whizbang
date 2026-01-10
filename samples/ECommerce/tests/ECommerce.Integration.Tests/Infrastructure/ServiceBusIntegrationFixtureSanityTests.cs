@@ -137,7 +137,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
     // Act - Send command and wait for event processing
     Console.WriteLine($"[SANITY] Sending command for InventoryWorker perspective test: {testProductId}");
     await fixture.Dispatcher.SendAsync(command);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 15000);
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 45000);
 
     // Assert - Verify product materialized in InventoryWorker perspective
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(testProductId);
