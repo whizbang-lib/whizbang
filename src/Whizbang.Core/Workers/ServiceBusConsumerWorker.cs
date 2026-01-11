@@ -24,7 +24,8 @@ public partial class ServiceBusConsumerWorker(
   OrderedStreamProcessor orderedProcessor,
   ServiceBusConsumerOptions? options = null,
   ILifecycleInvoker? lifecycleInvoker = null,
-  ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null
+  ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
+  IEnvelopeSerializer? envelopeSerializer = null
   ) : BackgroundService {
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
@@ -34,6 +35,7 @@ public partial class ServiceBusConsumerWorker(
   private readonly OrderedStreamProcessor _orderedProcessor = orderedProcessor ?? throw new ArgumentNullException(nameof(orderedProcessor));
   private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer = lifecycleMessageDeserializer;
+  private readonly IEnvelopeSerializer? _envelopeSerializer = envelopeSerializer;
   private readonly List<ISubscription> _subscriptions = [];
   private readonly ServiceBusConsumerOptions _options = options ?? new ServiceBusConsumerOptions();
 
@@ -82,7 +84,7 @@ public partial class ServiceBusConsumerWorker(
         );
 
         var subscription = await _transport.SubscribeAsync(
-          async (envelope, ct) => await _handleMessageAsync(envelope, ct),
+          async (envelope, envelopeType, ct) => await _handleMessageAsync(envelope, envelopeType, ct),
           destination,
           cancellationToken
         );
@@ -122,7 +124,7 @@ public partial class ServiceBusConsumerWorker(
     }
   }
 
-  private async Task _handleMessageAsync(IMessageEnvelope envelope, CancellationToken ct) {
+  private async Task _handleMessageAsync(IMessageEnvelope envelope, string? envelopeType, CancellationToken ct) {
     try {
       // Create scope to resolve scoped services (IWorkCoordinatorStrategy, IPerspectiveInvoker)
       await using var scope = _scopeFactory.CreateAsyncScope();
@@ -131,7 +133,8 @@ public partial class ServiceBusConsumerWorker(
       LogProcessingMessage(_logger, envelope.MessageId);
 
       // 1. Serialize envelope to InboxMessage
-      var newInboxMessage = _serializeToNewInboxMessage(envelope);
+      // Pass scope so we can resolve IEnvelopeSerializer if needed
+      var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, scope.ServiceProvider);
 
       // 2. Queue for atomic deduplication via process_work_batch
       strategy.QueueInboxMessage(newInboxMessage);
@@ -235,52 +238,103 @@ public partial class ServiceBusConsumerWorker(
 
   /// <summary>
   /// Creates InboxMessage for work coordinator pattern.
-  /// Serializes envelope to JSON and deserializes as MessageEnvelope&lt;JsonElement&gt; for storage.
-  /// The actual type is preserved in EnvelopeType for later typed deserialization.
+  /// Handles envelopes from transport which may be strongly-typed or JsonElement-typed.
+  /// The actual type information is preserved in envelopeTypeFromTransport for later deserialization.
   /// </summary>
   /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
   /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
-  private InboxMessage _serializeToNewInboxMessage(IMessageEnvelope envelope) {
-    // Get payload and its type for metadata
+  private InboxMessage _serializeToNewInboxMessage(IMessageEnvelope envelope, string? envelopeTypeFromTransport, IServiceProvider scopeServiceProvider) {
+    // Envelopes from transport can be:
+    // 1. Strongly-typed: MessageEnvelope<ProductCreatedEvent> - needs serialization to JsonElement form
+    // 2. JsonElement-typed: MessageEnvelope<JsonElement> - already in storage form
+
+    if (string.IsNullOrWhiteSpace(envelopeTypeFromTransport)) {
+      throw new InvalidOperationException(
+        $"EnvelopeType is required from transport but was null/empty. MessageId: {envelope.MessageId}. " +
+        $"This indicates a bug in the transport layer - envelope type must be preserved during transmission.");
+    }
+
+    // Extract message type from envelope type string
+    // Example: "MessageEnvelope`1[[MyApp.ProductCreatedEvent, MyApp]], Whizbang.Core"
+    // We need to extract: "MyApp.ProductCreatedEvent, MyApp"
+    var messageTypeName = _extractMessageTypeFromEnvelopeType(envelopeTypeFromTransport);
+
+    // Get payload type to determine metadata
     var payload = envelope.Payload;
-    var payloadType = payload.GetType();
+    var payloadType = payload?.GetType() ?? typeof(object);
 
-    // Determine handler name from payload type
-    var handlerName = payloadType.Name + "Handler";
+    // Check if envelope is already in JsonElement form
+    IMessageEnvelope<JsonElement> jsonEnvelope;
+    if (envelope is IMessageEnvelope<JsonElement> alreadyJsonEnvelope) {
+      // Already serialized - use directly
+      jsonEnvelope = alreadyJsonEnvelope;
+    } else {
+      // Strongly-typed envelope - need to serialize it
+      var serializer = _envelopeSerializer ?? scopeServiceProvider.GetService<IEnvelopeSerializer>();
+      if (serializer == null) {
+        throw new InvalidOperationException(
+          "IEnvelopeSerializer is required but not registered. " +
+          "Ensure you call services.AddWhizbang() to register core services.");
+      }
 
-    // Extract stream_id from envelope (aggregate ID or message ID)
-    var streamId = _extractStreamId(envelope);
+      // Call generic SerializeEnvelope method via reflection (necessary because payload type is only known at runtime)
+      var genericEnvelopeMethod = typeof(IEnvelopeSerializer).GetMethod(nameof(IEnvelopeSerializer.SerializeEnvelope));
+      var boundMethod = genericEnvelopeMethod!.MakeGenericMethod(payloadType);
+      var serialized = (SerializedEnvelope)boundMethod.Invoke(serializer, new object[] { envelope })!;
+      jsonEnvelope = serialized.JsonEnvelope;
 
-    // Get assembly-qualified name for proper deserialization
-    var messageTypeName = payloadType.AssemblyQualifiedName
-      ?? throw new InvalidOperationException($"Message type {payloadType.Name} must have an assembly-qualified name");
+      // NOTE: We use envelopeTypeFromTransport instead of serialized.EnvelopeType
+      // because the transport's metadata is authoritative
+    }
 
-    var envelopeTypeName = envelope.GetType().AssemblyQualifiedName
-      ?? throw new InvalidOperationException($"Envelope type {envelope.GetType().Name} must have an assembly-qualified name");
-
-    // Serialize the envelope to JSON and deserialize as MessageEnvelope<JsonElement>
-    // This allows AOT-compatible storage without runtime type resolution
-    // Use JsonTypeInfo for AOT compatibility (no reflection)
-    var objectTypeInfo = _jsonOptions.GetTypeInfo(typeof(object));
-    var envelopeJson = JsonSerializer.Serialize((object)envelope, objectTypeInfo);
-
-    var jsonEnvelopeTypeInfo = (System.Text.Json.Serialization.Metadata.JsonTypeInfo<MessageEnvelope<JsonElement>>)_jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
-    var jsonEnvelope = JsonSerializer.Deserialize(envelopeJson, jsonEnvelopeTypeInfo)
-      ?? throw new InvalidOperationException($"Failed to deserialize envelope as MessageEnvelope<JsonElement> for message {envelope.MessageId}");
-
+    // Determine if message is an event
     var isEvent = payload is IEvent;
 
-    LogSerializeInboxMessage(_logger, envelope.MessageId.Value, payloadType.Name, isEvent, streamId);
+    // Extract simple type name for handler name (last part after last '.')
+    var lastDotIndex = messageTypeName.LastIndexOf('.');
+    var simpleTypeName = lastDotIndex >= 0
+      ? messageTypeName.Substring(lastDotIndex + 1).Split(',')[0].Trim()
+      : messageTypeName.Split(',')[0].Trim();
+    var handlerName = simpleTypeName + "Handler";
+
+    var streamId = _extractStreamId(envelope);
+
+    LogSerializeInboxMessage(_logger, envelope.MessageId.Value, simpleTypeName, isEvent, streamId);
 
     return new InboxMessage {
       MessageId = envelope.MessageId.Value,
       HandlerName = handlerName,
-      Envelope = jsonEnvelope,  // MessageEnvelope<JsonElement>
-      EnvelopeType = envelopeTypeName,
+      Envelope = jsonEnvelope,
+      EnvelopeType = envelopeTypeFromTransport,  // Use the original type from transport!
       StreamId = streamId,
       IsEvent = isEvent,
       MessageType = messageTypeName
     };
+  }
+
+  /// <summary>
+  /// Extracts the message type name from an envelope type name.
+  /// Parses "MessageEnvelope`1[[MyApp.CreateProductCommand, MyApp]], Whizbang.Core"
+  /// and returns "MyApp.CreateProductCommand, MyApp".
+  /// </summary>
+  private static string _extractMessageTypeFromEnvelopeType(string envelopeTypeName) {
+    var startIndex = envelopeTypeName.IndexOf("[[", StringComparison.Ordinal);
+    var endIndex = envelopeTypeName.IndexOf("]]", StringComparison.Ordinal);
+
+    if (startIndex == -1 || endIndex == -1 || startIndex >= endIndex) {
+      throw new InvalidOperationException(
+        $"Invalid envelope type name format: '{envelopeTypeName}'. " +
+        $"Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'");
+    }
+
+    var messageTypeName = envelopeTypeName.Substring(startIndex + 2, endIndex - startIndex - 2);
+
+    if (string.IsNullOrWhiteSpace(messageTypeName)) {
+      throw new InvalidOperationException(
+        $"Failed to extract message type name from envelope type: '{envelopeTypeName}'");
+    }
+
+    return messageTypeName;
   }
 
   /// <summary>
