@@ -5,7 +5,7 @@ using RabbitMQ.Client.Events;
 #pragma warning disable CA1822 // Member does not access instance data (test doubles)
 #pragma warning disable CA1852 // Type can be sealed (test doubles)
 
-namespace Whizbang.Transports.RabbitMQ.Tests;
+namespace Whizbang.Hosting.RabbitMQ.Tests;
 
 /// <summary>
 /// Test doubles for RabbitMQ interfaces.
