@@ -21,7 +21,11 @@ using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
 using Whizbang.Data.EFCore.Postgres.Generated;
+#if AZURESERVICEBUS
 using Whizbang.Transports.AzureServiceBus;
+#elif RABBITMQ
+using Whizbang.Transports.RabbitMQ;
+#endif
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -40,8 +44,17 @@ builder.AddServiceDefaults();
 // Get connection strings from Aspire configuration
 var postgresConnection = builder.Configuration.GetConnectionString("bffdb")
     ?? throw new InvalidOperationException("PostgreSQL connection string 'bffdb' not found");
+
+#if AZURESERVICEBUS
 var serviceBusConnection = builder.Configuration.GetConnectionString("servicebus")
     ?? throw new InvalidOperationException("Azure Service Bus connection string 'servicebus' not found");
+
+#elif RABBITMQ
+var rabbitMqConnection = builder.Configuration.GetConnectionString("rabbitmq")
+    ?? throw new InvalidOperationException("RabbitMQ connection string 'rabbitmq' not found");
+
+#endif
+
 var angularUrl = builder.Configuration["services:ui:http:0"]
     ?? builder.Configuration.GetConnectionString("ui")
     ?? "http://localhost:4200";  // Fallback for local development without Aspire
@@ -49,10 +62,17 @@ var angularUrl = builder.Configuration["services:ui:http:0"]
 // Register combined JsonSerializerOptions in DI container for transport consumer worker
 builder.Services.AddSingleton(Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 
-// Register Azure Service Bus transport
+// Register transport
+#if AZURESERVICEBUS
 // Note: Transport creates JsonSerializerOptions from registry (now includes ECommerce.Contracts converters)
 builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
 builder.Services.AddAzureServiceBusHealthChecks();
+
+#elif RABBITMQ
+builder.Services.AddRabbitMQTransport(rabbitMqConnection);
+builder.Services.AddRabbitMQHealthChecks();
+
+#endif
 
 // Add trace store for observability
 builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
@@ -126,13 +146,22 @@ builder.Services
   .AddSorting()    // Enable ORDER BY clauses
   .AddProjections();  // Enable field selection optimization
 
-// Register transport readiness check (ServiceBusReadinessCheck for Azure Service Bus)
+// Register transport readiness check
+#if AZURESERVICEBUS
 builder.Services.AddSingleton<ITransportReadinessCheck>(sp => {
   var transport = sp.GetRequiredService<ITransport>();
   var client = sp.GetRequiredService<Azure.Messaging.ServiceBus.ServiceBusClient>();
   var logger = sp.GetRequiredService<ILogger<Whizbang.Hosting.Azure.ServiceBus.ServiceBusReadinessCheck>>();
   return new Whizbang.Hosting.Azure.ServiceBus.ServiceBusReadinessCheck(transport, client, logger);
 });
+
+#elif RABBITMQ
+builder.Services.AddSingleton<ITransportReadinessCheck>(sp => {
+  var connection = sp.GetRequiredService<RabbitMQ.Client.IConnection>();
+  return new Whizbang.Hosting.RabbitMQ.RabbitMQReadinessCheck(connection);
+});
+
+#endif
 
 // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
 builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
@@ -144,12 +173,48 @@ builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
 
 // Transport consumer - receives events from all services
 // Perspectives are invoked automatically via PerspectiveInvoker
-// NOTE: Subscription names must be unique across all topics in Aspire AppHost model
 var consumerOptions = new TransportConsumerOptions();
-consumerOptions.Destinations.Add(new TransportDestination("products", "sub-bff-products"));
-consumerOptions.Destinations.Add(new TransportDestination("orders", "sub-bff-orders"));
-consumerOptions.Destinations.Add(new TransportDestination("payments", "sub-bff-payments"));
-consumerOptions.Destinations.Add(new TransportDestination("shipping", "sub-bff-shipping"));
+
+#if AZURESERVICEBUS
+// Azure Service Bus subscription names (must be unique across all topics in Aspire AppHost model)
+consumerOptions.Destinations.Add(new TransportDestination(
+  Address: "products",
+  RoutingKey: "sub-bff-products"
+));
+consumerOptions.Destinations.Add(new TransportDestination(
+  Address: "orders",
+  RoutingKey: "sub-bff-orders"
+));
+consumerOptions.Destinations.Add(new TransportDestination(
+  Address: "payments",
+  RoutingKey: "sub-bff-payments"
+));
+consumerOptions.Destinations.Add(new TransportDestination(
+  Address: "shipping",
+  RoutingKey: "sub-bff-shipping"
+));
+
+#elif RABBITMQ
+// RabbitMQ exchanges and queues
+consumerOptions.Destinations.Add(new TransportDestination(
+  Address: "products",             // RabbitMQ exchange name
+  RoutingKey: "bff-products-queue" // RabbitMQ queue name
+));
+consumerOptions.Destinations.Add(new TransportDestination(
+  Address: "orders",
+  RoutingKey: "bff-orders-queue"
+));
+consumerOptions.Destinations.Add(new TransportDestination(
+  Address: "payments",
+  RoutingKey: "bff-payments-queue"
+));
+consumerOptions.Destinations.Add(new TransportDestination(
+  Address: "shipping",
+  RoutingKey: "bff-shipping-queue"
+));
+
+#endif
+
 builder.Services.AddSingleton(consumerOptions);
 builder.Services.AddHostedService<TransportConsumerWorker>();
 
