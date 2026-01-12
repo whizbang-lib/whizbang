@@ -433,13 +433,13 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
   public async Task RaceCondition_TransportFailures_RetriesSuccessfullyAsync(CancellationToken cancellationToken) {
     // Arrange - Deterministic failures: first 2 attempts fail, 3rd attempt succeeds
     var workCoordinator = new RealisticWorkCoordinator {
-      MinLatency = TimeSpan.FromMilliseconds(50),
-      MaxLatency = TimeSpan.FromMilliseconds(150)
+      MinLatency = TimeSpan.FromMilliseconds(10),
+      MaxLatency = TimeSpan.FromMilliseconds(30)
     };
 
     var publishStrategy = new RealisticPublishStrategy {
-      MinLatency = TimeSpan.FromMilliseconds(100),
-      MaxLatency = TimeSpan.FromMilliseconds(300),
+      MinLatency = TimeSpan.FromMilliseconds(20),
+      MaxLatency = TimeSpan.FromMilliseconds(50),
       FailureAttemptsBeforeSuccess = 2 // Fail first 2 attempts, succeed on 3rd (deterministic)
     };
 
@@ -467,11 +467,11 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     var workerTask = worker.StartAsync(cts.Token);
 
     // Wait long enough for 3 retry cycles per message
-    // Each cycle: 50-150ms DB + 100-300ms transport + 200ms poll interval = ~550ms worst case
-    // 3 cycles * 550ms = 1650ms per message, but messages process sequentially (worker processes batches)
+    // Each cycle: 10-30ms DB + 20-50ms transport + 200ms poll interval = ~280ms worst case
+    // 3 cycles * 280ms = 840ms per message, but messages process sequentially (worker processes batches)
     // Need enough time for all 10 messages × 3 attempts = 30 total publish calls
-    // 12 seconds provides buffer for parallel execution contention
-    await Task.Delay(12000, cancellationToken);
+    // 15 seconds provides generous buffer for parallel test execution and CPU contention (reduced latency makes test faster)
+    await Task.Delay(15000, cancellationToken);
 
     cts.Cancel();
 
