@@ -20,6 +20,13 @@
     <!-- Suppress IL warnings from EF Core InMemory and configuration binding -->
     <!-- <WarningsAsErrors>$(WarningsAsErrors);IL2026;IL2046;IL2075;IL3050</WarningsAsErrors> -->
     <NoWarn>$(NoWarn);IL2026;IL3050;IL2057</NoWarn>
+
+    <!-- Transport Provider Selection for Multi-Transport Support -->
+    <!-- Usage: dotnet build /p:TransportProvider=RabbitMQ -->
+    <!-- Default: Azure Service Bus -->
+    <DefineConstants Condition="'$(TransportProvider)' == ''">AZURESERVICEBUS</DefineConstants>
+    <DefineConstants Condition="'$(TransportProvider)' == 'RabbitMQ'">RABBITMQ</DefineConstants>
+    <DefineConstants Condition="'$(TransportProvider)' == 'AzureServiceBus'">AZURESERVICEBUS</DefineConstants>
   </PropertyGroup>
 
   <!-- BannedApiAnalyzers - Ban reflection attributes (except in test projects) -->
