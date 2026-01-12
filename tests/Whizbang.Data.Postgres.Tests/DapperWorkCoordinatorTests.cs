@@ -1860,7 +1860,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     await connection.ExecuteAsync(@"
       INSERT INTO wh_outbox (
-        message_id, destination, event_type, event_data, metadata, scope,
+        message_id, destination, message_type, event_data, metadata, scope,
         status, attempts, error, created_at, published_at,
         instance_id, lease_expiry, stream_id, partition_number, is_event, scheduled_for
       ) VALUES (
@@ -1975,7 +1975,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     await connection.ExecuteAsync(@"
       INSERT INTO wh_inbox (
-        message_id, handler_name, event_type, event_data, metadata, scope,
+        message_id, handler_name, message_type, event_data, metadata, scope,
         status, attempts, received_at, processed_at, instance_id, lease_expiry,
         stream_id, partition_number, is_event, scheduled_for
       ) VALUES (
