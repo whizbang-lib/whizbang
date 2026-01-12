@@ -455,20 +455,26 @@ public class PerspectiveLifecycleTests {
       }
     };
 
-    // Create waiter BEFORE sending commands to avoid race condition
+    // Create waiters BEFORE sending commands to avoid race condition
     // Each command creates 1 ProductCreatedEvent, which triggers 2 inventory perspectives + 2 BFF perspectives
     // 2 events × (2 inventory + 2 BFF) perspectives = 8 completions expected
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+    using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 4,
       bffPerspectives: 4);
+    // Each command also creates 1 InventoryRestockedEvent (since InitialStock > 0)
+    // 2 events × (1 inventory + 0 BFF) perspectives = 2 completions expected
+    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
+      inventoryPerspectives: 2,
+      bffPerspectives: 0);
 
     // Act - Dispatch multiple commands
     foreach (var command in commands) {
       await fixture.Dispatcher.SendAsync(command);
     }
 
-    // Wait for BOTH events to be processed through perspectives
-    await waiter.WaitAsync(timeoutMilliseconds: 30000);
+    // Wait for ALL events to be processed through perspectives
+    await productWaiter.WaitAsync(timeoutMilliseconds: 30000);
+    await restockWaiter.WaitAsync(timeoutMilliseconds: 30000);
 
     // Assert - Verify both products are saved
     var product1 = await fixture.BffProductLens.GetByIdAsync(commands[0].ProductId);
