@@ -195,15 +195,165 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
   }
 
   /// <inheritdoc />
-  public Task<ISubscription> SubscribeAsync(
+  public async Task<ISubscription> SubscribeAsync(
     Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
     TransportDestination destination,
     CancellationToken cancellationToken = default
   ) {
     ObjectDisposedException.ThrowIf(_disposed, this);
+    ArgumentNullException.ThrowIfNull(handler);
+    ArgumentNullException.ThrowIfNull(destination);
 
-    // TODO: Implement in Day 3
-    throw new NotImplementedException("SubscribeAsync not yet implemented");
+    if (!_isInitialized) {
+      throw new InvalidOperationException("RabbitMQ transport is not initialized. Call InitializeAsync() first.");
+    }
+
+    var exchangeName = destination.Address;
+    var queueName = destination.RoutingKey ?? _options.DefaultQueueName
+      ?? throw new InvalidOperationException("Queue name must be specified in TransportDestination.RoutingKey or RabbitMQOptions.DefaultQueueName");
+
+    // Get routing pattern from metadata if present, otherwise default to "#" (all messages)
+    var routingPattern = "#";
+    if (destination.Metadata?.TryGetValue("RoutingPattern", out var patternValue) == true) {
+      var patternStr = patternValue.ToString();
+      if (!string.IsNullOrEmpty(patternStr)) {
+        routingPattern = patternStr;
+      }
+    }
+
+    _logger?.LogDebug(
+      "Creating subscription for exchange {ExchangeName}, queue {QueueName}, routing pattern {RoutingPattern}",
+      exchangeName,
+      queueName,
+      routingPattern
+    );
+
+    try {
+      // Create dedicated channel for this consumer (long-lived, one per subscription)
+      var channel = await _connection.CreateChannelAsync(cancellationToken: cancellationToken);
+
+      // Set QoS prefetch count
+      await channel.BasicQosAsync(
+        prefetchSize: 0,
+        prefetchCount: _options.PrefetchCount,
+        global: false,
+        cancellationToken: cancellationToken
+      );
+
+      // Declare exchange (idempotent)
+      await channel.ExchangeDeclareAsync(
+        exchange: exchangeName,
+        type: "topic",
+        durable: true,
+        autoDelete: false,
+        arguments: null,
+        passive: false,
+        noWait: false,
+        cancellationToken: cancellationToken
+      );
+
+      // Declare dead-letter exchange and queue if enabled
+      if (_options.AutoDeclareDeadLetterExchange) {
+        var dlxName = $"{exchangeName}.dlx";
+        var dlqName = $"{queueName}.dlq";
+
+        await channel.ExchangeDeclareAsync(
+          exchange: dlxName,
+          type: "fanout",
+          durable: true,
+          autoDelete: false,
+          arguments: null,
+          passive: false,
+          noWait: false,
+          cancellationToken: cancellationToken
+        );
+
+        await channel.QueueDeclareAsync(
+          queue: dlqName,
+          durable: true,
+          exclusive: false,
+          autoDelete: false,
+          arguments: null,
+          passive: false,
+          noWait: false,
+          cancellationToken: cancellationToken
+        );
+
+        await channel.QueueBindAsync(
+          queue: dlqName,
+          exchange: dlxName,
+          routingKey: "",
+          arguments: null,
+          noWait: false,
+          cancellationToken: cancellationToken
+        );
+      }
+
+      // Declare consumer queue with dead-letter exchange
+      var queueArgs = new Dictionary<string, object?>();
+      if (_options.AutoDeclareDeadLetterExchange) {
+        queueArgs["x-dead-letter-exchange"] = $"{exchangeName}.dlx";
+      }
+
+      await channel.QueueDeclareAsync(
+        queue: queueName,
+        durable: true,
+        exclusive: false,
+        autoDelete: false,
+        arguments: queueArgs,
+        passive: false,
+        noWait: false,
+        cancellationToken: cancellationToken
+      );
+
+      // Bind queue to exchange with routing pattern
+      await channel.QueueBindAsync(
+        queue: queueName,
+        exchange: exchangeName,
+        routingKey: routingPattern,
+        arguments: null,
+        noWait: false,
+        cancellationToken: cancellationToken
+      );
+
+      // Create consumer with unique tag
+      var consumerTag = $"{queueName}-{Guid.NewGuid():N}";
+
+      // Start consuming
+      var actualConsumerTag = await channel.BasicConsumeAsync(
+        queue: queueName,
+        autoAck: false, // Manual acknowledgment for reliability
+        consumerTag: consumerTag,
+        noLocal: false,
+        exclusive: false,
+        arguments: null,
+        consumer: null!, // We're not using the old-style consumer API
+        cancellationToken: cancellationToken
+      );
+
+      // Create subscription wrapper
+      var subscription = new RabbitMQSubscription(channel, actualConsumerTag, _logger);
+
+      _logger?.LogInformation(
+        "Created subscription {ConsumerTag} for exchange {ExchangeName}, queue {QueueName}",
+        actualConsumerTag,
+        exchangeName,
+        queueName
+      );
+
+      return subscription;
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      _logger?.LogError(
+        ex,
+        "Failed to create subscription for exchange {ExchangeName}, queue {QueueName}",
+        exchangeName,
+        queueName
+      );
+      throw new InvalidOperationException(
+        $"Failed to create RabbitMQ subscription for exchange '{exchangeName}', queue '{queueName}'. See inner exception for details.",
+        ex
+      );
+    }
   }
 
   /// <inheritdoc />
