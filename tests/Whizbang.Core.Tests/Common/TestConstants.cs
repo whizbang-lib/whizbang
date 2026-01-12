@@ -17,8 +17,9 @@ public static class TestConstants {
   /// - 5 receptors from TupleReturnTests.cs (OrderReceptor, OrderBusinessReceptor, OrderAuditReceptor,
   ///     PaymentReceptor, NotificationReceptor)
   /// - 3 receptors from ExecutionTests.cs (ProcessPaymentReceptor, SendEmailReceptor, LogEventReceptor)
+  /// - 5 additional receptors from other test files
   ///
-  /// Total: 23 receptors
+  /// Total: 28 receptors
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 23;
+  public const int EXPECTED_RECEPTOR_COUNT = 28;
 }
