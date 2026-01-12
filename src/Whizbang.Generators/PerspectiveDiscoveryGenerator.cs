@@ -74,10 +74,14 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     ));
 
     // Get assembly name (simple name only, no version/culture/publicKeyToken)
-    var assemblyName = typeSymbol.ContainingAssembly.Name;
+    // For array types, get assembly from the element type (array types don't have ContainingAssembly)
+    var assemblyName = typeSymbol is IArrayTypeSymbol arrayType
+        ? arrayType.ElementType.ContainingAssembly.Name
+        : typeSymbol.ContainingAssembly.Name;
 
     // Format: "TypeName, AssemblyName"
     // Example: "ECommerce.Contracts.ProductCreatedEvent, ECommerce.Contracts"
+    // Example (array): "ECommerce.Contracts.ProductCreatedEvent[], ECommerce.Contracts"
     return $"{typeName}, {assemblyName}";
   }
 

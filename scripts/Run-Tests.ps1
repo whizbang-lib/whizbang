@@ -237,6 +237,10 @@ try {
         Write-Host ""
     } else {
         Write-Host "[WHIZBANG TEST SUITE - AI MODE]" -ForegroundColor Cyan
+
+        # Display actual command line that was used
+        Write-Host "Command: $($MyInvocation.Line)" -ForegroundColor DarkGray
+
         Write-Host "Max Parallel: $MaxParallel" -ForegroundColor Gray
         Write-Host "Mode: $Mode" -ForegroundColor Gray
         if ($onlyIntegrationTests) {
