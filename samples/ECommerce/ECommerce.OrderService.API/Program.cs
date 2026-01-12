@@ -14,7 +14,11 @@ using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
+#if AZURESERVICEBUS
 using Whizbang.Transports.AzureServiceBus;
+#elif RABBITMQ
+using Whizbang.Transports.RabbitMQ;
+#endif
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -37,13 +41,28 @@ builder.Services.AddOpenApi();
 // Get connection strings from Aspire configuration
 var postgresConnection = builder.Configuration.GetConnectionString("ordersdb")
     ?? throw new InvalidOperationException("PostgreSQL connection string 'ordersdb' not found");
+
+#if AZURESERVICEBUS
 var serviceBusConnection = builder.Configuration.GetConnectionString("servicebus")
     ?? throw new InvalidOperationException("Azure Service Bus connection string 'servicebus' not found");
 
-// Register Azure Service Bus transport
+#elif RABBITMQ
+var rabbitMqConnection = builder.Configuration.GetConnectionString("rabbitmq")
+    ?? throw new InvalidOperationException("RabbitMQ connection string 'rabbitmq' not found");
+
+#endif
+
+// Register transport
+#if AZURESERVICEBUS
 // Note: Transport uses JsonContextRegistry internally for serialization
 builder.Services.AddAzureServiceBusTransport(serviceBusConnection);
 builder.Services.AddAzureServiceBusHealthChecks();
+
+#elif RABBITMQ
+builder.Services.AddRabbitMQTransport(rabbitMqConnection);
+builder.Services.AddRabbitMQHealthChecks();
+
+#endif
 
 // Add trace store for observability
 builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
@@ -72,13 +91,22 @@ builder.Services.AddReceptors();
 builder.Services.AddWhizbangDispatcher();
 builder.Services.AddWhizbangAggregateIdExtractor();
 
-// Register transport readiness check (ServiceBusReadinessCheck for Azure Service Bus)
+// Register transport readiness check
+#if AZURESERVICEBUS
 builder.Services.AddSingleton<ITransportReadinessCheck>(sp => {
   var transport = sp.GetRequiredService<ITransport>();
   var client = sp.GetRequiredService<Azure.Messaging.ServiceBus.ServiceBusClient>();
   var logger = sp.GetRequiredService<ILogger<Whizbang.Hosting.Azure.ServiceBus.ServiceBusReadinessCheck>>();
   return new Whizbang.Hosting.Azure.ServiceBus.ServiceBusReadinessCheck(transport, client, logger);
 });
+
+#elif RABBITMQ
+builder.Services.AddSingleton<ITransportReadinessCheck>(sp => {
+  var connection = sp.GetRequiredService<RabbitMQ.Client.IConnection>();
+  return new Whizbang.Hosting.RabbitMQ.RabbitMQReadinessCheck(connection);
+});
+
+#endif
 
 // Register IMessagePublishStrategy for WorkCoordinatorPublisherWorker
 var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
