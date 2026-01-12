@@ -9,6 +9,7 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" />
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
+    <PackageReference Include="RabbitMQ.Client" />
   </ItemGroup>
 
   <ItemGroup>
@@ -17,8 +18,10 @@
     <ProjectReference Include="../../../src/Whizbang.Data.EFCore.Postgres/Whizbang.Data.EFCore.Postgres.csproj" />
     <ProjectReference Include="../../../src/Whizbang.Data.EFCore.Postgres.Generators/Whizbang.Data.EFCore.Postgres.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     <ProjectReference Include="../../../src/Whizbang.Transports.AzureServiceBus/Whizbang.Transports.AzureServiceBus.csproj" />
+    <ProjectReference Include="../../../src/Whizbang.Transports.RabbitMQ/Whizbang.Transports.RabbitMQ.csproj" />
+    <ProjectReference Include="../../../src/Whizbang.Hosting.Azure.ServiceBus/Whizbang.Hosting.Azure.ServiceBus.csproj" />
+    <ProjectReference Include="../../../src/Whizbang.Hosting.RabbitMQ/Whizbang.Hosting.RabbitMQ.csproj" />
     <ProjectReference Include="../ECommerce.Contracts/ECommerce.Contracts.csproj" />
     <ProjectReference Include="..\ECommerce.ServiceDefaults\ECommerce.ServiceDefaults.csproj" />
-    <ProjectReference Include="..\..\..\src\Whizbang.Hosting.Azure.ServiceBus\Whizbang.Hosting.Azure.ServiceBus.csproj" />
   </ItemGroup>
 </Project>
