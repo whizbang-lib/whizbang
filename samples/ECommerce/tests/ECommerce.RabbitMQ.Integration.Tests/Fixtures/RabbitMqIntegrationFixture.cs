@@ -463,6 +463,63 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     }
   }
 
+  /// <summary>
+  /// Creates a perspective completion waiter that registers receptors BEFORE sending commands.
+  /// This avoids race conditions where perspectives complete before receptors are registered.
+  /// </summary>
+  /// <typeparam name="TEvent">The event type to wait for</typeparam>
+  /// <param name="inventoryPerspectives">Number of perspectives expected in InventoryWorker host</param>
+  /// <param name="bffPerspectives">Number of perspectives expected in BFF host</param>
+  /// <returns>A waiter that can be used to wait for perspective completion</returns>
+  /// <remarks>
+  /// Usage:
+  /// <code>
+  /// // ProductCreatedEvent triggers 2 perspectives in each host
+  /// using var waiter = fixture.CreatePerspectiveWaiter&lt;ProductCreatedEvent&gt;(
+  ///   inventoryPerspectives: 2,
+  ///   bffPerspectives: 2
+  /// );
+  /// await fixture.Dispatcher.SendAsync(command);
+  /// await waiter.WaitAsync(timeout: 15000);
+  /// </code>
+  /// </remarks>
+  /// <docs>testing/lifecycle-synchronization</docs>
+  public PerspectiveCompletionWaiter<TEvent> CreatePerspectiveWaiter<TEvent>(
+    int inventoryPerspectives,
+    int bffPerspectives)
+    where TEvent : IEvent {
+
+    var inventoryRegistry = _inventoryHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var bffRegistry = _bffHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+
+    return new PerspectiveCompletionWaiter<TEvent>(
+      inventoryRegistry,
+      bffRegistry,
+      inventoryPerspectives,
+      bffPerspectives
+    );
+  }
+
+  /// <summary>
+  /// Waits for perspective processing to complete using lifecycle receptors.
+  /// This is a convenience method that creates a waiter, waits, and disposes it.
+  /// </summary>
+  /// <typeparam name="TEvent">The event type to wait for</typeparam>
+  /// <param name="inventoryPerspectives">Number of perspectives expected in InventoryWorker host</param>
+  /// <param name="bffPerspectives">Number of perspectives expected in BFF host</param>
+  /// <param name="timeoutMilliseconds">Maximum time to wait in milliseconds (default: 15000ms)</param>
+  /// <exception cref="TimeoutException">Thrown if perspective processing doesn't complete within timeout</exception>
+  /// <docs>testing/lifecycle-synchronization</docs>
+  public async Task WaitForPerspectiveCompletionAsync<TEvent>(
+    int inventoryPerspectives,
+    int bffPerspectives,
+    int timeoutMilliseconds = 15000)
+    where TEvent : IEvent {
+
+    using var waiter = CreatePerspectiveWaiter<TEvent>(inventoryPerspectives, bffPerspectives);
+    await waiter.WaitAsync(timeoutMilliseconds);
+  }
+
   public async ValueTask DisposeAsync() {
     // Dispose scopes
     _inventoryScope?.Dispose();
