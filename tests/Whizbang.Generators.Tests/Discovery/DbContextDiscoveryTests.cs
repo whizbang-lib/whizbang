@@ -7,56 +7,58 @@ namespace Whizbang.Generators.Tests.Discovery;
 
 /// <summary>
 /// Tests for DbContextDiscovery helper class.
-/// NOTE: DbContextDiscovery is currently not used by any generators.
-/// These are stub tests for future use when the helper is integrated.
+/// NOTE: DbContextDiscovery is NOT used by any generators and has limited utility.
+/// The helper provides basic DbContext discovery, but EFCorePerspectiveConfigurationGenerator
+/// implements its own specialized logic (attribute checking, schema derivation, etc.) that
+/// doesn't map cleanly to this helper. These tests are skipped as the helper is not used.
 /// </summary>
 public class DbContextDiscoveryTests {
 
   [Test]
   [RequiresAssemblyFiles]
-  [Skip("TODO: Implement test when DbContextDiscovery is used by a generator")]
+  [Skip("DbContextDiscovery helper is not used by any generator. EFCorePerspectiveConfigurationGenerator implements its own specialized discovery logic.")]
   public async Task IsPotentialDbContext_ClassWithBaseList_ReturnsTrueAsync() {
     await Task.CompletedTask;
   }
 
   [Test]
   [RequiresAssemblyFiles]
-  [Skip("TODO: Implement test when DbContextDiscovery is used by a generator")]
+  [Skip("DbContextDiscovery helper is not used by any generator. EFCorePerspectiveConfigurationGenerator implements its own specialized discovery logic.")]
   public async Task IsPotentialDbContext_ClassWithoutBaseList_ReturnsFalseAsync() {
     await Task.CompletedTask;
   }
 
   [Test]
   [RequiresAssemblyFiles]
-  [Skip("TODO: Implement test when DbContextDiscovery is used by a generator")]
+  [Skip("DbContextDiscovery helper is not used by any generator. EFCorePerspectiveConfigurationGenerator implements its own specialized discovery logic.")]
   public async Task Extract_DbContextClass_ReturnsDbContextInfoAsync() {
     await Task.CompletedTask;
   }
 
   [Test]
   [RequiresAssemblyFiles]
-  [Skip("TODO: Implement test when DbContextDiscovery is used by a generator")]
+  [Skip("DbContextDiscovery helper is not used by any generator. EFCorePerspectiveConfigurationGenerator implements its own specialized discovery logic.")]
   public async Task Extract_NonDbContextClass_ReturnsNullAsync() {
     await Task.CompletedTask;
   }
 
   [Test]
   [RequiresAssemblyFiles]
-  [Skip("TODO: Implement test when DbContextDiscovery is used by a generator")]
+  [Skip("DbContextDiscovery helper is not used by any generator. EFCorePerspectiveConfigurationGenerator implements its own specialized discovery logic.")]
   public async Task Extract_DbContextWithPerspectives_ExtractsExistingPerspectivesAsync() {
     await Task.CompletedTask;
   }
 
   [Test]
   [RequiresAssemblyFiles]
-  [Skip("TODO: Implement test when DbContextDiscovery is used by a generator")]
+  [Skip("DbContextDiscovery helper is not used by any generator. EFCorePerspectiveConfigurationGenerator implements its own specialized discovery logic.")]
   public async Task ExtractExistingPerspectives_WithPerspectiveDbSets_ExtractsModelTypesAsync() {
     await Task.CompletedTask;
   }
 
   [Test]
   [RequiresAssemblyFiles]
-  [Skip("TODO: Implement test when DbContextDiscovery is used by a generator")]
+  [Skip("DbContextDiscovery helper is not used by any generator. EFCorePerspectiveConfigurationGenerator implements its own specialized discovery logic.")]
   public async Task ExtractExistingPerspectives_WithoutPerspectives_ReturnsEmptyAsync() {
     await Task.CompletedTask;
   }
