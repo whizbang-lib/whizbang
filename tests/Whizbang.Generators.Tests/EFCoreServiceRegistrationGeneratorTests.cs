@@ -675,8 +675,8 @@ public class EFCoreServiceRegistrationGeneratorTests {
     // Pattern: ("migration_name.sql", @"SQL content")
     await Assert.That(sourceText).Contains(", @\"");
 
-    // Should call ExecuteSqlRawAsync with migration SQL from tuple
-    await Assert.That(sourceText).Contains("await dbContext.Database.ExecuteSqlRawAsync(sql");
+    // Should call ExecuteSqlRawAsync with migration SQL (variable names may vary: sql, transformedSql, etc.)
+    await Assert.That(sourceText).Contains("await dbContext.Database.ExecuteSqlRawAsync(");
   }
 
   /// <summary>

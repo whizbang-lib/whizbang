@@ -474,7 +474,7 @@ public class AggregateIdGeneratorTests {
     await Assert.That(diagnostics).Count().IsGreaterThanOrEqualTo(1);
     var invalidTypeDiagnostic = diagnostics.FirstOrDefault(d => d.Id == "WHIZ005");
     await Assert.That(invalidTypeDiagnostic).IsNotNull();
-    await Assert.That(invalidTypeDiagnostic!.GetMessage(CultureInfo.InvariantCulture)).Contains("must be of type Guid or Guid?");
+    await Assert.That(invalidTypeDiagnostic!.GetMessage(CultureInfo.InvariantCulture)).Contains("must be of type Guid, Guid?, or a type with a .Value property returning Guid");
   }
 
   [Test]
