@@ -46,7 +46,7 @@ var angularUrl = builder.Configuration["services:ui:http:0"]
     ?? builder.Configuration.GetConnectionString("ui")
     ?? "http://localhost:4200";  // Fallback for local development without Aspire
 
-// Register combined JsonSerializerOptions in DI container for ServiceBusConsumerWorker
+// Register combined JsonSerializerOptions in DI container for transport consumer worker
 builder.Services.AddSingleton(Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions());
 
 // Register Azure Service Bus transport
@@ -60,7 +60,7 @@ builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
 // Register service instance provider (MUST be before workers that depend on it)
 builder.Services.AddSingleton<IServiceInstanceProvider, ServiceInstanceProvider>();
 
-// Register OrderedStreamProcessor for message ordering in ServiceBusConsumerWorker
+// Register OrderedStreamProcessor for message ordering in transport consumer workers
 builder.Services.AddSingleton<OrderedStreamProcessor>();
 
 // Configure WorkCoordinatorPublisherOptions from appsettings.json
@@ -142,26 +142,16 @@ builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
   )
 );
 
-// Service Bus consumer - receives events from all services
+// Transport consumer - receives events from all services
 // Perspectives are invoked automatically via PerspectiveInvoker
 // NOTE: Subscription names must be unique across all topics in Aspire AppHost model
-var consumerOptions = new ServiceBusConsumerOptions();
-consumerOptions.Subscriptions.Add(new TopicSubscription("products", "sub-bff-products"));
-consumerOptions.Subscriptions.Add(new TopicSubscription("orders", "sub-bff-orders"));
-consumerOptions.Subscriptions.Add(new TopicSubscription("payments", "sub-bff-payments"));
-consumerOptions.Subscriptions.Add(new TopicSubscription("shipping", "sub-bff-shipping"));
+var consumerOptions = new TransportConsumerOptions();
+consumerOptions.Destinations.Add(new TransportDestination("products", "sub-bff-products"));
+consumerOptions.Destinations.Add(new TransportDestination("orders", "sub-bff-orders"));
+consumerOptions.Destinations.Add(new TransportDestination("payments", "sub-bff-payments"));
+consumerOptions.Destinations.Add(new TransportDestination("shipping", "sub-bff-shipping"));
 builder.Services.AddSingleton(consumerOptions);
-builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
-  new ServiceBusConsumerWorker(
-    sp.GetRequiredService<IServiceInstanceProvider>(),
-    sp.GetRequiredService<ITransport>(),
-    sp.GetRequiredService<IServiceScopeFactory>(),
-    sp.GetRequiredService<JsonSerializerOptions>(),
-    sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
-    sp.GetRequiredService<OrderedStreamProcessor>(),
-    consumerOptions
-  )
-);
+builder.Services.AddHostedService<TransportConsumerWorker>();
 
 // Outbox publisher worker - publishes pending messages from outbox to Service Bus
 // Options configured via appsettings.json "WorkCoordinatorPublisher" section

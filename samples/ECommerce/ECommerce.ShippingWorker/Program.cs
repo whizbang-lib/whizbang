@@ -65,11 +65,11 @@ builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
 // WorkCoordinator publisher - atomic coordination with lease-based work claiming
 builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
 
-// Service Bus consumer
-var consumerOptions = new ServiceBusConsumerOptions();
-consumerOptions.Subscriptions.Add(new TopicSubscription("orders", "sub-shipping-orders"));
+// Transport consumer
+var consumerOptions = new TransportConsumerOptions();
+consumerOptions.Destinations.Add(new TransportDestination("orders", "sub-shipping-orders"));
 builder.Services.AddSingleton(consumerOptions);
-builder.Services.AddHostedService<ServiceBusConsumerWorker>();
+builder.Services.AddHostedService<TransportConsumerWorker>();
 
 var host = builder.Build();
 

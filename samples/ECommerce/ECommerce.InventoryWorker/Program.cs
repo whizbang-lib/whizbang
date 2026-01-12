@@ -106,25 +106,15 @@ builder.Services.AddSingleton<IMessagePublishStrategy>(sp =>
   )
 );
 
-// Service Bus consumer - receives events and commands
-var consumerOptions = new ServiceBusConsumerOptions();
+// Transport consumer - receives events and commands
+var consumerOptions = new TransportConsumerOptions();
 // Event subscription - receives all events published to "products" topic
-consumerOptions.Subscriptions.Add(new TopicSubscription("products", "sub-inventory-products"));
-// Inbox subscription - receives point-to-point messages with CorrelationFilter
+consumerOptions.Destinations.Add(new TransportDestination("products", "sub-inventory-products"));
+// Inbox subscription - receives point-to-point messages with destination filter
 // Note: Subscription name and destination filter must match those registered in AppHost
-consumerOptions.Subscriptions.Add(new TopicSubscription("inbox", "sub-inbox-inventory", "inventory-service"));
+consumerOptions.Destinations.Add(new TransportDestination("inbox", "sub-inbox-inventory"));
 builder.Services.AddSingleton(consumerOptions);
-builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
-  new ServiceBusConsumerWorker(
-    sp.GetRequiredService<IServiceInstanceProvider>(),
-    sp.GetRequiredService<ITransport>(),
-    sp.GetRequiredService<IServiceScopeFactory>(),
-    jsonOptions,
-    sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
-    sp.GetRequiredService<OrderedStreamProcessor>(),
-    consumerOptions
-  )
-);
+builder.Services.AddHostedService<TransportConsumerWorker>();
 
 // WorkCoordinator publisher - atomic coordination with lease-based work claiming
 // Options configured via appsettings.json "WorkCoordinatorPublisher" section
