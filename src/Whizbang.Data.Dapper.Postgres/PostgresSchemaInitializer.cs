@@ -140,6 +140,9 @@ public sealed class PostgresSchemaInitializer {
 
       var functionSql = await File.ReadAllTextAsync(functionFilePath, cancellationToken);
 
+      // Replace __SCHEMA__ placeholder with "public" (default PostgreSQL schema)
+      functionSql = functionSql.Replace("__SCHEMA__", "public");
+
       await using var functionCommand = connection.CreateCommand();
       functionCommand.CommandText = functionSql;
       functionCommand.CommandTimeout = 30;
@@ -193,6 +196,9 @@ public sealed class PostgresSchemaInitializer {
       }
 
       var functionSql = File.ReadAllText(functionFilePath);
+
+      // Replace __SCHEMA__ placeholder with "public" (default PostgreSQL schema)
+      functionSql = functionSql.Replace("__SCHEMA__", "public");
 
       using var functionCommand = connection.CreateCommand();
       functionCommand.CommandText = functionSql;

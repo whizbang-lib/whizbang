@@ -153,6 +153,9 @@ public abstract class PostgresTestBase : IAsyncDisposable {
       var functionFilePath = Path.Combine(migrationPath, functionFile);
       var functionSql = await File.ReadAllTextAsync(functionFilePath);
 
+      // Replace __SCHEMA__ placeholder with "public" (default PostgreSQL schema for tests)
+      functionSql = functionSql.Replace("__SCHEMA__", "public");
+
       using var functionCommand = (NpgsqlCommand)connection.CreateCommand();
       functionCommand.CommandText = functionSql;
       try {
