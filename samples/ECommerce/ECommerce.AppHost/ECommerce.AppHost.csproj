@@ -12,6 +12,7 @@
     <PackageReference Include="Aspire.Hosting.NodeJs" />
     <PackageReference Include="Aspire.Hosting.PostgreSQL" />
     <PackageReference Include="Aspire.Hosting.Azure.ServiceBus" />
+    <PackageReference Include="Aspire.Hosting.RabbitMQ" />
   </ItemGroup>
 
   <ItemGroup>
@@ -22,6 +23,7 @@
     <ProjectReference Include="..\ECommerce.ShippingWorker\ECommerce.ShippingWorker.csproj" />
     <ProjectReference Include="..\ECommerce.BFF.API\ECommerce.BFF.API.csproj" />
     <ProjectReference Include="..\..\..\src\Whizbang.Hosting.Azure.ServiceBus\Whizbang.Hosting.Azure.ServiceBus.csproj" IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\..\src\Whizbang.Hosting.RabbitMQ\Whizbang.Hosting.RabbitMQ.csproj" IsAspireProjectResource="false" />
   </ItemGroup>
 
 </Project>
