@@ -121,12 +121,12 @@ public class PostgresFunctionTests : PostgresTestBase {
       new { eventId, streamId, now = DateTimeOffset.UtcNow });
 
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_outbox (message_id, destination, event_type, event_data, metadata, status, instance_id, lease_expiry, created_at)
+      INSERT INTO wh_outbox (message_id, destination, message_type, event_data, metadata, status, instance_id, lease_expiry, created_at)
       VALUES (@messageId, 'test', 'Test', '{}'::jsonb, '{}'::jsonb, 1, @instanceId, @leaseExpiry, @now)",
       new { messageId = outboxMessageId, instanceId = staleInstanceId, leaseExpiry = staleTime.AddMinutes(5), now = staleTime });
 
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_inbox (message_id, handler_name, event_type, event_data, metadata, status, instance_id, lease_expiry, received_at)
+      INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, status, instance_id, lease_expiry, received_at)
       VALUES (@messageId, 'TestHandler', 'Test', '{}'::jsonb, '{}'::jsonb, 1, @instanceId, @leaseExpiry, @now)",
       new { messageId = inboxMessageId, instanceId = staleInstanceId, leaseExpiry = staleTime.AddMinutes(5), now = staleTime });
 
@@ -282,7 +282,7 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Insert outbox message
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_outbox (message_id, destination, event_type, event_data, metadata, status, stream_id, created_at)
+      INSERT INTO wh_outbox (message_id, destination, message_type, event_data, metadata, status, stream_id, created_at)
       VALUES (@messageId, 'test-destination', 'TestEvent', '{}'::jsonb, '{}'::jsonb, 1, @streamId, @now)",
       new { messageId, streamId, now });
 
@@ -321,7 +321,7 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Insert outbox message
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_outbox (message_id, destination, event_type, event_data, metadata, status, stream_id, created_at)
+      INSERT INTO wh_outbox (message_id, destination, message_type, event_data, metadata, status, stream_id, created_at)
       VALUES (@messageId, 'test-destination', 'TestEvent', '{}'::jsonb, '{}'::jsonb, 1, @streamId, @now)",
       new { messageId, streamId, now });
 
@@ -358,7 +358,7 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Insert inbox message
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_inbox (message_id, handler_name, event_type, event_data, metadata, status, stream_id, received_at)
+      INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, status, stream_id, received_at)
       VALUES (@messageId, 'TestHandler', 'TestEvent', '{}'::jsonb, '{}'::jsonb, 1, @streamId, @now)",
       new { messageId, streamId, now });
 
@@ -500,7 +500,7 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Insert outbox message
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_outbox (message_id, destination, event_type, event_data, metadata, status, stream_id, attempts, created_at)
+      INSERT INTO wh_outbox (message_id, destination, message_type, event_data, metadata, status, stream_id, attempts, created_at)
       VALUES (@messageId, 'test-destination', 'TestEvent', '{}'::jsonb, '{}'::jsonb, 1, @streamId, 0, @now)",
       new { messageId, streamId, now });
 
@@ -691,7 +691,7 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Insert pending outbox message for pendingStreamId
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_outbox (message_id, destination, event_type, event_data, metadata, status, stream_id, created_at)
+      INSERT INTO wh_outbox (message_id, destination, message_type, event_data, metadata, status, stream_id, created_at)
       VALUES (@messageId, 'test', 'Test', '{}'::jsonb, '{}'::jsonb, 1, @pendingStreamId, @now)",
       new { messageId = _idProvider.NewGuid(), pendingStreamId, now });
 
@@ -753,7 +753,7 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Insert orphaned outbox messages
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_outbox (message_id, destination, event_type, event_data, metadata, status, stream_id, partition_number, created_at, instance_id, lease_expiry)
+      INSERT INTO wh_outbox (message_id, destination, message_type, event_data, metadata, status, stream_id, partition_number, created_at, instance_id, lease_expiry)
       VALUES
         (@message1Id, 'test', 'Test', '{}'::jsonb, '{}'::jsonb, 1, @streamId, @partition1, @now, NULL, NULL),
         (@message2Id, 'test', 'Test', '{}'::jsonb, '{}'::jsonb, 1, @streamId, @partition1, @now, NULL, NULL)",
@@ -794,7 +794,7 @@ public class PostgresFunctionTests : PostgresTestBase {
 
     // Insert orphaned inbox messages for different streams
     await connection.ExecuteAsync(@"
-      INSERT INTO wh_inbox (message_id, handler_name, event_type, event_data, metadata, status, stream_id, received_at, instance_id, lease_expiry)
+      INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, status, stream_id, received_at, instance_id, lease_expiry)
       VALUES
         (@message1Id, 'TestHandler', 'Test', '{}'::jsonb, '{}'::jsonb, 1, @stream1Id, @now, NULL, NULL),
         (@message2Id, 'TestHandler', 'Test', '{}'::jsonb, '{}'::jsonb, 1, @stream2Id, @now, NULL, NULL)",
