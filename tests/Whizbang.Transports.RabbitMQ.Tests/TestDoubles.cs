@@ -63,6 +63,13 @@ internal class FakeChannel : IChannel {
   public bool ExchangeDeclareAsyncCalled { get; private set; }
   public bool BasicPublishAsyncCalled { get; private set; }
 
+  // Track method calls for SubscribeAsync tests
+  public bool QueueDeclareAsyncCalled { get; private set; }
+  public bool QueueBindAsyncCalled { get; private set; }
+  public bool BasicConsumeAsyncCalled { get; private set; }
+  public bool BasicCancelAsyncCalled { get; private set; }
+  public string? LastConsumerTag { get; private set; }
+
   // Members actually used by RabbitMQChannelPool
   public bool IsOpen => !IsDisposed;
   public void Dispose() => IsDisposed = true;
@@ -104,12 +111,33 @@ internal class FakeChannel : IChannel {
     return ValueTask.CompletedTask;
   }
 
+  // Implement subscription methods for SubscribeAsync tests
+  public Task<QueueDeclareOk> QueueDeclareAsync(string queue, bool durable, bool exclusive, bool autoDelete, IDictionary<string, object?>? arguments, bool passive, bool noWait, CancellationToken cancellationToken = default) {
+    QueueDeclareAsyncCalled = true;
+    // Return a fake QueueDeclareOk
+    return Task.FromResult(new QueueDeclareOk(queue, 0, 0));
+  }
+
+  public Task QueueBindAsync(string queue, string exchange, string routingKey, IDictionary<string, object?>? arguments, bool noWait, CancellationToken cancellationToken = default) {
+    QueueBindAsyncCalled = true;
+    return Task.CompletedTask;
+  }
+
+  public Task<string> BasicConsumeAsync(string queue, bool autoAck, string consumerTag, bool noLocal, bool exclusive, IDictionary<string, object?>? arguments, IAsyncBasicConsumer consumer, CancellationToken cancellationToken = default) {
+    BasicConsumeAsyncCalled = true;
+    LastConsumerTag = consumerTag;
+    return Task.FromResult(consumerTag);
+  }
+
+  public Task BasicCancelAsync(string consumerTag, bool noWait, CancellationToken cancellationToken = default) {
+    BasicCancelAsyncCalled = true;
+    return Task.CompletedTask;
+  }
+
   // All other methods throw NotImplementedException
   public ValueTask<ulong> GetNextPublishSequenceNumberAsync(CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task AbortAsync(ushort replyCode, string replyText, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public ValueTask BasicAckAsync(ulong deliveryTag, bool multiple, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-  public Task BasicCancelAsync(string consumerTag, bool noWait, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-  public Task<string> BasicConsumeAsync(string queue, bool autoAck, string consumerTag, bool noLocal, bool exclusive, IDictionary<string, object?>? arguments, IAsyncBasicConsumer consumer, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task<BasicGetResult?> BasicGetAsync(string queue, bool autoAck, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public ValueTask BasicNackAsync(ulong deliveryTag, bool multiple, bool requeue, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task BasicQosAsync(uint prefetchSize, ushort prefetchCount, bool global, CancellationToken cancellationToken = default) => throw new NotImplementedException();
@@ -123,8 +151,6 @@ internal class FakeChannel : IChannel {
   public Task ExchangeDeleteAsync(string exchange, bool ifUnused, bool noWait, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task ExchangeUnbindAsync(string destination, string source, string routingKey, IDictionary<string, object?>? arguments, bool noWait, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task<uint> MessageCountAsync(string queue, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-  public Task QueueBindAsync(string queue, string exchange, string routingKey, IDictionary<string, object?>? arguments, bool noWait, CancellationToken cancellationToken = default) => throw new NotImplementedException();
-  public Task<QueueDeclareOk> QueueDeclareAsync(string queue, bool durable, bool exclusive, bool autoDelete, IDictionary<string, object?>? arguments, bool passive, bool noWait, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task<QueueDeclareOk> QueueDeclarePassiveAsync(string queue, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task<uint> QueueDeleteAsync(string queue, bool ifUnused, bool ifEmpty, bool noWait, CancellationToken cancellationToken = default) => throw new NotImplementedException();
   public Task<uint> QueuePurgeAsync(string queue, CancellationToken cancellationToken = default) => throw new NotImplementedException();

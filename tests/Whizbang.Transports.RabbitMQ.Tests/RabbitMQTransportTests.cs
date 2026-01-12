@@ -138,6 +138,181 @@ public class RabbitMQTransportTests {
     await Assert.That(transport.IsInitialized).IsTrue();
   }
 
+  [Test]
+  public async Task SubscribeAsync_CreatesConsumer_AndInvokesHandlerAsync() {
+    // Arrange
+    var fakeChannel = new FakeChannel();
+    var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(fakeChannel));
+    var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 5);
+    // Use reflection-based JSON for unit tests (AOT compatibility tested in integration tests)
+    var jsonOptions = new JsonSerializerOptions {
+      TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+    };
+    var options = new RabbitMQOptions();
+
+    var transport = new RabbitMQTransport(
+      fakeConnection,
+      jsonOptions,
+      pool,
+      options,
+      logger: null
+    );
+
+    await transport.InitializeAsync();
+
+    var destination = new TransportDestination("test-exchange", "test-queue");
+
+    // Act
+    var subscription = await transport.SubscribeAsync(
+      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      destination
+    );
+
+    // Assert - Verify subscription created and consumer registered
+    await Assert.That(subscription).IsNotNull();
+    await Assert.That(fakeChannel.QueueDeclareAsyncCalled).IsTrue();
+    await Assert.That(fakeChannel.QueueBindAsyncCalled).IsTrue();
+    await Assert.That(fakeChannel.BasicConsumeAsyncCalled).IsTrue();
+  }
+
+  [Test]
+  public async Task Subscription_InitialState_IsActiveAsync() {
+    // Arrange
+    var fakeChannel = new FakeChannel();
+    var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(fakeChannel));
+    var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 5);
+    var jsonOptions = new JsonSerializerOptions {
+      TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+    };
+    var options = new RabbitMQOptions();
+
+    var transport = new RabbitMQTransport(
+      fakeConnection,
+      jsonOptions,
+      pool,
+      options,
+      logger: null
+    );
+
+    await transport.InitializeAsync();
+
+    var destination = new TransportDestination("test-exchange", "test-queue");
+
+    // Act
+    var subscription = await transport.SubscribeAsync(
+      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      destination
+    );
+
+    // Assert
+    await Assert.That(subscription.IsActive).IsTrue();
+  }
+
+  [Test]
+  public async Task Subscription_Pause_SetsIsActiveFalseAsync() {
+    // Arrange
+    var fakeChannel = new FakeChannel();
+    var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(fakeChannel));
+    var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 5);
+    var jsonOptions = new JsonSerializerOptions {
+      TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+    };
+    var options = new RabbitMQOptions();
+
+    var transport = new RabbitMQTransport(
+      fakeConnection,
+      jsonOptions,
+      pool,
+      options,
+      logger: null
+    );
+
+    await transport.InitializeAsync();
+
+    var destination = new TransportDestination("test-exchange", "test-queue");
+    var subscription = await transport.SubscribeAsync(
+      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      destination
+    );
+
+    // Act
+    await subscription.PauseAsync();
+
+    // Assert
+    await Assert.That(subscription.IsActive).IsFalse();
+  }
+
+  [Test]
+  public async Task Subscription_Resume_SetsIsActiveTrueAsync() {
+    // Arrange
+    var fakeChannel = new FakeChannel();
+    var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(fakeChannel));
+    var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 5);
+    var jsonOptions = new JsonSerializerOptions {
+      TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+    };
+    var options = new RabbitMQOptions();
+
+    var transport = new RabbitMQTransport(
+      fakeConnection,
+      jsonOptions,
+      pool,
+      options,
+      logger: null
+    );
+
+    await transport.InitializeAsync();
+
+    var destination = new TransportDestination("test-exchange", "test-queue");
+    var subscription = await transport.SubscribeAsync(
+      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      destination
+    );
+
+    await subscription.PauseAsync();
+
+    // Act
+    await subscription.ResumeAsync();
+
+    // Assert
+    await Assert.That(subscription.IsActive).IsTrue();
+  }
+
+  [Test]
+  public async Task Subscription_Dispose_CancelsConsumerAsync() {
+    // Arrange
+    var fakeChannel = new FakeChannel();
+    var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(fakeChannel));
+    var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 5);
+    var jsonOptions = new JsonSerializerOptions {
+      TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+    };
+    var options = new RabbitMQOptions();
+
+    var transport = new RabbitMQTransport(
+      fakeConnection,
+      jsonOptions,
+      pool,
+      options,
+      logger: null
+    );
+
+    await transport.InitializeAsync();
+
+    var destination = new TransportDestination("test-exchange", "test-queue");
+    var subscription = await transport.SubscribeAsync(
+      async (envelope, envelopeType, ct) => await Task.CompletedTask,
+      destination
+    );
+
+    // Act
+    subscription.Dispose();
+
+    // Assert - Verify consumer was cancelled
+    await Assert.That(fakeChannel.BasicCancelAsyncCalled).IsTrue();
+    await Assert.That(fakeChannel.IsDisposed).IsTrue();
+  }
+
   // Helper to create a test envelope
   private static MessageEnvelope<TestMessage> _createTestEnvelope() {
     return new MessageEnvelope<TestMessage> {
