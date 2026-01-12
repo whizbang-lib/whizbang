@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
+using ECommerce.Contracts.Events;
 using ECommerce.Integration.Tests.Fixtures;
 
 namespace ECommerce.Integration.Tests.Workflows.InMemory;
@@ -60,11 +61,10 @@ public class CreateProductWorkflowTests {
       InitialStock = 50
     };
 
-    // Act
+    // Act - Create waiter BEFORE sending command to avoid race condition
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
     await fixture.Dispatcher.SendAsync(command);
-
-    // Process events through perspectives (synchronous with InProcessTransport)
-    await fixture.WaitForEventProcessingAsync();
+    await waiter.WaitAsync(timeoutMilliseconds: 15000);
 
     // Assert - Verify in InventoryWorker perspective
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(command.ProductId);
@@ -132,8 +132,9 @@ public class CreateProductWorkflowTests {
     // Act - Create each product and wait for event processing
     // This ensures events are processed in order and perspectives are updated before the next product
     foreach (var command in commands) {
+      using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
       await fixture.Dispatcher.SendAsync(command);
-      await fixture.WaitForEventProcessingAsync();
+      await waiter.WaitAsync(timeoutMilliseconds: 15000);
     }
 
     // Assert - Verify all products materialized in InventoryWorker perspective
@@ -178,9 +179,10 @@ public class CreateProductWorkflowTests {
       InitialStock = 0
     };
 
-    // Act
+    // Act - Create waiter BEFORE sending command to avoid race condition
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
     await fixture.Dispatcher.SendAsync(command);
-    await fixture.WaitForEventProcessingAsync();
+    await waiter.WaitAsync(timeoutMilliseconds: 15000);
 
     // Assert - Verify product exists with zero inventory
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(command.ProductId);
@@ -211,9 +213,10 @@ public class CreateProductWorkflowTests {
       InitialStock = 25
     };
 
-    // Act
+    // Act - Create waiter BEFORE sending command to avoid race condition
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
     await fixture.Dispatcher.SendAsync(command);
-    await fixture.WaitForEventProcessingAsync();
+    await waiter.WaitAsync(timeoutMilliseconds: 15000);
 
     // Assert - Verify product exists with null ImageUrl
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(command.ProductId);

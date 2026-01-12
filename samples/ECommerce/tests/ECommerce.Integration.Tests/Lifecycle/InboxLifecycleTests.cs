@@ -136,6 +136,7 @@ public class InboxLifecycleTests {
   /// Tests the "receptor may complete before this stage finishes" guarantee.
   /// </summary>
   [Test]
+  [Timeout(90_000)]  // TUnit includes fixture initialization in test timeout (~60s setup + ~5s test)
   public async Task PreInboxAsync_MayCompleteAfterReceptor_NonBlockingGuaranteeAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -153,6 +154,7 @@ public class InboxLifecycleTests {
 
     var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PreInboxAsync);
+    using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
 
     try {
       // Act - Dispatch command
@@ -165,7 +167,7 @@ public class InboxLifecycleTests {
       await Assert.That(receptor.InvocationCount).IsEqualTo(1);
 
       // Verify that receptor processing happened (perspective materialized)
-      await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+      await perspectiveWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     } finally {
       registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PreInboxAsync);
@@ -215,6 +217,7 @@ public class InboxLifecycleTests {
   /// Tests the "receptor has completed successfully" guarantee.
   /// </summary>
   [Test]
+  [Timeout(90_000)]  // TUnit includes fixture initialization in test timeout (~60s setup + ~5s test)
   public async Task PostInboxAsync_FiresAfterSuccessfulCompletion_GuaranteesReceptorFinishedAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -232,6 +235,7 @@ public class InboxLifecycleTests {
 
     var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostInboxAsync);
+    using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
 
     try {
       // Act - Dispatch command
@@ -245,7 +249,7 @@ public class InboxLifecycleTests {
       await Assert.That(receptor.InvocationCount).IsEqualTo(1);
 
       // Verify that receptor processing completed (perspective should be materialized)
-      await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+      await perspectiveWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     } finally {
       registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostInboxAsync);

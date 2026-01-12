@@ -174,6 +174,7 @@ public class OutboxLifecycleTests {
   /// Tests the "message successfully published to transport" guarantee.
   /// </summary>
   [Test]
+  [Timeout(90_000)]  // TUnit includes fixture initialization in test timeout (~60s setup + ~5s test)
   public async Task PostOutboxAsync_FiresAfterSuccessfulPublish_GuaranteesDeliveryAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -191,6 +192,7 @@ public class OutboxLifecycleTests {
 
     var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostOutboxAsync);
+    using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
 
     try {
       // Act - Dispatch command
@@ -210,7 +212,7 @@ public class OutboxLifecycleTests {
 
       // Verify message was actually received by BFF (indicates successful publish)
       // This is indirect verification that PostOutboxAsync fired AFTER successful publish
-      await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 60000);
+      await perspectiveWaiter.WaitAsync(timeoutMilliseconds: 60000);
 
     } finally {
       registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostOutboxAsync);

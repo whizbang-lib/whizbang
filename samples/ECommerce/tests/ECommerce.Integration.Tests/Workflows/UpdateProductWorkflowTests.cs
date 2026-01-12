@@ -88,8 +88,9 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/original.png",
       InitialStock = 10
     };
+    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
     await fixture.Dispatcher.SendAsync(createCommand);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 45000);
+    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Act - Update product name
     var updateCommand = new UpdateProductCommand {
@@ -99,8 +100,9 @@ public class UpdateProductWorkflowTests {
       Price = null,
       ImageUrl = null
     };
+    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(expectedPerspectiveCount: 1);
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductUpdatedEvent>(expectedPerspectiveCount: 2, timeoutMilliseconds: 45000);
+    await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Assert - Verify InventoryWorker perspective updated
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId);
@@ -135,8 +137,9 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/original.png",
       InitialStock = 20
     };
+    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
     await fixture.Dispatcher.SendAsync(createCommand);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 45000);
+    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Act - Update all fields
     var updateCommand = new UpdateProductCommand {
@@ -146,8 +149,9 @@ public class UpdateProductWorkflowTests {
       Price = 149.99m,
       ImageUrl = "/images/updated.png"
     };
+    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(expectedPerspectiveCount: 1);
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductUpdatedEvent>(expectedPerspectiveCount: 2, timeoutMilliseconds: 45000);
+    await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Assert - Verify InventoryWorker perspective fully updated
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId);
@@ -185,8 +189,9 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/price-test.png",
       InitialStock = 15
     };
+    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
     await fixture.Dispatcher.SendAsync(createCommand);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 45000);
+    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Act - Update only price
     var updateCommand = new UpdateProductCommand {
@@ -196,8 +201,9 @@ public class UpdateProductWorkflowTests {
       Price = 35.00m,
       ImageUrl = null
     };
+    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(expectedPerspectiveCount: 1);
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductUpdatedEvent>(expectedPerspectiveCount: 2, timeoutMilliseconds: 45000);
+    await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Assert - Verify only price changed
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId);
@@ -231,8 +237,9 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/old.png",
       InitialStock = 30
     };
+    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
     await fixture.Dispatcher.SendAsync(createCommand);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 45000);
+    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Act - Update description and image
     var updateCommand = new UpdateProductCommand {
@@ -242,8 +249,9 @@ public class UpdateProductWorkflowTests {
       Price = null,
       ImageUrl = "/images/new-and-improved.png"
     };
+    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(expectedPerspectiveCount: 1);
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductUpdatedEvent>(expectedPerspectiveCount: 2, timeoutMilliseconds: 45000);
+    await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Assert - Verify description and image updated
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId);
@@ -278,8 +286,9 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/v1.png",
       InitialStock = 5
     };
+    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
     await fixture.Dispatcher.SendAsync(createCommand);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 45000);
+    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Act - Update name
     var update1 = new UpdateProductCommand {
@@ -289,8 +298,9 @@ public class UpdateProductWorkflowTests {
       Price = null,
       ImageUrl = null
     };
+    using var updateWaiter1 = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(expectedPerspectiveCount: 1);
     await fixture.Dispatcher.SendAsync(update1);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductUpdatedEvent>(expectedPerspectiveCount: 2, timeoutMilliseconds: 45000);
+    await updateWaiter1.WaitAsync(timeoutMilliseconds: 45000);
 
     // Act - Update price
     var update2 = new UpdateProductCommand {
@@ -300,8 +310,9 @@ public class UpdateProductWorkflowTests {
       Price = 20.00m,
       ImageUrl = null
     };
+    using var updateWaiter2 = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(expectedPerspectiveCount: 1);
     await fixture.Dispatcher.SendAsync(update2);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductUpdatedEvent>(expectedPerspectiveCount: 2, timeoutMilliseconds: 45000);
+    await updateWaiter2.WaitAsync(timeoutMilliseconds: 45000);
 
     // Act - Update description and image
     var update3 = new UpdateProductCommand {
@@ -311,8 +322,9 @@ public class UpdateProductWorkflowTests {
       Price = null,
       ImageUrl = "/images/v3.png"
     };
+    using var updateWaiter3 = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(expectedPerspectiveCount: 1);
     await fixture.Dispatcher.SendAsync(update3);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductUpdatedEvent>(expectedPerspectiveCount: 2, timeoutMilliseconds: 45000);
+    await updateWaiter3.WaitAsync(timeoutMilliseconds: 45000);
 
     // Assert - Verify all changes accumulated
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId);
@@ -349,8 +361,9 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/isolation.png",
       InitialStock = 75
     };
+    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
     await fixture.Dispatcher.SendAsync(createCommand);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 45000);
+    await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Verify initial inventory
     var initialInventory = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);
@@ -365,8 +378,9 @@ public class UpdateProductWorkflowTests {
       Price = 50.00m,
       ImageUrl = "/images/updated-isolation.png"
     };
+    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(expectedPerspectiveCount: 1);
     await fixture.Dispatcher.SendAsync(updateCommand);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductUpdatedEvent>(expectedPerspectiveCount: 2, timeoutMilliseconds: 45000);
+    await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Assert - Verify inventory unchanged
     var updatedInventory = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);

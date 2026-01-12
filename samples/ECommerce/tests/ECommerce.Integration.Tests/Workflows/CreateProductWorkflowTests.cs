@@ -70,12 +70,13 @@ public class CreateProductWorkflowTests {
 
     // Act
     Console.WriteLine($"[TEST] Sending CreateProductCommand for ProductId={_testProd1}");
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
     await fixture.Dispatcher.SendAsync(command);
     Console.WriteLine($"[TEST] Command sent, waiting for perspective processing...");
 
     // Wait for perspective processing to complete (deterministic, no race condition!)
     // Longer timeout for workflow tests (45s) due to per-test container initialization
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 45000);
+    await waiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Assert - Verify in InventoryWorker perspective
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(command.ProductId);
@@ -142,8 +143,9 @@ public class CreateProductWorkflowTests {
     // Act - Create each product and wait for perspective processing
     // This ensures events are processed in order and perspectives are updated before the next product
     foreach (var command in commands) {
+      using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
       await fixture.Dispatcher.SendAsync(command);
-      await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 45000);
+      await waiter.WaitAsync(timeoutMilliseconds: 45000);
     }
 
     // Assert - Verify all products materialized in InventoryWorker perspective
@@ -188,8 +190,9 @@ public class CreateProductWorkflowTests {
     };
 
     // Act
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
     await fixture.Dispatcher.SendAsync(command);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 45000);
+    await waiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Assert - Verify product exists with zero inventory
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(command.ProductId);
@@ -223,13 +226,15 @@ public class CreateProductWorkflowTests {
 
     // Act
     Console.WriteLine("[TEST] Sending CreateProductCommand...");
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
     await fixture.Dispatcher.SendAsync(command);
     Console.WriteLine("[TEST] Command sent, waiting for event processing...");
 
     // DIAGNOSTIC: Dump event types and associations
     await fixture.DumpEventTypesAndAssociationsAsync();
+    await fixture.DumpTypeNameComparisonAsync("inventory");
 
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 45000);
+    await waiter.WaitAsync(timeoutMilliseconds: 45000);
     Console.WriteLine("[TEST] Perspective processing complete");
 
     // Assert - Verify product exists with null ImageUrl

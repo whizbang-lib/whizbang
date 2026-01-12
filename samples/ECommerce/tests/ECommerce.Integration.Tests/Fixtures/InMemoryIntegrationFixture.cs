@@ -271,6 +271,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangLifecycleInvoker(builder.Services);
     ECommerce.InventoryWorker.Generated.DispatcherRegistrations.AddWhizbangLifecycleMessageDeserializer(builder.Services);
     builder.Services.AddSingleton<Whizbang.Core.Messaging.ILifecycleReceptorRegistry, Whizbang.Core.Messaging.DefaultLifecycleReceptorRegistry>();
+    builder.Services.AddSingleton<Whizbang.Core.Messaging.IEventTypeProvider, ECommerce.Contracts.ECommerceEventTypeProvider>();
 
     // Register TopicRegistry to provide base topic names for events
     var topicRegistryInstance = new ECommerce.Contracts.Generated.TopicRegistry();
@@ -421,6 +422,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangLifecycleInvoker(builder.Services);
     ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangLifecycleMessageDeserializer(builder.Services);
     builder.Services.AddSingleton<Whizbang.Core.Messaging.ILifecycleReceptorRegistry, Whizbang.Core.Messaging.DefaultLifecycleReceptorRegistry>();
+    builder.Services.AddSingleton<Whizbang.Core.Messaging.IEventTypeProvider, ECommerce.Contracts.ECommerceEventTypeProvider>();
 
     // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
     builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
@@ -647,178 +649,162 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   }
 
   /// <summary>
-  /// Waits for both InventoryWorker and BFF work processing to become idle.
-  /// Tracks 4 workers: WorkCoordinatorPublisherWorker (outbox/inbox) + PerspectiveWorker (perspective materialization) for both services.
-  /// Uses event callbacks to efficiently detect when all event processing is complete.
-  /// Falls back to timeout if idle state is not reached within the specified time.
+  /// Dumps detailed comparison of event types vs associations to detect mismatches.
   /// </summary>
-  public async Task WaitForEventProcessingAsync(int timeoutMilliseconds = 30000) {
-    // Get WorkCoordinatorPublisherWorker instances (outbox/inbox processing)
-    var inventoryPublisher = _inventoryHost!.Services.GetServices<IHostedService>()
-      .OfType<WorkCoordinatorPublisherWorker>()
-      .FirstOrDefault();
+  public async Task DumpTypeNameComparisonAsync(string schemaName = "inventory", CancellationToken cancellationToken = default) {
+    using var scope = _inventoryHost!.Services.GetRequiredService<IServiceScopeFactory>().CreateScope();
+    var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
-    var bffPublisher = _bffHost!.Services.GetServices<IHostedService>()
-      .OfType<WorkCoordinatorPublisherWorker>()
-      .FirstOrDefault();
+    Console.WriteLine($"=== TYPE NAME COMPARISON ({schemaName}) ===");
 
-    // Get PerspectiveWorker instances (perspective materialization)
-    var inventoryPerspectiveWorker = _inventoryHost!.Services.GetServices<IHostedService>()
-      .OfType<PerspectiveWorker>()
-      .FirstOrDefault();
+    // Query event types from wh_event_store
+    var eventTypes = await dbContext.Database.SqlQuery<string>(@$"
+        SELECT DISTINCT event_type
+        FROM {schemaName}.wh_event_store
+        ORDER BY event_type
+    ").ToListAsync(cancellationToken);
 
-    var bffPerspectiveWorker = _bffHost!.Services.GetServices<IHostedService>()
-      .OfType<PerspectiveWorker>()
-      .FirstOrDefault();
+    // Query message types from wh_message_associations (perspectives only)
+    var associations = await dbContext.Database.SqlQuery<string>(@$"
+        SELECT DISTINCT message_type
+        FROM {schemaName}.wh_message_associations
+        WHERE association_type = 'perspective'
+        ORDER BY message_type
+    ").ToListAsync(cancellationToken);
 
-    // Create TaskCompletionSources for all 4 workers
-    var inventoryPublisherTcs = new TaskCompletionSource<bool>();
-    var bffPublisherTcs = new TaskCompletionSource<bool>();
-    var inventoryPerspectiveTcs = new TaskCompletionSource<bool>();
-    var bffPerspectiveTcs = new TaskCompletionSource<bool>();
-
-    // Wire up one-time idle callbacks
-    WorkProcessingIdleHandler? inventoryPublisherHandler = null;
-    WorkProcessingIdleHandler? bffPublisherHandler = null;
-    WorkProcessingIdleHandler? inventoryPerspectiveHandler = null;
-    WorkProcessingIdleHandler? bffPerspectiveHandler = null;
-
-    inventoryPublisherHandler = () => {
-      inventoryPublisherTcs.TrySetResult(true);
-      if (inventoryPublisher != null && inventoryPublisherHandler != null) {
-        inventoryPublisher.OnWorkProcessingIdle -= inventoryPublisherHandler;
-      }
-    };
-
-    bffPublisherHandler = () => {
-      bffPublisherTcs.TrySetResult(true);
-      if (bffPublisher != null && bffPublisherHandler != null) {
-        bffPublisher.OnWorkProcessingIdle -= bffPublisherHandler;
-      }
-    };
-
-    inventoryPerspectiveHandler = () => {
-      inventoryPerspectiveTcs.TrySetResult(true);
-      if (inventoryPerspectiveWorker != null && inventoryPerspectiveHandler != null) {
-        inventoryPerspectiveWorker.OnWorkProcessingIdle -= inventoryPerspectiveHandler;
-      }
-    };
-
-    bffPerspectiveHandler = () => {
-      bffPerspectiveTcs.TrySetResult(true);
-      if (bffPerspectiveWorker != null && bffPerspectiveHandler != null) {
-        bffPerspectiveWorker.OnWorkProcessingIdle -= bffPerspectiveHandler;
-      }
-    };
-
-    // Register WorkCoordinatorPublisherWorker callbacks
-    if (inventoryPublisher != null) {
-      inventoryPublisher.OnWorkProcessingIdle += inventoryPublisherHandler;
-      if (inventoryPublisher.IsIdle) {
-        inventoryPublisherTcs.TrySetResult(true);
-      }
-    } else {
-      inventoryPublisherTcs.TrySetResult(true);
+    Console.WriteLine($"Event Types in wh_event_store ({eventTypes.Count}):");
+    foreach (var et in eventTypes) {
+      Console.WriteLine($"  - {et}");
     }
 
-    if (bffPublisher != null) {
-      bffPublisher.OnWorkProcessingIdle += bffPublisherHandler;
-      if (bffPublisher.IsIdle) {
-        bffPublisherTcs.TrySetResult(true);
-      }
-    } else {
-      bffPublisherTcs.TrySetResult(true);
+    Console.WriteLine($"Message Types in wh_message_associations ({associations.Count}):");
+    foreach (var mt in associations) {
+      Console.WriteLine($"  - {mt}");
     }
 
-    // Register PerspectiveWorker callbacks
-    if (inventoryPerspectiveWorker != null) {
-      inventoryPerspectiveWorker.OnWorkProcessingIdle += inventoryPerspectiveHandler;
-      if (inventoryPerspectiveWorker.IsIdle) {
-        inventoryPerspectiveTcs.TrySetResult(true);
+    // Detect mismatches
+    var mismatches = associations
+      .Where(a => !eventTypes.Contains(a) && eventTypes.Any(e => e.Contains(a.Replace("global::", ""))))
+      .ToList();
+
+    if (mismatches.Any()) {
+      Console.WriteLine("=== DETECTED TYPE NAME MISMATCHES ===");
+      foreach (var mismatch in mismatches) {
+        Console.WriteLine($"Association has 'global::' prefix: {mismatch}");
       }
-    } else {
-      inventoryPerspectiveTcs.TrySetResult(true);
     }
 
-    if (bffPerspectiveWorker != null) {
-      bffPerspectiveWorker.OnWorkProcessingIdle += bffPerspectiveHandler;
-      if (bffPerspectiveWorker.IsIdle) {
-        bffPerspectiveTcs.TrySetResult(true);
-      }
+    Console.WriteLine("=== END TYPE NAME COMPARISON ===");
+  }
+
+  /// <summary>
+  /// Creates a perspective completion waiter that registers receptors BEFORE sending commands.
+  /// This avoids race conditions where perspectives complete before receptors are registered.
+  /// </summary>
+  /// <typeparam name="TEvent">The event type to wait for</typeparam>
+  /// <param name="expectedPerspectiveCount">Total number of perspectives expected (default: 4 for both hosts)</param>
+  /// <returns>A waiter that can be used to wait for perspective completion</returns>
+  /// <remarks>
+  /// Usage:
+  /// <code>
+  /// using var waiter = fixture.CreatePerspectiveWaiter&lt;ProductCreatedEvent&gt;(expectedCount: 4);
+  /// await fixture.Dispatcher.SendAsync(command);
+  /// await waiter.WaitAsync(timeout: 15000);
+  /// </code>
+  /// </remarks>
+  /// <docs>testing/lifecycle-synchronization</docs>
+  public PerspectiveCompletionWaiter<TEvent> CreatePerspectiveWaiter<TEvent>(
+    int expectedPerspectiveCount = 4)
+    where TEvent : IEvent {
+
+    var inventoryRegistry = _inventoryHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var bffRegistry = _bffHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+
+    return new PerspectiveCompletionWaiter<TEvent>(
+      inventoryRegistry,
+      bffRegistry,
+      expectedPerspectiveCount
+    );
+  }
+
+  /// <summary>
+  /// Waits for perspective processing to complete using lifecycle receptors.
+  /// This eliminates race conditions by using PostPerspectiveInline lifecycle stage.
+  /// </summary>
+  public async Task WaitForPerspectiveCompletionAsync<TEvent>(
+    int inventoryPerspectives,
+    int bffPerspectives,
+    int timeoutMilliseconds = 15000)
+    where TEvent : IEvent {
+
+    var totalPerspectives = inventoryPerspectives + bffPerspectives;
+    Console.WriteLine($"[WaitForPerspective] Waiting for {typeof(TEvent).Name} processing (Inventory={inventoryPerspectives}, BFF={bffPerspectives}, Total={totalPerspectives}, timeout={timeoutMilliseconds}ms)");
+
+    var inventoryCompletionSource = new TaskCompletionSource<bool>();
+    var inventoryCompletedPerspectives = new System.Collections.Concurrent.ConcurrentBag<string>();
+
+    var bffCompletionSource = new TaskCompletionSource<bool>();
+    var bffCompletedPerspectives = new System.Collections.Concurrent.ConcurrentBag<string>();
+
+    var tasksToWait = new List<Task>();
+    CountingPerspectiveReceptor<TEvent>? inventoryCountingReceptor = null;
+    CountingPerspectiveReceptor<TEvent>? bffCountingReceptor = null;
+
+    // Register receptor for InventoryHost if expecting perspectives
+    if (inventoryPerspectives > 0) {
+      inventoryCountingReceptor = new CountingPerspectiveReceptor<TEvent>(
+        inventoryCompletionSource,
+        inventoryCompletedPerspectives,
+        inventoryPerspectives
+      );
+
+      var inventoryRegistry = _inventoryHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+      inventoryRegistry.Register<TEvent>(inventoryCountingReceptor, LifecycleStage.PostPerspectiveInline);
+      tasksToWait.Add(inventoryCompletionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(timeoutMilliseconds)));
     } else {
-      bffPerspectiveTcs.TrySetResult(true);
+      inventoryCompletionSource.SetResult(true);  // No perspectives expected, mark as complete
     }
 
-    // Wait for all 4 workers to become idle (or timeout)
-    using var cts = new CancellationTokenSource(timeoutMilliseconds);
+    // Register receptor for BFFHost if expecting perspectives
+    if (bffPerspectives > 0) {
+      bffCountingReceptor = new CountingPerspectiveReceptor<TEvent>(
+        bffCompletionSource,
+        bffCompletedPerspectives,
+        bffPerspectives
+      );
+
+      var bffRegistry = _bffHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+      bffRegistry.Register<TEvent>(bffCountingReceptor, LifecycleStage.PostPerspectiveInline);
+      tasksToWait.Add(bffCompletionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(timeoutMilliseconds)));
+    } else {
+      bffCompletionSource.SetResult(true);  // No perspectives expected, mark as complete
+    }
 
     try {
-      await Task.WhenAll(
-        inventoryPublisherTcs.Task,
-        bffPublisherTcs.Task,
-        inventoryPerspectiveTcs.Task,
-        bffPerspectiveTcs.Task
-      ).WaitAsync(cts.Token);
-
-      Console.WriteLine("[InMemoryFixture] Event processing idle - all workers have no pending work (2 publishers + 2 perspective workers)");
-
-      // CRITICAL: Wait for perspective rows to exist in database
-      // Workers report idle before transactions are visible to other connections
-      // Poll database until perspective rows exist (with timeout)
-      var dbWaitStopwatch = System.Diagnostics.Stopwatch.StartNew();
-      var maxDbWait = TimeSpan.FromSeconds(10);
-      var perspectiveRowsExist = false;
-
-      while (dbWaitStopwatch.Elapsed < maxDbWait && !perspectiveRowsExist) {
-        using var scope = _inventoryHost!.Services.CreateScope();
-        var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
-        var connection = dbContext.Database.GetDbConnection();
-
-        if (connection.State != System.Data.ConnectionState.Open) {
-          await connection.OpenAsync();
-        }
-
-        await using var cmd = connection.CreateCommand();
-        cmd.CommandText = @"
-          SELECT CAST(COUNT(*) AS INTEGER) FROM (
-            SELECT id FROM inventory.wh_per_product_dto
-            UNION ALL
-            SELECT id FROM inventory.wh_per_inventory_level_dto
-          ) AS all_perspective_rows";
-
-        var rowCount = (int)(await cmd.ExecuteScalarAsync() ?? 0);
-
-        if (rowCount > 0) {
-          Console.WriteLine($"[InMemoryFixture] Perspective rows verified: {rowCount} rows exist (waited {dbWaitStopwatch.ElapsedMilliseconds}ms)");
-          perspectiveRowsExist = true;
-          break;
-        }
-
-        await Task.Delay(100);
+      // Wait for all expected perspectives to complete
+      if (tasksToWait.Count > 0) {
+        await Task.WhenAll(tasksToWait);
       }
-
-      if (!perspectiveRowsExist) {
-        Console.WriteLine($"[InMemoryFixture] WARNING: No perspective rows found after {maxDbWait.TotalSeconds}s wait");
+      Console.WriteLine($"[WaitForPerspective] All {totalPerspectives} perspectives completed:");
+      if (inventoryPerspectives > 0) {
+        Console.WriteLine($"  Inventory ({inventoryPerspectives}): {string.Join(", ", inventoryCompletedPerspectives)}");
       }
-    } catch (OperationCanceledException) {
-      Console.WriteLine($"[InMemoryFixture] WARNING: Event processing did not reach idle state within {timeoutMilliseconds}ms timeout");
-      Console.WriteLine($"[InMemoryFixture] InventoryWorker Publisher idle: {inventoryPublisher?.IsIdle ?? true}, PerspectiveWorker idle: {inventoryPerspectiveWorker?.IsIdle ?? true}");
-      Console.WriteLine($"[InMemoryFixture] BFF Publisher idle: {bffPublisher?.IsIdle ?? true}, PerspectiveWorker idle: {bffPerspectiveWorker?.IsIdle ?? true}");
+      if (bffPerspectives > 0) {
+        Console.WriteLine($"  BFF ({bffPerspectives}): {string.Join(", ", bffCompletedPerspectives)}");
+      }
     } finally {
-      // Clean up handlers
-      if (inventoryPublisher != null && inventoryPublisherHandler != null) {
-        inventoryPublisher.OnWorkProcessingIdle -= inventoryPublisherHandler;
+      // Unregister receptors
+      if (inventoryCountingReceptor != null) {
+        var inventoryRegistry = _inventoryHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+        inventoryRegistry.Unregister<TEvent>(inventoryCountingReceptor, LifecycleStage.PostPerspectiveInline);
       }
-      if (bffPublisher != null && bffPublisherHandler != null) {
-        bffPublisher.OnWorkProcessingIdle -= bffPublisherHandler;
-      }
-      if (inventoryPerspectiveWorker != null && inventoryPerspectiveHandler != null) {
-        inventoryPerspectiveWorker.OnWorkProcessingIdle -= inventoryPerspectiveHandler;
-      }
-      if (bffPerspectiveWorker != null && bffPerspectiveHandler != null) {
-        bffPerspectiveWorker.OnWorkProcessingIdle -= bffPerspectiveHandler;
+      if (bffCountingReceptor != null) {
+        var bffRegistry = _bffHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+        bffRegistry.Unregister<TEvent>(bffCountingReceptor, LifecycleStage.PostPerspectiveInline);
       }
     }
+
+    Console.WriteLine($"[WaitForPerspective] {typeof(TEvent).Name} processing complete!");
   }
 
   /// <summary>
@@ -874,13 +860,13 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   private async Task _setupTransportSubscriptionsAsync(CancellationToken cancellationToken) {
     // Subscribe InventoryWorker to "products" and "inventory" topics
     await _transport.SubscribeAsync(
-      async (envelope, ct) => await _handleMessageForHostAsync(_inventoryHost!, envelope, ct),
+      async (envelope, envelopeType, ct) => await _handleMessageForHostAsync(_inventoryHost!, envelope, envelopeType, ct),
       new TransportDestination("products", "inventory-worker"),
       cancellationToken
     );
 
     await _transport.SubscribeAsync(
-      async (envelope, ct) => await _handleMessageForHostAsync(_inventoryHost!, envelope, ct),
+      async (envelope, envelopeType, ct) => await _handleMessageForHostAsync(_inventoryHost!, envelope, envelopeType, ct),
       new TransportDestination("inventory", "inventory-worker"),
       cancellationToken
     );
@@ -890,13 +876,13 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     // Subscribe BFF to generic topics (topic-00, topic-01) to match GenericTopicRoutingStrategy
     // The routing strategy maps all events to these generic topics for Azure Service Bus emulator compatibility
     await _transport.SubscribeAsync(
-      async (envelope, ct) => await _handleMessageForHostAsync(_bffHost!, envelope, ct),
+      async (envelope, envelopeType, ct) => await _handleMessageForHostAsync(_bffHost!, envelope, envelopeType, ct),
       new TransportDestination("topic-00", "bff-service"),
       cancellationToken
     );
 
     await _transport.SubscribeAsync(
-      async (envelope, ct) => await _handleMessageForHostAsync(_bffHost!, envelope, ct),
+      async (envelope, envelopeType, ct) => await _handleMessageForHostAsync(_bffHost!, envelope, envelopeType, ct),
       new TransportDestination("topic-01", "bff-service"),
       cancellationToken
     );
@@ -909,8 +895,15 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   /// CRITICAL: Must process inbox work (dispatch to handlers, store events) - not just write to inbox!
   /// This creates events which trigger perspective checkpoints for PerspectiveWorker to process.
   /// </summary>
-  private async Task _handleMessageForHostAsync(IHost host, IMessageEnvelope envelope, CancellationToken ct) {
+  private async Task _handleMessageForHostAsync(IHost host, IMessageEnvelope envelope, string? envelopeType, CancellationToken ct) {
     try {
+      // Validate envelope type is present
+      if (string.IsNullOrWhiteSpace(envelopeType)) {
+        throw new InvalidOperationException(
+          $"EnvelopeType is required from transport but was null/empty. MessageId: {envelope.MessageId}. " +
+          $"This indicates a bug in the transport layer - envelope type must be preserved during transmission.");
+      }
+
       // Create scope to resolve scoped services
       await using var scope = host.Services.CreateAsyncScope();
       var strategy = scope.ServiceProvider.GetRequiredService<IWorkCoordinatorStrategy>();
@@ -918,7 +911,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       var orderedProcessor = host.Services.GetRequiredService<OrderedStreamProcessor>();
 
       // 1. Serialize envelope to InboxMessage
-      var newInboxMessage = _serializeToNewInboxMessage(envelope, jsonOptions);
+      var newInboxMessage = _serializeToNewInboxMessage(envelope, envelopeType, jsonOptions);
 
       // 2. Queue for atomic deduplication via process_work_batch
       strategy.QueueInboxMessage(newInboxMessage);
@@ -976,23 +969,59 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   }
 
   /// <summary>
+  /// Extracts the message type name from an envelope type name.
+  /// Example: "MessageEnvelope`1[[MyApp.ProductCreatedEvent, MyApp]], Whizbang.Core"
+  /// Returns: "MyApp.ProductCreatedEvent, MyApp"
+  /// </summary>
+  private static string _extractMessageTypeFromEnvelopeType(string envelopeTypeName) {
+    var startIndex = envelopeTypeName.IndexOf("[[", StringComparison.Ordinal);
+    var endIndex = envelopeTypeName.IndexOf("]]", StringComparison.Ordinal);
+
+    if (startIndex == -1 || endIndex == -1 || startIndex >= endIndex) {
+      throw new InvalidOperationException(
+        $"Invalid envelope type name format: '{envelopeTypeName}'. " +
+        $"Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'");
+    }
+
+    var messageTypeName = envelopeTypeName.Substring(startIndex + 2, endIndex - startIndex - 2);
+
+    if (string.IsNullOrWhiteSpace(messageTypeName)) {
+      throw new InvalidOperationException(
+        $"Failed to extract message type name from envelope type: '{envelopeTypeName}'");
+    }
+
+    return messageTypeName;
+  }
+
+  /// <summary>
   /// Serializes IMessageEnvelope to InboxMessage (same logic as ServiceBusConsumerWorker._serializeToNewInboxMessage).
   /// </summary>
-  private static InboxMessage _serializeToNewInboxMessage(IMessageEnvelope envelope, JsonSerializerOptions jsonOptions) {
-    var payload = envelope.Payload;
-    var payloadType = payload.GetType();
-    var handlerName = payloadType.Name + "Handler";
+  private static InboxMessage _serializeToNewInboxMessage(IMessageEnvelope envelope, string envelopeType, JsonSerializerOptions jsonOptions) {
+    // Extract message type from envelope type string
+    // This is CRITICAL - envelope.Payload.GetType() returns JsonElement after JSON serialization
+    // We must use the envelopeType parameter which contains the original type info
+    var messageTypeName = _extractMessageTypeFromEnvelopeType(envelopeType);
+
+    // Determine if message is an event by checking the type string suffix
+    // CRITICAL: Cannot use (payload is IEvent) because payload is JsonElement from InProcessTransport
+    // Must check if the type name ends with "Event" (convention-based)
+    var typeNameWithoutAssembly = messageTypeName.Split(',')[0].Trim();  // "ECommerce.Contracts.ProductCreatedEvent"
+    var lastSegment = typeNameWithoutAssembly.Split('.').Last();  // "ProductCreatedEvent"
+    var isEvent = lastSegment.EndsWith("Event", StringComparison.Ordinal);
+
+    // Extract simple type name for handler name (last part after last '.')
+    var lastDotIndex = messageTypeName.LastIndexOf('.');
+    var simpleTypeName = lastDotIndex >= 0
+      ? messageTypeName.Substring(lastDotIndex + 1).Split(',')[0].Trim()
+      : messageTypeName.Split(',')[0].Trim();
+    var handlerName = simpleTypeName + "Handler";
+
     var streamId = _extractStreamId(envelope);
 
-    // Use short form: "TypeName, AssemblyName" (NOT AssemblyQualifiedName which includes Version/Culture/PublicKeyToken)
-    // This matches the format expected by wh_message_associations and used in process_work_batch SQL JOIN
-    var messageTypeName = $"{payloadType.FullName}, {payloadType.Assembly.GetName().Name}";
-
-    var envelopeTypeName = envelope.GetType().AssemblyQualifiedName
-      ?? throw new InvalidOperationException($"Envelope type {envelope.GetType().Name} must have an assembly-qualified name");
-
-    // Serialize envelope to JSON and deserialize as MessageEnvelope<JsonElement>
+    // Serialize envelope to JSON for storage
     var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
+
+    // Deserialize as MessageEnvelope<JsonElement>
     var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)
       ?? throw new InvalidOperationException($"Failed to deserialize envelope as MessageEnvelope<JsonElement> for message {envelope.MessageId}");
 
@@ -1000,10 +1029,10 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       MessageId = envelope.MessageId.Value,
       HandlerName = handlerName,
       Envelope = jsonEnvelope,
-      EnvelopeType = envelopeTypeName,
+      EnvelopeType = envelopeType,
       StreamId = streamId,
-      IsEvent = payload is IEvent,
-      MessageType = messageTypeName
+      IsEvent = isEvent,
+      MessageType = messageTypeName  // ← Use extracted type, NOT payload.GetType()
     };
   }
 

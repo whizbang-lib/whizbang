@@ -63,13 +63,11 @@ public class SeedProductsWorkflowTests {
       fixture.GetLogger<SeedMutations>());
 
     // Act - Call seed mutation
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 48);
     var seededCount = await seedMutations.SeedProductsAsync();
 
     // Wait for all perspectives to complete (12 products × 4 perspectives each = 48)
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(
-      expectedPerspectiveCount: 48,
-      timeoutMilliseconds: 45000
-    );
+    await waiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Assert - Verify seeding result
     await Assert.That(seededCount).IsEqualTo(12);
@@ -116,11 +114,9 @@ public class SeedProductsWorkflowTests {
       fixture.GetLogger<SeedMutations>());
 
     // Act - Call seed mutation TWICE
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 48);
     var firstSeedCount = await seedMutations.SeedProductsAsync();
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(
-      expectedPerspectiveCount: 48,  // 12 products × 4 perspectives each
-      timeoutMilliseconds: 120000  // 120s timeout for bulk operations
-    );
+    await waiter.WaitAsync(timeoutMilliseconds: 120000);
 
     var secondSeedCount = await seedMutations.SeedProductsAsync();
     // No wait needed - second call is idempotent and returns 0 (no events published)
@@ -166,11 +162,9 @@ public class SeedProductsWorkflowTests {
       fixture.GetLogger<SeedMutations>());
 
     // Act
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 48);
     await seedMutations.SeedProductsAsync();
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(
-      expectedPerspectiveCount: 48,  // 12 products × 4 perspectives each
-      timeoutMilliseconds: 120000  // 120s timeout for bulk operations
-    );
+    await waiter.WaitAsync(timeoutMilliseconds: 120000);
 
     // Assert - Verify specific product stock levels
     var products = await fixture.BffProductLens.GetAllAsync();
@@ -216,11 +210,9 @@ public class SeedProductsWorkflowTests {
       fixture.GetLogger<SeedMutations>());
 
     // Act
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 48);
     await seedMutations.SeedProductsAsync();
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(
-      expectedPerspectiveCount: 48,  // 12 products × 4 perspectives each
-      timeoutMilliseconds: 120000  // 120s timeout for bulk operations
-    );
+    await waiter.WaitAsync(timeoutMilliseconds: 120000);
 
     // Assert - Get all products from both perspectives
     var bffProducts = await fixture.BffProductLens.GetAllAsync();

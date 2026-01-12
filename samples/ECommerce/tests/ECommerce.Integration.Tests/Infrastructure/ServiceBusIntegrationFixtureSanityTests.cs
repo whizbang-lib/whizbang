@@ -120,6 +120,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
   /// Tests that perspective workers process events and create perspective rows.
   /// </summary>
   [Test]
+  [Timeout(90_000)]  // TUnit includes fixture initialization in test timeout (~60s setup + ~5s test)
   public async Task InventoryWorker_Perspectives_MaterializeAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -136,8 +137,9 @@ public class ServiceBusIntegrationFixtureSanityTests {
 
     // Act - Send command and wait for event processing
     Console.WriteLine($"[SANITY] Sending command for InventoryWorker perspective test: {testProductId}");
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
     await fixture.Dispatcher.SendAsync(command);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 45000);
+    await waiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Assert - Verify product materialized in InventoryWorker perspective
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(testProductId);
@@ -158,7 +160,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
   /// If this fails, we know the Service Bus message delivery is broken.
   /// </summary>
   [Test]
-  [Timeout(30_000)]  // 30s timeout - give plenty of time for message delivery
+  [Timeout(90_000)]  // TUnit includes fixture initialization in test timeout (~60s setup + ~5s test)
   public async Task BFF_Perspectives_MaterializeFromServiceBusAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -176,10 +178,11 @@ public class ServiceBusIntegrationFixtureSanityTests {
     // Act - Send command and wait for event processing
     Console.WriteLine($"[SANITY] Sending command for BFF perspective test: {testProductId}");
     Console.WriteLine("[SANITY] This tests that ServiceBusConsumerWorker receives messages from topics");
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
     await fixture.Dispatcher.SendAsync(command);
 
     // Wait for both InventoryWorker (from event store) AND BFF (from Service Bus)
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 15000);
+    await waiter.WaitAsync(timeoutMilliseconds: 15000);
 
     // Dump diagnostics to understand what's happening
     await fixture.DumpEventTypesAndAssociationsAsync();
@@ -246,7 +249,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
     // Act - Send command and wait for event processing
     Console.WriteLine($"[SANITY-DATA] Sending command with InitialStock={expectedStock}");
     await fixture.Dispatcher.SendAsync(command);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 15000);
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(inventoryPerspectives: 2, bffPerspectives: 2, timeoutMilliseconds: 15000);
 
     // Assert - Check InventoryRestockedEvent in event store has correct data
     await using var connection = new NpgsqlConnection(fixture.ConnectionString);
@@ -316,7 +319,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
 
     // Wait for all event processing to complete (all perspectives across both hosts)
     Console.WriteLine($"[SANITY-PROPAGATION] Waiting for event processing...");
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 15000);
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(inventoryPerspectives: 2, bffPerspectives: 2, timeoutMilliseconds: 15000);
     Console.WriteLine($"[SANITY-PROPAGATION] Event processing completed!");
 
     Console.WriteLine($"[SANITY-PROPAGATION] Starting assertions...");

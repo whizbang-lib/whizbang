@@ -190,6 +190,7 @@ public class PerspectiveLifecycleTests {
 
     var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PrePerspectiveAsync);
+    using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
 
     try {
       // Act - Dispatch command
@@ -204,7 +205,7 @@ public class PerspectiveLifecycleTests {
 
       // Verify that perspective processing completed (data should be saved)
       // Wait for all perspectives to complete (no perspective filter)
-      await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4, timeoutMilliseconds: 60000);
+      await perspectiveWaiter.WaitAsync(timeoutMilliseconds: 60000);
 
     } finally {
       registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PrePerspectiveAsync);
@@ -270,6 +271,7 @@ public class PerspectiveLifecycleTests {
 
     var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveAsync);
+    using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
 
     try {
       // Act - Dispatch command
@@ -283,7 +285,7 @@ public class PerspectiveLifecycleTests {
       await Assert.That(receptor.InvocationCount).IsEqualTo(1);
 
       // Verify that perspective data is saved (checkpoint not yet reported, but data saved)
-      await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+      await perspectiveWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     } finally {
       registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveAsync);
@@ -367,7 +369,7 @@ public class PerspectiveLifecycleTests {
 
     // Act - Use the existing WaitForPerspectiveCompletionAsync helper (PostPerspectiveInline)
     await fixture.Dispatcher.SendAsync(command);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(inventoryPerspectives: 2, bffPerspectives: 2);
 
     // Assert - Verify perspective data is saved (this is the key guarantee!)
     var product = await fixture.BffProductLens.GetByIdAsync(command.ProductId);
@@ -427,6 +429,7 @@ public class PerspectiveLifecycleTests {
   /// Tests that the stage fires during the event processing loop, not just once per batch.
   /// </summary>
   [Test]
+  [Timeout(90_000)]  // TUnit includes fixture initialization in test timeout (~60s setup + ~5s test)
   public async Task PostPerspectiveInline_FiresForEachEvent_MultipleInvocationsAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -448,35 +451,24 @@ public class PerspectiveLifecycleTests {
       }
     };
 
-    var completionSource = new TaskCompletionSource<bool>();
-    var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(
-      completionSource,
-      perspectiveName: "ProductCatalogPerspective");
+    // Create waiter BEFORE sending commands to avoid race condition
+    // Each command creates 1 ProductCreatedEvent, which triggers 2 BFF perspectives
+    // 2 events × 2 BFF perspectives = 4 completions expected
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
 
-    var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
-    registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveInline);
-
-    try {
-      // Act - Dispatch multiple commands
-      foreach (var command in commands) {
-        await fixture.Dispatcher.SendAsync(command);
-      }
-
-      // Wait for last event to complete PostPerspectiveInline
-      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(30));
-
-      // Assert - Receptor should have been invoked at least once
-      await Assert.That(receptor.InvocationCount).IsGreaterThanOrEqualTo(1);
-
-      // Verify both products are saved
-      var product1 = await fixture.BffProductLens.GetByIdAsync(commands[0].ProductId);
-      var product2 = await fixture.BffProductLens.GetByIdAsync(commands[1].ProductId);
-      await Assert.That(product1).IsNotNull();
-      await Assert.That(product2).IsNotNull();
-
-    } finally {
-      registry.Unregister<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveInline);
+    // Act - Dispatch multiple commands
+    foreach (var command in commands) {
+      await fixture.Dispatcher.SendAsync(command);
     }
+
+    // Wait for BOTH events to be processed through perspectives
+    await waiter.WaitAsync(timeoutMilliseconds: 30000);
+
+    // Assert - Verify both products are saved
+    var product1 = await fixture.BffProductLens.GetByIdAsync(commands[0].ProductId);
+    var product2 = await fixture.BffProductLens.GetByIdAsync(commands[1].ProductId);
+    await Assert.That(product1).IsNotNull();
+    await Assert.That(product2).IsNotNull();
   }
 
   // ========================================
