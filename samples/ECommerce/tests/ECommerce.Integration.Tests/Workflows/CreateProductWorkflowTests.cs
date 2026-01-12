@@ -70,15 +70,19 @@ public class CreateProductWorkflowTests {
 
     // Act
     Console.WriteLine($"[TEST] Sending CreateProductCommand for ProductId={_testProd1}");
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+    using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
       bffPerspectives: 2);
+    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
+      inventoryPerspectives: 1,
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(command);
     Console.WriteLine($"[TEST] Command sent, waiting for perspective processing...");
 
     // Wait for perspective processing to complete (deterministic, no race condition!)
     // Longer timeout for workflow tests (45s) due to per-test container initialization
-    await waiter.WaitAsync(timeoutMilliseconds: 45000);
+    await productWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Assert - Verify in InventoryWorker perspective
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(command.ProductId);
@@ -145,11 +149,15 @@ public class CreateProductWorkflowTests {
     // Act - Create each product and wait for perspective processing
     // This ensures events are processed in order and perspectives are updated before the next product
     foreach (var command in commands) {
-      using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
         inventoryPerspectives: 2,
         bffPerspectives: 2);
+      using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
+        inventoryPerspectives: 1,
+        bffPerspectives: 0);
       await fixture.Dispatcher.SendAsync(command);
-      await waiter.WaitAsync(timeoutMilliseconds: 45000);
+      await productWaiter.WaitAsync(timeoutMilliseconds: 45000);
+      await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
     }
 
     // Assert - Verify all products materialized in InventoryWorker perspective
