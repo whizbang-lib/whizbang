@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
@@ -79,7 +80,7 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
   }
 
   /// <inheritdoc />
-  public Task PublishAsync(
+  public async Task PublishAsync(
     IMessageEnvelope envelope,
     TransportDestination destination,
     string? envelopeType = null,
@@ -89,8 +90,108 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
     ArgumentNullException.ThrowIfNull(envelope);
     ArgumentNullException.ThrowIfNull(destination);
 
-    // TODO: Implement in GREEN phase
-    throw new NotImplementedException("PublishAsync not yet implemented");
+    if (!_isInitialized) {
+      throw new InvalidOperationException("RabbitMQ transport is not initialized. Call InitializeAsync() first.");
+    }
+
+    var exchangeName = destination.Address;
+    var routingKey = destination.RoutingKey ?? "#";
+
+    _logger?.LogDebug(
+      "Publishing message {MessageId} to exchange {ExchangeName} with routing key {RoutingKey}",
+      envelope.MessageId,
+      exchangeName,
+      routingKey
+    );
+
+    try {
+      // Rent channel from pool (RAII pattern - automatically returned on dispose)
+      using var pooledChannel = await _channelPool.RentAsync(cancellationToken);
+      var channel = pooledChannel.Channel;
+
+      // Declare exchange (idempotent - safe to call multiple times)
+      await channel.ExchangeDeclareAsync(
+        exchange: exchangeName,
+        type: "topic",
+        durable: true,
+        autoDelete: false,
+        arguments: null,
+        passive: false,
+        noWait: false,
+        cancellationToken: cancellationToken
+      );
+
+      // Get envelope type name
+      var envelopeTypeName = envelopeType ?? envelope.GetType().AssemblyQualifiedName
+        ?? throw new InvalidOperationException("Envelope type must have an assembly qualified name");
+
+      var envelopeRuntimeType = envelope.GetType();
+
+      // Serialize envelope using AOT-compatible JsonContextRegistry
+      var typeInfo = _jsonOptions.GetTypeInfo(envelopeRuntimeType)
+        ?? throw new InvalidOperationException($"No JsonTypeInfo found for {envelopeRuntimeType.Name}. Ensure the message type is registered via JsonContextRegistry.");
+
+      var json = JsonSerializer.Serialize(envelope, typeInfo);
+      var body = Encoding.UTF8.GetBytes(json);
+
+      // Create message properties
+      var properties = new BasicProperties {
+        MessageId = envelope.MessageId.Value.ToString(),
+        ContentType = "application/json",
+        Persistent = true,
+        Headers = new Dictionary<string, object?>()
+      };
+
+      // Add envelope type for deserialization
+      properties.Headers["EnvelopeType"] = envelopeTypeName;
+
+      // Add correlation ID if present
+      var correlationId = envelope.GetCorrelationId();
+      if (correlationId != null) {
+        properties.CorrelationId = correlationId.Value.Value.ToString();
+      }
+
+      // Add causation ID if present
+      var causationId = envelope.GetCausationId();
+      if (causationId != null) {
+        properties.Headers["CausationId"] = causationId.Value.Value.ToString();
+      }
+
+      // Add custom metadata
+      if (destination.Metadata != null) {
+        foreach (var (key, value) in destination.Metadata) {
+          properties.Headers[key] = value;
+        }
+      }
+
+      // Publish message to exchange
+      await channel.BasicPublishAsync(
+        exchange: exchangeName,
+        routingKey: routingKey,
+        mandatory: false,
+        basicProperties: properties,
+        body: body,
+        cancellationToken: cancellationToken
+      );
+
+      _logger?.LogDebug(
+        "Successfully published message {MessageId} to exchange {ExchangeName}",
+        envelope.MessageId,
+        exchangeName
+      );
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      _logger?.LogError(
+        ex,
+        "Failed to publish message {MessageId} to exchange {ExchangeName} with routing key {RoutingKey}",
+        envelope.MessageId,
+        exchangeName,
+        routingKey
+      );
+      throw new InvalidOperationException(
+        $"Failed to publish message {envelope.MessageId} to RabbitMQ exchange '{exchangeName}'. See inner exception for details.",
+        ex
+      );
+    }
   }
 
   /// <inheritdoc />

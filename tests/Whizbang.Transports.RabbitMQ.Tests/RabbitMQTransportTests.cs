@@ -1,9 +1,11 @@
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using RabbitMQ.Client;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Observability;
+using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Transports.RabbitMQ;
@@ -11,6 +13,9 @@ using Whizbang.Transports.RabbitMQ;
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 
 namespace Whizbang.Transports.RabbitMQ.Tests;
+
+// Test message type for serialization tests
+internal sealed record TestMessage(string Content);
 
 /// <summary>
 /// Tests for RabbitMQTransport PublishAsync implementation.
@@ -28,7 +33,10 @@ public class RabbitMQTransportTests {
     });
 
     var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 5);
-    var jsonOptions = new JsonSerializerOptions();
+    // Use reflection-based JSON for unit tests (AOT compatibility tested in integration tests)
+    var jsonOptions = new JsonSerializerOptions {
+      TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+    };
     var options = new RabbitMQOptions();
 
     var transport = new RabbitMQTransport(
@@ -57,7 +65,10 @@ public class RabbitMQTransportTests {
     var fakeChannel = new FakeChannel();
     var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(fakeChannel));
     var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 5);
-    var jsonOptions = new JsonSerializerOptions();
+    // Use reflection-based JSON for unit tests (AOT compatibility tested in integration tests)
+    var jsonOptions = new JsonSerializerOptions {
+      TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+    };
     var options = new RabbitMQOptions();
 
     var transport = new RabbitMQTransport(
@@ -82,7 +93,10 @@ public class RabbitMQTransportTests {
     var fakeChannel = new FakeChannel();
     var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(fakeChannel));
     var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 5);
-    var jsonOptions = new JsonSerializerOptions();
+    // Use reflection-based JSON for unit tests (AOT compatibility tested in integration tests)
+    var jsonOptions = new JsonSerializerOptions {
+      TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+    };
     var options = new RabbitMQOptions();
 
     var transport = new RabbitMQTransport(
@@ -103,7 +117,10 @@ public class RabbitMQTransportTests {
     var fakeChannel = new FakeChannel();
     var fakeConnection = new FakeConnection(() => Task.FromResult<IChannel>(fakeChannel));
     var pool = new RabbitMQChannelPool(fakeConnection, maxChannels: 5);
-    var jsonOptions = new JsonSerializerOptions();
+    // Use reflection-based JSON for unit tests (AOT compatibility tested in integration tests)
+    var jsonOptions = new JsonSerializerOptions {
+      TypeInfoResolver = new DefaultJsonTypeInfoResolver()
+    };
     var options = new RabbitMQOptions();
 
     var transport = new RabbitMQTransport(
@@ -122,9 +139,18 @@ public class RabbitMQTransportTests {
   }
 
   // Helper to create a test envelope
-  private static IMessageEnvelope _createTestEnvelope() {
-    // Create a simple test envelope with minimal data
-    // This will need to be expanded once we have access to actual envelope types
-    throw new NotImplementedException("Need to create test envelope - will implement in GREEN phase");
+  private static MessageEnvelope<TestMessage> _createTestEnvelope() {
+    return new MessageEnvelope<TestMessage> {
+      MessageId = MessageId.New(),
+      Payload = new TestMessage("test-content"),
+      Hops = [
+        new MessageHop {
+          Type = HopType.Current,
+          Timestamp = DateTimeOffset.UtcNow,
+          Topic = "test-topic",
+          ServiceInstance = ServiceInstanceInfo.Unknown
+        }
+      ]
+    };
   }
 }
