@@ -7,6 +7,7 @@
     <PackageVersion Include="Aspire.Hosting.Azure.ServiceBus" Version="13.1.0" />
     <PackageVersion Include="Aspire.Hosting.NodeJs" Version="9.5.2" />
     <PackageVersion Include="Aspire.Hosting.PostgreSQL" Version="13.1.0" />
+    <PackageVersion Include="Aspire.Hosting.RabbitMQ" Version="13.1.0" />
     <PackageVersion Include="Azure.Messaging.ServiceBus" Version="7.20.1" />
     <PackageVersion Include="BenchmarkDotNet" Version="0.15.8" />
     <PackageVersion Include="Bogus" Version="35.6.5" />
@@ -52,9 +53,11 @@
     <PackageVersion Include="OpenTelemetry.Instrumentation.Http" Version="1.14.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.Runtime" Version="1.14.0" />
     <PackageVersion Include="PolySharp" Version="1.15.0" />
+    <PackageVersion Include="RabbitMQ.Client" Version="7.0.0" />
     <PackageVersion Include="Rocks" Version="10.0.0" />
     <PackageVersion Include="System.Collections.Immutable" Version="9.0.0" />
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.9.0" />
+    <PackageVersion Include="Testcontainers.RabbitMQ" Version="4.9.0" />
     <PackageVersion Include="Testcontainers.ServiceBus" Version="4.9.0" />
     <PackageVersion Include="Testcontainers.Azurite" Version="4.9.0" />
     <PackageVersion Include="TUnit" Version="1.5.70" />
