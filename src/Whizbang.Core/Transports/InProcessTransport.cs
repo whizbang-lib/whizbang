@@ -35,7 +35,7 @@ namespace Whizbang.Core.Transports;
 /// Useful for testing and single-process scenarios.
 /// </summary>
 public class InProcessTransport : ITransport {
-  private readonly ConcurrentDictionary<string, List<(Func<IMessageEnvelope, CancellationToken, Task> handler, InProcessSubscription subscription)>> _subscriptions = new();
+  private readonly ConcurrentDictionary<string, List<(Func<IMessageEnvelope, string?, CancellationToken, Task> handler, InProcessSubscription subscription)>> _subscriptions = new();
   private bool _isInitialized;
 
   /// <inheritdoc />
@@ -82,7 +82,7 @@ public class InProcessTransport : ITransport {
       foreach (var (handler, subscription) in subscriptionHandlers.ToArray()) {
         // Only invoke handler if subscription is active and not disposed
         if (subscription.IsActive) {
-          await handler(envelope, cancellationToken);
+          await handler(envelope, envelopeType, cancellationToken);
         }
       }
     }
@@ -93,7 +93,7 @@ public class InProcessTransport : ITransport {
   /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SubscribeAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SubscribeAsync_ConcurrentSubscriptions_AllRegisteredAsync</tests>
   public Task<ISubscription> SubscribeAsync(
-    Func<IMessageEnvelope, CancellationToken, Task> handler,
+    Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
     TransportDestination destination,
     CancellationToken cancellationToken = default
   ) {
@@ -135,7 +135,7 @@ public class InProcessTransport : ITransport {
 
     // Subscribe to response destination before publishing request
     var responseSubscription = await SubscribeAsync(
-      handler: (envelope, ct) => {
+      handler: (envelope, envelopeType, ct) => {
         tcs.TrySetResult(envelope);
         return Task.CompletedTask;
       },

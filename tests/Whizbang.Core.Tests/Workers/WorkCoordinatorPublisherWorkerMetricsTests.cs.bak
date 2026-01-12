@@ -4,7 +4,6 @@ using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Core;
@@ -16,10 +15,10 @@ using Whizbang.Core.Workers;
 namespace Whizbang.Core.Tests.Workers;
 
 /// <summary>
-/// Tests for WorkCoordinatorPublisherWorker database readiness integration.
-/// Phase 3B: Verifies that database readiness checks prevent work coordinator calls until database is available.
+/// Tests for WorkCoordinatorPublisherWorker observability metrics.
+/// Phase 2: Verifies that transport readiness buffering is properly tracked and logged.
 /// </summary>
-public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
+public class WorkCoordinatorPublisherWorkerMetricsTests {
   private sealed record _testMessage { }
 
   private static MessageEnvelope<JsonElement> _createTestEnvelope(Guid messageId) {
@@ -32,123 +31,87 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
   }
 
   [Test]
-  public async Task DatabaseNotReady_ProcessWorkBatchAsync_SkippedAsync() {
+  public async Task TransportNotReady_SingleBuffer_LogsInformationAsync() {
     // Arrange
     var testLogger = new TestLogger<WorkCoordinatorPublisherWorker>();
-    var testWorkCoordinator = new TestWorkCoordinator();
-    var databaseReadinessCheck = new TestDatabaseReadinessCheck {
-      IsReadyResult = false  // Database not ready
+    var workCoordinator = new TestWorkCoordinator {
+      WorkToReturn = [
+        _createTestOutboxWork(Guid.NewGuid())
+      ]
     };
-    var publishStrategy = new TestPublishStrategy();
+    var publishStrategy = new TestPublishStrategy {
+      IsReadyResult = false  // Transport not ready
+    };
     var instanceProvider = _createTestInstanceProvider();
-    var services = _createServiceCollection(
-      testWorkCoordinator,
-      publishStrategy,
-      instanceProvider,
-      databaseReadinessCheck,
-      testLogger
-    );
+    var services = _createServiceCollection(workCoordinator, publishStrategy, instanceProvider, testLogger);
 
-    // Act - Start worker briefly
-    var worker = services.GetRequiredService<IHostedService>();
+    // Act - Start worker briefly to process one batch
+    var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await Task.Delay(300);  // Allow time for polling
+    await Task.Delay(300);  // Allow one batch to process
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 
-    // Assert - ProcessWorkBatchAsync should NOT be called
-    await Assert.That(testWorkCoordinator.CallCount).IsEqualTo(0)
-      .Because("ProcessWorkBatchAsync should be skipped when database not ready");
-
-    // Verify logging
-    var dbLogs = testLogger.GetLogsContaining("Database not ready");
-    await Assert.That(dbLogs.Count).IsGreaterThanOrEqualTo(1)
-      .Because("Database unavailability should be logged");
+    // Assert - LogInformation should be emitted for transport buffering
+    var bufferLogs = testLogger.GetLogsContaining("Transport not ready, buffering message");
+    await Assert.That(bufferLogs.Count).IsGreaterThanOrEqualTo(1)
+      .Because("Transport buffering should log at Information level");
+    await Assert.That(bufferLogs[0].LogLevel).IsEqualTo(LogLevel.Information)
+      .Because("Buffering is important operational info, not debug");
   }
 
   [Test]
-  public async Task DatabaseReady_ProcessWorkBatchAsync_CalledAsync() {
+  public async Task TransportNotReady_ConsecutiveBuffers_TracksCountAsync() {
     // Arrange
-    var testWorkCoordinator = new TestWorkCoordinator();
-    var databaseReadinessCheck = new TestDatabaseReadinessCheck {
-      IsReadyResult = true  // Database ready
+    var workCoordinator = new TestWorkCoordinator {
+      WorkToReturn = [
+        _createTestOutboxWork(Guid.NewGuid()),
+        _createTestOutboxWork(Guid.NewGuid()),
+        _createTestOutboxWork(Guid.NewGuid())
+      ]
     };
-    var publishStrategy = new TestPublishStrategy();
+    var publishStrategy = new TestPublishStrategy {
+      IsReadyResult = false  // Transport stays not ready
+    };
     var instanceProvider = _createTestInstanceProvider();
-    var services = _createServiceCollection(
-      testWorkCoordinator,
-      publishStrategy,
-      instanceProvider,
-      databaseReadinessCheck
-    );
+    var services = _createServiceCollection(workCoordinator, publishStrategy, instanceProvider);
 
     // Act
-    var worker = services.GetRequiredService<IHostedService>();
+    var worker = (WorkCoordinatorPublisherWorker)services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
     await Task.Delay(300);
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 
-    // Assert - ProcessWorkBatchAsync should be called
-    await Assert.That(testWorkCoordinator.CallCount).IsGreaterThanOrEqualTo(1)
-      .Because("ProcessWorkBatchAsync should be called when database is ready");
+    // Assert - Metrics should track consecutive not-ready checks
+    await Assert.That(worker.ConsecutiveNotReadyChecks).IsGreaterThanOrEqualTo(1)
+      .Because("Each transport not-ready check should increment counter");
   }
 
   [Test]
-  public async Task DatabaseNotReady_ConsecutiveChecks_TracksCountAsync() {
-    // Arrange
-    var testWorkCoordinator = new TestWorkCoordinator();
-    var databaseReadinessCheck = new TestDatabaseReadinessCheck {
-      IsReadyResult = false  // Database stays not ready
-    };
-    var publishStrategy = new TestPublishStrategy();
-    var instanceProvider = _createTestInstanceProvider();
-    var services = _createServiceCollection(
-      testWorkCoordinator,
-      publishStrategy,
-      instanceProvider,
-      databaseReadinessCheck
-    );
-
-    // Act
-    var worker = (WorkCoordinatorPublisherWorker)services.GetRequiredService<IHostedService>();
-    using var cts = new CancellationTokenSource();
-    await worker.StartAsync(cts.Token);
-    await Task.Delay(500);  // Allow multiple polling cycles
-    cts.Cancel();
-    await worker.StopAsync(CancellationToken.None);
-
-    // Assert - Consecutive not-ready checks should be tracked
-    await Assert.That(worker.ConsecutiveDatabaseNotReadyChecks).IsGreaterThanOrEqualTo(1)
-      .Because("Each database not-ready check should increment counter");
-  }
-
-  [Test]
-  public async Task DatabaseNotReady_ExceedsThreshold_LogsWarningAsync() {
+  public async Task TransportNotReady_ExceedsThreshold_LogsWarningAsync() {
     // Arrange
     var testLogger = new TestLogger<WorkCoordinatorPublisherWorker>();
-    var testWorkCoordinator = new TestWorkCoordinator();
-    var databaseReadinessCheck = new TestDatabaseReadinessCheck {
-      IsReadyResult = false  // Database never ready
+    var messageIds = new List<Guid>();
+    for (int i = 0; i < 12; i++) {  // Create 12 messages to exceed threshold of 10
+      messageIds.Add(Guid.NewGuid());
+    }
+    var workCoordinator = new TestWorkCoordinator {
+      WorkToReturn = messageIds.ConvertAll(_createTestOutboxWork)
     };
-    var publishStrategy = new TestPublishStrategy();
+    var publishStrategy = new TestPublishStrategy {
+      IsReadyResult = false  // Transport never ready
+    };
     var instanceProvider = _createTestInstanceProvider();
-    var services = _createServiceCollection(
-      testWorkCoordinator,
-      publishStrategy,
-      instanceProvider,
-      databaseReadinessCheck,
-      testLogger
-    );
+    var services = _createServiceCollection(workCoordinator, publishStrategy, instanceProvider, testLogger);
 
-    // Act - Run long enough to exceed threshold (10 consecutive checks)
-    // Increased wait time for systems under load
-    var worker = services.GetRequiredService<IHostedService>();
+    // Act
+    var worker = services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-    await Task.Delay(2500);  // Allow sufficient time for multiple polls under load
+    await Task.Delay(500);  // Allow enough time to process messages
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 
@@ -157,85 +120,103 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     await Assert.That(warningLogs.Count).IsGreaterThanOrEqualTo(1)
       .Because("After 10 consecutive not-ready checks, a warning should be logged");
 
-    var dbWarnings = testLogger.GetLogsContaining("Database not ready for");
-    await Assert.That(dbWarnings.Count).IsGreaterThanOrEqualTo(1)
-      .Because("Warning should mention database readiness issue");
+    var transportWarnings = testLogger.GetLogsContaining("Transport not ready for");
+    await Assert.That(transportWarnings.Count).IsGreaterThanOrEqualTo(1)
+      .Because("Warning should mention transport readiness issue");
   }
 
   [Test]
-  public async Task DatabaseBecomesReady_ResetsConsecutiveCounterAsync() {
+  public async Task TransportBecomesReady_ResetsConsecutiveCounterAsync() {
     // Arrange
-    var testWorkCoordinator = new TestWorkCoordinator();
-    var databaseReadinessCheck = new TestDatabaseReadinessCheck {
-      IsReadyResult = false  // Start not ready
-    };
+    var workCoordinator = new TestWorkCoordinator();
     var publishStrategy = new TestPublishStrategy();
     var instanceProvider = _createTestInstanceProvider();
-    var services = _createServiceCollection(
-      testWorkCoordinator,
-      publishStrategy,
-      instanceProvider,
-      databaseReadinessCheck
-    );
+    var services = _createServiceCollection(workCoordinator, publishStrategy, instanceProvider);
+    var worker = (WorkCoordinatorPublisherWorker)services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
 
-    var worker = (WorkCoordinatorPublisherWorker)services.GetRequiredService<IHostedService>();
+    // Simulate 5 not-ready messages
+    publishStrategy.IsReadyResult = false;
+    workCoordinator.WorkToReturn = [
+      _createTestOutboxWork(Guid.NewGuid()),
+      _createTestOutboxWork(Guid.NewGuid()),
+      _createTestOutboxWork(Guid.NewGuid()),
+      _createTestOutboxWork(Guid.NewGuid()),
+      _createTestOutboxWork(Guid.NewGuid())
+    ];
+
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-
-    // Wait for some not-ready checks
     await Task.Delay(300);
 
-    // Act - Database becomes ready
-    databaseReadinessCheck.IsReadyResult = true;
+    // Act - Transport becomes ready
+    publishStrategy.IsReadyResult = true;
+    workCoordinator.WorkToReturn = [_createTestOutboxWork(Guid.NewGuid())];
     await Task.Delay(300);
 
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 
-    // Assert - Counter should reset to 0 after database becomes ready
-    await Assert.That(worker.ConsecutiveDatabaseNotReadyChecks).IsEqualTo(0)
-      .Because("Consecutive counter should reset when database becomes ready");
+    // Assert - Counter should reset to 0 after successful publish
+    await Assert.That(worker.ConsecutiveNotReadyChecks).IsEqualTo(0)
+      .Because("Consecutive counter should reset when transport becomes ready");
   }
 
   [Test]
-  public async Task DatabaseNotReady_MessagesBuffered_UntilReadyAsync() {
+  public async Task BufferedMessages_TracksCountAsync() {
     // Arrange
-    var messageId = Guid.NewGuid();
-    var testWorkCoordinator = new TestWorkCoordinator {
-      WorkToReturn = [_createTestOutboxWork(messageId)]
+    var messageIds = new List<Guid> {
+      Guid.NewGuid(),
+      Guid.NewGuid(),
+      Guid.NewGuid()
     };
-    var databaseReadinessCheck = new TestDatabaseReadinessCheck {
-      IsReadyResult = false  // Start not ready
+    var workCoordinator = new TestWorkCoordinator {
+      WorkToReturn = messageIds.ConvertAll(_createTestOutboxWork)
     };
-    var publishStrategy = new TestPublishStrategy();
+    var publishStrategy = new TestPublishStrategy {
+      IsReadyResult = false  // Transport not ready
+    };
     var instanceProvider = _createTestInstanceProvider();
-    var services = _createServiceCollection(
-      testWorkCoordinator,
-      publishStrategy,
-      instanceProvider,
-      databaseReadinessCheck
-    );
+    var services = _createServiceCollection(workCoordinator, publishStrategy, instanceProvider);
 
-    var worker = services.GetRequiredService<IHostedService>();
+    // Act
+    var worker = (WorkCoordinatorPublisherWorker)services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
     using var cts = new CancellationTokenSource();
     await worker.StartAsync(cts.Token);
-
-    // Database not ready - ProcessWorkBatchAsync skipped
     await Task.Delay(300);
-    await Assert.That(publishStrategy.PublishedWork).IsEmpty()
-      .Because("No work should be published when database not ready");
-
-    // Act - Database becomes ready
-    databaseReadinessCheck.IsReadyResult = true;
-    testWorkCoordinator.WorkToReturn = [_createTestOutboxWork(messageId)];
-    await Task.Delay(300);
-
     cts.Cancel();
     await worker.StopAsync(CancellationToken.None);
 
-    // Assert - Work should be published after database becomes ready
-    await Assert.That(publishStrategy.PublishedWork.Count).IsGreaterThanOrEqualTo(1)
-      .Because("Work should be published once database becomes ready");
+    // Assert - BufferedMessageCount should reflect lease renewals
+    await Assert.That(worker.BufferedMessageCount).IsGreaterThanOrEqualTo(3)
+      .Because("All 3 messages should be buffered due to transport not ready");
+  }
+
+  [Test]
+  public async Task LeaseRenewals_TrackedInMetricsAsync() {
+    // Arrange
+    var workCoordinator = new TestWorkCoordinator {
+      WorkToReturn = [
+        _createTestOutboxWork(Guid.NewGuid()),
+        _createTestOutboxWork(Guid.NewGuid())
+      ]
+    };
+    var publishStrategy = new TestPublishStrategy {
+      IsReadyResult = false
+    };
+    var instanceProvider = _createTestInstanceProvider();
+    var services = _createServiceCollection(workCoordinator, publishStrategy, instanceProvider);
+
+    // Act
+    var worker = (WorkCoordinatorPublisherWorker)services.GetRequiredService<Microsoft.Extensions.Hosting.IHostedService>();
+    using var cts = new CancellationTokenSource();
+    await worker.StartAsync(cts.Token);
+    await Task.Delay(300);
+    cts.Cancel();
+    await worker.StopAsync(CancellationToken.None);
+
+    // Assert - TotalLeaseRenewals should accumulate across batches
+    await Assert.That(worker.TotalLeaseRenewals).IsGreaterThanOrEqualTo(2)
+      .Because("Each buffered message should contribute to total lease renewals");
   }
 
   // Test helper classes
@@ -248,7 +229,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
       string serviceName,
       string hostName,
       int processId,
-      Dictionary<string, JsonElement>? metadata,
+      Dictionary<string, System.Text.Json.JsonElement>? metadata,
       MessageCompletion[] outboxCompletions,
       MessageFailure[] outboxFailures,
       MessageCompletion[] inboxCompletions,
@@ -298,19 +279,12 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     }
   }
 
-  private sealed class TestDatabaseReadinessCheck : IDatabaseReadinessCheck {
-    public bool IsReadyResult { get; set; } = true;
-
-    public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
-      return Task.FromResult(IsReadyResult);
-    }
-  }
-
   private sealed class TestPublishStrategy : IMessagePublishStrategy {
+    public bool IsReadyResult { get; set; } = true;
     public List<OutboxWork> PublishedWork { get; } = [];
 
     public Task<bool> IsReadyAsync(CancellationToken cancellationToken = default) {
-      return Task.FromResult(true);  // Transport always ready for these tests
+      return Task.FromResult(IsReadyResult);
     }
 
     public Task<MessagePublishResult> PublishAsync(OutboxWork work, CancellationToken cancellationToken) {
@@ -357,7 +331,6 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
       Destination = "test-topic",
       Envelope = _createTestEnvelope(messageId),
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
-      MessageType = "System.Text.Json.JsonElement, System.Text.Json",
       StreamId = Guid.NewGuid(),
       PartitionNumber = 1,
       Attempts = 0,
@@ -380,14 +353,12 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
     IWorkCoordinator workCoordinator,
     IMessagePublishStrategy publishStrategy,
     IServiceInstanceProvider instanceProvider,
-    IDatabaseReadinessCheck databaseReadinessCheck,
     ILogger<WorkCoordinatorPublisherWorker>? logger = null) {
 
     var services = new ServiceCollection();
     services.AddSingleton(workCoordinator);
     services.AddSingleton(publishStrategy);
     services.AddSingleton(instanceProvider);
-    services.AddSingleton(databaseReadinessCheck);
     services.AddSingleton<IWorkChannelWriter>(new TestWorkChannelWriter());  // Required by WorkCoordinatorPublisherWorker
     services.AddSingleton(Microsoft.Extensions.Options.Options.Create(new WorkCoordinatorPublisherOptions {
       PollingIntervalMilliseconds = 100  // Fast polling for tests

@@ -69,7 +69,7 @@ public class ThroughputBenchmarks {
     var topic = "throughput-test";
 
     // Subscribe
-    var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
+    var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
       Interlocked.Increment(ref receivedCount);
       if (receivedCount >= messageCount) {
         tcs.TrySetResult(true);
@@ -99,7 +99,7 @@ public class ThroughputBenchmarks {
     var tcs = new TaskCompletionSource<bool>();
     var topic = "throughput-medium";
 
-    var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
+    var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
       Interlocked.Increment(ref receivedCount);
       if (receivedCount >= messageCount) {
         tcs.TrySetResult(true);
@@ -126,7 +126,7 @@ public class ThroughputBenchmarks {
     var tcs = new TaskCompletionSource<bool>();
     var topic = "throughput-large";
 
-    var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
+    var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
       Interlocked.Increment(ref receivedCount);
       if (receivedCount >= messageCount) {
         tcs.TrySetResult(true);
@@ -155,7 +155,7 @@ public class ThroughputBenchmarks {
     var tcs = new TaskCompletionSource<bool>();
     var topic = "throughput-concurrent";
 
-    var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
+    var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
       if (Interlocked.Increment(ref receivedCount) >= totalMessages) {
         tcs.TrySetResult(true);
       }
@@ -195,7 +195,7 @@ public class ThroughputBenchmarks {
 
     var subscriptions = new List<ISubscription>();
     foreach (var topic in topics) {
-      var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
+      var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
         if (Interlocked.Increment(ref receivedCount) >= totalMessages) {
           tcs.TrySetResult(true);
         }
@@ -233,7 +233,7 @@ public class ThroughputBenchmarks {
     var topic = "throughput-request-response";
 
     // Setup response handler
-    var subscription = await _transport.SubscribeAsync(async (requestEnvelope, ct) => {
+    var subscription = await _transport.SubscribeAsync(async (requestEnvelope, envelopeType, ct) => {
       // Simulate processing and send response
       var typedEnvelope = (MessageEnvelope<SmallCommand>)requestEnvelope;
       var response = new SmallCommand($"response-{typedEnvelope.Payload.Id}", typedEnvelope.Payload.Value * 2);
@@ -279,7 +279,7 @@ public class ThroughputBenchmarks {
     var topic = "throughput-tracing";
     var traceStore = new InMemoryTraceStore();
 
-    var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
+    var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
       // Simulate tracing overhead
       await traceStore.StoreAsync(envelope, ct);
 

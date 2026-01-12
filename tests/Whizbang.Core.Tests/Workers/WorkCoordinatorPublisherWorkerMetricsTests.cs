@@ -331,6 +331,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
       Destination = "test-topic",
       Envelope = _createTestEnvelope(messageId),
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
+      MessageType = "System.Text.Json.JsonElement, System.Text.Json",
       StreamId = Guid.NewGuid(),
       PartitionNumber = 1,
       Attempts = 0,

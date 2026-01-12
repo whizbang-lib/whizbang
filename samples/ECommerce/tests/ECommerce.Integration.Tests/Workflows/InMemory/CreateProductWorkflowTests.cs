@@ -62,7 +62,9 @@ public class CreateProductWorkflowTests {
     };
 
     // Act - Create waiter BEFORE sending command to avoid race condition
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 2,
+      bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(command);
     await waiter.WaitAsync(timeoutMilliseconds: 15000);
 
@@ -132,7 +134,9 @@ public class CreateProductWorkflowTests {
     // Act - Create each product and wait for event processing
     // This ensures events are processed in order and perspectives are updated before the next product
     foreach (var command in commands) {
-      using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+      using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+        inventoryPerspectives: 2,
+        bffPerspectives: 2);
       await fixture.Dispatcher.SendAsync(command);
       await waiter.WaitAsync(timeoutMilliseconds: 15000);
     }
@@ -180,7 +184,9 @@ public class CreateProductWorkflowTests {
     };
 
     // Act - Create waiter BEFORE sending command to avoid race condition
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 2,
+      bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(command);
     await waiter.WaitAsync(timeoutMilliseconds: 15000);
 
@@ -214,7 +220,9 @@ public class CreateProductWorkflowTests {
     };
 
     // Act - Create waiter BEFORE sending command to avoid race condition
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 2,
+      bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(command);
     await waiter.WaitAsync(timeoutMilliseconds: 15000);
 

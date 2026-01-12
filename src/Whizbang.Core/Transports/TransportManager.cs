@@ -180,8 +180,8 @@ public class TransportManager(IMessageSerializer serializer, IServiceInstancePro
       Metadata: metadata
     );
 
-    // Wrap handler to match ITransport signature (adds CancellationToken parameter)
-    Task __transportHandler(IMessageEnvelope envelope, CancellationToken ct) {
+    // Wrap handler to match ITransport signature (adds envelopeType and CancellationToken parameters)
+    Task __transportHandler(IMessageEnvelope envelope, string? envelopeType, CancellationToken ct) {
       return handler(envelope);
     }
 

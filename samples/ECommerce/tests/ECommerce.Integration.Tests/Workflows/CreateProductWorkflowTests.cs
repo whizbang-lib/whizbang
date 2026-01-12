@@ -70,7 +70,9 @@ public class CreateProductWorkflowTests {
 
     // Act
     Console.WriteLine($"[TEST] Sending CreateProductCommand for ProductId={_testProd1}");
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 2,
+      bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(command);
     Console.WriteLine($"[TEST] Command sent, waiting for perspective processing...");
 
@@ -143,7 +145,9 @@ public class CreateProductWorkflowTests {
     // Act - Create each product and wait for perspective processing
     // This ensures events are processed in order and perspectives are updated before the next product
     foreach (var command in commands) {
-      using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+      using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+        inventoryPerspectives: 2,
+        bffPerspectives: 2);
       await fixture.Dispatcher.SendAsync(command);
       await waiter.WaitAsync(timeoutMilliseconds: 45000);
     }
@@ -190,7 +194,9 @@ public class CreateProductWorkflowTests {
     };
 
     // Act
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 2,
+      bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(command);
     await waiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -226,7 +232,9 @@ public class CreateProductWorkflowTests {
 
     // Act
     Console.WriteLine("[TEST] Sending CreateProductCommand...");
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 2,
+      bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(command);
     Console.WriteLine("[TEST] Command sent, waiting for event processing...");
 

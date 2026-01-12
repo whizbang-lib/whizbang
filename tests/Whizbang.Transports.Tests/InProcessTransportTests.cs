@@ -85,7 +85,7 @@ public class InProcessTransportTests {
 
     IMessageEnvelope? receivedEnvelope = null;
     await transport.SubscribeAsync(
-      handler: (env, ct) => {
+      handler: (env, envelopeType, ct) => {
         receivedEnvelope = env;
         return Task.CompletedTask;
       },
@@ -114,7 +114,7 @@ public class InProcessTransportTests {
     for (int i = 0; i < subscriberCount; i++) {
       var index = i;
       await transport.SubscribeAsync(
-        handler: (env, ct) => {
+        handler: (env, envelopeType, ct) => {
           invocations.Add(index);
           return Task.CompletedTask;
         },
@@ -157,7 +157,7 @@ public class InProcessTransportTests {
     var topic2Invoked = false;
 
     await transport.SubscribeAsync(
-      handler: (env, ct) => {
+      handler: (env, envelopeType, ct) => {
         topic1Invoked = true;
         return Task.CompletedTask;
       },
@@ -165,7 +165,7 @@ public class InProcessTransportTests {
     );
 
     await transport.SubscribeAsync(
-      handler: (env, ct) => {
+      handler: (env, envelopeType, ct) => {
         topic2Invoked = true;
         return Task.CompletedTask;
       },
@@ -192,7 +192,7 @@ public class InProcessTransportTests {
 
     // Act
     var subscription = await transport.SubscribeAsync(
-      handler: (env, ct) => Task.CompletedTask,
+      handler: (env, envelopeType, ct) => Task.CompletedTask,
       destination: destination
     );
 
@@ -211,7 +211,7 @@ public class InProcessTransportTests {
 
     // Act & Assert
     await Assert.That(async () => await transport.SubscribeAsync(
-      handler: (env, ct) => Task.CompletedTask,
+      handler: (env, envelopeType, ct) => Task.CompletedTask,
       destination: destination,
       cancellationToken: cts.Token
     )).Throws<OperationCanceledException>();
@@ -245,7 +245,7 @@ public class InProcessTransportTests {
 
     var handlerInvoked = false;
     var subscription = await transport.SubscribeAsync(
-      handler: (env, ct) => {
+      handler: (env, envelopeType, ct) => {
         handlerInvoked = true;
         return Task.CompletedTask;
       },
@@ -275,7 +275,7 @@ public class InProcessTransportTests {
     var transport = new InProcessTransport();
     var destination = new TransportDestination("test-topic");
     var subscription = await transport.SubscribeAsync(
-      handler: (env, ct) => Task.CompletedTask,
+      handler: (env, envelopeType, ct) => Task.CompletedTask,
       destination: destination
     );
 
@@ -292,7 +292,7 @@ public class InProcessTransportTests {
     var transport = new InProcessTransport();
     var destination = new TransportDestination("test-topic");
     var subscription = await transport.SubscribeAsync(
-      handler: (env, ct) => Task.CompletedTask,
+      handler: (env, envelopeType, ct) => Task.CompletedTask,
       destination: destination
     );
 
@@ -314,7 +314,7 @@ public class InProcessTransportTests {
 
     var handlerInvoked = false;
     var subscription = await transport.SubscribeAsync(
-      handler: (env, ct) => {
+      handler: (env, envelopeType, ct) => {
         handlerInvoked = true;
         return Task.CompletedTask;
       },
@@ -336,7 +336,7 @@ public class InProcessTransportTests {
     var transport = new InProcessTransport();
     var destination = new TransportDestination("test-topic");
     var subscription = await transport.SubscribeAsync(
-      handler: (env, ct) => Task.CompletedTask,
+      handler: (env, envelopeType, ct) => Task.CompletedTask,
       destination: destination
     );
 
@@ -362,7 +362,7 @@ public class InProcessTransportTests {
 
     // Setup responder
     await transport.SubscribeAsync(
-      handler: async (env, ct) => {
+      handler: async (env, envelopeType, ct) => {
         // Simulate responder sending response
         var responseDestination = new TransportDestination($"response-{env.MessageId.Value}");
         await transport.PublishAsync(responseEnvelope, responseDestination, envelopeType: null, ct);
@@ -425,7 +425,7 @@ public class InProcessTransportTests {
     var invocations = new ConcurrentBag<MessageId>();
 
     await transport.SubscribeAsync(
-      handler: (env, ct) => {
+      handler: (env, envelopeType, ct) => {
         invocations.Add(env.MessageId);
         return Task.CompletedTask;
       },
@@ -459,7 +459,7 @@ public class InProcessTransportTests {
     // Act - Subscribe concurrently
     var subscribeTasks = Enumerable.Range(0, concurrentSubscriptions)
       .Select(index => transport.SubscribeAsync(
-        handler: (env, ct) => {
+        handler: (env, envelopeType, ct) => {
           invocations.Add(index);
           return Task.CompletedTask;
         },
@@ -488,7 +488,7 @@ public class InProcessTransportTests {
     var tasks = Enumerable.Range(0, 50)
       .Select(async _ => {
         var subscription = await transport.SubscribeAsync(
-          handler: (env, ct) => Task.CompletedTask,
+          handler: (env, envelopeType, ct) => Task.CompletedTask,
           destination: destination
         );
         subscriptions.Add(subscription);
@@ -521,7 +521,7 @@ public class InProcessTransportTests {
     var handler1Invoked = false;
 
     await transport.SubscribeAsync(
-      handler: (env, ct) => {
+      handler: (env, envelopeType, ct) => {
         handler1Invoked = true;
         throw new InvalidOperationException("Handler 1 failed");
       },
@@ -529,7 +529,7 @@ public class InProcessTransportTests {
     );
 
     await transport.SubscribeAsync(
-      handler: (env, ct) => {
+      handler: (env, envelopeType, ct) => {
         return Task.CompletedTask;
       },
       destination: destination
@@ -582,7 +582,7 @@ public class InProcessTransportTests {
     var handler2Invoked = false;
 
     await transport.SubscribeAsync(
-      handler: (env, ct) => {
+      handler: (env, envelopeType, ct) => {
         handler1Invoked = true;
         return Task.CompletedTask;
       },
@@ -590,7 +590,7 @@ public class InProcessTransportTests {
     );
 
     await transport.SubscribeAsync(
-      handler: (env, ct) => {
+      handler: (env, envelopeType, ct) => {
         handler2Invoked = true;
         return Task.CompletedTask;
       },

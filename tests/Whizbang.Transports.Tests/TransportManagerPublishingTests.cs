@@ -32,7 +32,7 @@ public class TransportManagerPublishingTests {
     // Track published messages
     var publishedEnvelopes = new List<IMessageEnvelope>();
     await transport.SubscribeAsync(
-      (envelope, ct) => {
+      (envelope, envelopeType, ct) => {
         publishedEnvelopes.Add(envelope);
         return Task.CompletedTask;
       },
@@ -78,7 +78,7 @@ public class TransportManagerPublishingTests {
     var publishedToDest2 = new List<IMessageEnvelope>();
 
     await transport1.SubscribeAsync(
-      (envelope, ct) => {
+      (envelope, envelopeType, ct) => {
         publishedToDest1.Add(envelope);
         return Task.CompletedTask;
       },
@@ -87,7 +87,7 @@ public class TransportManagerPublishingTests {
     );
 
     await transport2.SubscribeAsync(
-      (envelope, ct) => {
+      (envelope, envelopeType, ct) => {
         publishedToDest2.Add(envelope);
         return Task.CompletedTask;
       },
@@ -123,7 +123,7 @@ public class TransportManagerPublishingTests {
     // Track published destinations
     var capturedDestinations = new List<TransportDestination>();
     await transport.SubscribeAsync(
-      (envelope, ct) => Task.CompletedTask,
+      (envelope, envelopeType, ct) => Task.CompletedTask,
       new TransportDestination("dest"),
       CancellationToken.None
     );
@@ -163,7 +163,7 @@ public class TransportManagerPublishingTests {
     // Track published messages
     var publishedEnvelopes = new List<IMessageEnvelope>();
     await transport.SubscribeAsync(
-      (envelope, ct) => {
+      (envelope, envelopeType, ct) => {
         publishedEnvelopes.Add(envelope);
         return Task.CompletedTask;
       },
@@ -198,7 +198,7 @@ public class TransportManagerPublishingTests {
     // Track published messages
     var publishedEnvelopes = new List<IMessageEnvelope>();
     await transport.SubscribeAsync(
-      (envelope, ct) => {
+      (envelope, envelopeType, ct) => {
         publishedEnvelopes.Add(envelope);
         return Task.CompletedTask;
       },

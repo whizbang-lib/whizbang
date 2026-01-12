@@ -361,10 +361,17 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     var envelopes = new List<MessageEnvelope<IEvent>>(records.Count);
 
     foreach (var record in records) {
-      // Look up the concrete type based on EventType column
-      if (!typeLookup.TryGetValue(record.EventType, out var concreteType)) {
+      // Normalize event type name (remove assembly version/culture/publickey if present)
+      // EventType column stores "TypeName, AssemblyName" or full assembly-qualified name
+      // We need to match against FullName (TypeName only) in our dictionary
+      var storedTypeName = record.EventType;
+      var commaIndex = storedTypeName.IndexOf(',');
+      var normalizedTypeName = commaIndex > 0 ? storedTypeName.Substring(0, commaIndex).Trim() : storedTypeName;
+
+      // Look up the concrete type based on normalized EventType
+      if (!typeLookup.TryGetValue(normalizedTypeName, out var concreteType)) {
         throw new InvalidOperationException(
-          $"Unknown event type '{record.EventType}' for event ID {record.Id}. " +
+          $"Unknown event type '{record.EventType}' (normalized: '{normalizedTypeName}'). " +
           $"Provided event types: [{string.Join(", ", eventTypes.Select(t => t.FullName ?? t.Name))}]"
         );
       }

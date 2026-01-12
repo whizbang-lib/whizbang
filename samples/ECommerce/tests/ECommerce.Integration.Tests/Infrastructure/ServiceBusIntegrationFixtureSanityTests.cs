@@ -137,7 +137,9 @@ public class ServiceBusIntegrationFixtureSanityTests {
 
     // Act - Send command and wait for event processing
     Console.WriteLine($"[SANITY] Sending command for InventoryWorker perspective test: {testProductId}");
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 2,
+      bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(command);
     await waiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -178,7 +180,9 @@ public class ServiceBusIntegrationFixtureSanityTests {
     // Act - Send command and wait for event processing
     Console.WriteLine($"[SANITY] Sending command for BFF perspective test: {testProductId}");
     Console.WriteLine("[SANITY] This tests that ServiceBusConsumerWorker receives messages from topics");
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 2,
+      bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(command);
 
     // Wait for both InventoryWorker (from event store) AND BFF (from Service Bus)

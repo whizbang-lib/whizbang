@@ -448,6 +448,12 @@ public record OutboxWork {
   public required string EnvelopeType { get; init; }
 
   /// <summary>
+  /// Assembly-qualified name of the message payload type (e.g., "MyApp.Commands.CreateProductCommand, MyApp").
+  /// Used for deserialization and stored in the event_type database column.
+  /// </summary>
+  public required string MessageType { get; init; }
+
+  /// <summary>
   /// Stream ID for ordering (aggregate ID or message ID).
   /// Events from the same stream must be processed in order.
   /// </summary>

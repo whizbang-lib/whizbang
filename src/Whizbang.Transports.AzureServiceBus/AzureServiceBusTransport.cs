@@ -242,7 +242,7 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
   /// <inheritdoc />
   /// <tests>No tests found</tests>
   public async Task<ISubscription> SubscribeAsync(
-    Func<IMessageEnvelope, CancellationToken, Task> handler,
+    Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
     TransportDestination destination,
     CancellationToken cancellationToken = default
   ) {
@@ -367,8 +367,8 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
             envelope.MessageId.Value
           );
 
-          // Invoke handler
-          await handler(envelope, args.CancellationToken);
+          // Invoke handler with envelope type metadata
+          await handler(envelope, envelopeTypeName, args.CancellationToken);
 
           // Complete the message
           await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);

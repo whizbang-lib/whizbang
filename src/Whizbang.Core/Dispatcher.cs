@@ -50,7 +50,8 @@ public abstract class Dispatcher(
   Routing.ITopicRegistry? topicRegistry = null,
   Routing.ITopicRoutingStrategy? topicRoutingStrategy = null,
   IAggregateIdExtractor? aggregateIdExtractor = null,
-  ILifecycleInvoker? lifecycleInvoker = null
+  ILifecycleInvoker? lifecycleInvoker = null,
+  IEnvelopeSerializer? envelopeSerializer = null
   ) : IDispatcher {
   private readonly IServiceProvider _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -62,6 +63,8 @@ public abstract class Dispatcher(
   private readonly Routing.ITopicRoutingStrategy _topicRoutingStrategy = topicRoutingStrategy ?? Routing.PassthroughRoutingStrategy.Instance;
   private readonly IAggregateIdExtractor? _aggregateIdExtractor = aggregateIdExtractor;
   private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
+  // Resolve from service provider if not injected (for backwards compatibility with generated code)
+  private readonly IEnvelopeSerializer? _envelopeSerializer = envelopeSerializer ?? serviceProvider.GetService<IEnvelopeSerializer>();
 
   /// <summary>
   /// Gets the service provider for receptor resolution.
@@ -736,7 +739,6 @@ public abstract class Dispatcher(
 
       // Resolve destination topic using registry and routing strategy
       var destination = _resolveEventTopic(eventType);
-      Console.WriteLine($"[DISPATCHER-DIAGNOSTIC] _publishToOutboxViaScopeAsync: destination='{destination}' for event {eventType.Name}");
 
       // Create MessageEnvelope wrapping the event (using SAME messageId as event store)
       var envelope = new MessageEnvelope<TEvent> {
@@ -759,11 +761,9 @@ public abstract class Dispatcher(
       envelope.AddHop(hop);
 
       System.Diagnostics.Debug.WriteLine($"[Dispatcher] Queueing event {eventType.Name} to work coordinator with destination '{destination}'");
-      Console.WriteLine($"[DISPATCHER-DIAGNOSTIC] MessageHop.Topic set to: '{hop.Topic}'");
 
       // Serialize envelope to OutboxMessage
       var newOutboxMessage = _serializeToNewOutboxMessage(envelope, eventData!, eventType, destination);
-      Console.WriteLine($"[DISPATCHER-DIAGNOSTIC] OutboxMessage created with Destination: '{newOutboxMessage.Destination}'");
 
       // Queue event for batched processing
       strategy.QueueOutboxMessage(newOutboxMessage);
@@ -791,13 +791,8 @@ public abstract class Dispatcher(
   /// <param name="context">Optional routing context (tenant ID, region, etc.)</param>
   /// <returns>The resolved topic name</returns>
   private string _resolveEventTopic(Type eventType, IReadOnlyDictionary<string, object>? context = null) {
-    Console.WriteLine($"[DISPATCHER-DIAGNOSTIC] _resolveEventTopic called for {eventType.Name}");
-    Console.WriteLine($"[DISPATCHER-DIAGNOSTIC] _topicRegistry is {(_topicRegistry == null ? "NULL" : "registered")}");
-    Console.WriteLine($"[DISPATCHER-DIAGNOSTIC] _topicRoutingStrategy is {(_topicRoutingStrategy == null ? "NULL" : _topicRoutingStrategy.GetType().Name)}");
-
     // 1. Try registry first (source-generated or configured)
     var baseTopic = _topicRegistry?.GetBaseTopic(eventType);
-    Console.WriteLine($"[DISPATCHER-DIAGNOSTIC] Base topic from registry: {baseTopic ?? "NULL"}");
 
     // 2. Fallback to convention if not found in registry
     if (baseTopic == null) {
@@ -814,10 +809,7 @@ public abstract class Dispatcher(
         // Default: use lowercase type name without "Event" suffix
         baseTopic = typeName.Replace("Event", "").ToLowerInvariant();
       }
-      Console.WriteLine($"[DISPATCHER-DIAGNOSTIC] Base topic from convention fallback: {baseTopic}");
     }
-
-    Console.WriteLine($"[DISPATCHER-DIAGNOSTIC] Final base topic before routing strategy: '{baseTopic}'");
 
     // baseTopic should never be null here due to convention fallback, but add defensive check
     if (baseTopic == null) {
@@ -827,7 +819,6 @@ public abstract class Dispatcher(
     // 3. Apply routing strategy (pool suffix, tenant prefix, etc.)
     // _topicRoutingStrategy is never null (defaults to PassthroughRoutingStrategy if not provided)
     var resolvedTopic = _topicRoutingStrategy!.ResolveTopic(eventType, baseTopic, context);
-    Console.WriteLine($"[DISPATCHER-DIAGNOSTIC] Topic after routing strategy: '{resolvedTopic}'");
     return resolvedTopic;
   }
 
@@ -1147,43 +1138,72 @@ public abstract class Dispatcher(
     Type payloadType,
     string destination
   ) {
+    // DIAGNOSTIC: Check if TMess age is JsonElement BEFORE calling serializer
+    if (typeof(TMessage) == typeof(JsonElement)) {
+      throw new InvalidOperationException(
+        $"BUG IN DISPATCHER: _serializeToNewOutboxMessage called with TMessage=JsonElement. " +
+        $"MessageId: {envelope.MessageId}. " +
+        $"Envelope type: {envelope.GetType().FullName}. " +
+        $"Payload type: {(payload?.GetType().FullName ?? "null")}. " +
+        $"PayloadType parameter: {payloadType.FullName}. " +
+        $"This indicates Dispatcher is being passed a MessageEnvelope<JsonElement> instead of a strongly-typed envelope.");
+    }
+
     // Extract stream_id: try aggregate ID from first hop, fall back to message ID
     var streamId = _extractStreamId(envelope);
 
-    // Get assembly-qualified name for proper deserialization
-    var messageTypeName = payloadType.AssemblyQualifiedName
-      ?? throw new InvalidOperationException($"Message type {payloadType.Name} must have an assembly-qualified name");
-
-    var envelopeTypeName = envelope.GetType().AssemblyQualifiedName
-      ?? throw new InvalidOperationException($"Envelope type {envelope.GetType().Name} must have an assembly-qualified name");
-
-    // Serialize the envelope to JSON and deserialize as MessageEnvelope<JsonElement>
-    // This allows AOT-compatible storage without runtime type resolution
-    if (_jsonOptions == null) {
-      throw new InvalidOperationException("JsonSerializerOptions required for envelope serialization");
+    // Use centralized envelope serializer (REQUIRED)
+    if (_envelopeSerializer == null) {
+      throw new InvalidOperationException(
+        "IEnvelopeSerializer is required but not registered. " +
+        "Ensure you call services.AddWhizbang() to register core services.");
     }
 
-    // Use JsonTypeInfo for AOT compatibility (no reflection)
-    var objectTypeInfo = _jsonOptions.GetTypeInfo(typeof(object));
-    var envelopeJson = JsonSerializer.Serialize((object)envelope, objectTypeInfo);
+    var serialized = _envelopeSerializer.SerializeEnvelope(envelope);
 
-    var jsonEnvelopeTypeInfo = (JsonTypeInfo<MessageEnvelope<JsonElement>>)_jsonOptions.GetTypeInfo(typeof(MessageEnvelope<JsonElement>));
-    var jsonEnvelope = JsonSerializer.Deserialize(envelopeJson, jsonEnvelopeTypeInfo)
-      ?? throw new InvalidOperationException($"Failed to deserialize envelope as MessageEnvelope<JsonElement> for message {envelope.MessageId}");
+    // DIAGNOSTIC: Log if MessageType is JsonElement (should never happen after serializer checks)
+    if (serialized.MessageType.Contains("JsonElement", StringComparison.OrdinalIgnoreCase)) {
+      throw new InvalidOperationException(
+        $"CRITICAL BUG: EnvelopeSerializer returned MessageType='{serialized.MessageType}' which contains 'JsonElement'. " +
+        $"MessageId: {envelope.MessageId}. " +
+        $"Envelope type: {envelope.GetType().FullName}. " +
+        $"TMessage type parameter: {typeof(TMessage).FullName}. " +
+        $"Payload type: {(payload?.GetType().FullName ?? "null")}. " +
+        $"PayloadType parameter: {payloadType.FullName}. " +
+        $"The serializer defensive checks should have caught this!");
+    }
 
-    return new OutboxMessage {
+    var outboxMessage = new OutboxMessage {
       MessageId = envelope.MessageId.Value,
       Destination = destination,
-      Envelope = jsonEnvelope,  // MessageEnvelope<JsonElement>
+      Envelope = serialized.JsonEnvelope,
       Metadata = new EnvelopeMetadata {
         MessageId = envelope.MessageId,
         Hops = envelope.Hops.ToList()
       },
-      EnvelopeType = envelopeTypeName,
+      EnvelopeType = serialized.EnvelopeType,
       StreamId = streamId,
       IsEvent = payload is IEvent,
-      MessageType = messageTypeName
+      MessageType = serialized.MessageType
     };
+
+    // FINAL CHECK: Throw if ANY type string contains JsonElement
+    if (outboxMessage.MessageType.Contains("JsonElement", StringComparison.OrdinalIgnoreCase) ||
+        outboxMessage.EnvelopeType.Contains("JsonElement", StringComparison.OrdinalIgnoreCase)) {
+      throw new InvalidOperationException(
+        $"FINAL CHECK FAILED: OutboxMessage contains JsonElement in type metadata. " +
+        $"MessageId={outboxMessage.MessageId}, " +
+        $"MessageType={outboxMessage.MessageType}, " +
+        $"EnvelopeType={outboxMessage.EnvelopeType}, " +
+        $"TMessage={typeof(TMessage).FullName}, " +
+        $"PayloadType={payloadType.FullName}, " +
+        $"Payload runtime type={payload?.GetType().FullName ?? "null"}. " +
+        $"This means either: (1) Envelope parameter was MessageEnvelope<JsonElement>, " +
+        $"(2) Payload was JsonElement, or (3) PayloadType parameter was typeof(JsonElement). " +
+        $"All these cases should have been caught by earlier checks!");
+    }
+
+    return outboxMessage;
   }
 
   /// <summary>

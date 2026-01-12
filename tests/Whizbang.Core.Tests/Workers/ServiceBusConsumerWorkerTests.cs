@@ -77,7 +77,7 @@ internal sealed class TestTransport : ITransport {
   }
 
   public Task<ISubscription> SubscribeAsync(
-    Func<IMessageEnvelope, CancellationToken, Task> handler,
+    Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
     TransportDestination destination,
     CancellationToken cancellationToken = default) {
     return Task.FromResult<ISubscription>(new TestSubscription());

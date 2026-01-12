@@ -204,11 +204,17 @@ public class DapperWorkCoordinator(
           flags |= WorkBatchFlags.Orphaned;
         }
 
+        // Extract message type - prefer direct column, fall back to parsing EnvelopeType if null (backward compat)
+        var messageType = !string.IsNullOrWhiteSpace(r.message_type)
+          ? r.message_type
+          : _extractMessageTypeFromEnvelopeType(r.envelope_type!);
+
         return new OutboxWork {
           MessageId = r.work_id,
           Destination = r.destination!,
           Envelope = jsonEnvelope,
           EnvelopeType = r.envelope_type!,
+          MessageType = messageType,
           StreamId = r.work_stream_id,
           PartitionNumber = r.partition_number,
           Attempts = r.attempts,
@@ -495,6 +501,31 @@ public class DapperWorkCoordinator(
       LastEventId = result.last_event_id,
       Status = (PerspectiveProcessingStatus)result.status
     };
+  }
+
+  /// <summary>
+  /// Extracts the message type name from an envelope type name.
+  /// Example: "MessageEnvelope`1[[MyApp.ProductCreatedEvent, MyApp]], Whizbang.Core"
+  /// Returns: "MyApp.ProductCreatedEvent, MyApp"
+  /// </summary>
+  private static string _extractMessageTypeFromEnvelopeType(string envelopeTypeName) {
+    var startIndex = envelopeTypeName.IndexOf("[[", StringComparison.Ordinal);
+    var endIndex = envelopeTypeName.IndexOf("]]", StringComparison.Ordinal);
+
+    if (startIndex == -1 || endIndex == -1 || startIndex >= endIndex) {
+      throw new InvalidOperationException(
+        $"Invalid envelope type name format: '{envelopeTypeName}'. " +
+        $"Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'");
+    }
+
+    var messageTypeName = envelopeTypeName.Substring(startIndex + 2, endIndex - startIndex - 2);
+
+    if (string.IsNullOrWhiteSpace(messageTypeName)) {
+      throw new InvalidOperationException(
+        $"Failed to extract message type name from envelope type: '{envelopeTypeName}'");
+    }
+
+    return messageTypeName;
   }
 
   /// <summary>

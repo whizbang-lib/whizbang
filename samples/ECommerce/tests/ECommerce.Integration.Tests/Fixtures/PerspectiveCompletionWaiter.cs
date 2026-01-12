@@ -17,22 +17,22 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
   private readonly CountingPerspectiveReceptor<TEvent> _bffReceptor;
   private readonly TaskCompletionSource<bool> _inventoryCompletionSource;
   private readonly TaskCompletionSource<bool> _bffCompletionSource;
-  private readonly int _expectedPerspectiveCount;
+  private readonly int _inventoryPerspectives;
+  private readonly int _bffPerspectives;
 
   public PerspectiveCompletionWaiter(
     ILifecycleReceptorRegistry inventoryRegistry,
     ILifecycleReceptorRegistry bffRegistry,
-    int expectedPerspectiveCount) {
+    int inventoryPerspectives,
+    int bffPerspectives) {
 
     _inventoryRegistry = inventoryRegistry ?? throw new ArgumentNullException(nameof(inventoryRegistry));
     _bffRegistry = bffRegistry ?? throw new ArgumentNullException(nameof(bffRegistry));
-    _expectedPerspectiveCount = expectedPerspectiveCount;
+    _inventoryPerspectives = inventoryPerspectives;
+    _bffPerspectives = bffPerspectives;
 
-    Console.WriteLine($"[PerspectiveWaiter] Creating waiter for {typeof(TEvent).Name} (expecting {expectedPerspectiveCount} total perspectives)");
-
-    // IMPORTANT: Both InventoryHost and BFFHost process perspectives
-    // Create SEPARATE receptors for each host (they have perspectives with the same names!)
-    var perspectivesPerHost = expectedPerspectiveCount / 2;
+    var totalPerspectives = inventoryPerspectives + bffPerspectives;
+    Console.WriteLine($"[PerspectiveWaiter] Creating waiter for {typeof(TEvent).Name} (Inventory={inventoryPerspectives}, BFF={bffPerspectives}, Total={totalPerspectives})");
 
     _inventoryCompletionSource = new TaskCompletionSource<bool>();
     var inventoryCompletedPerspectives = new System.Collections.Concurrent.ConcurrentBag<string>();
@@ -44,13 +44,13 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
     _inventoryReceptor = new CountingPerspectiveReceptor<TEvent>(
       _inventoryCompletionSource,
       inventoryCompletedPerspectives,
-      perspectivesPerHost
+      inventoryPerspectives
     );
 
     _bffReceptor = new CountingPerspectiveReceptor<TEvent>(
       _bffCompletionSource,
       bffCompletedPerspectives,
-      perspectivesPerHost
+      bffPerspectives
     );
 
     // CRITICAL: Register receptors NOW (before command is sent)
@@ -65,7 +65,8 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
   /// </summary>
   /// <param name="timeoutMilliseconds">Timeout in milliseconds (default: 45000ms for Service Bus emulator latency)</param>
   public async Task WaitAsync(int timeoutMilliseconds = 45000) {
-    Console.WriteLine($"[PerspectiveWaiter] Waiting for {typeof(TEvent).Name} processing (timeout={timeoutMilliseconds}ms)");
+    var totalPerspectives = _inventoryPerspectives + _bffPerspectives;
+    Console.WriteLine($"[PerspectiveWaiter] Waiting for {typeof(TEvent).Name} processing (Inventory={_inventoryPerspectives}, BFF={_bffPerspectives}, Total={totalPerspectives}, timeout={timeoutMilliseconds}ms)");
 
     try {
       // Wait for BOTH hosts to complete their perspectives
@@ -73,7 +74,7 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
         _inventoryCompletionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(timeoutMilliseconds)),
         _bffCompletionSource.Task.WaitAsync(TimeSpan.FromMilliseconds(timeoutMilliseconds))
       );
-      Console.WriteLine($"[PerspectiveWaiter] All {_expectedPerspectiveCount} perspectives completed for {typeof(TEvent).Name}!");
+      Console.WriteLine($"[PerspectiveWaiter] All {totalPerspectives} perspectives completed for {typeof(TEvent).Name}!");
     } catch (TimeoutException) {
       Console.WriteLine($"[PerspectiveWaiter] TIMEOUT waiting for {typeof(TEvent).Name} after {timeoutMilliseconds}ms");
       Console.WriteLine($"[PerspectiveWaiter] Inventory completed: {_inventoryCompletionSource.Task.IsCompleted}");

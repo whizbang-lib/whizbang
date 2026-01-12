@@ -56,7 +56,7 @@ public class ITransportTests {
     // Arrange
     var transport = _createTestTransport();
     var destination = new TransportDestination("test-topic");
-    Task handler(IMessageEnvelope env, CancellationToken ct) {
+    Task handler(IMessageEnvelope env, string? envelopeType, CancellationToken ct) {
       return Task.CompletedTask;
     }
 

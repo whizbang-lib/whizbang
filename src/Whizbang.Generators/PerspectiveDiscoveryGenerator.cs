@@ -62,6 +62,27 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   /// - Single variadic: IPerspectiveFor&lt;TModel, TEvent1, TEvent2, ...&gt;
   /// - Multiple separate: IPerspectiveFor&lt;TModel, TEvent1&gt;, IPerspectiveFor&lt;TModel, TEvent2&gt;
   /// </summary>
+  private static string _formatTypeNameForRuntime(ITypeSymbol typeSymbol) {
+    if (typeSymbol == null) {
+      throw new ArgumentNullException(nameof(typeSymbol));
+    }
+
+    // Get fully qualified type name WITHOUT global:: prefix
+    var typeName = typeSymbol.ToDisplayString(new SymbolDisplayFormat(
+        typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
+        genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters
+    ));
+
+    // Get assembly name (simple name only, no version/culture/publicKeyToken)
+    var assemblyName = typeSymbol.ContainingAssembly.Name;
+
+    // Format: "TypeName, AssemblyName"
+    // Example: "ECommerce.Contracts.ProductCreatedEvent, ECommerce.Contracts"
+    return $"{typeName}, {assemblyName}";
+  }
+
+  /// <summary>
+  /// Extracts perspective information from a class that implements IPerspectiveFor interfaces.
   private static PerspectiveInfo[]? _extractPerspectiveInfos(
       GeneratorSyntaxContext context,
       System.Threading.CancellationToken cancellationToken) {
@@ -114,6 +135,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     // Generate one PerspectiveInfo per implemented interface
     foreach (var perspectiveInterface in perspectiveInterfaces) {
       // Extract all type arguments: [TModel, TEvent1, TEvent2, ...]
+      // Use FullyQualifiedFormat for CODE GENERATION (includes global:: prefix)
       var typeArguments = perspectiveInterface.TypeArguments
           .Select(t => t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
           .ToArray();
@@ -122,6 +144,12 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       var eventTypeSymbols = perspectiveInterface.TypeArguments.Skip(1).ToArray();
       var eventTypes = eventTypeSymbols
           .Select(t => t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
+          .ToArray();
+
+      // Calculate DATABASE FORMAT (TypeName, AssemblyName - no global:: prefix)
+      // This format is used for registration in wh_message_associations table
+      var messageTypeNames = eventTypeSymbols
+          .Select(t => _formatTypeNameForRuntime(t))
           .ToArray();
 
       // Validate StreamKey for each event type and collect errors + StreamKey info
@@ -148,6 +176,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
           ClassName: className,
           InterfaceTypeArguments: typeArguments,
           EventTypes: eventTypes,
+          MessageTypeNames: messageTypeNames,
           StreamKeyPropertyName: streamKeyPropertyName,
           EventStreamKeys: eventStreamKeys.Count > 0 ? eventStreamKeys.ToArray() : null,
           EventValidationErrors: validationErrors.Count > 0 ? validationErrors.ToArray() : null
@@ -323,28 +352,20 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       var perspectiveClassName = _getSimpleName(perspective.ClassName);
 
       // Each event type creates one association
-      foreach (var eventType in perspective.EventTypes) {
+      // Use MessageTypeNames which already has the correct database format (no global:: prefix)
+      foreach (var messageTypeName in perspective.MessageTypeNames) {
         // Add comma separator (except for first item)
         if (!isFirstAssociation) {
           associations.AppendLine("    json.AppendLine(\",\");");
         }
         isFirstAssociation = false;
 
-        // Format event type using TypeNameFormatter conventions (TypeName, AssemblyName)
-        // Strip "global::" prefix if present
-        var typeName = eventType.StartsWith("global::", StringComparison.Ordinal)
-            ? eventType["global::".Length..]
-            : eventType;
-
-        // Extract assembly name from type name
-        // For "ECommerce.Contracts.Events.ProductCreatedEvent", assembly is "ECommerce.Contracts"
-        // Pattern: Find the first part before ".Events" or ".Commands" or take first two segments
-        var eventAssemblyName = _extractAssemblyName(typeName);
-        var formattedEventType = $"{typeName}, {eventAssemblyName}";
+        // MessageTypeNames already in correct format: "TypeName, AssemblyName"
+        // No need to strip global:: or recalculate assembly name
 
         // Generate C# code that appends JSON object
         associations.AppendLine($"    json.Append(\"    {{\");");
-        associations.AppendLine($"    json.Append($\"\\\"MessageType\\\": \\\"{formattedEventType}\\\", \");");
+        associations.AppendLine($"    json.Append($\"\\\"MessageType\\\": \\\"{messageTypeName}\\\", \");");
         associations.AppendLine("    json.Append(\"\\\"AssociationType\\\": \\\"perspective\\\", \");");
         associations.AppendLine($"    json.Append($\"\\\"TargetName\\\": \\\"{perspectiveClassName}\\\", \");");
         associations.AppendLine("    json.Append(\"\\\"ServiceName\\\": \\\"\");");
@@ -364,22 +385,18 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     foreach (var perspective in perspectives) {
       var perspectiveClassName = _getSimpleName(perspective.ClassName);
 
-      foreach (var eventType in perspective.EventTypes) {
+      // Use MessageTypeNames which already has the correct database format
+      foreach (var messageTypeName in perspective.MessageTypeNames) {
         // Add comma separator (except for first item)
         if (!isFirst) {
           associationsArray.AppendLine(",");
         }
         isFirst = false;
 
-        // Format event type (same logic as JSON generation)
-        var typeName = eventType.StartsWith("global::", StringComparison.Ordinal)
-            ? eventType["global::".Length..]
-            : eventType;
-        var eventAssemblyName = _extractAssemblyName(typeName);
-        var formattedEventType = $"{typeName}, {eventAssemblyName}";
+        // MessageTypeNames already in correct format: "TypeName, AssemblyName"
 
         // Generate MessageAssociation instantiation
-        associationsArray.Append($"      new MessageAssociation(\"{formattedEventType}\", \"perspective\", \"{perspectiveClassName}\", serviceName)");
+        associationsArray.Append($"      new MessageAssociation(\"{messageTypeName}\", \"perspective\", \"{perspectiveClassName}\", serviceName)");
       }
     }
 

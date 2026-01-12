@@ -57,13 +57,13 @@ public interface ITransport {
   /// Subscribes to messages from a destination.
   /// The handler will be invoked for each message received.
   /// </summary>
-  /// <param name="handler">The handler to invoke for each message</param>
+  /// <param name="handler">The handler to invoke for each message. Parameters: (envelope, envelopeType, cancellationToken). The envelopeType is the original assembly-qualified type name before serialization, or null if not available.</param>
   /// <param name="destination">The destination to subscribe to</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>A subscription that can be used to control or cancel the subscription</returns>
   /// <tests>tests/Whizbang.Transports.Tests/ITransportTests.cs:ITransport_SubscribeAsync_RegistersHandler_ReturnsSubscriptionAsync</tests>
   Task<ISubscription> SubscribeAsync(
-    Func<IMessageEnvelope, CancellationToken, Task> handler,
+    Func<IMessageEnvelope, string?, CancellationToken, Task> handler,
     TransportDestination destination,
     CancellationToken cancellationToken = default
   );

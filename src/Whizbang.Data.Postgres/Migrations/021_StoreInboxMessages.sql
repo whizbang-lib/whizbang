@@ -54,7 +54,7 @@ BEGIN
       INSERT INTO wh_inbox (
       message_id,
       handler_name,
-      event_type,
+      message_type,
       event_data,
       metadata,
       scope,

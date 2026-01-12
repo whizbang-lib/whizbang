@@ -291,11 +291,17 @@ public class EFCoreWorkCoordinator<TDbContext>(
           }
         }
 
+        // Extract message type - prefer direct column, fall back to parsing EnvelopeType if null (backward compat)
+        var messageType = !string.IsNullOrWhiteSpace(r.MessageType)
+          ? r.MessageType
+          : _extractMessageTypeFromEnvelopeType(r.EnvelopeType!);
+
         return new OutboxWork {
           MessageId = r.WorkId,
           Destination = r.Destination!,
           Envelope = jsonEnvelope,
           EnvelopeType = r.EnvelopeType!,
+          MessageType = messageType,
           StreamId = r.StreamId,
           PartitionNumber = r.PartitionNumber,
           Attempts = r.Attempts,
@@ -310,7 +316,15 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var inboxWork = validResults
       .Where(r => r.Source == "inbox")
       .Select(r => {
-        var envelope = _deserializeEnvelope(r.MessageType!, r.MessageData!);
+        // Inbox messages MUST have message_type populated (envelope_type not stored for inbox)
+        if (string.IsNullOrWhiteSpace(r.MessageType)) {
+          throw new InvalidOperationException(
+            $"Inbox message {r.WorkId} has null/empty message_type. " +
+            $"This indicates the message was not properly serialized by the transport consumer. " +
+            $"Ensure ServiceBusConsumerWorker or equivalent is correctly populating MessageType.");
+        }
+
+        var envelope = _deserializeEnvelope(r.MessageType, r.MessageData!);
         // Cast to IMessageEnvelope<JsonElement> - envelope is always deserialized as MessageEnvelope<JsonElement>
         var jsonEnvelope = envelope as IMessageEnvelope<JsonElement>
           ?? throw new InvalidOperationException($"Envelope must be IMessageEnvelope<JsonElement> for message {r.WorkId}");
@@ -339,7 +353,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
         return new InboxWork {
           MessageId = r.WorkId,
           Envelope = jsonEnvelope,
-          MessageType = r.MessageType!,
+          MessageType = r.MessageType,
           StreamId = r.StreamId,
           PartitionNumber = r.PartitionNumber,
           Status = (MessageProcessingStatus)r.Status,
@@ -735,6 +749,31 @@ public class EFCoreWorkCoordinator<TDbContext>(
       LastEventId = result.LastEventId,
       Status = (PerspectiveProcessingStatus)result.Status
     };
+  }
+
+  /// <summary>
+  /// Extracts the message type name from an envelope type name.
+  /// Example: "MessageEnvelope`1[[MyApp.ProductCreatedEvent, MyApp]], Whizbang.Core"
+  /// Returns: "MyApp.ProductCreatedEvent, MyApp"
+  /// </summary>
+  private static string _extractMessageTypeFromEnvelopeType(string envelopeTypeName) {
+    var startIndex = envelopeTypeName.IndexOf("[[", StringComparison.Ordinal);
+    var endIndex = envelopeTypeName.IndexOf("]]", StringComparison.Ordinal);
+
+    if (startIndex == -1 || endIndex == -1 || startIndex >= endIndex) {
+      throw new InvalidOperationException(
+        $"Invalid envelope type name format: '{envelopeTypeName}'. " +
+        $"Expected format: 'MessageEnvelope`1[[MessageType, Assembly]], EnvelopeAssembly'");
+    }
+
+    var messageTypeName = envelopeTypeName.Substring(startIndex + 2, endIndex - startIndex - 2);
+
+    if (string.IsNullOrWhiteSpace(messageTypeName)) {
+      throw new InvalidOperationException(
+        $"Failed to extract message type name from envelope type: '{envelopeTypeName}'");
+    }
+
+    return messageTypeName;
   }
 
   /// <summary>

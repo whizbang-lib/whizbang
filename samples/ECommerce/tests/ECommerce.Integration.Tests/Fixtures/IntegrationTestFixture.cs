@@ -278,14 +278,6 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
   }
 
   /// <summary>
-  /// Waits for asynchronous event processing to complete.
-  /// Gives the Service Bus consumer and perspectives time to process published events.
-  /// </summary>
-  public async Task WaitForEventProcessingAsync(int millisecondsDelay = 3000) {
-    await Task.Delay(millisecondsDelay);
-  }
-
-  /// <summary>
   /// Cleans up all test data from the database (truncates all tables).
   /// </summary>
   public async Task CleanupDatabaseAsync(CancellationToken cancellationToken = default) {

@@ -198,10 +198,17 @@ public abstract class DapperEventStoreBase : IEventStore {
     var metadataTypeInfo = JsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
 
     foreach (var row in rows) {
-      // Look up the concrete type based on EventType column
-      if (!typeLookup.TryGetValue(row.EventType, out var eventTypeInfo)) {
+      // Normalize event type name (remove assembly version/culture/publickey if present)
+      // EventType column stores "TypeName, AssemblyName" or full assembly-qualified name
+      // We need to match against FullName (TypeName only) in our dictionary
+      var storedTypeName = row.EventType;
+      var commaIndex = storedTypeName.IndexOf(',');
+      var normalizedTypeName = commaIndex > 0 ? storedTypeName.Substring(0, commaIndex).Trim() : storedTypeName;
+
+      // Look up the concrete type based on normalized EventType
+      if (!typeLookup.TryGetValue(normalizedTypeName, out var eventTypeInfo)) {
         throw new InvalidOperationException(
-          $"Unknown event type '{row.EventType}'. " +
+          $"Unknown event type '{row.EventType}' (normalized: '{normalizedTypeName}'). " +
           $"Provided event types: [{string.Join(", ", eventTypes.Select(t => t.FullName ?? t.Name))}]"
         );
       }

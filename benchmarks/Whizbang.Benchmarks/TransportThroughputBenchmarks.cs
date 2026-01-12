@@ -53,7 +53,7 @@ public class TransportThroughputBenchmarks {
     var tcs = new TaskCompletionSource<bool>();
     var topic = "transport-single";
 
-    var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
+    var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
       if (Interlocked.Increment(ref receivedCount) >= messageCount) {
         tcs.TrySetResult(true);
       }
@@ -83,7 +83,7 @@ public class TransportThroughputBenchmarks {
     // Subscribe multiple handlers to same topic
     var subscriptions = new List<ISubscription>();
     for (int i = 0; i < subscriberCount; i++) {
-      var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
+      var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
         if (Interlocked.Increment(ref receivedCount) >= expectedTotal) {
           tcs.TrySetResult(true);
         }
@@ -121,7 +121,7 @@ public class TransportThroughputBenchmarks {
     // Subscribe to each topic
     var subscriptions = new List<ISubscription>();
     foreach (var topic in topics) {
-      var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
+      var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
         if (Interlocked.Increment(ref receivedCount) >= totalMessages) {
           tcs.TrySetResult(true);
         }
@@ -154,7 +154,7 @@ public class TransportThroughputBenchmarks {
     var topic = "transport-subscribe-test";
 
     for (int i = 0; i < operationCount; i++) {
-      var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
+      var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
         await Task.CompletedTask;
       }, new TransportDestination(topic));
 
@@ -174,7 +174,7 @@ public class TransportThroughputBenchmarks {
     var tcs = new TaskCompletionSource<bool>();
     var topic = "transport-concurrent-pub";
 
-    var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
+    var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
       if (Interlocked.Increment(ref receivedCount) >= totalMessages) {
         tcs.TrySetResult(true);
       }
@@ -207,7 +207,7 @@ public class TransportThroughputBenchmarks {
     var topic = "transport-batched";
     var receivedCount = 0;
 
-    var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
+    var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
       Interlocked.Increment(ref receivedCount);
       await Task.CompletedTask;
     }, new TransportDestination(topic));
@@ -239,7 +239,7 @@ public class TransportThroughputBenchmarks {
     var tcs = new TaskCompletionSource<bool>();
     var topic = "transport.routing.test";
 
-    var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
+    var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
       if (Interlocked.Increment(ref receivedCount) >= messageCount) {
         tcs.TrySetResult(true);
       }
@@ -274,7 +274,7 @@ public class TransportThroughputBenchmarks {
     // Subscribe to each topic with routing key pattern
     var subscriptions = new List<ISubscription>();
     foreach (var topic in topics) {
-      var subscription = await _transport.SubscribeAsync(async (envelope, ct) => {
+      var subscription = await _transport.SubscribeAsync(async (envelope, envelopeType, ct) => {
         if (Interlocked.Increment(ref receivedCount) >= totalMessages) {
           tcs.TrySetResult(true);
         }

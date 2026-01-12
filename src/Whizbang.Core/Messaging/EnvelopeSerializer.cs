@@ -28,9 +28,23 @@ public sealed class EnvelopeSerializer : IEnvelopeSerializer {
     // This indicates the envelope was already serialized and is being double-serialized
     if (payloadType == typeof(JsonElement)) {
       throw new InvalidOperationException(
-        $"Payload is JsonElement, which means the envelope was already serialized. " +
+        $"DOUBLE SERIALIZATION DETECTED: Payload is JsonElement, which means the envelope was already serialized. " +
         $"MessageId: {envelope.MessageId}. " +
-        $"This is a bug - envelopes should only be serialized once before storage.");
+        $"Envelope type: {envelope.GetType().FullName}. " +
+        $"TMessage type parameter: {typeof(TMessage).FullName}. " +
+        $"Payload runtime type: {payloadType.FullName}. " +
+        $"This is a bug - envelopes should only be serialized once before storage. " +
+        $"Check if Dispatcher is being passed a JsonElement instead of a strongly-typed message.");
+    }
+
+    // DEFENSIVE: Detect if TMessage is JsonElement (should never happen!)
+    if (typeof(TMessage) == typeof(JsonElement)) {
+      throw new InvalidOperationException(
+        $"WRONG TYPE PARAMETER: TMessage is JsonElement. " +
+        $"MessageId: {envelope.MessageId}. " +
+        $"Envelope type: {envelope.GetType().FullName}. " +
+        $"This indicates SerializeEnvelope was called with wrong type parameter. " +
+        $"The envelope should be strongly-typed (e.g., MessageEnvelope<ProductCreatedEvent>), not MessageEnvelope<JsonElement>.");
     }
 
     // CRITICAL: Capture envelope type BEFORE serialization

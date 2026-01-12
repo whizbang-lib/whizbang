@@ -53,7 +53,7 @@ CREATE INDEX IF NOT EXISTS idx_message_dedup_first_seen ON wh_message_deduplicat
 CREATE TABLE IF NOT EXISTS wh_inbox (
   message_id UUID NOT NULL PRIMARY KEY,
   handler_name VARCHAR(500) NOT NULL,
-  event_type VARCHAR(500) NOT NULL,
+  message_type VARCHAR(500) NOT NULL,
   event_data JSONB NOT NULL,
   metadata JSONB NOT NULL,
   scope JSONB NULL,
@@ -82,7 +82,7 @@ CREATE INDEX IF NOT EXISTS idx_inbox_scheduled_for ON wh_inbox (stream_id, sched
 CREATE TABLE IF NOT EXISTS wh_outbox (
   message_id UUID NOT NULL PRIMARY KEY,
   destination VARCHAR(500) NOT NULL,
-  event_type VARCHAR(500) NOT NULL,
+  message_type VARCHAR(500) NOT NULL,
   event_data JSONB NOT NULL,
   metadata JSONB NOT NULL,
   scope JSONB NULL,

@@ -33,7 +33,7 @@ public static class OutboxSchema {
         Nullable: true  // Events don't have destinations, only commands do
       ),
       new ColumnDefinition(
-        Name: "event_type",
+        Name: "message_type",
         DataType: WhizbangDataType.STRING,
         MaxLength: 500,
         Nullable: false
@@ -179,7 +179,7 @@ public static class OutboxSchema {
   public static class Columns {
     public const string MESSAGE_ID = "message_id";
     public const string DESTINATION = "destination";
-    public const string EVENT_TYPE = "event_type";
+    public const string MESSAGE_TYPE = "message_type";
     public const string ENVELOPE_TYPE = "envelope_type";
     public const string EVENT_DATA = "event_data";
     public const string METADATA = "metadata";

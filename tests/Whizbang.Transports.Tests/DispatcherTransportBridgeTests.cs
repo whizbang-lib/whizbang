@@ -39,7 +39,7 @@ public class DispatcherTransportBridgeTests {
 
     // Subscribe to the destination to simulate remote service
     await transport.SubscribeAsync(
-      handler: (envelope, ct) => {
+      handler: (envelope, envelopeType, ct) => {
         messageReceived = true;
         receivedEnvelope = envelope;
         return Task.CompletedTask;
@@ -77,7 +77,7 @@ public class DispatcherTransportBridgeTests {
     byte[]? serializedBytes = null;
 
     await transport.SubscribeAsync(
-      handler: async (envelope, ct) => {
+      handler: async (envelope, envelopeType, ct) => {
         // Verify serialization works
         serializedBytes = await serializer.SerializeAsync(envelope);
         var deserialized = await serializer.DeserializeAsync<TestCommand>(serializedBytes);
@@ -109,7 +109,7 @@ public class DispatcherTransportBridgeTests {
 
     // Setup remote responder (simulates remote service)
     await transport.SubscribeAsync(
-      handler: async (requestEnvelope, ct) => {
+      handler: async (requestEnvelope, envelopeType, ct) => {
         var request = ((MessageEnvelope<TestQuery>)requestEnvelope).Payload;
         var response = new TestResult { Result = request.Value * 2 };
 
@@ -273,7 +273,7 @@ public class DispatcherTransportBridgeTests {
 
     IMessageEnvelope? receivedEnvelope = null;
     await transport.SubscribeAsync(
-      handler: (envelope, ct) => {
+      handler: (envelope, envelopeType, ct) => {
         receivedEnvelope = envelope;
         return Task.CompletedTask;
       },
@@ -309,7 +309,7 @@ public class DispatcherTransportBridgeTests {
 
     IMessageEnvelope? receivedEnvelope = null;
     await transport.SubscribeAsync(
-      handler: (envelope, ct) => {
+      handler: (envelope, envelopeType, ct) => {
         receivedEnvelope = envelope;
         return Task.CompletedTask;
       },
@@ -345,7 +345,7 @@ public class DispatcherTransportBridgeTests {
 
     // Setup remote responder
     await transport.SubscribeAsync(
-      handler: async (requestEnvelope, ct) => {
+      handler: async (requestEnvelope, envelopeType, ct) => {
         receivedRequest = requestEnvelope;
         var request = ((MessageEnvelope<TestQuery>)requestEnvelope).Payload;
         var response = new TestResult { Result = request.Value * 2 };

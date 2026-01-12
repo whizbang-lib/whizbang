@@ -173,10 +173,24 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Build full interface type arguments for registration
     var typeArguments = new[] { modelTypeName }.Concat(eventTypes).ToArray();
 
+    // Calculate DATABASE FORMAT (TypeName, AssemblyName - no global:: prefix)
+    // This generator doesn't use database registration, but we need to provide the parameter
+    var messageTypeNames = eventTypeSymbols
+        .Select(t => {
+          var typeName = t.ToDisplayString(new SymbolDisplayFormat(
+              typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
+              genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters
+          ));
+          var assemblyName = t.ContainingAssembly.Name;
+          return $"{typeName}, {assemblyName}";
+        })
+        .ToArray();
+
     return new PerspectiveInfo(
         ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
         InterfaceTypeArguments: typeArguments,
         EventTypes: eventTypes.ToArray(),
+        MessageTypeNames: messageTypeNames,
         StreamKeyPropertyName: streamKeyPropertyName,
         EventStreamKeys: eventStreamKeys.Count > 0 ? eventStreamKeys.ToArray() : null
     );

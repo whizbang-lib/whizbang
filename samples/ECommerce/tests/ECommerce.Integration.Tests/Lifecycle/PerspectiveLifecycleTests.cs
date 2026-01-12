@@ -190,7 +190,9 @@ public class PerspectiveLifecycleTests {
 
     var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PrePerspectiveAsync);
-    using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+    using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 2,
+      bffPerspectives: 2);
 
     try {
       // Act - Dispatch command
@@ -271,7 +273,9 @@ public class PerspectiveLifecycleTests {
 
     var registry = fixture.BffHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostPerspectiveAsync);
-    using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+    using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 2,
+      bffPerspectives: 2);
 
     try {
       // Act - Dispatch command
@@ -452,9 +456,11 @@ public class PerspectiveLifecycleTests {
     };
 
     // Create waiter BEFORE sending commands to avoid race condition
-    // Each command creates 1 ProductCreatedEvent, which triggers 2 BFF perspectives
-    // 2 events × 2 BFF perspectives = 4 completions expected
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+    // Each command creates 1 ProductCreatedEvent, which triggers 2 inventory perspectives + 2 BFF perspectives
+    // 2 events × (2 inventory + 2 BFF) perspectives = 8 completions expected
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 4,
+      bffPerspectives: 4);
 
     // Act - Dispatch multiple commands
     foreach (var command in commands) {

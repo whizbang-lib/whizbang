@@ -44,7 +44,7 @@ BEGIN
     INSERT INTO wh_outbox (
       message_id,
       destination,
-      event_type,
+      message_type,
       envelope_type,
       event_data,
       metadata,

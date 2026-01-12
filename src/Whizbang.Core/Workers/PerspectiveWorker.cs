@@ -93,6 +93,7 @@ public partial class PerspectiveWorker(
       }
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       LogErrorProcessingInitialCheckpoints(_logger, ex);
+      throw; // Never swallow exceptions
     }
 
     while (!stoppingToken.IsCancellationRequested) {
@@ -122,6 +123,7 @@ public partial class PerspectiveWorker(
         await _processWorkBatchAsync(stoppingToken);
       } catch (Exception ex) when (ex is not OperationCanceledException) {
         LogErrorProcessingCheckpoints(_logger, ex);
+        throw; // Never swallow exceptions
       }
 
       // Wait before next poll (unless cancelled)
@@ -180,11 +182,11 @@ public partial class PerspectiveWorker(
         staleThresholdSeconds: _options.StaleThresholdSeconds,
         cancellationToken: cancellationToken
       );
-    } catch (Exception ex) {
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
       // Database failure: Completions remain in 'Sent' status
       // ResetStale() will move them back to 'Pending' after timeout
       LogErrorProcessingWorkBatch(_logger, ex);
-      return; // Exit early, retry on next cycle
+      throw; // Never swallow exceptions
     }
 
     // 5. Extract acknowledgement counts from workBatch metadata (from first row)
@@ -331,6 +333,7 @@ public partial class PerspectiveWorker(
             }
           } catch (Exception ex) {
             LogErrorInvokingLifecycleReceptors(_logger, ex, perspectiveName, streamId);
+            throw; // Never swallow exceptions
           }
         }
 
@@ -360,7 +363,7 @@ public partial class PerspectiveWorker(
         await _completionStrategy.ReportCompletionAsync(result, workCoordinator, cancellationToken);
 
         LogPerspectiveCheckpointCompleted(_logger, perspectiveName, streamId, result.LastEventId);
-      } catch (Exception ex) {
+      } catch (Exception ex) when (ex is not OperationCanceledException) {
         LogErrorProcessingPerspectiveCheckpoint(_logger, ex, perspectiveName, streamId);
 
         var failure = new PerspectiveCheckpointFailure {
@@ -373,6 +376,7 @@ public partial class PerspectiveWorker(
 
         // Report failure via strategy
         await _completionStrategy.ReportFailureAsync(failure, workCoordinator, cancellationToken);
+        throw; // Never swallow exceptions
       }
     }
 
@@ -423,8 +427,16 @@ public partial class PerspectiveWorker(
       Guid currentEventId,
       CancellationToken cancellationToken) {
 
-    if (_lifecycleInvoker is null || _eventTypeProvider is null) {
-      return; // Guards against nullability - skip lifecycle invocation if dependencies missing
+    if (_lifecycleInvoker is null) {
+      throw new InvalidOperationException(
+        $"ILifecycleInvoker is required for lifecycle stage invocation but was not registered. " +
+        $"Ensure AddWhizbangLifecycleInvoker() is called during DI setup.");
+    }
+
+    if (_eventTypeProvider is null) {
+      throw new InvalidOperationException(
+        $"IEventTypeProvider is required for lifecycle stage invocation but was not registered. " +
+        $"Register an implementation (e.g., ECommerceEventTypeProvider) as a singleton.");
     }
 
     try {
@@ -482,10 +494,11 @@ public partial class PerspectiveWorker(
         );
       }
 
-    } catch (Exception ex) {
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
       // Log error but don't fail the entire perspective processing
       // Lifecycle receptor failures shouldn't prevent checkpoint progress
       LogErrorInvokingLifecycleReceptors(_logger, ex, perspectiveName, streamId);
+      throw; // Never swallow exceptions
     }
   }
 

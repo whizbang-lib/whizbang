@@ -129,7 +129,7 @@ public class DispatcherTransportBridge(
 
     // Subscribe to transport and route to dispatcher
     return await _transport.SubscribeAsync(
-      handler: async (envelope, ct) => {
+      handler: async (envelope, envelopeType, ct) => {
         // Extract message from envelope
         var typedEnvelope = (MessageEnvelope<TMessage>)envelope;
         var message = typedEnvelope.Payload;

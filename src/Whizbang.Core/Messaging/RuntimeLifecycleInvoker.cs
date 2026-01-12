@@ -1,27 +1,68 @@
+using System;
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core.Observability;
+
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
-/// Placeholder implementation of ILifecycleInvoker for Phase 3.
-/// In Phase 4, the source generator will create the full implementation with:
-/// - Compile-time routing for receptors with [FireAt] attributes
-/// - Runtime registry integration for dynamically registered receptors
-/// - AOT-compatible invocation without reflection
+/// Runtime implementation of ILifecycleInvoker that queries the ILifecycleReceptorRegistry
+/// for dynamically registered receptors and invokes them using pre-compiled delegates.
 /// </summary>
 /// <remarks>
-/// This implementation currently does nothing and serves as a marker until
-/// the generator creates the full lifecycle invoker. Tests will need to register
-/// receptors and rely on generated code for invocation once Phase 4 is complete.
+/// <para>
+/// This implementation supports runtime receptor registration (primarily for tests).
+/// In future phases, the source generator may create a full implementation with
+/// compile-time routing for receptors with [FireAt] attributes.
+/// </para>
+/// <para>
+/// Invocation is AOT-compatible - the registry provides pre-compiled delegates
+/// that eliminate reflection at invocation time.
+/// </para>
 /// </remarks>
 public sealed class RuntimeLifecycleInvoker : ILifecycleInvoker {
+  private readonly ILifecycleReceptorRegistry _registry;
+
+  /// <summary>
+  /// Creates a new RuntimeLifecycleInvoker.
+  /// </summary>
+  /// <param name="registry">The receptor registry to query for registered receptors.</param>
+  public RuntimeLifecycleInvoker(ILifecycleReceptorRegistry registry) {
+    ArgumentNullException.ThrowIfNull(registry);
+    _registry = registry;
+  }
+
   /// <inheritdoc/>
-  public ValueTask InvokeAsync(
+  public async ValueTask InvokeAsync(
       object message,
       LifecycleStage stage,
       ILifecycleContext? context = null,
       CancellationToken cancellationToken = default) {
 
-    // Phase 3: Placeholder - no implementation yet
-    // Phase 4: Generator will create full implementation with compile-time and runtime routing
-    return ValueTask.CompletedTask;
+    ArgumentNullException.ThrowIfNull(message);
+
+    var messageType = message.GetType();
+
+    // Get pre-compiled AOT-compatible invocation delegates from registry
+    var handlers = _registry.GetHandlers(messageType, stage);
+
+    if (handlers.Count == 0) {
+      // No receptors registered for this message type and stage - this is normal
+      return;
+    }
+
+    // Invoke all registered receptors
+    foreach (var handler in handlers) {
+      try {
+        await handler(message, context, cancellationToken).ConfigureAwait(false);
+      } catch (Exception ex) {
+        // Log error but don't stop processing other receptors
+        // In production, this should use ILogger, but for now we'll rethrow to catch test issues
+        // TODO: Add ILogger support for error logging
+        throw new InvalidOperationException(
+          $"Lifecycle receptor failed at stage {stage} for message type {messageType.Name}: {ex.Message}",
+          ex);
+      }
+    }
   }
 }

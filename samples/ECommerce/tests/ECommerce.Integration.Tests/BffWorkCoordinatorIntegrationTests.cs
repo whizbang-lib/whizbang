@@ -493,7 +493,7 @@ public class TestTransport : Whizbang.Core.Transports.ITransport {
   }
 
   public Task<Whizbang.Core.Transports.ISubscription> SubscribeAsync(
-    Func<Whizbang.Core.Observability.IMessageEnvelope, CancellationToken, Task> handler,
+    Func<Whizbang.Core.Observability.IMessageEnvelope, string?, CancellationToken, Task> handler,
     Whizbang.Core.Transports.TransportDestination destination,
     CancellationToken cancellationToken = default) {
     throw new NotImplementedException("SubscribeAsync not needed for outbox tests");

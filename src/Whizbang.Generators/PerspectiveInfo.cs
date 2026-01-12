@@ -6,8 +6,9 @@ namespace Whizbang.Generators;
 /// A perspective class implements IPerspectiveFor&lt;TModel, TEvent1, TEvent2, ...&gt; with all type arguments.
 /// </summary>
 /// <param name="ClassName">Fully qualified class name implementing IPerspectiveFor</param>
-/// <param name="InterfaceTypeArguments">All type arguments from IPerspectiveFor interface (TModel, TEvent1, TEvent2, ...) as fully qualified names</param>
-/// <param name="EventTypes">Array of fully qualified event type names (extracted from InterfaceTypeArguments for diagnostics)</param>
+/// <param name="InterfaceTypeArguments">All type arguments from IPerspectiveFor interface (TModel, TEvent1, TEvent2, ...) as fully qualified names with global:: prefix for code generation</param>
+/// <param name="EventTypes">Array of fully qualified event type names with global:: prefix for code generation (extracted from InterfaceTypeArguments for diagnostics)</param>
+/// <param name="MessageTypeNames">Array of event type names in database format (TypeName, AssemblyName - no global:: prefix) for message association registration</param>
 /// <param name="StreamKeyPropertyName">Property name marked with [StreamKey] attribute on the model (null if not found)</param>
 /// <param name="EventStreamKeys">Map of event type name to its StreamKey property name</param>
 /// <param name="EventValidationErrors">Array of validation errors for event types (event name, error type)</param>
@@ -17,6 +18,7 @@ internal sealed record PerspectiveInfo(
     string ClassName,
     string[] InterfaceTypeArguments,
     string[] EventTypes,
+    string[] MessageTypeNames,
     string? StreamKeyPropertyName = null,
     EventStreamKeyInfo[]? EventStreamKeys = null,
     EventValidationError[]? EventValidationErrors = null

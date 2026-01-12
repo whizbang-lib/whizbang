@@ -702,19 +702,25 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   /// This avoids race conditions where perspectives complete before receptors are registered.
   /// </summary>
   /// <typeparam name="TEvent">The event type to wait for</typeparam>
-  /// <param name="expectedPerspectiveCount">Total number of perspectives expected (default: 4 for both hosts)</param>
+  /// <param name="inventoryPerspectives">Number of perspectives expected in InventoryWorker host</param>
+  /// <param name="bffPerspectives">Number of perspectives expected in BFF host</param>
   /// <returns>A waiter that can be used to wait for perspective completion</returns>
   /// <remarks>
   /// Usage:
   /// <code>
-  /// using var waiter = fixture.CreatePerspectiveWaiter&lt;ProductCreatedEvent&gt;(expectedCount: 4);
+  /// // ProductCreatedEvent triggers 2 perspectives in each host
+  /// using var waiter = fixture.CreatePerspectiveWaiter&lt;ProductCreatedEvent&gt;(
+  ///   inventoryPerspectives: 2,
+  ///   bffPerspectives: 2
+  /// );
   /// await fixture.Dispatcher.SendAsync(command);
   /// await waiter.WaitAsync(timeout: 15000);
   /// </code>
   /// </remarks>
   /// <docs>testing/lifecycle-synchronization</docs>
   public PerspectiveCompletionWaiter<TEvent> CreatePerspectiveWaiter<TEvent>(
-    int expectedPerspectiveCount = 4)
+    int inventoryPerspectives,
+    int bffPerspectives)
     where TEvent : IEvent {
 
     var inventoryRegistry = _inventoryHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
@@ -723,7 +729,8 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     return new PerspectiveCompletionWaiter<TEvent>(
       inventoryRegistry,
       bffRegistry,
-      expectedPerspectiveCount
+      inventoryPerspectives,
+      bffPerspectives
     );
   }
 

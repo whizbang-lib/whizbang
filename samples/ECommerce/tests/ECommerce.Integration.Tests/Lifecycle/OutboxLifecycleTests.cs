@@ -192,7 +192,9 @@ public class OutboxLifecycleTests {
 
     var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
     registry.Register<ProductCreatedEvent>(receptor, LifecycleStage.PostOutboxAsync);
-    using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+    using var perspectiveWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 2,
+      bffPerspectives: 2);
 
     try {
       // Act - Dispatch command

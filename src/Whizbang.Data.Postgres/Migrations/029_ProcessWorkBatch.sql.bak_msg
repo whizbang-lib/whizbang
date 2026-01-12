@@ -366,7 +366,7 @@ BEGIN
     SELECT
       o.message_id,
       o.stream_id,
-      o.message_type,
+      o.event_type,
       o.event_data,
       o.metadata,
       o.scope,
@@ -381,7 +381,7 @@ BEGIN
     SELECT
       oe.stream_id,
       oe.message_id,
-      oe.message_type,
+      oe.event_type,
       oe.event_data,
       oe.metadata,
       oe.scope,
@@ -411,8 +411,8 @@ BEGIN
       bv.message_id as event_id,
       bv.stream_id,
       bv.stream_id as aggregate_id,
-      SPLIT_PART(__SCHEMA__.normalize_event_type(bv.message_type), ',', 1) as aggregate_type,
-      __SCHEMA__.normalize_event_type(bv.message_type),
+      SPLIT_PART(__SCHEMA__.normalize_event_type(bv.event_type), ',', 1) as aggregate_type,
+      __SCHEMA__.normalize_event_type(bv.event_type),
       -- Extract just the Payload from the envelope for event_data
       (bv.event_data::jsonb -> 'Payload') as event_data,
       -- Build EnvelopeMetadata structure (MessageId + Hops) for metadata
@@ -432,7 +432,7 @@ BEGIN
     -- Find events that conflicted (were skipped due to idempotency)
     SELECT
       bv.message_id,
-      bv.message_type
+      bv.event_type
     FROM outbox_base_versions bv
     WHERE NOT EXISTS (
       SELECT 1 FROM stored_events se WHERE se.event_id = bv.message_id
@@ -441,7 +441,7 @@ BEGIN
   SELECT
     array_agg(se.event_id),
     (SELECT COUNT(*) FROM conflict_events),
-    (SELECT array_agg(DISTINCT ce.message_type) FROM conflict_events ce)
+    (SELECT array_agg(DISTINCT ce.event_type) FROM conflict_events ce)
   INTO v_stored_outbox_events, v_outbox_conflict_count, v_outbox_conflict_types
   FROM stored_events se;
 
@@ -472,7 +472,7 @@ BEGIN
     SELECT
       i.message_id,
       i.stream_id,
-      i.message_type,
+      i.event_type,
       i.event_data,
       i.metadata,
       i.scope,
@@ -487,7 +487,7 @@ BEGIN
     SELECT
       ie.stream_id,
       ie.message_id,
-      ie.message_type,
+      ie.event_type,
       ie.event_data,
       ie.metadata,
       ie.scope,
@@ -517,8 +517,8 @@ BEGIN
       bv.message_id as event_id,
       bv.stream_id,
       bv.stream_id as aggregate_id,
-      SPLIT_PART(__SCHEMA__.normalize_event_type(bv.message_type), ',', 1) as aggregate_type,
-      __SCHEMA__.normalize_event_type(bv.message_type),
+      SPLIT_PART(__SCHEMA__.normalize_event_type(bv.event_type), ',', 1) as aggregate_type,
+      __SCHEMA__.normalize_event_type(bv.event_type),
       -- Extract just the Payload from the envelope for event_data
       (bv.event_data::jsonb -> 'Payload') as event_data,
       -- Build EnvelopeMetadata structure (MessageId + Hops) for metadata
@@ -538,7 +538,7 @@ BEGIN
     -- Find events that conflicted (were skipped due to idempotency)
     SELECT
       bv.message_id,
-      bv.message_type
+      bv.event_type
     FROM inbox_base_versions bv
     WHERE NOT EXISTS (
       SELECT 1 FROM stored_events se WHERE se.event_id = bv.message_id
@@ -547,7 +547,7 @@ BEGIN
   SELECT
     array_agg(se.event_id),
     (SELECT COUNT(*) FROM conflict_events),
-    (SELECT array_agg(DISTINCT ce.message_type) FROM conflict_events ce)
+    (SELECT array_agg(DISTINCT ce.event_type) FROM conflict_events ce)
   INTO v_stored_inbox_events, v_inbox_conflict_count, v_inbox_conflict_types
   FROM stored_events se;
 
@@ -817,7 +817,7 @@ BEGIN
     o.stream_id as work_stream_id,
     o.partition_number,
     o.destination as destination,
-    o.message_type as message_type,
+    o.event_type as message_type,
     o.envelope_type as envelope_type,
     o.event_data::TEXT as message_data,
     -- CRITICAL: First row includes acknowledgement counts in metadata
@@ -865,7 +865,7 @@ BEGIN
     i.stream_id as work_stream_id,
     i.partition_number,
     i.handler_name as destination,
-    i.message_type as message_type,
+    i.event_type as message_type,
     NULL::VARCHAR(500) as envelope_type,
     i.event_data::TEXT as message_data,
     -- CRITICAL: First row includes ack counts if no outbox work
@@ -936,10 +936,8 @@ BEGIN
       pe.*,
       temp_new.event_work_id as new_event_work_id,
       temp_orphaned.event_work_id as orphaned_event_work_id,
-      es.event_type,  -- Get event_type from event_store for perspective worker
       ROW_NUMBER() OVER (ORDER BY pe.stream_id, pe.perspective_name, pe.sequence_number) as row_num
     FROM wh_perspective_events pe
-    INNER JOIN __SCHEMA__.wh_event_store es ON pe.event_id = es.event_id  -- JOIN to get event_type
     LEFT JOIN temp_new_perspective_events temp_new ON pe.event_work_id = temp_new.event_work_id
     LEFT JOIN temp_orphaned_perspective_events temp_orphaned ON pe.event_work_id = temp_orphaned.event_work_id
     LEFT JOIN __SCHEMA__.wh_perspective_checkpoints pc
@@ -961,7 +959,7 @@ BEGIN
     pe.stream_id as work_stream_id,
     NULL::INTEGER as partition_number,  -- Perspectives don't use partition-based load balancing
     NULL::VARCHAR(200) as destination,
-    pe.event_type as message_type,  -- Event type from wh_event_store JOIN
+    NULL::VARCHAR(500) as message_type,  -- Event type comes from wh_event_store
     NULL::VARCHAR(500) as envelope_type, -- Event envelope type comes from wh_event_store
     NULL::TEXT as message_data,          -- Event data comes from wh_event_store
     -- CRITICAL: First row includes ack counts if no outbox/inbox work

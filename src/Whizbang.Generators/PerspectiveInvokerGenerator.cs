@@ -88,6 +88,7 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
     }
 
     // Extract all type arguments: [TModel, TEvent1, TEvent2, ...]
+    // Use FullyQualifiedFormat for CODE GENERATION (includes global:: prefix)
     var typeArguments = perspectiveInterface.TypeArguments
         .Select(t => t.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
         .ToArray();
@@ -95,10 +96,25 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
     // Extract event types (all except TModel at index 0) for diagnostics
     var eventTypes = typeArguments.Skip(1).ToArray();
 
+    // Calculate DATABASE FORMAT (TypeName, AssemblyName - no global:: prefix)
+    // This generator doesn't use database registration, but we need to provide the parameter
+    var eventTypeSymbols = perspectiveInterface.TypeArguments.Skip(1).ToArray();
+    var messageTypeNames = eventTypeSymbols
+        .Select(t => {
+          var typeName = t.ToDisplayString(new SymbolDisplayFormat(
+              typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
+              genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters
+          ));
+          var assemblyName = t.ContainingAssembly.Name;
+          return $"{typeName}, {assemblyName}";
+        })
+        .ToArray();
+
     return new PerspectiveInfo(
         ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
         InterfaceTypeArguments: typeArguments,
-        EventTypes: eventTypes
+        EventTypes: eventTypes,
+        MessageTypeNames: messageTypeNames
     );
   }
 

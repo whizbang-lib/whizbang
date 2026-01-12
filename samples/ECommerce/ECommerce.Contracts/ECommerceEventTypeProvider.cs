@@ -1,5 +1,5 @@
-using Whizbang.Core.Messaging;
 using ECommerce.Contracts.Events;
+using Whizbang.Core.Messaging;
 
 namespace ECommerce.Contracts;
 

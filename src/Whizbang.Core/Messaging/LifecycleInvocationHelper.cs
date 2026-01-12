@@ -93,12 +93,12 @@ public static class LifecycleInvocationHelper {
     _ = Task.Run(async () => {
       try {
         foreach (var outboxMsg in outboxSnapshot) {
-          var message = lifecycleMessageDeserializer.DeserializeFromEnvelope(outboxMsg.Envelope, outboxMsg.EnvelopeType);
+          var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
           await lifecycleInvoker.InvokeAsync(message, asyncStage, asyncContext, ct);
         }
 
         foreach (var inboxMsg in inboxSnapshot) {
-          var message = lifecycleMessageDeserializer.DeserializeFromEnvelope(inboxMsg.Envelope, inboxMsg.EnvelopeType);
+          var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
           await lifecycleInvoker.InvokeAsync(message, asyncStage, asyncContext, ct);
         }
       } catch (Exception ex) {
@@ -113,12 +113,12 @@ public static class LifecycleInvocationHelper {
     // Invoke inline stage (blocking, sequential)
     // Reuse the same snapshots for consistency (async and inline stages process the same messages)
     foreach (var outboxMsg in outboxSnapshot) {
-      var message = lifecycleMessageDeserializer.DeserializeFromEnvelope(outboxMsg.Envelope, outboxMsg.EnvelopeType);
+      var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
       await lifecycleInvoker.InvokeAsync(message, inlineStage, inlineContext, ct);
     }
 
     foreach (var inboxMsg in inboxSnapshot) {
-      var message = lifecycleMessageDeserializer.DeserializeFromEnvelope(inboxMsg.Envelope, inboxMsg.EnvelopeType);
+      var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
       await lifecycleInvoker.InvokeAsync(message, inlineStage, inlineContext, ct);
     }
   }
@@ -184,12 +184,12 @@ public static class LifecycleInvocationHelper {
     _ = Task.Run(async () => {
       try {
         foreach (var outboxMsg in outboxSnapshot) {
-          var message = lifecycleMessageDeserializer.DeserializeFromEnvelope(outboxMsg.Envelope, outboxMsg.EnvelopeType);
+          var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
           await lifecycleInvoker.InvokeAsync(message, asyncStage, lifecycleContext, ct);
         }
 
         foreach (var inboxMsg in inboxSnapshot) {
-          var message = lifecycleMessageDeserializer.DeserializeFromEnvelope(inboxMsg.Envelope, inboxMsg.EnvelopeType);
+          var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
           await lifecycleInvoker.InvokeAsync(message, asyncStage, lifecycleContext, ct);
         }
       } catch (Exception ex) {

@@ -72,7 +72,9 @@ public class RestockInventoryWorkflowTests {
       ImageUrl = "/images/restock.png",
       InitialStock = 10
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 2,
+      bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(createCommand);
     await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -81,7 +83,9 @@ public class RestockInventoryWorkflowTests {
       ProductId = _testProdRestock1,
       QuantityToAdd = 50
     };
-    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(expectedPerspectiveCount: 1);
+    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
+      inventoryPerspectives: 1,
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(restockCommand);
     await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -117,7 +121,9 @@ public class RestockInventoryWorkflowTests {
       ImageUrl = "/images/multi-restock.png",
       InitialStock = 5
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 2,
+      bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(createCommand);
     await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -130,7 +136,9 @@ public class RestockInventoryWorkflowTests {
     };
 
     foreach (var restockCommand in restockCommands) {
-      using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(expectedPerspectiveCount: 1);
+      using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
+        inventoryPerspectives: 1,
+        bffPerspectives: 0);
       await fixture.Dispatcher.SendAsync(restockCommand);
       await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
     }
@@ -166,7 +174,9 @@ public class RestockInventoryWorkflowTests {
       ImageUrl = "/images/restock-zero.png",
       InitialStock = 0
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 2,
+      bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(createCommand);
     await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -175,7 +185,9 @@ public class RestockInventoryWorkflowTests {
       ProductId = _testProdRestockZero,
       QuantityToAdd = 100
     };
-    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(expectedPerspectiveCount: 1);
+    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
+      inventoryPerspectives: 1,
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(restockCommand);
     await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -209,7 +221,9 @@ public class RestockInventoryWorkflowTests {
       ImageUrl = "/images/zero-qty.png",
       InitialStock = 25
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 2,
+      bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(createCommand);
     await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -218,7 +232,9 @@ public class RestockInventoryWorkflowTests {
       ProductId = _testProdRestockZeroQty,
       QuantityToAdd = 0
     };
-    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(expectedPerspectiveCount: 1);
+    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
+      inventoryPerspectives: 1,
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(restockCommand);
     await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -252,7 +268,9 @@ public class RestockInventoryWorkflowTests {
       ImageUrl = "/images/large-restock.png",
       InitialStock = 50
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 2,
+      bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(createCommand);
     await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -261,7 +279,9 @@ public class RestockInventoryWorkflowTests {
       ProductId = _testProdLargeRestock,
       QuantityToAdd = 10000
     };
-    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(expectedPerspectiveCount: 1);
+    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
+      inventoryPerspectives: 1,
+      bffPerspectives: 0);
     await fixture.Dispatcher.SendAsync(restockCommand);
     await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
 

@@ -259,17 +259,29 @@ public partial class ServiceBusConsumerWorker(
     // We need to extract: "MyApp.ProductCreatedEvent, MyApp"
     var messageTypeName = _extractMessageTypeFromEnvelopeType(envelopeTypeFromTransport);
 
-    // Get payload type to determine metadata
+    // Get payload to check its type
     var payload = envelope.Payload;
     var payloadType = payload?.GetType() ?? typeof(object);
 
-    // Check if envelope is already in JsonElement form
+    // Check if envelope/payload is already in JsonElement form
+    // CRITICAL: Must check payload type, not just envelope type, because envelope could be
+    // IMessageEnvelope<object> with a JsonElement payload
     IMessageEnvelope<JsonElement> jsonEnvelope;
     if (envelope is IMessageEnvelope<JsonElement> alreadyJsonEnvelope) {
-      // Already serialized - use directly
+      // Envelope is correctly typed as IMessageEnvelope<JsonElement> - use directly
       jsonEnvelope = alreadyJsonEnvelope;
+    } else if (payloadType == typeof(JsonElement)) {
+      // Payload is JsonElement but envelope is not IMessageEnvelope<JsonElement>
+      // This means envelope is probably IMessageEnvelope<object> with JsonElement payload
+      // DEFENSIVE: This should not happen - envelopes from transport should be strongly-typed
+      throw new InvalidOperationException(
+        $"Envelope has JsonElement payload but envelope type is {envelope.GetType().Name}. " +
+        $"MessageId: {envelope.MessageId}. " +
+        $"This indicates double-serialization or incorrect envelope creation. " +
+        $"Envelopes from transport must be strongly-typed (e.g., MessageEnvelope<ProductCreatedEvent>), " +
+        $"not MessageEnvelope<object> or MessageEnvelope<JsonElement>.");
     } else {
-      // Strongly-typed envelope - need to serialize it
+      // Strongly-typed envelope - need to serialize it to JsonElement form for storage
       var serializer = _envelopeSerializer ?? scopeServiceProvider.GetService<IEnvelopeSerializer>();
       if (serializer == null) {
         throw new InvalidOperationException(

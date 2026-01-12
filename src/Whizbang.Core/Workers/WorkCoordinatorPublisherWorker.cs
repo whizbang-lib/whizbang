@@ -270,7 +270,7 @@ public partial class WorkCoordinatorPublisherWorker(
 
         // PreOutbox lifecycle stages (before publishing to transport)
         if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
-          var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(work.Envelope, work.EnvelopeType);
+          var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
 
           var lifecycleContext = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.PreOutboxAsync,
@@ -293,7 +293,7 @@ public partial class WorkCoordinatorPublisherWorker(
 
         // PostOutbox lifecycle stages (after publishing to transport)
         if (_lifecycleInvoker is not null && _lifecycleMessageDeserializer is not null) {
-          var message = _lifecycleMessageDeserializer.DeserializeFromEnvelope(work.Envelope, work.EnvelopeType);
+          var message = _lifecycleMessageDeserializer.DeserializeFromJsonElement(work.Envelope.Payload, work.MessageType);
 
           var lifecycleContext = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.PostOutboxAsync,

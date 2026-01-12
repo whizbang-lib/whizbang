@@ -441,7 +441,7 @@ BEGIN
   SELECT
     array_agg(se.event_id),
     (SELECT COUNT(*) FROM conflict_events),
-    (SELECT array_agg(DISTINCT ce.message_type) FROM conflict_events ce)
+    (SELECT array_agg(DISTINCT ce.event_type) FROM conflict_events ce)
   INTO v_stored_outbox_events, v_outbox_conflict_count, v_outbox_conflict_types
   FROM stored_events se;
 
@@ -547,7 +547,7 @@ BEGIN
   SELECT
     array_agg(se.event_id),
     (SELECT COUNT(*) FROM conflict_events),
-    (SELECT array_agg(DISTINCT ce.message_type) FROM conflict_events ce)
+    (SELECT array_agg(DISTINCT ce.event_type) FROM conflict_events ce)
   INTO v_stored_inbox_events, v_inbox_conflict_count, v_inbox_conflict_types
   FROM stored_events se;
 
@@ -936,10 +936,8 @@ BEGIN
       pe.*,
       temp_new.event_work_id as new_event_work_id,
       temp_orphaned.event_work_id as orphaned_event_work_id,
-      es.event_type,  -- Get event_type from event_store for perspective worker
       ROW_NUMBER() OVER (ORDER BY pe.stream_id, pe.perspective_name, pe.sequence_number) as row_num
     FROM wh_perspective_events pe
-    INNER JOIN __SCHEMA__.wh_event_store es ON pe.event_id = es.event_id  -- JOIN to get event_type
     LEFT JOIN temp_new_perspective_events temp_new ON pe.event_work_id = temp_new.event_work_id
     LEFT JOIN temp_orphaned_perspective_events temp_orphaned ON pe.event_work_id = temp_orphaned.event_work_id
     LEFT JOIN __SCHEMA__.wh_perspective_checkpoints pc
@@ -961,7 +959,7 @@ BEGIN
     pe.stream_id as work_stream_id,
     NULL::INTEGER as partition_number,  -- Perspectives don't use partition-based load balancing
     NULL::VARCHAR(200) as destination,
-    pe.event_type as message_type,  -- Event type from wh_event_store JOIN
+    NULL::VARCHAR(500) as message_type,  -- Event type comes from wh_event_store
     NULL::VARCHAR(500) as envelope_type, -- Event envelope type comes from wh_event_store
     NULL::TEXT as message_data,          -- Event data comes from wh_event_store
     -- CRITICAL: First row includes ack counts if no outbox/inbox work

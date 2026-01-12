@@ -88,7 +88,9 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/original.png",
       InitialStock = 10
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 2,
+      bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(createCommand);
     await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -100,7 +102,9 @@ public class UpdateProductWorkflowTests {
       Price = null,
       ImageUrl = null
     };
-    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(expectedPerspectiveCount: 1);
+    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
+      inventoryPerspectives: 1,
+      bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(updateCommand);
     await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -137,7 +141,9 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/original.png",
       InitialStock = 20
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 2,
+      bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(createCommand);
     await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -149,7 +155,9 @@ public class UpdateProductWorkflowTests {
       Price = 149.99m,
       ImageUrl = "/images/updated.png"
     };
-    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(expectedPerspectiveCount: 1);
+    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
+      inventoryPerspectives: 1,
+      bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(updateCommand);
     await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -189,7 +197,9 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/price-test.png",
       InitialStock = 15
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 2,
+      bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(createCommand);
     await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -201,7 +211,9 @@ public class UpdateProductWorkflowTests {
       Price = 35.00m,
       ImageUrl = null
     };
-    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(expectedPerspectiveCount: 1);
+    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
+      inventoryPerspectives: 1,
+      bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(updateCommand);
     await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -237,7 +249,9 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/old.png",
       InitialStock = 30
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 2,
+      bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(createCommand);
     await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -249,7 +263,9 @@ public class UpdateProductWorkflowTests {
       Price = null,
       ImageUrl = "/images/new-and-improved.png"
     };
-    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(expectedPerspectiveCount: 1);
+    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
+      inventoryPerspectives: 1,
+      bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(updateCommand);
     await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -286,7 +302,9 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/v1.png",
       InitialStock = 5
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 2,
+      bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(createCommand);
     await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -298,7 +316,9 @@ public class UpdateProductWorkflowTests {
       Price = null,
       ImageUrl = null
     };
-    using var updateWaiter1 = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(expectedPerspectiveCount: 1);
+    using var updateWaiter1 = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
+      inventoryPerspectives: 1,
+      bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(update1);
     await updateWaiter1.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -310,7 +330,9 @@ public class UpdateProductWorkflowTests {
       Price = 20.00m,
       ImageUrl = null
     };
-    using var updateWaiter2 = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(expectedPerspectiveCount: 1);
+    using var updateWaiter2 = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
+      inventoryPerspectives: 1,
+      bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(update2);
     await updateWaiter2.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -322,7 +344,9 @@ public class UpdateProductWorkflowTests {
       Price = null,
       ImageUrl = "/images/v3.png"
     };
-    using var updateWaiter3 = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(expectedPerspectiveCount: 1);
+    using var updateWaiter3 = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
+      inventoryPerspectives: 1,
+      bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(update3);
     await updateWaiter3.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -361,7 +385,9 @@ public class UpdateProductWorkflowTests {
       ImageUrl = "/images/isolation.png",
       InitialStock = 75
     };
-    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 4);
+    using var createWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 2,
+      bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(createCommand);
     await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -378,7 +404,9 @@ public class UpdateProductWorkflowTests {
       Price = 50.00m,
       ImageUrl = "/images/updated-isolation.png"
     };
-    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(expectedPerspectiveCount: 1);
+    using var updateWaiter = fixture.CreatePerspectiveWaiter<ProductUpdatedEvent>(
+      inventoryPerspectives: 1,
+      bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(updateCommand);
     await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
 

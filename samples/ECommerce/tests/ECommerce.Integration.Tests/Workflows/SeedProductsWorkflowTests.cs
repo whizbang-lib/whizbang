@@ -63,7 +63,9 @@ public class SeedProductsWorkflowTests {
       fixture.GetLogger<SeedMutations>());
 
     // Act - Call seed mutation
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 48);
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 24,
+      bffPerspectives: 24);
     var seededCount = await seedMutations.SeedProductsAsync();
 
     // Wait for all perspectives to complete (12 products × 4 perspectives each = 48)
@@ -114,7 +116,9 @@ public class SeedProductsWorkflowTests {
       fixture.GetLogger<SeedMutations>());
 
     // Act - Call seed mutation TWICE
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 48);
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 24,
+      bffPerspectives: 24);
     var firstSeedCount = await seedMutations.SeedProductsAsync();
     await waiter.WaitAsync(timeoutMilliseconds: 120000);
 
@@ -162,7 +166,9 @@ public class SeedProductsWorkflowTests {
       fixture.GetLogger<SeedMutations>());
 
     // Act
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 48);
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 24,
+      bffPerspectives: 24);
     await seedMutations.SeedProductsAsync();
     await waiter.WaitAsync(timeoutMilliseconds: 120000);
 
@@ -210,7 +216,9 @@ public class SeedProductsWorkflowTests {
       fixture.GetLogger<SeedMutations>());
 
     // Act
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(expectedPerspectiveCount: 48);
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 24,
+      bffPerspectives: 24);
     await seedMutations.SeedProductsAsync();
     await waiter.WaitAsync(timeoutMilliseconds: 120000);
 
