@@ -115,9 +115,9 @@ public class PostPerspectiveInlineCommitTest {
         throw;
       }
 
-      // Assert - Receptor is invoked for each perspective that processes the event
-      // In this case: InventoryLevelsPerspective and ProductCatalogPerspective
-      await Assert.That(receptor.InvocationCount).IsGreaterThanOrEqualTo(2);
+      // Assert - Receptor is invoked only for ProductCatalogPerspective (filtered by perspectiveName)
+      // InventoryLevelsPerspective also processes ProductCreatedEvent but is filtered out by the receptor
+      await Assert.That(receptor.InvocationCount).IsEqualTo(1);
 
       // Assert - CRITICAL: Data MUST be queryable immediately after PostPerspectiveInline fires
       // This is the ENTIRE PURPOSE of PostPerspectiveInline - it's a blocking stage that

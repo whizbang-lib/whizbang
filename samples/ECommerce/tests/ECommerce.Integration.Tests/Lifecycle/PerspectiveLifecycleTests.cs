@@ -462,10 +462,10 @@ public class PerspectiveLifecycleTests {
       inventoryPerspectives: 4,
       bffPerspectives: 4);
     // Each command also creates 1 InventoryRestockedEvent (since InitialStock > 0)
-    // 2 events × (1 inventory + 0 BFF) perspectives = 2 completions expected
+    // 2 events × (1 inventory + 1 BFF) perspectives = 4 completions expected
     using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
       inventoryPerspectives: 2,
-      bffPerspectives: 0);
+      bffPerspectives: 2);
 
     // Act - Dispatch multiple commands
     foreach (var command in commands) {
