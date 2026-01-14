@@ -159,7 +159,9 @@ public abstract class Dispatcher(
         EventId = null,
         StreamId = null,
         PerspectiveName = null,
-        LastProcessedEventId = null
+        LastProcessedEventId = null,
+        MessageSource = MessageSource.Local,
+        AttemptNumber = 1 // Local dispatch is always first attempt
       };
       await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
     }
@@ -223,7 +225,9 @@ public abstract class Dispatcher(
         EventId = null,
         StreamId = null,
         PerspectiveName = null,
-        LastProcessedEventId = null
+        LastProcessedEventId = null,
+        MessageSource = MessageSource.Local,
+        AttemptNumber = 1 // Local dispatch is always first attempt
       };
       await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
     }
@@ -357,7 +361,9 @@ public abstract class Dispatcher(
         EventId = null,
         StreamId = null,
         PerspectiveName = null,
-        LastProcessedEventId = null
+        LastProcessedEventId = null,
+        MessageSource = MessageSource.Local,
+        AttemptNumber = 1 // Local dispatch is always first attempt
       };
       await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
     }

@@ -25,4 +25,10 @@ public sealed record LifecycleExecutionContext : ILifecycleContext {
 
   /// <inheritdoc/>
   public Guid? LastProcessedEventId { get; init; }
+
+  /// <inheritdoc/>
+  public MessageSource? MessageSource { get; init; }
+
+  /// <inheritdoc/>
+  public int? AttemptNumber { get; init; }
 }

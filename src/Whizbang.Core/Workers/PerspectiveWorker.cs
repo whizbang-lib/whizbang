@@ -312,7 +312,9 @@ public partial class PerspectiveWorker(
                   CurrentStage = LifecycleStage.PrePerspectiveAsync,
                   StreamId = streamId,
                   PerspectiveName = perspectiveName,
-                  LastProcessedEventId = lastProcessedEventId
+                  LastProcessedEventId = lastProcessedEventId,
+                  MessageSource = MessageSource.Local,
+                  AttemptNumber = 1 // Perspectives process from local event store
                 };
 
                 // PrePerspectiveAsync (non-blocking)
@@ -474,7 +476,9 @@ public partial class PerspectiveWorker(
         CurrentStage = LifecycleStage.PostPerspectiveAsync, // Will be updated per stage
         StreamId = streamId,
         PerspectiveName = perspectiveName,
-        LastProcessedEventId = currentEventId
+        LastProcessedEventId = currentEventId,
+        MessageSource = MessageSource.Local,
+        AttemptNumber = 1 // Perspectives process from local event store
       };
 
       // Phase 1: PostPerspectiveAsync (non-blocking, informational)

@@ -70,4 +70,40 @@ public interface ILifecycleContext {
   /// after processing completes.
   /// </summary>
   Guid? LastProcessedEventId { get; }
+
+  /// <summary>
+  /// Gets the message source (Outbox for local publish, Inbox for transport receive).
+  /// Allows receptors to distinguish between local publication and external consumption.
+  /// Only set for Distribute lifecycle stages (PreDistribute, Distribute, PostDistribute).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <strong>Use Case:</strong> Distribute stages fire for BOTH outbox (publishing) and inbox (consuming).
+  /// Receptors can filter by MessageSource to only handle one scenario:
+  /// </para>
+  /// <code>
+  /// if (_context?.MessageSource == MessageSource.Inbox) {
+  ///   return; // Skip inbox, only process outbox
+  /// }
+  /// </code>
+  /// </remarks>
+  MessageSource? MessageSource { get; }
+
+  /// <summary>
+  /// Gets the current attempt number for this work item (1-based).
+  /// Increments on retries after failures. Null if not applicable for the lifecycle stage.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <strong>Use Case:</strong> Perspective lifecycle stages may fire multiple times if
+  /// perspective processing succeeds but checkpoint save fails. Receptors can check
+  /// AttemptNumber to only fire once:
+  /// </para>
+  /// <code>
+  /// if (_context?.AttemptNumber > 1) {
+  ///   return; // Skip retries, only fire on first attempt
+  /// }
+  /// </code>
+  /// </remarks>
+  int? AttemptNumber { get; }
 }

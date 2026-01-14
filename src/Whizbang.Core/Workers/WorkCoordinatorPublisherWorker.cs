@@ -277,7 +277,9 @@ public partial class WorkCoordinatorPublisherWorker(
             EventId = null,
             StreamId = null,
             PerspectiveName = null,
-            LastProcessedEventId = null
+            LastProcessedEventId = null,
+            MessageSource = MessageSource.Outbox,
+            AttemptNumber = work.Attempts
           };
 
           await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreOutboxAsync, lifecycleContext, stoppingToken);
@@ -300,7 +302,9 @@ public partial class WorkCoordinatorPublisherWorker(
             EventId = null,
             StreamId = null,
             PerspectiveName = null,
-            LastProcessedEventId = null
+            LastProcessedEventId = null,
+            MessageSource = MessageSource.Outbox,
+            AttemptNumber = work.Attempts
           };
 
           await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostOutboxAsync, lifecycleContext, stoppingToken);

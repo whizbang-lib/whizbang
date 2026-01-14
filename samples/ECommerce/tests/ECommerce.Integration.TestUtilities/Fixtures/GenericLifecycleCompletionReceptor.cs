@@ -127,7 +127,21 @@ public sealed class GenericLifecycleCompletionReceptor<TMessage> : IReceptor<TMe
         return ValueTask.CompletedTask;
       }
 
-      Console.WriteLine("[RECEPTOR] ✓ Context validation PASSED");
+      // CRITICAL FIX: For Distribute stages, only count Outbox invocations (publishing)
+      // Skip Inbox invocations (receiving from transport) to avoid duplicate counts
+      // This prevents counting the same event twice: once when published, again when received
+      var isDistributeStage = LastLifecycleContext.CurrentStage == LifecycleStage.PreDistributeInline ||
+                              LastLifecycleContext.CurrentStage == LifecycleStage.PreDistributeAsync ||
+                              LastLifecycleContext.CurrentStage == LifecycleStage.DistributeAsync ||
+                              LastLifecycleContext.CurrentStage == LifecycleStage.PostDistributeAsync ||
+                              LastLifecycleContext.CurrentStage == LifecycleStage.PostDistributeInline;
+
+      if (isDistributeStage && LastLifecycleContext.MessageSource == MessageSource.Inbox) {
+        Console.WriteLine($"[RECEPTOR] FILTERED: Distribute stage with MessageSource.Inbox (only count Outbox for Distribute stages)");
+        return ValueTask.CompletedTask;
+      }
+
+      Console.WriteLine($"[RECEPTOR] ✓ Context validation PASSED (MessageSource: {LastLifecycleContext.MessageSource})");
     } else {
       Console.WriteLine("[RECEPTOR] WARNING: ILifecycleContext NOT available - cannot validate stage/perspective");
     }

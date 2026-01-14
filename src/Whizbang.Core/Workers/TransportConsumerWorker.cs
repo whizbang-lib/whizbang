@@ -171,7 +171,9 @@ public class TransportConsumerWorker : BackgroundService {
             EventId = null,
             StreamId = null,
             PerspectiveName = null,
-            LastProcessedEventId = null
+            LastProcessedEventId = null,
+            MessageSource = MessageSource.Inbox,
+            AttemptNumber = null // Attempt info not tracked for inbox work
           };
 
           await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PreInboxAsync, lifecycleContext, cancellationToken);
@@ -218,7 +220,9 @@ public class TransportConsumerWorker : BackgroundService {
             EventId = null,
             StreamId = null,
             PerspectiveName = null,
-            LastProcessedEventId = null
+            LastProcessedEventId = null,
+            MessageSource = MessageSource.Inbox,
+            AttemptNumber = null // Attempt info not tracked for inbox work
           };
 
           await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.PostInboxAsync, lifecycleContext, cancellationToken);
