@@ -23,7 +23,7 @@ namespace Whizbang.Core.Workers;
 /// <docs>workers/perspective-worker</docs>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:InstantStrategy_ReportCompletionAsync_CallsCoordinatorImmediately_Async</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:InstantStrategy_GetPendingCompletions_AlwaysReturnsEmpty_Async</tests>
-public sealed class InstantCompletionStrategy : IPerspectiveCompletionStrategy {
+public sealed partial class InstantCompletionStrategy : IPerspectiveCompletionStrategy {
   private readonly ILogger<InstantCompletionStrategy> _logger;
 
   /// <summary>
@@ -47,17 +47,12 @@ public sealed class InstantCompletionStrategy : IPerspectiveCompletionStrategy {
     PerspectiveCheckpointCompletion completion,
     IWorkCoordinator coordinator,
     CancellationToken cancellationToken) {
-#pragma warning disable CA1848 // Use LoggerMessage delegates for performance - not critical for debug logging
-    _logger.LogDebug("[InstantCompletionStrategy] Reporting completion: {PerspectiveName}/{StreamId}, lastEventId={LastEventId}",
-      completion.PerspectiveName, completion.StreamId, completion.LastEventId);
-#pragma warning restore CA1848
+    LogReportingCompletion(_logger, completion.PerspectiveName, completion.StreamId, completion.LastEventId);
 
     // Report immediately via lightweight out-of-band method
     await coordinator.ReportPerspectiveCompletionAsync(completion, cancellationToken);
 
-#pragma warning disable CA1848
-    _logger.LogDebug("[InstantCompletionStrategy] Completion reported successfully");
-#pragma warning restore CA1848
+    LogCompletionReported(_logger);
   }
 
   /// <inheritdoc />
@@ -126,4 +121,26 @@ public sealed class InstantCompletionStrategy : IPerspectiveCompletionStrategy {
   public void ResetStale(DateTimeOffset now) {
     // No-op - no stale items since we report immediately
   }
+
+  /// <summary>
+  /// Debug log for reporting perspective completion.
+  /// Traces immediate completion reporting to coordinator.
+  /// </summary>
+  [LoggerMessage(
+    EventId = 1,
+    Level = LogLevel.Debug,
+    Message = "[InstantCompletionStrategy] Reporting completion: {PerspectiveName}/{StreamId}, lastEventId={LastEventId}"
+  )]
+  static partial void LogReportingCompletion(ILogger logger, string perspectiveName, Guid streamId, Guid lastEventId);
+
+  /// <summary>
+  /// Debug log for successful completion report.
+  /// Confirms coordinator received the completion notification.
+  /// </summary>
+  [LoggerMessage(
+    EventId = 2,
+    Level = LogLevel.Debug,
+    Message = "[InstantCompletionStrategy] Completion reported successfully"
+  )]
+  static partial void LogCompletionReported(ILogger logger);
 }

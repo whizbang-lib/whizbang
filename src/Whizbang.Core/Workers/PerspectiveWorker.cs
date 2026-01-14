@@ -366,27 +366,16 @@ public partial class PerspectiveWorker(
         // This ensures it fires before checkpoint commits, as designed.
 
         // Phase 3c: Report completion via strategy (saves checkpoint to database)
-#pragma warning disable CA1848 // Use LoggerMessage delegates for performance - not critical for debug logging
-        _logger.LogDebug("[PerspectiveWorker] Reporting completion for {PerspectiveName} on stream {StreamId}, lastEventId={LastEventId}",
-          perspectiveName, streamId, result.LastEventId);
-#pragma warning restore CA1848
+        LogReportingCompletion(_logger, perspectiveName, streamId, result.LastEventId);
         await _completionStrategy.ReportCompletionAsync(result, workCoordinator, cancellationToken);
-#pragma warning disable CA1848
-        _logger.LogDebug("[PerspectiveWorker] Completion reported successfully");
-#pragma warning restore CA1848
+        LogCompletionReported(_logger);
 
         // Phase 3d: Invoke PostPerspectiveInline lifecycle receptors (blocking, for test synchronization)
         // CRITICAL: Fires AFTER checkpoint is saved - guarantees data is committed and queryable
-#pragma warning disable CA1848
-        _logger.LogDebug("[PerspectiveWorker] Checking PostPerspectiveInline: processedEvents.Count={EventCount}, lifecycleInvoker={HasInvoker}",
-          processedEvents.Count, _lifecycleInvoker is not null);
-#pragma warning restore CA1848
+        LogCheckingPostPerspectiveInline(_logger, processedEvents.Count, _lifecycleInvoker is not null);
 
         if (processedEvents.Count > 0 && _lifecycleInvoker is not null) {
-#pragma warning disable CA1848
-          _logger.LogDebug("[PerspectiveWorker] Invoking PostPerspectiveInline for {EventCount} events on {PerspectiveName}/{StreamId}",
-            processedEvents.Count, perspectiveName, streamId);
-#pragma warning restore CA1848
+          LogInvokingPostPerspectiveInline(_logger, processedEvents.Count, perspectiveName, streamId);
           await _invokeLifecycleReceptorsForEventsAsync(
             processedEvents,
             streamId,
@@ -396,18 +385,14 @@ public partial class PerspectiveWorker(
             LifecycleStage.PostPerspectiveInline,
             cancellationToken
           );
-#pragma warning disable CA1848
-          _logger.LogDebug("[PerspectiveWorker] PostPerspectiveInline invocation completed");
-#pragma warning restore CA1848
+          LogPostPerspectiveInlineCompleted(_logger);
         } else {
-#pragma warning disable CA1848
           if (processedEvents.Count == 0) {
-            _logger.LogDebug("[PerspectiveWorker] Skipping PostPerspectiveInline: no processed events");
+            LogSkippingPostPerspectiveInlineNoEvents(_logger);
           }
           if (_lifecycleInvoker is null) {
-            _logger.LogDebug("[PerspectiveWorker] Skipping PostPerspectiveInline: no lifecycle invoker registered");
+            LogSkippingPostPerspectiveInlineNoInvoker(_logger);
           }
-#pragma warning restore CA1848
         }
 
         LogPerspectiveCheckpointCompleted(_logger, perspectiveName, streamId, result.LastEventId);
@@ -739,6 +724,81 @@ public partial class PerspectiveWorker(
     Message = "DIAGNOSTIC: Lifecycle dependencies for perspective '{PerspectiveName}' on stream {StreamId}: LifecycleInvoker={HasLifecycleInvoker}, EventStore={HasEventStore}, EventTypeProvider={HasEventTypeProvider}"
   )]
   static partial void LogLifecycleDependenciesResolved(ILogger logger, string perspectiveName, Guid streamId, bool hasLifecycleInvoker, bool hasEventStore, bool hasEventTypeProvider);
+
+  /// <summary>
+  /// Debug log for reporting perspective completion to coordinator.
+  /// Traces when checkpoint is about to be saved to database.
+  /// </summary>
+  [LoggerMessage(
+    EventId = 25,
+    Level = LogLevel.Debug,
+    Message = "[PerspectiveWorker] Reporting completion for {PerspectiveName} on stream {StreamId}, lastEventId={LastEventId}"
+  )]
+  static partial void LogReportingCompletion(ILogger logger, string perspectiveName, Guid streamId, Guid lastEventId);
+
+  /// <summary>
+  /// Debug log for successful completion report.
+  /// Confirms checkpoint was saved to database via completion strategy.
+  /// </summary>
+  [LoggerMessage(
+    EventId = 26,
+    Level = LogLevel.Debug,
+    Message = "[PerspectiveWorker] Completion reported successfully"
+  )]
+  static partial void LogCompletionReported(ILogger logger);
+
+  /// <summary>
+  /// Debug log for checking PostPerspectiveInline preconditions.
+  /// Shows whether conditions are met for invoking PostPerspectiveInline lifecycle stage.
+  /// </summary>
+  [LoggerMessage(
+    EventId = 27,
+    Level = LogLevel.Debug,
+    Message = "[PerspectiveWorker] Checking PostPerspectiveInline: processedEvents.Count={EventCount}, lifecycleInvoker={HasInvoker}"
+  )]
+  static partial void LogCheckingPostPerspectiveInline(ILogger logger, int eventCount, bool hasInvoker);
+
+  /// <summary>
+  /// Debug log for invoking PostPerspectiveInline receptors.
+  /// Critical for test synchronization - fires AFTER checkpoint is saved.
+  /// </summary>
+  [LoggerMessage(
+    EventId = 28,
+    Level = LogLevel.Debug,
+    Message = "[PerspectiveWorker] Invoking PostPerspectiveInline for {EventCount} events on {PerspectiveName}/{StreamId}"
+  )]
+  static partial void LogInvokingPostPerspectiveInline(ILogger logger, int eventCount, string perspectiveName, Guid streamId);
+
+  /// <summary>
+  /// Debug log for successful PostPerspectiveInline completion.
+  /// Confirms all blocking lifecycle receptors have finished.
+  /// </summary>
+  [LoggerMessage(
+    EventId = 29,
+    Level = LogLevel.Debug,
+    Message = "[PerspectiveWorker] PostPerspectiveInline invocation completed"
+  )]
+  static partial void LogPostPerspectiveInlineCompleted(ILogger logger);
+
+  /// <summary>
+  /// Debug log explaining why PostPerspectiveInline was skipped (no processed events).
+  /// </summary>
+  [LoggerMessage(
+    EventId = 30,
+    Level = LogLevel.Debug,
+    Message = "[PerspectiveWorker] Skipping PostPerspectiveInline: no processed events"
+  )]
+  static partial void LogSkippingPostPerspectiveInlineNoEvents(ILogger logger);
+
+  /// <summary>
+  /// Debug log explaining why PostPerspectiveInline was skipped (no lifecycle invoker).
+  /// </summary>
+  [LoggerMessage(
+    EventId = 31,
+    Level = LogLevel.Debug,
+    Message = "[PerspectiveWorker] Skipping PostPerspectiveInline: no lifecycle invoker registered"
+  )]
+  static partial void LogSkippingPostPerspectiveInlineNoInvoker(ILogger logger);
 }
 
 /// <summary>
