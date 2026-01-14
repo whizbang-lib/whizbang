@@ -257,6 +257,9 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     // Register IWorkChannelWriter for communication between strategy and worker
     builder.Services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
 
+    // Register InstantCompletionStrategy for immediate perspective completion reporting (test optimization)
+    builder.Services.AddSingleton<IPerspectiveCompletionStrategy, InstantCompletionStrategy>();
+
     // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
     builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
       options.PollingIntervalMilliseconds = 100;
@@ -398,6 +401,9 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
 
     // Register IWorkChannelWriter for communication between strategy and worker
     builder.Services.AddSingleton<IWorkChannelWriter, WorkChannelWriter>();
+
+    // Register InstantCompletionStrategy for immediate perspective completion reporting (test optimization)
+    builder.Services.AddSingleton<IPerspectiveCompletionStrategy, InstantCompletionStrategy>();
 
     // Configure WorkCoordinatorPublisherWorker with faster polling for integration tests
     builder.Services.Configure<WorkCoordinatorPublisherOptions>(options => {
