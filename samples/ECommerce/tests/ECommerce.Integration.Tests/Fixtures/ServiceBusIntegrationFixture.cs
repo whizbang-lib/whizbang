@@ -758,12 +758,15 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
 
     var inventoryRegistry = _inventoryHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
     var bffRegistry = _bffHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
+    var loggerFactory = _bffHost!.Services.GetRequiredService<ILoggerFactory>();
+    var logger = loggerFactory.CreateLogger<PerspectiveCompletionWaiter<TEvent>>();
 
     return new PerspectiveCompletionWaiter<TEvent>(
       inventoryRegistry,
       bffRegistry,
       inventoryPerspectives,
-      bffPerspectives
+      bffPerspectives,
+      logger
     );
   }
 

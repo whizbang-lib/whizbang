@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
 
@@ -17,19 +19,23 @@ public sealed class CountingPerspectiveReceptor<TEvent> : IReceptor<TEvent>, IAc
   private readonly TaskCompletionSource<bool> _completionSource;
   private readonly ConcurrentBag<string> _completedPerspectives;
   private readonly int _expectedCount;
+  private readonly ILogger _logger;
   private int _completionCount = 0;
   private ILifecycleContext? _context;
 
   public CountingPerspectiveReceptor(
     TaskCompletionSource<bool> completionSource,
     ConcurrentBag<string> completedPerspectives,
-    int expectedCount) {
+    int expectedCount,
+    ILogger? logger = null) {
 
     _completionSource = completionSource ?? throw new ArgumentNullException(nameof(completionSource));
     _completedPerspectives = completedPerspectives ?? throw new ArgumentNullException(nameof(completedPerspectives));
     _expectedCount = expectedCount;
+    _logger = logger ?? NullLogger.Instance;
 
-    Console.WriteLine($"[CountingReceptor.ctor] Created receptor expecting {expectedCount} perspective completions");
+    _logger.LogDebug("[CountingReceptor] Created receptor expecting {ExpectedCount} perspective completions for {EventType}",
+      expectedCount, typeof(TEvent).Name);
   }
 
   /// <inheritdoc/>
@@ -42,7 +48,8 @@ public sealed class CountingPerspectiveReceptor<TEvent> : IReceptor<TEvent>, IAc
     var perspectiveName = _context?.PerspectiveType?.Name ?? "Unknown";
     var streamId = _context?.StreamId?.ToString() ?? "Unknown";
 
-    Console.WriteLine($"[CountingReceptor] Perspective '{perspectiveName}' completed for event {typeof(TEvent).Name} on stream {streamId}");
+    _logger.LogDebug("[CountingReceptor] Perspective '{PerspectiveName}' completed for event {EventType} on stream {StreamId}",
+      perspectiveName, typeof(TEvent).Name, streamId);
 
     // Track (perspectiveName, streamId) pairs to count per-stream invocations
     // This allows counting multiple events for the same perspective (e.g., 2 ProductCreatedEvents → 2 InventoryLevelsPerspective invocations)
@@ -51,15 +58,18 @@ public sealed class CountingPerspectiveReceptor<TEvent> : IReceptor<TEvent>, IAc
       _completedPerspectives.Add(key);
       var currentCount = Interlocked.Increment(ref _completionCount);
 
-      Console.WriteLine($"[CountingReceptor] Unique perspective-stream count: {currentCount}/{_expectedCount}");
+      _logger.LogDebug("[CountingReceptor] Unique perspective-stream count: {CurrentCount}/{ExpectedCount}",
+        currentCount, _expectedCount);
 
       // Signal completion when all expected perspective-stream pairs have processed
       if (currentCount >= _expectedCount) {
-        Console.WriteLine($"[CountingReceptor] ALL {_expectedCount} perspective-stream pairs completed! Signaling completion.");
+        _logger.LogInformation("[CountingReceptor] ALL {ExpectedCount} perspective-stream pairs completed! Signaling completion for {EventType}",
+          _expectedCount, typeof(TEvent).Name);
         _completionSource.TrySetResult(true);
       }
     } else {
-      Console.WriteLine($"[CountingReceptor] Perspective-stream '{key}' already counted (duplicate invocation)");
+      _logger.LogDebug("[CountingReceptor] Perspective-stream '{Key}' already counted (duplicate invocation)",
+        key);
     }
 
     return ValueTask.CompletedTask;

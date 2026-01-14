@@ -366,11 +366,19 @@ public partial class PerspectiveWorker(
         // This ensures it fires before checkpoint commits, as designed.
 
         // Phase 3c: Report completion via strategy (saves checkpoint to database)
+        _logger.LogDebug("[PerspectiveWorker] Reporting completion for {PerspectiveName} on stream {StreamId}, lastEventId={LastEventId}",
+          perspectiveName, streamId, result.LastEventId);
         await _completionStrategy.ReportCompletionAsync(result, workCoordinator, cancellationToken);
+        _logger.LogDebug("[PerspectiveWorker] Completion reported successfully");
 
         // Phase 3d: Invoke PostPerspectiveInline lifecycle receptors (blocking, for test synchronization)
         // CRITICAL: Fires AFTER checkpoint is saved - guarantees data is committed and queryable
+        _logger.LogDebug("[PerspectiveWorker] Checking PostPerspectiveInline: processedEvents.Count={EventCount}, lifecycleInvoker={HasInvoker}",
+          processedEvents.Count, _lifecycleInvoker is not null);
+
         if (processedEvents.Count > 0 && _lifecycleInvoker is not null) {
+          _logger.LogDebug("[PerspectiveWorker] Invoking PostPerspectiveInline for {EventCount} events on {PerspectiveName}/{StreamId}",
+            processedEvents.Count, perspectiveName, streamId);
           await _invokeLifecycleReceptorsForEventsAsync(
             processedEvents,
             streamId,
@@ -380,6 +388,14 @@ public partial class PerspectiveWorker(
             LifecycleStage.PostPerspectiveInline,
             cancellationToken
           );
+          _logger.LogDebug("[PerspectiveWorker] PostPerspectiveInline invocation completed");
+        } else {
+          if (processedEvents.Count == 0) {
+            _logger.LogDebug("[PerspectiveWorker] Skipping PostPerspectiveInline: no processed events");
+          }
+          if (_lifecycleInvoker is null) {
+            _logger.LogDebug("[PerspectiveWorker] Skipping PostPerspectiveInline: no lifecycle invoker registered");
+          }
         }
 
         LogPerspectiveCheckpointCompleted(_logger, perspectiveName, streamId, result.LastEventId);

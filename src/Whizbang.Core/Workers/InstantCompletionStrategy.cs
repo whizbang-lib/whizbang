@@ -1,3 +1,5 @@
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core.Messaging;
 
 namespace Whizbang.Core.Workers;
@@ -22,14 +24,17 @@ namespace Whizbang.Core.Workers;
 /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:InstantStrategy_ReportCompletionAsync_CallsCoordinatorImmediately_Async</tests>
 /// <tests>tests/Whizbang.Core.Tests/Workers/PerspectiveCompletionStrategyTests.cs:InstantStrategy_GetPendingCompletions_AlwaysReturnsEmpty_Async</tests>
 public sealed class InstantCompletionStrategy : IPerspectiveCompletionStrategy {
+  private readonly ILogger<InstantCompletionStrategy> _logger;
+
   /// <summary>
   /// Creates a new instant completion strategy.
   /// </summary>
+  /// <param name="logger">Optional logger for diagnostic output.</param>
   /// <remarks>
   /// No configuration needed - uses lightweight out-of-band coordinator methods.
   /// </remarks>
-  public InstantCompletionStrategy() {
-    // No-op constructor - no state needed for instant reporting
+  public InstantCompletionStrategy(ILogger<InstantCompletionStrategy>? logger = null) {
+    _logger = logger ?? NullLogger<InstantCompletionStrategy>.Instance;
   }
 
   /// <inheritdoc />
@@ -42,8 +47,13 @@ public sealed class InstantCompletionStrategy : IPerspectiveCompletionStrategy {
     PerspectiveCheckpointCompletion completion,
     IWorkCoordinator coordinator,
     CancellationToken cancellationToken) {
+    _logger.LogDebug("[InstantCompletionStrategy] Reporting completion: {PerspectiveName}/{StreamId}, lastEventId={LastEventId}",
+      completion.PerspectiveName, completion.StreamId, completion.LastEventId);
+
     // Report immediately via lightweight out-of-band method
     await coordinator.ReportPerspectiveCompletionAsync(completion, cancellationToken);
+
+    _logger.LogDebug("[InstantCompletionStrategy] Completion reported successfully");
   }
 
   /// <inheritdoc />
