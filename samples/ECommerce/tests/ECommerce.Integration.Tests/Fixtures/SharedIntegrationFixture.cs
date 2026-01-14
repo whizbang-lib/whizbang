@@ -47,6 +47,11 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       .WithDatabase("whizbang_integration_test")
       .WithUsername("whizbang_user")
       .WithPassword("whizbang_pass")
+      .WithWaitStrategy(Wait.ForUnixContainer().UntilCommandIsCompleted("pg_isready"))
+      .WithStartupCallback((container, ct) => {
+        Console.WriteLine("[SharedFixture] PostgreSQL container started, waiting for readiness...");
+        return Task.CompletedTask;
+      })
       .Build();
 
     // Create network for Service Bus emulator and SQL Server
@@ -476,10 +481,11 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
 
   /// <summary>
   /// Waits for PostgreSQL to be ready to accept connections by attempting to open a connection.
-  /// Polls up to 30 times (30 seconds total) with 1 second delay between attempts.
+  /// Polls up to 60 times (60 seconds total) with 1 second delay between attempts.
+  /// Increased from 30 to 60 to handle slow container startup on busy systems.
   /// </summary>
   private async Task _waitForPostgresReadyAsync(string connectionString, CancellationToken cancellationToken = default) {
-    var maxAttempts = 30; // 30 seconds total
+    var maxAttempts = 60; // 60 seconds total (increased from 30 for reliability)
     for (var attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
         using var dataSource = new Npgsql.NpgsqlDataSourceBuilder(connectionString).Build();
@@ -487,7 +493,10 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
         Console.WriteLine($"[SharedFixture] PostgreSQL connection successful (attempt {attempt})");
         return;
       } catch (Exception ex) when (attempt < maxAttempts) {
-        Console.WriteLine($"[SharedFixture] PostgreSQL not ready (attempt {attempt}): {ex.Message}");
+        // Only log every 5th attempt to reduce noise
+        if (attempt % 5 == 0 || attempt == 1) {
+          Console.WriteLine($"[SharedFixture] PostgreSQL not ready (attempt {attempt}/{maxAttempts}): {ex.Message}");
+        }
         await Task.Delay(1000, cancellationToken);
       }
     }

@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Whizbang.Core.Observability;
 
 namespace Whizbang.Core.Messaging;
@@ -625,7 +626,9 @@ public record PerspectiveCheckpointCompletion {
   /// Type of the perspective that processed the event.
   /// Provides the actual <see cref="Type"/> of the perspective class for precise identification.
   /// Null in unit tests or when type information is unavailable.
+  /// Runtime-only property - not serialized to database. Use PerspectiveName for database queries.
   /// </summary>
+  [JsonIgnore]
   public Type? PerspectiveType { get; init; }
 
   /// <summary>

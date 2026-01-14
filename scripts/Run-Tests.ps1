@@ -170,11 +170,33 @@
 [CmdletBinding()]
 param(
     [int]$MaxParallel = 0,  # 0 = use Environment.ProcessorCount
+
+    [ArgumentCompleter({
+        param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+        # Get all test project names from the tests/ directory
+        $testProjects = Get-ChildItem -Path "$PSScriptRoot/../tests" -Directory -ErrorAction SilentlyContinue |
+            Where-Object { Test-Path "$($_.FullName)/*.csproj" } |
+            ForEach-Object { $_.Name -replace '\.Tests$', '' }
+
+        # Also get sample test projects
+        $sampleProjects = Get-ChildItem -Path "$PSScriptRoot/../samples" -Recurse -Directory -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -like "*.Tests" -and (Test-Path "$($_.FullName)/*.csproj") } |
+            ForEach-Object { $_.Name -replace '\.Tests$', '' }
+
+        # Combine and filter based on what user has typed
+        $allProjects = $testProjects + $sampleProjects | Sort-Object -Unique
+        $allProjects | Where-Object { $_ -like "*$wordToComplete*" } | ForEach-Object {
+            [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+        }
+    })]
     [string]$ProjectFilter = "",
+
     [string]$TestFilter = "",
     [switch]$VerboseOutput,
+
     [ValidateSet("Ai", "Ci", "Full", "AiFull", "IntegrationsOnly", "AiIntegrations")]
     [string]$Mode = "Ai",  # Test execution mode: Ai (default), Ci, Full, AiFull, IntegrationsOnly, AiIntegrations
+
     [int]$ProgressInterval = 60,  # Progress update interval in seconds (Ai modes only)
     [switch]$LiveUpdates,  # Show progress immediately when counts change (Ai modes only)
 
@@ -208,6 +230,43 @@ $onlyIntegrationTests = $Mode -in @("IntegrationsOnly", "AiIntegrations")
 # Navigate to repo root
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $repoRoot
+
+# Clean up any leftover test containers from previous runs
+# This ensures tests start with a clean slate even if previous runs were interrupted
+if ($includeIntegrationTests -or $onlyIntegrationTests) {
+    if (-not $useAiOutput) {
+        Write-Host "Cleaning up any leftover test containers..." -ForegroundColor Yellow
+    }
+
+    # Stop and remove ServiceBus emulator containers
+    $serviceBusContainers = docker ps -a --filter "name=servicebus-emulator" --format "{{.ID}}"
+    if ($serviceBusContainers) {
+        $serviceBusContainers | ForEach-Object { docker stop $_ 2>&1 | Out-Null; docker rm $_ 2>&1 | Out-Null }
+    }
+
+    # Stop and remove SQL Server containers for ServiceBus
+    $mssqlContainers = docker ps -a --filter "name=mssql-servicebus" --format "{{.ID}}"
+    if ($mssqlContainers) {
+        $mssqlContainers | ForEach-Object { docker stop $_ 2>&1 | Out-Null; docker rm $_ 2>&1 | Out-Null }
+    }
+
+    # Stop and remove PostgreSQL test containers
+    $postgresContainers = docker ps -a --filter "name=postgres" --format "{{.ID}}"
+    if ($postgresContainers) {
+        $postgresContainers | ForEach-Object { docker stop $_ 2>&1 | Out-Null; docker rm $_ 2>&1 | Out-Null }
+    }
+
+    # Stop and remove RabbitMQ test containers
+    $rabbitContainers = docker ps -a --filter "name=rabbitmq" --format "{{.ID}}"
+    if ($rabbitContainers) {
+        $rabbitContainers | ForEach-Object { docker stop $_ 2>&1 | Out-Null; docker rm $_ 2>&1 | Out-Null }
+    }
+
+    if (-not $useAiOutput) {
+        Write-Host "Container cleanup complete." -ForegroundColor Green
+        Write-Host ""
+    }
+}
 
 try {
     # Determine parallel level
