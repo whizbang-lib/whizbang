@@ -170,7 +170,6 @@ public class TransportConsumerWorker : BackgroundService {
             CurrentStage = LifecycleStage.PreInboxAsync,
             EventId = null,
             StreamId = null,
-            PerspectiveName = null,
             LastProcessedEventId = null,
             MessageSource = MessageSource.Inbox,
             AttemptNumber = null // Attempt info not tracked for inbox work
@@ -219,7 +218,6 @@ public class TransportConsumerWorker : BackgroundService {
             CurrentStage = LifecycleStage.PostInboxAsync,
             EventId = null,
             StreamId = null,
-            PerspectiveName = null,
             LastProcessedEventId = null,
             MessageSource = MessageSource.Inbox,
             AttemptNumber = null // Attempt info not tracked for inbox work

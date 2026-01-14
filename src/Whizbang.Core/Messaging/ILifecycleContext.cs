@@ -30,7 +30,7 @@ namespace Whizbang.Core.Messaging;
 ///
 ///   public ValueTask HandleAsync(ProductCreatedEvent evt, CancellationToken ct) {
 ///     // Only signal completion if ProductCatalog perspective processed this
-///     if (_context?.PerspectiveName == "ProductCatalog") {
+///     if (_context?.PerspectiveType?.Name == "ProductCatalogPerspective") {
 ///       _completion.SetResult(true);
 ///     }
 ///     return ValueTask.CompletedTask;
@@ -58,13 +58,6 @@ public interface ILifecycleContext {
   Guid? StreamId { get; }
 
   /// <summary>
-  /// Gets the perspective name being processed, if applicable.
-  /// Only set for perspective lifecycle stages (PrePerspective*, PostPerspective*).
-  /// Null for other stages.
-  /// </summary>
-  string? PerspectiveName { get; }
-
-  /// <summary>
   /// Gets the perspective type being processed, if applicable.
   /// Only set for perspective lifecycle stages (PrePerspective*, PostPerspective*).
   /// Null for other stages.
@@ -73,11 +66,16 @@ public interface ILifecycleContext {
   /// <para>
   /// <strong>Use Case:</strong> Provides the actual <see cref="Type"/> of the perspective
   /// class being executed, allowing receptors to precisely identify which perspective
-  /// triggered the lifecycle stage. More reliable than <see cref="PerspectiveName"/> for
-  /// filtering by specific perspective implementations.
+  /// triggered the lifecycle stage.
   /// </para>
   /// <code>
+  /// // Filter by specific perspective type
   /// if (_context?.PerspectiveType == typeof(ProductCatalogPerspective)) {
+  ///   // Only handle ProductCatalogPerspective
+  /// }
+  ///
+  /// // Or filter by perspective name
+  /// if (_context?.PerspectiveType?.Name == "ProductCatalogPerspective") {
   ///   // Only handle ProductCatalogPerspective
   /// }
   /// </code>

@@ -276,7 +276,6 @@ public partial class WorkCoordinatorPublisherWorker(
             CurrentStage = LifecycleStage.PreOutboxAsync,
             EventId = null,
             StreamId = null,
-            PerspectiveName = null,
             LastProcessedEventId = null,
             MessageSource = MessageSource.Outbox,
             AttemptNumber = work.Attempts
@@ -301,7 +300,6 @@ public partial class WorkCoordinatorPublisherWorker(
             CurrentStage = LifecycleStage.PostOutboxAsync,
             EventId = null,
             StreamId = null,
-            PerspectiveName = null,
             LastProcessedEventId = null,
             MessageSource = MessageSource.Outbox,
             AttemptNumber = work.Attempts

@@ -21,9 +21,6 @@ public sealed record LifecycleExecutionContext : ILifecycleContext {
   public Guid? StreamId { get; init; }
 
   /// <inheritdoc/>
-  public string? PerspectiveName { get; init; }
-
-  /// <inheritdoc/>
   public Type? PerspectiveType { get; init; }
 
   /// <inheritdoc/>

@@ -311,7 +311,6 @@ public partial class PerspectiveWorker(
                 var context = new LifecycleExecutionContext {
                   CurrentStage = LifecycleStage.PrePerspectiveAsync,
                   StreamId = streamId,
-                  PerspectiveName = perspectiveName,
                   LastProcessedEventId = lastProcessedEventId,
                   MessageSource = MessageSource.Local,
                   AttemptNumber = 1 // Perspectives process from local event store
@@ -502,7 +501,6 @@ public partial class PerspectiveWorker(
       var context = new LifecycleExecutionContext {
         CurrentStage = stage,
         StreamId = streamId,
-        PerspectiveName = perspectiveName,
         PerspectiveType = perspectiveType,
         LastProcessedEventId = currentEventId,
         MessageSource = MessageSource.Local,

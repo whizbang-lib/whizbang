@@ -112,7 +112,7 @@ public sealed class GenericLifecycleCompletionReceptor<TMessage> : IReceptor<TMe
     if (LastLifecycleContext is not null) {
       Console.WriteLine($"[RECEPTOR] Lifecycle context available:");
       Console.WriteLine($"[RECEPTOR]   - Current stage: {LastLifecycleContext.CurrentStage}");
-      Console.WriteLine($"[RECEPTOR]   - Perspective name: {LastLifecycleContext.PerspectiveName ?? "NULL"}");
+      Console.WriteLine($"[RECEPTOR]   - Perspective name: {LastLifecycleContext.PerspectiveType?.Name ?? "NULL"}");
       Console.WriteLine($"[RECEPTOR]   - Stream ID: {LastLifecycleContext.StreamId}");
 
       // Validate stage if specified
@@ -122,8 +122,8 @@ public sealed class GenericLifecycleCompletionReceptor<TMessage> : IReceptor<TMe
       }
 
       // Validate perspective name if specified
-      if (_perspectiveName is not null && LastLifecycleContext.PerspectiveName != _perspectiveName) {
-        Console.WriteLine($"[RECEPTOR] FILTERED: Expected perspective '{_perspectiveName}', got '{LastLifecycleContext.PerspectiveName}'");
+      if (_perspectiveName is not null && LastLifecycleContext.PerspectiveType?.Name != _perspectiveName) {
+        Console.WriteLine($"[RECEPTOR] FILTERED: Expected perspective '{_perspectiveName}', got '{LastLifecycleContext.PerspectiveType?.Name}'");
         return ValueTask.CompletedTask;
       }
 

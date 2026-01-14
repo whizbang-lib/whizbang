@@ -75,12 +75,12 @@ public sealed class PerspectiveCompletionReceptor<TEvent> : IReceptor<TEvent>
   /// Filters by perspective name if specified.
   /// </summary>
   public ValueTask HandleAsync(TEvent message, CancellationToken cancellationToken = default) {
-    Console.WriteLine($"[TestReceptor.HandleAsync] INVOKED! Event={typeof(TEvent).Name}, Perspective={_lifecycleContext?.PerspectiveName ?? "null"}");
+    Console.WriteLine($"[TestReceptor.HandleAsync] INVOKED! Event={typeof(TEvent).Name}, Perspective={_lifecycleContext?.PerspectiveType?.Name ?? "null"}");
 
     // Filter by perspective if specified
     if (_lifecycleContext is not null && _perspectiveName is not null) {
-      if (_lifecycleContext.PerspectiveName != _perspectiveName) {
-        Console.WriteLine($"[TestReceptor] Skipping - waiting for '{_perspectiveName}', got '{_lifecycleContext.PerspectiveName}'");
+      if (_lifecycleContext.PerspectiveType?.Name != _perspectiveName) {
+        Console.WriteLine($"[TestReceptor] Skipping - waiting for '{_perspectiveName}', got '{_lifecycleContext.PerspectiveType?.Name}'");
         return ValueTask.CompletedTask;  // Not the perspective we're waiting for
       }
     }

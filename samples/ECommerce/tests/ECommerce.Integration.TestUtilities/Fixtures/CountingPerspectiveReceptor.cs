@@ -39,7 +39,7 @@ public sealed class CountingPerspectiveReceptor<TEvent> : IReceptor<TEvent>, IAc
 
   public ValueTask HandleAsync(TEvent message, CancellationToken cancellationToken = default) {
     // Get perspective name and stream ID from lifecycle context
-    var perspectiveName = _context?.PerspectiveName ?? "Unknown";
+    var perspectiveName = _context?.PerspectiveType?.Name ?? "Unknown";
     var streamId = _context?.StreamId?.ToString() ?? "Unknown";
 
     Console.WriteLine($"[CountingReceptor] Perspective '{perspectiveName}' completed for event {typeof(TEvent).Name} on stream {streamId}");

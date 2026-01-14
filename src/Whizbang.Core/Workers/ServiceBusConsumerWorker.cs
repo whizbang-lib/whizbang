@@ -167,7 +167,6 @@ public partial class ServiceBusConsumerWorker(
             CurrentStage = LifecycleStage.PreInboxAsync,
             EventId = null,
             StreamId = null,
-            PerspectiveName = null,
             LastProcessedEventId = null,
             MessageSource = MessageSource.Inbox,
             AttemptNumber = null // Attempt info not tracked for inbox work
@@ -215,7 +214,6 @@ public partial class ServiceBusConsumerWorker(
             CurrentStage = LifecycleStage.PostInboxAsync,
             EventId = null,
             StreamId = null,
-            PerspectiveName = null,
             LastProcessedEventId = null,
             MessageSource = MessageSource.Inbox,
             AttemptNumber = null // Attempt info not tracked for inbox work

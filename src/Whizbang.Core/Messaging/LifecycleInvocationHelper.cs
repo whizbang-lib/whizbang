@@ -85,7 +85,6 @@ public static class LifecycleInvocationHelper {
             CurrentStage = asyncStage,
             EventId = null,
             StreamId = null,
-            PerspectiveName = null,
             LastProcessedEventId = null,
             MessageSource = Messaging.MessageSource.Outbox,
             AttemptNumber = null // Attempt info not available at this stage
@@ -101,7 +100,6 @@ public static class LifecycleInvocationHelper {
             CurrentStage = asyncStage,
             EventId = null,
             StreamId = null,
-            PerspectiveName = null,
             LastProcessedEventId = null,
             MessageSource = Messaging.MessageSource.Inbox,
             AttemptNumber = null // Attempt info not available at this stage
@@ -126,7 +124,6 @@ public static class LifecycleInvocationHelper {
         CurrentStage = inlineStage,
         EventId = null,
         StreamId = null,
-        PerspectiveName = null,
         LastProcessedEventId = null,
         MessageSource = Messaging.MessageSource.Outbox,
         AttemptNumber = null // Attempt info not available at this stage
@@ -142,7 +139,6 @@ public static class LifecycleInvocationHelper {
         CurrentStage = inlineStage,
         EventId = null,
         StreamId = null,
-        PerspectiveName = null,
         LastProcessedEventId = null,
         MessageSource = Messaging.MessageSource.Inbox,
         AttemptNumber = null // Attempt info not available at this stage
@@ -211,7 +207,6 @@ public static class LifecycleInvocationHelper {
             CurrentStage = asyncStage,
             EventId = null,
             StreamId = null,
-            PerspectiveName = null,
             LastProcessedEventId = null,
             MessageSource = Messaging.MessageSource.Outbox,
             AttemptNumber = null // Attempt info not available at this stage
@@ -227,7 +222,6 @@ public static class LifecycleInvocationHelper {
             CurrentStage = asyncStage,
             EventId = null,
             StreamId = null,
-            PerspectiveName = null,
             LastProcessedEventId = null,
             MessageSource = Messaging.MessageSource.Inbox,
             AttemptNumber = null // Attempt info not available at this stage

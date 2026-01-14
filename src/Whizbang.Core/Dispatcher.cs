@@ -158,7 +158,6 @@ public abstract class Dispatcher(
         CurrentStage = LifecycleStage.ImmediateAsync,
         EventId = null,
         StreamId = null,
-        PerspectiveName = null,
         LastProcessedEventId = null,
         MessageSource = MessageSource.Local,
         AttemptNumber = 1 // Local dispatch is always first attempt
@@ -224,7 +223,6 @@ public abstract class Dispatcher(
         CurrentStage = LifecycleStage.ImmediateAsync,
         EventId = null,
         StreamId = null,
-        PerspectiveName = null,
         LastProcessedEventId = null,
         MessageSource = MessageSource.Local,
         AttemptNumber = 1 // Local dispatch is always first attempt
@@ -360,7 +358,6 @@ public abstract class Dispatcher(
         CurrentStage = LifecycleStage.ImmediateAsync,
         EventId = null,
         StreamId = null,
-        PerspectiveName = null,
         LastProcessedEventId = null,
         MessageSource = MessageSource.Local,
         AttemptNumber = 1 // Local dispatch is always first attempt
@@ -431,7 +428,6 @@ public abstract class Dispatcher(
         CurrentStage = LifecycleStage.ImmediateAsync,
         EventId = null,
         StreamId = null,
-        PerspectiveName = null,
         LastProcessedEventId = null
       };
       await _lifecycleInvoker.InvokeAsync(message!, LifecycleStage.ImmediateAsync, lifecycleContext, default);
@@ -612,7 +608,6 @@ public abstract class Dispatcher(
         CurrentStage = LifecycleStage.ImmediateAsync,
         EventId = null,
         StreamId = null,
-        PerspectiveName = null,
         LastProcessedEventId = null
       };
       await _lifecycleInvoker.InvokeAsync(message!, LifecycleStage.ImmediateAsync, lifecycleContext, default);

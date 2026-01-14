@@ -113,7 +113,6 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         var context = new LifecycleExecutionContext {
           CurrentStage = LifecycleStage.PrePerspectiveAsync,
           StreamId = streamId,
-          PerspectiveName = perspectiveName,
           PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
           EventId = null,  // No specific event ID yet (haven't processed)
           LastProcessedEventId = lastProcessedEventId
@@ -186,7 +185,6 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           var context = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.PostPerspectiveAsync,
             StreamId = streamId,
-            PerspectiveName = perspectiveName,
             PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
             EventId = eventId,
             LastProcessedEventId = lastSuccessfulEventId
