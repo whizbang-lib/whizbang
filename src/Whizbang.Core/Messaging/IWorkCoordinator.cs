@@ -622,6 +622,13 @@ public record PerspectiveCheckpointCompletion {
   public required string PerspectiveName { get; init; }
 
   /// <summary>
+  /// Type of the perspective that processed the event.
+  /// Provides the actual <see cref="Type"/> of the perspective class for precise identification.
+  /// Null in unit tests or when type information is unavailable.
+  /// </summary>
+  public Type? PerspectiveType { get; init; }
+
+  /// <summary>
   /// Last event ID processed (checkpoint position).
   /// UUIDv7 - naturally ordered by time, doubles as sequence number.
   /// </summary>

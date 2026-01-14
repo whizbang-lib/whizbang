@@ -65,6 +65,26 @@ public interface ILifecycleContext {
   string? PerspectiveName { get; }
 
   /// <summary>
+  /// Gets the perspective type being processed, if applicable.
+  /// Only set for perspective lifecycle stages (PrePerspective*, PostPerspective*).
+  /// Null for other stages.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// <strong>Use Case:</strong> Provides the actual <see cref="Type"/> of the perspective
+  /// class being executed, allowing receptors to precisely identify which perspective
+  /// triggered the lifecycle stage. More reliable than <see cref="PerspectiveName"/> for
+  /// filtering by specific perspective implementations.
+  /// </para>
+  /// <code>
+  /// if (_context?.PerspectiveType == typeof(ProductCatalogPerspective)) {
+  ///   // Only handle ProductCatalogPerspective
+  /// }
+  /// </code>
+  /// </remarks>
+  Type? PerspectiveType { get; }
+
+  /// <summary>
   /// Gets the last successfully processed event ID (checkpoint), if applicable.
   /// Only set for perspective lifecycle stages. Represents the checkpoint position
   /// after processing completes.

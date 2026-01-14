@@ -61,27 +61,52 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
 
   /// <summary>
   /// Gets the IProductLens instance for querying product catalog (from InventoryWorker host).
+  /// Uses a long-lived scope that is recreated when RefreshLensScopes() is called.
   /// </summary>
   public IProductLens InventoryProductLens => _inventoryScope?.ServiceProvider.GetRequiredService<IProductLens>()
     ?? throw new InvalidOperationException("Fixture not initialized");
 
   /// <summary>
   /// Gets the IInventoryLens instance for querying inventory levels (from InventoryWorker host).
+  /// Uses a long-lived scope that is recreated when RefreshLensScopes() is called.
   /// </summary>
   public IInventoryLens InventoryLens => _inventoryScope?.ServiceProvider.GetRequiredService<IInventoryLens>()
     ?? throw new InvalidOperationException("Fixture not initialized");
 
   /// <summary>
   /// Gets the IProductCatalogLens instance for querying product catalog (from BFF host).
+  /// Uses a long-lived scope that is recreated when RefreshLensScopes() is called.
   /// </summary>
   public IProductCatalogLens BffProductLens => _bffScope?.ServiceProvider.GetRequiredService<IProductCatalogLens>()
     ?? throw new InvalidOperationException("Fixture not initialized");
 
   /// <summary>
   /// Gets the IInventoryLevelsLens instance for querying inventory levels (from BFF host).
+  /// Uses a long-lived scope that is recreated when RefreshLensScopes() is called.
   /// </summary>
   public IInventoryLevelsLens BffInventoryLens => _bffScope?.ServiceProvider.GetRequiredService<IInventoryLevelsLens>()
     ?? throw new InvalidOperationException("Fixture not initialized");
+
+  /// <summary>
+  /// Refreshes lens scopes to ensure queries see the latest committed data.
+  /// Call this after commands complete and before querying perspectives.
+  /// This disposes old DbContexts and creates fresh ones with current database state.
+  /// IMPORTANT: Call this immediately after WaitAsync() returns - no delays needed!
+  /// PostPerspectiveInline lifecycle stage ensures data is committed before receptor fires.
+  /// </summary>
+  public void RefreshLensScopes() {
+    // Dispose old scopes
+    _inventoryScope?.Dispose();
+    _bffScope?.Dispose();
+
+    // Create fresh scopes with new DbContexts
+    if (_inventoryHost != null) {
+      _inventoryScope = _inventoryHost.Services.CreateScope();
+    }
+    if (_bffHost != null) {
+      _bffScope = _bffHost.Services.CreateScope();
+    }
+  }
 
   /// <summary>
   /// Gets the Inventory PostgreSQL connection string for direct database operations.
@@ -128,6 +153,12 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   /// </summary>
   public async Task InitializeAsync(CancellationToken ct = default) {
     Console.WriteLine($"[RabbitMqFixture] InitializeAsync START (testId={_testId})");
+
+    // CRITICAL: Add small random delay to stagger test initialization
+    // This prevents all 60 tests from hitting PostgreSQL/RabbitMQ simultaneously
+    var staggerDelay = Random.Shared.Next(50, 200); // 50-200ms random delay
+    await Task.Delay(staggerDelay, ct);
+    Console.WriteLine($"[RabbitMqFixture] Stagger delay: {staggerDelay}ms (reduces concurrent resource contention)");
 
     // Create hosts
     Console.WriteLine("[RabbitMqFixture] Creating InventoryWorker host...");
@@ -643,11 +674,11 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   }
 
   public async ValueTask DisposeAsync() {
-    // Dispose scopes
+    // Dispose scopes first
     _inventoryScope?.Dispose();
     _bffScope?.Dispose();
 
-    // Stop and dispose hosts (this will close RabbitMQ consumers/channels)
+    // Stop and dispose hosts (this will close RabbitMQ consumers/channels and DB connections)
     if (_inventoryHost != null) {
       await _inventoryHost.StopAsync(TimeSpan.FromSeconds(10)); // Increased timeout for graceful shutdown
       _inventoryHost.Dispose();
@@ -660,10 +691,81 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
 
     // CRITICAL: Wait for RabbitMQ connections to fully close
     // RabbitMQ consumers dispose asynchronously, and connections need time to clean up
+    // Increased delay to ensure cleanup under resource exhaustion
     Console.WriteLine("[RabbitMqFixture] Waiting for RabbitMQ connections to close...");
-    await Task.Delay(2000); // 2 second delay for connection cleanup
+    await Task.Delay(3000); // 3 second delay for connection cleanup (increased for resource exhaustion scenarios)
     Console.WriteLine("[RabbitMqFixture] RabbitMQ connections closed.");
 
+    // Clear connection pools to ensure all DB connections are closed
+    // CRITICAL: Must happen BEFORE dropping databases
+    ClearConnectionPool(_inventoryPostgresConnection);
+    ClearConnectionPool(_bffPostgresConnection);
+
+    // Clean up per-test databases
+    // CRITICAL: Must happen AFTER hosts are disposed and connection pools cleared
+    await DropDatabaseAsync(_inventoryPostgresConnection);
+    await DropDatabaseAsync(_bffPostgresConnection);
+
     _managementClient.Dispose();
+  }
+
+  /// <summary>
+  /// Clears the Npgsql connection pool for a database connection string.
+  /// This ensures all connections are closed before dropping the database.
+  /// </summary>
+  private void ClearConnectionPool(string connectionString) {
+    try {
+      using var connection = new Npgsql.NpgsqlConnection(connectionString);
+      Npgsql.NpgsqlConnection.ClearPool(connection);
+      Console.WriteLine($"[RabbitMqFixture] Cleared connection pool");
+    } catch (Exception ex) {
+      // Log but don't throw - cleanup failures shouldn't break tests
+      Console.WriteLine($"[RabbitMqFixture] Warning: Failed to clear connection pool: {ex.Message}");
+    }
+  }
+
+  /// <summary>
+  /// Drops a per-test database after closing all active connections.
+  /// This prevents database accumulation and connection pool exhaustion.
+  /// </summary>
+  private async Task DropDatabaseAsync(string connectionString) {
+    try {
+      // Extract database name from connection string
+      var builder = new Npgsql.NpgsqlConnectionStringBuilder(connectionString);
+      var dbName = builder.Database;
+
+      // Skip if no database specified
+      if (string.IsNullOrEmpty(dbName) || dbName == "postgres") {
+        return;
+      }
+
+      // Connect to postgres database (the template) to drop our test database
+      builder.Database = "postgres";
+      var adminConnectionString = builder.ConnectionString;
+
+      await using var connection = new Npgsql.NpgsqlConnection(adminConnectionString);
+      await connection.OpenAsync();
+
+      // Terminate all connections to the database before dropping
+      // This prevents "database is being accessed by other users" errors
+      await using var terminateCommand = connection.CreateCommand();
+      terminateCommand.CommandText = $@"
+        SELECT pg_terminate_backend(pid)
+        FROM pg_stat_activity
+        WHERE datname = '{dbName}'
+          AND pid <> pg_backend_pid();
+      ";
+      await terminateCommand.ExecuteNonQueryAsync();
+
+      // Drop the database
+      await using var dropCommand = connection.CreateCommand();
+      dropCommand.CommandText = $"DROP DATABASE IF EXISTS \"{dbName}\"";
+      await dropCommand.ExecuteNonQueryAsync();
+
+      Console.WriteLine($"[RabbitMqFixture] Dropped database: {dbName}");
+    } catch (Exception ex) {
+      // Log but don't throw - cleanup failures shouldn't break tests
+      Console.WriteLine($"[RabbitMqFixture] Warning: Failed to drop database: {ex.Message}");
+    }
   }
 }

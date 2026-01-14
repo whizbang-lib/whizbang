@@ -52,6 +52,7 @@ public sealed class GenericLifecycleCompletionReceptor<TMessage> : IReceptor<TMe
   private readonly string? _perspectiveName;
   private readonly Func<TMessage, bool>? _messageFilter;
   private int _invocationCount;
+  private static readonly AsyncLocal<ILifecycleContext?> _asyncLocalContext = new();
 
   /// <summary>
   /// Gets the number of times this receptor has been invoked.
@@ -60,8 +61,9 @@ public sealed class GenericLifecycleCompletionReceptor<TMessage> : IReceptor<TMe
 
   /// <summary>
   /// Gets the lifecycle context from the last invocation (if context injection is used).
+  /// IMPORTANT: This uses AsyncLocal for thread-safety when multiple perspectives invoke concurrently.
   /// </summary>
-  public ILifecycleContext? LastLifecycleContext { get; private set; }
+  public ILifecycleContext? LastLifecycleContext => _asyncLocalContext.Value;
 
   /// <summary>
   /// Gets the last message received by this receptor.
@@ -113,6 +115,7 @@ public sealed class GenericLifecycleCompletionReceptor<TMessage> : IReceptor<TMe
       Console.WriteLine($"[RECEPTOR] Lifecycle context available:");
       Console.WriteLine($"[RECEPTOR]   - Current stage: {LastLifecycleContext.CurrentStage}");
       Console.WriteLine($"[RECEPTOR]   - Perspective name: {LastLifecycleContext.PerspectiveName ?? "NULL"}");
+      Console.WriteLine($"[RECEPTOR]   - Perspective type: {LastLifecycleContext.PerspectiveType?.FullName ?? "NULL"}");
       Console.WriteLine($"[RECEPTOR]   - Stream ID: {LastLifecycleContext.StreamId}");
 
       // Validate stage if specified
@@ -164,10 +167,11 @@ public sealed class GenericLifecycleCompletionReceptor<TMessage> : IReceptor<TMe
 
   /// <summary>
   /// Sets the lifecycle context (called by test infrastructure when context is available).
+  /// IMPORTANT: Uses AsyncLocal for thread-safety - each async call flow gets its own context.
   /// </summary>
   /// <param name="context">The lifecycle context from the current invocation.</param>
   public void SetLifecycleContext(ILifecycleContext context) {
-    LastLifecycleContext = context;
+    _asyncLocalContext.Value = context;
 
     // Note: Stage and perspective filtering is done in HandleAsync()
     // We just store the context here for validation later
@@ -179,6 +183,6 @@ public sealed class GenericLifecycleCompletionReceptor<TMessage> : IReceptor<TMe
   public void Reset() {
     _invocationCount = 0;
     LastMessage = default;
-    LastLifecycleContext = null;
+    _asyncLocalContext.Value = null;
   }
 }

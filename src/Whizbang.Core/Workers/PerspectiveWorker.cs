@@ -356,21 +356,32 @@ public partial class PerspectiveWorker(
           cancellationToken
         );
 
-        // Phase 3: Invoke lifecycle receptors after perspective processing completes
-        // This enables deterministic test synchronization and eliminates race conditions
-        if (_lifecycleInvoker is not null && eventStore is not null && result.Status == PerspectiveProcessingStatus.Completed) {
-          await _invokeLifecycleReceptorsAsync(
-            eventStore,
+        // Phase 3a: Load events that were just processed (shared by both lifecycle stages)
+        // Only load once to avoid duplicate queries and potential transaction issues
+        var processedEvents = (_lifecycleInvoker is not null && eventStore is not null && result.Status == PerspectiveProcessingStatus.Completed)
+          ? await _loadProcessedEventsAsync(eventStore, streamId, perspectiveName, lastProcessedEventId, result.LastEventId, cancellationToken)
+          : new List<MessageEnvelope<IEvent>>();
+
+        // NOTE: PostPerspectiveAsync is fired from the generated perspective runner, not here.
+        // The runner fires it after flushing data but before returning the completion.
+        // This ensures it fires before checkpoint commits, as designed.
+
+        // Phase 3c: Report completion via strategy (saves checkpoint to database)
+        await _completionStrategy.ReportCompletionAsync(result, workCoordinator, cancellationToken);
+
+        // Phase 3d: Invoke PostPerspectiveInline lifecycle receptors (blocking, for test synchronization)
+        // CRITICAL: Fires AFTER checkpoint is saved - guarantees data is committed and queryable
+        if (processedEvents.Count > 0 && _lifecycleInvoker is not null) {
+          await _invokeLifecycleReceptorsForEventsAsync(
+            processedEvents,
             streamId,
             perspectiveName,
-            lastProcessedEventId,
+            result.PerspectiveType,
             result.LastEventId,
+            LifecycleStage.PostPerspectiveInline,
             cancellationToken
           );
         }
-
-        // Report completion via strategy
-        await _completionStrategy.ReportCompletionAsync(result, workCoordinator, cancellationToken);
 
         LogPerspectiveCheckpointCompleted(_logger, perspectiveName, streamId, result.LastEventId);
       } catch (Exception ex) when (ex is not OperationCanceledException) {
@@ -425,11 +436,10 @@ public partial class PerspectiveWorker(
   }
 
   /// <summary>
-  /// Invokes lifecycle receptors after perspective processing completes successfully.
-  /// Loads events that were just processed and notifies receptors at PostPerspectiveAsync
-  /// and PostPerspectiveInline stages for deterministic test synchronization.
+  /// Loads events that were just processed by the perspective run.
+  /// Loads once and reuses for both PostPerspectiveAsync and PostPerspectiveInline stages.
   /// </summary>
-  private async Task _invokeLifecycleReceptorsAsync(
+  private async Task<List<MessageEnvelope<IEvent>>> _loadProcessedEventsAsync(
       IEventStore eventStore,
       Guid streamId,
       string perspectiveName,
@@ -437,16 +447,9 @@ public partial class PerspectiveWorker(
       Guid currentEventId,
       CancellationToken cancellationToken) {
 
-    if (_lifecycleInvoker is null) {
-      throw new InvalidOperationException(
-        $"ILifecycleInvoker is required for lifecycle stage invocation but was not registered. " +
-        $"Ensure AddWhizbangLifecycleInvoker() is called during DI setup.");
-    }
-
     if (_eventTypeProvider is null) {
-      throw new InvalidOperationException(
-        $"IEventTypeProvider is required for lifecycle stage invocation but was not registered. " +
-        $"Register an implementation (e.g., ECommerceEventTypeProvider) as a singleton.");
+      LogWarningNoEventTypes(_logger, perspectiveName, streamId);
+      return new List<MessageEnvelope<IEvent>>();
     }
 
     try {
@@ -454,7 +457,7 @@ public partial class PerspectiveWorker(
       var eventTypes = _eventTypeProvider.GetEventTypes();
       if (eventTypes.Count == 0) {
         LogWarningNoEventTypes(_logger, perspectiveName, streamId);
-        return; // Cannot load events without type information
+        return new List<MessageEnvelope<IEvent>>();
       }
 
       // Load all events that were just processed by this perspective run
@@ -467,40 +470,50 @@ public partial class PerspectiveWorker(
         cancellationToken
       );
 
-      if (processedEvents.Count == 0) {
-        return; // No events to process
-      }
+      return processedEvents;
 
+    } catch (Exception ex) when (ex is not OperationCanceledException) {
+      LogErrorInvokingLifecycleReceptors(_logger, ex, perspectiveName, streamId);
+      throw;
+    }
+  }
+
+  /// <summary>
+  /// Invokes lifecycle receptors for the given events at the specified stage.
+  /// Used for both PostPerspectiveAsync (before checkpoint save) and PostPerspectiveInline (after checkpoint save).
+  /// </summary>
+  private async Task _invokeLifecycleReceptorsForEventsAsync(
+      List<MessageEnvelope<IEvent>> processedEvents,
+      Guid streamId,
+      string perspectiveName,
+      Type? perspectiveType,
+      Guid currentEventId,
+      LifecycleStage stage,
+      CancellationToken cancellationToken) {
+
+    if (_lifecycleInvoker is null) {
+      throw new InvalidOperationException(
+        $"ILifecycleInvoker is required for lifecycle stage invocation but was not registered. " +
+        $"Ensure AddWhizbangLifecycleInvoker() is called during DI setup.");
+    }
+
+    try {
       // Create lifecycle context with stream and perspective information
       var context = new LifecycleExecutionContext {
-        CurrentStage = LifecycleStage.PostPerspectiveAsync, // Will be updated per stage
+        CurrentStage = stage,
         StreamId = streamId,
         PerspectiveName = perspectiveName,
+        PerspectiveType = perspectiveType,
         LastProcessedEventId = currentEventId,
         MessageSource = MessageSource.Local,
         AttemptNumber = 1 // Perspectives process from local event store
       };
 
-      // Phase 1: PostPerspectiveAsync (non-blocking, informational)
-      // Receptors at this stage should not block perspective processing
-      context = context with { CurrentStage = LifecycleStage.PostPerspectiveAsync };
+      // Invoke receptors for each event
       foreach (var envelope in processedEvents) {
         await _lifecycleInvoker.InvokeAsync(
           envelope.Payload,
-          LifecycleStage.PostPerspectiveAsync,
-          context,
-          cancellationToken
-        );
-      }
-
-      // Phase 2: PostPerspectiveInline (blocking, for test synchronization)
-      // Receptors at this stage fire BEFORE checkpoint completion is reported
-      // This enables deterministic test synchronization without polling
-      context = context with { CurrentStage = LifecycleStage.PostPerspectiveInline };
-      foreach (var envelope in processedEvents) {
-        await _lifecycleInvoker.InvokeAsync(
-          envelope.Payload,
-          LifecycleStage.PostPerspectiveInline,
+          stage,
           context,
           cancellationToken
         );

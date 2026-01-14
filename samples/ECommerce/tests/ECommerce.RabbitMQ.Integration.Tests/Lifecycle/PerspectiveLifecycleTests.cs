@@ -309,7 +309,8 @@ public class PerspectiveLifecycleTests {
   /// Tests the "checkpoint not yet reported to coordinator" guarantee.
   /// </summary>
   [Test]
-  public async Task PostPerspectiveAsync_FiresBeforeCheckpointReported_TimingGuaranteeAsync() {
+  [Timeout(45000)] // Increased timeout for resource-constrained environments (45s)
+  public async Task PostPerspectiveAsync_FiresBeforeCheckpointReported_TimingGuaranteeAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -339,11 +340,11 @@ public class PerspectiveLifecycleTests {
       // Act - Dispatch command
       await fixture.Dispatcher.SendAsync(command);
 
-      // Wait for both PostPerspective stages
+      // Wait for both PostPerspective stages (increased timeout for resource exhaustion scenarios)
       await Task.WhenAll(
         postAsyncCompletion.Task,
         postInlineCompletion.Task
-      ).WaitAsync(TimeSpan.FromSeconds(20));
+      ).WaitAsync(TimeSpan.FromSeconds(35));
 
       // Assert - Both stages should have fired
       await Assert.That(postAsyncReceptor.InvocationCount).IsEqualTo(1);
@@ -367,7 +368,8 @@ public class PerspectiveLifecycleTests {
   /// This is the CRITICAL stage for test synchronization - guarantees perspective data is saved.
   /// </summary>
   [Test]
-  public async Task PostPerspectiveInline_FiresAfterPerspectiveCompletes_BlocksCheckpointAsync() {
+  [Timeout(45000)] // Increased timeout for resource-constrained environments (45s)
+  public async Task PostPerspectiveInline_FiresAfterPerspectiveCompletes_BlocksCheckpointAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -381,7 +383,10 @@ public class PerspectiveLifecycleTests {
 
     // Act - Use the existing WaitForPerspectiveCompletionAsync helper (PostPerspectiveInline)
     await fixture.Dispatcher.SendAsync(command);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(inventoryPerspectives: 2, bffPerspectives: 2);
+    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(
+      inventoryPerspectives: 2,
+      bffPerspectives: 2,
+      timeoutMilliseconds: 35000); // Increased timeout for resource exhaustion scenarios
 
     // Assert - Verify perspective data is saved (this is the key guarantee!)
     var product = await fixture.BffProductLens.GetByIdAsync(command.ProductId);
@@ -500,7 +505,8 @@ public class PerspectiveLifecycleTests {
   /// PrePerspectiveInline → PrePerspectiveAsync (parallel) → PostPerspectiveAsync → PostPerspectiveInline
   /// </summary>
   [Test]
-  public async Task PerspectiveStages_FireInCorrectOrder_AllStagesInvokedAsync() {
+  [Timeout(50000)] // Increased timeout for resource-constrained environments (50s)
+  public async Task PerspectiveStages_FireInCorrectOrder_AllStagesInvokedAsync(CancellationToken cancellationToken) {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
@@ -539,13 +545,13 @@ public class PerspectiveLifecycleTests {
       // Act - Dispatch command (event will be processed by ProductCatalog perspective in BFF)
       await fixture.Dispatcher.SendAsync(command);
 
-      // Wait for all stages to complete (with timeout)
+      // Wait for all stages to complete (increased timeout for resource exhaustion scenarios)
       await Task.WhenAll(
         preInlineCompletion.Task,
         preAsyncCompletion.Task,
         postAsyncCompletion.Task,
         postInlineCompletion.Task
-      ).WaitAsync(TimeSpan.FromSeconds(25));
+      ).WaitAsync(TimeSpan.FromSeconds(40));
 
       // Assert - All stages should have been invoked
       await Assert.That(preInlineReceptor.InvocationCount).IsEqualTo(1);

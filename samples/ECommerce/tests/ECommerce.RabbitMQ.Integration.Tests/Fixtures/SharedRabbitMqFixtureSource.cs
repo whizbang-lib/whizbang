@@ -154,13 +154,14 @@ public static class SharedRabbitMqFixtureSource {
 
     // Build connection string with unique database name
     // IMPORTANT: Use small pool sizes to avoid hitting PostgreSQL's max_connections limit
-    // With 60 tests × 2 databases per test = 120 databases, we need to be conservative
+    // With 60 tests × 2 databases per test = 120 databases, we need to be very conservative
+    // Reducing to MaxPoolSize=2 to prevent resource exhaustion when running all tests together
     var builder = new Npgsql.NpgsqlConnectionStringBuilder(PostgresConnectionString) {
       Database = dbName,
       MinPoolSize = 0,    // Don't keep idle connections
-      MaxPoolSize = 5,    // Limit max connections per database (was default 100)
-      ConnectionIdleLifetime = 10,  // Close idle connections after 10 seconds
-      ConnectionPruningInterval = 5  // Prune connections every 5 seconds
+      MaxPoolSize = 2,    // Limit max connections per database (reduced from 5 to prevent exhaustion)
+      ConnectionIdleLifetime = 5,  // Close idle connections after 5 seconds (reduced from 10)
+      ConnectionPruningInterval = 3  // Prune connections every 3 seconds (reduced from 5)
     };
 
     return builder.ConnectionString;

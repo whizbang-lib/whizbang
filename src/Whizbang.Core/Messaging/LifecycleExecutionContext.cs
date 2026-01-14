@@ -24,6 +24,9 @@ public sealed record LifecycleExecutionContext : ILifecycleContext {
   public string? PerspectiveName { get; init; }
 
   /// <inheritdoc/>
+  public Type? PerspectiveType { get; init; }
+
+  /// <inheritdoc/>
   public Guid? LastProcessedEventId { get; init; }
 
   /// <inheritdoc/>

@@ -100,6 +100,10 @@ public class UpdateProductWorkflowTests {
     await fixture.Dispatcher.SendAsync(updateCommand);
     await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
+
+    // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
+    fixture.RefreshLensScopes();
+
     // Assert - Verify InventoryWorker perspective updated
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId);
     await Assert.That(inventoryProduct).IsNotNull();
@@ -151,6 +155,10 @@ public class UpdateProductWorkflowTests {
       bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(updateCommand);
     await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
+
+
+    // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
+    fixture.RefreshLensScopes();
 
     // Assert - Verify InventoryWorker perspective fully updated
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId);
@@ -207,6 +215,10 @@ public class UpdateProductWorkflowTests {
     await fixture.Dispatcher.SendAsync(updateCommand);
     await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
+
+    // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
+    fixture.RefreshLensScopes();
+
     // Assert - Verify only price changed
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId);
     await Assert.That(inventoryProduct).IsNotNull();
@@ -257,6 +269,10 @@ public class UpdateProductWorkflowTests {
       bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(updateCommand);
     await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
+
+
+    // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
+    fixture.RefreshLensScopes();
 
     // Assert - Verify description and image updated
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId);
@@ -338,6 +354,10 @@ public class UpdateProductWorkflowTests {
     await fixture.Dispatcher.SendAsync(update3);
     await updateWaiter3.WaitAsync(timeoutMilliseconds: 45000);
 
+
+    // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
+    fixture.RefreshLensScopes();
+
     // Assert - Verify all changes accumulated
     var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(createCommand.ProductId);
     await Assert.That(inventoryProduct).IsNotNull();
@@ -396,6 +416,10 @@ public class UpdateProductWorkflowTests {
       bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(updateCommand);
     await updateWaiter.WaitAsync(timeoutMilliseconds: 45000);
+
+
+    // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
+    fixture.RefreshLensScopes();
 
     // Assert - Verify inventory unchanged
     var updatedInventory = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);

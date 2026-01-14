@@ -83,6 +83,7 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var eventsProcessed = 0;
     var lastSuccessfulEventId = lastProcessedEventId;
     var processedEvents = new List<(object Event, Guid EventId)>();  // Track events for PostPerspectiveInline (fires AFTER save)
+    var backgroundTasks = new List<Task>();  // Track async lifecycle tasks to ensure they complete
     __MODEL_TYPE_NAME__ updatedModel = currentModel;
 
     // Build list of event types this perspective handles (for polymorphic deserialization)
@@ -113,24 +114,21 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           CurrentStage = LifecycleStage.PrePerspectiveAsync,
           StreamId = streamId,
           PerspectiveName = perspectiveName,
+          PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
           EventId = null,  // No specific event ID yet (haven't processed)
           LastProcessedEventId = lastProcessedEventId
         };
 
-        // Fire ASYNC hooks (backgrounded, non-blocking)
-        _ = Task.Run(async () => {
-          try {
-            await _lifecycleInvoker.InvokeAsync(
-              firstEvent,  // Pass first event for type-based receptor routing
-              LifecycleStage.PrePerspectiveAsync,
-              context with { CurrentStage = LifecycleStage.PrePerspectiveAsync },
-              cancellationToken
-            );
-          } catch (Exception ex) {
-            _logger.LogError(ex, "Error invoking PrePerspectiveAsync receptors for {PerspectiveName} on stream {StreamId}",
-              perspectiveName, streamId);
-          }
-        });
+        // Fire ASYNC hooks (non-blocking - runs concurrently with perspective processing)
+        // Note: We don't await this immediately, allowing it to run in parallel with perspective processing.
+        // However, we track it to ensure completion before returning from RunAsync.
+        var preAsyncTask = _lifecycleInvoker.InvokeAsync(
+          firstEvent,  // Pass first event for type-based receptor routing
+          LifecycleStage.PrePerspectiveAsync,
+          context with { CurrentStage = LifecycleStage.PrePerspectiveAsync },
+          cancellationToken
+        ).AsTask();  // Convert ValueTask to Task for tracking
+        backgroundTasks.Add(preAsyncTask);
 
         // Fire INLINE hooks (blocking, transactional)
         await _lifecycleInvoker.InvokeAsync(
@@ -181,45 +179,44 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
             lastSuccessfulEventId
         );
 
-        // Fire PostPerspective lifecycle hooks AFTER database transaction commits
-        // This guarantees perspective data is persisted and queryable before receptors fire
+        // Fire PostPerspectiveAsync lifecycle hooks AFTER perspective data is flushed
+        // PostPerspectiveAsync is for early, non-blocking notification (data committed but checkpoint not yet saved)
+        // PostPerspectiveInline fires LATER in PerspectiveWorker after checkpoint commits (guarantees both data + checkpoint are committed)
         foreach (var (evt, eventId) in processedEvents) {
           var context = new LifecycleExecutionContext {
             CurrentStage = LifecycleStage.PostPerspectiveAsync,
             StreamId = streamId,
             PerspectiveName = perspectiveName,
+            PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
             EventId = eventId,
             LastProcessedEventId = lastSuccessfulEventId
           };
 
-          // Fire ASYNC hooks (backgrounded, non-blocking)
-          _ = Task.Run(async () => {
-            try {
-              await _lifecycleInvoker.InvokeAsync(
-                evt,
-                LifecycleStage.PostPerspectiveAsync,
-                context with { CurrentStage = LifecycleStage.PostPerspectiveAsync },
-                cancellationToken
-              );
-            } catch (Exception ex) {
-              _logger.LogError(ex, "Error invoking async lifecycle receptors for {PerspectiveName} on stream {StreamId}, event {EventId}",
-                perspectiveName, streamId, eventId);
-            }
-          });
-
-          // Fire INLINE hooks (blocking, transactional)
-          await _lifecycleInvoker.InvokeAsync(
+          // Fire ASYNC hooks (non-blocking - for early notification before checkpoint commits)
+          // Note: We don't await this immediately, allowing perspective processing to complete.
+          // However, we track it to ensure completion before returning from RunAsync.
+          var postAsyncTask = _lifecycleInvoker.InvokeAsync(
             evt,
-            LifecycleStage.PostPerspectiveInline,
-            context with { CurrentStage = LifecycleStage.PostPerspectiveInline },
+            LifecycleStage.PostPerspectiveAsync,
+            context with { CurrentStage = LifecycleStage.PostPerspectiveAsync },
             cancellationToken
-          );
+          ).AsTask();  // Convert ValueTask to Task for tracking
+          backgroundTasks.Add(postAsyncTask);
         }
+      }
+
+      // CRITICAL: Wait for all background async lifecycle tasks to complete before returning
+      // This ensures async stages (PrePerspectiveAsync, PostPerspectiveAsync) actually execute
+      // even under thread pool exhaustion. Without this, Task.Run might not execute due to
+      // thread pool saturation, causing lifecycle receptors to never fire.
+      if (backgroundTasks.Count > 0) {
+        await Task.WhenAll(backgroundTasks);
       }
 
       return new PerspectiveCheckpointCompletion {
         StreamId = streamId,
         PerspectiveName = perspectiveName,
+        PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
         LastEventId = lastSuccessfulEventId ?? lastProcessedEventId ?? Guid.Empty,
         Status = eventsProcessed > 0 ? PerspectiveProcessingStatus.Completed : PerspectiveProcessingStatus.None
       };

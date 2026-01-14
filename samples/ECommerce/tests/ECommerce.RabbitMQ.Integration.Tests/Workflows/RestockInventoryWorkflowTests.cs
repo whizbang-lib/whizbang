@@ -96,6 +96,10 @@ public class RestockInventoryWorkflowTests {
     await fixture.Dispatcher.SendAsync(restockCommand);
     await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
+
+    // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
+    fixture.RefreshLensScopes();
+
     // Assert - Verify InventoryWorker perspective updated
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);
     await Assert.That(inventoryLevel).IsNotNull();
@@ -148,6 +152,10 @@ public class RestockInventoryWorkflowTests {
       await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
     }
 
+
+    // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
+    fixture.RefreshLensScopes();
+
     // Assert - Verify total quantity = 5 + 10 + 20 + 15 = 50
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);
     await Assert.That(inventoryLevel).IsNotNull();
@@ -194,6 +202,10 @@ public class RestockInventoryWorkflowTests {
     await fixture.Dispatcher.SendAsync(restockCommand);
     await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
+
+    // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
+    fixture.RefreshLensScopes();
+
     // Assert - Verify quantity increased from 0 to 100
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);
     await Assert.That(inventoryLevel).IsNotNull();
@@ -239,6 +251,10 @@ public class RestockInventoryWorkflowTests {
     await fixture.Dispatcher.SendAsync(restockCommand);
     await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
+
+    // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
+    fixture.RefreshLensScopes();
+
     // Assert - Verify quantity unchanged
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);
     await Assert.That(inventoryLevel).IsNotNull();
@@ -283,6 +299,10 @@ public class RestockInventoryWorkflowTests {
       bffPerspectives: 1);  // BFF also has InventoryLevelsPerspective that handles this event
     await fixture.Dispatcher.SendAsync(restockCommand);
     await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
+
+
+    // Refresh lens scopes to get fresh DbContexts that can see committed perspective data
+    fixture.RefreshLensScopes();
 
     // Assert - Verify large quantity handled
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);

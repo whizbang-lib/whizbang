@@ -88,7 +88,7 @@ public class CreateProductWorkflowTests {
       bffPerspectives: 2);
     using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
       inventoryPerspectives: 1,
-      bffPerspectives: 0);
+      bffPerspectives: 1);  // BFF has InventoryLevelsPerspective that handles this event
     await fixture.Dispatcher.SendAsync(command);
     Console.WriteLine($"[TEST] Command sent, waiting for perspective processing...");
 
@@ -167,7 +167,7 @@ public class CreateProductWorkflowTests {
         bffPerspectives: 2);
       using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
         inventoryPerspectives: 1,
-        bffPerspectives: 0);
+        bffPerspectives: 1);  // BFF has InventoryLevelsPerspective that handles this event
       await fixture.Dispatcher.SendAsync(command);
       await productWaiter.WaitAsync(timeoutMilliseconds: 45000);
       await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
@@ -175,6 +175,8 @@ public class CreateProductWorkflowTests {
 
     // Assert - Verify all products materialized in InventoryWorker perspective
     foreach (var command in commands) {
+      // Refresh lens scopes before each query to ensure we see the latest committed data
+      fixture.RefreshLensScopes();
       var product = await fixture.InventoryProductLens.GetByIdAsync(command.ProductId);
       await Assert.That(product).IsNotNull();
       await Assert.That(product!.Name).IsEqualTo(command.Name);
