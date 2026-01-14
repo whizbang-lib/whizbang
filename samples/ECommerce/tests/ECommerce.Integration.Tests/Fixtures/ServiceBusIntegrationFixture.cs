@@ -645,10 +645,10 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   ///   timeoutMilliseconds: 15000
   /// );
   ///
-  /// // InventoryRestockedEvent is only handled by InventoryWorker perspectives
+  /// // InventoryRestockedEvent is handled by both InventoryWorker and BFF perspectives
   /// await WaitForPerspectiveCompletionAsync&lt;InventoryRestockedEvent&gt;(
   ///   inventoryPerspectives: 1,
-  ///   bffPerspectives: 0,
+  ///   bffPerspectives: 1,
   ///   timeoutMilliseconds: 15000
   /// );
   /// </code>

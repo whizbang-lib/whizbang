@@ -75,7 +75,7 @@ public class CreateProductWorkflowTests {
       bffPerspectives: 2);
     using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
       inventoryPerspectives: 1,
-      bffPerspectives: 0);
+      bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(command);
     Console.WriteLine($"[TEST] Command sent, waiting for perspective processing...");
 
@@ -154,7 +154,7 @@ public class CreateProductWorkflowTests {
         bffPerspectives: 2);
       using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
         inventoryPerspectives: 1,
-        bffPerspectives: 0);
+        bffPerspectives: 1);
       await fixture.Dispatcher.SendAsync(command);
       await productWaiter.WaitAsync(timeoutMilliseconds: 45000);
       await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);

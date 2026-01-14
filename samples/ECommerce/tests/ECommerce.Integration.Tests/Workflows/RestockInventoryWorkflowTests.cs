@@ -85,7 +85,7 @@ public class RestockInventoryWorkflowTests {
     };
     using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
       inventoryPerspectives: 1,
-      bffPerspectives: 0);
+      bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(restockCommand);
     await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -138,7 +138,7 @@ public class RestockInventoryWorkflowTests {
     foreach (var restockCommand in restockCommands) {
       using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
         inventoryPerspectives: 1,
-        bffPerspectives: 0);
+        bffPerspectives: 1);
       await fixture.Dispatcher.SendAsync(restockCommand);
       await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
     }
@@ -187,7 +187,7 @@ public class RestockInventoryWorkflowTests {
     };
     using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
       inventoryPerspectives: 1,
-      bffPerspectives: 0);
+      bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(restockCommand);
     await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -234,7 +234,7 @@ public class RestockInventoryWorkflowTests {
     };
     using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
       inventoryPerspectives: 1,
-      bffPerspectives: 0);
+      bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(restockCommand);
     await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
@@ -281,7 +281,7 @@ public class RestockInventoryWorkflowTests {
     };
     using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
       inventoryPerspectives: 1,
-      bffPerspectives: 0);
+      bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(restockCommand);
     await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
