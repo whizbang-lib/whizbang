@@ -87,6 +87,11 @@ public class RestockInventoryWorkflowTests {
       inventoryPerspectives: 1,
       bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(restockCommand);
+
+    // SQL diagnostic: Check event flow after command dispatch
+    await Task.Delay(5000); // Give system time to process
+    await fixture.DiagnoseEventFlowAsync("InventoryRestockedEvent", fixture.GetLogger<RestockInventoryWorkflowTests>());
+
     await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Assert - Verify InventoryWorker perspective updated
@@ -189,6 +194,11 @@ public class RestockInventoryWorkflowTests {
       inventoryPerspectives: 1,
       bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(restockCommand);
+
+    // SQL diagnostic: Check event flow after command dispatch
+    await Task.Delay(5000); // Give system time to process
+    await fixture.DiagnoseEventFlowAsync("InventoryRestockedEvent", fixture.GetLogger<RestockInventoryWorkflowTests>());
+
     await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Assert - Verify quantity increased from 0 to 100

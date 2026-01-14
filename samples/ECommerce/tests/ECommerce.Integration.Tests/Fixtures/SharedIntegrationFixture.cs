@@ -708,6 +708,140 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   }
 
   /// <summary>
+  /// Performs SQL diagnostics for event and perspective checkpoint debugging.
+  /// Queries inbox, event store, and perspective checkpoints for a specific event type.
+  /// Controlled by WHIZBANG_DEBUG environment variable or debug parameter.
+  /// </summary>
+  /// <param name="eventTypeName">Simple event type name (e.g., "InventoryRestockedEvent")</param>
+  /// <param name="logger">Logger for diagnostic output</param>
+  /// <param name="forceDebug">Force debug output regardless of environment variable</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  public async Task DiagnoseEventFlowAsync(
+    string eventTypeName,
+    ILogger? logger = null,
+    bool forceDebug = false,
+    CancellationToken cancellationToken = default) {
+
+    // Check if debug logging is enabled
+    var debugEnabled = forceDebug || Environment.GetEnvironmentVariable("WHIZBANG_DEBUG") == "true";
+    if (!debugEnabled || !_isInitialized) {
+      return;
+    }
+
+    logger ??= GetLogger<SharedIntegrationFixture>();
+
+    using var scope = _inventoryHost!.Services.CreateScope();
+    var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+
+    // Query 1: Check inbox for event
+    var inboxQuery = @"
+      SELECT message_id, message_type, stream_id, is_event, status, received_at
+      FROM inventory.wh_inbox
+      WHERE message_type LIKE '%' || @p0 || '%'
+      ORDER BY received_at DESC
+      LIMIT 5";
+
+    var inboxResults = await dbContext.Database
+      .SqlQueryRaw<InboxDiagnosticResult>(inboxQuery, eventTypeName)
+      .ToListAsync(cancellationToken);
+
+    logger.LogDebug("[SQL Diagnostic] Inbox results for {EventType}: {Count} messages found",
+      eventTypeName, inboxResults.Count);
+
+    foreach (var row in inboxResults) {
+      logger.LogDebug("  - MessageId={MessageId}, StreamId={StreamId}, IsEvent={IsEvent}, Status={Status}, ReceivedAt={ReceivedAt}",
+        row.MessageId, row.StreamId, row.IsEvent, row.Status, row.ReceivedAt);
+    }
+
+    // Query 2: Check event store for event
+    var eventStoreQuery = @"
+      SELECT event_id, stream_id, event_type, version, sequence_number, created_at
+      FROM inventory.wh_event_store
+      WHERE event_type LIKE '%' || @p0 || '%'
+      ORDER BY created_at DESC
+      LIMIT 5";
+
+    var eventStoreResults = await dbContext.Database
+      .SqlQueryRaw<EventStoreDiagnosticResult>(eventStoreQuery, eventTypeName)
+      .ToListAsync(cancellationToken);
+
+    logger.LogDebug("[SQL Diagnostic] Event store results for {EventType}: {Count} events found",
+      eventTypeName, eventStoreResults.Count);
+
+    foreach (var row in eventStoreResults) {
+      logger.LogDebug("  - EventId={EventId}, StreamId={StreamId}, Version={Version}, SeqNum={SeqNum}, CreatedAt={CreatedAt}",
+        row.EventId, row.StreamId, row.Version, row.SequenceNumber, row.CreatedAt);
+    }
+
+    // Query 3: Check perspective checkpoints (should exist for streams that have events)
+    if (eventStoreResults.Count > 0) {
+      var streamIds = string.Join(", ", eventStoreResults.Select(e => $"'{e.StreamId}'"));
+      var checkpointQuery = $@"
+        SELECT perspective_name, stream_id, last_event_id, last_sequence_number, status
+        FROM inventory.wh_perspective_checkpoints
+        WHERE stream_id IN ({streamIds})
+        ORDER BY perspective_name, stream_id";
+
+      var checkpointResults = await dbContext.Database
+        .SqlQueryRaw<CheckpointDiagnosticResult>(checkpointQuery)
+        .ToListAsync(cancellationToken);
+
+      logger.LogDebug("[SQL Diagnostic] Perspective checkpoints for streams with {EventType}: {Count} checkpoints found",
+        eventTypeName, checkpointResults.Count);
+
+      foreach (var row in checkpointResults) {
+        logger.LogDebug("  - Perspective={PerspectiveName}, StreamId={StreamId}, LastEventId={LastEventId}, LastSeqNum={LastSeqNum}, Status={Status}",
+          row.PerspectiveName, row.StreamId, row.LastEventId, row.LastSequenceNumber, row.Status);
+      }
+    }
+
+    // Query 4: Check BFF schema as well
+    using var bffScope = _bffHost!.Services.CreateScope();
+    var bffDbContext = bffScope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
+
+    var bffEventStoreQuery = @"
+      SELECT event_id, stream_id, event_type, version, sequence_number, created_at
+      FROM bff.wh_event_store
+      WHERE event_type LIKE '%' || @p0 || '%'
+      ORDER BY created_at DESC
+      LIMIT 5";
+
+    var bffEventStoreResults = await bffDbContext.Database
+      .SqlQueryRaw<EventStoreDiagnosticResult>(bffEventStoreQuery, eventTypeName)
+      .ToListAsync(cancellationToken);
+
+    logger.LogDebug("[SQL Diagnostic] BFF event store results for {EventType}: {Count} events found",
+      eventTypeName, bffEventStoreResults.Count);
+
+    foreach (var row in bffEventStoreResults) {
+      logger.LogDebug("  - EventId={EventId}, StreamId={StreamId}, Version={Version}, SeqNum={SeqNum}, CreatedAt={CreatedAt}",
+        row.EventId, row.StreamId, row.Version, row.SequenceNumber, row.CreatedAt);
+    }
+
+    // Query 5: Check BFF perspective checkpoints
+    if (bffEventStoreResults.Count > 0) {
+      var bffStreamIds = string.Join(", ", bffEventStoreResults.Select(e => $"'{e.StreamId}'"));
+      var bffCheckpointQuery = $@"
+        SELECT perspective_name, stream_id, last_event_id, last_sequence_number, status
+        FROM bff.wh_perspective_checkpoints
+        WHERE stream_id IN ({bffStreamIds})
+        ORDER BY perspective_name, stream_id";
+
+      var bffCheckpointResults = await bffDbContext.Database
+        .SqlQueryRaw<CheckpointDiagnosticResult>(bffCheckpointQuery)
+        .ToListAsync(cancellationToken);
+
+      logger.LogDebug("[SQL Diagnostic] BFF perspective checkpoints for streams with {EventType}: {Count} checkpoints found",
+        eventTypeName, bffCheckpointResults.Count);
+
+      foreach (var row in bffCheckpointResults) {
+        logger.LogDebug("  - Perspective={PerspectiveName}, StreamId={StreamId}, LastEventId={LastEventId}, LastSeqNum={LastSeqNum}, Status={Status}",
+          row.PerspectiveName, row.StreamId, row.LastEventId, row.LastSequenceNumber, row.Status);
+      }
+    }
+  }
+
+  /// <summary>
   /// Cleans up all test data from the database (truncates all tables).
   /// Call this between test classes to ensure isolation.
   /// </summary>
@@ -774,4 +908,42 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       );
     }
   }
+}
+
+/// <summary>
+/// Diagnostic result type for inbox queries.
+/// Maps to wh_inbox table columns for event flow debugging.
+/// </summary>
+internal class InboxDiagnosticResult {
+  public Guid MessageId { get; set; }
+  public string MessageType { get; set; } = string.Empty;
+  public Guid StreamId { get; set; }
+  public bool IsEvent { get; set; }
+  public string Status { get; set; } = string.Empty;
+  public DateTimeOffset ReceivedAt { get; set; }
+}
+
+/// <summary>
+/// Diagnostic result type for event store queries.
+/// Maps to wh_event_store table columns for event flow debugging.
+/// </summary>
+internal class EventStoreDiagnosticResult {
+  public Guid EventId { get; set; }
+  public Guid StreamId { get; set; }
+  public string EventType { get; set; } = string.Empty;
+  public int Version { get; set; }
+  public long SequenceNumber { get; set; }
+  public DateTimeOffset CreatedAt { get; set; }
+}
+
+/// <summary>
+/// Diagnostic result type for perspective checkpoint queries.
+/// Maps to wh_perspective_checkpoints table columns for perspective processing debugging.
+/// </summary>
+internal class CheckpointDiagnosticResult {
+  public string PerspectiveName { get; set; } = string.Empty;
+  public Guid StreamId { get; set; }
+  public Guid LastEventId { get; set; }
+  public long LastSequenceNumber { get; set; }
+  public string Status { get; set; } = string.Empty;
 }
