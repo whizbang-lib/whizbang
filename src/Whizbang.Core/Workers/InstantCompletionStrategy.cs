@@ -47,13 +47,17 @@ public sealed class InstantCompletionStrategy : IPerspectiveCompletionStrategy {
     PerspectiveCheckpointCompletion completion,
     IWorkCoordinator coordinator,
     CancellationToken cancellationToken) {
+#pragma warning disable CA1848 // Use LoggerMessage delegates for performance - not critical for debug logging
     _logger.LogDebug("[InstantCompletionStrategy] Reporting completion: {PerspectiveName}/{StreamId}, lastEventId={LastEventId}",
       completion.PerspectiveName, completion.StreamId, completion.LastEventId);
+#pragma warning restore CA1848
 
     // Report immediately via lightweight out-of-band method
     await coordinator.ReportPerspectiveCompletionAsync(completion, cancellationToken);
 
+#pragma warning disable CA1848
     _logger.LogDebug("[InstantCompletionStrategy] Completion reported successfully");
+#pragma warning restore CA1848
   }
 
   /// <inheritdoc />

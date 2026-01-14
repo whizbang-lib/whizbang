@@ -366,19 +366,27 @@ public partial class PerspectiveWorker(
         // This ensures it fires before checkpoint commits, as designed.
 
         // Phase 3c: Report completion via strategy (saves checkpoint to database)
+#pragma warning disable CA1848 // Use LoggerMessage delegates for performance - not critical for debug logging
         _logger.LogDebug("[PerspectiveWorker] Reporting completion for {PerspectiveName} on stream {StreamId}, lastEventId={LastEventId}",
           perspectiveName, streamId, result.LastEventId);
+#pragma warning restore CA1848
         await _completionStrategy.ReportCompletionAsync(result, workCoordinator, cancellationToken);
+#pragma warning disable CA1848
         _logger.LogDebug("[PerspectiveWorker] Completion reported successfully");
+#pragma warning restore CA1848
 
         // Phase 3d: Invoke PostPerspectiveInline lifecycle receptors (blocking, for test synchronization)
         // CRITICAL: Fires AFTER checkpoint is saved - guarantees data is committed and queryable
+#pragma warning disable CA1848
         _logger.LogDebug("[PerspectiveWorker] Checking PostPerspectiveInline: processedEvents.Count={EventCount}, lifecycleInvoker={HasInvoker}",
           processedEvents.Count, _lifecycleInvoker is not null);
+#pragma warning restore CA1848
 
         if (processedEvents.Count > 0 && _lifecycleInvoker is not null) {
+#pragma warning disable CA1848
           _logger.LogDebug("[PerspectiveWorker] Invoking PostPerspectiveInline for {EventCount} events on {PerspectiveName}/{StreamId}",
             processedEvents.Count, perspectiveName, streamId);
+#pragma warning restore CA1848
           await _invokeLifecycleReceptorsForEventsAsync(
             processedEvents,
             streamId,
@@ -388,14 +396,18 @@ public partial class PerspectiveWorker(
             LifecycleStage.PostPerspectiveInline,
             cancellationToken
           );
+#pragma warning disable CA1848
           _logger.LogDebug("[PerspectiveWorker] PostPerspectiveInline invocation completed");
+#pragma warning restore CA1848
         } else {
+#pragma warning disable CA1848
           if (processedEvents.Count == 0) {
             _logger.LogDebug("[PerspectiveWorker] Skipping PostPerspectiveInline: no processed events");
           }
           if (_lifecycleInvoker is null) {
             _logger.LogDebug("[PerspectiveWorker] Skipping PostPerspectiveInline: no lifecycle invoker registered");
           }
+#pragma warning restore CA1848
         }
 
         LogPerspectiveCheckpointCompleted(_logger, perspectiveName, streamId, result.LastEventId);
