@@ -468,6 +468,15 @@ BEGIN
   -- END IF;
 
   -- Phase 4.5B: Store events from inbox messages with tracking
+  -- DIAGNOSTIC: Log inbox event candidates
+  RAISE NOTICE '[Phase 4.5B] Checking inbox events from temp_new_inbox';
+  RAISE NOTICE '[Phase 4.5B] Total temp_new_inbox count: %', (SELECT COUNT(*) FROM temp_new_inbox);
+  RAISE NOTICE '[Phase 4.5B] Inbox events matching criteria (is_event=true AND stream_id IS NOT NULL): %',
+    (SELECT COUNT(*) FROM wh_inbox i
+     WHERE i.message_id IN (SELECT message_id FROM temp_new_inbox)
+       AND i.is_event = true
+       AND i.stream_id IS NOT NULL);
+
   WITH inbox_events AS (
     SELECT
       i.message_id,
@@ -553,6 +562,10 @@ BEGIN
 
   -- Ensure array is never NULL
   v_stored_inbox_events := COALESCE(v_stored_inbox_events, '{}');
+
+  -- DIAGNOSTIC: Log storage results
+  RAISE NOTICE '[Phase 4.5B] Stored % inbox events to wh_event_store', array_length(v_stored_inbox_events, 1);
+  RAISE NOTICE '[Phase 4.5B] Conflict count: %', v_inbox_conflict_count;
 
   -- Log warnings for idempotent conflicts (if any)
   -- TODO: Implement log_event() function for tracking idempotent conflicts
@@ -948,10 +961,9 @@ BEGIN
     WHERE pe.instance_id = p_instance_id
       AND pe.lease_expiry > p_now
       AND pe.processed_at IS NULL
-      -- CRITICAL FIX: Don't claim events if checkpoint is already completed or failed
-      -- This prevents infinite re-processing when InstantCompletionStrategy reports completions
-      -- Status flags: Processing=1, Completed=2, Failed=4
-      AND (pc.status IS NULL OR (pc.status & 6) = 0)  -- Not completed (2) and not failed (4)
+      -- Note: pe.processed_at IS NULL already prevents re-processing individual events
+      -- Checkpoint status (pc.status) tracks the LAST processed event, not THIS event
+      -- Filtering on checkpoint status would block all subsequent events in the stream
   )
   SELECT
     v_rank as instance_rank,

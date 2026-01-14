@@ -7,24 +7,30 @@ namespace ECommerce.RabbitMQ.Integration.Tests.Infrastructure;
 /// <summary>
 /// Sanity tests for RabbitMQ integration test fixtures.
 /// Verifies that containers start correctly and hosts initialize properly.
+/// Each test gets its own PostgreSQL databases + hosts. RabbitMQ container is shared via SharedRabbitMqFixtureSource.
+/// Tests run sequentially for reliable timing.
 /// </summary>
-[ClassDataSource<RabbitMqClassFixtureSource>(Shared = SharedType.PerClass)]
-public sealed class RabbitMqFixtureSanityTests(RabbitMqClassFixtureSource fixtureSource) {
-  private RabbitMqIntegrationFixture? _fixture;
+[NotInParallel]
+public sealed class RabbitMqFixtureSanityTests {
+  private static RabbitMqIntegrationFixture? _fixture;
 
   [Before(Test)]
-  public async Task InitializeAsync() {
-    // Initialize container fixture (starts RabbitMQ + PostgreSQL)
-    await fixtureSource.InitializeAsync();
+  public async Task SetupAsync() {
+    // Initialize shared containers (first test only)
+    await SharedRabbitMqFixtureSource.InitializeAsync();
 
-    // Create and initialize test fixture (creates hosts)
+    // Get separate database connections for each host (eliminates lock contention)
+    var inventoryDbConnection = SharedRabbitMqFixtureSource.GetPerTestDatabaseConnectionString();
+    var bffDbConnection = SharedRabbitMqFixtureSource.GetPerTestDatabaseConnectionString();
+
+    // Create and initialize test fixture with separate databases
     _fixture = new RabbitMqIntegrationFixture(
-      fixtureSource.RabbitMqConnectionString,
-      fixtureSource.PostgresConnectionString,
-      fixtureSource.ManagementApiUri,
-      testClassName: nameof(RabbitMqFixtureSanityTests)
+      SharedRabbitMqFixtureSource.RabbitMqConnectionString,
+      inventoryDbConnection,
+      bffDbConnection,
+      SharedRabbitMqFixtureSource.ManagementApiUri,
+      testId: Guid.NewGuid().ToString("N")[..12]
     );
-
     await _fixture.InitializeAsync();
   }
 
@@ -43,26 +49,26 @@ public sealed class RabbitMqFixtureSanityTests(RabbitMqClassFixtureSource fixtur
   [Test]
   public async Task RabbitMQ_ConnectionIsOpen() {
     // Verify RabbitMQ connection string is valid
-    await Assert.That(fixtureSource.RabbitMqConnectionString).IsNotNull().And.IsNotEmpty();
+    await Assert.That(SharedRabbitMqFixtureSource.RabbitMqConnectionString).IsNotNull().And.IsNotEmpty();
 
-    Console.WriteLine($"[Sanity] RabbitMQ connection: {fixtureSource.RabbitMqConnectionString}");
+    Console.WriteLine($"[Sanity] RabbitMQ connection: {SharedRabbitMqFixtureSource.RabbitMqConnectionString}");
   }
 
   [Test]
   public async Task PostgreSQL_ConnectionIsOpen() {
     // Verify PostgreSQL connection string is valid
-    await Assert.That(fixtureSource.PostgresConnectionString).IsNotNull().And.IsNotEmpty();
+    await Assert.That(SharedRabbitMqFixtureSource.PostgresConnectionString).IsNotNull().And.IsNotEmpty();
 
-    Console.WriteLine($"[Sanity] PostgreSQL connection: {fixtureSource.PostgresConnectionString}");
+    Console.WriteLine($"[Sanity] PostgreSQL connection: {SharedRabbitMqFixtureSource.PostgresConnectionString}");
   }
 
   [Test]
   public async Task ManagementApi_UriIsValid() {
     // Verify Management API URI is valid
-    await Assert.That(fixtureSource.ManagementApiUri).IsNotNull();
-    await Assert.That(fixtureSource.ManagementApiUri.Scheme).IsEqualTo("http");
+    await Assert.That(SharedRabbitMqFixtureSource.ManagementApiUri).IsNotNull();
+    await Assert.That(SharedRabbitMqFixtureSource.ManagementApiUri.Scheme).IsEqualTo("http");
 
-    Console.WriteLine($"[Sanity] Management API: {fixtureSource.ManagementApiUri}");
+    Console.WriteLine($"[Sanity] Management API: {SharedRabbitMqFixtureSource.ManagementApiUri}");
   }
 
   [After(Test)]

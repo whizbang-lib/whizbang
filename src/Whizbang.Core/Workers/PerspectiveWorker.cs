@@ -283,6 +283,14 @@ public partial class PerspectiveWorker(
         // Resolve IEventStore from scope (it's registered as scoped, not singleton)
         var eventStore = scope.ServiceProvider.GetService<IEventStore>();
 
+        // DIAGNOSTIC: Log lifecycle invocation dependencies for debugging
+        LogLifecycleDependenciesResolved(_logger,
+          perspectiveName,
+          streamId,
+          _lifecycleInvoker is not null,
+          eventStore is not null,
+          _eventTypeProvider is not null);
+
         // Phase 3.1: Invoke PrePerspective lifecycle receptors before perspective processing
         // This allows receptors to prepare or validate before perspective updates
         if (_lifecycleInvoker is not null && eventStore is not null && _eventTypeProvider is not null) {
@@ -677,6 +685,17 @@ public partial class PerspectiveWorker(
     Message = "No event types available from IEventTypeProvider for perspective {PerspectiveName} on stream {StreamId}. Skipping lifecycle receptor invocation."
   )]
   static partial void LogWarningNoEventTypes(ILogger logger, string perspectiveName, Guid streamId);
+
+  /// <summary>
+  /// Diagnostic log entry for debugging lifecycle invocation dependencies.
+  /// Helps diagnose why PostPerspective lifecycle stages might not be firing.
+  /// </summary>
+  [LoggerMessage(
+    EventId = 24,
+    Level = LogLevel.Debug,
+    Message = "DIAGNOSTIC: Lifecycle dependencies for perspective '{PerspectiveName}' on stream {StreamId}: LifecycleInvoker={HasLifecycleInvoker}, EventStore={HasEventStore}, EventTypeProvider={HasEventTypeProvider}"
+  )]
+  static partial void LogLifecycleDependenciesResolved(ILogger logger, string perspectiveName, Guid streamId, bool hasLifecycleInvoker, bool hasEventStore, bool hasEventTypeProvider);
 }
 
 /// <summary>

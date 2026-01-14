@@ -2,11 +2,12 @@ using System.Collections.Concurrent;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
 
-namespace ECommerce.RabbitMQ.Integration.Tests.Fixtures;
+namespace ECommerce.Integration.Tests.Fixtures;
 
 /// <summary>
-/// Test receptor that counts perspective completions and signals when all expected perspectives have completed.
-/// Used for deterministic test synchronization when one event triggers multiple perspectives.
+/// Test receptor that counts perspective completions per stream and signals when all expected perspective-stream pairs have completed.
+/// Used for deterministic test synchronization when multiple events trigger perspectives across different streams.
+/// Tracks (perspectiveName, streamId) pairs to support multiple invocations of the same perspective for different events/streams.
 /// </summary>
 /// <typeparam name="TEvent">The event type to wait for.</typeparam>
 [FireAt(LifecycleStage.PostPerspectiveInline)]
@@ -37,25 +38,28 @@ public sealed class CountingPerspectiveReceptor<TEvent> : IReceptor<TEvent>, IAc
   }
 
   public ValueTask HandleAsync(TEvent message, CancellationToken cancellationToken = default) {
-    // Get perspective name from lifecycle context
+    // Get perspective name and stream ID from lifecycle context
     var perspectiveName = _context?.PerspectiveName ?? "Unknown";
+    var streamId = _context?.StreamId?.ToString() ?? "Unknown";
 
-    Console.WriteLine($"[CountingReceptor] Perspective '{perspectiveName}' completed for event {typeof(TEvent).Name}");
+    Console.WriteLine($"[CountingReceptor] Perspective '{perspectiveName}' completed for event {typeof(TEvent).Name} on stream {streamId}");
 
-    // Track unique perspective names (avoid double-counting)
-    if (!_completedPerspectives.Contains(perspectiveName)) {
-      _completedPerspectives.Add(perspectiveName);
+    // Track (perspectiveName, streamId) pairs to count per-stream invocations
+    // This allows counting multiple events for the same perspective (e.g., 2 ProductCreatedEvents → 2 InventoryLevelsPerspective invocations)
+    var key = $"{perspectiveName}:{streamId}";
+    if (!_completedPerspectives.Contains(key)) {
+      _completedPerspectives.Add(key);
       var currentCount = Interlocked.Increment(ref _completionCount);
 
-      Console.WriteLine($"[CountingReceptor] Unique perspective count: {currentCount}/{_expectedCount}");
+      Console.WriteLine($"[CountingReceptor] Unique perspective-stream count: {currentCount}/{_expectedCount}");
 
-      // Signal completion when all expected unique perspectives have processed
+      // Signal completion when all expected perspective-stream pairs have processed
       if (currentCount >= _expectedCount) {
-        Console.WriteLine($"[CountingReceptor] ALL {_expectedCount} perspectives completed! Signaling completion.");
+        Console.WriteLine($"[CountingReceptor] ALL {_expectedCount} perspective-stream pairs completed! Signaling completion.");
         _completionSource.TrySetResult(true);
       }
     } else {
-      Console.WriteLine($"[CountingReceptor] Perspective '{perspectiveName}' already counted (duplicate invocation)");
+      Console.WriteLine($"[CountingReceptor] Perspective-stream '{key}' already counted (duplicate invocation)");
     }
 
     return ValueTask.CompletedTask;

@@ -19,6 +19,7 @@ public sealed class RabbitMqClassFixtureSource : IDisposable {
       .WithImage("rabbitmq:3.13-management-alpine")
       .WithUsername("guest")
       .WithPassword("guest")
+      .WithPortBinding(15672, true)  // Expose Management API port
       .Build();
 
     // Create PostgreSQL container
@@ -50,7 +51,9 @@ public sealed class RabbitMqClassFixtureSource : IDisposable {
   /// Starts both containers in parallel for faster setup (10-15s total).
   /// </summary>
   public async Task InitializeAsync() {
-    if (_initialized) return;
+    if (_initialized) {
+      return;
+    }
 
     // Start containers in parallel (10-15s total)
     await Task.WhenAll(
@@ -63,6 +66,27 @@ public sealed class RabbitMqClassFixtureSource : IDisposable {
     ManagementApiUri = new Uri($"http://localhost:{_rabbitMqContainer.GetMappedPublicPort(15672)}");
 
     _initialized = true;
+  }
+
+  /// <summary>
+  /// Creates a unique database connection string for a specific test.
+  /// Each test gets its own database for complete isolation.
+  /// </summary>
+  public string GetPerTestDatabaseConnectionString() {
+    if (!_initialized) {
+      throw new InvalidOperationException("Fixture must be initialized before creating per-test databases");
+    }
+
+    // Generate unique database name using GUID (simple and reliable)
+    // Format: test_<guid> (e.g., test_abc123..., ~37 characters total)
+    var dbName = $"test_{Guid.NewGuid():N}";
+
+    // Build connection string with unique database name
+    var builder = new Npgsql.NpgsqlConnectionStringBuilder(PostgresConnectionString) {
+      Database = dbName
+    };
+
+    return builder.ConnectionString;
   }
 
   public void Dispose() {

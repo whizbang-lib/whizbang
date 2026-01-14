@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
 using ECommerce.Contracts.Events;
+using ECommerce.Integration.Tests.Fixtures;
 using ECommerce.RabbitMQ.Integration.Tests.Fixtures;
 using Microsoft.Extensions.DependencyInjection;
 using TUnit.Core;
@@ -11,6 +12,8 @@ namespace ECommerce.RabbitMQ.Integration.Tests.Lifecycle;
 /// <summary>
 /// Integration tests for all 4 Inbox lifecycle stages.
 /// Validates that lifecycle receptors fire at correct points around receptor invocation when messages are received.
+/// Each test gets its own PostgreSQL databases + hosts. RabbitMQ container is shared via SharedRabbitMqFixtureSource.
+/// Tests run sequentially for reliable timing.
 /// </summary>
 /// <remarks>
 /// <para><strong>Hook Location</strong>: TransportConsumerWorker.cs, around message handling</para>
@@ -26,23 +29,28 @@ namespace ECommerce.RabbitMQ.Integration.Tests.Lifecycle;
 /// <docs>testing/lifecycle-synchronization</docs>
 [Category("Integration")]
 [Category("Lifecycle")]
-[ClassDataSource<RabbitMqClassFixtureSource>(Shared = SharedType.PerClass)]
-public class InboxLifecycleTests(RabbitMqClassFixtureSource fixtureSource) {
-  private RabbitMqIntegrationFixture? _fixture;
+[NotInParallel]
+public class InboxLifecycleTests {
+  private static RabbitMqIntegrationFixture? _fixture;
 
   [Before(Test)]
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
-    // Initialize container fixture (starts RabbitMQ + PostgreSQL)
-    await fixtureSource.InitializeAsync();
+    // Initialize shared containers (first test only)
+    await SharedRabbitMqFixtureSource.InitializeAsync();
 
-    // Create and initialize test fixture (creates hosts)
+    // Get separate database connections for each host (eliminates lock contention)
+    var inventoryDbConnection = SharedRabbitMqFixtureSource.GetPerTestDatabaseConnectionString();
+    var bffDbConnection = SharedRabbitMqFixtureSource.GetPerTestDatabaseConnectionString();
+
+    // Create and initialize test fixture with separate databases
     _fixture = new RabbitMqIntegrationFixture(
-      fixtureSource.RabbitMqConnectionString,
-      fixtureSource.PostgresConnectionString,
-      fixtureSource.ManagementApiUri,
-      testClassName: nameof(InboxLifecycleTests)
+      SharedRabbitMqFixtureSource.RabbitMqConnectionString,
+      inventoryDbConnection,
+      bffDbConnection,
+      SharedRabbitMqFixtureSource.ManagementApiUri,
+      testId: Guid.NewGuid().ToString("N")[..12]
     );
     await _fixture.InitializeAsync();
   }

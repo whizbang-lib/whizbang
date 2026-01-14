@@ -119,7 +119,8 @@ public static class JsonContextRegistry {
     ArgumentNullException.ThrowIfNull(type);
     ArgumentNullException.ThrowIfNull(resolver);
 
-    var normalizedName = _normalizeTypeName(assemblyQualifiedName);
+    // Use centralized type name normalization from EventTypeMatchingHelper
+    var normalizedName = Messaging.EventTypeMatchingHelper.NormalizeTypeName(assemblyQualifiedName);
     _typeNameMappings[normalizedName] = (type, resolver);
   }
 
@@ -140,41 +141,14 @@ public static class JsonContextRegistry {
       return null;
     }
 
-    var normalizedName = _normalizeTypeName(assemblyQualifiedName);
+    // Use centralized type name normalization from EventTypeMatchingHelper
+    var normalizedName = Messaging.EventTypeMatchingHelper.NormalizeTypeName(assemblyQualifiedName);
 
     if (_typeNameMappings.TryGetValue(normalizedName, out var entry)) {
       return entry.resolver.GetTypeInfo(entry.type, options);
     }
 
     return null;
-  }
-
-  /// <summary>
-  /// Normalizes a .NET type name by extracting "TypeName, AssemblyName" portion.
-  /// Strips Version, Culture, and PublicKeyToken for fuzzy matching.
-  /// Handles nested generic types (e.g., MessageEnvelope`1[[PayloadType, Assembly]], OuterAssembly).
-  /// This matches the fuzzy matching logic used in the database for perspective event subscriptions.
-  /// </summary>
-  /// <param name="assemblyQualifiedName">Full or short-form assembly-qualified type name</param>
-  /// <returns>Normalized "TypeName, AssemblyName" string</returns>
-  private static string _normalizeTypeName(string assemblyQualifiedName) {
-    if (string.IsNullOrEmpty(assemblyQualifiedName)) {
-      return assemblyQualifiedName;
-    }
-
-    // For generic types like MessageEnvelope`1[[PayloadType, Assembly, Version=..., ...]], OuterAssembly, Version=..., ...
-    // we need to strip version info from BOTH the inner type and the outer type.
-    // Strategy: Use regex to replace ", Version=..., Culture=..., PublicKeyToken=..." patterns anywhere in the string.
-
-    // Pattern matches: ", Version=X, Culture=Y, PublicKeyToken=Z" or any subset
-    // This works for both simple types and nested generic types
-    var result = System.Text.RegularExpressions.Regex.Replace(
-      assemblyQualifiedName,
-      @",\s*Version=[^,\]]+(?:,\s*Culture=[^,\]]+)?(?:,\s*PublicKeyToken=[^,\]]+)?",
-      "",
-      System.Text.RegularExpressions.RegexOptions.None);
-
-    return result;
   }
 
   /// <summary>

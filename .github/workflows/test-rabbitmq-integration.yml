@@ -1,0 +1,121 @@
+name: RabbitMQ Integration Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'src/**'
+      - 'samples/ECommerce/**'
+      - 'tests/**'
+      - '.github/workflows/test-rabbitmq-integration.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'src/**'
+      - 'samples/ECommerce/**'
+      - 'tests/**'
+      - '.github/workflows/test-rabbitmq-integration.yml'
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  DOTNET_VERSION: '10.0.x'
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+  DOTNET_NOLOGO: '1'
+
+jobs:
+  rabbitmq-integration-tests:
+    name: RabbitMQ Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Display .NET Info
+        run: dotnet --info
+
+      - name: Restore Dependencies
+        run: dotnet restore
+
+      - name: Build Solution
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Run RabbitMQ Integration Tests
+        run: |
+          dotnet test samples/ECommerce/tests/ECommerce.RabbitMQ.Integration.Tests/ \
+            --no-build \
+            --configuration Release \
+            --max-parallel-test-modules 4 \
+            --logger "console;verbosity=normal" \
+            --logger "trx;LogFileName=rabbitmq-integration-tests.trx"
+        env:
+          # TestContainers configuration for CI
+          TESTCONTAINERS_RYUK_DISABLED: 'false'  # Enable Ryuk for cleanup
+          TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX: ''  # Use Docker Hub directly
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: rabbitmq-integration-test-results
+          path: '**/TestResults/*.trx'
+          retention-days: 30
+
+      - name: Publish Test Results
+        if: always()
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: '**/TestResults/*.trx'
+          check_name: 'RabbitMQ Integration Test Results'
+          comment_mode: 'off'  # Don't comment on PRs (optional)
+
+  # Optional: Run both Azure Service Bus and RabbitMQ tests for comparison
+  all-integration-tests:
+    name: All Integration Tests (Azure Service Bus + RabbitMQ)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    if: github.event_name == 'workflow_dispatch'  # Only on manual trigger
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore Dependencies
+        run: dotnet restore
+
+      - name: Build Solution
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Run All Integration Tests
+        run: |
+          pwsh scripts/Run-Tests.ps1 -Mode IntegrationsOnly -MaxParallel 4
+        shell: pwsh
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: all-integration-test-results
+          path: '**/TestResults/*.trx'
+          retention-days: 30
+
+      - name: Display Test Summary
+        if: always()
+        run: |
+          echo "## Integration Test Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Both Azure Service Bus and RabbitMQ integration tests completed." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Check uploaded artifacts for detailed test results." >> $GITHUB_STEP_SUMMARY

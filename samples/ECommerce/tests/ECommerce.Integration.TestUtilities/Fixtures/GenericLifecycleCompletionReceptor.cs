@@ -1,7 +1,7 @@
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
 
-namespace ECommerce.RabbitMQ.Integration.Tests.Fixtures;
+namespace ECommerce.Integration.Tests.Fixtures;
 
 /// <summary>
 /// Generic test receptor that signals completion when invoked at any lifecycle stage.

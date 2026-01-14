@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace Whizbang.Data.EFCore.Postgres;
@@ -7,12 +8,13 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// Consumer assemblies register their discovered models via module initializer.
 /// This approach is AOT-compatible (no reflection required).
 /// Supports multiple assemblies registering callbacks (e.g., InventoryWorker + BFF.API).
-/// Tracks which (DbContext, callback) pairs have been invoked to prevent duplicate registrations.
+/// Tracks which (ServiceCollection, DbContext, callback) tuples have been invoked to prevent duplicate registrations within the same ServiceCollection.
+/// Uses ConditionalWeakTable to track per-ServiceCollection without preventing garbage collection.
 /// </summary>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ModelRegistrationRegistryTests.cs</tests>
 public static class ModelRegistrationRegistry {
   private static readonly List<Action<IServiceCollection, Type, IDbUpsertStrategy>> _registrars = new();
-  private static readonly HashSet<(Type dbContextType, int callbackIndex)> _invoked = new();
+  private static readonly ConditionalWeakTable<IServiceCollection, HashSet<(Type dbContextType, int callbackIndex)>> _invoked = new();
   private static readonly object _lock = new();
 
   /// <summary>
@@ -30,11 +32,12 @@ public static class ModelRegistrationRegistry {
   }
 
   /// <summary>
-  /// Invokes the LATEST registered model registration callback.
+  /// Invokes the LATEST registered model registration callback for the given ServiceCollection.
   /// Called by driver extensions (InMemory, Postgres) to register discovered models and infrastructure.
   /// If no registrars have been set (module initializers hasn't run or no DbContext found), does nothing gracefully.
   /// Only the latest registrar is invoked to support hot reload and test scenarios where registrations can be replaced.
-  /// Tracks which callbacks have been invoked for which DbContext to prevent duplicate service registrations.
+  /// Tracks which callbacks have been invoked for which (ServiceCollection, DbContext) pair to prevent duplicate service registrations within the same ServiceCollection.
+  /// Uses ConditionalWeakTable to track per-ServiceCollection, allowing test scenarios where each test creates a new ServiceCollection.
   /// </summary>
   /// <param name="services">The service collection to register services in.</param>
   /// <param name="dbContextType">The DbContext type.</param>
@@ -56,11 +59,19 @@ public static class ModelRegistrationRegistry {
         return;
       }
 
-      // Invoke ONLY the latest registered callback
+      // Get or create the invocation tracking set for this ServiceCollection
+      // ConditionalWeakTable ensures we don't prevent ServiceCollection from being garbage collected
+      if (!_invoked.TryGetValue(services, out var invokedSet)) {
+        invokedSet = new HashSet<(Type dbContextType, int callbackIndex)>();
+        _invoked.Add(services, invokedSet);
+      }
+
+      // Invoke ONLY the latest registered callback for this ServiceCollection
       // This allows later registrations to override earlier ones (hot reload, test scenarios)
+      // Each ServiceCollection gets its own invocation tracking, supporting test scenarios where each test creates a new ServiceCollection
       var latestIndex = _registrars.Count - 1;
       var key = (dbContextType, latestIndex);
-      if (_invoked.Add(key)) {
+      if (invokedSet.Add(key)) {
         _registrars[latestIndex](services, dbContextType, upsertStrategy);
       }
     }

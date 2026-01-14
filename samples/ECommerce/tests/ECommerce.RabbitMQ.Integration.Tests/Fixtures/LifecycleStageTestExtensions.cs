@@ -1,3 +1,4 @@
+using ECommerce.Integration.Tests.Fixtures;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Whizbang.Core;

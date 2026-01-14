@@ -3,6 +3,7 @@ using System.Text;
 using ECommerce.BFF.API.Generated;
 using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Generated;
+using ECommerce.Integration.Tests.Fixtures;
 using ECommerce.InventoryWorker.Generated;
 using ECommerce.InventoryWorker.Lenses;
 using Medo;
@@ -18,20 +19,21 @@ using Whizbang.Core.Perspectives;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
-using Whizbang.Transports.RabbitMQ;
 using Whizbang.Hosting.RabbitMQ;
+using Whizbang.Transports.RabbitMQ;
 
 namespace ECommerce.RabbitMQ.Integration.Tests.Fixtures;
 
 /// <summary>
-/// Per-class integration fixture for RabbitMQ tests.
-/// Creates test hosts (Inventory, BFF) with RabbitMQ transport and provides cleanup via Management API.
+/// Per-test integration fixture for RabbitMQ tests.
+/// Creates test hosts (Inventory, BFF) with RabbitMQ transport and unique topology per test.
 /// </summary>
 public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   private readonly string _rabbitMqConnection;
-  private readonly string _postgresConnection;
+  private readonly string _inventoryPostgresConnection;
+  private readonly string _bffPostgresConnection;
   private readonly Uri _managementApiUri;
-  private readonly string _testClassName;
+  private readonly string _testId;
   private readonly HttpClient _managementClient;
 
   private IHost? _inventoryHost;
@@ -82,9 +84,15 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     ?? throw new InvalidOperationException("Fixture not initialized");
 
   /// <summary>
-  /// Gets the PostgreSQL connection string for direct database operations.
+  /// Gets the Inventory PostgreSQL connection string for direct database operations.
   /// </summary>
-  public string ConnectionString => _postgresConnection
+  public string InventoryConnectionString => _inventoryPostgresConnection
+    ?? throw new InvalidOperationException("Fixture not initialized");
+
+  /// <summary>
+  /// Gets the BFF PostgreSQL connection string for direct database operations.
+  /// </summary>
+  public string BffConnectionString => _bffPostgresConnection
     ?? throw new InvalidOperationException("Fixture not initialized");
 
   /// <summary>
@@ -97,14 +105,16 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
 
   public RabbitMqIntegrationFixture(
     string rabbitMqConnection,
-    string postgresConnection,
+    string inventoryPostgresConnection,
+    string bffPostgresConnection,
     Uri managementApiUri,
-    string testClassName
+    string testId
   ) {
     _rabbitMqConnection = rabbitMqConnection;
-    _postgresConnection = postgresConnection;
+    _inventoryPostgresConnection = inventoryPostgresConnection;
+    _bffPostgresConnection = bffPostgresConnection;
     _managementApiUri = managementApiUri;
-    _testClassName = testClassName;
+    _testId = testId;
 
     // Setup Management API client for cleanup
     _managementClient = new HttpClient { BaseAddress = managementApiUri };
@@ -117,37 +127,49 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   /// Initializes database schemas and starts test hosts.
   /// </summary>
   public async Task InitializeAsync(CancellationToken ct = default) {
+    Console.WriteLine($"[RabbitMqFixture] InitializeAsync START (testId={_testId})");
+
     // Create hosts
+    Console.WriteLine("[RabbitMqFixture] Creating InventoryWorker host...");
     _inventoryHost = CreateInventoryHost();
+    Console.WriteLine("[RabbitMqFixture] InventoryWorker host created");
+
+    Console.WriteLine("[RabbitMqFixture] Creating BFF host...");
     _bffHost = CreateBffHost();
+    Console.WriteLine("[RabbitMqFixture] BFF host created");
 
     // Initialize database schemas
+    Console.WriteLine("[RabbitMqFixture] Initializing database schemas...");
     await InitializeDatabaseSchemasAsync(ct);
+    Console.WriteLine("[RabbitMqFixture] Database schemas initialized");
 
     // Start hosts AFTER schema is ready
     Console.WriteLine("[RabbitMqFixture] Starting service hosts...");
     await _inventoryHost.StartAsync(ct);
+    Console.WriteLine("[RabbitMqFixture] InventoryWorker host started");
     await _bffHost.StartAsync(ct);
-    Console.WriteLine("[RabbitMqFixture] Service hosts started.");
+    Console.WriteLine("[RabbitMqFixture] BFF host started");
 
     // Wait for TransportConsumerWorker to fully subscribe
     // StartAsync returns before background services are fully initialized
-    Console.WriteLine("[RabbitMqFixture] Waiting for consumer workers to subscribe...");
+    Console.WriteLine("[RabbitMqFixture] Waiting for consumer workers to subscribe (3s delay)...");
     await Task.Delay(3000, ct); // 3 seconds for subscription setup
-    Console.WriteLine("[RabbitMqFixture] Consumer workers ready.");
+    Console.WriteLine("[RabbitMqFixture] Consumer workers ready");
 
     // Create long-lived scopes for lenses
+    Console.WriteLine("[RabbitMqFixture] Creating long-lived scopes for lenses...");
     _inventoryScope = _inventoryHost.Services.CreateScope();
     _bffScope = _bffHost.Services.CreateScope();
+    Console.WriteLine("[RabbitMqFixture] Scopes created");
 
-    Console.WriteLine("[RabbitMqFixture] Ready for test execution!");
+    Console.WriteLine("[RabbitMqFixture] InitializeAsync COMPLETE - Ready for test execution!");
   }
 
   /// <summary>
   /// Cleans up test-specific queues and exchanges via Management API.
   /// </summary>
   public async Task CleanupTestAsync(string testName, CancellationToken ct = default) {
-    string testId = new TestRabbitMqRoutingStrategy(_testClassName).GenerateTestId(testName);
+    string testId = new TestRabbitMqRoutingStrategy(_testId).GenerateTestId(testName);
 
     // Delete test-specific queues and exchanges via Management API
     // Note: These are placeholders - actual cleanup would need to know exact queue/exchange names
@@ -176,10 +198,11 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
 
     // Register routing strategy (maps to test-specific exchanges)
     builder.Services.AddSingleton<Whizbang.Core.Routing.ITopicRoutingStrategy>(
-      new TestRabbitMqRoutingStrategy(_testClassName));
+      new TestRabbitMqRoutingStrategy(_testId));
 
     // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
-    var inventoryDataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(_postgresConnection);
+    // Each host gets its own database to eliminate lock contention
+    var inventoryDataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(_inventoryPostgresConnection);
     inventoryDataSourceBuilder.ConfigureJsonOptions(jsonOptions);
     inventoryDataSourceBuilder.EnableDynamicJson();
     var inventoryDataSource = inventoryDataSourceBuilder.Build();
@@ -188,6 +211,10 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     builder.Services.AddDbContext<ECommerce.InventoryWorker.InventoryDbContext>(options => {
       options.UseNpgsql(inventoryDataSource);
     });
+
+    // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
+    ECommerce.InventoryWorker.Generated.GeneratedModelRegistration.Initialize();
+    ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
 
     // Register Whizbang with EFCore infrastructure
     _ = builder.Services
@@ -254,6 +281,30 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
     builder.Services.AddHostedService<PerspectiveWorker>();
 
+    // Register OrderedStreamProcessor for message ordering
+    builder.Services.AddSingleton<OrderedStreamProcessor>();
+
+    // RabbitMQ consumer with test-specific routing
+    // Inventory subscribes to test-specific exchanges/queues
+    var consumerOptions = new TransportConsumerOptions();
+    consumerOptions.Destinations.Add(new TransportDestination(
+      Address: $"products-{_testId}",
+      RoutingKey: $"inventory-products-queue-{_testId}"
+    ));
+    builder.Services.AddSingleton(consumerOptions);
+    builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
+      new TransportConsumerWorker(
+        sp.GetRequiredService<ITransport>(),
+        consumerOptions,
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        jsonOptions,
+        sp.GetRequiredService<OrderedStreamProcessor>(),
+        sp.GetService<ILifecycleInvoker>(),
+        sp.GetService<ILifecycleMessageDeserializer>(),
+        sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
+      )
+    );
+
     // Logging
     builder.Services.AddLogging(logging => {
       logging.SetMinimumLevel(LogLevel.Information);
@@ -289,10 +340,11 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
 
     // Register routing strategy (maps to test-specific exchanges)
     builder.Services.AddSingleton<Whizbang.Core.Routing.ITopicRoutingStrategy>(
-      new TestRabbitMqRoutingStrategy(_testClassName));
+      new TestRabbitMqRoutingStrategy(_testId));
 
     // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
-    var bffDataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(_postgresConnection);
+    // Each host gets its own database to eliminate lock contention
+    var bffDataSourceBuilder = new Npgsql.NpgsqlDataSourceBuilder(_bffPostgresConnection);
     bffDataSourceBuilder.ConfigureJsonOptions(jsonOptions);
     bffDataSourceBuilder.EnableDynamicJson();
     var bffDataSource = bffDataSourceBuilder.Build();
@@ -300,6 +352,10 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
 
     builder.Services.AddDbContext<ECommerce.BFF.API.BffDbContext>(options =>
       options.UseNpgsql(bffDataSource));
+
+    // IMPORTANT: Explicitly call module initializers for test assemblies (may not run automatically)
+    ECommerce.BFF.API.Generated.GeneratedModelRegistration.Initialize();
+    ECommerce.Contracts.Generated.WhizbangIdConverterInitializer.Initialize();
 
     // Register Whizbang with EFCore infrastructure
     _ = builder.Services
@@ -316,6 +372,9 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     // Register TopicRegistry
     var topicRegistryInstance = new ECommerce.Contracts.Generated.TopicRegistry();
     builder.Services.AddSingleton<Whizbang.Core.Routing.ITopicRegistry>(topicRegistryInstance);
+
+    // Register dispatcher
+    ECommerce.BFF.API.Generated.DispatcherRegistrations.AddWhizbangDispatcher(builder.Services);
 
     // Register SignalR (required by BFF lenses)
     builder.Services.AddSignalR();
@@ -365,18 +424,31 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     builder.Services.AddHostedService<PerspectiveWorker>();
 
     // RabbitMQ consumer with test-specific routing
-    // BFF subscribes to test-specific exchanges/queues
+    // BFF subscribes only to exchanges for events its perspectives handle:
+    // - products: ProductCatalogPerspective (ProductCreated, ProductUpdated, ProductDeleted)
+    // - inventory: InventoryLevelsPerspective (ProductCreated, InventoryRestocked, InventoryReserved, InventoryReleased, InventoryAdjusted)
     var consumerOptions = new TransportConsumerOptions();
     consumerOptions.Destinations.Add(new TransportDestination(
-      Address: $"products-{_testClassName}",
-      RoutingKey: $"bff-products-queue-{_testClassName}"
+      Address: $"products-{_testId}",
+      RoutingKey: $"bff-products-queue-{_testId}"
     ));
     consumerOptions.Destinations.Add(new TransportDestination(
-      Address: $"orders-{_testClassName}",
-      RoutingKey: $"bff-orders-queue-{_testClassName}"
+      Address: $"inventory-{_testId}",
+      RoutingKey: $"bff-inventory-queue-{_testId}"
     ));
     builder.Services.AddSingleton(consumerOptions);
-    builder.Services.AddHostedService<TransportConsumerWorker>();
+    builder.Services.AddHostedService<TransportConsumerWorker>(sp =>
+      new TransportConsumerWorker(
+        sp.GetRequiredService<ITransport>(),
+        consumerOptions,
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        jsonOptions,
+        sp.GetRequiredService<OrderedStreamProcessor>(),
+        sp.GetService<ILifecycleInvoker>(),
+        sp.GetService<ILifecycleMessageDeserializer>(),
+        sp.GetRequiredService<ILogger<TransportConsumerWorker>>()
+      )
+    );
 
     // Logging
     builder.Services.AddLogging(logging => {
@@ -388,23 +460,40 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   }
 
   private async Task InitializeDatabaseSchemasAsync(CancellationToken ct) {
+    // Create both per-test databases (each host gets its own database to eliminate lock contention)
+    Console.WriteLine($"[RabbitMqFixture] Creating Inventory database...");
+    await CreateDatabaseAsync(_inventoryPostgresConnection, ct);
+    Console.WriteLine($"[RabbitMqFixture] Inventory database created!");
+
+    Console.WriteLine($"[RabbitMqFixture] Creating BFF database...");
+    await CreateDatabaseAsync(_bffPostgresConnection, ct);
+    Console.WriteLine($"[RabbitMqFixture] BFF database created!");
+
     // Initialize Inventory database
     // CRITICAL: Must run BEFORE starting hosts, otherwise workers fail trying to call process_work_batch
     Console.WriteLine("[RabbitMqFixture] Initializing Inventory database schema...");
     if (_inventoryHost != null) {
       using var scope = _inventoryHost.Services.CreateScope();
+      Console.WriteLine("[RabbitMqFixture] Created scope for Inventory");
       var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+      Console.WriteLine("[RabbitMqFixture] Got InventoryDbContext");
       var logger = scope.ServiceProvider.GetRequiredService<ILogger<RabbitMqIntegrationFixture>>();
+      Console.WriteLine("[RabbitMqFixture] Calling EnsureWhizbangDatabaseInitializedAsync for Inventory...");
       await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger, ct);
+      Console.WriteLine("[RabbitMqFixture] Inventory database schema initialized");
     }
 
     // Initialize BFF database
     Console.WriteLine("[RabbitMqFixture] Initializing BFF database schema...");
     if (_bffHost != null) {
       using var scope = _bffHost.Services.CreateScope();
+      Console.WriteLine("[RabbitMqFixture] Created scope for BFF");
       var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
+      Console.WriteLine("[RabbitMqFixture] Got BffDbContext");
       var logger = scope.ServiceProvider.GetRequiredService<ILogger<RabbitMqIntegrationFixture>>();
+      Console.WriteLine("[RabbitMqFixture] Calling EnsureWhizbangDatabaseInitializedAsync for BFF...");
       await dbContext.EnsureWhizbangDatabaseInitializedAsync(logger, ct);
+      Console.WriteLine("[RabbitMqFixture] BFF database schema initialized");
     }
 
     // Register message associations for perspective auto-checkpoint creation
@@ -460,6 +549,33 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
       response.EnsureSuccessStatusCode();
     } catch {
       // Exchange might not exist, ignore
+    }
+  }
+
+  /// <summary>
+  /// Creates the per-test database using the template database.
+  /// </summary>
+  private async Task CreateDatabaseAsync(string connectionString, CancellationToken ct) {
+    // Extract database name from connection string
+    var builder = new Npgsql.NpgsqlConnectionStringBuilder(connectionString);
+    var dbName = builder.Database;
+
+    // Connect to postgres database (the template) to create our test database
+    builder.Database = "postgres";
+    var adminConnectionString = builder.ConnectionString;
+
+    await using var connection = new Npgsql.NpgsqlConnection(adminConnectionString);
+    await connection.OpenAsync(ct);
+
+    // Create database (IF NOT EXISTS for idempotency)
+    var createDbCommand = connection.CreateCommand();
+    createDbCommand.CommandText = $"CREATE DATABASE \"{dbName}\"";
+
+    try {
+      await createDbCommand.ExecuteNonQueryAsync(ct);
+    } catch (Npgsql.PostgresException ex) when (ex.SqlState == "42P04") {
+      // Database already exists, ignore (42P04 = duplicate_database)
+      Console.WriteLine($"[RabbitMqFixture] Database {dbName} already exists");
     }
   }
 

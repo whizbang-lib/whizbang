@@ -1,7 +1,7 @@
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
 
-namespace ECommerce.RabbitMQ.Integration.Tests.Fixtures;
+namespace ECommerce.Integration.Tests.Fixtures;
 
 /// <summary>
 /// Waiter that registers lifecycle receptors BEFORE sending commands to avoid race conditions.
@@ -52,6 +52,16 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
       bffCompletedPerspectives,
       bffPerspectives
     );
+
+    // CRITICAL: If expectedCount is 0, signal completion immediately
+    if (inventoryPerspectives == 0) {
+      Console.WriteLine($"[PerspectiveWaiter] Inventory expects 0 perspectives, signaling immediate completion");
+      _inventoryCompletionSource.TrySetResult(true);
+    }
+    if (bffPerspectives == 0) {
+      Console.WriteLine($"[PerspectiveWaiter] BFF expects 0 perspectives, signaling immediate completion");
+      _bffCompletionSource.TrySetResult(true);
+    }
 
     // CRITICAL: Register receptors NOW (before command is sent)
     Console.WriteLine($"[PerspectiveWaiter] Registering receptors for {typeof(TEvent).Name}");

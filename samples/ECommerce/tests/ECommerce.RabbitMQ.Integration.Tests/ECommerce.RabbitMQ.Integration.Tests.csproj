@@ -33,6 +33,7 @@
     <ProjectReference Include="../../ECommerce.Contracts/ECommerce.Contracts.csproj" />
     <ProjectReference Include="../../ECommerce.InventoryWorker/ECommerce.InventoryWorker.csproj" />
     <ProjectReference Include="../../ECommerce.BFF.API/ECommerce.BFF.API.csproj" />
+    <ProjectReference Include="../ECommerce.Integration.TestUtilities/ECommerce.Integration.TestUtilities.csproj" />
   </ItemGroup>
 
 </Project>

@@ -1,7 +1,9 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using RabbitMQ.Client;
+using RabbitMQ.Client.Events;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Transports;
 
@@ -121,7 +123,8 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
         cancellationToken: cancellationToken
       );
 
-      // Get envelope type name
+      // Get envelope type name - prefer provided envelopeType to preserve correct generic type
+      // (envelope.GetType() may be MessageEnvelope<object> when loaded from outbox)
       var envelopeTypeName = envelopeType ?? envelope.GetType().AssemblyQualifiedName
         ?? throw new InvalidOperationException("Envelope type must have an assembly qualified name");
 
@@ -316,27 +319,126 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
         cancellationToken: cancellationToken
       );
 
-      // Create consumer with unique tag
-      var consumerTag = $"{queueName}-{Guid.NewGuid():N}";
+      // Create subscription wrapper first (before setting up handler)
+      var subscription = new RabbitMQSubscription(channel, queueName, _logger);
+
+      // Create async consumer
+      var consumer = new AsyncEventingBasicConsumer(channel);
+
+      // Set up message received handler
+      consumer.ReceivedAsync += async (sender, args) => {
+        if (!subscription.IsActive) {
+          // If paused, nack the message with requeue
+          await channel.BasicNackAsync(
+            deliveryTag: args.DeliveryTag,
+            multiple: false,
+            requeue: true
+          );
+          return;
+        }
+
+        try {
+          // Get envelope type from headers
+          byte[]? envelopeTypeBytes = null;
+          if (args.BasicProperties.Headers?.TryGetValue("EnvelopeType", out var envelopeTypeObj) == true &&
+              envelopeTypeObj is byte[] bytes) {
+            envelopeTypeBytes = bytes;
+          }
+
+          if (envelopeTypeBytes == null) {
+            _logger?.LogError("Message {MessageId} missing EnvelopeType header", args.BasicProperties.MessageId);
+            await channel.BasicNackAsync(args.DeliveryTag, false, false);
+            return;
+          }
+
+          var envelopeTypeName = Encoding.UTF8.GetString(envelopeTypeBytes);
+
+          // Deserialize envelope using AOT-compatible JsonContextRegistry
+          var json = Encoding.UTF8.GetString(args.Body.Span);
+
+          var typeInfo = Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName(envelopeTypeName, _jsonOptions);
+          if (typeInfo == null) {
+            _logger?.LogError("No JsonTypeInfo found for envelope type {EnvelopeType}", envelopeTypeName);
+            await channel.BasicNackAsync(args.DeliveryTag, false, false);
+            return;
+          }
+
+          _logger?.LogDebug(
+            "DIAGNOSTIC [RabbitMQ]: Deserializing envelope. EnvelopeTypeName={EnvelopeTypeName}, TypeInfo={TypeInfoType}",
+            envelopeTypeName,
+            typeInfo.Type.FullName
+          );
+
+          if (JsonSerializer.Deserialize(json, typeInfo) is not IMessageEnvelope envelope) {
+            _logger?.LogError("Failed to deserialize message {MessageId} as {EnvelopeType}",
+              args.BasicProperties.MessageId, envelopeTypeName);
+            await channel.BasicNackAsync(args.DeliveryTag, false, false);
+            return;
+          }
+
+          _logger?.LogDebug(
+            "DIAGNOSTIC [RabbitMQ]: Deserialized envelope. EnvelopeType={EnvelopeType}, PayloadType={PayloadType}, MessageId={MessageId}",
+            envelope.GetType().FullName,
+            envelope.Payload?.GetType().FullName ?? "null",
+            envelope.MessageId.Value
+          );
+
+          // Invoke handler with envelope type metadata
+          await handler(envelope, envelopeTypeName, cancellationToken);
+
+          // Acknowledge the message
+          await channel.BasicAckAsync(
+            deliveryTag: args.DeliveryTag,
+            multiple: false
+          );
+
+          _logger?.LogDebug(
+            "Processed message {MessageId} from queue {QueueName}",
+            args.BasicProperties.MessageId,
+            queueName
+          );
+        } catch (Exception ex) {
+          _logger?.LogError(
+            ex,
+            "Error processing message {MessageId} from queue {QueueName}",
+            args.BasicProperties.MessageId ?? "unknown",
+            queueName
+          );
+
+          // Check delivery count via redelivered flag and custom header
+          var deliveryCount = args.Redelivered ? 2 : 1;
+          if (args.BasicProperties.Headers?.TryGetValue("x-delivery-count", out var countObj) == true) {
+            deliveryCount = Convert.ToInt32(countObj, CultureInfo.InvariantCulture);
+          }
+
+          if (deliveryCount >= _options.MaxDeliveryAttempts) {
+            _logger?.LogWarning(
+              "Message {MessageId} exceeded max delivery attempts ({MaxAttempts}), nacking without requeue",
+              args.BasicProperties.MessageId,
+              _options.MaxDeliveryAttempts
+            );
+            await channel.BasicNackAsync(args.DeliveryTag, false, false);
+          } else {
+            // Nack with requeue for retry
+            await channel.BasicNackAsync(args.DeliveryTag, false, true);
+          }
+        }
+      };
 
       // Start consuming
-      var actualConsumerTag = await channel.BasicConsumeAsync(
+      var consumerTag = await channel.BasicConsumeAsync(
         queue: queueName,
         autoAck: false, // Manual acknowledgment for reliability
-        consumerTag: consumerTag,
+        consumerTag: $"{queueName}-{Guid.NewGuid():N}",
         noLocal: false,
         exclusive: false,
         arguments: null,
-        consumer: null!, // We're not using the old-style consumer API
+        consumer: consumer,
         cancellationToken: cancellationToken
       );
 
-      // Create subscription wrapper
-      var subscription = new RabbitMQSubscription(channel, actualConsumerTag, _logger);
-
       _logger?.LogInformation(
-        "Created subscription {ConsumerTag} for exchange {ExchangeName}, queue {QueueName}",
-        actualConsumerTag,
+        "Created subscription for exchange {ExchangeName}, queue {QueueName}",
         exchangeName,
         queueName
       );

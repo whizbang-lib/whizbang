@@ -299,8 +299,17 @@ public partial class ServiceBusConsumerWorker(
       // because the transport's metadata is authoritative
     }
 
-    // Determine if message is an event
-    var isEvent = payload is IEvent;
+    // Determine if message is an event using IEventTypeProvider
+    // This is more reliable than "payload is IEvent" when payload is JsonElement
+    var isEvent = false;
+    var eventTypeProvider = scopeServiceProvider.GetService<IEventTypeProvider>();
+    if (eventTypeProvider != null) {
+      var eventTypes = eventTypeProvider.GetEventTypes();
+      isEvent = EventTypeMatchingHelper.IsEventType(messageTypeName, eventTypes);
+    } else {
+      // Fallback to runtime check if provider not available
+      isEvent = payload is IEvent;
+    }
 
     // Extract simple type name for handler name (last part after last '.')
     var lastDotIndex = messageTypeName.LastIndexOf('.');
