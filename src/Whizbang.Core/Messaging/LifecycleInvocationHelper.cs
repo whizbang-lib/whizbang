@@ -24,14 +24,13 @@ namespace Whizbang.Core.Messaging;
 public static class LifecycleInvocationHelper {
 
   /// <summary>
-  /// Invokes Distribute lifecycle receptors for outbox messages ONLY at async and inline stages.
-  /// Distribute stages fire when PUBLISHING events (outbox), not when CONSUMING events (inbox).
+  /// Invokes lifecycle receptors for outbox and inbox messages at async and inline stages.
   /// Snapshots collections before Task.Run to prevent "Collection was modified" exceptions.
   /// </summary>
   /// <param name="asyncStage">The async lifecycle stage (e.g., PostDistributeAsync)</param>
   /// <param name="inlineStage">The inline lifecycle stage (e.g., PostDistributeInline)</param>
   /// <param name="outboxMessages">Outbox messages to process</param>
-  /// <param name="inboxMessages">Inbox messages to process (IGNORED for Distribute stages)</param>
+  /// <param name="inboxMessages">Inbox messages to process</param>
   /// <param name="lifecycleInvoker">Lifecycle invoker (null-safe, returns early if null)</param>
   /// <param name="lifecycleMessageDeserializer">Message deserializer (null-safe, returns early if null)</param>
   /// <param name="logger">Optional logger for error reporting</param>
@@ -45,19 +44,13 @@ public static class LifecycleInvocationHelper {
   ///   LifecycleStage.PostDistributeAsync,
   ///   LifecycleStage.PostDistributeInline,
   ///   _queuedOutboxMessages,
-  ///   _queuedInboxMessages,  // Ignored by Distribute stages
+  ///   _queuedInboxMessages,
   ///   _lifecycleInvoker,
   ///   _lifecycleMessageDeserializer,
   ///   _logger,
   ///   ct
   /// );
   /// </code>
-  /// <para>
-  /// <strong>IMPORTANT:</strong> Distribute stages (PreDistribute, Distribute, PostDistribute) only fire
-  /// for OUTBOX messages (when publishing). They do NOT fire for INBOX messages (when consuming).
-  /// This prevents duplicate lifecycle invocations when the same event is published locally and then
-  /// received via transport on another service.
-  /// </para>
   /// <para>
   /// <strong>Thread Safety Guarantee:</strong> Collections are snapshotted before backgrounding,
   /// so the main thread can safely modify the original collections while the background task iterates.
@@ -94,14 +87,18 @@ public static class LifecycleInvocationHelper {
     // CRITICAL: Snapshot collections before Task.Run to avoid "Collection was modified" exceptions
     // The main thread may modify the original collections while the background task iterates
     var outboxSnapshot = outboxMessages.ToArray();
+    var inboxSnapshot = inboxMessages.ToArray();
 
     // Invoke async stage (non-blocking, backgrounded)
     _ = Task.Run(async () => {
       try {
-        // IMPORTANT: Only process OUTBOX messages for Distribute stages
-        // Distribute stages fire when PUBLISHING (outbox), not when CONSUMING (inbox)
         foreach (var outboxMsg in outboxSnapshot) {
           var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
+          await lifecycleInvoker.InvokeAsync(message, asyncStage, asyncContext, ct);
+        }
+
+        foreach (var inboxMsg in inboxSnapshot) {
+          var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
           await lifecycleInvoker.InvokeAsync(message, asyncStage, asyncContext, ct);
         }
       } catch (Exception ex) {
@@ -114,22 +111,25 @@ public static class LifecycleInvocationHelper {
     }, ct);
 
     // Invoke inline stage (blocking, sequential)
-    // IMPORTANT: Only process OUTBOX messages for Distribute stages
-    // Distribute stages fire when PUBLISHING (outbox), not when CONSUMING (inbox)
+    // Reuse the same snapshots for consistency (async and inline stages process the same messages)
     foreach (var outboxMsg in outboxSnapshot) {
       var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
+      await lifecycleInvoker.InvokeAsync(message, inlineStage, inlineContext, ct);
+    }
+
+    foreach (var inboxMsg in inboxSnapshot) {
+      var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
       await lifecycleInvoker.InvokeAsync(message, inlineStage, inlineContext, ct);
     }
   }
 
   /// <summary>
-  /// Invokes Distribute lifecycle receptors for outbox messages ONLY at an async-only stage (no inline counterpart).
-  /// Distribute stages fire when PUBLISHING events (outbox), not when CONSUMING events (inbox).
+  /// Invokes lifecycle receptors for outbox and inbox messages at an async-only stage (no inline counterpart).
   /// Snapshots collections before Task.Run to prevent "Collection was modified" exceptions.
   /// </summary>
   /// <param name="asyncStage">The async lifecycle stage (e.g., DistributeAsync)</param>
   /// <param name="outboxMessages">Outbox messages to process</param>
-  /// <param name="inboxMessages">Inbox messages to process (IGNORED for Distribute stages)</param>
+  /// <param name="inboxMessages">Inbox messages to process</param>
   /// <param name="lifecycleInvoker">Lifecycle invoker (null-safe, returns early if null)</param>
   /// <param name="lifecycleMessageDeserializer">Message deserializer (null-safe, returns early if null)</param>
   /// <param name="logger">Optional logger for error reporting</param>
@@ -139,22 +139,16 @@ public static class LifecycleInvocationHelper {
   /// <strong>Usage Pattern (async-only stages like DistributeAsync):</strong>
   /// </para>
   /// <code>
-  /// LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStage(
+  /// await LifecycleInvocationHelper.InvokeAsyncOnlyLifecycleStageAsync(
   ///   LifecycleStage.DistributeAsync,
   ///   _queuedOutboxMessages,
-  ///   _queuedInboxMessages,  // Ignored by Distribute stages
+  ///   _queuedInboxMessages,
   ///   _lifecycleInvoker,
   ///   _lifecycleMessageDeserializer,
   ///   _logger,
   ///   ct
   /// );
   /// </code>
-  /// <para>
-  /// <strong>IMPORTANT:</strong> Distribute stages (PreDistribute, Distribute, PostDistribute) only fire
-  /// for OUTBOX messages (when publishing). They do NOT fire for INBOX messages (when consuming).
-  /// This prevents duplicate lifecycle invocations when the same event is published locally and then
-  /// received via transport on another service.
-  /// </para>
   /// <para>
   /// <strong>Thread Safety Guarantee:</strong> Collections are snapshotted before backgrounding,
   /// so the main thread can safely modify the original collections while the background task iterates.
@@ -184,14 +178,18 @@ public static class LifecycleInvocationHelper {
 
     // CRITICAL: Snapshot collections before Task.Run to avoid "Collection was modified" exceptions
     var outboxSnapshot = outboxMessages.ToArray();
+    var inboxSnapshot = inboxMessages.ToArray();
 
     // Invoke async stage (non-blocking, backgrounded) - no inline stage for DistributeAsync
     _ = Task.Run(async () => {
       try {
-        // IMPORTANT: Only process OUTBOX messages for Distribute stages
-        // Distribute stages fire when PUBLISHING (outbox), not when CONSUMING (inbox)
         foreach (var outboxMsg in outboxSnapshot) {
           var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(outboxMsg.Envelope.Payload, outboxMsg.MessageType);
+          await lifecycleInvoker.InvokeAsync(message, asyncStage, lifecycleContext, ct);
+        }
+
+        foreach (var inboxMsg in inboxSnapshot) {
+          var message = lifecycleMessageDeserializer.DeserializeFromJsonElement(inboxMsg.Envelope.Payload, inboxMsg.MessageType);
           await lifecycleInvoker.InvokeAsync(message, asyncStage, lifecycleContext, ct);
         }
       } catch (Exception ex) {
