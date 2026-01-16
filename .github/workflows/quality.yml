@@ -35,6 +35,17 @@ jobs:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       run: |
-        dotnet-sonarscanner begin /k:"whizbang-lib_whizbang" /o:"whizbang-lib" /d:sonar.token="${SONAR_TOKEN}" /d:sonar.host.url="https://sonarcloud.io"
+        dotnet-sonarscanner begin /k:"whizbang-lib_whizbang" /o:"whizbang-lib" \
+          /d:sonar.token="${SONAR_TOKEN}" \
+          /d:sonar.host.url="https://sonarcloud.io" \
+          /d:sonar.exclusions="**/samples/**,**/benchmarks/**,**/*Generated.cs,**/.whizbang-generated/**" \
+          /d:sonar.coverage.exclusions="**/samples/**,**/benchmarks/**,**/tests/**" \
+          /d:sonar.issue.ignore.multicriteria="e1,e2,e3" \
+          /d:sonar.issue.ignore.multicriteria.e1.ruleKey="csharpsquid:S1192" \
+          /d:sonar.issue.ignore.multicriteria.e1.resourceKey="**/*Generator*.cs" \
+          /d:sonar.issue.ignore.multicriteria.e2.ruleKey="csharpsquid:S6444" \
+          /d:sonar.issue.ignore.multicriteria.e2.resourceKey="**/*Generator*.cs" \
+          /d:sonar.issue.ignore.multicriteria.e3.ruleKey="csharpsquid:S125" \
+          /d:sonar.issue.ignore.multicriteria.e3.resourceKey="**/*Generator*.cs"
         dotnet build --configuration Release
         dotnet-sonarscanner end /d:sonar.token="${SONAR_TOKEN}"
