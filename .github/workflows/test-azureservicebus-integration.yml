@@ -62,7 +62,6 @@ jobs:
       - name: Run Azure Service Bus Integration Tests
         run: |
           dotnet test --project samples/ECommerce/tests/ECommerce.Integration.Tests/ \
-            --no-build \
             --configuration Release \
             --max-parallel-test-modules 1 \
             --report-trx
