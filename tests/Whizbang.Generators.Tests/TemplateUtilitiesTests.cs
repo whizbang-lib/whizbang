@@ -1,8 +1,10 @@
+extern alias shared;
+
 using System.Diagnostics.CodeAnalysis;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Generators.Shared.Utilities;
+using TemplateUtilities = shared::Whizbang.Generators.Shared.Utilities.TemplateUtilities;
 
 namespace Whizbang.Generators.Tests;
 

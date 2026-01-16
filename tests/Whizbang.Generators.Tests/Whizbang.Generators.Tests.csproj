@@ -18,6 +18,10 @@
   <ItemGroup>
     <!-- Reference to the generator projects we're testing -->
     <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj" />
+    <!-- Shared library for testing shared utility types (use extern alias to avoid conflicts with ILRepack merged types) -->
+    <ProjectReference Include="../../src/Whizbang.Generators.Shared/Whizbang.Generators.Shared.csproj">
+      <Aliases>shared</Aliases>
+    </ProjectReference>
     <ProjectReference Include="../../src/Whizbang.Data.EFCore.Postgres.Generators/Whizbang.Data.EFCore.Postgres.Generators.csproj" />
     <!-- Core for interfaces like ICommand, IEvent, etc. -->
     <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />

@@ -1,7 +1,9 @@
+extern alias shared;
+
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Generators.Shared.Models;
+using PerspectiveInfo = shared::Whizbang.Generators.Shared.Models.PerspectiveInfo;
 
 namespace Whizbang.Generators.Tests.Models;
 

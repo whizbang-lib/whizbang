@@ -15,6 +15,9 @@
     <NoWarn>$(NoWarn);RS2008</NoWarn>
     <!-- Enable ILRepack to merge Shared DLL into generator DLL -->
     <ILRepackEnabled>true</ILRepackEnabled>
+    <!-- Exclude System.Index and System.Range from ILRepack merge -->
+    <!-- These types are part of .NET runtime and should not be merged -->
+    <ILRepackExcludeFilters>System.Index;System.Range</ILRepackExcludeFilters>
     <!-- Disable TypeForwardedTo generation for polyfills to avoid conflicts with .NET 10 test project -->
     <!-- See: https://github.com/Sergio0694/PolySharp/issues/103 -->
     <PolySharpExcludeTypeForwardedToDeclarations>true</PolySharpExcludeTypeForwardedToDeclarations>

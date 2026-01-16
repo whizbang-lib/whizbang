@@ -1,9 +1,11 @@
+extern alias shared;
+
 using System.Collections.Immutable;
 using Microsoft.CodeAnalysis;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Generators.Shared.Models;
+using DbContextInfo = shared::Whizbang.Generators.Shared.Models.DbContextInfo;
 
 namespace Whizbang.Generators.Tests.Models;
 
