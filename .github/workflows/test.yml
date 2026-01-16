@@ -28,9 +28,9 @@ jobs:
       run: |
         # Run unit tests only (exclude Data*.Tests which require PostgreSQL)
         # Run each test project individually to ensure coverage is collected
+        # Note: Whizbang.Documentation.Tests excluded (has zero tests)
         for project in \
           tests/Whizbang.Core.Tests \
-          tests/Whizbang.Documentation.Tests \
           tests/Whizbang.Execution.Tests \
           tests/Whizbang.Generators.Tests \
           tests/Whizbang.Hosting.Azure.ServiceBus.Tests \
