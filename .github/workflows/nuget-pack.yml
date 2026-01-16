@@ -23,7 +23,7 @@ jobs:
       run: dotnet build --configuration Release --no-restore -maxcpucount:1
 
     - name: Pack NuGet packages
-      run: dotnet pack --configuration Release --no-build --output ./packages
+      run: dotnet pack --configuration Release --output ./packages
 
     - name: List packages
       run: ls -la ./packages
