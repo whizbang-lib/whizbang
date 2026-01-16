@@ -84,6 +84,37 @@ public class AggregateIdGenerator : IIncrementalGenerator {
     var typeSymbol = RoslynGuards.GetTypeSymbolFromNode(context.Node, context.SemanticModel, cancellationToken);
 
     // Find all properties with [AggregateId] attribute (including inherited)
+    var aggregateIdProperties = _findAllAggregateIdProperties(typeSymbol);
+
+    // No [AggregateId] attributes found
+    if (aggregateIdProperties.Count == 0) {
+      return null;
+    }
+
+    // Get the first property (if multiple, we'll track for warning later)
+    var firstProperty = aggregateIdProperties[0];
+
+    // Validate property type
+    var typeValidation = _validatePropertyType(firstProperty, typeSymbol);
+
+    // Store diagnostics to report during generation
+    var hasMultiple = aggregateIdProperties.Count > 1;
+
+    // Return value-type record with discovered information
+    return new AggregateIdInfo(
+        MessageType: typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        PropertyName: firstProperty.Name,
+        IsNullable: typeValidation.IsNullable,
+        UsesValueProperty: typeValidation.UsesValueProperty,
+        HasMultipleAttributes: hasMultiple,
+        HasInvalidType: typeValidation.HasInvalidType
+    );
+  }
+
+  /// <summary>
+  /// Finds all properties with [AggregateId] attribute, including inherited properties.
+  /// </summary>
+  private static List<IPropertySymbol> _findAllAggregateIdProperties(INamedTypeSymbol typeSymbol) {
     var aggregateIdProperties = typeSymbol.GetMembers()
         .OfType<IPropertySymbol>()
         .Where(p => _hasAggregateIdAttribute(p))
@@ -99,16 +130,18 @@ public class AggregateIdGenerator : IIncrementalGenerator {
       baseType = baseType.BaseType;
     }
 
-    // No [AggregateId] attributes found
-    if (aggregateIdProperties.Count == 0) {
-      return null;
-    }
+    return aggregateIdProperties;
+  }
 
-    // Get the first property (if multiple, we'll track for warning later)
-    var firstProperty = aggregateIdProperties[0];
+  /// <summary>
+  /// Validates property type using two strategies: direct Guid check and heuristic for generated types.
+  /// Returns validation result with type information.
+  /// </summary>
+  private static PropertyTypeValidation _validatePropertyType(
+      IPropertySymbol property,
+      INamedTypeSymbol containingType) {
 
-    // Validate property type is Guid, Guid?, or has .Value property
-    var propertyType = firstProperty.Type;
+    var propertyType = property.Type;
     var isGuid = propertyType.SpecialType == SpecialType.None &&
                  propertyType.ToDisplayString() == "System.Guid";
     var isNullableGuid = RoslynGuards.IsNullableOfType(propertyType, "System.Guid");
@@ -141,7 +174,7 @@ public class AggregateIdGenerator : IIncrementalGenerator {
       var typeName = propertyType.Name;
       var isInCurrentAssembly = SymbolEqualityComparer.Default.Equals(
           propertyType.ContainingAssembly,
-          typeSymbol.ContainingAssembly);
+          containingType.ContainingAssembly);
 
       // Heuristic: struct ending in "Id" from same assembly is likely a WhizbangId
       if (isInCurrentAssembly && typeName.EndsWith("Id", StringComparison.Ordinal)) {
@@ -151,18 +184,11 @@ public class AggregateIdGenerator : IIncrementalGenerator {
 
     var usesValueProperty = !isGuid && !isNullableGuid && hasValueProperty;
     var valueIsNullable = usesValueProperty && valueProp != null && RoslynGuards.IsNullableOfType(valueProp.Type, "System.Guid");
-
-    // Store diagnostics to report during generation
-    var hasMultiple = aggregateIdProperties.Count > 1;
     var hasInvalidType = !isGuid && !isNullableGuid && !hasValueProperty;
 
-    // Return value-type record with discovered information
-    return new AggregateIdInfo(
-        MessageType: typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        PropertyName: firstProperty.Name,
+    return new PropertyTypeValidation(
         IsNullable: isNullableGuid || valueIsNullable,
         UsesValueProperty: usesValueProperty,
-        HasMultipleAttributes: hasMultiple,
         HasInvalidType: hasInvalidType
     );
   }

@@ -119,19 +119,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
 
     // Get model type and StreamKey property (same across all interfaces for this class)
     var modelType = perspectiveInterfaces.First().TypeArguments[0];
-
-    string? streamKeyPropertyName = null;
-    foreach (var member in modelType.GetMembers()) {
-      if (member is IPropertySymbol property) {
-        var hasStreamKeyAttribute = property.GetAttributes()
-            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
-
-        if (hasStreamKeyAttribute) {
-          streamKeyPropertyName = property.Name;
-          break;
-        }
-      }
-    }
+    var streamKeyPropertyName = _findStreamKeyProperty(modelType);
 
     var className = classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
     var results = new List<PerspectiveInfo>();
@@ -156,25 +144,8 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
           .Select(t => _formatTypeNameForRuntime(t))
           .ToArray();
 
-      // Validate StreamKey for each event type and collect errors + StreamKey info
-      var validationErrors = new List<EventValidationError>();
-      var eventStreamKeys = new List<EventStreamKeyInfo>();
-
-      foreach (var eventTypeSymbol in eventTypeSymbols) {
-        var error = _validateEventStreamKey(eventTypeSymbol);
-        if (error != null) {
-          validationErrors.Add(error);
-        } else {
-          // Extract StreamKey property name (only if valid)
-          var streamKeyProp = _extractStreamKeyProperty(eventTypeSymbol);
-          if (streamKeyProp != null) {
-            eventStreamKeys.Add(new EventStreamKeyInfo(
-                EventTypeName: eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-                StreamKeyPropertyName: streamKeyProp
-            ));
-          }
-        }
-      }
+      // Validate event types and extract StreamKey information
+      var (validationErrors, eventStreamKeys) = _validateAndExtractEventInfo(eventTypeSymbols);
 
       results.Add(new PerspectiveInfo(
           ClassName: className,
@@ -188,6 +159,53 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     }
 
     return results.ToArray();
+  }
+
+  /// <summary>
+  /// Finds the StreamKey property in a model type.
+  /// Returns the property name if found, null otherwise.
+  /// </summary>
+  private static string? _findStreamKeyProperty(ITypeSymbol modelType) {
+    foreach (var member in modelType.GetMembers()) {
+      if (member is IPropertySymbol property) {
+        var hasStreamKeyAttribute = property.GetAttributes()
+            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
+
+        if (hasStreamKeyAttribute) {
+          return property.Name;
+        }
+      }
+    }
+    return null;
+  }
+
+  /// <summary>
+  /// Validates event types and extracts StreamKey information.
+  /// Returns validation errors and StreamKey info for valid events.
+  /// </summary>
+  private static (List<EventValidationError> ValidationErrors, List<EventStreamKeyInfo> StreamKeys) _validateAndExtractEventInfo(
+      ITypeSymbol[] eventTypeSymbols) {
+
+    var validationErrors = new List<EventValidationError>();
+    var eventStreamKeys = new List<EventStreamKeyInfo>();
+
+    foreach (var eventTypeSymbol in eventTypeSymbols) {
+      var error = _validateEventStreamKey(eventTypeSymbol);
+      if (error != null) {
+        validationErrors.Add(error);
+      } else {
+        // Extract StreamKey property name (only if valid)
+        var streamKeyProp = _extractStreamKeyProperty(eventTypeSymbol);
+        if (streamKeyProp != null) {
+          eventStreamKeys.Add(new EventStreamKeyInfo(
+              EventTypeName: eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+              StreamKeyPropertyName: streamKeyProp
+          ));
+        }
+      }
+    }
+
+    return (validationErrors, eventStreamKeys);
   }
 
   /// <summary>

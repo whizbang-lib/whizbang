@@ -21,3 +21,13 @@ public sealed record AggregateIdInfo(
     bool HasMultipleAttributes = false,
     bool HasInvalidType = false
 );
+
+/// <summary>
+/// Value type containing property type validation result.
+/// Used internally by AggregateIdGenerator to reduce cognitive complexity.
+/// </summary>
+internal sealed record PropertyTypeValidation(
+    bool IsNullable,
+    bool UsesValueProperty,
+    bool HasInvalidType
+);

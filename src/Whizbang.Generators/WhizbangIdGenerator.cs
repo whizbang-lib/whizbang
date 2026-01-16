@@ -297,77 +297,15 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
       return;
     }
 
-    var validIds = new List<WhizbangIdInfo>();
-    var errors = new List<(Location, string)>();
-
-    // Separate valid IDs from errors
-    foreach (var result in results) {
-      if (result is null) {
-        continue;
-      }
-
-      var (idInfo, errorLocation, errorTypeName) = result.Value;
-
-      if (idInfo is null && errorLocation is not null && errorTypeName is not null) {
-        errors.Add((errorLocation, errorTypeName));
-      } else if (idInfo is not null) {
-        validIds.Add(idInfo);
-      }
-    }
-
-    // Emit error diagnostics
-    foreach (var (location, typeName) in errors) {
-      context.ReportDiagnostic(Diagnostic.Create(
-          DiagnosticDescriptors.WhizbangIdMustBePartial,
-          location,
-          typeName
-      ));
-    }
+    // Separate valid IDs from errors and report error diagnostics
+    var validIds = _separateValidIdsFromErrors(context, results);
 
     if (validIds.Count == 0) {
       return;
     }
 
-    // Phase 3: Deduplication and collision detection
-    // Group by fully qualified name to deduplicate
-    var deduplicated = validIds
-        .GroupBy(id => id.FullyQualifiedName)
-        .Select(group => group.First())  // Take first occurrence
-        .ToList();
-
-    // Detect collisions (same type name in different namespaces)
-    var collisionGroups = deduplicated
-        .GroupBy(id => id.TypeName)
-        .Where(group => group.Count() > 1)
-        .ToList();
-
-    // Build set of types that have collisions (need namespace-qualified hint names)
-    var collidingTypeNames = new HashSet<string>();
-    foreach (var collisionGroup in collisionGroups) {
-      collidingTypeNames.Add(collisionGroup.Key);
-    }
-
-    // Emit collision warnings
-    foreach (var collisionGroup in collisionGroups) {
-      var ids = collisionGroup.ToList();
-      for (int i = 0; i < ids.Count; i++) {
-        for (int j = i + 1; j < ids.Count; j++) {
-          var id1 = ids[i];
-          var id2 = ids[j];
-
-          // Emit warning unless suppressed by either ID
-          if (!id1.SuppressDuplicateWarning && !id2.SuppressDuplicateWarning) {
-            context.ReportDiagnostic(Diagnostic.Create(
-                DiagnosticDescriptors.WhizbangIdDuplicateName,
-                Location.None,
-                id1.TypeName,
-                id1.Namespace,
-                id2.Namespace
-            ));
-          }
-        }
-      }
-    }
+    // Deduplicate and detect/report collisions
+    var (deduplicated, collidingTypeNames) = _deduplicateAndDetectCollisions(context, validIds);
 
     // Generate code for each deduplicated ID
     foreach (var id in deduplicated) {
@@ -396,6 +334,105 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     // Generate registration class (one per assembly)
     if (deduplicated.Count > 0) {
       _generateProviderRegistration(context, deduplicated);
+    }
+  }
+
+  /// <summary>
+  /// Separates valid WhizbangId info from errors and reports error diagnostics.
+  /// Returns list of valid IDs that can proceed to code generation.
+  /// </summary>
+  private static List<WhizbangIdInfo> _separateValidIdsFromErrors(
+      SourceProductionContext context,
+      ImmutableArray<(WhizbangIdInfo?, Location?, string?)?> results) {
+
+    var validIds = new List<WhizbangIdInfo>();
+    var errors = new List<(Location, string)>();
+
+    // Separate valid IDs from errors
+    foreach (var result in results) {
+      if (result is null) {
+        continue;
+      }
+
+      var (idInfo, errorLocation, errorTypeName) = result.Value;
+
+      if (idInfo is null && errorLocation is not null && errorTypeName is not null) {
+        errors.Add((errorLocation, errorTypeName));
+      } else if (idInfo is not null) {
+        validIds.Add(idInfo);
+      }
+    }
+
+    // Emit error diagnostics
+    foreach (var (location, typeName) in errors) {
+      context.ReportDiagnostic(Diagnostic.Create(
+          DiagnosticDescriptors.WhizbangIdMustBePartial,
+          location,
+          typeName
+      ));
+    }
+
+    return validIds;
+  }
+
+  /// <summary>
+  /// Deduplicates WhizbangIds by fully qualified name and detects/reports collisions.
+  /// Returns deduplicated list and set of colliding type names (for hint name qualification).
+  /// </summary>
+  private static (List<WhizbangIdInfo> Deduplicated, HashSet<string> CollidingTypeNames) _deduplicateAndDetectCollisions(
+      SourceProductionContext context,
+      List<WhizbangIdInfo> validIds) {
+
+    // Group by fully qualified name to deduplicate
+    var deduplicated = validIds
+        .GroupBy(id => id.FullyQualifiedName)
+        .Select(group => group.First())  // Take first occurrence
+        .ToList();
+
+    // Detect collisions (same type name in different namespaces)
+    var collisionGroups = deduplicated
+        .GroupBy(id => id.TypeName)
+        .Where(group => group.Count() > 1)
+        .ToList();
+
+    // Build set of types that have collisions (need namespace-qualified hint names)
+    var collidingTypeNames = new HashSet<string>();
+    foreach (var collisionGroup in collisionGroups) {
+      collidingTypeNames.Add(collisionGroup.Key);
+    }
+
+    // Emit collision warnings
+    foreach (var collisionGroup in collisionGroups) {
+      _reportCollisionWarnings(context, collisionGroup.ToList());
+    }
+
+    return (deduplicated, collidingTypeNames);
+  }
+
+  /// <summary>
+  /// Reports collision warnings for WhizbangIds with the same type name in different namespaces.
+  /// Uses nested loops to report all pairwise collisions (only once per pair).
+  /// </summary>
+  private static void _reportCollisionWarnings(
+      SourceProductionContext context,
+      List<WhizbangIdInfo> collidingIds) {
+
+    for (int i = 0; i < collidingIds.Count; i++) {
+      for (int j = i + 1; j < collidingIds.Count; j++) {
+        var id1 = collidingIds[i];
+        var id2 = collidingIds[j];
+
+        // Emit warning unless suppressed by either ID
+        if (!id1.SuppressDuplicateWarning && !id2.SuppressDuplicateWarning) {
+          context.ReportDiagnostic(Diagnostic.Create(
+              DiagnosticDescriptors.WhizbangIdDuplicateName,
+              Location.None,
+              id1.TypeName,
+              id1.Namespace,
+              id2.Namespace
+          ));
+        }
+      }
     }
   }
 
