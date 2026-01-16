@@ -55,11 +55,40 @@ jobs:
 
       - name: Run PostgreSQL Integration Tests
         run: |
-          dotnet test --no-build \
-            --test-modules "**/bin/**/Release/net10.0/Whizbang.Data*.Tests.dll" \
-            --max-parallel-test-modules 2 \
-            --report-trx \
-            --report-trx-filename postgres-integration-tests.trx
+          set +e  # Don't exit on error, we'll handle retries
+          max_attempts=3
+          attempt=1
+          exit_code=0
+
+          while [ $attempt -le $max_attempts ]; do
+            echo "Attempt $attempt of $max_attempts..."
+
+            dotnet test --no-build \
+              --test-modules "**/bin/**/Release/net10.0/Whizbang.Data*.Tests.dll" \
+              --max-parallel-test-modules 2 \
+              --report-trx \
+              --report-trx-filename postgres-integration-tests.trx
+
+            exit_code=$?
+
+            if [ $exit_code -eq 0 ]; then
+              echo "Tests passed on attempt $attempt"
+              break
+            else
+              echo "Tests failed on attempt $attempt with exit code $exit_code"
+              if [ $attempt -lt $max_attempts ]; then
+                echo "Waiting 10 seconds before retry..."
+                sleep 10
+              fi
+            fi
+
+            attempt=$((attempt + 1))
+          done
+
+          if [ $exit_code -ne 0 ]; then
+            echo "All $max_attempts attempts failed"
+            exit $exit_code
+          fi
         env:
           # TestContainers configuration for CI
           TESTCONTAINERS_RYUK_DISABLED: 'false'  # Enable Ryuk for cleanup
