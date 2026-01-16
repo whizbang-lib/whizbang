@@ -53,8 +53,8 @@ jobs:
             --no-build \
             --configuration Release \
             --max-parallel-test-modules 4 \
-            --logger "console;verbosity=normal" \
-            --logger "trx;LogFileName=rabbitmq-integration-tests.trx"
+            --report-trx \
+            --report-trx-filename rabbitmq-integration-tests.trx
         env:
           # TestContainers configuration for CI
           TESTCONTAINERS_RYUK_DISABLED: 'false'  # Enable Ryuk for cleanup

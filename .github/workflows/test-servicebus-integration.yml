@@ -58,8 +58,8 @@ jobs:
             --no-build \
             --configuration Release \
             --max-parallel-test-modules 1 \
-            --logger "console;verbosity=normal" \
-            --logger "trx;LogFileName=servicebus-integration-tests.trx"
+            --report-trx \
+            --report-trx-filename servicebus-integration-tests.trx
         env:
           # Tests will start ServiceBus emulator via docker-compose
           # No additional configuration needed

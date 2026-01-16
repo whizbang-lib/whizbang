@@ -54,8 +54,8 @@ jobs:
           dotnet test --no-build \
             --test-modules "**/bin/**/Release/net10.0/Whizbang.Data*.Tests.dll" \
             --max-parallel-test-modules 2 \
-            --logger "console;verbosity=normal" \
-            --logger "trx;LogFileName=postgres-integration-tests.trx"
+            --report-trx \
+            --report-trx-filename postgres-integration-tests.trx
         env:
           # TestContainers configuration for CI
           TESTCONTAINERS_RYUK_DISABLED: 'false'  # Enable Ryuk for cleanup
