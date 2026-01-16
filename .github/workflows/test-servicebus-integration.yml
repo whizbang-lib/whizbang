@@ -58,8 +58,7 @@ jobs:
             --no-build \
             --configuration Release \
             --max-parallel-test-modules 1 \
-            --report-trx \
-            --report-trx-filename servicebus-integration-tests.trx
+            --report-trx
         env:
           # Tests will start ServiceBus emulator via docker-compose
           # No additional configuration needed
