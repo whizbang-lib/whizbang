@@ -88,11 +88,8 @@ public sealed class RabbitMQSubscription : ISubscription {
         _logger?.LogDebug("Cancelled consumer {ConsumerTag} for queue {QueueName}", _consumerTag, _queueName);
       }
 
-      // Close channel (this will cancel any remaining consumers on this channel)
-      _channel.CloseAsync().GetAwaiter().GetResult();
-      _logger?.LogInformation("Closed channel for queue {QueueName}", _queueName);
-
-      // Dispose channel (it was created specifically for this subscription)
+      // Dispose channel directly (it was created specifically for this subscription)
+      // Disposing automatically closes the channel, so no need to call CloseAsync
       _channel.Dispose();
       _logger?.LogDebug("Disposed channel for queue {QueueName}", _queueName);
     } catch (Exception ex) {

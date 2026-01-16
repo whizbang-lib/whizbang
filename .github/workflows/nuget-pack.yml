@@ -22,8 +22,15 @@ jobs:
     - name: Build
       run: dotnet build --configuration Release --no-restore -maxcpucount:1
 
+    - name: Build multi-targeted projects explicitly
+      run: |
+        # Whizbang.Data.Schema targets both net10.0 and netstandard2.0
+        # Build both target frameworks explicitly before packing
+        dotnet build src/Whizbang.Data.Schema/Whizbang.Data.Schema.csproj --configuration Release --framework net10.0 -maxcpucount:1
+        dotnet build src/Whizbang.Data.Schema/Whizbang.Data.Schema.csproj --configuration Release --framework netstandard2.0 -maxcpucount:1
+
     - name: Pack NuGet packages
-      run: dotnet pack --configuration Release --output ./packages
+      run: dotnet pack --configuration Release --no-build --output ./packages
 
     - name: List packages
       run: ls -la ./packages
