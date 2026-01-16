@@ -1,4 +1,60 @@
 <Project>
+  <!-- Custom task to add retry logic with exponential backoff for file locking issues -->
+  <UsingTask TaskName="RetryFileOperation" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <FilePath ParameterType="System.String" Required="true" />
+      <MaxRetries ParameterType="System.Int32" Required="false" />
+      <Success ParameterType="System.Boolean" Output="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System" />
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.Threading" />
+      <Code Type="Fragment" Language="cs">
+        <![CDATA[
+        int maxRetries = MaxRetries > 0 ? MaxRetries : 5;
+        int attempt = 0;
+        Success = false;
+
+        while (attempt < maxRetries && !Success) {
+            attempt++;
+            try {
+                // Check if file is locked by trying to open it exclusively
+                if (File.Exists(FilePath)) {
+                    using (var fs = File.Open(FilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) {
+                        // File is accessible
+                    }
+                }
+                Success = true;
+            } catch (IOException) when (attempt < maxRetries) {
+                // File is locked, wait with exponential backoff
+                int delayMs = (int)Math.Pow(2, attempt) * 1000; // 2s, 4s, 8s, 16s, 32s
+                Log.LogMessage(MessageImportance.High, $"File locked: {FilePath}. Retry {attempt}/{maxRetries} after {delayMs/1000}s...");
+                Thread.Sleep(delayMs);
+            } catch (IOException ex) when (attempt >= maxRetries) {
+                Log.LogError($"File locked after {maxRetries} retries: {FilePath}. Error: {ex.Message}");
+                Success = false;
+            }
+        }
+        ]]>
+      </Code>
+    </Task>
+  </UsingTask>
+
+  <!-- Override GenerateDepsFile target to add retry logic -->
+  <Target Name="_GenerateDepsFileWithRetry" BeforeTargets="GenerateDepsFile">
+    <PropertyGroup>
+      <DepsFilePath Condition="'$(DepsFilePath)' == ''">$(IntermediateOutputPath)$(TargetName).deps.json</DepsFilePath>
+    </PropertyGroup>
+
+    <RetryFileOperation
+      FilePath="$(DepsFilePath)"
+      MaxRetries="5"
+      Condition="Exists('$(DepsFilePath)')">
+      <Output TaskParameter="Success" PropertyName="DepsFileAccessible" />
+    </RetryFileOperation>
+  </Target>
+
   <!-- Post-build task to extract message registry JSON from generated C# file -->
   <Target Name="ExtractMessageRegistry" AfterTargets="Build">
     <PropertyGroup>
