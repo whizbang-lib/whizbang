@@ -11,6 +11,19 @@ namespace Whizbang.Data.Schema.Schemas;
 /// <docs>core-concepts/message-associations</docs>
 public static class MessageAssociationsSchema {
   /// <summary>
+  /// Column name constants for type-safe access.
+  /// </summary>
+  public static class Columns {
+    public const string ID = "id";
+    public const string MESSAGE_TYPE = "message_type";
+    public const string ASSOCIATION_TYPE = "association_type";
+    public const string TARGET_NAME = "target_name";
+    public const string SERVICE_NAME = "service_name";
+    public const string CREATED_AT = "created_at";
+    public const string UPDATED_AT = "updated_at";
+  }
+
+  /// <summary>
   /// Complete message_associations table definition.
   /// </summary>
   public static readonly TableDefinition Table = new(
@@ -24,25 +37,25 @@ public static class MessageAssociationsSchema {
         DefaultValue: DefaultValue.Function(DefaultValueFunction.UUID__GENERATE)
       ),
       new ColumnDefinition(
-        Name: "message_type",
+        Name: Columns.MESSAGE_TYPE,
         DataType: WhizbangDataType.STRING,
         MaxLength: 500,
         Nullable: false
       ),
       new ColumnDefinition(
-        Name: "association_type",
+        Name: Columns.ASSOCIATION_TYPE,
         DataType: WhizbangDataType.STRING,
         MaxLength: 50,
         Nullable: false
       ),
       new ColumnDefinition(
-        Name: "target_name",
+        Name: Columns.TARGET_NAME,
         DataType: WhizbangDataType.STRING,
         MaxLength: 500,
         Nullable: false
       ),
       new ColumnDefinition(
-        Name: "service_name",
+        Name: Columns.SERVICE_NAME,
         DataType: WhizbangDataType.STRING,
         MaxLength: 500,
         Nullable: false
@@ -63,43 +76,30 @@ public static class MessageAssociationsSchema {
     Indexes: ImmutableArray.Create(
       new IndexDefinition(
         Name: "idx_message_associations_message_type",
-        Columns: ImmutableArray.Create("message_type")
+        Columns: ImmutableArray.Create(Columns.MESSAGE_TYPE)
       ),
       new IndexDefinition(
         Name: "idx_message_associations_association_type",
-        Columns: ImmutableArray.Create("association_type")
+        Columns: ImmutableArray.Create(Columns.ASSOCIATION_TYPE)
       ),
       new IndexDefinition(
         Name: "idx_message_associations_target_name",
-        Columns: ImmutableArray.Create("target_name")
+        Columns: ImmutableArray.Create(Columns.TARGET_NAME)
       ),
       new IndexDefinition(
         Name: "idx_message_associations_service_name",
-        Columns: ImmutableArray.Create("service_name")
+        Columns: ImmutableArray.Create(Columns.SERVICE_NAME)
       ),
       new IndexDefinition(
         Name: "idx_message_associations_target_lookup",
-        Columns: ImmutableArray.Create("association_type", "target_name", "service_name")
+        Columns: ImmutableArray.Create(Columns.ASSOCIATION_TYPE, Columns.TARGET_NAME, Columns.SERVICE_NAME)
       )
     ),
     UniqueConstraints: ImmutableArray.Create(
       new UniqueConstraintDefinition(
         Name: "uq_message_association",
-        Columns: ImmutableArray.Create("message_type", "association_type", "target_name", "service_name")
+        Columns: ImmutableArray.Create(Columns.MESSAGE_TYPE, Columns.ASSOCIATION_TYPE, Columns.TARGET_NAME, Columns.SERVICE_NAME)
       )
     )
   );
-
-  /// <summary>
-  /// Column name constants for type-safe access.
-  /// </summary>
-  public static class Columns {
-    public const string ID = "id";
-    public const string MESSAGE_TYPE = "message_type";
-    public const string ASSOCIATION_TYPE = "association_type";
-    public const string TARGET_NAME = "target_name";
-    public const string SERVICE_NAME = "service_name";
-    public const string CREATED_AT = "created_at";
-    public const string UPDATED_AT = "updated_at";
-  }
 }

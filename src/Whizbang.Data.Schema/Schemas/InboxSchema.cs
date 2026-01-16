@@ -10,6 +10,32 @@ namespace Whizbang.Data.Schema.Schemas;
 /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/InboxSchemaTests.cs</tests>
 public static class InboxSchema {
   /// <summary>
+  /// Column name constants for type-safe access.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/InboxSchemaTests.cs:Columns_ShouldProvideAllConstantsAsync</tests>
+  public static class Columns {
+    public const string MESSAGE_ID = "message_id";
+    public const string HANDLER_NAME = "handler_name";
+    public const string MESSAGE_TYPE = "message_type";
+    public const string EVENT_TYPE = "event_type"; // Alias for MESSAGE_TYPE used by tests
+    public const string EVENT_DATA = "event_data";
+    public const string METADATA = "metadata";
+    public const string SCOPE = "scope";
+    public const string STREAM_ID = "stream_id";
+    public const string PARTITION_NUMBER = "partition_number";
+    public const string IS_EVENT = "is_event";
+    public const string STATUS = "status";
+    public const string ATTEMPTS = "attempts";
+    public const string ERROR = "error";
+    public const string INSTANCE_ID = "instance_id";
+    public const string LEASE_EXPIRY = "lease_expiry";
+    public const string FAILURE_REASON = "failure_reason";
+    public const string SCHEDULED_FOR = "scheduled_for";
+    public const string PROCESSED_AT = "processed_at";
+    public const string RECEIVED_AT = "received_at";
+  }
+
+  /// <summary>
   /// Complete inbox table definition.
   /// </summary>
   /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/InboxSchemaTests.cs:Table_ShouldHaveCorrectNameAsync</tests>
@@ -33,7 +59,7 @@ public static class InboxSchema {
         Nullable: false
       ),
       new ColumnDefinition(
-        Name: "message_type",
+        Name: "event_type",
         DataType: WhizbangDataType.STRING,
         MaxLength: 500,
         Nullable: false
@@ -92,28 +118,28 @@ public static class InboxSchema {
         Nullable: true
       ),
       new ColumnDefinition(
-        Name: "lease_expiry",
+        Name: Columns.LEASE_EXPIRY,
         DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: true
       ),
       new ColumnDefinition(
-        Name: "failure_reason",
+        Name: Columns.FAILURE_REASON,
         DataType: WhizbangDataType.INTEGER,
         Nullable: false,
         DefaultValue: DefaultValue.Integer(99)
       ),
       new ColumnDefinition(
-        Name: "scheduled_for",
+        Name: Columns.SCHEDULED_FOR,
         DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: true
       ),
       new ColumnDefinition(
-        Name: "processed_at",
+        Name: Columns.PROCESSED_AT,
         DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: true
       ),
       new ColumnDefinition(
-        Name: "received_at",
+        Name: Columns.RECEIVED_AT,
         DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
@@ -122,67 +148,42 @@ public static class InboxSchema {
     Indexes: ImmutableArray.Create(
       new IndexDefinition(
         Name: "idx_inbox_processed_at",
-        Columns: ImmutableArray.Create("processed_at")
+        Columns: ImmutableArray.Create(Columns.PROCESSED_AT)
       ),
       new IndexDefinition(
         Name: "idx_inbox_received_at",
-        Columns: ImmutableArray.Create("received_at")
+        Columns: ImmutableArray.Create(Columns.RECEIVED_AT)
       ),
       new IndexDefinition(
         Name: "idx_inbox_lease_expiry",
-        Columns: ImmutableArray.Create("lease_expiry"),
+        Columns: ImmutableArray.Create(Columns.LEASE_EXPIRY),
         WhereClause: "lease_expiry IS NOT NULL"
       ),
       new IndexDefinition(
         Name: "idx_inbox_status_lease",
-        Columns: ImmutableArray.Create("status", "lease_expiry"),
+        Columns: ImmutableArray.Create(Columns.STATUS, Columns.LEASE_EXPIRY),
         WhereClause: "(status & 32768) = 0 AND (status & 2) != 2"
       ),
       new IndexDefinition(
         Name: "idx_inbox_failure_reason",
-        Columns: ImmutableArray.Create("failure_reason"),
+        Columns: ImmutableArray.Create(Columns.FAILURE_REASON),
         WhereClause: "(status & 32768) = 32768"
       ),
       new IndexDefinition(
         Name: "idx_inbox_scheduled_for",
-        Columns: ImmutableArray.Create("stream_id", "scheduled_for", "received_at"),
+        Columns: ImmutableArray.Create(Columns.STREAM_ID, Columns.SCHEDULED_FOR, Columns.RECEIVED_AT),
         WhereClause: "scheduled_for IS NOT NULL"
       ),
       new IndexDefinition(
         Name: "idx_inbox_partition_claiming",
-        Columns: ImmutableArray.Create("partition_number", "scheduled_for", "received_at"),
+        Columns: ImmutableArray.Create(Columns.PARTITION_NUMBER, Columns.SCHEDULED_FOR, Columns.RECEIVED_AT),
         WhereClause: "(status & 2) != 2 AND (status & 32768) = 0"
       ),
       new IndexDefinition(
         Name: "idx_inbox_instance_lease",
-        Columns: ImmutableArray.Create("instance_id", "lease_expiry"),
+        Columns: ImmutableArray.Create(Columns.INSTANCE_ID, Columns.LEASE_EXPIRY),
         WhereClause: "instance_id IS NOT NULL AND lease_expiry IS NOT NULL"
       )
     )
   );
-
-  /// <summary>
-  /// Column name constants for type-safe access.
-  /// </summary>
-  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/InboxSchemaTests.cs:Columns_ShouldProvideAllConstantsAsync</tests>
-  public static class Columns {
-    public const string MESSAGE_ID = "message_id";
-    public const string HANDLER_NAME = "handler_name";
-    public const string MESSAGE_TYPE = "message_type";
-    public const string EVENT_DATA = "event_data";
-    public const string METADATA = "metadata";
-    public const string SCOPE = "scope";
-    public const string STREAM_ID = "stream_id";
-    public const string PARTITION_NUMBER = "partition_number";
-    public const string IS_EVENT = "is_event";
-    public const string STATUS = "status";
-    public const string ATTEMPTS = "attempts";
-    public const string ERROR = "error";
-    public const string INSTANCE_ID = "instance_id";
-    public const string LEASE_EXPIRY = "lease_expiry";
-    public const string FAILURE_REASON = "failure_reason";
-    public const string SCHEDULED_FOR = "scheduled_for";
-    public const string PROCESSED_AT = "processed_at";
-    public const string RECEIVED_AT = "received_at";
-  }
 }

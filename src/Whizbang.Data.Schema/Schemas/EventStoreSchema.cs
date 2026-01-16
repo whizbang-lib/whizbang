@@ -10,6 +10,24 @@ namespace Whizbang.Data.Schema.Schemas;
 /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/EventStoreSchemaTests.cs</tests>
 public static class EventStoreSchema {
   /// <summary>
+  /// Column name constants for type-safe access.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/EventStoreSchemaTests.cs:Columns_ShouldProvideAllConstantsAsync</tests>
+  public static class Columns {
+    public const string EVENT_ID = "event_id";
+    public const string STREAM_ID = "stream_id";
+    public const string AGGREGATE_ID = "aggregate_id";
+    public const string AGGREGATE_TYPE = "aggregate_type";
+    public const string EVENT_TYPE = "event_type";
+    public const string EVENT_DATA = "event_data";
+    public const string METADATA = "metadata";
+    public const string SCOPE = "scope";
+    public const string VERSION = "version";
+    public const string SEQUENCE_NUMBER = "sequence_number";
+    public const string CREATED_AT = "created_at";
+  }
+
+  /// <summary>
   /// Complete event_store table definition.
   /// Includes stream_id for stream-based event sourcing and scope for security/tenant context.
   /// </summary>
@@ -69,7 +87,12 @@ public static class EventStoreSchema {
         Nullable: true
       ),
       new ColumnDefinition(
-        Name: "version",
+        Name: Columns.SEQUENCE_NUMBER,
+        DataType: WhizbangDataType.BIG_INT,
+        Nullable: false
+      ),
+      new ColumnDefinition(
+        Name: Columns.VERSION,
         DataType: WhizbangDataType.INTEGER,
         Nullable: false
       ),
@@ -83,35 +106,22 @@ public static class EventStoreSchema {
     Indexes: ImmutableArray.Create(
       new IndexDefinition(
         Name: "idx_event_store_stream",
-        Columns: ImmutableArray.Create("stream_id", "version"),
+        Columns: ImmutableArray.Create(Columns.STREAM_ID, Columns.VERSION),
         Unique: true
       ),
       new IndexDefinition(
         Name: "idx_event_store_aggregate",
-        Columns: ImmutableArray.Create("aggregate_id", "version"),
+        Columns: ImmutableArray.Create(Columns.AGGREGATE_ID, Columns.VERSION),
         Unique: true
       ),
       new IndexDefinition(
         Name: "idx_event_store_aggregate_type",
-        Columns: ImmutableArray.Create("aggregate_type", "created_at")
+        Columns: ImmutableArray.Create(Columns.AGGREGATE_TYPE, Columns.CREATED_AT)
+      ),
+      new IndexDefinition(
+        Name: "idx_event_store_sequence",
+        Columns: ImmutableArray.Create(Columns.SEQUENCE_NUMBER)
       )
     )
   );
-
-  /// <summary>
-  /// Column name constants for type-safe access.
-  /// </summary>
-  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/EventStoreSchemaTests.cs:Columns_ShouldProvideAllConstantsAsync</tests>
-  public static class Columns {
-    public const string EVENT_ID = "event_id";
-    public const string STREAM_ID = "stream_id";
-    public const string AGGREGATE_ID = "aggregate_id";
-    public const string AGGREGATE_TYPE = "aggregate_type";
-    public const string EVENT_TYPE = "event_type";
-    public const string EVENT_DATA = "event_data";
-    public const string METADATA = "metadata";
-    public const string SCOPE = "scope";
-    public const string VERSION = "version";
-    public const string CREATED_AT = "created_at";
-  }
 }

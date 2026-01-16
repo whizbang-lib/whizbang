@@ -102,6 +102,45 @@ pwsh scripts/coverage/show-coverage-report.ps1 -CoveragePath ./coverage.xml
 
 ---
 
+## Code Quality
+
+### Run-SonarAnalysis.ps1
+
+Runs SonarCloud analysis locally to check code quality before pushing changes. Detects bugs, code smells, vulnerabilities, and technical debt.
+
+**First-time setup:**
+1. Restore tools: `dotnet tool restore` (installs dotnet-sonarscanner from `.config/dotnet-tools.json`)
+2. Generate a token at: https://sonarcloud.io/account/security
+3. Run the script - it will guide you through saving the token
+4. Token is stored in `.sonarcloud.token` (gitignored, never committed)
+
+The script automatically restores tools from the manifest on each run.
+
+**Usage:**
+```powershell
+pwsh scripts/Run-SonarAnalysis.ps1                    # Use token from env var or .sonarcloud.token
+pwsh scripts/Run-SonarAnalysis.ps1 -Token "your-token" # Provide token directly
+pwsh scripts/Run-SonarAnalysis.ps1 -SkipBuild         # Skip rebuild (faster if you just built)
+```
+
+**Token priority:**
+1. `-Token` parameter
+2. `SONAR_TOKEN` environment variable
+3. `.sonarcloud.token` file (created automatically on first run)
+
+**What it analyzes:**
+- Code smells, bugs, vulnerabilities
+- Cognitive complexity (S3776)
+- Technical debt calculation
+- Security hotspots
+- Excludes: samples, benchmarks, generated code
+
+**Output:**
+- Analysis results uploaded to SonarCloud
+- View dashboard at: https://sonarcloud.io/project/overview?id=whizbang-lib_whizbang
+
+---
+
 ## Benchmarks
 
 ### run-benchmarks.ps1
