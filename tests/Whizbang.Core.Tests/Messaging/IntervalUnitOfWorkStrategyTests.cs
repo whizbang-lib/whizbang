@@ -244,20 +244,27 @@ public class IntervalUnitOfWorkStrategyTests {
   public async Task PeriodicTimer_TriggersOnFlushRequestedAsync() {
     // Arrange
     await using var strategy = new IntervalUnitOfWorkStrategy(TimeSpan.FromMilliseconds(50));
+    var callbackTriggered = new TaskCompletionSource<Guid>();
     var callbackCount = 0;
     var callbackUnitIds = new List<Guid>();
 
     strategy.OnFlushRequested += async (unitId, ct) => {
       callbackCount++;
       callbackUnitIds.Add(unitId);
+      callbackTriggered.TrySetResult(unitId); // Signal first callback
       await Task.CompletedTask;
     };
 
     var message = new TestMessage { Value = "test" };
     await strategy.QueueMessageAsync(message);
 
-    // Wait for at least one timer tick
-    await Task.Delay(150);
+    // Wait for callback with timeout (deterministic - no arbitrary delays)
+    var timeoutTask = Task.Delay(TimeSpan.FromSeconds(2));
+    var completedTask = await Task.WhenAny(callbackTriggered.Task, timeoutTask);
+
+    if (completedTask == timeoutTask) {
+      throw new TimeoutException("Timer callback was not triggered within 2 seconds");
+    }
 
     // Assert - Callback should have been invoked at least once
     await Assert.That(callbackCount).IsGreaterThanOrEqualTo(1);
