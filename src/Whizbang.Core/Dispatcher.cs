@@ -1038,7 +1038,7 @@ public abstract class Dispatcher(
   /// <summary>
   /// Sends multiple typed messages and collects all delivery receipts (AOT-compatible).
   /// Type information is preserved at compile time, avoiding reflection.
-  /// Optimized for batch operations - processes messages individually to preserve type safety.
+  /// Optimized for batch operations - creates a single scope and flushes once for outbox messages.
   /// </summary>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:SendMany_WithMultipleCommands_ShouldReturnAllReceiptsAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:SendManyAsync_Generic_CreatesTypedEnvelopesAsync</tests>
@@ -1049,10 +1049,36 @@ public abstract class Dispatcher(
   public async Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull {
     ArgumentNullException.ThrowIfNull(messages);
 
+    var messageList = messages.ToList();
     var receipts = new List<IDeliveryReceipt>();
-    foreach (var message in messages) {
+
+    // Separate messages into local and outbox-bound
+    var localMessages = new List<TMessage>();
+    var outboxMessages = new List<(object message, Type messageType, IMessageContext context)>();
+
+    var messageType = typeof(TMessage);
+    foreach (var message in messageList) {
+      var invoker = GetReceptorInvoker<TMessage>(message, messageType);
+
+      if (invoker != null) {
+        // Has local receptor
+        localMessages.Add(message);
+      } else {
+        // No local receptor - route to outbox
+        outboxMessages.Add((message, messageType, MessageContext.New()));
+      }
+    }
+
+    // Process local messages individually (fast path)
+    foreach (var message in localMessages) {
       var receipt = await _sendAsyncInternalAsync<TMessage>(message, MessageContext.New());
       receipts.Add(receipt);
+    }
+
+    // Process outbox messages in a single batch (optimized)
+    if (outboxMessages.Count > 0) {
+      var outboxReceipts = await _sendManyToOutboxAsync(outboxMessages);
+      receipts.AddRange(outboxReceipts);
     }
 
     return receipts;

@@ -118,7 +118,6 @@ CREATE TABLE IF NOT EXISTS wh_event_store (
   event_data JSONB NOT NULL,
   metadata JSONB NOT NULL,
   scope JSONB NULL,
-  sequence_number BIGINT NOT NULL,
   version INTEGER NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -126,7 +125,6 @@ CREATE TABLE IF NOT EXISTS wh_event_store (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_event_store_stream ON wh_event_store (stream_id, version);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_event_store_aggregate ON wh_event_store (aggregate_id, version);
 CREATE INDEX IF NOT EXISTS idx_event_store_aggregate_type ON wh_event_store (aggregate_type, created_at);
-CREATE INDEX IF NOT EXISTS idx_event_store_sequence ON wh_event_store (sequence_number);
 
 -- Receptor Processing - Event handler tracking (log-style)
 CREATE TABLE IF NOT EXISTS wh_receptor_processing (

@@ -73,7 +73,7 @@ public partial class OrderedStreamProcessor {
       .GroupBy(w => w.StreamId ?? Guid.Empty)  // NULL stream = no ordering required, group together
       .Select(g => new StreamBatch<InboxWork> {
         StreamId = g.Key,
-        Messages = g.OrderBy(m => m.SequenceOrder).ToList()  // Ensure ordering by sequence
+        Messages = g.OrderBy(m => m.MessageId).ToList()  // Ensure ordering by message_id (UUIDv7)
       })
       .ToList();
 
@@ -129,7 +129,7 @@ public partial class OrderedStreamProcessor {
       .GroupBy(w => w.StreamId ?? Guid.Empty)
       .Select(g => new StreamBatch<OutboxWork> {
         StreamId = g.Key,
-        Messages = g.OrderBy(m => m.SequenceOrder).ToList()
+        Messages = g.OrderBy(m => m.MessageId).ToList()  // Order by message_id (UUIDv7)
       })
       .ToList();
 

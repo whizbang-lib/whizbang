@@ -25,29 +25,24 @@ BEGIN
     v_last_event_id := NULL;
     v_is_complete := FALSE;
 
-    -- Find highest sequence with no gaps before it
+    -- Find highest event_id with no gaps before it
+    -- Event IDs are UUIDv7 with temporal ordering, so we can compare them directly
     -- This ensures we only advance the checkpoint to a safely completed position
-    SELECT MAX(pe.sequence_number) INTO v_last_sequence
+    SELECT pe.event_id INTO v_last_event_id
     FROM wh_perspective_events pe
     WHERE pe.stream_id = v_checkpoint.stream_id
       AND pe.perspective_name = v_checkpoint.perspective_name
       AND pe.processed_at IS NOT NULL
-      -- Critical: Ensure no earlier uncompleted events
+      -- Critical: Ensure no earlier uncompleted events (using UUIDv7 ordering)
       AND NOT EXISTS (
         SELECT 1 FROM wh_perspective_events earlier
         WHERE earlier.stream_id = pe.stream_id
           AND earlier.perspective_name = pe.perspective_name
-          AND earlier.sequence_number < pe.sequence_number
+          AND earlier.event_id < pe.event_id
           AND earlier.processed_at IS NULL
-      );
-
-    -- Get event_id for that sequence from event store
-    IF v_last_sequence IS NOT NULL THEN
-      SELECT es.event_id INTO v_last_event_id
-      FROM wh_event_store es
-      WHERE es.stream_id = v_checkpoint.stream_id
-        AND es.sequence_number = v_last_sequence;
-    END IF;
+      )
+    ORDER BY pe.event_id DESC
+    LIMIT 1;
 
     -- Check if all events for this stream/perspective are complete
     v_is_complete := NOT EXISTS (

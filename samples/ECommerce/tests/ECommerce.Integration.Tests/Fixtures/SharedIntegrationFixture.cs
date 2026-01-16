@@ -737,7 +737,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     var inboxQuery = @"
       SELECT message_id, message_type, stream_id, is_event, status, received_at
       FROM inventory.wh_inbox
-      WHERE message_type LIKE '%' || @p0 || '%'
+      WHERE message_type LIKE '%' || {0} || '%'
       ORDER BY received_at DESC
       LIMIT 5";
 
@@ -755,9 +755,9 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
 
     // Query 2: Check event store for event
     var eventStoreQuery = @"
-      SELECT event_id, stream_id, event_type, version, sequence_number, created_at
+      SELECT event_id, stream_id, event_type, version, created_at
       FROM inventory.wh_event_store
-      WHERE event_type LIKE '%' || @p0 || '%'
+      WHERE event_type LIKE '%' || {0} || '%'
       ORDER BY created_at DESC
       LIMIT 5";
 
@@ -769,15 +769,15 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       eventTypeName, eventStoreResults.Count);
 
     foreach (var row in eventStoreResults) {
-      logger.LogDebug("  - EventId={EventId}, StreamId={StreamId}, Version={Version}, SeqNum={SeqNum}, CreatedAt={CreatedAt}",
-        row.EventId, row.StreamId, row.Version, row.SequenceNumber, row.CreatedAt);
+      logger.LogDebug("  - EventId={EventId}, StreamId={StreamId}, Version={Version}, CreatedAt={CreatedAt}",
+        row.EventId, row.StreamId, row.Version, row.CreatedAt);
     }
 
     // Query 3: Check perspective checkpoints (should exist for streams that have events)
     if (eventStoreResults.Count > 0) {
       var streamIds = string.Join(", ", eventStoreResults.Select(e => $"'{e.StreamId}'"));
       var checkpointQuery = $@"
-        SELECT perspective_name, stream_id, last_event_id, last_sequence_number, status
+        SELECT perspective_name, stream_id, last_event_id, status
         FROM inventory.wh_perspective_checkpoints
         WHERE stream_id IN ({streamIds})
         ORDER BY perspective_name, stream_id";
@@ -790,8 +790,8 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
         eventTypeName, checkpointResults.Count);
 
       foreach (var row in checkpointResults) {
-        logger.LogDebug("  - Perspective={PerspectiveName}, StreamId={StreamId}, LastEventId={LastEventId}, LastSeqNum={LastSeqNum}, Status={Status}",
-          row.PerspectiveName, row.StreamId, row.LastEventId, row.LastSequenceNumber, row.Status);
+        logger.LogDebug("  - Perspective={PerspectiveName}, StreamId={StreamId}, LastEventId={LastEventId}, Status={Status}",
+          row.PerspectiveName, row.StreamId, row.LastEventId, row.Status);
       }
     }
 
@@ -800,9 +800,9 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     var bffDbContext = bffScope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
 
     var bffEventStoreQuery = @"
-      SELECT event_id, stream_id, event_type, version, sequence_number, created_at
+      SELECT event_id, stream_id, event_type, version, created_at
       FROM bff.wh_event_store
-      WHERE event_type LIKE '%' || @p0 || '%'
+      WHERE event_type LIKE '%' || {0} || '%'
       ORDER BY created_at DESC
       LIMIT 5";
 
@@ -814,15 +814,15 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       eventTypeName, bffEventStoreResults.Count);
 
     foreach (var row in bffEventStoreResults) {
-      logger.LogDebug("  - EventId={EventId}, StreamId={StreamId}, Version={Version}, SeqNum={SeqNum}, CreatedAt={CreatedAt}",
-        row.EventId, row.StreamId, row.Version, row.SequenceNumber, row.CreatedAt);
+      logger.LogDebug("  - EventId={EventId}, StreamId={StreamId}, Version={Version}, CreatedAt={CreatedAt}",
+        row.EventId, row.StreamId, row.Version, row.CreatedAt);
     }
 
     // Query 5: Check BFF perspective checkpoints
     if (bffEventStoreResults.Count > 0) {
       var bffStreamIds = string.Join(", ", bffEventStoreResults.Select(e => $"'{e.StreamId}'"));
       var bffCheckpointQuery = $@"
-        SELECT perspective_name, stream_id, last_event_id, last_sequence_number, status
+        SELECT perspective_name, stream_id, last_event_id, status
         FROM bff.wh_perspective_checkpoints
         WHERE stream_id IN ({bffStreamIds})
         ORDER BY perspective_name, stream_id";
@@ -835,8 +835,8 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
         eventTypeName, bffCheckpointResults.Count);
 
       foreach (var row in bffCheckpointResults) {
-        logger.LogDebug("  - Perspective={PerspectiveName}, StreamId={StreamId}, LastEventId={LastEventId}, LastSeqNum={LastSeqNum}, Status={Status}",
-          row.PerspectiveName, row.StreamId, row.LastEventId, row.LastSequenceNumber, row.Status);
+        logger.LogDebug("  - Perspective={PerspectiveName}, StreamId={StreamId}, LastEventId={LastEventId}, Status={Status}",
+          row.PerspectiveName, row.StreamId, row.LastEventId, row.Status);
       }
     }
   }
@@ -862,7 +862,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
         DO $$
         BEGIN
           -- Truncate core infrastructure tables
-          TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_checkpoints, inventory.wh_receptor_processing CASCADE;
+          TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_checkpoints, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_message_deduplication CASCADE;
 
           -- Truncate all perspective tables (pattern: wh_per_*)
           -- This clears materialized views from both InventoryWorker and BFF
@@ -932,7 +932,6 @@ internal class EventStoreDiagnosticResult {
   public Guid StreamId { get; set; }
   public string EventType { get; set; } = string.Empty;
   public int Version { get; set; }
-  public long SequenceNumber { get; set; }
   public DateTimeOffset CreatedAt { get; set; }
 }
 
@@ -944,6 +943,22 @@ internal class CheckpointDiagnosticResult {
   public string PerspectiveName { get; set; } = string.Empty;
   public Guid StreamId { get; set; }
   public Guid LastEventId { get; set; }
-  public long LastSequenceNumber { get; set; }
-  public string Status { get; set; } = string.Empty;
+  public short Status { get; set; } // smallint in database
+}
+
+/// <summary>
+/// Diagnostic result type for perspective events queries.
+/// Maps to wh_perspective_events table columns for perspective work debugging.
+/// </summary>
+internal class PerspectiveEventDiagnosticResult {
+  public Guid EventWorkId { get; set; }
+  public Guid StreamId { get; set; }
+  public string PerspectiveName { get; set; } = string.Empty;
+  public Guid EventId { get; set; }
+  public int Status { get; set; }
+  public Guid InstanceId { get; set; }
+  public DateTimeOffset LeaseExpiry { get; set; }
+  public DateTimeOffset? ProcessedAt { get; set; }
+  public int Attempts { get; set; }
+  public DateTimeOffset CreatedAt { get; set; }
 }

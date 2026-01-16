@@ -55,7 +55,7 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
 
     // Check if perspective events were created (indicates match)
     var perspectiveEvents = await connection.QueryAsync<PerspectiveEventRow>(@"
-      SELECT event_work_id, stream_id, perspective_name, event_id, sequence_number, status
+      SELECT event_work_id, stream_id, perspective_name, event_id, status
       FROM wh_perspective_events
       WHERE stream_id = @streamId
         AND perspective_name = 'ProductListPerspective'",
@@ -872,6 +872,5 @@ public class AutoCheckpointCreationTests : PostgresTestBase {
     Guid stream_id,
     string perspective_name,
     Guid event_id,
-    long sequence_number,
     int status);
 }

@@ -141,7 +141,6 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
         Attempts = 0,
         Status = MessageProcessingStatus.Stored,
         Flags = WorkBatchFlags.None,
-        SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
       }
     ];
 
@@ -184,7 +183,6 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
         Attempts = 0,
         Status = MessageProcessingStatus.Stored,
         Flags = WorkBatchFlags.None,
-        SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
       }
     ];
 
@@ -220,7 +218,6 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
         Attempts = 0,
         Status = MessageProcessingStatus.Stored,
         Flags = WorkBatchFlags.None,
-        SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
       });
     }
 

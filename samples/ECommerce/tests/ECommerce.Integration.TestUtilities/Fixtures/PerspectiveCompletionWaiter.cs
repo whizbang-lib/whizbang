@@ -1,3 +1,4 @@
+using Microsoft.Extensions.Logging;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
 
@@ -19,17 +20,20 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
   private readonly TaskCompletionSource<bool> _bffCompletionSource;
   private readonly int _inventoryPerspectives;
   private readonly int _bffPerspectives;
+  private readonly ILogger<PerspectiveCompletionWaiter<TEvent>>? _logger;
 
   public PerspectiveCompletionWaiter(
     ILifecycleReceptorRegistry inventoryRegistry,
     ILifecycleReceptorRegistry bffRegistry,
     int inventoryPerspectives,
-    int bffPerspectives) {
+    int bffPerspectives,
+    ILogger<PerspectiveCompletionWaiter<TEvent>>? logger = null) {
 
     _inventoryRegistry = inventoryRegistry ?? throw new ArgumentNullException(nameof(inventoryRegistry));
     _bffRegistry = bffRegistry ?? throw new ArgumentNullException(nameof(bffRegistry));
     _inventoryPerspectives = inventoryPerspectives;
     _bffPerspectives = bffPerspectives;
+    _logger = logger;
 
     var totalPerspectives = inventoryPerspectives + bffPerspectives;
     Console.WriteLine($"[PerspectiveWaiter] Creating waiter for {typeof(TEvent).Name} (Inventory={inventoryPerspectives}, BFF={bffPerspectives}, Total={totalPerspectives})");

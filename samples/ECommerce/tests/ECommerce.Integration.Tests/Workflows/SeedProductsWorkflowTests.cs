@@ -50,7 +50,7 @@ public class SeedProductsWorkflowTests {
   /// 5. Products queryable via lenses
   /// </summary>
   [Test]
-  [Timeout(180000)] // 180 seconds: container init (~15s) + bulk event processing (12 products)
+  [Timeout(240000)] // 240 seconds: container init (~15s) + bulk event processing (72 perspective invocations across 2 hosts)
   public async Task SeedProducts_CreatesAllProducts_MaterializesInAllPerspectivesAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
@@ -63,13 +63,20 @@ public class SeedProductsWorkflowTests {
       fixture.GetLogger<SeedMutations>());
 
     // Act - Call seed mutation
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-      inventoryPerspectives: 24,
-      bffPerspectives: 24);
+    // CRITICAL: Wait for BOTH ProductCreatedEvent AND InventoryRestockedEvent
+    // All 12 products have InitialStock > 0, so both events are published per product
+    using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 24,  // 12 products × 2 perspectives (Product + Inventory)
+      bffPerspectives: 24);        // 12 products × 2 perspectives (Product + Inventory)
+    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
+      inventoryPerspectives: 12,  // 12 products × 1 perspective (Inventory only)
+      bffPerspectives: 12);        // 12 products × 1 perspective (Inventory only)
     var seededCount = await seedMutations.SeedProductsAsync();
 
-    // Wait for all perspectives to complete (12 products × 4 perspectives each = 48)
-    await waiter.WaitAsync(timeoutMilliseconds: 45000);
+    // Wait for all perspectives to complete
+    // 150s each provides headroom for 48 + 24 perspective invocations in test environment
+    await productWaiter.WaitAsync(timeoutMilliseconds: 150000);
+    await restockWaiter.WaitAsync(timeoutMilliseconds: 150000);
 
     // Assert - Verify seeding result
     await Assert.That(seededCount).IsEqualTo(12);
@@ -116,11 +123,17 @@ public class SeedProductsWorkflowTests {
       fixture.GetLogger<SeedMutations>());
 
     // Act - Call seed mutation TWICE
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+    // CRITICAL: Wait for BOTH ProductCreatedEvent AND InventoryRestockedEvent
+    // All 12 products have InitialStock > 0, so both events are published per product
+    using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 24,
       bffPerspectives: 24);
+    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
+      inventoryPerspectives: 12,
+      bffPerspectives: 12);
     var firstSeedCount = await seedMutations.SeedProductsAsync();
-    await waiter.WaitAsync(timeoutMilliseconds: 120000);
+    await productWaiter.WaitAsync(timeoutMilliseconds: 140000);
+    await restockWaiter.WaitAsync(timeoutMilliseconds: 140000);
 
     var secondSeedCount = await seedMutations.SeedProductsAsync();
     // No wait needed - second call is idempotent and returns 0 (no events published)
@@ -154,7 +167,7 @@ public class SeedProductsWorkflowTests {
   /// Tests that seeded products have correct stock levels in both perspectives.
   /// </summary>
   [Test]
-  [Timeout(180000)] // 180 seconds: container init (~15s) + bulk event processing (12 products)
+  [Timeout(240000)] // 240 seconds: container init (~15s) + bulk event processing (72 perspective invocations across 2 hosts)
   public async Task SeedProducts_CreatesInventoryLevels_WithCorrectStockAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
@@ -166,11 +179,17 @@ public class SeedProductsWorkflowTests {
       fixture.GetLogger<SeedMutations>());
 
     // Act
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+    // CRITICAL: Wait for BOTH ProductCreatedEvent AND InventoryRestockedEvent
+    // All 12 products have InitialStock > 0, so both events are published per product
+    using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 24,
       bffPerspectives: 24);
+    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
+      inventoryPerspectives: 12,
+      bffPerspectives: 12);
     await seedMutations.SeedProductsAsync();
-    await waiter.WaitAsync(timeoutMilliseconds: 120000);
+    await productWaiter.WaitAsync(timeoutMilliseconds: 150000);
+    await restockWaiter.WaitAsync(timeoutMilliseconds: 150000);
 
     // Assert - Verify specific product stock levels
     var products = await fixture.BffProductLens.GetAllAsync();
@@ -204,7 +223,7 @@ public class SeedProductsWorkflowTests {
   /// Tests that seeded products are properly synchronized across both worker and BFF perspectives.
   /// </summary>
   [Test]
-  [Timeout(180000)] // 180 seconds: container init (~15s) + bulk event processing (12 products)
+  [Timeout(240000)] // 240 seconds: container init (~15s) + bulk event processing (72 perspective invocations across 2 hosts)
   public async Task SeedProducts_SynchronizesPerspectives_AcrossBFFAndInventoryWorkerAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
@@ -216,11 +235,17 @@ public class SeedProductsWorkflowTests {
       fixture.GetLogger<SeedMutations>());
 
     // Act
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+    // CRITICAL: Wait for BOTH ProductCreatedEvent AND InventoryRestockedEvent
+    // All 12 products have InitialStock > 0, so both events are published per product
+    using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 24,
       bffPerspectives: 24);
+    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
+      inventoryPerspectives: 12,
+      bffPerspectives: 12);
     await seedMutations.SeedProductsAsync();
-    await waiter.WaitAsync(timeoutMilliseconds: 120000);
+    await productWaiter.WaitAsync(timeoutMilliseconds: 150000);
+    await restockWaiter.WaitAsync(timeoutMilliseconds: 150000);
 
     // Assert - Get all products from both perspectives
     var bffProducts = await fixture.BffProductLens.GetAllAsync();

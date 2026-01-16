@@ -82,7 +82,6 @@ public class DapperPostgresEventStore(
             StreamId = streamId,
             AggregateId = streamId, // For backwards compatibility, stream_id = aggregate_id
             AggregateType = typeof(TMessage).Name,
-            SequenceNumber = nextSequence,
             Version = (int)nextSequence, // version tracks stream-specific sequence
             // Use centralized formatter for consistent type name format across all event stores
             // Format: "TypeName, AssemblyName" (medium form)
@@ -319,9 +318,9 @@ public class DapperPostgresEventStore(
   /// <tests>No tests found</tests>
   protected override string GetAppendSql() => @"
     INSERT INTO wh_event_store
-      (event_id, stream_id, aggregate_id, aggregate_type, sequence_number, version, event_type, event_data, metadata, scope, created_at)
+      (event_id, stream_id, aggregate_id, aggregate_type, version, event_type, event_data, metadata, scope, created_at)
     VALUES
-      (@EventId, @StreamId, @AggregateId, @AggregateType, @SequenceNumber, @Version, @EventType,
+      (@EventId, @StreamId, @AggregateId, @AggregateType, @Version, @EventType,
        @EventData::jsonb, @Metadata::jsonb, @Scope::jsonb, @CreatedAt)";
 
   /// <summary>
@@ -335,8 +334,8 @@ public class DapperPostgresEventStore(
       metadata::text AS Metadata,
       scope::text AS Scope
     FROM wh_event_store
-    WHERE stream_id = @StreamId AND sequence_number >= @FromSequence
-    ORDER BY sequence_number";
+    WHERE stream_id = @StreamId AND version >= @FromSequence
+    ORDER BY version";
 
   /// <summary>
   /// Returns the PostgreSQL-specific SQL for querying events between two checkpoint IDs.
@@ -354,7 +353,7 @@ public class DapperPostgresEventStore(
   /// </summary>
   /// <tests>No tests found</tests>
   protected override string GetLastSequenceSql() => @"
-    SELECT COALESCE(MAX(sequence_number), -1)
+    SELECT COALESCE(MAX(version), -1)
     FROM wh_event_store
     WHERE stream_id = @StreamId";
 }

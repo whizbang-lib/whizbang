@@ -125,8 +125,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None,
-      SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+      Flags = WorkBatchFlags.None
     };
 
     // Act
@@ -162,8 +161,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 1,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None,
-      SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+      Flags = WorkBatchFlags.None
     };
 
     // Act
@@ -196,8 +194,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None,
-      SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+      Flags = WorkBatchFlags.None
     };
 
     // Act
@@ -228,8 +225,7 @@ public class TransportPublishStrategyTests {
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None,
-      SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+      Flags = WorkBatchFlags.None
     };
 
     // Act

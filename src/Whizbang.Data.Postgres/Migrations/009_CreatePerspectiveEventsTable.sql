@@ -11,9 +11,8 @@ CREATE TABLE IF NOT EXISTS wh_perspective_events (
   stream_id UUID NOT NULL,
   perspective_name VARCHAR(200) NOT NULL,
 
-  -- Event reference
+  -- Event reference (UUIDv7 provides temporal ordering)
   event_id UUID NOT NULL,
-  sequence_number BIGINT NOT NULL,
 
   -- Lease management (follows inbox/outbox pattern)
   instance_id UUID,
@@ -44,9 +43,9 @@ CREATE INDEX IF NOT EXISTS idx_perspective_event_claim
 ON wh_perspective_events (instance_id, lease_expiry, scheduled_for)
 WHERE processed_at IS NULL;
 
--- Index for ordering within stream/perspective (ensures sequential processing)
+-- Index for ordering within stream/perspective (ensures sequential processing via UUIDv7)
 CREATE INDEX IF NOT EXISTS idx_perspective_event_order
-ON wh_perspective_events (stream_id, perspective_name, sequence_number);
+ON wh_perspective_events (stream_id, perspective_name, event_id);
 
 COMMENT ON TABLE wh_perspective_events IS
 'Ephemeral event tracking for perspective processing. Events are created when new events arrive for a perspective, leased by workers, and deleted after processing (unless debug mode).';
@@ -54,8 +53,7 @@ COMMENT ON TABLE wh_perspective_events IS
 COMMENT ON COLUMN wh_perspective_events.event_work_id IS 'Unique identifier for this work item';
 COMMENT ON COLUMN wh_perspective_events.stream_id IS 'Stream this event belongs to (for partition-based load balancing)';
 COMMENT ON COLUMN wh_perspective_events.perspective_name IS 'Name of the perspective that needs to process this event';
-COMMENT ON COLUMN wh_perspective_events.event_id IS 'Event to be processed (references wh_event_store)';
-COMMENT ON COLUMN wh_perspective_events.sequence_number IS 'Sequence number for ordering (from wh_event_store)';
+COMMENT ON COLUMN wh_perspective_events.event_id IS 'Event to be processed (references wh_event_store). UUIDv7 provides temporal ordering';
 COMMENT ON COLUMN wh_perspective_events.instance_id IS 'Instance that claimed this work (NULL if not claimed)';
 COMMENT ON COLUMN wh_perspective_events.lease_expiry IS 'When the lease expires (NULL if not claimed)';
 COMMENT ON COLUMN wh_perspective_events.status IS 'Processing status flags (MessageProcessingStatus)';

@@ -139,11 +139,20 @@ public partial class ServiceBusConsumerWorker(
       // 2. Queue for atomic deduplication via process_work_batch
       strategy.QueueInboxMessage(newInboxMessage);
 
+      // DIAGNOSTIC: Log before flush
+      LogBeforeFlush(_logger, newInboxMessage.MessageId, newInboxMessage.IsEvent, newInboxMessage.StreamId);
+
       // 3. Flush - calls process_work_batch with atomic INSERT ... ON CONFLICT DO NOTHING
       var workBatch = await strategy.FlushAsync(WorkBatchFlags.None, ct);
 
+      // DIAGNOSTIC: Log after flush
+      LogAfterFlush(_logger, workBatch.InboxWork.Count, workBatch.OutboxWork.Count, workBatch.PerspectiveWork.Count);
+
       // 4. Check if work was returned - empty means duplicate (already processed)
       var myWork = workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value).ToList();
+
+      // DIAGNOSTIC: Log work batch details for this message
+      LogWorkReturned(_logger, envelope.MessageId.Value, myWork.Count, newInboxMessage.IsEvent);
 
       if (myWork.Count == 0) {
         LogMessageAlreadyProcessed(_logger, envelope.MessageId);
@@ -324,7 +333,7 @@ public partial class ServiceBusConsumerWorker(
 
     LogSerializeInboxMessage(_logger, envelope.MessageId.Value, simpleTypeName, isEvent, streamId);
 
-    return new InboxMessage {
+    var inboxMessage = new InboxMessage {
       MessageId = envelope.MessageId.Value,
       HandlerName = handlerName,
       Envelope = jsonEnvelope,
@@ -333,6 +342,12 @@ public partial class ServiceBusConsumerWorker(
       IsEvent = isEvent,
       MessageType = messageTypeName
     };
+
+    // DIAGNOSTIC: Log detailed inbox message info for ServiceBus debugging
+    LogCreatedInboxMessage(_logger, inboxMessage.MessageId, inboxMessage.IsEvent, inboxMessage.StreamId,
+      inboxMessage.MessageType, inboxMessage.EnvelopeType, jsonEnvelope.Payload.ValueKind);
+
+    return inboxMessage;
   }
 
   /// <summary>
@@ -606,6 +621,35 @@ public partial class ServiceBusConsumerWorker(
     Message = "ServiceBusConsumerWorker stopping..."
   )]
   static partial void LogWorkerStoppingGracefully(ILogger logger);
+
+  // Diagnostic logging
+  [LoggerMessage(
+    EventId = 20,
+    Level = LogLevel.Information,
+    Message = "[ServiceBus DIAGNOSTIC] Before FlushAsync: MessageId={MessageId}, IsEvent={IsEvent}, StreamId={StreamId}"
+  )]
+  static partial void LogBeforeFlush(ILogger logger, Guid messageId, bool isEvent, Guid? streamId);
+
+  [LoggerMessage(
+    EventId = 21,
+    Level = LogLevel.Information,
+    Message = "[ServiceBus DIAGNOSTIC] After FlushAsync: TotalInboxWork={InboxWorkCount}, TotalOutboxWork={OutboxWorkCount}, TotalPerspectiveWork={PerspectiveWorkCount}"
+  )]
+  static partial void LogAfterFlush(ILogger logger, int inboxWorkCount, int outboxWorkCount, int perspectiveWorkCount);
+
+  [LoggerMessage(
+    EventId = 22,
+    Level = LogLevel.Information,
+    Message = "[ServiceBus DIAGNOSTIC] Work returned for MessageId={MessageId}: InboxWork={InboxCount}, IsEvent={IsEvent}"
+  )]
+  static partial void LogWorkReturned(ILogger logger, Guid messageId, int inboxCount, bool isEvent);
+
+  [LoggerMessage(
+    EventId = 23,
+    Level = LogLevel.Information,
+    Message = "[ServiceBus DIAGNOSTIC] Created InboxMessage: MessageId={MessageId}, IsEvent={IsEvent}, StreamId={StreamId}, MessageType={MessageType}, EnvelopeType={EnvelopeType}, PayloadType={PayloadType}"
+  )]
+  static partial void LogCreatedInboxMessage(ILogger logger, Guid messageId, bool isEvent, Guid? streamId, string messageType, string? envelopeType, JsonValueKind payloadType);
 }
 
 /// <summary>

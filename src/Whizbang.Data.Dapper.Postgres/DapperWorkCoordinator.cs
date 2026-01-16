@@ -219,8 +219,7 @@ public class DapperWorkCoordinator(
           PartitionNumber = r.partition_number,
           Attempts = r.attempts,
           Status = (MessageProcessingStatus)r.status,
-          Flags = flags,
-          SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+          Flags = flags
         };
       })
       .ToList();
@@ -253,8 +252,7 @@ public class DapperWorkCoordinator(
           StreamId = r.work_stream_id,
           PartitionNumber = r.partition_number,
           Status = (MessageProcessingStatus)r.status,
-          Flags = flags,
-          SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+          Flags = flags
         };
       })
       .ToList();
@@ -560,7 +558,6 @@ internal class WorkBatchRow {
   public bool is_newly_stored { get; set; }
   public bool is_orphaned { get; set; }
   public string? perspective_name { get; set; }
-  public long? sequence_number { get; set; }
 }
 
 /// <summary>

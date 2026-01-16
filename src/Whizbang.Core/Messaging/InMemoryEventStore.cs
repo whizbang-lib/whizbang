@@ -231,8 +231,8 @@ public class InMemoryEventStore(
     public IEnumerable<IMessageEnvelope> Read(long fromSequence) {
       lock (_lock) {
         return [.. _events
-          .Where(e => e.Sequence >= fromSequence)
-          .OrderBy(e => e.Sequence)
+          .Where(e => e.Version >= fromSequence)
+          .OrderBy(e => e.Version)
           .Select(e => e.Envelope)];
       }
     }
@@ -273,5 +273,5 @@ public class InMemoryEventStore(
     }
   }
 
-  private record EventRecord(long Sequence, Guid EventId, IMessageEnvelope Envelope);
+  private record EventRecord(long Version, Guid EventId, IMessageEnvelope Envelope);
 }

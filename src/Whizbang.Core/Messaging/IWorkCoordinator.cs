@@ -484,12 +484,6 @@ public record OutboxWork {
   public WorkBatchFlags Flags { get; init; }
 
   /// <summary>
-  /// Sequence order for maintaining ordering within a stream.
-  /// Epoch milliseconds from created_at timestamp.
-  /// </summary>
-  public long SequenceOrder { get; init; }
-
-  /// <summary>
   /// JSONB metadata from database.
   /// First row includes acknowledgement counts for completion tracking.
   /// Contains keys like outbox_completions_processed, outbox_failures_processed, etc.
@@ -545,12 +539,6 @@ public record InboxWork {
   /// Examples: NewlyStored, Orphaned, FromEventStore, RetryAfterFailure.
   /// </summary>
   public WorkBatchFlags Flags { get; init; }
-
-  /// <summary>
-  /// Sequence order for maintaining ordering within a stream.
-  /// Epoch milliseconds from received_at timestamp.
-  /// </summary>
-  public long SequenceOrder { get; init; }
 
   /// <summary>
   /// JSONB metadata from database.

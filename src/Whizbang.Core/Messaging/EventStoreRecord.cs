@@ -44,14 +44,8 @@ public sealed class EventStoreRecord {
   public required string AggregateType { get; set; }
 
   /// <summary>
-  /// Sequence number within the stream (starts at 0, sequential).
-  /// Combined with StreamId forms unique constraint for optimistic concurrency.
-  /// </summary>
-  /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:InsertEventStoreRecordAsync</tests>
-  public required long Sequence { get; set; }
-
-  /// <summary>
   /// Version number within the stream for optimistic concurrency.
+  /// Combined with StreamId forms unique constraint for optimistic concurrency.
   /// </summary>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_WithEventOutbox_PersistsToEventStoreAsync</tests>
   /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperWorkCoordinatorTests.cs:ProcessWorkBatchAsync_WithEventInbox_PersistsToEventStoreAsync</tests>

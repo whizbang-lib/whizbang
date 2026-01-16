@@ -371,9 +371,10 @@ public class PerspectiveLifecycleTests {
       InitialStock = 10
     };
 
-    // Act - Use the existing WaitForPerspectiveCompletionAsync helper (PostPerspectiveInline)
+    // Act - Create waiter BEFORE sending command to avoid race condition
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(inventoryPerspectives: 2, bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(command);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(inventoryPerspectives: 2, bffPerspectives: 2);
+    await waiter.WaitAsync();
 
     // Assert - Verify perspective data is saved (this is the key guarantee!)
     var product = await fixture.BffProductLens.GetByIdAsync(command.ProductId);

@@ -307,7 +307,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
           Attempts = r.Attempts,
           Status = (MessageProcessingStatus)r.Status,
           Flags = flags,
-          SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),  // Use current time for ordering
           Metadata = metadata
         };
       })
@@ -358,7 +357,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
           PartitionNumber = r.PartitionNumber,
           Status = (MessageProcessingStatus)r.Status,
           Flags = flags,
-          SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),  // Use current time for ordering
           Metadata = metadata
         };
       })
@@ -844,9 +842,6 @@ internal class WorkBatchRow {
 
   [Column("perspective_name")]
   public string? PerspectiveName { get; set; }  // NULL for non-perspective work
-
-  [Column("sequence_number")]
-  public long? SequenceNumber { get; set; }  // NULL for non-perspective work
 }
 
 /// <summary>

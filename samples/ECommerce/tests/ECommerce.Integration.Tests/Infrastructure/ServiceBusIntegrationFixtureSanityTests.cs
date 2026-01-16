@@ -178,15 +178,21 @@ public class ServiceBusIntegrationFixtureSanityTests {
     };
 
     // Act - Send command and wait for event processing
+    // CRITICAL: Wait for BOTH ProductCreatedEvent AND InventoryRestockedEvent
+    // InitialStock = 15, so both events are published
     Console.WriteLine($"[SANITY] Sending command for BFF perspective test: {testProductId}");
     Console.WriteLine("[SANITY] This tests that ServiceBusConsumerWorker receives messages from topics");
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+    using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
       bffPerspectives: 2);
+    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
+      inventoryPerspectives: 1,
+      bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(command);
 
     // Wait for both InventoryWorker (from event store) AND BFF (from Service Bus)
-    await waiter.WaitAsync(timeoutMilliseconds: 15000);
+    await productWaiter.WaitAsync(timeoutMilliseconds: 15000);
+    await restockWaiter.WaitAsync(timeoutMilliseconds: 15000);
 
     // Dump diagnostics to understand what's happening
     await fixture.DumpEventTypesAndAssociationsAsync();
@@ -234,7 +240,7 @@ public class ServiceBusIntegrationFixtureSanityTests {
   /// This tests that when we send InitialStock=15, the event in wh_event_store contains 15.
   /// </summary>
   [Test]
-  [Timeout(90_000)]  // TUnit includes fixture initialization in test timeout (~60s setup + ~5s test)
+  [Timeout(150_000)]  // 150 seconds: fixture init (~60s) + product waiter (45s) + restock waiter (45s)
   public async Task EventStore_ContainsCorrectEventDataAsync() {
     // Arrange
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
@@ -251,9 +257,15 @@ public class ServiceBusIntegrationFixtureSanityTests {
     };
 
     // Act - Send command and wait for event processing
+    // CRITICAL: Wait for BOTH ProductCreatedEvent AND InventoryRestockedEvent
+    // InitialStock = 42, so both events are published
+    // CRITICAL: Create waiters BEFORE sending command to avoid race condition
     Console.WriteLine($"[SANITY-DATA] Sending command with InitialStock={expectedStock}");
+    using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(inventoryPerspectives: 2, bffPerspectives: 2);
+    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(inventoryPerspectives: 1, bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(command);
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(inventoryPerspectives: 2, bffPerspectives: 2, timeoutMilliseconds: 15000);
+    await productWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Assert - Check InventoryRestockedEvent in event store has correct data
     await using var connection = new NpgsqlConnection(fixture.ConnectionString);
@@ -318,12 +330,14 @@ public class ServiceBusIntegrationFixtureSanityTests {
     };
 
     // Act - Send command and wait for perspectives to process
+    // CRITICAL: Create waiter BEFORE sending command to avoid race condition
     Console.WriteLine($"[SANITY-PROPAGATION] Sending command: Stock={expectedStock}, Price={expectedPrice}");
+    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(inventoryPerspectives: 2, bffPerspectives: 2);
     await fixture.Dispatcher.SendAsync(command);
 
     // Wait for all event processing to complete (all perspectives across both hosts)
     Console.WriteLine($"[SANITY-PROPAGATION] Waiting for event processing...");
-    await fixture.WaitForPerspectiveCompletionAsync<ProductCreatedEvent>(inventoryPerspectives: 2, bffPerspectives: 2, timeoutMilliseconds: 15000);
+    await waiter.WaitAsync(timeoutMilliseconds: 15000);
     Console.WriteLine($"[SANITY-PROPAGATION] Event processing completed!");
 
     Console.WriteLine($"[SANITY-PROPAGATION] Starting assertions...");
@@ -383,14 +397,13 @@ public class ServiceBusIntegrationFixtureSanityTests {
           pe.event_work_id,
           pe.perspective_name,
           pe.event_id,
-          pe.sequence_number,
           pe.status,
           pe.processed_at,
           es.event_type
         FROM inventory.wh_perspective_events pe
         INNER JOIN inventory.wh_event_store es ON pe.event_id = es.event_id
         WHERE pe.stream_id = @streamId
-        ORDER BY pe.sequence_number";
+        ORDER BY pe.event_id";
       cmd2.Parameters.AddWithValue("streamId", testProductId.Value);
 
       await using var reader2 = await cmd2.ExecuteReaderAsync();

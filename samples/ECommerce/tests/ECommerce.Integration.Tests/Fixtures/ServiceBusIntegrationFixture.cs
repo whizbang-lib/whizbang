@@ -63,11 +63,13 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     _batchIndex = batchIndex;
 
     // Create TestContainers PostgreSQL (proven reliable)
+    // Enable logging to capture RAISE NOTICE statements from process_work_batch Phase 4.5B
     _postgresContainer = new PostgreSqlBuilder()
       .WithImage("postgres:17-alpine")
       .WithDatabase("whizbang_integration_test")
       .WithUsername("whizbang_user")
       .WithPassword("whizbang_pass")
+      .WithCommand("-c", "log_min_messages=NOTICE", "-c", "client_min_messages=NOTICE", "-c", "log_statement=all")
       .Build();
 
     Console.WriteLine($"[ServiceBusFixture] Using topics: {_topicA}, {_topicB}");
@@ -276,10 +278,12 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // Use shared client instead of creating a new one
     // This reduces connection count and avoids ConnectionsQuotaExceeded errors
 
-    // Drain subscriptions for BFF only (InventoryWorker builds perspectives internally)
+    // Drain subscriptions for both BFF and InventoryWorker
     var subscriptions = new[] {
-      (_topicA, "sub-00-a"),  // topic-00 subscription
-      (_topicB, "sub-01-a")   // topic-01 subscription
+      (_topicA, "sub-00-a"),  // topic-00 subscription (BFF)
+      (_topicB, "sub-01-a"),  // topic-01 subscription (BFF)
+      (_topicA, "sub-00-b"),  // topic-00 subscription (InventoryWorker)
+      (_topicB, "sub-01-b")   // topic-01 subscription (InventoryWorker)
     };
 
     foreach (var (topic, subscription) in subscriptions) {
@@ -347,6 +351,9 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
 
     // Register Azure Service Bus transport (will resolve shared client from DI)
     builder.Services.AddAzureServiceBusTransport(serviceBusConnectionString);
+
+    // Register OrderedStreamProcessor for message ordering (required by ServiceBusConsumerWorker)
+    builder.Services.AddSingleton<OrderedStreamProcessor>();
 
     // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
     // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
@@ -448,13 +455,31 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     builder.Services.AddHostedService<WorkCoordinatorPublisherWorker>();
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
 
-    // NOTE: InventoryWorker does NOT use ServiceBusConsumerWorker
-    // InventoryWorker perspectives read directly from inventory.wh_event_store (event sourcing pattern)
-    // Only BFF uses ServiceBusConsumerWorker to receive events via Service Bus topics
+    // Azure Service Bus consumer for InventoryWorker
+    // CRITICAL: InventoryWorker MUST subscribe to receive its own published events to store them in local event store
+    // Without this, events go to outbox → ServiceBus but never get stored to inventory.wh_event_store for perspectives
+    var inventoryConsumerOptions = new ServiceBusConsumerOptions();
+    inventoryConsumerOptions.Subscriptions.Add(new TopicSubscription(topicA, "sub-00-b"));  // topic-00 subscription
+    inventoryConsumerOptions.Subscriptions.Add(new TopicSubscription(topicB, "sub-01-b"));  // topic-01 subscription
+    builder.Services.AddSingleton(inventoryConsumerOptions);
+    builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
+      new ServiceBusConsumerWorker(
+        sp.GetRequiredService<IServiceInstanceProvider>(),
+        sp.GetRequiredService<ITransport>(),
+        sp.GetRequiredService<IServiceScopeFactory>(),
+        jsonOptions,  // Pass JSON options for event deserialization
+        sp.GetRequiredService<ILogger<ServiceBusConsumerWorker>>(),
+        sp.GetRequiredService<OrderedStreamProcessor>(),
+        inventoryConsumerOptions,
+        sp.GetService<ILifecycleInvoker>(),  // Add lifecycle invoker for Inbox stages
+        sp.GetService<ILifecycleMessageDeserializer>()  // Add lifecycle deserializer
+      )
+    );
 
     // Logging
+    var debugEnabled = Environment.GetEnvironmentVariable("WHIZBANG_DEBUG") == "true";
     builder.Services.AddLogging(logging => {
-      logging.SetMinimumLevel(LogLevel.Information);
+      logging.SetMinimumLevel(debugEnabled ? LogLevel.Debug : LogLevel.Information);
       logging.AddConsole();
     });
 
@@ -499,7 +524,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // Add trace store for observability
     builder.Services.AddSingleton<ITraceStore, InMemoryTraceStore>();
 
-    // Register OrderedStreamProcessor for message ordering
+    // Register OrderedStreamProcessor for message ordering (required by ServiceBusConsumerWorker)
     builder.Services.AddSingleton<OrderedStreamProcessor>();
 
     // Register EF Core DbContext with NpgsqlDataSource (required for EnableDynamicJson)
@@ -612,8 +637,9 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     );
 
     // Logging
+    var bffDebugEnabled = Environment.GetEnvironmentVariable("WHIZBANG_DEBUG") == "true";
     builder.Services.AddLogging(logging => {
-      logging.SetMinimumLevel(LogLevel.Information);
+      logging.SetMinimumLevel(bffDebugEnabled ? LogLevel.Debug : LogLevel.Information);
       logging.AddConsole();
     });
 
@@ -761,6 +787,9 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     var loggerFactory = _bffHost!.Services.GetRequiredService<ILoggerFactory>();
     var logger = loggerFactory.CreateLogger<PerspectiveCompletionWaiter<TEvent>>();
 
+    // DIAGNOSTIC: Log registry instances used by test waiter
+    Console.WriteLine($"[Fixture DIAGNOSTIC] Creating waiter for {typeof(TEvent).Name}: InventoryRegistry={inventoryRegistry.GetHashCode()}, BffRegistry={bffRegistry.GetHashCode()}");
+
     return new PerspectiveCompletionWaiter<TEvent>(
       inventoryRegistry,
       bffRegistry,
@@ -822,7 +851,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
           DO $$
           BEGIN
             -- Truncate core infrastructure tables (INVENTORY schema)
-            TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_checkpoints, inventory.wh_receptor_processing, inventory.wh_active_streams CASCADE;
+            TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_checkpoints, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
 
             -- Truncate all perspective tables (INVENTORY schema)
             TRUNCATE TABLE inventory.wh_per_inventory_level_dto CASCADE;
@@ -830,7 +859,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
             TRUNCATE TABLE inventory.wh_per_product_dto CASCADE;
 
             -- Truncate core infrastructure tables (BFF schema)
-            TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_checkpoints, bff.wh_receptor_processing, bff.wh_active_streams CASCADE;
+            TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_checkpoints, bff.wh_perspective_events, bff.wh_receptor_processing, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
 
             -- Truncate all perspective tables (BFF schema)
             TRUNCATE TABLE bff.wh_per_inventory_level_dto CASCADE;
@@ -915,19 +944,12 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     Console.WriteLine($"=== TYPE NAME COMPARISON ({schemaName}) ===");
 
     // Query event types from wh_event_store
-    var eventTypes = await dbContext.Database.SqlQuery<string>($@"
-        SELECT DISTINCT event_type
-        FROM {schemaName}.wh_event_store
-        ORDER BY event_type
-    ").ToListAsync(cancellationToken);
+    var eventTypesQuery = $"SELECT DISTINCT event_type FROM {schemaName}.wh_event_store ORDER BY event_type";
+    var eventTypes = await dbContext.Database.SqlQueryRaw<string>(eventTypesQuery).ToListAsync(cancellationToken);
 
     // Query message types from wh_message_associations (perspectives only)
-    var associations = await dbContext.Database.SqlQuery<string>($@"
-        SELECT DISTINCT message_type
-        FROM {schemaName}.wh_message_associations
-        WHERE association_type = 'perspective'
-        ORDER BY message_type
-    ").ToListAsync(cancellationToken);
+    var associationsQuery = $"SELECT DISTINCT message_type FROM {schemaName}.wh_message_associations WHERE association_type = 'perspective' ORDER BY message_type";
+    var associations = await dbContext.Database.SqlQueryRaw<string>(associationsQuery).ToListAsync(cancellationToken);
 
     Console.WriteLine($"Event Types in wh_event_store ({eventTypes.Count}):");
     foreach (var et in eventTypes) {
@@ -1059,11 +1081,27 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     var inventoryDbContext = _inventoryScope!.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
     var bffDbContext = _bffScope!.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
 
+    // Get current instance IDs for comparison
+    var inventoryInstanceProvider = _inventoryScope!.ServiceProvider.GetRequiredService<IServiceInstanceProvider>();
+    var bffInstanceProvider = _bffScope!.ServiceProvider.GetRequiredService<IServiceInstanceProvider>();
+
+    logger.LogInformation("[SQL Diagnostic] Inventory InstanceId: {InstanceId}, Service: {ServiceName}",
+      inventoryInstanceProvider.InstanceId, inventoryInstanceProvider.ServiceName);
+    logger.LogInformation("[SQL Diagnostic] BFF InstanceId: {InstanceId}, Service: {ServiceName}",
+      bffInstanceProvider.InstanceId, bffInstanceProvider.ServiceName);
+    logger.LogInformation("[SQL Diagnostic] Current UTC time: {Now}", DateTimeOffset.UtcNow);
+
     // Query 1: Check inbox for event
     var inboxQuery = @"
-      SELECT message_id, message_type, stream_id, is_event, status, received_at
+      SELECT
+        message_id AS MessageId,
+        message_type AS MessageType,
+        stream_id AS StreamId,
+        is_event AS IsEvent,
+        status AS Status,
+        received_at AS ReceivedAt
       FROM inventory.wh_inbox
-      WHERE message_type LIKE '%' || @p0 || '%'
+      WHERE message_type LIKE '%' || {0} || '%'
       ORDER BY received_at DESC
       LIMIT 5";
 
@@ -1081,9 +1119,14 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
 
     // Query 2: Check event store for event
     var eventStoreQuery = @"
-      SELECT event_id, stream_id, event_type, version, sequence_number, created_at
+      SELECT
+        event_id AS EventId,
+        stream_id AS StreamId,
+        event_type AS EventType,
+        version AS Version,
+        created_at AS CreatedAt
       FROM inventory.wh_event_store
-      WHERE event_type LIKE '%' || @p0 || '%'
+      WHERE event_type LIKE '%' || {0} || '%'
       ORDER BY created_at DESC
       LIMIT 5";
 
@@ -1095,15 +1138,19 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       eventTypeName, eventStoreResults.Count);
 
     foreach (var row in eventStoreResults) {
-      logger.LogDebug("  - EventId={EventId}, StreamId={StreamId}, Version={Version}, SeqNum={SeqNum}, CreatedAt={CreatedAt}",
-        row.EventId, row.StreamId, row.Version, row.SequenceNumber, row.CreatedAt);
+      logger.LogDebug("  - EventId={EventId}, StreamId={StreamId}, Version={Version}, CreatedAt={CreatedAt}",
+        row.EventId, row.StreamId, row.Version, row.CreatedAt);
     }
 
     // Query 3: Check perspective checkpoints (should exist for streams that have events)
     if (eventStoreResults.Count > 0) {
       var streamIds = string.Join(", ", eventStoreResults.Select(e => $"'{e.StreamId}'"));
       var checkpointQuery = $@"
-        SELECT perspective_name, stream_id, last_event_id, last_sequence_number, status
+        SELECT
+          perspective_name AS PerspectiveName,
+          stream_id AS StreamId,
+          last_event_id AS LastEventId,
+          status AS Status
         FROM inventory.wh_perspective_checkpoints
         WHERE stream_id IN ({streamIds})
         ORDER BY perspective_name, stream_id";
@@ -1116,16 +1163,69 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         eventTypeName, checkpointResults.Count);
 
       foreach (var row in checkpointResults) {
-        logger.LogDebug("  - Perspective={PerspectiveName}, StreamId={StreamId}, LastEventId={LastEventId}, LastSeqNum={LastSeqNum}, Status={Status}",
-          row.PerspectiveName, row.StreamId, row.LastEventId, row.LastSequenceNumber, row.Status);
+        logger.LogDebug("  - Perspective={PerspectiveName}, StreamId={StreamId}, LastEventId={LastEventId}, Status={Status}",
+          row.PerspectiveName, row.StreamId, row.LastEventId, row.Status);
+      }
+
+      // Query 3.5: Check Inventory perspective_events
+      var inventoryPerspectiveEventsQuery = $@"
+        SELECT
+          pe.event_work_id AS EventWorkId,
+          pe.stream_id AS StreamId,
+          pe.perspective_name AS PerspectiveName,
+          pe.event_id AS EventId,
+          pe.status AS Status,
+          pe.instance_id AS InstanceId,
+          pe.lease_expiry AS LeaseExpiry,
+          pe.processed_at AS ProcessedAt,
+          pe.attempts AS Attempts,
+          pe.created_at AS CreatedAt
+        FROM inventory.wh_perspective_events pe
+        INNER JOIN inventory.wh_event_store es ON pe.event_id = es.event_id
+        WHERE pe.stream_id IN ({streamIds})
+          AND es.event_type LIKE '%' || {0} || '%'
+        ORDER BY pe.created_at DESC
+        LIMIT 10";
+
+      var inventoryPerspectiveEventResults = await inventoryDbContext.Database
+        .SqlQueryRaw<PerspectiveEventDiagnosticResult>(inventoryPerspectiveEventsQuery, eventTypeName)
+        .ToListAsync(cancellationToken);
+
+      logger.LogDebug("[SQL Diagnostic] Inventory perspective_events for {EventType}: {Count} events found",
+        eventTypeName, inventoryPerspectiveEventResults.Count);
+
+      foreach (var row in inventoryPerspectiveEventResults) {
+        var isLeaseExpired = row.LeaseExpiry < DateTimeOffset.UtcNow;
+        var isProcessed = row.ProcessedAt != null;
+        var matchesInstanceId = row.InstanceId == inventoryInstanceProvider.InstanceId;
+
+        logger.LogDebug("  - EventWorkId={EventWorkId}, Perspective={PerspectiveName}, Status={Status}",
+          row.EventWorkId, row.PerspectiveName, row.Status);
+        logger.LogDebug("    InstanceId={InstanceId} (matches={Matches}), LeaseExpiry={LeaseExpiry} (expired={Expired}), ProcessedAt={ProcessedAt} (processed={Processed})",
+          row.InstanceId, matchesInstanceId, row.LeaseExpiry, isLeaseExpired, row.ProcessedAt, isProcessed);
+
+        if (isProcessed) {
+          logger.LogWarning("    ❌ Already processed");
+        } else if (!matchesInstanceId) {
+          logger.LogWarning("    ❌ InstanceId mismatch");
+        } else if (isLeaseExpired) {
+          logger.LogWarning("    ❌ Lease expired");
+        } else {
+          logger.LogInformation("    ✅ Should be claimable");
+        }
       }
     }
 
     // Query 4: Check BFF schema as well
     var bffEventStoreQuery = @"
-      SELECT event_id, stream_id, event_type, version, sequence_number, created_at
+      SELECT
+        event_id AS EventId,
+        stream_id AS StreamId,
+        event_type AS EventType,
+        version AS Version,
+        created_at AS CreatedAt
       FROM bff.wh_event_store
-      WHERE event_type LIKE '%' || @p0 || '%'
+      WHERE event_type LIKE '%' || {0} || '%'
       ORDER BY created_at DESC
       LIMIT 5";
 
@@ -1137,15 +1237,19 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       eventTypeName, bffEventStoreResults.Count);
 
     foreach (var row in bffEventStoreResults) {
-      logger.LogDebug("  - EventId={EventId}, StreamId={StreamId}, Version={Version}, SeqNum={SeqNum}, CreatedAt={CreatedAt}",
-        row.EventId, row.StreamId, row.Version, row.SequenceNumber, row.CreatedAt);
+      logger.LogDebug("  - EventId={EventId}, StreamId={StreamId}, Version={Version}, CreatedAt={CreatedAt}",
+        row.EventId, row.StreamId, row.Version, row.CreatedAt);
     }
 
     // Query 5: Check BFF perspective checkpoints
     if (bffEventStoreResults.Count > 0) {
       var bffStreamIds = string.Join(", ", bffEventStoreResults.Select(e => $"'{e.StreamId}'"));
       var bffCheckpointQuery = $@"
-        SELECT perspective_name, stream_id, last_event_id, last_sequence_number, status
+        SELECT
+          perspective_name AS PerspectiveName,
+          stream_id AS StreamId,
+          last_event_id AS LastEventId,
+          status AS Status
         FROM bff.wh_perspective_checkpoints
         WHERE stream_id IN ({bffStreamIds})
         ORDER BY perspective_name, stream_id";
@@ -1158,8 +1262,62 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
         eventTypeName, bffCheckpointResults.Count);
 
       foreach (var row in bffCheckpointResults) {
-        logger.LogDebug("  - Perspective={PerspectiveName}, StreamId={StreamId}, LastEventId={LastEventId}, LastSeqNum={LastSeqNum}, Status={Status}",
-          row.PerspectiveName, row.StreamId, row.LastEventId, row.LastSequenceNumber, row.Status);
+        logger.LogDebug("  - Perspective={PerspectiveName}, StreamId={StreamId}, LastEventId={LastEventId}, Status={Status}",
+          row.PerspectiveName, row.StreamId, row.LastEventId, row.Status);
+      }
+
+      // Query 6: Check BFF perspective_events (THE CRITICAL QUERY!)
+      // This shows us WHY PerspectiveWorker isn't claiming work
+      var bffPerspectiveEventsQuery = $@"
+        SELECT
+          pe.event_work_id AS EventWorkId,
+          pe.stream_id AS StreamId,
+          pe.perspective_name AS PerspectiveName,
+          pe.event_id AS EventId,
+          pe.status AS Status,
+          pe.instance_id AS InstanceId,
+          pe.lease_expiry AS LeaseExpiry,
+          pe.processed_at AS ProcessedAt,
+          pe.attempts AS Attempts,
+          pe.created_at AS CreatedAt
+        FROM bff.wh_perspective_events pe
+        INNER JOIN bff.wh_event_store es ON pe.event_id = es.event_id
+        WHERE pe.stream_id IN ({bffStreamIds})
+          AND es.event_type LIKE '%' || {0} || '%'
+        ORDER BY pe.created_at DESC
+        LIMIT 10";
+
+      var bffPerspectiveEventResults = await bffDbContext.Database
+        .SqlQueryRaw<PerspectiveEventDiagnosticResult>(bffPerspectiveEventsQuery, eventTypeName)
+        .ToListAsync(cancellationToken);
+
+      logger.LogInformation("[SQL Diagnostic] BFF perspective_events for {EventType}: {Count} events found",
+        eventTypeName, bffPerspectiveEventResults.Count);
+
+      foreach (var row in bffPerspectiveEventResults) {
+        var isLeaseExpired = row.LeaseExpiry < DateTimeOffset.UtcNow;
+        var isProcessed = row.ProcessedAt != null;
+        var matchesInstanceId = row.InstanceId == bffInstanceProvider.InstanceId;
+
+        logger.LogInformation("  - EventWorkId={EventWorkId}, Perspective={PerspectiveName}, Status={Status}",
+          row.EventWorkId, row.PerspectiveName, row.Status);
+        logger.LogInformation("    InstanceId={InstanceId} (matches={Matches}), LeaseExpiry={LeaseExpiry} (expired={Expired}), ProcessedAt={ProcessedAt} (processed={Processed})",
+          row.InstanceId, matchesInstanceId, row.LeaseExpiry, isLeaseExpired, row.ProcessedAt, isProcessed);
+        logger.LogInformation("    Attempts={Attempts}, CreatedAt={CreatedAt}",
+          row.Attempts, row.CreatedAt);
+
+        // Explain WHY this work isn't being claimed
+        if (isProcessed) {
+          logger.LogWarning("    ❌ NOT CLAIMABLE: Already processed at {ProcessedAt}", row.ProcessedAt);
+        } else if (!matchesInstanceId) {
+          logger.LogWarning("    ❌ NOT CLAIMABLE: InstanceId mismatch (expected {Expected}, got {Actual})",
+            bffInstanceProvider.InstanceId, row.InstanceId);
+        } else if (isLeaseExpired) {
+          logger.LogWarning("    ❌ NOT CLAIMABLE: Lease expired (expiry={Expiry}, now={Now})",
+            row.LeaseExpiry, DateTimeOffset.UtcNow);
+        } else {
+          logger.LogInformation("    ✅ SHOULD BE CLAIMABLE: All conditions met!");
+        }
       }
     }
   }

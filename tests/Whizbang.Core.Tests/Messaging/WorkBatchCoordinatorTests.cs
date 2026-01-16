@@ -90,8 +90,7 @@ public class WorkBatchCoordinatorTests {
       Envelope = _createTestEnvelope(messageId),
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None,
-      SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+      Flags = WorkBatchFlags.None
     };
 
     var testWorkCoordinator = new TestWorkCoordinator {
@@ -182,8 +181,7 @@ public class WorkBatchCoordinatorTests {
       Envelope = _createTestEnvelope(messageId),
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None,
-      SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+      Flags = WorkBatchFlags.None
     };
     var perspectiveWork = new PerspectiveWork {
       StreamId = Guid.NewGuid(),

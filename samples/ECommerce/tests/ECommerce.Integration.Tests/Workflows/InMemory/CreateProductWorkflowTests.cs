@@ -192,15 +192,12 @@ public class CreateProductWorkflowTests {
     };
 
     // Act - Create waiter BEFORE sending command to avoid race condition
+    // NOTE: Only wait for ProductCreatedEvent since InitialStock = 0 won't trigger InventoryRestockedEvent
     using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
       inventoryPerspectives: 2,
       bffPerspectives: 2);
-    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-      inventoryPerspectives: 1,
-      bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(command);
     await productWaiter.WaitAsync(timeoutMilliseconds: 15000);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 15000);
 
     // Assert - Verify product exists with zero inventory
     var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(command.ProductId);

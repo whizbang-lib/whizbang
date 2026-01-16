@@ -296,7 +296,7 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
       await dbContext.Database.ExecuteSqlRawAsync(@"
         DO $$
         BEGIN
-          TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox CASCADE;
+          TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_events, inventory.wh_message_deduplication CASCADE;
         EXCEPTION
           WHEN undefined_table THEN
             -- Tables don't exist, nothing to clean up

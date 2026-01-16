@@ -69,11 +69,6 @@ public static class EventStoreSchema {
         Nullable: true
       ),
       new ColumnDefinition(
-        Name: "sequence_number",
-        DataType: WhizbangDataType.BIG_INT,
-        Nullable: false
-      ),
-      new ColumnDefinition(
         Name: "version",
         DataType: WhizbangDataType.INTEGER,
         Nullable: false
@@ -99,10 +94,6 @@ public static class EventStoreSchema {
       new IndexDefinition(
         Name: "idx_event_store_aggregate_type",
         Columns: ImmutableArray.Create("aggregate_type", "created_at")
-      ),
-      new IndexDefinition(
-        Name: "idx_event_store_sequence",
-        Columns: ImmutableArray.Create("sequence_number")
       )
     )
   );
@@ -120,7 +111,6 @@ public static class EventStoreSchema {
     public const string EVENT_DATA = "event_data";
     public const string METADATA = "metadata";
     public const string SCOPE = "scope";
-    public const string SEQUENCE_NUMBER = "sequence_number";
     public const string VERSION = "version";
     public const string CREATED_AT = "created_at";
   }

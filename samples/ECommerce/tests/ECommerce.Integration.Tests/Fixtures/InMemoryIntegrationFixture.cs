@@ -658,19 +658,12 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     Console.WriteLine($"=== TYPE NAME COMPARISON ({schemaName}) ===");
 
     // Query event types from wh_event_store
-    var eventTypes = await dbContext.Database.SqlQuery<string>($@"
-        SELECT DISTINCT event_type
-        FROM {schemaName}.wh_event_store
-        ORDER BY event_type
-    ").ToListAsync(cancellationToken);
+    var eventTypesQuery = $"SELECT DISTINCT event_type FROM {schemaName}.wh_event_store ORDER BY event_type";
+    var eventTypes = await dbContext.Database.SqlQueryRaw<string>(eventTypesQuery).ToListAsync(cancellationToken);
 
     // Query message types from wh_message_associations (perspectives only)
-    var associations = await dbContext.Database.SqlQuery<string>($@"
-        SELECT DISTINCT message_type
-        FROM {schemaName}.wh_message_associations
-        WHERE association_type = 'perspective'
-        ORDER BY message_type
-    ").ToListAsync(cancellationToken);
+    var associationsQuery = $"SELECT DISTINCT message_type FROM {schemaName}.wh_message_associations WHERE association_type = 'perspective' ORDER BY message_type";
+    var associations = await dbContext.Database.SqlQueryRaw<string>(associationsQuery).ToListAsync(cancellationToken);
 
     Console.WriteLine($"Event Types in wh_event_store ({eventTypes.Count}):");
     foreach (var et in eventTypes) {
@@ -836,7 +829,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
         DO $$
         BEGIN
           -- Truncate core infrastructure tables (INVENTORY schema)
-          TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_checkpoints, inventory.wh_receptor_processing, inventory.wh_active_streams CASCADE;
+          TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_checkpoints, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
 
           -- Truncate all perspective tables (INVENTORY schema)
           TRUNCATE TABLE inventory.wh_per_inventory_level_dto CASCADE;
@@ -844,7 +837,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
           TRUNCATE TABLE inventory.wh_per_product_dto CASCADE;
 
           -- Truncate core infrastructure tables (BFF schema)
-          TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_checkpoints, bff.wh_receptor_processing, bff.wh_active_streams CASCADE;
+          TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_checkpoints, bff.wh_perspective_events, bff.wh_receptor_processing, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
 
           -- Truncate all perspective tables (BFF schema)
           TRUNCATE TABLE bff.wh_per_inventory_level_dto CASCADE;

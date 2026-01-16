@@ -69,8 +69,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       StreamId = streamId,
       AggregateId = streamId,  // Backwards compatibility: AggregateId = StreamId
       AggregateType = typeof(TMessage).FullName ?? "Unknown",  // Aggregate type from event type
-      Sequence = nextSequence,
-      Version = (int)nextSequence,  // Backwards compatibility: Version = Sequence
+      Version = (int)nextSequence,  // Version for optimistic concurrency
       // Use centralized formatter for consistent type name format across all event stores
       // Format: "TypeName, AssemblyName" (medium form)
       // This matches wh_message_associations format and enables auto-checkpoint creation
@@ -111,8 +110,8 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
 
     // Query events from the specified sequence onwards
     var query = _context.Set<EventStoreRecord>()
-      .Where(e => e.StreamId == streamId && e.Sequence >= fromSequence)
-      .OrderBy(e => e.Sequence)
+      .Where(e => e.StreamId == streamId && e.Version >= fromSequence)
+      .OrderBy(e => e.Version)
       .AsAsyncEnumerable();
 
     await foreach (var record in query.WithCancellation(cancellationToken)) {
@@ -121,7 +120,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       var typeInfo = (JsonTypeInfo<TMessage>)_jsonOptions.GetTypeInfo(typeof(TMessage));
       var eventData = JsonSerializer.Deserialize(eventDataJson, typeInfo);
       if (eventData == null) {
-        throw new InvalidOperationException($"Failed to deserialize event at sequence {record.Sequence}");
+        throw new InvalidOperationException($"Failed to deserialize event at version {record.Version}");
       }
 
       // Metadata is already strongly-typed EnvelopeMetadata - use directly
@@ -410,7 +409,7 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
 
     var lastSequence = await _context.Set<EventStoreRecord>()
       .Where(e => e.StreamId == streamId)
-      .MaxAsync(e => (long?)e.Sequence, cancellationToken);
+      .MaxAsync(e => (long?)e.Version, cancellationToken);
 
     return lastSequence ?? -1;
   }

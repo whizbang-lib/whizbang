@@ -104,7 +104,6 @@ public static class WhizbangModelBuilderExtensions {
       entity.Property(e => e.StreamId).HasColumnName("stream_id").IsRequired();
       entity.Property(e => e.AggregateId).HasColumnName("aggregate_id").IsRequired();
       entity.Property(e => e.AggregateType).HasColumnName("aggregate_type").IsRequired();
-      entity.Property(e => e.Sequence).HasColumnName("sequence_number").IsRequired();
       entity.Property(e => e.Version).HasColumnName("version").IsRequired();
       entity.Property(e => e.EventType).HasColumnName("event_type").IsRequired();
       entity.Property(e => e.EventData).HasColumnName("event_data").HasColumnType("jsonb").IsRequired();
@@ -112,9 +111,8 @@ public static class WhizbangModelBuilderExtensions {
       entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType("jsonb");
       entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
 
-      entity.HasIndex(e => new { e.StreamId, e.Version }).IsUnique();
+      entity.HasIndex(e => new { e.StreamId, e.Version }).IsUnique();  // Required for ON CONFLICT in process_work_batch
       entity.HasIndex(e => new { e.AggregateId, e.Version }).IsUnique();
-      entity.HasIndex(e => new { e.StreamId, e.Sequence }).IsUnique();  // Required for ON CONFLICT in process_work_batch
       entity.HasIndex(e => e.StreamId);
       entity.HasIndex(e => e.CreatedAt);
     });

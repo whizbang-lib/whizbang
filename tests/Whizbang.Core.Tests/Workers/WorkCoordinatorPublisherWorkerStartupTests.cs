@@ -351,7 +351,6 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
       Flags = WorkBatchFlags.None,
-      SequenceOrder = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
     };
   }
 

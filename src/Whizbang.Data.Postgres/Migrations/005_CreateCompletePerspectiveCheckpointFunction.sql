@@ -37,12 +37,15 @@ BEGIN
     AND perspective_name = p_perspective_name;
 
   -- CRITICAL: Mark perspective events as processed
-  -- Without this, events remain unprocessed forever and prevent new events from being claimed
-  UPDATE __SCHEMA__.wh_perspective_events
+  -- Only mark events up to and including the event we just processed (by UUIDv7 ordering)
+  -- Event IDs are Medo.Uuid7 which provide temporal ordering
+  -- This prevents marking future events that were created concurrently as "already processed"
+  UPDATE __SCHEMA__.wh_perspective_events pe
   SET processed_at = NOW()
   WHERE stream_id = p_stream_id
     AND perspective_name = p_perspective_name
-    AND processed_at IS NULL;
+    AND processed_at IS NULL
+    AND event_id <= p_last_event_id;
 
   -- If we were catching up and successfully completed, clear the CatchingUp flag
   IF v_is_catching_up AND (p_status & 2) = 2 THEN  -- Completed flag

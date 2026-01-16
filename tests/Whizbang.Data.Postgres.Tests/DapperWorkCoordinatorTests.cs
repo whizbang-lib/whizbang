@@ -682,9 +682,6 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await Assert.That(work.PartitionNumber).IsNotNull();
     await Assert.That(work.PartitionNumber!.Value).IsGreaterThanOrEqualTo(0);
     await Assert.That(work.PartitionNumber!.Value).IsLessThanOrEqualTo(9999);
-
-    // Verify sequence_order was set
-    await Assert.That(work.SequenceOrder).IsGreaterThan(0);
   }
 
   [Test]
@@ -736,9 +733,6 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await Assert.That(work.PartitionNumber).IsNotNull();
     await Assert.That(work.PartitionNumber!.Value).IsGreaterThanOrEqualTo(0);
     await Assert.That(work.PartitionNumber!.Value).IsLessThanOrEqualTo(9999);
-
-    // Verify sequence_order was set
-    await Assert.That(work.SequenceOrder).IsGreaterThan(0);
   }
 
   // ========================================
@@ -2053,9 +2047,9 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     using var connection = await ConnectionFactory.CreateConnectionAsync();
     await connection.ExecuteAsync(@"
       INSERT INTO wh_event_store (
-        event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, scope, sequence_number, version, created_at
+        event_id, stream_id, aggregate_id, aggregate_type, event_type, event_data, metadata, scope, version, created_at
       ) VALUES (
-        @eventId, @streamId, @streamId, 'Test', @eventType, @eventData::jsonb, '{}'::jsonb, NULL, nextval('wh_event_sequence'), @version, @now
+        @eventId, @streamId, @streamId, 'Test', @eventType, @eventData::jsonb, '{}'::jsonb, NULL, @version, @now
       )",
       new {
         eventId,

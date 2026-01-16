@@ -29,11 +29,12 @@ BEGIN
         AND ast.lease_expiry > p_now
     )
     -- Critical: Ensure ordering - no earlier uncompleted events in same perspective
+    -- Event IDs are UUIDv7 with temporal ordering, so we can compare them directly
     AND NOT EXISTS (
       SELECT 1 FROM wh_perspective_events earlier
       WHERE earlier.stream_id = pe.stream_id
         AND earlier.perspective_name = pe.perspective_name
-        AND earlier.sequence_number < pe.sequence_number
+        AND earlier.event_id < pe.event_id
         AND (
           -- Earlier event is claimed by another instance
           (earlier.instance_id IS NOT NULL AND earlier.lease_expiry > p_now)

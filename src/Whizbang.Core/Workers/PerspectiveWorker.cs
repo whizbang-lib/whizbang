@@ -143,6 +143,9 @@ public partial class PerspectiveWorker(
     await using var scope = _scopeFactory.CreateAsyncScope();
     var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
+    // DIAGNOSTIC: Log which service/instance is processing checkpoints
+    LogProcessingWorkBatchForService(_logger, _instanceProvider.ServiceName, _instanceProvider.InstanceId);
+
     // 1. Get pending items (status = Pending, not yet sent)
     var pendingCompletions = _completionStrategy.GetPendingCompletions();
     var pendingFailures = _completionStrategy.GetPendingFailures();
@@ -357,9 +360,20 @@ public partial class PerspectiveWorker(
 
         // Phase 3a: Load events that were just processed (shared by both lifecycle stages)
         // Only load once to avoid duplicate queries and potential transaction issues
-        var processedEvents = (_lifecycleInvoker is not null && eventStore is not null && result.Status == PerspectiveProcessingStatus.Completed)
-          ? await _loadProcessedEventsAsync(eventStore, streamId, perspectiveName, lastProcessedEventId, result.LastEventId, cancellationToken)
+        var shouldLoadEvents = _lifecycleInvoker is not null && eventStore is not null && result.Status == PerspectiveProcessingStatus.Completed;
+#pragma warning disable CA1848 // Temporary diagnostic logging
+        _logger.LogInformation("[PerspectiveWorker DIAGNOSTIC] Loading events for {PerspectiveName}/{StreamId}: shouldLoad={ShouldLoad}, invoker={HasInvoker}, store={HasStore}, status={Status}, lastProcessed={LastProcessed}, current={Current}",
+          perspectiveName, streamId, shouldLoadEvents, _lifecycleInvoker is not null, eventStore is not null, result.Status, lastProcessedEventId, result.LastEventId);
+#pragma warning restore CA1848
+
+        var processedEvents = shouldLoadEvents
+          ? await _loadProcessedEventsAsync(eventStore!, streamId, perspectiveName, lastProcessedEventId, result.LastEventId, cancellationToken)
           : new List<MessageEnvelope<IEvent>>();
+
+#pragma warning disable CA1848 // Temporary diagnostic logging
+        _logger.LogInformation("[PerspectiveWorker DIAGNOSTIC] Loaded {Count} events for {PerspectiveName}/{StreamId}",
+          processedEvents.Count, perspectiveName, streamId);
+#pragma warning restore CA1848
 
         // NOTE: PostPerspectiveAsync is fired from the generated perspective runner, not here.
         // The runner fires it after flushing data but before returning the completion.
@@ -376,6 +390,7 @@ public partial class PerspectiveWorker(
 
         if (processedEvents.Count > 0 && _lifecycleInvoker is not null) {
           LogInvokingPostPerspectiveInline(_logger, processedEvents.Count, perspectiveName, streamId);
+
           await _invokeLifecycleReceptorsForEventsAsync(
             processedEvents,
             streamId,
@@ -389,9 +404,17 @@ public partial class PerspectiveWorker(
         } else {
           if (processedEvents.Count == 0) {
             LogSkippingPostPerspectiveInlineNoEvents(_logger);
+#pragma warning disable CA1848 // Temporary diagnostic logging
+            _logger.LogWarning("[PerspectiveWorker DIAGNOSTIC] ❌ SKIPPING PostPerspectiveInline for {PerspectiveName}/{StreamId}: NO EVENTS (lastProcessed={LastProcessed}, current={Current})",
+              perspectiveName, streamId, lastProcessedEventId, result.LastEventId);
+#pragma warning restore CA1848
           }
           if (_lifecycleInvoker is null) {
             LogSkippingPostPerspectiveInlineNoInvoker(_logger);
+#pragma warning disable CA1848 // Temporary diagnostic logging
+            _logger.LogWarning("[PerspectiveWorker DIAGNOSTIC] ❌ SKIPPING PostPerspectiveInline for {PerspectiveName}/{StreamId}: NO INVOKER",
+              perspectiveName, streamId);
+#pragma warning restore CA1848
           }
         }
 
@@ -474,6 +497,11 @@ public partial class PerspectiveWorker(
 
       // Load all events that were just processed by this perspective run
       // Use polymorphic read since we don't know the concrete event types ahead of time
+#pragma warning disable CA1848 // Temporary diagnostic logging
+      _logger.LogInformation("[PerspectiveWorker DIAGNOSTIC] Calling GetEventsBetweenPolymorphicAsync for {PerspectiveName}/{StreamId}: lastProcessed={LastProcessed}, current={Current}, eventTypes={EventTypes}",
+        perspectiveName, streamId, lastProcessedEventId, currentEventId, eventTypes.Count);
+#pragma warning restore CA1848
+
       var processedEvents = await eventStore.GetEventsBetweenPolymorphicAsync(
         streamId,
         lastProcessedEventId,  // Exclusive start
@@ -481,6 +509,11 @@ public partial class PerspectiveWorker(
         eventTypes,            // All known event types for deserialization
         cancellationToken
       );
+
+#pragma warning disable CA1848 // Temporary diagnostic logging
+      _logger.LogInformation("[PerspectiveWorker DIAGNOSTIC] GetEventsBetweenPolymorphicAsync returned {Count} events for {PerspectiveName}/{StreamId}",
+        processedEvents.Count, perspectiveName, streamId);
+#pragma warning restore CA1848
 
       return processedEvents;
 
@@ -799,6 +832,16 @@ public partial class PerspectiveWorker(
     Message = "[PerspectiveWorker] Skipping PostPerspectiveInline: no lifecycle invoker registered"
   )]
   static partial void LogSkippingPostPerspectiveInlineNoInvoker(ILogger logger);
+
+  /// <summary>
+  /// DIAGNOSTIC: Log which service is processing work batch (service name maps to schema).
+  /// </summary>
+  [LoggerMessage(
+    EventId = 32,
+    Level = LogLevel.Information,
+    Message = "[PerspectiveWorker SCHEMA DIAGNOSTIC] Service={ServiceName} (InstanceId={InstanceId}) is processing checkpoints"
+  )]
+  static partial void LogProcessingWorkBatchForService(ILogger logger, string serviceName, Guid instanceId);
 }
 
 /// <summary>

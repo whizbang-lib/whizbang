@@ -71,8 +71,8 @@ public abstract class DapperEventStoreBase : IEventStore {
   protected abstract string GetReadSql();
 
   /// <summary>
-  /// Gets the SQL query to get the last sequence number for a stream.
-  /// Should return MAX(sequence_number) or -1 if stream doesn't exist.
+  /// Gets the SQL query to get the last version number for a stream.
+  /// Should return MAX(version) or -1 if stream doesn't exist.
   /// Parameters: @StreamId (Guid)
   /// </summary>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:GetLastSequenceAsync_EmptyStream_ShouldReturnMinusOneAsync</tests>

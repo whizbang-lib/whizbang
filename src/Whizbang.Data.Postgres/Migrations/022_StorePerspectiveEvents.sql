@@ -24,8 +24,7 @@ BEGIN
     SELECT
       (elem->>'StreamId')::UUID as v_stream_id,
       (elem->>'PerspectiveName')::VARCHAR(200) as v_perspective_name,
-      (elem->>'EventId')::UUID as v_event_id,
-      (elem->>'SequenceNumber')::BIGINT as v_sequence_number
+      (elem->>'EventId')::UUID as v_event_id
     FROM jsonb_array_elements(p_events) as elem
   LOOP
     -- Generate work item ID
@@ -37,7 +36,6 @@ BEGIN
       stream_id,
       perspective_name,
       event_id,
-      sequence_number,
       status,
       attempts,
       created_at,
@@ -48,7 +46,6 @@ BEGIN
       v_event.v_stream_id,
       v_event.v_perspective_name,
       v_event.v_event_id,
-      v_event.v_sequence_number,
       1,  -- Stored flag
       0,  -- Initial attempts
       p_now,

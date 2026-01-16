@@ -77,8 +77,7 @@ CREATE OR REPLACE FUNCTION __SCHEMA__.process_work_batch(
   failure_reason INTEGER,       -- MessageFailureReason enum value (NULL if no failure)
 
   -- Perspective-specific fields (NULL for non-perspective work)
-  perspective_name VARCHAR(200),
-  sequence_number BIGINT
+  perspective_name VARCHAR(200)
 ) AS $$
 DECLARE
   v_lease_expiry TIMESTAMPTZ;
@@ -331,6 +330,10 @@ BEGIN
     (SELECT COUNT(*) FROM temp_new_outbox), p_instance_id;
 
   -- Store new inbox messages and track
+  -- DIAGNOSTIC: Log what's being passed to store_inbox_messages
+  RAISE NOTICE '[Phase 4] Calling store_inbox_messages with % inbox messages',
+    jsonb_array_length(p_new_inbox_messages);
+
   INSERT INTO temp_new_inbox (message_id, stream_id)
   SELECT sim.message_id, sim.stream_id
   FROM __SCHEMA__.store_inbox_messages(
@@ -341,6 +344,19 @@ BEGIN
     p_partition_count
   ) AS sim
   WHERE sim.was_newly_created = true;
+
+  -- DIAGNOSTIC: Log how many new inbox messages were tracked
+  RAISE NOTICE '[Phase 4] Stored % new inbox messages to temp_new_inbox (instance_id=%)',
+    (SELECT COUNT(*) FROM temp_new_inbox), p_instance_id;
+  RAISE NOTICE '[Phase 4] Debug: SELECT COUNT(*) from store_inbox_messages result would be: %',
+    (SELECT COUNT(*)
+     FROM __SCHEMA__.store_inbox_messages(
+       p_new_inbox_messages,
+       p_instance_id,
+       v_lease_expiry,
+       p_now,
+       p_partition_count
+     ));
 
   -- Store new perspective events and track
   INSERT INTO temp_new_perspective_events (event_work_id, stream_id, perspective_name)
@@ -403,7 +419,6 @@ BEGIN
       event_data,
       metadata,
       scope,
-      sequence_number,
       version,
       created_at
     )
@@ -421,7 +436,6 @@ BEGIN
         'Hops', COALESCE(bv.event_data::jsonb -> 'Hops', '[]'::jsonb)
       ) as metadata,
       bv.scope,
-      nextval('wh_event_sequence'),
       bv.base_version + bv.row_num as version,
       p_now
     FROM outbox_base_versions bv
@@ -518,7 +532,6 @@ BEGIN
       event_data,
       metadata,
       scope,
-      sequence_number,
       version,
       created_at
     )
@@ -536,7 +549,6 @@ BEGIN
         'Hops', COALESCE(bv.event_data::jsonb -> 'Hops', '[]'::jsonb)
       ) as metadata,
       bv.scope,
-      nextval('wh_event_sequence'),
       bv.base_version + bv.row_num as version,
       p_now
     FROM inbox_base_versions bv
@@ -598,7 +610,6 @@ BEGIN
     stream_id,
     perspective_name,
     event_id,
-    sequence_number,
     status,
     attempts,
     created_at,
@@ -610,7 +621,6 @@ BEGIN
     es.stream_id,
     ma.target_name as perspective_name,
     es.event_id,
-    es.sequence_number,
     1 as status,  -- Stored flag
     0 as attempts,
     p_now as created_at,
@@ -841,8 +851,7 @@ BEGIN
     CASE WHEN o.orphaned_message_id IS NOT NULL THEN true ELSE false END as is_orphaned,
     NULL::TEXT as error,
     NULL::INTEGER as failure_reason,
-    NULL::VARCHAR(200) as perspective_name,
-    NULL::BIGINT as sequence_number
+    NULL::VARCHAR(200) as perspective_name
   FROM ordered_outbox o;
 
   -- Return inbox work (first row includes acknowledgement counts if no outbox work)
@@ -891,8 +900,7 @@ BEGIN
     CASE WHEN i.orphaned_message_id IS NOT NULL THEN true ELSE false END as is_orphaned,
     NULL::TEXT as error,
     NULL::INTEGER as failure_reason,
-    NULL::VARCHAR(200) as perspective_name,
-    NULL::BIGINT as sequence_number
+    NULL::VARCHAR(200) as perspective_name
   FROM ordered_inbox i;
 
   -- Return receptor work
@@ -915,8 +923,7 @@ BEGIN
     CASE WHEN temp_orphaned.processing_id IS NOT NULL THEN true ELSE false END as is_orphaned,
     NULL::TEXT as error,
     NULL::INTEGER as failure_reason,
-    NULL::VARCHAR(200) as perspective_name,
-    NULL::BIGINT as sequence_number
+    NULL::VARCHAR(200) as perspective_name
   FROM wh_receptor_processing rp
   LEFT JOIN temp_orphaned_receptor temp_orphaned ON rp.id = temp_orphaned.processing_id
   WHERE rp.instance_id = p_instance_id
@@ -950,7 +957,7 @@ BEGIN
       temp_new.event_work_id as new_event_work_id,
       temp_orphaned.event_work_id as orphaned_event_work_id,
       es.event_type,  -- Get event_type from event_store for perspective worker
-      ROW_NUMBER() OVER (ORDER BY pe.stream_id, pe.perspective_name, pe.sequence_number) as row_num
+      ROW_NUMBER() OVER (ORDER BY pe.stream_id, pe.perspective_name, pe.event_id) as row_num
     FROM wh_perspective_events pe
     INNER JOIN __SCHEMA__.wh_event_store es ON pe.event_id = es.event_id  -- JOIN to get event_type
     LEFT JOIN temp_new_perspective_events temp_new ON pe.event_work_id = temp_new.event_work_id
@@ -986,10 +993,9 @@ BEGIN
     CASE WHEN pe.orphaned_event_work_id IS NOT NULL THEN true ELSE false END as is_orphaned,
     NULL::TEXT as error,
     NULL::INTEGER as failure_reason,
-    pe.perspective_name,
-    pe.sequence_number
+    pe.perspective_name
   FROM ordered_perspective pe
-  ORDER BY pe.stream_id, pe.perspective_name, pe.sequence_number;
+  ORDER BY pe.stream_id, pe.perspective_name, pe.event_id;
 END;
 $$ LANGUAGE plpgsql;
 

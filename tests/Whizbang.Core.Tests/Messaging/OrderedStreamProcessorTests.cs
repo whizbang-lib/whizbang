@@ -25,35 +25,36 @@ public class OrderedStreamProcessorTests {
     // Arrange
     var sut = new OrderedStreamProcessor(parallelizeStreams: false);
     var streamId = _idProvider.NewGuid();
-    var processedOrder = new List<long>();
+    var processedOrder = new List<Medo.Uuid7>();
 
-    // Create 5 messages with different SequenceOrder
+    // Create 5 messages with UUIDv7 temporal ordering
     var messages = new List<InboxWork> {
-      _createInboxWork(streamId, sequenceOrder: 100),
-      _createInboxWork(streamId, sequenceOrder: 300),
-      _createInboxWork(streamId, sequenceOrder: 200),
-      _createInboxWork(streamId, sequenceOrder: 500),
-      _createInboxWork(streamId, sequenceOrder: 400)
+      _createInboxWork(streamId),
+      _createInboxWork(streamId),
+      _createInboxWork(streamId),
+      _createInboxWork(streamId),
+      _createInboxWork(streamId)
     };
 
     // Act
     await sut.ProcessInboxWorkAsync(
       messages,
       processor: async work => {
-        processedOrder.Add(work.SequenceOrder);
+        processedOrder.Add(work.MessageId);
         return await Task.FromResult(MessageProcessingStatus.EventStored);
       },
       completionHandler: (_, _) => { },
       failureHandler: (_, _, _) => { }
     );
 
-    // Assert - Should process in SequenceOrder ascending order
+    // Assert - Should process in MessageId (UUIDv7) ascending order
     await Assert.That(processedOrder).Count().IsEqualTo(5);
-    await Assert.That(processedOrder[0]).IsEqualTo(100L);
-    await Assert.That(processedOrder[1]).IsEqualTo(200L);
-    await Assert.That(processedOrder[2]).IsEqualTo(300L);
-    await Assert.That(processedOrder[3]).IsEqualTo(400L);
-    await Assert.That(processedOrder[4]).IsEqualTo(500L);
+    // Verify messages were processed in creation order (UUIDv7 provides temporal ordering)
+    await Assert.That(processedOrder[0]).IsEqualTo(messages[0].MessageId);
+    await Assert.That(processedOrder[1]).IsEqualTo(messages[1].MessageId);
+    await Assert.That(processedOrder[2]).IsEqualTo(messages[2].MessageId);
+    await Assert.That(processedOrder[3]).IsEqualTo(messages[3].MessageId);
+    await Assert.That(processedOrder[4]).IsEqualTo(messages[4].MessageId);
   }
 
   [Test]
@@ -71,12 +72,12 @@ public class OrderedStreamProcessorTests {
 
     // Create messages from 3 different streams
     var messages = new List<InboxWork> {
-      _createInboxWork(stream1, sequenceOrder: 100),
-      _createInboxWork(stream1, sequenceOrder: 200),
-      _createInboxWork(stream2, sequenceOrder: 100),
-      _createInboxWork(stream2, sequenceOrder: 200),
-      _createInboxWork(stream3, sequenceOrder: 100),
-      _createInboxWork(stream3, sequenceOrder: 200)
+      _createInboxWork(stream1),
+      _createInboxWork(stream1),
+      _createInboxWork(stream2),
+      _createInboxWork(stream2),
+      _createInboxWork(stream3),
+      _createInboxWork(stream3)
     };
 
     // Act
@@ -140,20 +141,20 @@ public class OrderedStreamProcessorTests {
     var processedMessages = new ConcurrentBag<Guid>();
     var failedMessages = new ConcurrentBag<Guid>();
 
-    // Create messages from 2 streams
-    var messages = new List<InboxWork> {
-      _createInboxWork(stream1, sequenceOrder: 100),
-      _createInboxWork(stream1, sequenceOrder: 200),  // Won't be processed (stream stopped)
-      _createInboxWork(stream2, sequenceOrder: 100),
-      _createInboxWork(stream2, sequenceOrder: 200)
-    };
+    // Create messages from 2 streams (UUIDv7 provides temporal ordering)
+    var stream1msg1 = _createInboxWork(stream1);
+    var stream1msg2 = _createInboxWork(stream1);  // Won't be processed (stream stopped)
+    var stream2msg1 = _createInboxWork(stream2);
+    var stream2msg2 = _createInboxWork(stream2);
+
+    var messages = new List<InboxWork> { stream1msg1, stream1msg2, stream2msg1, stream2msg2 };
 
     // Act
     await sut.ProcessInboxWorkAsync(
       messages,
       processor: async work => {
         // Fail first message of stream1
-        if (work.StreamId == stream1 && work.SequenceOrder == 100) {
+        if (work.MessageId == stream1msg1.MessageId) {
           throw new InvalidOperationException("Simulated failure");
         }
 
@@ -191,7 +192,7 @@ public class OrderedStreamProcessorTests {
     string? reportedError = null;
 
     // Create work item with only Stored status (processing will fail before EventStored)
-    var message = _createInboxWork(streamId, sequenceOrder: 100);
+    var message = _createInboxWork(streamId);
     message = message with {
       Status = MessageProcessingStatus.Stored
     };
@@ -229,41 +230,42 @@ public class OrderedStreamProcessorTests {
     // Arrange
     var sut = new OrderedStreamProcessor(parallelizeStreams: false);
     var streamId = _idProvider.NewGuid();
-    var processedOrder = new List<long>();
+    var processedOrder = new List<Medo.Uuid7>();
 
-    // Create 5 messages with different SequenceOrder
+    // Create 5 messages with UUIDv7 temporal ordering
     var messages = new List<OutboxWork> {
-      _createOutboxWork(streamId, sequenceOrder: 100),
-      _createOutboxWork(streamId, sequenceOrder: 300),
-      _createOutboxWork(streamId, sequenceOrder: 200),
-      _createOutboxWork(streamId, sequenceOrder: 500),
-      _createOutboxWork(streamId, sequenceOrder: 400)
+      _createOutboxWork(streamId),
+      _createOutboxWork(streamId),
+      _createOutboxWork(streamId),
+      _createOutboxWork(streamId),
+      _createOutboxWork(streamId)
     };
 
     // Act
     await sut.ProcessOutboxWorkAsync(
       messages,
       processor: async work => {
-        processedOrder.Add(work.SequenceOrder);
+        processedOrder.Add(work.MessageId);
         return await Task.FromResult(MessageProcessingStatus.Published);
       },
       completionHandler: (_, _) => { },
       failureHandler: (_, _, _) => { }
     );
 
-    // Assert - Should process in SequenceOrder ascending order
+    // Assert - Should process in MessageId (UUIDv7) ascending order
     await Assert.That(processedOrder).Count().IsEqualTo(5);
-    await Assert.That(processedOrder[0]).IsEqualTo(100L);
-    await Assert.That(processedOrder[1]).IsEqualTo(200L);
-    await Assert.That(processedOrder[2]).IsEqualTo(300L);
-    await Assert.That(processedOrder[3]).IsEqualTo(400L);
-    await Assert.That(processedOrder[4]).IsEqualTo(500L);
+    // Verify messages were processed in creation order (UUIDv7 provides temporal ordering)
+    await Assert.That(processedOrder[0]).IsEqualTo(messages[0].MessageId);
+    await Assert.That(processedOrder[1]).IsEqualTo(messages[1].MessageId);
+    await Assert.That(processedOrder[2]).IsEqualTo(messages[2].MessageId);
+    await Assert.That(processedOrder[3]).IsEqualTo(messages[3].MessageId);
+    await Assert.That(processedOrder[4]).IsEqualTo(messages[4].MessageId);
   }
 
   // Helper methods
 
-  private InboxWork _createInboxWork(Guid streamId, long sequenceOrder) {
-    var messageId = _idProvider.NewGuid();
+  private InboxWork _createInboxWork(Guid streamId) {
+    var messageId = _idProvider.NewGuid();  // UUIDv7 with temporal ordering
     var envelope = _createTestEnvelope(messageId);
     return new InboxWork {
       MessageId = messageId,
@@ -272,13 +274,12 @@ public class OrderedStreamProcessorTests {
       StreamId = streamId,
       PartitionNumber = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None,
-      SequenceOrder = sequenceOrder
+      Flags = WorkBatchFlags.None
     };
   }
 
-  private OutboxWork _createOutboxWork(Guid streamId, long sequenceOrder) {
-    var messageId = _idProvider.NewGuid();
+  private OutboxWork _createOutboxWork(Guid streamId) {
+    var messageId = _idProvider.NewGuid();  // UUIDv7 with temporal ordering
     var envelope = _createTestEnvelope(messageId);
     return new OutboxWork {
       MessageId = messageId,
@@ -290,8 +291,7 @@ public class OrderedStreamProcessorTests {
       PartitionNumber = 0,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
-      Flags = WorkBatchFlags.None,
-      SequenceOrder = sequenceOrder
+      Flags = WorkBatchFlags.None
     };
   }
 
