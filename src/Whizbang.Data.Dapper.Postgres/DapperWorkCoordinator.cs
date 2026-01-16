@@ -57,61 +57,6 @@ public class DapperWorkCoordinator(
   private readonly ILogger<DapperWorkCoordinator>? _logger = logger;
 
   public async Task<WorkBatch> ProcessWorkBatchAsync(
-    Guid instanceId,
-    string serviceName,
-    string hostName,
-    int processId,
-    Dictionary<string, JsonElement>? metadata,
-    MessageCompletion[] outboxCompletions,
-    MessageFailure[] outboxFailures,
-    MessageCompletion[] inboxCompletions,
-    MessageFailure[] inboxFailures,
-    ReceptorProcessingCompletion[] receptorCompletions,
-    ReceptorProcessingFailure[] receptorFailures,
-    PerspectiveCheckpointCompletion[] perspectiveCompletions,
-    PerspectiveCheckpointFailure[] perspectiveFailures,
-    OutboxMessage[] newOutboxMessages,
-    InboxMessage[] newInboxMessages,
-    Guid[] renewOutboxLeaseIds,
-    Guid[] renewInboxLeaseIds,
-    WorkBatchFlags flags = WorkBatchFlags.None,
-    int partitionCount = 10_000,
-    int leaseSeconds = 300,
-    int staleThresholdSeconds = 600,
-    CancellationToken cancellationToken = default
-  ) {
-    // Delegate to internal implementation using parameter object
-    var request = new ProcessWorkBatchRequest(
-      InstanceId: instanceId,
-      ServiceName: serviceName,
-      HostName: hostName,
-      ProcessId: processId,
-      Metadata: metadata,
-      OutboxCompletions: outboxCompletions,
-      OutboxFailures: outboxFailures,
-      InboxCompletions: inboxCompletions,
-      InboxFailures: inboxFailures,
-      ReceptorCompletions: receptorCompletions,
-      ReceptorFailures: receptorFailures,
-      PerspectiveCompletions: perspectiveCompletions,
-      PerspectiveFailures: perspectiveFailures,
-      NewOutboxMessages: newOutboxMessages,
-      NewInboxMessages: newInboxMessages,
-      RenewOutboxLeaseIds: renewOutboxLeaseIds,
-      RenewInboxLeaseIds: renewInboxLeaseIds,
-      Flags: flags,
-      PartitionCount: partitionCount,
-      LeaseSeconds: leaseSeconds,
-      StaleThresholdSeconds: staleThresholdSeconds
-    );
-
-    return await _processWorkBatchInternalAsync(request, cancellationToken);
-  }
-
-  /// <summary>
-  /// Internal implementation of ProcessWorkBatchAsync using parameter object to reduce complexity.
-  /// </summary>
-  private async Task<WorkBatch> _processWorkBatchInternalAsync(
     ProcessWorkBatchRequest request,
     CancellationToken cancellationToken = default
   ) {
@@ -614,34 +559,6 @@ internal class CheckpointQueryResult {
   public Guid? last_event_id { get; set; }
   public short status { get; set; }
 }
-
-/// <summary>
-/// Parameter object for ProcessWorkBatchAsync to reduce method complexity.
-/// Groups related parameters for better maintainability and caller ergonomics.
-/// </summary>
-internal sealed record ProcessWorkBatchRequest(
-  Guid InstanceId,
-  string ServiceName,
-  string HostName,
-  int ProcessId,
-  Dictionary<string, JsonElement>? Metadata,
-  MessageCompletion[] OutboxCompletions,
-  MessageFailure[] OutboxFailures,
-  MessageCompletion[] InboxCompletions,
-  MessageFailure[] InboxFailures,
-  ReceptorProcessingCompletion[] ReceptorCompletions,
-  ReceptorProcessingFailure[] ReceptorFailures,
-  PerspectiveCheckpointCompletion[] PerspectiveCompletions,
-  PerspectiveCheckpointFailure[] PerspectiveFailures,
-  OutboxMessage[] NewOutboxMessages,
-  InboxMessage[] NewInboxMessages,
-  Guid[] RenewOutboxLeaseIds,
-  Guid[] RenewInboxLeaseIds,
-  WorkBatchFlags Flags = WorkBatchFlags.None,
-  int PartitionCount = 10_000,
-  int LeaseSeconds = 300,
-  int StaleThresholdSeconds = 600
-);
 
 /// <summary>
 /// Holds all serialized JSON data for the database function call.

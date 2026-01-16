@@ -49,30 +49,30 @@ public class WorkBatchCoordinator : IWorkBatchCoordinator {
     CancellationToken ct = default
   ) {
     // Call the central SQL function (process_work_batch)
-    var workBatch = await _workCoordinator.ProcessWorkBatchAsync(
-      instanceId,
-      _instanceProvider.ServiceName,
-      _instanceProvider.HostName,
-      _instanceProvider.ProcessId,
-      metadata: null,
-      outboxCompletions: [.. (outboxCompletions ?? [])],
-      outboxFailures: [.. (outboxFailures ?? [])],
-      inboxCompletions: [.. (inboxCompletions ?? [])],
-      inboxFailures: [.. (inboxFailures ?? [])],
-      receptorCompletions: [],
-      receptorFailures: [],
-      perspectiveCompletions: [.. (perspectiveCompletions ?? [])],
-      perspectiveFailures: [.. (perspectiveFailures ?? [])],
-      newOutboxMessages: [],
-      newInboxMessages: [],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
-      flags: WorkBatchFlags.None,
-      partitionCount: 16,  // TODO: Make configurable
-      leaseSeconds: 30,    // TODO: Make configurable
-      staleThresholdSeconds: 300,  // TODO: Make configurable
-      cancellationToken: ct
-    );
+    var request = new ProcessWorkBatchRequest {
+      InstanceId = instanceId,
+      ServiceName = _instanceProvider.ServiceName,
+      HostName = _instanceProvider.HostName,
+      ProcessId = _instanceProvider.ProcessId,
+      Metadata = null,
+      OutboxCompletions = [.. (outboxCompletions ?? [])],
+      OutboxFailures = [.. (outboxFailures ?? [])],
+      InboxCompletions = [.. (inboxCompletions ?? [])],
+      InboxFailures = [.. (inboxFailures ?? [])],
+      ReceptorCompletions = [],
+      ReceptorFailures = [],
+      PerspectiveCompletions = [.. (perspectiveCompletions ?? [])],
+      PerspectiveFailures = [.. (perspectiveFailures ?? [])],
+      NewOutboxMessages = [],
+      NewInboxMessages = [],
+      RenewOutboxLeaseIds = [],
+      RenewInboxLeaseIds = [],
+      Flags = WorkBatchFlags.None,
+      PartitionCount = 16,  // TODO: Make configurable
+      LeaseSeconds = 30,    // TODO: Make configurable
+      StaleThresholdSeconds = 300  // TODO: Make configurable
+    };
+    var workBatch = await _workCoordinator.ProcessWorkBatchAsync(request, ct);
 
     // Distribute outbox work to outbox channel
     foreach (var outboxWork in workBatch.OutboxWork) {

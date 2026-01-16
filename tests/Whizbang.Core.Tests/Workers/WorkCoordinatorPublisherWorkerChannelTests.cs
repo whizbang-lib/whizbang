@@ -38,32 +38,12 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
     public int CallCount { get; private set; }
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
-      Guid instanceId,
-      string serviceName,
-      string hostName,
-      int processId,
-      Dictionary<string, System.Text.Json.JsonElement>? metadata,
-      MessageCompletion[] outboxCompletions,
-      MessageFailure[] outboxFailures,
-      MessageCompletion[] inboxCompletions,
-      MessageFailure[] inboxFailures,
-      ReceptorProcessingCompletion[] receptorCompletions,
-      ReceptorProcessingFailure[] receptorFailures,
-      PerspectiveCheckpointCompletion[] perspectiveCompletions,
-      PerspectiveCheckpointFailure[] perspectiveFailures,
-      OutboxMessage[] newOutboxMessages,
-      InboxMessage[] newInboxMessages,
-      Guid[] renewOutboxLeaseIds,
-      Guid[] renewInboxLeaseIds,
-      WorkBatchFlags flags = WorkBatchFlags.None,
-      int partitionCount = 10000,
-      int leaseSeconds = 300,
-      int staleThresholdSeconds = 600,
+      ProcessWorkBatchRequest request,
       CancellationToken cancellationToken = default) {
 
       CallCount++;
-      ReceivedCompletions.AddRange(outboxCompletions);
-      ReceivedFailures.AddRange(outboxFailures);
+      ReceivedCompletions.AddRange(request.OutboxCompletions);
+      ReceivedFailures.AddRange(request.OutboxFailures);
 
       return Task.FromResult(new WorkBatch {
         OutboxWork = [.. WorkToReturn],

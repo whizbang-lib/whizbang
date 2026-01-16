@@ -249,29 +249,8 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     public List<OutboxWork> WorkToReturn { get; set; } = [];
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
-      System.Guid instanceId,
-      string serviceName,
-      string hostName,
-      int processId,
-      System.Collections.Generic.Dictionary<string, JsonElement>? metadata,
-      MessageCompletion[] outboxCompletions,
-      MessageFailure[] outboxFailures,
-      MessageCompletion[] inboxCompletions,
-      MessageFailure[] inboxFailures,
-      ReceptorProcessingCompletion[] receptorCompletions,
-      ReceptorProcessingFailure[] receptorFailures,
-      PerspectiveCheckpointCompletion[] perspectiveCompletions,
-      PerspectiveCheckpointFailure[] perspectiveFailures,
-      OutboxMessage[] newOutboxMessages,
-      InboxMessage[] newInboxMessages,
-      System.Guid[] renewOutboxLeaseIds,
-      System.Guid[] renewInboxLeaseIds,
-      WorkBatchFlags flags,
-      int partitionCount,
-      int leaseSeconds,
-      int staleThresholdSeconds,
-      CancellationToken cancellationToken = default
-    ) {
+      ProcessWorkBatchRequest request,
+      CancellationToken cancellationToken = default) {
       return Task.FromResult(new WorkBatch {
         OutboxWork = WorkToReturn,
         InboxWork = [],

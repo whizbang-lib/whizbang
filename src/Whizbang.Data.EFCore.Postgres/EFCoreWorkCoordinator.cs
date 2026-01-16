@@ -51,56 +51,36 @@ public class EFCoreWorkCoordinator<TDbContext>(
     ?? throw new InvalidOperationException("DbContext must have a connection string configured");
 
   public async Task<WorkBatch> ProcessWorkBatchAsync(
-    Guid instanceId,
-    string serviceName,
-    string hostName,
-    int processId,
-    Dictionary<string, JsonElement>? metadata,
-    MessageCompletion[] outboxCompletions,
-    MessageFailure[] outboxFailures,
-    MessageCompletion[] inboxCompletions,
-    MessageFailure[] inboxFailures,
-    ReceptorProcessingCompletion[] receptorCompletions,
-    ReceptorProcessingFailure[] receptorFailures,
-    PerspectiveCheckpointCompletion[] perspectiveCompletions,
-    PerspectiveCheckpointFailure[] perspectiveFailures,
-    OutboxMessage[] newOutboxMessages,
-    InboxMessage[] newInboxMessages,
-    Guid[] renewOutboxLeaseIds,
-    Guid[] renewInboxLeaseIds,
-    WorkBatchFlags flags = WorkBatchFlags.None,
-    int partitionCount = 10_000,
-    int leaseSeconds = 300,
-    int staleThresholdSeconds = 600,
+    ProcessWorkBatchRequest request,
     CancellationToken cancellationToken = default
   ) {
     _logger?.LogDebug(
       "Processing work batch for instance {InstanceId} ({ServiceName}@{HostName}:{ProcessId}): {OutboxCompletions} outbox completions, {OutboxFailures} outbox failures, {InboxCompletions} inbox completions, {InboxFailures} inbox failures, {NewOutbox} new outbox, {NewInbox} new inbox, Flags={Flags}",
-      instanceId,
-      serviceName,
-      hostName,
-      processId,
-      outboxCompletions.Length,
-      outboxFailures.Length,
-      inboxCompletions.Length,
-      inboxFailures.Length,
-      newOutboxMessages.Length,
-      newInboxMessages.Length,
-      flags
+      request.InstanceId,
+      request.ServiceName,
+      request.HostName,
+      request.ProcessId,
+      request.OutboxCompletions.Length,
+      request.OutboxFailures.Length,
+      request.InboxCompletions.Length,
+      request.InboxFailures.Length,
+      request.NewOutboxMessages.Length,
+      request.NewInboxMessages.Length,
+      request.Flags
     );
 
     // Convert to JSONB parameters
-    var outboxCompletionsJson = _serializeCompletions(outboxCompletions);
-    var outboxFailuresJson = _serializeFailures(outboxFailures);
-    var inboxCompletionsJson = _serializeCompletions(inboxCompletions);
-    var inboxFailuresJson = _serializeFailures(inboxFailures);
-    var perspectiveCompletionsJson = _serializePerspectiveCompletions(perspectiveCompletions);
-    var perspectiveFailuresJson = _serializePerspectiveFailures(perspectiveFailures);
-    var newOutboxJson = _serializeNewOutboxMessages(newOutboxMessages);
-    var newInboxJson = _serializeNewInboxMessages(newInboxMessages);
-    var metadataJson = _serializeMetadata(metadata);
-    var renewOutboxJson = _serializeLeaseRenewals(renewOutboxLeaseIds);
-    var renewInboxJson = _serializeLeaseRenewals(renewInboxLeaseIds);
+    var outboxCompletionsJson = _serializeCompletions(request.OutboxCompletions);
+    var outboxFailuresJson = _serializeFailures(request.OutboxFailures);
+    var inboxCompletionsJson = _serializeCompletions(request.InboxCompletions);
+    var inboxFailuresJson = _serializeFailures(request.InboxFailures);
+    var perspectiveCompletionsJson = _serializePerspectiveCompletions(request.PerspectiveCompletions);
+    var perspectiveFailuresJson = _serializePerspectiveFailures(request.PerspectiveFailures);
+    var newOutboxJson = _serializeNewOutboxMessages(request.NewOutboxMessages);
+    var newInboxJson = _serializeNewInboxMessages(request.NewInboxMessages);
+    var metadataJson = _serializeMetadata(request.Metadata);
+    var renewOutboxJson = _serializeLeaseRenewals(request.RenewOutboxLeaseIds);
+    var renewInboxJson = _serializeLeaseRenewals(request.RenewInboxLeaseIds);
 
     var outboxCompletionsParam = PostgresJsonHelper.JsonStringToJsonb(outboxCompletionsJson);
     outboxCompletionsParam.ParameterName = "p_outbox_completions";
@@ -200,14 +180,14 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var results = await _dbContext.Database
       .SqlQueryRaw<WorkBatchRow>(
         sql,
-        new Npgsql.NpgsqlParameter("p_instance_id", instanceId),
-        new Npgsql.NpgsqlParameter("p_service_name", serviceName),
-        new Npgsql.NpgsqlParameter("p_host_name", hostName),
-        new Npgsql.NpgsqlParameter("p_process_id", processId),
+        new Npgsql.NpgsqlParameter("p_instance_id", request.InstanceId),
+        new Npgsql.NpgsqlParameter("p_service_name", request.ServiceName),
+        new Npgsql.NpgsqlParameter("p_host_name", request.HostName),
+        new Npgsql.NpgsqlParameter("p_process_id", request.ProcessId),
         metadataParam,
         new Npgsql.NpgsqlParameter("p_now", now),
-        new Npgsql.NpgsqlParameter("p_lease_duration_seconds", leaseSeconds),
-        new Npgsql.NpgsqlParameter("p_partition_count", partitionCount),
+        new Npgsql.NpgsqlParameter("p_lease_duration_seconds", request.LeaseSeconds),
+        new Npgsql.NpgsqlParameter("p_partition_count", request.PartitionCount),
         outboxCompletionsParam,
         inboxCompletionsParam,
         perspectiveEventCompletionsParam,
@@ -222,8 +202,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
         renewOutboxParam,
         renewInboxParam,
         renewPerspectiveEventLeaseIdsParam,
-        new Npgsql.NpgsqlParameter("p_flags", (int)flags),
-        new Npgsql.NpgsqlParameter("p_stale_threshold_seconds", staleThresholdSeconds)
+        new Npgsql.NpgsqlParameter("p_flags", (int)request.Flags),
+        new Npgsql.NpgsqlParameter("p_stale_threshold_seconds", request.StaleThresholdSeconds)
       )
       .ToListAsync(cancellationToken);
 
