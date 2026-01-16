@@ -42,7 +42,7 @@ jobs:
           tests/Whizbang.Transports.RabbitMQ.Tests \
           tests/Whizbang.Transports.Tests
         do
-          dotnet test --project "$project" --no-build --configuration Release \
+          dotnet test --project "$project" --configuration Release \
             --coverage --coverage-output-format cobertura
         done
 
