@@ -67,15 +67,7 @@ public class AggregateIdGenerator : IIncrementalGenerator {
   /// </summary>
   private static bool _isTypeWithAttributes(SyntaxNode node) {
     // Check for records or classes (message types)
-    if (node is RecordDeclarationSyntax record) {
-      return true;
-    }
-
-    if (node is ClassDeclarationSyntax @class) {
-      return true;
-    }
-
-    return false;
+    return node is RecordDeclarationSyntax or ClassDeclarationSyntax;
   }
 
   /// <summary>

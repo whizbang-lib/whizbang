@@ -233,20 +233,17 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Determine message type and response type
+    // Determine message type
     string messageType;
-    string responseType;
 
     if (receptorInterface is not null) {
       // Regular receptor with response - defensive guard
       RoslynGuards.ValidateTypeArgumentCount(receptorInterface, 2, "IReceptor<TMessage, TResponse>");
       messageType = receptorInterface.TypeArguments[0].ToDisplayString();
-      responseType = receptorInterface.TypeArguments[1].ToDisplayString();
     } else {
       // Void receptor - defensive guard
       RoslynGuards.ValidateTypeArgumentCount(voidReceptorInterface!, 1, "IReceptor<TMessage>");
       messageType = voidReceptorInterface!.TypeArguments[0].ToDisplayString();
-      responseType = "void";
     }
 
     // Find the HandleAsync method
@@ -710,13 +707,12 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   // Helper classes for JSON deserialization
   private sealed class CodeDocsEntry {
     public string File { get; set; } = "";
-    public int Line { get; set; }
     public string Symbol { get; set; } = "";
     public string Docs { get; set; } = "";
   }
 
   private sealed class CodeTestsMapData {
-    public Dictionary<string, TestLinkMapping[]>? CodeToTests { get; set; }
+    public Dictionary<string, TestLinkMapping[]>? CodeToTests { get; init; }
   }
 
   private sealed class TestLinkMapping {

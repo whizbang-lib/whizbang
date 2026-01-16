@@ -289,7 +289,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // Generate and replace each region
     template = TemplateUtilities.ReplaceRegion(template, "LAZY_FIELDS", lazyFields.ToString());
-    template = TemplateUtilities.ReplaceRegion(template, "LAZY_PROPERTIES", _generateLazyProperties(assembly, allTypes));
+    template = TemplateUtilities.ReplaceRegion(template, "LAZY_PROPERTIES", "// JsonTypeInfo objects are created on-demand in GetTypeInfo() using provided options");
     template = TemplateUtilities.ReplaceRegion(template, "ASSEMBLY_AWARE_HELPER", _generateAssemblyAwareHelper(assembly, converters, messages, compilation));
     template = TemplateUtilities.ReplaceRegion(template, "GET_DISCOVERED_TYPE_INFO", _generateGetTypeInfo(assembly, allTypes, listTypes));
     template = TemplateUtilities.ReplaceRegion(template, "HELPER_METHODS", _generateHelperMethods(assembly));
@@ -376,14 +376,6 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     return sb.ToString();
   }
 
-  private static string _generateLazyProperties(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> messages) {
-    var sb = new System.Text.StringBuilder();
-
-    // Note: We don't use lazy properties anymore since we create in GetTypeInfo with provided options
-    sb.AppendLine("// JsonTypeInfo objects are created on-demand in GetTypeInfo() using provided options");
-
-    return sb.ToString();
-  }
 
   private static string _generateGetTypeInfo(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes, ImmutableArray<ListTypeInfo> listTypes) {
     var sb = new System.Text.StringBuilder();
@@ -1088,28 +1080,6 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     return sb.ToString();
   }
 
-  /// <summary>
-  /// Generates GetTypeInfo checks for List&lt;T&gt; types.
-  /// </summary>
-  private static string _generateListGetTypeInfo(Assembly assembly, ImmutableArray<ListTypeInfo> listTypes) {
-    if (listTypes.IsEmpty) {
-      return string.Empty;
-    }
-
-    var sb = new System.Text.StringBuilder();
-    var snippet = TemplateUtilities.ExtractSnippet(assembly, "JsonContextSnippets.cs", "GET_TYPE_INFO_LIST");
-
-    sb.AppendLine("  // List<T> types discovered in messages");
-    foreach (var listType in listTypes) {
-      var check = snippet
-          .Replace("__ELEMENT_TYPE__", listType.ElementTypeName)
-          .Replace("__ELEMENT_SIMPLE_NAME__", listType.ElementSimpleName);
-      sb.AppendLine(check);
-      sb.AppendLine();
-    }
-
-    return sb.ToString();
-  }
 
   /// <summary>
   /// Generates factory methods for List&lt;T&gt; types.

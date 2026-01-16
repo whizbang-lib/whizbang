@@ -38,8 +38,6 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// </summary>
 [Generator]
 public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
-  private const string PERSPECTIVE_ROW_TYPE = "Whizbang.Core.Lenses.PerspectiveRow<TModel>";
-
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Generate marker file to confirm generator is running
     context.RegisterPostInitializationOutput(ctx => {

@@ -181,12 +181,6 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // DEBUG: Log all interfaces this class implements
-    // var allInterfacesDebug = string.Join(", ", symbol.AllInterfaces.Select(i => i.OriginalDefinition.ToDisplayString()));
-    // context.ReportDiagnostic(Diagnostic.Create(
-    //     new DiagnosticDescriptor("EF DEBUG001", "Class interfaces", $"Class {symbol.Name} implements: {allInterfacesDebug}", "Debug", DiagnosticSeverity.Warning, true),
-    //     Location.None));
-
     // Check if class implements IPerspectiveFor<TModel> base interface or any variant
     // IPerspectiveFor has multiple overloads:
     // - IPerspectiveFor<TModel> (base marker)

@@ -31,7 +31,6 @@ namespace Whizbang.Generators;
 /// </summary>
 [Generator]
 public class PerspectiveSchemaGenerator : IIncrementalGenerator {
-  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
   private const int SIZE_WARNING_THRESHOLD = 1500; // Warn before hitting 2KB compression threshold
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
