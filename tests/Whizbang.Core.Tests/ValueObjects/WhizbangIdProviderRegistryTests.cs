@@ -3,12 +3,8 @@ using Whizbang.Core;
 
 namespace Whizbang.Core.Tests.ValueObjects;
 
-// Test ID types
-[WhizbangId]
-public readonly partial struct RegistryTestId1;
-
-[WhizbangId]
-public readonly partial struct RegistryTestId2;
+// Test ID types are defined in WhizbangIdTestTypes.cs
+// This ensures source generator runs before test code references Provider types
 
 public class WhizbangIdProviderRegistryTests {
   [Test]
