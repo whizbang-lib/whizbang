@@ -29,21 +29,6 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
-    services:
-      # Azure Service Bus Emulator
-      # https://learn.microsoft.com/azure/service-bus-messaging/overview-emulator
-      servicebus-emulator:
-        image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
-        ports:
-          - 5672:5672  # AMQP
-        env:
-          ACCEPT_EULA: 'Y'
-        options: >-
-          --health-cmd "curl -f http://localhost:5672 || exit 1"
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -56,6 +41,11 @@ jobs:
       - name: Display .NET Info
         run: dotnet --info
 
+      - name: Install docker-compose
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y docker-compose
+
       - name: Restore Dependencies
         run: dotnet restore
 
@@ -67,12 +57,12 @@ jobs:
           dotnet test --project samples/ECommerce/tests/ECommerce.Integration.Tests/ \
             --no-build \
             --configuration Release \
-            --max-parallel-test-modules 2 \
+            --max-parallel-test-modules 1 \
             --logger "console;verbosity=normal" \
             --logger "trx;LogFileName=servicebus-integration-tests.trx"
         env:
-          # ServiceBus emulator connection
-          AZURE_SERVICEBUS_CONNECTION_STRING: "Endpoint=sb://localhost;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
+          # Tests will start ServiceBus emulator via docker-compose
+          # No additional configuration needed
 
       - name: Upload Test Results
         if: always()
