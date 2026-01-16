@@ -1,5 +1,12 @@
 # Whizbang
 
+[![Build](https://github.com/whizbang-lib/whizbang/actions/workflows/build.yml/badge.svg)](https://github.com/whizbang-lib/whizbang/actions/workflows/build.yml)
+[![Tests](https://github.com/whizbang-lib/whizbang/actions/workflows/test.yml/badge.svg)](https://github.com/whizbang-lib/whizbang/actions/workflows/test.yml)
+[![codecov](https://codecov.io/gh/whizbang-lib/whizbang/branch/main/graph/badge.svg)](https://codecov.io/gh/whizbang-lib/whizbang)
+[![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=whizbang-lib_whizbang&metric=alert_status)](https://sonarcloud.io/dashboard?id=whizbang-lib_whizbang)
+[![NuGet](https://img.shields.io/nuget/v/Whizbang.Core.svg)](https://www.nuget.org/packages/Whizbang.Core/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A comprehensive .NET library for building event-driven, CQRS, and event-sourced applications with zero reflection and AOT compatibility.
 
 ## Version 0.1.0 - Foundation Release
@@ -35,12 +42,15 @@ Type-safe IDs using source-generation:
 
 ## Technology Stack
 
-- **.NET 9.0** - Target framework
+- **.NET 10.0** - Target framework (LTS)
 - **Vogen** - Source-generated value objects
-- **TUnit** - Modern source-generation test framework
-- **TUnit.Assertions** - Native assertions
-- **Rocks** - Source-generation mocking
+- **TUnit 1.5+** - Modern source-generation test framework
+- **TUnit.Assertions** - Native fluent assertions
+- **Rocks 9.3+** - Source-generation mocking for AOT compatibility
 - **Bogus** - Test data generation
+- **EF Core 10** - Database access with compiled models
+- **Dapper** - High-performance SQL queries
+- **PostgreSQL** - Primary database with JsonB and UUIDv7 support
 
 ## Getting Started
 

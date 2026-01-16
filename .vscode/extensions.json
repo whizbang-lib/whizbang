@@ -1,8 +1,8 @@
 {
   "recommendations": [
-    "ms-dotnettools.csdevkit",
+    "SonarSource.sonarlint-vscode",
     "ms-dotnettools.csharp",
-    "editorconfig.editorconfig",
-    "sanaajani.taskrunnercode"
+    "ms-dotnettools.csdevkit",
+    "ms-vscode.powershell"
   ]
 }

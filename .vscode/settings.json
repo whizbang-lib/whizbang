@@ -1,22 +1,5 @@
 {
-  "dotnet.testWindow.useTestingPlatformProtocol": true,
-  "dotnet.server.useOmnisharp": true,
-  "editor.formatOnSave": true,
-  "editor.formatOnSaveMode": "file",
-  "files.eol": "\n",
-  "omnisharp.enableEditorConfigSupport": true,
-  "cSpell.ignorePaths": [
-    "settings.json",
-    ".gitignore",
-    "**/.gitignore",
-    "**/*.csproj",
-  ],
-  "task.allowAutomaticTasks": "on",
-  "dotnet.automaticallySyncWithActiveItem": true,
-  "cSpell.words": [
-    "Carbone",
-    "Diagnoser",
-    "Npgsql",
-    "signalr"
-  ]
+  "sonarlint.connectedMode.project": {
+    "projectKey": "whizbang-lib_whizbang"
+  }
 }
