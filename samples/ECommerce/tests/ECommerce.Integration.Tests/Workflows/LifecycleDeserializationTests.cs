@@ -118,14 +118,20 @@ public class LifecycleDeserializationTests {
     var completionSource = new TaskCompletionSource<bool>();
     var expectedCount = commands.Length;
     var actualCount = 0;
+    var expectedProductIds = commands.Select(c => c.ProductId).ToHashSet();
 
     var receptor = new DistributeStageTestReceptor(new TaskCompletionSource<ProductCreatedEvent>());
 
-    // Create a custom receptor that counts events
+    // Create a custom receptor that counts events ONLY for products sent in THIS test
+    // This prevents counting stale events from previous tests or concurrent processes
     var countingReceptor = new CustomDistributeReceptor((evt) => {
-      receivedEvents.Add(evt);
-      if (System.Threading.Interlocked.Increment(ref actualCount) >= expectedCount) {
-        completionSource.TrySetResult(true);
+      if (expectedProductIds.Contains(evt.ProductId)) {
+        receivedEvents.Add(evt);
+        if (System.Threading.Interlocked.Increment(ref actualCount) >= expectedCount) {
+          completionSource.TrySetResult(true);
+        }
+      } else {
+        Console.WriteLine($"[TEST] Ignoring event for ProductId={evt.ProductId} (not in this test's expected set)");
       }
     });
 

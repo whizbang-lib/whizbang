@@ -146,19 +146,23 @@ public class CreateProductWorkflowTests {
       }
     };
 
-    // Act - Create each product and wait for perspective processing
-    // This ensures events are processed in order and perspectives are updated before the next product
+    // Act - Create ONE waiter for ALL products to avoid race conditions
+    // Creating separate waiters per product can cause event "stealing" where a waiter counts events from previous iterations
+    using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
+      inventoryPerspectives: 2 * commands.Length,  // 2 perspectives * 3 products = 6
+      bffPerspectives: 2 * commands.Length);        // 2 perspectives * 3 products = 6
+    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
+      inventoryPerspectives: 1 * commands.Length,  // 1 perspective * 3 products = 3
+      bffPerspectives: 1 * commands.Length);        // 1 perspective * 3 products = 3
+
+    // Send all commands
     foreach (var command in commands) {
-      using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
-        inventoryPerspectives: 2,
-        bffPerspectives: 2);
-      using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
-        inventoryPerspectives: 1,
-        bffPerspectives: 1);
       await fixture.Dispatcher.SendAsync(command);
-      await productWaiter.WaitAsync(timeoutMilliseconds: 45000);
-      await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
     }
+
+    // Wait for ALL perspective processing to complete (deterministic, no race condition!)
+    await productWaiter.WaitAsync(timeoutMilliseconds: 45000);
+    await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Assert - Verify all products materialized in InventoryWorker perspective
     foreach (var command in commands) {
