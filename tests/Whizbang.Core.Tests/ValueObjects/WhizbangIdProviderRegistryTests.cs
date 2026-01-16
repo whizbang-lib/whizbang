@@ -16,7 +16,8 @@ public class WhizbangIdProviderRegistryTests {
     // Act
     WhizbangIdProviderRegistry.RegisterFactory<RegistryTestId1>(bp => {
       factoryCalled = true;
-      return new RegistryTestId1Provider(bp);
+      // Use the static CreateProvider method instead of directly instantiating Provider
+      return RegistryTestId1.CreateProvider(bp);
     });
 
     var provider = WhizbangIdProviderRegistry.CreateProvider<RegistryTestId1>(baseProvider);
@@ -31,7 +32,7 @@ public class WhizbangIdProviderRegistryTests {
   public async Task CreateProvider_WithRegisteredType_ReturnsProviderAsync() {
     // Arrange
     var baseProvider = new Uuid7IdProvider();
-    WhizbangIdProviderRegistry.RegisterFactory<RegistryTestId2>(bp => new RegistryTestId2Provider(bp));
+    WhizbangIdProviderRegistry.RegisterFactory<RegistryTestId2>(bp => RegistryTestId2.CreateProvider(bp));
 
     // Act
     var provider = WhizbangIdProviderRegistry.CreateProvider<RegistryTestId2>(baseProvider);
