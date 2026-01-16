@@ -7,14 +7,14 @@ on:
       - 'src/**'
       - 'samples/ECommerce/**'
       - 'tests/**'
-      - '.github/workflows/test-servicebus-integration.yml'
+      - '.github/workflows/test-azureservicebus-integration.yml'
   pull_request:
     branches: [ main, develop ]
     paths:
       - 'src/**'
       - 'samples/ECommerce/**'
       - 'tests/**'
-      - '.github/workflows/test-servicebus-integration.yml'
+      - '.github/workflows/test-azureservicebus-integration.yml'
   workflow_dispatch:  # Allow manual trigger
 
 env:
