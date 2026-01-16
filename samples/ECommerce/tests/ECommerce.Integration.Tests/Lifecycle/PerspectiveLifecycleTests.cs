@@ -87,7 +87,7 @@ public class PerspectiveLifecycleTests {
     // Assert - Verify receptor was invoked
     await Assert.That(receptor.InvocationCount).IsEqualTo(1);
     await Assert.That(receptor.LastMessage).IsNotNull();
-    await Assert.That(receptor.LastMessage!.ProductId.Value).IsEqualTo(command.ProductId.Value);
+    await Assert.That(receptor.LastMessage!.ProductId).IsEqualTo(command.ProductId.Value);
   }
 
   /// <summary>
@@ -163,7 +163,7 @@ public class PerspectiveLifecycleTests {
     // Assert - Verify receptor was invoked
     await Assert.That(receptor.InvocationCount).IsEqualTo(1);
     await Assert.That(receptor.LastMessage).IsNotNull();
-    await Assert.That(receptor.LastMessage!.ProductId.Value).IsEqualTo(command.ProductId.Value);
+    await Assert.That(receptor.LastMessage!.ProductId).IsEqualTo(command.ProductId.Value);
   }
 
   /// <summary>
@@ -246,7 +246,7 @@ public class PerspectiveLifecycleTests {
     // Assert - Verify receptor was invoked
     await Assert.That(receptor.InvocationCount).IsEqualTo(1);
     await Assert.That(receptor.LastMessage).IsNotNull();
-    await Assert.That(receptor.LastMessage!.ProductId.Value).IsEqualTo(command.ProductId.Value);
+    await Assert.That(receptor.LastMessage!.ProductId).IsEqualTo(command.ProductId.Value);
   }
 
   /// <summary>
