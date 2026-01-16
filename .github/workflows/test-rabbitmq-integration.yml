@@ -49,7 +49,7 @@ jobs:
         run: dotnet restore
 
       - name: Build Solution
-        run: dotnet build --no-restore --configuration Release
+        run: dotnet build --no-restore --configuration Release -maxcpucount:1
 
       - name: Run RabbitMQ Integration Tests
         run: |
