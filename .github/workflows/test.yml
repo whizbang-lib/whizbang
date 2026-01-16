@@ -25,7 +25,7 @@ jobs:
       run: dotnet build --no-restore --configuration Release
 
     - name: Run tests with coverage
-      run: dotnet test --no-build --configuration Release --collect:"XPlat Code Coverage" --results-directory ./coverage
+      run: dotnet test --no-build --configuration Release --coverage --coverage-output ./coverage/ --coverage-output-format cobertura
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
