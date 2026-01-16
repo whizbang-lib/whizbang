@@ -145,12 +145,11 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     var lastSegment = segments[segments.Length - 1];
 
     // If last segment is generic (API, Service, etc.), take second-to-last
-    if (lastSegment.Equals("API", StringComparison.OrdinalIgnoreCase) ||
-        lastSegment.Equals("Service", StringComparison.OrdinalIgnoreCase) ||
-        lastSegment.Equals("Worker", StringComparison.OrdinalIgnoreCase)) {
-      if (segments.Length > 1) {
-        lastSegment = segments[segments.Length - 2];
-      }
+    if ((lastSegment.Equals("API", StringComparison.OrdinalIgnoreCase) ||
+         lastSegment.Equals("Service", StringComparison.OrdinalIgnoreCase) ||
+         lastSegment.Equals("Worker", StringComparison.OrdinalIgnoreCase)) &&
+        segments.Length > 1) {
+      lastSegment = segments[segments.Length - 2];
     }
 
     // Remove common suffixes (case-insensitive)

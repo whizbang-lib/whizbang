@@ -139,11 +139,10 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     }
 
     // Check for constructor argument with namespace
-    if (whizbangIdAttr.ConstructorArguments.Length > 0) {
-      if (whizbangIdAttr.ConstructorArguments[0].Value is string constructorNamespace &&
-          !string.IsNullOrWhiteSpace(constructorNamespace)) {
-        targetNamespace = constructorNamespace;
-      }
+    if (whizbangIdAttr.ConstructorArguments.Length > 0 &&
+        whizbangIdAttr.ConstructorArguments[0].Value is string constructorNamespace &&
+        !string.IsNullOrWhiteSpace(constructorNamespace)) {
+      targetNamespace = constructorNamespace;
     }
 
     // Extract SuppressDuplicateWarning property
@@ -201,11 +200,10 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     }
 
     // Check for constructor argument with namespace
-    if (whizbangIdAttr.ConstructorArguments.Length > 0) {
-      if (whizbangIdAttr.ConstructorArguments[0].Value is string constructorNamespace &&
-          !string.IsNullOrWhiteSpace(constructorNamespace)) {
-        targetNamespace = constructorNamespace;
-      }
+    if (whizbangIdAttr.ConstructorArguments.Length > 0 &&
+        whizbangIdAttr.ConstructorArguments[0].Value is string constructorNamespace &&
+        !string.IsNullOrWhiteSpace(constructorNamespace)) {
+      targetNamespace = constructorNamespace;
     }
 
     // Extract SuppressDuplicateWarning property
@@ -264,11 +262,10 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     }
 
     // Check for constructor argument with namespace
-    if (whizbangIdAttr.ConstructorArguments.Length > 0) {
-      if (whizbangIdAttr.ConstructorArguments[0].Value is string constructorNamespace &&
-          !string.IsNullOrWhiteSpace(constructorNamespace)) {
-        targetNamespace = constructorNamespace;
-      }
+    if (whizbangIdAttr.ConstructorArguments.Length > 0 &&
+        whizbangIdAttr.ConstructorArguments[0].Value is string constructorNamespace &&
+        !string.IsNullOrWhiteSpace(constructorNamespace)) {
+      targetNamespace = constructorNamespace;
     }
 
     // Extract SuppressDuplicateWarning property

@@ -126,6 +126,19 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
+  /// Determines the message kind for diagnostic reporting.
+  /// </summary>
+  private static string _getMessageKind(JsonMessageTypeInfo message) {
+    if (message.IsCommand) {
+      return "command";
+    }
+    if (message.IsEvent) {
+      return "event";
+    }
+    return "serializable type";
+  }
+
+  /// <summary>
   /// Extracts message type information from syntax node using semantic analysis.
   /// Returns null if the node is not a message type (ICommand or IEvent).
   /// </summary>
@@ -220,9 +233,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     // Report diagnostics for discovered message types
     foreach (var message in messages) {
-      var messageKind = message.IsCommand ? "command" :
-                        message.IsEvent ? "event" :
-                        "serializable type";
+      var messageKind = _getMessageKind(message);
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.JsonSerializableTypeDiscovered,
           Location.None,
