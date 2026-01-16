@@ -1,0 +1,35 @@
+name: NuGet Pack
+
+on:
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  pack:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup .NET
+      uses: actions/setup-dotnet@v4
+      with:
+        dotnet-version: '10.0.x'
+
+    - name: Restore dependencies
+      run: dotnet restore
+
+    - name: Build
+      run: dotnet build --configuration Release --no-restore
+
+    - name: Pack NuGet packages
+      run: dotnet pack --configuration Release --no-build --output ./packages
+
+    - name: List packages
+      run: ls -la ./packages
+
+    - name: Upload packages as artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: nuget-packages
+        path: ./packages/*.nupkg
