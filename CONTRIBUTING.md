@@ -202,6 +202,14 @@ git push origin feature/my-feature
 3. Address feedback and update PR
 4. Once approved, maintainer merges PR
 
+## Release Process
+
+For maintainers preparing releases, see [.github/RELEASE.md](.github/RELEASE.md) for the complete release checklist covering:
+- Alpha, Beta, and GA release phases
+- Exit criteria for each phase
+- Quality gates and validation steps
+- Publishing workflow
+
 ## Community
 
 ### Getting Help

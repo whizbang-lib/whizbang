@@ -78,6 +78,60 @@ All tests are currently **failing** by design. This is TDD - tests define the be
 
 See the [whizbang-lib.github.io](https://github.com/whizbang/whizbang-lib.github.io) repository for comprehensive documentation of all features and design decisions.
 
+## Release Workflow
+
+### Three-Phase Release Process
+
+Whizbang uses a three-phase release process:
+
+1. **Alpha** - Internal testing and validation
+2. **Beta** - Limited public testing with early adopters
+3. **GA** - General availability for public use
+
+### Release Checklist
+
+The complete release checklist is maintained in `.github/RELEASE.md`.
+
+### Using the `/release` Command
+
+Claude Code can guide you through the release process:
+
+```bash
+/release alpha   # Start alpha release
+/release beta    # Start beta release
+/release ga      # Start GA release
+```
+
+### Manual Release Process
+
+If not using Claude Code, follow these steps:
+
+#### Alpha Release
+1. Follow all items in `.github/RELEASE.md` Alpha Phase section
+2. Verify all exit criteria are met
+3. Tag version: `git tag -a v0.1.0-alpha.1 -m "Alpha 1"`
+4. Push tag: `git push origin v0.1.0-alpha.1`
+5. GitHub Actions will automatically publish to NuGet
+
+#### Beta Release
+1. Complete Alpha phase
+2. Address feedback from alpha testing
+3. Follow all items in `.github/RELEASE.md` Beta Phase section
+4. Tag version: `git tag -a v0.1.0-beta.1 -m "Beta 1"`
+5. Push tag: `git push origin v0.1.0-beta.1`
+
+#### GA Release
+1. Complete Beta phase
+2. Address feedback from beta testing
+3. Follow all items in `.github/RELEASE.md` GA Phase section
+4. Tag version: `git tag -a v0.1.0 -m "Release v0.1.0"`
+5. Push tag: `git push origin v0.1.0`
+6. Announce to community
+
+### Version Numbering
+
+See GitVersion section for automatic version calculation.
+
 ## Next Steps
 
 1. ✅ Foundation skeleton (DONE)
@@ -93,4 +147,4 @@ This is v0.1.0 - the foundation. Follow the TDD approach:
 2. Implement to make tests pass (green)
 3. Refactor for quality (refactor)
 
-See [CONTRIBUTING.md](../whizbang-lib.github.io/CONTRIBUTING.md) for full guidelines.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
