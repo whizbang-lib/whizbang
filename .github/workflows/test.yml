@@ -26,10 +26,25 @@ jobs:
 
     - name: Run tests with coverage (excluding integration tests)
       run: |
-        # Run all Whizbang.*.Tests except Data-related and Integration tests
-        dotnet test --no-build \
-          --coverage --coverage-output-format cobertura \
-          --test-modules "**/bin/**/Release/net10.0/Whizbang.{Core,Generators,Observability,Policies,Sequencing,Transports,Execution,Partitioning,Documentation,Hosting.Azure.ServiceBus,Hosting.RabbitMQ,Transports.RabbitMQ}.Tests.dll"
+        # Run unit tests only (exclude Data*.Tests which require PostgreSQL)
+        # Run each test project individually to ensure coverage is collected
+        for project in \
+          tests/Whizbang.Core.Tests \
+          tests/Whizbang.Documentation.Tests \
+          tests/Whizbang.Execution.Tests \
+          tests/Whizbang.Generators.Tests \
+          tests/Whizbang.Hosting.Azure.ServiceBus.Tests \
+          tests/Whizbang.Hosting.RabbitMQ.Tests \
+          tests/Whizbang.Observability.Tests \
+          tests/Whizbang.Partitioning.Tests \
+          tests/Whizbang.Policies.Tests \
+          tests/Whizbang.Sequencing.Tests \
+          tests/Whizbang.Transports.RabbitMQ.Tests \
+          tests/Whizbang.Transports.Tests
+        do
+          dotnet test --project "$project" --no-build --configuration Release \
+            --coverage --coverage-output-format cobertura
+        done
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v4
