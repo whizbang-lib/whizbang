@@ -319,15 +319,15 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
         cancellationToken: cancellationToken
       );
 
-      // Create subscription wrapper first (before setting up handler)
-      var subscription = new RabbitMQSubscription(channel, queueName, _logger);
-
       // Create async consumer
       var consumer = new AsyncEventingBasicConsumer(channel);
 
+      // Temporary subscription reference for use in handler (will be set after BasicConsumeAsync)
+      RabbitMQSubscription? subscription = null;
+
       // Set up message received handler
       consumer.ReceivedAsync += async (sender, args) => {
-        if (!subscription.IsActive) {
+        if (subscription != null && !subscription.IsActive) {
           // If paused, nack the message with requeue
           await channel.BasicNackAsync(
             deliveryTag: args.DeliveryTag,
@@ -437,10 +437,14 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
         cancellationToken: cancellationToken
       );
 
+      // Create subscription wrapper with consumer tag (so Dispose can cancel consumer explicitly)
+      subscription = new RabbitMQSubscription(channel, queueName, consumerTag, _logger);
+
       _logger?.LogInformation(
-        "Created subscription for exchange {ExchangeName}, queue {QueueName}",
+        "Created subscription for exchange {ExchangeName}, queue {QueueName}, consumer tag {ConsumerTag}",
         exchangeName,
-        queueName
+        queueName,
+        consumerTag
       );
 
       return subscription;

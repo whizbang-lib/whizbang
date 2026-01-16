@@ -13,6 +13,7 @@ namespace Whizbang.Transports.RabbitMQ;
 public sealed class RabbitMQSubscription : ISubscription {
   private readonly IChannel _channel;
   private readonly string _queueName;
+  private readonly string? _consumerTag;
   private readonly ILogger? _logger;
   private bool _isActive = true;
   private bool _disposed;
@@ -22,10 +23,12 @@ public sealed class RabbitMQSubscription : ISubscription {
   /// </summary>
   /// <param name="channel">RabbitMQ channel used by this consumer</param>
   /// <param name="queueName">Queue name for this subscription</param>
+  /// <param name="consumerTag">Consumer tag for this subscription</param>
   /// <param name="logger">Optional logger instance</param>
   public RabbitMQSubscription(
     IChannel channel,
     string queueName,
+    string? consumerTag = null,
     ILogger? logger = null
   ) {
     ArgumentNullException.ThrowIfNull(channel);
@@ -33,6 +36,7 @@ public sealed class RabbitMQSubscription : ISubscription {
 
     _channel = channel;
     _queueName = queueName;
+    _consumerTag = consumerTag;
     _logger = logger;
   }
 
@@ -78,7 +82,13 @@ public sealed class RabbitMQSubscription : ISubscription {
     _disposed = true;
 
     try {
-      // Close channel (this will cancel all consumers on this channel)
+      // Cancel consumer explicitly if consumer tag is available
+      if (_consumerTag != null) {
+        _channel.BasicCancelAsync(_consumerTag, noWait: false).GetAwaiter().GetResult();
+        _logger?.LogDebug("Cancelled consumer {ConsumerTag} for queue {QueueName}", _consumerTag, _queueName);
+      }
+
+      // Close channel (this will cancel any remaining consumers on this channel)
       _channel.CloseAsync().GetAwaiter().GetResult();
       _logger?.LogInformation("Closed channel for queue {QueueName}", _queueName);
 
