@@ -73,7 +73,7 @@ public class CreateProductWorkflowTests {
     await restockWaiter.WaitAsync(timeoutMilliseconds: 15000);
 
     // Assert - Verify in InventoryWorker perspective
-    var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(command.ProductId);
+    var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(command.ProductId.Value);
     await Assert.That(inventoryProduct).IsNotNull();
     await Assert.That(inventoryProduct!.Name).IsEqualTo(command.Name);
     await Assert.That(inventoryProduct.Description).IsEqualTo(command.Description);
@@ -81,20 +81,20 @@ public class CreateProductWorkflowTests {
     await Assert.That(inventoryProduct.ImageUrl).IsEqualTo(command.ImageUrl);
 
     // Assert - Verify inventory was initialized with initial stock
-    var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(command.ProductId);
+    var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(command.ProductId.Value);
     await Assert.That(inventoryLevel).IsNotNull();
     await Assert.That(inventoryLevel!.Quantity).IsEqualTo(command.InitialStock);
     await Assert.That(inventoryLevel.Available).IsEqualTo(command.InitialStock);
 
     // Assert - Verify in BFF perspective
-    var bffProduct = await fixture.BffProductLens.GetByIdAsync(command.ProductId);
+    var bffProduct = await fixture.BffProductLens.GetByIdAsync(command.ProductId.Value);
     await Assert.That(bffProduct).IsNotNull();
     await Assert.That(bffProduct!.Name).IsEqualTo(command.Name);
     await Assert.That(bffProduct.Description).IsEqualTo(command.Description);
     await Assert.That(bffProduct.Price).IsEqualTo(command.Price);
 
     // Assert - Verify BFF inventory perspective
-    var bffInventory = await fixture.BffInventoryLens.GetByProductIdAsync(command.ProductId);
+    var bffInventory = await fixture.BffInventoryLens.GetByProductIdAsync(command.ProductId.Value);
     await Assert.That(bffInventory).IsNotNull();
     await Assert.That(bffInventory!.Quantity).IsEqualTo(command.InitialStock);
   }
@@ -151,23 +151,23 @@ public class CreateProductWorkflowTests {
 
     // Assert - Verify all products materialized in InventoryWorker perspective
     foreach (var command in commands) {
-      var product = await fixture.InventoryProductLens.GetByIdAsync(command.ProductId);
+      var product = await fixture.InventoryProductLens.GetByIdAsync(command.ProductId.Value);
       await Assert.That(product).IsNotNull();
       await Assert.That(product!.Name).IsEqualTo(command.Name);
       await Assert.That(product.Price).IsEqualTo(command.Price);
 
-      var inventory = await fixture.InventoryLens.GetByProductIdAsync(command.ProductId);
+      var inventory = await fixture.InventoryLens.GetByProductIdAsync(command.ProductId.Value);
       await Assert.That(inventory).IsNotNull();
       await Assert.That(inventory!.Quantity).IsEqualTo(command.InitialStock);
     }
 
     // Assert - Verify all products materialized in BFF perspective
     foreach (var command in commands) {
-      var product = await fixture.BffProductLens.GetByIdAsync(command.ProductId);
+      var product = await fixture.BffProductLens.GetByIdAsync(command.ProductId.Value);
       await Assert.That(product).IsNotNull();
       await Assert.That(product!.Name).IsEqualTo(command.Name);
 
-      var inventory = await fixture.BffInventoryLens.GetByProductIdAsync(command.ProductId);
+      var inventory = await fixture.BffInventoryLens.GetByProductIdAsync(command.ProductId.Value);
       await Assert.That(inventory).IsNotNull();
       await Assert.That(inventory!.Quantity).IsEqualTo(command.InitialStock);
     }
@@ -200,12 +200,12 @@ public class CreateProductWorkflowTests {
     await productWaiter.WaitAsync(timeoutMilliseconds: 15000);
 
     // Assert - Verify product exists with zero inventory
-    var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(command.ProductId);
+    var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(command.ProductId.Value);
     await Assert.That(inventoryLevel).IsNotNull();
     await Assert.That(inventoryLevel!.Quantity).IsEqualTo(0);
     await Assert.That(inventoryLevel.Available).IsEqualTo(0);
 
-    var bffInventory = await fixture.BffInventoryLens.GetByProductIdAsync(command.ProductId);
+    var bffInventory = await fixture.BffInventoryLens.GetByProductIdAsync(command.ProductId.Value);
     await Assert.That(bffInventory).IsNotNull();
     await Assert.That(bffInventory!.Quantity).IsEqualTo(0);
   }
@@ -240,11 +240,11 @@ public class CreateProductWorkflowTests {
     await restockWaiter.WaitAsync(timeoutMilliseconds: 15000);
 
     // Assert - Verify product exists with null ImageUrl
-    var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(command.ProductId);
+    var inventoryProduct = await fixture.InventoryProductLens.GetByIdAsync(command.ProductId.Value);
     await Assert.That(inventoryProduct).IsNotNull();
     await Assert.That(inventoryProduct!.ImageUrl).IsNull();
 
-    var bffProduct = await fixture.BffProductLens.GetByIdAsync(command.ProductId);
+    var bffProduct = await fixture.BffProductLens.GetByIdAsync(command.ProductId.Value);
     await Assert.That(bffProduct).IsNotNull();
     await Assert.That(bffProduct!.ImageUrl).IsNull();
   }

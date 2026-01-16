@@ -101,13 +101,13 @@ public class RestockInventoryWorkflowTests {
     await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Assert - Verify InventoryWorker perspective updated
-    var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);
+    var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
     await Assert.That(inventoryLevel).IsNotNull();
     await Assert.That(inventoryLevel!.Quantity).IsEqualTo(60); // 10 + 50
     await Assert.That(inventoryLevel.Available).IsEqualTo(60);
 
     // Assert - Verify BFF perspective updated
-    var bffInventory = await fixture.BffInventoryLens.GetByProductIdAsync(createCommand.ProductId);
+    var bffInventory = await fixture.BffInventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
     await Assert.That(bffInventory).IsNotNull();
     await Assert.That(bffInventory!.Quantity).IsEqualTo(60); // 10 + 50
   }
@@ -161,12 +161,12 @@ public class RestockInventoryWorkflowTests {
     }
 
     // Assert - Verify total quantity = 5 + 10 + 20 + 15 = 50
-    var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);
+    var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
     await Assert.That(inventoryLevel).IsNotNull();
     await Assert.That(inventoryLevel!.Quantity).IsEqualTo(50);
     await Assert.That(inventoryLevel.Available).IsEqualTo(50);
 
-    var bffInventory = await fixture.BffInventoryLens.GetByProductIdAsync(createCommand.ProductId);
+    var bffInventory = await fixture.BffInventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
     await Assert.That(bffInventory).IsNotNull();
     await Assert.That(bffInventory!.Quantity).IsEqualTo(50);
   }
@@ -214,11 +214,11 @@ public class RestockInventoryWorkflowTests {
     await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Assert - Verify quantity increased from 0 to 100
-    var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);
+    var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
     await Assert.That(inventoryLevel).IsNotNull();
     await Assert.That(inventoryLevel!.Quantity).IsEqualTo(100);
 
-    var bffInventory = await fixture.BffInventoryLens.GetByProductIdAsync(createCommand.ProductId);
+    var bffInventory = await fixture.BffInventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
     await Assert.That(bffInventory).IsNotNull();
     await Assert.That(bffInventory!.Quantity).IsEqualTo(100);
   }
@@ -267,12 +267,12 @@ public class RestockInventoryWorkflowTests {
     await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Assert - Verify quantity unchanged
-    var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);
+    var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
     await Assert.That(inventoryLevel).IsNotNull();
     Console.WriteLine($"[TEST] Inventory quantity: {inventoryLevel!.Quantity}, expected: 25 (no change)");
     await Assert.That(inventoryLevel!.Quantity).IsEqualTo(25); // No change
 
-    var bffInventory = await fixture.BffInventoryLens.GetByProductIdAsync(createCommand.ProductId);
+    var bffInventory = await fixture.BffInventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
     await Assert.That(bffInventory).IsNotNull();
     await Assert.That(bffInventory!.Quantity).IsEqualTo(25); // No change
   }
@@ -321,12 +321,12 @@ public class RestockInventoryWorkflowTests {
     await restockWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Assert - Verify large quantity handled
-    var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);
+    var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
     await Assert.That(inventoryLevel).IsNotNull();
     Console.WriteLine($"[TEST] Inventory quantity: {inventoryLevel!.Quantity}, expected: 10050");
     await Assert.That(inventoryLevel!.Quantity).IsEqualTo(10050); // 50 + 10000
 
-    var bffInventory = await fixture.BffInventoryLens.GetByProductIdAsync(createCommand.ProductId);
+    var bffInventory = await fixture.BffInventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
     await Assert.That(bffInventory).IsNotNull();
     await Assert.That(bffInventory!.Quantity).IsEqualTo(10050);
   }

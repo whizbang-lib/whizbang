@@ -87,7 +87,7 @@ public class PerspectiveLifecycleTests {
     // Assert - Verify receptor was invoked
     await Assert.That(receptor.InvocationCount).IsEqualTo(1);
     await Assert.That(receptor.LastMessage).IsNotNull();
-    await Assert.That(receptor.LastMessage!.ProductId).IsEqualTo(command.ProductId);
+    await Assert.That(receptor.LastMessage!.ProductId.Value).IsEqualTo(command.ProductId.Value);
   }
 
   /// <summary>
@@ -163,7 +163,7 @@ public class PerspectiveLifecycleTests {
     // Assert - Verify receptor was invoked
     await Assert.That(receptor.InvocationCount).IsEqualTo(1);
     await Assert.That(receptor.LastMessage).IsNotNull();
-    await Assert.That(receptor.LastMessage!.ProductId).IsEqualTo(command.ProductId);
+    await Assert.That(receptor.LastMessage!.ProductId.Value).IsEqualTo(command.ProductId.Value);
   }
 
   /// <summary>
@@ -246,7 +246,7 @@ public class PerspectiveLifecycleTests {
     // Assert - Verify receptor was invoked
     await Assert.That(receptor.InvocationCount).IsEqualTo(1);
     await Assert.That(receptor.LastMessage).IsNotNull();
-    await Assert.That(receptor.LastMessage!.ProductId).IsEqualTo(command.ProductId);
+    await Assert.That(receptor.LastMessage!.ProductId.Value).IsEqualTo(command.ProductId.Value);
   }
 
   /// <summary>
@@ -377,7 +377,7 @@ public class PerspectiveLifecycleTests {
     await waiter.WaitAsync();
 
     // Assert - Verify perspective data is saved (this is the key guarantee!)
-    var product = await fixture.BffProductLens.GetByIdAsync(command.ProductId);
+    var product = await fixture.BffProductLens.GetByIdAsync(command.ProductId.Value);
     await Assert.That(product).IsNotNull();
     await Assert.That(product!.Name).IsEqualTo(command.Name);
     await Assert.That(product.Price).IsEqualTo(command.Price);
@@ -420,7 +420,7 @@ public class PerspectiveLifecycleTests {
       await Assert.That(receptor.InvocationCount).IsEqualTo(1);
 
       // Verify perspective data is immediately queryable
-      var product = await fixture.BffProductLens.GetByIdAsync(command.ProductId);
+      var product = await fixture.BffProductLens.GetByIdAsync(command.ProductId.Value);
       await Assert.That(product).IsNotNull();
       await Assert.That(product!.Name).IsEqualTo(command.Name);
 
@@ -478,8 +478,8 @@ public class PerspectiveLifecycleTests {
     await restockWaiter.WaitAsync(timeoutMilliseconds: 30000);
 
     // Assert - Verify both products are saved
-    var product1 = await fixture.BffProductLens.GetByIdAsync(commands[0].ProductId);
-    var product2 = await fixture.BffProductLens.GetByIdAsync(commands[1].ProductId);
+    var product1 = await fixture.BffProductLens.GetByIdAsync(commands[0].ProductId.Value);
+    var product2 = await fixture.BffProductLens.GetByIdAsync(commands[1].ProductId.Value);
     await Assert.That(product1).IsNotNull();
     await Assert.That(product2).IsNotNull();
   }
