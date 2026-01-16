@@ -6,6 +6,43 @@ All scripts use **PowerShell Core (pwsh)** for cross-platform compatibility.
 
 ---
 
+## Testing
+
+### Run-Tests.ps1
+
+Runs all test projects in the Whizbang solution with parallel execution and AI-optimized output modes.
+
+**Usage:**
+```powershell
+pwsh scripts/Run-Tests.ps1                                    # Default: AI mode, exclude integration
+pwsh scripts/Run-Tests.ps1 -Mode Ci                           # Full output for CI/CD
+pwsh scripts/Run-Tests.ps1 -Mode Full                         # Include integration tests (slow)
+pwsh scripts/Run-Tests.ps1 -ProjectFilter "Core"              # Filter to specific project
+pwsh scripts/Run-Tests.ps1 -TestFilter "ProcessWorkBatchAsync" # Filter to specific tests
+```
+
+**Modes:**
+- `Ai` (default) - AI-optimized sparse output, exclude integration tests
+- `Ci` - Full output, exclude integration tests (for CI/CD)
+- `Full` - Full output, include all tests (comprehensive validation)
+- `AiFull` - AI-optimized output, include all tests
+- `IntegrationsOnly` - Full output, only integration tests
+- `AiIntegrations` - AI-optimized output, only integration tests
+
+**Parameters:**
+- `-MaxParallel` - Maximum parallel test projects (default: CPU core count)
+- `-ProjectFilter` - Filter to specific test projects (e.g., "Core", "EFCore.Postgres")
+- `-TestFilter` - Filter to specific tests by name pattern
+- `-Mode` - Test execution mode (default: Ai)
+- `-Verbose` - Show detailed test output
+
+**Output:**
+- Summary of passed/failed/skipped tests
+- Per-project breakdown
+- Pass rate percentage
+
+---
+
 ## Coverage
 
 ### run-all-tests-with-coverage.ps1
@@ -122,15 +159,42 @@ info WHIZ001: Found receptor 'PaymentReceptor' handling ProcessPayment → Payme
 
 ## Maintenance
 
-### remove-coverage-from-history.sh
+### clean-generator-locks.ps1
+
+Cleans file locks from Whizbang source generator DLLs caused by lingering processes.
+
+**Problem it solves:**
+- ILRepack error: "The file '.../Whizbang.Generators.dll' already exists"
+- Aspire doesn't always terminate child processes when debugging stops
+- File locks prevent rebuilding generator projects
+
+**Usage:**
+```powershell
+pwsh scripts/maintenance/clean-generator-locks.ps1
+```
+
+**What it does:**
+1. Kills ECommerce and Aspire AppHost processes
+2. Shuts down dotnet build server
+3. Cleans generator project build artifacts
+4. Removes locked DLL/PDB files
+
+**When to use:**
+- Cannot rebuild after stopping Aspire debugging
+- Getting "file already exists" errors during build
+- Generator changes not being picked up
+
+---
+
+### remove-coverage-from-history.ps1
 
 Removes coverage files from Git history (reduces repository size).
 
 **⚠️ WARNING: Rewrites Git history - use with caution!**
 
 **Usage:**
-```bash
-./scripts/maintenance/remove-coverage-from-history.sh
+```powershell
+pwsh scripts/maintenance/remove-coverage-from-history.ps1
 ```
 
 **What it does:**
@@ -142,6 +206,38 @@ Removes coverage files from Git history (reduces repository size).
 - Coverage files were accidentally committed
 - Repository size needs reduction
 - You have team agreement to rewrite history
+
+---
+
+## Code Fixes
+
+### Fix-IDE1006-PrivateProtectedMembers.ps1
+
+Automatically fixes IDE1006 naming violations for private and protected members.
+
+**Usage:**
+```powershell
+pwsh scripts/Fix-IDE1006-PrivateProtectedMembers.ps1
+```
+
+**What it fixes:**
+- Private fields to `_camelCase` convention
+- Protected fields to `_camelCase` convention
+- Private/protected methods to `PascalCase` convention
+
+---
+
+### Fix-IDE1006-PrivateStaticReadonly.ps1
+
+Automatically fixes IDE1006 naming violations for private static readonly fields.
+
+**Usage:**
+```powershell
+pwsh scripts/Fix-IDE1006-PrivateStaticReadonly.ps1
+```
+
+**What it fixes:**
+- Private static readonly fields to `PascalCase` convention (e.g., `DefaultValue`, `EmptyString`)
 
 ---
 

@@ -252,8 +252,8 @@ var order = new Order {
 - `/src/Whizbang.Generators/CLAUDE.md` - Source generator guidance
 
 ### Other Repos
-- `/Users/philcarbone/src/CLAUDE.md` - Workspace overview
-- `/Users/philcarbone/src/whizbang-lib.github.io/ai-docs/` - Documentation site standards
+- `../../CLAUDE.md` - Workspace overview
+- `../../whizbang-lib.github.io/ai-docs/` - Documentation site standards
 
 ---
 

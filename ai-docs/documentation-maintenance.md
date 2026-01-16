@@ -145,7 +145,7 @@ public class GenerateDispatcherAttribute : Attribute {
 Navigate to documentation repository:
 
 ```bash
-cd /Users/philcarbone/src/whizbang-lib.github.io
+cd ../whizbang-lib.github.io
 ```
 
 **Determine file path based on version**:
@@ -203,7 +203,7 @@ After updating documentation, regenerate the mapping file:
 
 ```bash
 # From documentation repository
-cd /Users/philcarbone/src/whizbang-lib.github.io
+cd ../whizbang-lib.github.io
 node src/scripts/generate-code-docs-map.mjs
 ```
 
@@ -247,7 +247,7 @@ The search index rebuilds automatically during:
 
 Manual rebuild (if needed):
 ```bash
-cd /Users/philcarbone/src/whizbang-lib.github.io
+cd ../whizbang-lib.github.io
 ./build-search-index.sh
 ```
 
@@ -257,12 +257,12 @@ Commit library and documentation changes together:
 
 ```bash
 # Commit library changes
-cd /Users/philcarbone/src/whizbang
+cd ../whizbang
 git add src/Whizbang.Core/IDispatcher.cs  # or Generators, Testing, etc.
 git commit -m "feat(dispatcher): Add new SendManyAsync method"
 
 # Commit documentation changes
-cd /Users/philcarbone/src/whizbang-lib.github.io
+cd ../whizbang-lib.github.io
 git add src/assets/docs/v0.1.0/core-concepts/dispatcher.md
 git add src/assets/code-docs-map.json
 git add src/assets/search-index.json
@@ -594,7 +594,7 @@ If user says yes:
 
 ```bash
 # Regenerate mapping
-cd /Users/philcarbone/src/whizbang-lib.github.io
+cd ../whizbang-lib.github.io
 node src/scripts/generate-code-docs-map.mjs
 
 # Rebuild search index

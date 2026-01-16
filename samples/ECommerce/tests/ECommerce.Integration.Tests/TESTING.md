@@ -82,8 +82,60 @@ The Azure Service Bus Emulator has several limitations that dictate our test arc
 - Check `ServiceBusIntegrationFixture.DrainAllSubscriptionsAsync()`
 - Verify fixture cleanup in `[After(Test)]` hook
 
+## Cross-Service Event Distribution Architecture
+
+### Critical Design Requirement
+
+**Both InventoryWorker and BFF MUST have ServiceBusConsumerWorker registered** to receive events from ServiceBus topics.
+
+### Event Flow
+
+```
+Publisher (InventoryWorker):
+  Receptor → PublishAsync → Outbox → WorkCoordinatorPublisherWorker → ServiceBus Topics
+
+Subscribers (InventoryWorker + BFF):
+  ServiceBus Topics → ServiceBusConsumerWorker → Inbox → process_work_batch → Event Store → Perspectives
+```
+
+### Why Both Services Need ServiceBusConsumerWorker
+
+1. **InventoryWorker**: Publishes events but MUST also subscribe to receive them back
+   - Events published by receptors go to outbox → ServiceBus
+   - Without subscriber, events never return to `inventory.wh_event_store`
+   - Perspectives timeout waiting for events that never arrive
+
+2. **BFF**: Cross-service event consumption
+   - Subscribes to InventoryWorker's events
+   - Receives via ServiceBus → stores to `bff.wh_event_store`
+   - Perspectives materialize from received events
+
+### Test Fixture Configuration
+
+**InventoryWorker** (Lines 458-477):
+- Subscribes to `sub-00-b` and `sub-01-b` on topics `topic-00` and `topic-01`
+- Receives its own published events from ServiceBus
+- Stores events to `inventory.wh_event_store` via `process_work_batch` Phase 4.5B
+
+**BFF** (Lines 599-618):
+- Subscribes to `sub-00-a` and `sub-01-a` on the same topics
+- Receives cross-service events from InventoryWorker
+- Stores events to `bff.wh_event_store`
+
+### Common Pitfall
+
+**WRONG**: Assuming InventoryWorker doesn't need ServiceBusConsumerWorker because it has local receptors
+**RIGHT**: InventoryWorker MUST subscribe to receive its own events from ServiceBus for perspectives to work
+
+Without ServiceBusConsumerWorker on InventoryWorker:
+- ✅ Events are published to ServiceBus
+- ✅ BFF receives and processes events
+- ❌ Events never stored to `inventory.wh_event_store`
+- ❌ InventoryWorker perspectives timeout waiting for events
+
 ### Related Files
 
 - `SharedFixtureSource.cs` - Manages shared emulator and ServiceBusClient
 - `ServiceBusIntegrationFixture.cs` - Per-test fixture with shared Service Bus
 - `EmulatorLauncher.cs` - Handles emulator startup and lifecycle
+- `Config-Named.json` - Emulator topic and subscription configuration

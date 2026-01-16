@@ -420,3 +420,10 @@ FodyWeavers.xsd
 # Migrations - commented to allow src/Whizbang.Data.EFCore.Postgres.Generators/Templates/Migrations/
 coverage[0-9\-a-zA-Z]*
 coverage
+
+# Development artifacts
+*.bak
+baseline-test-results.txt
+test-results.txt
+clean-warnings-and-errors.txt
+coverage_files.txt

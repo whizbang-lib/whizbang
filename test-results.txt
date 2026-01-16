@@ -1,4 +1,0 @@
-Unhandled exception: One or more errors occurred. (Unable to proceed with project '/Users/philcarbone/src/whizbang/src/Whizbang.Testing/Whizbang.Testing.csproj'.
-Ensure you have a runnable project type.
-A runnable project should target a runnable TFM (for instance, net10.0) and have OutputType 'Exe'.
-The current OutputType is 'Library'.)

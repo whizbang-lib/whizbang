@@ -54,6 +54,4 @@ Benefits:
 - Easier testing and debugging
 - Better performance analysis
 - Clearer dependency graph
-- Maintainable codebase
-
-See migration plan: /Users/philcarbone/.claude/plans/curious-hopping-quokka.md';
+- Maintainable codebase';

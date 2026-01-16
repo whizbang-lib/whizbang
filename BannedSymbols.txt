@@ -1,3 +1,0 @@
-T:System.Diagnostics.CodeAnalysis.RequiresUnreferencedCodeAttribute; Reflection is banned in Whizbang - use source generators instead
-T:System.Diagnostics.CodeAnalysis.RequiresDynamicCodeAttribute; Dynamic code generation is banned in Whizbang - use source generators instead
-T:System.Diagnostics.CodeAnalysis.UnconditionalSuppressMessageAttribute; Do not suppress AOT warnings - fix the underlying code instead

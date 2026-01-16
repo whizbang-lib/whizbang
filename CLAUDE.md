@@ -255,7 +255,7 @@ public interface IDispatcher {
 
 **Workflow**:
 1. Add `<docs>` tags to public types in Core, Generators, Testing projects
-2. Regenerate mapping: `cd /Users/philcarbone/src/whizbang-lib.github.io && node src/scripts/generate-code-docs-map.mjs`
+2. Regenerate mapping: `cd ../whizbang-lib.github.io && node src/scripts/generate-code-docs-map.mjs`
 3. Validate: `mcp__whizbang-docs__validate-doc-links()`
 
 **MCP Tools**:
@@ -283,7 +283,7 @@ public void Dispatch<TMessage>(TMessage message) where TMessage : IMessage {
 
 **Workflow**:
 1. Follow naming convention: `ClassNameTests` tests `ClassName`
-2. Regenerate mapping: `cd /Users/philcarbone/src/whizbang-lib.github.io && node src/scripts/generate-code-tests-map.mjs`
+2. Regenerate mapping: `cd ../whizbang-lib.github.io && node src/scripts/generate-code-tests-map.mjs`
 3. Query coverage: `mcp__whizbang-docs__get-coverage-stats()`
 
 **MCP Tools**:
@@ -308,9 +308,9 @@ public void Dispatch<TMessage>(TMessage message) where TMessage : IMessage {
 
 ## Cross-Repository Context
 
-**Workspace CLAUDE.md**: `/Users/philcarbone/src/CLAUDE.md` - Navigation between repos
-**Documentation Repo**: `/Users/philcarbone/src/whizbang-lib.github.io/` - Living specifications
-**VSCode Extension**: `/Users/philcarbone/src/whizbang-vscode/` - IDE integration
+**Workspace CLAUDE.md**: `../CLAUDE.md` - Navigation between repos
+**Documentation Repo**: `../whizbang-lib.github.io/` - Living specifications
+**VSCode Extension**: `../whizbang-vscode/` - IDE integration
 
 📖 **Read workspace CLAUDE.md** when working across multiple repositories.
 

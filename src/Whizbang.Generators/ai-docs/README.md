@@ -229,8 +229,8 @@ This directory contains topic-specific documentation for working with Whizbang's
 - `/CLAUDE.md` - Library repo overview
 
 ### Other Repos
-- `/Users/philcarbone/src/CLAUDE.md` - Workspace overview
-- `/Users/philcarbone/src/whizbang/ai-docs/` - Core development docs
+- `../../../../CLAUDE.md` - Workspace overview
+- `../../../../whizbang/ai-docs/` - Core development docs
 
 ---
 
