@@ -77,48 +77,4 @@ jobs:
         with:
           files: '**/TestResults/*.trx'
           check_name: 'RabbitMQ Integration Test Results'
-          comment_mode: 'off'  # Don't comment on PRs (optional)
-
-  # Optional: Run both Azure Service Bus and RabbitMQ tests for comparison
-  all-integration-tests:
-    name: All Integration Tests (Azure Service Bus + RabbitMQ)
-    runs-on: ubuntu-latest
-    timeout-minutes: 45
-    if: github.event_name == 'workflow_dispatch'  # Only on manual trigger
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup .NET
-        uses: actions/setup-dotnet@v4
-        with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
-
-      - name: Restore Dependencies
-        run: dotnet restore
-
-      - name: Build Solution
-        run: dotnet build --no-restore --configuration Release
-
-      - name: Run All Integration Tests
-        run: |
-          pwsh scripts/Run-Tests.ps1 -Mode IntegrationsOnly -MaxParallel 4
-        shell: pwsh
-
-      - name: Upload Test Results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: all-integration-test-results
-          path: '**/TestResults/*.trx'
-          retention-days: 30
-
-      - name: Display Test Summary
-        if: always()
-        run: |
-          echo "## Integration Test Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Both Azure Service Bus and RabbitMQ integration tests completed." >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Check uploaded artifacts for detailed test results." >> $GITHUB_STEP_SUMMARY
+          comment_mode: 'off'
