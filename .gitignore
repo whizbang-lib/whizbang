@@ -47,7 +47,9 @@ Generated\ Files/
 **/.whizbang/
 
 # Whizbang Generated Schema Files (regenerated from C# schema definitions)
+# Note: Dapper.Sqlite needs whizbang-schema.sql as an embedded resource
 **/whizbang-schema.sql
+!src/Whizbang.Data.Dapper.Sqlite/whizbang-schema.sql
 **/whizbang-*-schema.sql
 sql-scripts/whizbang-*.sql
 
