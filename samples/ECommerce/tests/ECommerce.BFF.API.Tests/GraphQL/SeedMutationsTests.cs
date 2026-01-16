@@ -23,22 +23,22 @@ public class SeedMutationsTests {
     public List<object> SentCommands { get; } = [];
     public int SendCount => SentCommands.Count;
 
-    public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message) {
+    public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message) where TMessage : notnull {
       SentCommands.Add(message!);
       return Task.FromResult<IDeliveryReceipt>(
         DeliveryReceipt.Accepted(MessageId.New(), "test-dispatcher")
       );
     }
 
-    public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
+    public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) where TMessage : notnull => throw new NotImplementedException();
     public Task<IDeliveryReceipt> SendAsync(object message) => throw new NotImplementedException();
     public Task<IDeliveryReceipt> SendAsync(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
-    public ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(TMessage message) => throw new NotImplementedException();
-    public ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
+    public ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(TMessage message) where TMessage : notnull => throw new NotImplementedException();
+    public ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) where TMessage : notnull => throw new NotImplementedException();
     public ValueTask<TResult> LocalInvokeAsync<TResult>(object message) => throw new NotImplementedException();
     public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
-    public ValueTask LocalInvokeAsync<TMessage>(TMessage message) => throw new NotImplementedException();
-    public ValueTask LocalInvokeAsync<TMessage>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
+    public ValueTask LocalInvokeAsync<TMessage>(TMessage message) where TMessage : notnull => throw new NotImplementedException();
+    public ValueTask LocalInvokeAsync<TMessage>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) where TMessage : notnull => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message) => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
     public Task PublishAsync<TEvent>(TEvent @event) => throw new NotImplementedException();
@@ -188,19 +188,19 @@ public class SeedMutationsTests {
   /// Test double for IDispatcher that always throws exceptions
   /// </summary>
   private class FailingTestDispatcher : IDispatcher {
-    public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message) {
+    public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message) where TMessage : notnull {
       throw new InvalidOperationException("Dispatcher failure");
     }
 
-    public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
+    public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) where TMessage : notnull => throw new NotImplementedException();
     public Task<IDeliveryReceipt> SendAsync(object message) => throw new NotImplementedException();
     public Task<IDeliveryReceipt> SendAsync(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
-    public ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(TMessage message) => throw new NotImplementedException();
-    public ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
+    public ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(TMessage message) where TMessage : notnull => throw new NotImplementedException();
+    public ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) where TMessage : notnull => throw new NotImplementedException();
     public ValueTask<TResult> LocalInvokeAsync<TResult>(object message) => throw new NotImplementedException();
     public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
-    public ValueTask LocalInvokeAsync<TMessage>(TMessage message) => throw new NotImplementedException();
-    public ValueTask LocalInvokeAsync<TMessage>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
+    public ValueTask LocalInvokeAsync<TMessage>(TMessage message) where TMessage : notnull => throw new NotImplementedException();
+    public ValueTask LocalInvokeAsync<TMessage>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) where TMessage : notnull => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message) => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
     public Task PublishAsync<TEvent>(TEvent @event) => throw new NotImplementedException();

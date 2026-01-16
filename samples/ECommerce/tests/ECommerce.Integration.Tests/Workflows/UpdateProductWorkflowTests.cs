@@ -32,7 +32,7 @@ public class UpdateProductWorkflowTests {
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
     // Get SHARED ServiceBus resources (emulator + single static ServiceBusClient)
-    var testIndex = GetTestIndex();
+    var testIndex = _getTestIndex();
     var (connectionString, sharedClient) = await SharedFixtureSource.GetSharedResourcesAsync(testIndex);
 
     // Create fixture with shared client (per-test PostgreSQL + hosts, but shared ServiceBusClient)
@@ -40,7 +40,7 @@ public class UpdateProductWorkflowTests {
     await _fixture.InitializeAsync();
   }
 
-  private static int GetTestIndex() {
+  private static int _getTestIndex() {
     // Assign fixed index for this test class (all 4 workflow test classes use batch 0)
     return 2; // UpdateProductWorkflowTests = index 2
   }

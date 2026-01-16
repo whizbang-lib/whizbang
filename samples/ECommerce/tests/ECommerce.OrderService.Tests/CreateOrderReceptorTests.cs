@@ -26,24 +26,24 @@ public class CreateOrderReceptorTests {
     }
 
     // Generic SendAsync methods
-    public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message) => throw new NotImplementedException();
-    public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
+    public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message) where TMessage : notnull => throw new NotImplementedException();
+    public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) where TMessage : notnull => throw new NotImplementedException();
 
     // Non-generic SendAsync methods
     public Task<IDeliveryReceipt> SendAsync(object message) => throw new NotImplementedException();
     public Task<IDeliveryReceipt> SendAsync(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
 
     // Generic LocalInvokeAsync methods with result
-    public ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(TMessage message) => throw new NotImplementedException();
-    public ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
+    public ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(TMessage message) where TMessage : notnull => throw new NotImplementedException();
+    public ValueTask<TResult> LocalInvokeAsync<TMessage, TResult>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) where TMessage : notnull => throw new NotImplementedException();
 
     // Non-generic LocalInvokeAsync methods with result
     public ValueTask<TResult> LocalInvokeAsync<TResult>(object message) => throw new NotImplementedException();
     public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
 
     // Generic LocalInvokeAsync methods without result
-    public ValueTask LocalInvokeAsync<TMessage>(TMessage message) => throw new NotImplementedException();
-    public ValueTask LocalInvokeAsync<TMessage>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
+    public ValueTask LocalInvokeAsync<TMessage>(TMessage message) where TMessage : notnull => throw new NotImplementedException();
+    public ValueTask LocalInvokeAsync<TMessage>(TMessage message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) where TMessage : notnull => throw new NotImplementedException();
 
     // Non-generic LocalInvokeAsync methods without result
     public ValueTask LocalInvokeAsync(object message) => throw new NotImplementedException();

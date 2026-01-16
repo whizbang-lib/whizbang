@@ -13,9 +13,9 @@
     <!-- Create output directory -->
     <MakeDir Condition="Exists('$(MessageRegistryFile)')" Directories="$(RegistryOutputDir)" />
 
-    <!-- Extract JSON from C# file using sed -->
+    <!-- Extract JSON from C# file using PowerShell (cross-platform) -->
     <Exec Condition="Exists('$(MessageRegistryFile)')"
-          Command="sed -n '/internal const string Json = @&quot;/,/^&quot;;/p' '$(MessageRegistryFile)' | sed '1s/.*@&quot;//' | sed '$s/&quot;;.*//g' | sed 's/&quot;&quot;/&quot;/g' > '$(RegistryOutputFile)'" />
+          Command="pwsh -NoProfile -File &quot;$(MSBuildThisFileDirectory)extract-registry.ps1&quot; -InputFile &quot;$(MessageRegistryFile)&quot; -OutputFile &quot;$(RegistryOutputFile)&quot;" />
 
     <Message Condition="Exists('$(MessageRegistryFile)')" Text="Message registry extracted successfully!" Importance="high" />
   </Target>

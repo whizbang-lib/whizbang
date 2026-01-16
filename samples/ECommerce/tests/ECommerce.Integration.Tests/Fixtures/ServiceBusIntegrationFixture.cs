@@ -162,14 +162,14 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
 
     // Drain stale messages from ServiceBus subscriptions
     Console.WriteLine("[ServiceBusFixture] Draining stale messages from subscriptions...");
-    await DrainSubscriptionsAsync(cancellationToken);
+    await _drainSubscriptionsAsync(cancellationToken);
     Console.WriteLine("[ServiceBusFixture] Subscriptions drained.");
 
     // Create service hosts (InventoryWorker + BFF)
     // IMPORTANT: Do NOT start hosts yet - schema must be initialized first!
     Console.WriteLine("[ServiceBusFixture] Creating service hosts...");
-    _inventoryHost = CreateInventoryHost(_postgresConnection, _serviceBusConnection, _topicA, _topicB);
-    _bffHost = CreateBffHost(_postgresConnection, _serviceBusConnection, _topicA, _topicB);
+    _inventoryHost = _createInventoryHost(_postgresConnection, _serviceBusConnection, _topicA, _topicB);
+    _bffHost = _createBffHost(_postgresConnection, _serviceBusConnection, _topicA, _topicB);
 
     // Initialize Whizbang database schema (create tables, functions, etc.)
     // CRITICAL: Must run BEFORE starting hosts, otherwise workers fail trying to call process_work_batch
@@ -274,7 +274,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   /// Critical for test isolation when using shared generic topics across test runs.
   /// Uses the shared ServiceBusClient to avoid creating extra connections.
   /// </summary>
-  private async Task DrainSubscriptionsAsync(CancellationToken cancellationToken = default) {
+  private async Task _drainSubscriptionsAsync(CancellationToken cancellationToken = default) {
     // Use shared client instead of creating a new one
     // This reduces connection count and avoids ConnectionsQuotaExceeded errors
 
@@ -320,7 +320,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Creates the InventoryWorker host with generic topic subscriptions.
   /// </summary>
-  private IHost CreateInventoryHost(
+  private IHost _createInventoryHost(
     string postgresConnectionString,
     string serviceBusConnectionString,
     string topicA,
@@ -489,7 +489,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Creates the BFF host with generic topic subscriptions.
   /// </summary>
-  private IHost CreateBffHost(
+  private IHost _createBffHost(
     string postgresConnectionString,
     string serviceBusConnectionString,
     string topicA,
@@ -827,7 +827,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
 
     // Drain Service Bus subscriptions to prevent cross-contamination between tests
     Console.WriteLine("[ServiceBusFixture] Draining subscriptions between tests...");
-    await DrainSubscriptionsAsync(cancellationToken);
+    await _drainSubscriptionsAsync(cancellationToken);
     Console.WriteLine("[ServiceBusFixture] Subscriptions drained.");
 
     // Resume BFF ServiceBusConsumerWorker after draining
@@ -980,7 +980,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   /// Waits for all pending work (outbox, inbox, perspectives) to complete in BOTH schemas before shutdown.
   /// This prevents in-flight operations from being canceled mid-transaction.
   /// </summary>
-  private async Task WaitForPendingWorkAsync(int timeoutMilliseconds = 5000) {
+  private async Task _waitForPendingWorkAsync(int timeoutMilliseconds = 5000) {
     var stopwatch = System.Diagnostics.Stopwatch.StartNew();
     var attempt = 0;
     var consecutiveEmptyChecks = 0;  // Track consecutive checks with 0 pending work
@@ -1328,7 +1328,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     if (_isInitialized && _inventoryHost != null) {
       try {
         Console.WriteLine("[ServiceBusFixture] Waiting for pending work to complete before shutdown...");
-        await WaitForPendingWorkAsync(timeoutMilliseconds: 5000);
+        await _waitForPendingWorkAsync(timeoutMilliseconds: 5000);
         Console.WriteLine("[ServiceBusFixture] All pending work completed.");
       } catch (Exception ex) {
         Console.WriteLine($"[ServiceBusFixture] Warning: Pre-shutdown wait encountered error (non-critical): {ex.Message}");

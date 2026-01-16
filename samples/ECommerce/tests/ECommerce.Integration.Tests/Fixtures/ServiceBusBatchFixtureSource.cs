@@ -18,7 +18,7 @@ public sealed class ServiceBusBatchFixtureSource {
   public ServiceBusBatchFixtureSource() {
     // Synchronously wait for initialization to complete
     // This ensures fixtures are ready before test classes are constructed
-    InitializeAsync().GetAwaiter().GetResult();
+    _initializeAsync().GetAwaiter().GetResult();
   }
 
   /// <summary>
@@ -31,7 +31,7 @@ public sealed class ServiceBusBatchFixtureSource {
   /// Reuses the emulator from SharedFixtureSource instead of starting a new one.
   /// </summary>
   [Obsolete]
-  private async Task InitializeAsync() {
+  private async Task _initializeAsync() {
     if (_initialized) {
       return;
     }

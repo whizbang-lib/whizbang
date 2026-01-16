@@ -18,7 +18,7 @@ public sealed class WorkflowFixtureSource {
   public WorkflowFixtureSource() {
     // Synchronously wait for initialization to complete
     // This ensures fixture is ready before test classes are constructed
-    InitializeAsync().GetAwaiter().GetResult();
+    _initializeAsync().GetAwaiter().GetResult();
   }
 
   /// <summary>
@@ -26,7 +26,7 @@ public sealed class WorkflowFixtureSource {
   /// </summary>
   public ServiceBusIntegrationFixture Fixture => _sharedFixture ?? throw new InvalidOperationException("Workflow fixture not initialized");
 
-  private static async Task InitializeAsync() {
+  private static async Task _initializeAsync() {
     if (_initialized) {
       return;
     }

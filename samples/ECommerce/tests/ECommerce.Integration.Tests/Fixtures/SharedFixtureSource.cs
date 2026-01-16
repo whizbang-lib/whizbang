@@ -111,7 +111,7 @@ public static class SharedFixtureSource {
         Console.WriteLine("================================================================================");
 
         // Clean up partial initialization
-        await CleanupAfterFailureAsync();
+        await _cleanupAfterFailureAsync();
 
         throw new InvalidOperationException(
           $"Failed to initialize shared ServiceBus emulator. " +
@@ -128,7 +128,7 @@ public static class SharedFixtureSource {
   /// <summary>
   /// Cleans up resources after initialization failure.
   /// </summary>
-  private static async Task CleanupAfterFailureAsync() {
+  private static async Task _cleanupAfterFailureAsync() {
     try {
       if (_sharedServiceBusClient != null) {
         await _sharedServiceBusClient.DisposeAsync();

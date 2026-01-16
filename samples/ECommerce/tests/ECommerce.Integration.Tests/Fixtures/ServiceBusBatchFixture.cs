@@ -63,7 +63,7 @@ public sealed class ServiceBusBatchFixture : IAsyncDisposable {
     _externalSharedClient = sharedClient;
     Console.WriteLine($"[Batch {_batchIndex}] Using provided shared ServiceBusClient for warmup");
 
-    await WarmupAsync(cancellationToken);
+    await _warmupAsync(cancellationToken);
 
     Console.WriteLine($"[Batch {_batchIndex}] Ready! Emulator warmed up.");
   }
@@ -83,7 +83,7 @@ public sealed class ServiceBusBatchFixture : IAsyncDisposable {
     } else {
       // Create temporary client for warmup
       Console.WriteLine($"[Batch {_batchIndex}] No shared client provided, creating temporary one for warmup");
-      await WarmupAsync(cancellationToken);
+      await _warmupAsync(cancellationToken);
     }
   }
 
@@ -116,7 +116,7 @@ public sealed class ServiceBusBatchFixture : IAsyncDisposable {
   /// This eliminates cold-start delays during actual test execution.
   /// Uses the external shared ServiceBusClient if provided, otherwise creates a temporary one.
   /// </summary>
-  private async Task WarmupAsync(CancellationToken cancellationToken = default) {
+  private async Task _warmupAsync(CancellationToken cancellationToken = default) {
     var sw = Stopwatch.StartNew();
 
     ServiceBusClient clientToUse;
@@ -136,7 +136,7 @@ public sealed class ServiceBusBatchFixture : IAsyncDisposable {
       // Send warmup messages to generic topics used by GenericTopicRoutingStrategy
       // These match the topics that InventoryWorker publishes to and BFF subscribes from
       var warmupTasks = new[] { "topic-00", "topic-01" }.Select(async topicName => {
-        await SendWarmupMessageAsync(clientToUse, topicName, cancellationToken);
+        await _sendWarmupMessageAsync(clientToUse, topicName, cancellationToken);
       });
 
       await Task.WhenAll(warmupTasks);
@@ -156,7 +156,7 @@ public sealed class ServiceBusBatchFixture : IAsyncDisposable {
   /// This ensures the emulator is fully ready for bidirectional message flow (send→receive→complete).
   /// Retries with backoff to handle emulator propagation delay after startup.
   /// </summary>
-  private static async Task SendWarmupMessageAsync(
+  private static async Task _sendWarmupMessageAsync(
     ServiceBusClient client,
     string topicName,
     CancellationToken cancellationToken = default

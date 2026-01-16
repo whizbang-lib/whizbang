@@ -130,20 +130,20 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
 
     // Create Aspire app (PostgreSQL container)
     Console.WriteLine("[AspireFixture] Creating PostgreSQL container...");
-    _aspireApp = await CreateAspireAppAsync(cancellationToken);
-    _postgresConnection = await GetPostgresConnectionStringAsync(_aspireApp, cancellationToken);
+    _aspireApp = await _createAspireAppAsync(cancellationToken);
+    _postgresConnection = await _getPostgresConnectionStringAsync(_aspireApp, cancellationToken);
     Console.WriteLine("[AspireFixture] PostgreSQL ready.");
 
     // Drain stale messages from ServiceBus subscriptions BEFORE starting hosts
     Console.WriteLine("[AspireFixture] Draining stale messages from subscriptions...");
-    await DrainSubscriptionsAsync(cancellationToken);
+    await _drainSubscriptionsAsync(cancellationToken);
     Console.WriteLine("[AspireFixture] Subscriptions drained.");
 
     // Create service hosts (InventoryWorker + BFF)
     // IMPORTANT: Do NOT start hosts yet - schema must be initialized first!
     Console.WriteLine("[AspireFixture] Creating service hosts...");
-    _inventoryHost = CreateInventoryHost(_postgresConnection, _serviceBusConnection, _topicA, _topicB);
-    _bffHost = CreateBffHost(_postgresConnection, _serviceBusConnection, _topicA, _topicB);
+    _inventoryHost = _createInventoryHost(_postgresConnection, _serviceBusConnection, _topicA, _topicB);
+    _bffHost = _createBffHost(_postgresConnection, _serviceBusConnection, _topicA, _topicB);
 
     // Initialize Whizbang database schema (create tables, functions, etc.)
     // CRITICAL: Must run BEFORE starting hosts, otherwise workers fail trying to call process_work_batch
@@ -220,7 +220,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   /// Critical for test isolation when using shared generic topics across test runs.
   /// Uses the shared ServiceBusClient to avoid creating extra connections.
   /// </summary>
-  private async Task DrainSubscriptionsAsync(CancellationToken cancellationToken = default) {
+  private async Task _drainSubscriptionsAsync(CancellationToken cancellationToken = default) {
     // Use shared client instead of creating a new one
     // This reduces connection count and avoids ConnectionsQuotaExceeded errors
 
@@ -257,7 +257,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Creates the Aspire app with PostgreSQL container.
   /// </summary>
-  private static async Task<DistributedApplication> CreateAspireAppAsync(CancellationToken cancellationToken = default) {
+  private static async Task<DistributedApplication> _createAspireAppAsync(CancellationToken cancellationToken = default) {
     var appHost = await DistributedApplicationTestingBuilder
       .CreateAsync<Projects.ECommerce_Integration_Tests_AppHost>(cancellationToken: cancellationToken);
 
@@ -272,7 +272,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   /// Gets the PostgreSQL connection string from the Aspire app.
   /// Waits for PostgreSQL to be ready.
   /// </summary>
-  private static async Task<string> GetPostgresConnectionStringAsync(
+  private static async Task<string> _getPostgresConnectionStringAsync(
     DistributedApplication app,
     CancellationToken cancellationToken = default
   ) {
@@ -281,7 +281,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       ?? throw new InvalidOperationException("Failed to get PostgreSQL connection string");
 
     // Wait for PostgreSQL to be ready
-    await WaitForPostgresAsync(connectionString, cancellationToken);
+    await _waitForPostgresAsync(connectionString, cancellationToken);
 
     return connectionString;
   }
@@ -289,7 +289,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Waits for PostgreSQL to be ready by attempting to connect until successful.
   /// </summary>
-  private static async Task WaitForPostgresAsync(string connectionString, CancellationToken cancellationToken = default) {
+  private static async Task _waitForPostgresAsync(string connectionString, CancellationToken cancellationToken = default) {
     var maxAttempts = 30;
     var delay = TimeSpan.FromSeconds(1);
 
@@ -310,7 +310,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Creates the InventoryWorker host with generic topic subscriptions.
   /// </summary>
-  private IHost CreateInventoryHost(
+  private IHost _createInventoryHost(
     string postgresConnectionString,
     string serviceBusConnectionString,
     string topicA,
@@ -445,7 +445,7 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Creates the BFF host with generic topic subscriptions.
   /// </summary>
-  private IHost CreateBffHost(
+  private IHost _createBffHost(
     string postgresConnectionString,
     string serviceBusConnectionString,
     string topicA,
