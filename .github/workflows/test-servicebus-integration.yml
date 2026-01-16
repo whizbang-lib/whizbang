@@ -1,0 +1,91 @@
+name: Azure Service Bus Integration Tests
+
+on:
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'src/**'
+      - 'samples/ECommerce/**'
+      - 'tests/**'
+      - '.github/workflows/test-servicebus-integration.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'src/**'
+      - 'samples/ECommerce/**'
+      - 'tests/**'
+      - '.github/workflows/test-servicebus-integration.yml'
+  workflow_dispatch:  # Allow manual trigger
+
+env:
+  DOTNET_VERSION: '10.0.x'
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+  DOTNET_NOLOGO: '1'
+
+jobs:
+  servicebus-integration-tests:
+    name: Azure Service Bus Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    services:
+      # Azure Service Bus Emulator
+      # https://learn.microsoft.com/azure/service-bus-messaging/overview-emulator
+      servicebus-emulator:
+        image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
+        ports:
+          - 5672:5672  # AMQP
+        env:
+          ACCEPT_EULA: 'Y'
+        options: >-
+          --health-cmd "curl -f http://localhost:5672 || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Display .NET Info
+        run: dotnet --info
+
+      - name: Restore Dependencies
+        run: dotnet restore
+
+      - name: Build Solution
+        run: dotnet build --no-restore --configuration Release
+
+      - name: Run Azure Service Bus Integration Tests
+        run: |
+          dotnet test --project samples/ECommerce/tests/ECommerce.Integration.Tests/ \
+            --no-build \
+            --configuration Release \
+            --max-parallel-test-modules 2 \
+            --logger "console;verbosity=normal" \
+            --logger "trx;LogFileName=servicebus-integration-tests.trx"
+        env:
+          # ServiceBus emulator connection
+          AZURE_SERVICEBUS_CONNECTION_STRING: "Endpoint=sb://localhost;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;"
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: servicebus-integration-test-results
+          path: '**/TestResults/*.trx'
+          retention-days: 30
+
+      - name: Publish Test Results
+        if: always()
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: '**/TestResults/*.trx'
+          check_name: 'Azure Service Bus Integration Test Results'
+          comment_mode: 'off'
