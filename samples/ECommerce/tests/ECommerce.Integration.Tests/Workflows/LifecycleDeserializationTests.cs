@@ -118,7 +118,7 @@ public class LifecycleDeserializationTests {
     var completionSource = new TaskCompletionSource<bool>();
     var expectedCount = commands.Length;
     var actualCount = 0;
-    var expectedProductIds = commands.Select(c => c.ProductId).ToHashSet();
+    var expectedProductIds = commands.Select(c => c.ProductId.Value).ToHashSet();  // Extract Guid from ProductId value object
 
     var receptor = new DistributeStageTestReceptor(new TaskCompletionSource<ProductCreatedEvent>());
 
