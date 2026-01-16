@@ -23,6 +23,8 @@ This project adheres to the Contributor Covenant [Code of Conduct](CODE_OF_CONDU
 - PowerShell 7+ (cross-platform)
 - Git
 
+For detailed setup instructions, see [.github/SETUP.md](.github/SETUP.md).
+
 ### Setting Up Your Development Environment
 
 1. **Fork and clone the repository**
