@@ -51,7 +51,7 @@ jobs:
 
       - name: Run PostgreSQL Integration Tests
         run: |
-          dotnet test --no-build --configuration Release \
+          dotnet test --no-build \
             --test-modules "**/bin/**/Release/net10.0/Whizbang.Data*.Tests.dll" \
             --max-parallel-test-modules 2 \
             --logger "console;verbosity=normal" \
