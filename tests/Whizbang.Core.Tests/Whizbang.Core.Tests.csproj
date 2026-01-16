@@ -12,8 +12,9 @@
     <NoWarn>$(NoWarn);CA1707</NoWarn>
   </PropertyGroup>
   <ItemGroup>
-    <!-- Exclude generated files from compilation (they're already compiled via the generator pipeline) -->
-    <Compile Remove=".whizbang-generated/**/*.cs" />
+    <!-- Note: Source generator output is automatically included in compilation -->
+    <!-- Only exclude TUnit-generated test metadata to avoid conflicts -->
+    <Compile Remove=".whizbang-generated/TUnit.Core.SourceGenerator/**/*.cs" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
