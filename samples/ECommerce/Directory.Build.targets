@@ -15,7 +15,7 @@
 
     <!-- Extract JSON from C# file using sed -->
     <Exec Condition="Exists('$(MessageRegistryFile)')"
-          Command="sed -n '/internal const string Json = @&quot;/,/^&quot;/p' '$(MessageRegistryFile)' | sed '1s/.*@&quot;//' | sed '$s/&quot;.*//g' | sed 's/&quot;&quot;/&quot;/g' > '$(RegistryOutputFile)'" />
+          Command="sed -n '/internal const string Json = @&quot;/,/^&quot;;/p' '$(MessageRegistryFile)' | sed '1s/.*@&quot;//' | sed '$s/&quot;;.*//g' | sed 's/&quot;&quot;/&quot;/g' > '$(RegistryOutputFile)'" />
 
     <Message Condition="Exists('$(MessageRegistryFile)')" Text="Message registry extracted successfully!" Importance="high" />
   </Target>
