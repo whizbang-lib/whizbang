@@ -49,7 +49,7 @@ jobs:
 
       - name: Run RabbitMQ Integration Tests
         run: |
-          dotnet test samples/ECommerce/tests/ECommerce.RabbitMQ.Integration.Tests/ \
+          dotnet test --project samples/ECommerce/tests/ECommerce.RabbitMQ.Integration.Tests/ \
             --no-build \
             --configuration Release \
             --max-parallel-test-modules 4 \
