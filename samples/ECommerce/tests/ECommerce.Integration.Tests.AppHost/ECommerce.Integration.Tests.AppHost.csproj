@@ -1,6 +1,7 @@
 <Project Sdk="Aspire.AppHost.Sdk/13.0.0">
 
   <PropertyGroup>
+    <IsPackable>false</IsPackable>
     <OutputType>Exe</OutputType>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>

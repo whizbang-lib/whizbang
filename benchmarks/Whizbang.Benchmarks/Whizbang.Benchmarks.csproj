@@ -1,6 +1,7 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <IsPackable>false</IsPackable>
     <OutputType>Exe</OutputType>
     <!-- Suppress CA rules that conflict with BenchmarkDotNet requirements -->
     <!-- CA1707: Benchmark method names use underscores for readability -->

@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk.Worker">
 
   <PropertyGroup>
+    <IsPackable>false</IsPackable>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>dotnet-ECommerce.ShippingWorker-4d470672-3gee-657d-0698-5h7dd5158ee3</UserSecretsId>
