@@ -16,26 +16,26 @@ public static class WhizbangModelBuilderExtensions {
     /// <summary>
     /// Configures Whizbang infrastructure entities (Inbox, Outbox, EventStore, ServiceInstance).
     /// Call this from your DbContext.OnModelCreating() before adding perspective configurations.
+    /// Schema is set via HasDefaultSchema() in generated code.
     /// </summary>
-    /// <param name="schema">Optional schema name for table qualification (e.g., "inventory", "bff"). If null, uses "public" (default schema).</param>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs:ConfigureWhizbangInfrastructure_ConfiguresInboxEntityAsync</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs:ConfigureWhizbangInfrastructure_ConfiguresOutboxEntityAsync</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs:ConfigureWhizbangInfrastructure_ConfiguresEventStoreEntityAsync</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs:ConfigureWhizbangInfrastructure_ConfiguresServiceInstanceEntityAsync</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs:ConfigureWhizbangInfrastructure_ConfiguresMessageDeduplicationEntityAsync</tests>
-    public ModelBuilder ConfigureWhizbangInfrastructure(string? schema = null) {
-      _configureInbox(modelBuilder, schema);
-      _configureOutbox(modelBuilder, schema);
-      _configureEventStore(modelBuilder, schema);
-      _configureServiceInstance(modelBuilder, schema);
-      _configureMessageDeduplication(modelBuilder, schema);
-      _configureMessageAssociations(modelBuilder, schema);
-      _configurePerspectiveCheckpoints(modelBuilder, schema);
+    public ModelBuilder ConfigureWhizbangInfrastructure() {
+      _configureInbox(modelBuilder);
+      _configureOutbox(modelBuilder);
+      _configureEventStore(modelBuilder);
+      _configureServiceInstance(modelBuilder);
+      _configureMessageDeduplication(modelBuilder);
+      _configureMessageAssociations(modelBuilder);
+      _configurePerspectiveCheckpoints(modelBuilder);
       return modelBuilder;
     }
   }
 
-  private static void _configureInbox(ModelBuilder modelBuilder, string? schema) {
+  private static void _configureInbox(ModelBuilder modelBuilder) {
     modelBuilder.Entity<InboxRecord>(entity => {
       // Schema is set via HasDefaultSchema() in generated code - do NOT pass schema here
       entity.ToTable("wh_inbox");
@@ -64,7 +64,7 @@ public static class WhizbangModelBuilderExtensions {
     });
   }
 
-  private static void _configureOutbox(ModelBuilder modelBuilder, string? schema) {
+  private static void _configureOutbox(ModelBuilder modelBuilder) {
     modelBuilder.Entity<OutboxRecord>(entity => {
       // Schema is set via HasDefaultSchema() in generated code - do NOT pass schema here
       entity.ToTable("wh_outbox");
@@ -95,7 +95,7 @@ public static class WhizbangModelBuilderExtensions {
     });
   }
 
-  private static void _configureEventStore(ModelBuilder modelBuilder, string? schema) {
+  private static void _configureEventStore(ModelBuilder modelBuilder) {
     modelBuilder.Entity<EventStoreRecord>(entity => {
       // Schema is set via HasDefaultSchema() in generated code - do NOT pass schema here
       entity.ToTable("wh_event_store");
@@ -119,7 +119,7 @@ public static class WhizbangModelBuilderExtensions {
     });
   }
 
-  private static void _configureServiceInstance(ModelBuilder modelBuilder, string? schema) {
+  private static void _configureServiceInstance(ModelBuilder modelBuilder) {
     modelBuilder.Entity<ServiceInstanceRecord>(entity => {
       // Schema is set via HasDefaultSchema() in generated code - do NOT pass schema here
       entity.ToTable("wh_service_instances");
@@ -139,7 +139,7 @@ public static class WhizbangModelBuilderExtensions {
   }
 
 
-  private static void _configureMessageDeduplication(ModelBuilder modelBuilder, string? schema) {
+  private static void _configureMessageDeduplication(ModelBuilder modelBuilder) {
     modelBuilder.Entity<MessageDeduplicationRecord>(entity => {
       // Schema is set via HasDefaultSchema() in generated code - do NOT pass schema here
       entity.ToTable("wh_message_deduplication");
@@ -152,7 +152,7 @@ public static class WhizbangModelBuilderExtensions {
     });
   }
 
-  private static void _configureMessageAssociations(ModelBuilder modelBuilder, string? schema) {
+  private static void _configureMessageAssociations(ModelBuilder modelBuilder) {
     modelBuilder.Entity<MessageAssociationRecord>(entity => {
       // Schema is set via HasDefaultSchema() in generated code - do NOT pass schema here
       entity.ToTable("wh_message_associations");
@@ -175,7 +175,7 @@ public static class WhizbangModelBuilderExtensions {
     });
   }
 
-  private static void _configurePerspectiveCheckpoints(ModelBuilder modelBuilder, string? schema) {
+  private static void _configurePerspectiveCheckpoints(ModelBuilder modelBuilder) {
     modelBuilder.Entity<PerspectiveCheckpointRecord>(entity => {
       // Schema is set via HasDefaultSchema() in generated code - do NOT pass schema here
       entity.ToTable("wh_perspective_checkpoints");
