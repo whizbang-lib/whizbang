@@ -131,7 +131,7 @@ public class InMemoryRequestResponseStore : IRequestResponseStore {
     return Task.CompletedTask;
   }
 
-  private record RequestRecord(
+  private sealed record RequestRecord(
     MessageId RequestId,
     TaskCompletionSource<IMessageEnvelope> CompletionSource,
     DateTimeOffset ExpiresAt

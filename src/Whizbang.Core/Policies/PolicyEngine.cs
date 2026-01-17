@@ -96,7 +96,7 @@ public class PolicyEngine : IPolicyEngine {
   /// <summary>
   /// Internal policy representation
   /// </summary>
-  private record Policy(
+  private sealed record Policy(
     string Name,
     Func<PolicyContext, bool> Predicate,
     Action<PolicyConfiguration> Configure

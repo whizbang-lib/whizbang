@@ -211,7 +211,7 @@ public class InMemoryEventStore : IEventStore {
   /// <summary>
   /// Thread-safe stream data container.
   /// </summary>
-  private class StreamData {
+  private sealed class StreamData {
     private readonly Lock _lock = new();
     private readonly List<EventRecord> _events = [];
     private long _currentSequence = -1;
@@ -269,5 +269,5 @@ public class InMemoryEventStore : IEventStore {
     }
   }
 
-  private record EventRecord(long Version, Guid EventId, IMessageEnvelope Envelope);
+  private sealed record EventRecord(long Version, Guid EventId, IMessageEnvelope Envelope);
 }
