@@ -34,6 +34,10 @@ public class DapperPostgresEventStore(
   private readonly JsonbSizeValidator _sizeValidator = sizeValidator ?? throw new ArgumentNullException(nameof(sizeValidator));
   private readonly IPolicyEngine _policyEngine = policyEngine ?? throw new ArgumentNullException(nameof(policyEngine));
 
+  // Unused parameters retained for backward compatibility
+  private readonly IPerspectiveInvoker? _ = perspectiveInvoker;
+  private readonly ILogger<DapperPostgresEventStore> __ = logger;
+
   /// <summary>
   /// Appends an event to the specified stream (AOT-compatible).
   /// Stream ID is provided explicitly, avoiding reflection.

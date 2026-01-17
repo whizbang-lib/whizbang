@@ -1,6 +1,0 @@
-﻿/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.PaymentWorker/PaymentDbContext.cs
-/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.PaymentWorker/Program.cs
-/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.PaymentWorker/Receptors/ProcessPaymentReceptor.cs
-/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.PaymentWorker/obj/Debug/net10.0/ECommerce.PaymentWorker.GlobalUsings.g.cs
-/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.PaymentWorker/obj/Debug/net10.0/.NETCoreApp,Version=v10.0.AssemblyAttributes.cs
-/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.PaymentWorker/obj/Debug/net10.0/ECommerce.PaymentWorker.AssemblyInfo.cs

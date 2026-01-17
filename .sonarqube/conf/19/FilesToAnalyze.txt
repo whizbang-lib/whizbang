@@ -1,8 +1,1 @@
-﻿/Users/philcarbone/src/whizbang/tests/Whizbang.Execution.Tests/ExecutionStatePoolTests.cs
-/Users/philcarbone/src/whizbang/tests/Whizbang.Execution.Tests/ExecutionStrategyContractTests.cs
-/Users/philcarbone/src/whizbang/tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs
-/Users/philcarbone/src/whizbang/tests/Whizbang.Execution.Tests/PooledSourcePoolTests.cs
-/Users/philcarbone/src/whizbang/tests/Whizbang.Execution.Tests/PooledValueTaskSourceTests.cs
-/Users/philcarbone/src/whizbang/tests/Whizbang.Execution.Tests/SerialExecutorTests.cs
-/Users/philcarbone/src/whizbang/README.md
-/Users/philcarbone/src/whizbang/tests/Whizbang.Execution.Tests/count_all_tests.sh
+﻿/Users/philcarbone/src/whizbang/README.md

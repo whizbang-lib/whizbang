@@ -24,6 +24,9 @@ public class DapperSqliteEventStore(
   JsonSerializerOptions jsonOptions,
   IPolicyEngine policyEngine) : DapperEventStoreBase(connectionFactory, executor, jsonOptions) {
 
+  // Unused parameter retained for backward compatibility
+  private readonly IPolicyEngine _ = policyEngine;
+
   /// <summary>
   /// Appends an event to the specified stream (AOT-compatible).
   /// Stream ID is provided explicitly, avoiding reflection.

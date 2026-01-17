@@ -1,2 +1,0 @@
-﻿/Users/philcarbone/src/whizbang/test-diagnostics/Program.cs
-/Users/philcarbone/src/whizbang/README.md

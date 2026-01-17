@@ -1,10 +1,7 @@
-﻿/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.NotificationWorker/NotificationDbContext.cs
-/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.NotificationWorker/Program.cs
-/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.NotificationWorker/Receptors/SendNotificationReceptor.cs
-/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.NotificationWorker/Worker.cs
-/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.NotificationWorker/obj/Release/net10.0/ECommerce.NotificationWorker.GlobalUsings.g.cs
-/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.NotificationWorker/obj/Release/net10.0/.NETCoreApp,Version=v10.0.AssemblyAttributes.cs
-/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.NotificationWorker/obj/Release/net10.0/ECommerce.NotificationWorker.AssemblyInfo.cs
-/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.NotificationWorker/appsettings.Development.json
-/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.NotificationWorker/appsettings.json
-/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.NotificationWorker/Properties/launchSettings.json
+﻿/Users/philcarbone/src/whizbang/src/Whizbang.Transports.RabbitMQ/RabbitMQChannelPool.cs
+/Users/philcarbone/src/whizbang/src/Whizbang.Transports.RabbitMQ/RabbitMQHealthCheck.cs
+/Users/philcarbone/src/whizbang/src/Whizbang.Transports.RabbitMQ/RabbitMQOptions.cs
+/Users/philcarbone/src/whizbang/src/Whizbang.Transports.RabbitMQ/RabbitMQSubscription.cs
+/Users/philcarbone/src/whizbang/src/Whizbang.Transports.RabbitMQ/RabbitMQTransport.cs
+/Users/philcarbone/src/whizbang/src/Whizbang.Transports.RabbitMQ/ServiceCollectionExtensions.cs
+/Users/philcarbone/src/whizbang/README.md

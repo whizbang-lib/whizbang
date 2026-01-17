@@ -41,6 +41,8 @@ public delegate Task ReceptorPublisher<in TEvent>(TEvent eventData);
 /// </summary>
 /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs</tests>
 /// <tests>tests/Whizbang.Core.Tests/Integration/DispatcherReceptorIntegrationTests.cs</tests>
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Parameter 'jsonOptions' retained for backward compatibility with generated code")]
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "S1172:Unused method parameters should be removed", Justification = "Parameter 'jsonOptions' retained for backward compatibility with generated code")]
 public abstract class Dispatcher(
   IServiceProvider serviceProvider,
   IServiceInstanceProvider instanceProvider,
@@ -62,6 +64,9 @@ public abstract class Dispatcher(
   private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
   // Resolve from service provider if not injected (for backwards compatibility with generated code)
   private readonly IEnvelopeSerializer? _envelopeSerializer = envelopeSerializer ?? serviceProvider.GetService<IEnvelopeSerializer>();
+
+  // Unused parameter retained for backward compatibility with generated code
+  private readonly JsonSerializerOptions? _ = jsonOptions;
 
   /// <summary>
   /// Gets the service provider for receptor resolution.
