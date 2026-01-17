@@ -1,2 +1,2 @@
-﻿/Users/philcarbone/src/whizbang/src/Whizbang.Data.EFCore.Custom/WhizbangDbContextAttribute.cs
+﻿/Users/philcarbone/src/whizbang/test-diagnostics/Program.cs
 /Users/philcarbone/src/whizbang/README.md

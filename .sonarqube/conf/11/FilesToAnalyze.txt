@@ -1,6 +1,10 @@
-﻿/Users/philcarbone/src/whizbang/src/Whizbang.Transports.AzureServiceBus/AzureServiceBusHealthCheck.cs
-/Users/philcarbone/src/whizbang/src/Whizbang.Transports.AzureServiceBus/AzureServiceBusOptions.cs
-/Users/philcarbone/src/whizbang/src/Whizbang.Transports.AzureServiceBus/AzureServiceBusSubscription.cs
-/Users/philcarbone/src/whizbang/src/Whizbang.Transports.AzureServiceBus/AzureServiceBusTransport.cs
-/Users/philcarbone/src/whizbang/src/Whizbang.Transports.AzureServiceBus/ServiceCollectionExtensions.cs
+﻿/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Custom/DapperDbExecutor.cs
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Custom/DapperEventStoreBase.cs
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Custom/DapperRequestResponseStoreBase.cs
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Custom/DapperSequenceProviderBase.cs
 /Users/philcarbone/src/whizbang/README.md
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Custom/Migrations/001_initial_schema.postgresql.sql
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Custom/Migrations/001_initial_schema.sqlite.sql
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Custom/Migrations/001_initial_schema.sqlserver.sql
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Custom/Migrations/002_add_message_queue_leasing.postgresql.sql
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Custom/Migrations/002_add_message_queue_leasing.sqlite.sql

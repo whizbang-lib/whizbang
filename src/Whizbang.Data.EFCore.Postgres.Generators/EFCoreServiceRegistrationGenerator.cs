@@ -71,7 +71,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         static (ctx, data) => {
           var perspectives = data.Left.Left;
           var dbContexts = data.Left.Right;
-          var compilation = data.Right;
 
           try {
             // Filter nulls to ensure type safety - OfType<> both filters and changes type to non-nullable
