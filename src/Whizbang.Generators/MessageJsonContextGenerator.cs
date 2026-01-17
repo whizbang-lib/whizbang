@@ -715,8 +715,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       // Property 0: MessageId using snippet
       var messageIdProperty = propertyCreationSnippet
           .Replace(PLACEHOLDER_INDEX, "0")
-          .Replace(PLACEHOLDER_PROPERTY_TYPE, "MessageId")
-          .Replace(PLACEHOLDER_PROPERTY_NAME, "MessageId")
+          .Replace(PLACEHOLDER_PROPERTY_TYPE, PLACEHOLDER_MESSAGE_ID)
+          .Replace(PLACEHOLDER_PROPERTY_NAME, PLACEHOLDER_MESSAGE_ID)
           .Replace(PLACEHOLDER_MESSAGE_TYPE, $"MessageEnvelope<{message.FullyQualifiedName}>")
           .Replace(PLACEHOLDER_SETTER, "null,  // MessageEnvelope uses constructor, no setter needed");
       sb.AppendLine(messageIdProperty);
@@ -748,7 +748,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       var messageIdParam = parameterInfoSnippet
           .Replace(PLACEHOLDER_INDEX, "0")
           .Replace(PLACEHOLDER_PARAMETER_NAME, "messageId")
-          .Replace(PLACEHOLDER_PROPERTY_TYPE, "MessageId");
+          .Replace(PLACEHOLDER_PROPERTY_TYPE, PLACEHOLDER_MESSAGE_ID);
       sb.AppendLine(messageIdParam);
 
       var payloadParam = parameterInfoSnippet
@@ -767,7 +767,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       // Create JsonObjectInfoValues
       sb.AppendLine($"  var objectInfo = new JsonObjectInfoValues<MessageEnvelope<{message.FullyQualifiedName}>> {{");
       sb.AppendLine($"      ObjectWithParameterizedConstructorCreator = static args => new MessageEnvelope<{message.FullyQualifiedName}>(");
-      sb.AppendLine("          (MessageId)args[0],");
+      sb.AppendLine($"          ({PLACEHOLDER_MESSAGE_ID})args[0],");
       sb.AppendLine($"          ({message.FullyQualifiedName})args[1],");
       sb.AppendLine("          (List<MessageHop>)args[2]),");
       sb.AppendLine("      PropertyMetadataInitializer = _ => properties,");
