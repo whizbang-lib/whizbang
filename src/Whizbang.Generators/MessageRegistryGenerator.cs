@@ -68,6 +68,27 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   private const string I_RECEPTOR = "Whizbang.Core.IReceptor";
   private const string I_PERSPECTIVE_FOR = "Whizbang.Core.Perspectives.IPerspectiveFor";
 
+  // Template and placeholder constants
+  private const string TEMPLATE_SNIPPET_FILE = "MessageRegistrySnippets.cs";
+  private const string PLACEHOLDER_MESSAGE_TYPE = "__MESSAGE_TYPE__";
+  private const string PLACEHOLDER_IS_COMMAND = "__IS_COMMAND__";
+  private const string PLACEHOLDER_IS_EVENT = "__IS_EVENT__";
+  private const string PLACEHOLDER_FILE_PATH = "__FILE_PATH__";
+  private const string PLACEHOLDER_LINE_NUMBER = "__LINE_NUMBER__";
+  private const string PLACEHOLDER_DOCS_URL = "__DOCS_URL__";
+  private const string PLACEHOLDER_TESTS = "__TESTS__";
+  private const string PLACEHOLDER_CLASS_NAME = "__CLASS_NAME__";
+  private const string PLACEHOLDER_METHOD_NAME = "__METHOD_NAME__";
+  private const string PLACEHOLDER_DISPATCHERS = "__DISPATCHERS__";
+  private const string PLACEHOLDER_RECEPTORS = "__RECEPTORS__";
+  private const string PLACEHOLDER_PERSPECTIVES = "__PERSPECTIVES__";
+  private const string PLACEHOLDER_MESSAGES = "__MESSAGES__";
+  private const string PLACEHOLDER_JSON = "__JSON__";
+  private const string PLACEHOLDER_TEST_FILE = "__TEST_FILE__";
+  private const string PLACEHOLDER_TEST_METHOD = "__TEST_METHOD__";
+  private const string PLACEHOLDER_TEST_LINE = "__TEST_LINE__";
+  private const string PLACEHOLDER_TEST_CLASS = "__TEST_CLASS__";
+
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover message types (ICommand, IEvent)
     // Where() filters nulls, Select() unwraps nullable for incremental generator caching
@@ -340,37 +361,37 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     // Load snippets
     var messageHeaderSnippet = TemplateUtilities.ExtractSnippet(
         typeof(MessageRegistryGenerator).Assembly,
-        "MessageRegistrySnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "MESSAGE_ENTRY_HEADER");
 
     var messageFooterSnippet = TemplateUtilities.ExtractSnippet(
         typeof(MessageRegistryGenerator).Assembly,
-        "MessageRegistrySnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "MESSAGE_ENTRY_FOOTER");
 
     var dispatcherSnippet = TemplateUtilities.ExtractSnippet(
         typeof(MessageRegistryGenerator).Assembly,
-        "MessageRegistrySnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "DISPATCHER_ENTRY");
 
     var receptorSnippet = TemplateUtilities.ExtractSnippet(
         typeof(MessageRegistryGenerator).Assembly,
-        "MessageRegistrySnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "RECEPTOR_ENTRY");
 
     var perspectiveSnippet = TemplateUtilities.ExtractSnippet(
         typeof(MessageRegistryGenerator).Assembly,
-        "MessageRegistrySnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "PERSPECTIVE_ENTRY");
 
     var testSnippet = TemplateUtilities.ExtractSnippet(
         typeof(MessageRegistryGenerator).Assembly,
-        "MessageRegistrySnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "TEST_ENTRY");
 
     var jsonWrapperSnippet = TemplateUtilities.ExtractSnippet(
         typeof(MessageRegistryGenerator).Assembly,
-        "MessageRegistrySnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "JSON_ARRAY_WRAPPER");
 
     // Collect all message type names from all sources
@@ -418,30 +439,30 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
 
       // Build message header
       var messageHeader = messageHeaderSnippet
-          .Replace("__MESSAGE_TYPE__", _escapeJson(group.TypeName));
+          .Replace(PLACEHOLDER_MESSAGE_TYPE, _escapeJson(group.TypeName));
 
       // If message is defined in this project, use its metadata; otherwise, infer from usage
       if (msg is not null) {
         var testEntries = _buildTestEntries(msg.Tests, testSnippet);
         messageHeader = messageHeader
-            .Replace("__IS_COMMAND__", msg.IsCommand.ToString().ToLowerInvariant())
-            .Replace("__IS_EVENT__", msg.IsEvent.ToString().ToLowerInvariant())
-            .Replace("__FILE_PATH__", _escapeJson(msg.FilePath))
-            .Replace("__LINE_NUMBER__", msg.LineNumber.ToString(CultureInfo.InvariantCulture))
-            .Replace("__DOCS_URL__", msg.DocsUrl ?? "")
-            .Replace("__TESTS__", testEntries);
+            .Replace(PLACEHOLDER_IS_COMMAND, msg.IsCommand.ToString().ToLowerInvariant())
+            .Replace(PLACEHOLDER_IS_EVENT, msg.IsEvent.ToString().ToLowerInvariant())
+            .Replace(PLACEHOLDER_FILE_PATH, _escapeJson(msg.FilePath))
+            .Replace(PLACEHOLDER_LINE_NUMBER, msg.LineNumber.ToString(CultureInfo.InvariantCulture))
+            .Replace(PLACEHOLDER_DOCS_URL, msg.DocsUrl ?? "")
+            .Replace(PLACEHOLDER_TESTS, testEntries);
       } else {
         // Message is from a referenced assembly - infer type from handlers
         var isCommand = group.Receptors.Count > 0;
         var isEvent = group.Perspectives.Count > 0 || (group.Receptors.Count == 0 && group.Dispatchers.Count > 0);
 
         messageHeader = messageHeader
-            .Replace("__IS_COMMAND__", isCommand.ToString().ToLowerInvariant())
-            .Replace("__IS_EVENT__", isEvent.ToString().ToLowerInvariant())
-            .Replace("__FILE_PATH__", "")
-            .Replace("__LINE_NUMBER__", "0")
-            .Replace("__DOCS_URL__", "")
-            .Replace("__TESTS__", "");
+            .Replace(PLACEHOLDER_IS_COMMAND, isCommand.ToString().ToLowerInvariant())
+            .Replace(PLACEHOLDER_IS_EVENT, isEvent.ToString().ToLowerInvariant())
+            .Replace(PLACEHOLDER_FILE_PATH, "")
+            .Replace(PLACEHOLDER_LINE_NUMBER, "0")
+            .Replace(PLACEHOLDER_DOCS_URL, "")
+            .Replace(PLACEHOLDER_TESTS, "");
       }
 
       // Build dispatchers
@@ -450,12 +471,12 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
         var d = group.Dispatchers[j];
         var dispatcherTestEntries = _buildTestEntries(d.Tests, testSnippet);
         var entry = dispatcherSnippet
-            .Replace("__CLASS_NAME__", _escapeJson(d.ClassName))
-            .Replace("__METHOD_NAME__", _escapeJson(d.MethodName))
-            .Replace("__FILE_PATH__", _escapeJson(d.FilePath))
-            .Replace("__LINE_NUMBER__", d.LineNumber.ToString(CultureInfo.InvariantCulture))
-            .Replace("__DOCS_URL__", d.DocsUrl ?? "")
-            .Replace("__TESTS__", dispatcherTestEntries);
+            .Replace(PLACEHOLDER_CLASS_NAME, _escapeJson(d.ClassName))
+            .Replace(PLACEHOLDER_METHOD_NAME, _escapeJson(d.MethodName))
+            .Replace(PLACEHOLDER_FILE_PATH, _escapeJson(d.FilePath))
+            .Replace(PLACEHOLDER_LINE_NUMBER, d.LineNumber.ToString(CultureInfo.InvariantCulture))
+            .Replace(PLACEHOLDER_DOCS_URL, d.DocsUrl ?? "")
+            .Replace(PLACEHOLDER_TESTS, dispatcherTestEntries);
 
         dispatcherEntries.Append(entry);
         if (j < group.Dispatchers.Count - 1) {
@@ -469,12 +490,12 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
         var r = group.Receptors[j];
         var receptorTestEntries = _buildTestEntries(r.Tests, testSnippet);
         var entry = receptorSnippet
-            .Replace("__CLASS_NAME__", _escapeJson(r.ClassName))
-            .Replace("__METHOD_NAME__", _escapeJson(r.MethodName))
-            .Replace("__FILE_PATH__", _escapeJson(r.FilePath))
-            .Replace("__LINE_NUMBER__", r.LineNumber.ToString(CultureInfo.InvariantCulture))
-            .Replace("__DOCS_URL__", r.DocsUrl ?? "")
-            .Replace("__TESTS__", receptorTestEntries);
+            .Replace(PLACEHOLDER_CLASS_NAME, _escapeJson(r.ClassName))
+            .Replace(PLACEHOLDER_METHOD_NAME, _escapeJson(r.MethodName))
+            .Replace(PLACEHOLDER_FILE_PATH, _escapeJson(r.FilePath))
+            .Replace(PLACEHOLDER_LINE_NUMBER, r.LineNumber.ToString(CultureInfo.InvariantCulture))
+            .Replace(PLACEHOLDER_DOCS_URL, r.DocsUrl ?? "")
+            .Replace(PLACEHOLDER_TESTS, receptorTestEntries);
 
         receptorEntries.Append(entry);
         if (j < group.Receptors.Count - 1) {
@@ -488,11 +509,11 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
         var p = group.Perspectives[j];
         var perspectiveTestEntries = _buildTestEntries(p.Tests, testSnippet);
         var entry = perspectiveSnippet
-            .Replace("__CLASS_NAME__", _escapeJson(p.ClassName))
-            .Replace("__FILE_PATH__", _escapeJson(p.FilePath))
-            .Replace("__LINE_NUMBER__", p.LineNumber.ToString(CultureInfo.InvariantCulture))
-            .Replace("__DOCS_URL__", p.DocsUrl ?? "")
-            .Replace("__TESTS__", perspectiveTestEntries);
+            .Replace(PLACEHOLDER_CLASS_NAME, _escapeJson(p.ClassName))
+            .Replace(PLACEHOLDER_FILE_PATH, _escapeJson(p.FilePath))
+            .Replace(PLACEHOLDER_LINE_NUMBER, p.LineNumber.ToString(CultureInfo.InvariantCulture))
+            .Replace(PLACEHOLDER_DOCS_URL, p.DocsUrl ?? "")
+            .Replace(PLACEHOLDER_TESTS, perspectiveTestEntries);
 
         perspectiveEntries.Append(entry);
         if (j < group.Perspectives.Count - 1) {
@@ -502,9 +523,9 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
 
       // Build message footer
       var messageFooter = messageFooterSnippet
-          .Replace("__DISPATCHERS__", dispatcherEntries.ToString())
-          .Replace("__RECEPTORS__", receptorEntries.ToString())
-          .Replace("__PERSPECTIVES__", perspectiveEntries.ToString());
+          .Replace(PLACEHOLDER_DISPATCHERS, dispatcherEntries.ToString())
+          .Replace(PLACEHOLDER_RECEPTORS, receptorEntries.ToString())
+          .Replace(PLACEHOLDER_PERSPECTIVES, perspectiveEntries.ToString());
 
       // Combine header and footer
       messageEntries.Append(messageHeader);
@@ -516,15 +537,15 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     }
 
     // Build final JSON
-    var json = jsonWrapperSnippet.Replace("__MESSAGES__", messageEntries.ToString());
+    var json = jsonWrapperSnippet.Replace(PLACEHOLDER_MESSAGES, messageEntries.ToString());
 
     // Generate C# wrapper with embedded JSON using snippet
     var wrapperSnippet = TemplateUtilities.ExtractSnippet(
         typeof(MessageRegistryGenerator).Assembly,
-        "MessageRegistrySnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "CSHARP_WRAPPER");
 
-    var csharpSource = wrapperSnippet.Replace("__JSON__", json.Replace("\"", "\"\""));
+    var csharpSource = wrapperSnippet.Replace(PLACEHOLDER_JSON, json.Replace("\"", "\"\""));
 
     context.AddSource("MessageRegistry.g.cs", csharpSource);
   }
@@ -690,10 +711,10 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     for (int i = 0; i < tests.Length; i++) {
       var test = tests[i];
       var entry = testSnippet
-          .Replace("__TEST_FILE__", _escapeJson(test.TestFile))
-          .Replace("__TEST_METHOD__", _escapeJson(test.TestMethod))
-          .Replace("__TEST_LINE__", test.TestLine.ToString(CultureInfo.InvariantCulture))
-          .Replace("__TEST_CLASS__", _escapeJson(test.TestClass));
+          .Replace(PLACEHOLDER_TEST_FILE, _escapeJson(test.TestFile))
+          .Replace(PLACEHOLDER_TEST_METHOD, _escapeJson(test.TestMethod))
+          .Replace(PLACEHOLDER_TEST_LINE, test.TestLine.ToString(CultureInfo.InvariantCulture))
+          .Replace(PLACEHOLDER_TEST_CLASS, _escapeJson(test.TestClass));
 
       entries.Append(entry);
       if (i < tests.Length - 1) {
