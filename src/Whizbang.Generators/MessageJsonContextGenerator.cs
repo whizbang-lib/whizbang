@@ -546,7 +546,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       // Get assembly-qualified name using the ACTUAL compilation assembly name
       // FullyQualifiedName is like "global::MyApp.Commands.CreateOrder"
       // We need "MyApp.Commands.CreateOrder, MyApp.Contracts" (actual assembly name)
-      var typeNameWithoutGlobal = type.FullyQualifiedName.Replace("global::", "");
+      var typeNameWithoutGlobal = type.FullyQualifiedName.Replace(PLACEHOLDER_GLOBAL, "");
 
       sb.AppendLine($"    \"{typeNameWithoutGlobal}, {actualAssemblyName}\" => context.GetTypeInfoInternal(typeof({type.FullyQualifiedName}), options),");
     }
@@ -570,7 +570,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         "CORE_TYPE_FACTORY");
 
     // MessageId factory - use custom AOT-compatible converter
-    sb.AppendLine(coreTypeFactorySnippet.Replace("__TYPE_NAME__", "MessageId"));
+    sb.AppendLine(coreTypeFactorySnippet.Replace(PLACEHOLDER_TYPE_NAME, PLACEHOLDER_MESSAGE_ID));
     sb.AppendLine();
 
     // CorrelationId factory - use custom AOT-compatible converter
@@ -813,7 +813,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       foreach (var message in messageTypes) {
         // Generate type name without "global::" prefix for assembly-qualified name
         // e.g., "MyApp.Commands.CreateOrder, MyApp.Contracts"
-        var typeNameWithoutGlobal = message.FullyQualifiedName.Replace("global::", "");
+        var typeNameWithoutGlobal = message.FullyQualifiedName.Replace(PLACEHOLDER_GLOBAL, "");
         var assemblyQualifiedName = $"{typeNameWithoutGlobal}, {actualAssemblyName}";
 
         converterRegistrations.AppendLine($"  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(");
@@ -828,7 +828,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       converterRegistrations.AppendLine();
       converterRegistrations.AppendLine("  // Register MessageEnvelope<T> wrapper types for transport deserialization");
       foreach (var message in messageTypes) {
-        var typeNameWithoutGlobal = message.FullyQualifiedName.Replace("global::", "");
+        var typeNameWithoutGlobal = message.FullyQualifiedName.Replace(PLACEHOLDER_GLOBAL, "");
         // Format: Whizbang.Core.Observability.MessageEnvelope`1[[PayloadType, Assembly]], Whizbang.Core
         var envelopeTypeName = $"Whizbang.Core.Observability.MessageEnvelope`1[[{typeNameWithoutGlobal}, {actualAssemblyName}]], Whizbang.Core";
 
@@ -878,7 +878,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         }
 
         // Try to find the type symbol in the compilation
-        var typeSymbol = compilation.GetTypeByMetadataName(elementTypeName.Replace("global::", ""));
+        var typeSymbol = compilation.GetTypeByMetadataName(elementTypeName.Replace(PLACEHOLDER_GLOBAL, ""));
         if (typeSymbol == null) {
           continue;
         }
@@ -1008,7 +1008,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
         // Extract simple type name from fully qualified name
         // e.g., "global::ECommerce.Contracts.Commands.ProductId" -> "ProductId"
-        var parts = property.Type.Replace("global::", "").Split('.');
+        var parts = property.Type.Replace(PLACEHOLDER_GLOBAL, "").Split('.');
         var typeName = parts[^1];
 
         // Heuristic: If type name ends with "Id", it's likely a WhizbangId type with a generated converter
@@ -1062,7 +1062,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
         // Extract simple name from fully qualified element type
         var parts = elementTypeName.Split('.');
-        var elementSimpleName = parts[^1].Replace("global::", "");
+        var elementSimpleName = parts[^1].Replace(PLACEHOLDER_GLOBAL, "");
 
         listTypes[listTypeName] = new ListTypeInfo(
             ListTypeName: listTypeName,
