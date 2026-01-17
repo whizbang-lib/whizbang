@@ -395,25 +395,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
         "JSON_ARRAY_WRAPPER");
 
     // Collect all message type names from all sources
-    var allMessageTypes = new HashSet<string>();
-
-    foreach (var msg in enrichedMessages) {
-      allMessageTypes.Add(msg.TypeName);
-    }
-
-    foreach (var dispatcher in enrichedDispatchers) {
-      allMessageTypes.Add(dispatcher.MessageType);
-    }
-
-    foreach (var receptor in enrichedReceptors) {
-      allMessageTypes.Add(receptor.MessageType);
-    }
-
-    foreach (var perspective in enrichedPerspectives) {
-      foreach (var eventType in perspective.EventTypes) {
-        allMessageTypes.Add(eventType);
-      }
-    }
+    var allMessageTypes = _collectAllMessageTypes(enrichedMessages, enrichedDispatchers, enrichedReceptors, enrichedPerspectives);
 
     // Group by message type - include all message types, even if not defined in this project
     var messageGroups = allMessageTypes
@@ -465,67 +447,16 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
             .Replace(PLACEHOLDER_TESTS, "");
       }
 
-      // Build dispatchers
-      var dispatcherEntries = new StringBuilder();
-      for (int j = 0; j < group.Dispatchers.Count; j++) {
-        var d = group.Dispatchers[j];
-        var dispatcherTestEntries = _buildTestEntries(d.Tests, testSnippet);
-        var entry = dispatcherSnippet
-            .Replace(PLACEHOLDER_CLASS_NAME, _escapeJson(d.ClassName))
-            .Replace(PLACEHOLDER_METHOD_NAME, _escapeJson(d.MethodName))
-            .Replace(PLACEHOLDER_FILE_PATH, _escapeJson(d.FilePath))
-            .Replace(PLACEHOLDER_LINE_NUMBER, d.LineNumber.ToString(CultureInfo.InvariantCulture))
-            .Replace(PLACEHOLDER_DOCS_URL, d.DocsUrl ?? "")
-            .Replace(PLACEHOLDER_TESTS, dispatcherTestEntries);
-
-        dispatcherEntries.Append(entry);
-        if (j < group.Dispatchers.Count - 1) {
-          dispatcherEntries.AppendLine(",");
-        }
-      }
-
-      // Build receptors
-      var receptorEntries = new StringBuilder();
-      for (int j = 0; j < group.Receptors.Count; j++) {
-        var r = group.Receptors[j];
-        var receptorTestEntries = _buildTestEntries(r.Tests, testSnippet);
-        var entry = receptorSnippet
-            .Replace(PLACEHOLDER_CLASS_NAME, _escapeJson(r.ClassName))
-            .Replace(PLACEHOLDER_METHOD_NAME, _escapeJson(r.MethodName))
-            .Replace(PLACEHOLDER_FILE_PATH, _escapeJson(r.FilePath))
-            .Replace(PLACEHOLDER_LINE_NUMBER, r.LineNumber.ToString(CultureInfo.InvariantCulture))
-            .Replace(PLACEHOLDER_DOCS_URL, r.DocsUrl ?? "")
-            .Replace(PLACEHOLDER_TESTS, receptorTestEntries);
-
-        receptorEntries.Append(entry);
-        if (j < group.Receptors.Count - 1) {
-          receptorEntries.AppendLine(",");
-        }
-      }
-
-      // Build perspectives
-      var perspectiveEntries = new StringBuilder();
-      for (int j = 0; j < group.Perspectives.Count; j++) {
-        var p = group.Perspectives[j];
-        var perspectiveTestEntries = _buildTestEntries(p.Tests, testSnippet);
-        var entry = perspectiveSnippet
-            .Replace(PLACEHOLDER_CLASS_NAME, _escapeJson(p.ClassName))
-            .Replace(PLACEHOLDER_FILE_PATH, _escapeJson(p.FilePath))
-            .Replace(PLACEHOLDER_LINE_NUMBER, p.LineNumber.ToString(CultureInfo.InvariantCulture))
-            .Replace(PLACEHOLDER_DOCS_URL, p.DocsUrl ?? "")
-            .Replace(PLACEHOLDER_TESTS, perspectiveTestEntries);
-
-        perspectiveEntries.Append(entry);
-        if (j < group.Perspectives.Count - 1) {
-          perspectiveEntries.AppendLine(",");
-        }
-      }
+      // Build dispatchers, receptors, and perspectives using extracted helper methods
+      var dispatcherEntries = _buildDispatchersList(group.Dispatchers, dispatcherSnippet, testSnippet);
+      var receptorEntries = _buildReceptorsList(group.Receptors, receptorSnippet, testSnippet);
+      var perspectiveEntries = _buildPerspectivesList(group.Perspectives, perspectiveSnippet, testSnippet);
 
       // Build message footer
       var messageFooter = messageFooterSnippet
-          .Replace(PLACEHOLDER_DISPATCHERS, dispatcherEntries.ToString())
-          .Replace(PLACEHOLDER_RECEPTORS, receptorEntries.ToString())
-          .Replace(PLACEHOLDER_PERSPECTIVES, perspectiveEntries.ToString());
+          .Replace(PLACEHOLDER_DISPATCHERS, dispatcherEntries)
+          .Replace(PLACEHOLDER_RECEPTORS, receptorEntries)
+          .Replace(PLACEHOLDER_PERSPECTIVES, perspectiveEntries);
 
       // Combine header and footer
       messageEntries.Append(messageHeader);
@@ -725,6 +656,125 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
     return entries.ToString();
   }
 
+  // ========================================
+  // Helper Methods for _generateMessageRegistry Complexity Reduction
+  // ========================================
+
+  /// <summary>
+  /// Collects all unique message type names from messages, dispatchers, receptors, and perspectives.
+  /// </summary>
+  private static HashSet<string> _collectAllMessageTypes(
+      ImmutableArray<MessageTypeInfo> messages,
+      ImmutableArray<DispatcherLocationInfo> dispatchers,
+      ImmutableArray<ReceptorLocationInfo> receptors,
+      ImmutableArray<PerspectiveLocationInfo> perspectives) {
+
+    var allMessageTypes = new HashSet<string>();
+
+    foreach (var msg in messages) {
+      allMessageTypes.Add(msg.TypeName);
+    }
+
+    foreach (var dispatcher in dispatchers) {
+      allMessageTypes.Add(dispatcher.MessageType);
+    }
+
+    foreach (var receptor in receptors) {
+      allMessageTypes.Add(receptor.MessageType);
+    }
+
+    foreach (var perspective in perspectives) {
+      foreach (var eventType in perspective.EventTypes) {
+        allMessageTypes.Add(eventType);
+      }
+    }
+
+    return allMessageTypes;
+  }
+
+  /// <summary>
+  /// Builds JSON entries for a list of dispatchers.
+  /// </summary>
+  private static string _buildDispatchersList(
+      List<DispatcherLocationInfo> dispatchers,
+      string dispatcherSnippet,
+      string testSnippet) {
+
+    var entries = new StringBuilder();
+    for (int j = 0; j < dispatchers.Count; j++) {
+      var d = dispatchers[j];
+      var testEntries = _buildTestEntries(d.Tests, testSnippet);
+      var entry = dispatcherSnippet
+          .Replace(PLACEHOLDER_CLASS_NAME, _escapeJson(d.ClassName))
+          .Replace(PLACEHOLDER_METHOD_NAME, _escapeJson(d.MethodName))
+          .Replace(PLACEHOLDER_FILE_PATH, _escapeJson(d.FilePath))
+          .Replace(PLACEHOLDER_LINE_NUMBER, d.LineNumber.ToString(CultureInfo.InvariantCulture))
+          .Replace(PLACEHOLDER_DOCS_URL, d.DocsUrl ?? "")
+          .Replace(PLACEHOLDER_TESTS, testEntries);
+
+      entries.Append(entry);
+      if (j < dispatchers.Count - 1) {
+        entries.AppendLine(",");
+      }
+    }
+    return entries.ToString();
+  }
+
+  /// <summary>
+  /// Builds JSON entries for a list of receptors.
+  /// </summary>
+  private static string _buildReceptorsList(
+      List<ReceptorLocationInfo> receptors,
+      string receptorSnippet,
+      string testSnippet) {
+
+    var entries = new StringBuilder();
+    for (int j = 0; j < receptors.Count; j++) {
+      var r = receptors[j];
+      var testEntries = _buildTestEntries(r.Tests, testSnippet);
+      var entry = receptorSnippet
+          .Replace(PLACEHOLDER_CLASS_NAME, _escapeJson(r.ClassName))
+          .Replace(PLACEHOLDER_METHOD_NAME, _escapeJson(r.MethodName))
+          .Replace(PLACEHOLDER_FILE_PATH, _escapeJson(r.FilePath))
+          .Replace(PLACEHOLDER_LINE_NUMBER, r.LineNumber.ToString(CultureInfo.InvariantCulture))
+          .Replace(PLACEHOLDER_DOCS_URL, r.DocsUrl ?? "")
+          .Replace(PLACEHOLDER_TESTS, testEntries);
+
+      entries.Append(entry);
+      if (j < receptors.Count - 1) {
+        entries.AppendLine(",");
+      }
+    }
+    return entries.ToString();
+  }
+
+  /// <summary>
+  /// Builds JSON entries for a list of perspectives.
+  /// </summary>
+  private static string _buildPerspectivesList(
+      List<PerspectiveLocationInfo> perspectives,
+      string perspectiveSnippet,
+      string testSnippet) {
+
+    var entries = new StringBuilder();
+    for (int j = 0; j < perspectives.Count; j++) {
+      var p = perspectives[j];
+      var testEntries = _buildTestEntries(p.Tests, testSnippet);
+      var entry = perspectiveSnippet
+          .Replace(PLACEHOLDER_CLASS_NAME, _escapeJson(p.ClassName))
+          .Replace(PLACEHOLDER_FILE_PATH, _escapeJson(p.FilePath))
+          .Replace(PLACEHOLDER_LINE_NUMBER, p.LineNumber.ToString(CultureInfo.InvariantCulture))
+          .Replace(PLACEHOLDER_DOCS_URL, p.DocsUrl ?? "")
+          .Replace(PLACEHOLDER_TESTS, testEntries);
+
+      entries.Append(entry);
+      if (j < perspectives.Count - 1) {
+        entries.AppendLine(",");
+      }
+    }
+    return entries.ToString();
+  }
+
   // Helper classes for JSON deserialization
   private sealed class CodeDocsEntry {
     public string File { get; set; } = "";
@@ -794,3 +844,4 @@ internal sealed record TestInfo(
   int TestLine,
   string TestClass
 );
+
