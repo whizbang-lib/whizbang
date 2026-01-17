@@ -14,6 +14,10 @@ namespace Whizbang.Benchmarks;
 [MemoryDiagnoser]
 [MarkdownExporter]
 public class AllocationProfilingBenchmarks {
+  private const string BENCHMARK_HOST = "benchmark-host";
+  private const int BENCHMARK_PROCESS_ID = 12345;
+  private const string BENCHMARK_ENVIRONMENT = "benchmark";
+
   private sealed record TestCommand(string Id, int Value);
 
   private ParallelExecutor _parallelExecutor = null!;
@@ -43,8 +47,8 @@ public class AllocationProfilingBenchmarks {
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "Benchmark",
         InstanceId = Guid.NewGuid(),
-        HostName = "benchmark-host",
-        ProcessId = 12345
+        HostName = BENCHMARK_HOST,
+        ProcessId = BENCHMARK_PROCESS_ID
       },
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow,
@@ -60,7 +64,7 @@ public class AllocationProfilingBenchmarks {
       message: message,
       envelope: _envelope,
       services: serviceProvider,
-      environment: "benchmark"
+      environment: BENCHMARK_ENVIRONMENT
     );
 
     // Pooled context (rented each time)
@@ -68,7 +72,7 @@ public class AllocationProfilingBenchmarks {
       message: message,
       envelope: _envelope,
       services: serviceProvider,
-      environment: "benchmark"
+      environment: BENCHMARK_ENVIRONMENT
     );
 
     // Pre-allocate handler to avoid lambda allocation on each call

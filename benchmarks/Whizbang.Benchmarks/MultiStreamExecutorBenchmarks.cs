@@ -15,6 +15,10 @@ namespace Whizbang.Benchmarks;
 [MemoryDiagnoser]
 [MarkdownExporter]
 public class MultiStreamExecutorBenchmarks {
+  private const string BENCHMARK_HOST = "benchmark-host";
+  private const int BENCHMARK_PROCESS_ID = 12345;
+  private const string BENCHMARK_ENVIRONMENT = "benchmark";
+
   private sealed record TestCommand(string AggregateId, int SequenceNumber);
 
   private IExecutionStrategy[] _executors = null!;
@@ -47,8 +51,8 @@ public class MultiStreamExecutorBenchmarks {
         ServiceInstance = new ServiceInstanceInfo {
           ServiceName = "Benchmark",
           InstanceId = Guid.NewGuid(),
-          HostName = "benchmark-host",
-          ProcessId = 12345
+          HostName = BENCHMARK_HOST,
+          ProcessId = BENCHMARK_PROCESS_ID
         },
         Type = HopType.Current,
         Timestamp = DateTimeOffset.UtcNow,
@@ -61,7 +65,7 @@ public class MultiStreamExecutorBenchmarks {
         message: message,
         envelope: envelope,
         services: serviceProvider,
-        environment: "benchmark"
+        environment: BENCHMARK_ENVIRONMENT
       );
     }
   }
