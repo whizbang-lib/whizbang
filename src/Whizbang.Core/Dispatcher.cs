@@ -1115,7 +1115,7 @@ public abstract class Dispatcher(
     }
 
     // Process local messages individually (fast path)
-    foreach (var (message, messageType) in localMessages) {
+    foreach (var (message, _) in localMessages) {
       var receipt = await SendAsync(message);
       receipts.Add(receipt);
     }

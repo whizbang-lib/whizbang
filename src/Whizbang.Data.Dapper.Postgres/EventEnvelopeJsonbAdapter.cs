@@ -106,14 +106,6 @@ public class EventEnvelopeJsonbAdapter(JsonSerializerOptions jsonOptions) : IJso
       ? Guid.Parse(msgIdElem.GetString()!)
       : throw new InvalidOperationException("MessageId not found in metadata");
 
-    var correlationId = metadataDict.TryGetValue("correlation_id", out var corrIdElem) && !string.IsNullOrEmpty(corrIdElem.GetString())
-      ? Guid.Parse(corrIdElem.GetString()!)
-      : (Guid?)null;
-
-    var causationId = metadataDict.TryGetValue("causation_id", out var causIdElem) && !string.IsNullOrEmpty(causIdElem.GetString())
-      ? Guid.Parse(causIdElem.GetString()!)
-      : (Guid?)null;
-
     // Deserialize hops (AOT-compatible)
     List<MessageHop> hops;
     if (metadataDict.TryGetValue("hops", out var hopsElem)) {

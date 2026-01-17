@@ -249,7 +249,6 @@ public partial class PerspectiveWorker(
     foreach (var group in groupedWork) {
       var streamId = group.Key.StreamId;
       var perspectiveName = group.Key.PerspectiveName;
-      var workItems = group.ToList();
 
       try {
         // Look up the checkpoint to get the LastProcessedEventId

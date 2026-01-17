@@ -1,0 +1,1 @@
+﻿/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.ServiceDefaults/Extensions.cs
