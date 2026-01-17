@@ -469,7 +469,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
             ? eventType["global::".Length..]
             : eventType;
 
-        // Generate: if (typeof(TModel) == typeof(global::ModelType) && typeof(TEvent) == typeof(global::EventType)) {
+        // Generate type-check condition for model and event types
         sb.AppendLine($"    if (typeof(TModel) == typeof({modelType}) && typeof(TEvent) == typeof({eventType})) {{");
         sb.AppendLine($"      return new[] {{");
         sb.AppendLine($"        new PerspectiveAssociationInfo<TModel, TEvent>(");
