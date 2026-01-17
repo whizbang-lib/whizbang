@@ -30,6 +30,7 @@ namespace Whizbang.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/RoslynGuardsTests.cs</tests>
 [ExcludeFromCodeCoverage]
 public static class RoslynGuards {
+  private const string ROSLYN_BUG_MESSAGE = "ROSLYN_BUG_MESSAGE";
 
   /// <summary>
   /// Gets the declared symbol for a class declaration, or throws if null.
@@ -56,7 +57,7 @@ public static class RoslynGuards {
 
     var symbol = semanticModel.GetDeclaredSymbol(classDeclaration, cancellationToken) as INamedTypeSymbol ?? throw new InvalidOperationException(
           $"Roslyn returned null symbol for class declaration '{classDeclaration.Identifier.Text}'. " +
-          "This indicates a Roslyn compiler bug or malformed compilation unit.");
+          ROSLYN_BUG_MESSAGE);
     return symbol;
   }
 
@@ -77,7 +78,7 @@ public static class RoslynGuards {
 
     var symbol = semanticModel.GetDeclaredSymbol(recordDeclaration, cancellationToken) as INamedTypeSymbol ?? throw new InvalidOperationException(
           $"Roslyn returned null symbol for record declaration '{recordDeclaration.Identifier.Text}'. " +
-          "This indicates a Roslyn compiler bug or malformed compilation unit.");
+          ROSLYN_BUG_MESSAGE);
     return symbol;
   }
 
@@ -99,7 +100,7 @@ public static class RoslynGuards {
     var symbolInfo = semanticModel.GetSymbolInfo(invocation, cancellationToken);
     var methodSymbol = symbolInfo.Symbol as IMethodSymbol ?? throw new InvalidOperationException(
           $"Roslyn returned null or non-method symbol for invocation expression at {invocation.GetLocation()}. " +
-          "This indicates a Roslyn compiler bug or malformed compilation unit.");
+          ROSLYN_BUG_MESSAGE);
     return methodSymbol;
   }
 
@@ -121,7 +122,7 @@ public static class RoslynGuards {
     var typeInfo = semanticModel.GetTypeInfo(expression, cancellationToken);
     var typeSymbol = typeInfo.Type ?? throw new InvalidOperationException(
           $"Roslyn returned null type info for expression at {expression.GetLocation()}. " +
-          "This indicates a Roslyn compiler bug or malformed compilation unit.");
+          ROSLYN_BUG_MESSAGE);
     return typeSymbol;
   }
 
@@ -175,7 +176,7 @@ public static class RoslynGuards {
       throw new InvalidOperationException(
           $"Expected {interfaceName} to have {expectedCount} type argument(s), " +
           $"but Roslyn returned {interfaceSymbol.TypeArguments.Length}. " +
-          "This indicates a Roslyn compiler bug or malformed compilation unit.");
+          ROSLYN_BUG_MESSAGE);
     }
   }
 

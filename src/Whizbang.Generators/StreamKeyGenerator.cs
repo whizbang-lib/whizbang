@@ -31,6 +31,8 @@ namespace Whizbang.Generators;
 public class StreamKeyGenerator : IIncrementalGenerator {
   private const string IEVENT_INTERFACE = "Whizbang.Core.IEvent";
   private const string STREAMKEY_ATTRIBUTE = "Whizbang.Core.StreamKeyAttribute";
+  private const string STREAMKEY_ATTRIBUTE_NAME = "StreamKeyAttribute";
+  private const string STREAMKEY_SHORT_NAME = "StreamKey";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover IEvent types with [StreamKey] attribute
@@ -91,8 +93,8 @@ public class StreamKeyGenerator : IIncrementalGenerator {
     foreach (var member in typeSymbol.GetMembers()) {
       if (member is IPropertySymbol property) {
         var hasStreamKeyAttr = property.GetAttributes().Any(a =>
-            a.AttributeClass?.Name == "StreamKeyAttribute" ||
-            a.AttributeClass?.Name == "StreamKey" ||
+            a.AttributeClass?.Name == STREAMKEY_ATTRIBUTE_NAME ||
+            a.AttributeClass?.Name == STREAMKEY_SHORT_NAME ||
             a.AttributeClass?.ToDisplayString() == STREAMKEY_ATTRIBUTE ||
             a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{STREAMKEY_ATTRIBUTE}");
 
@@ -111,8 +113,8 @@ public class StreamKeyGenerator : IIncrementalGenerator {
     foreach (var ctor in constructors) {
       foreach (var parameter in ctor.Parameters) {
         var hasStreamKeyAttr = parameter.GetAttributes().Any(a =>
-            a.AttributeClass?.Name == "StreamKeyAttribute" ||
-            a.AttributeClass?.Name == "StreamKey" ||
+            a.AttributeClass?.Name == STREAMKEY_ATTRIBUTE_NAME ||
+            a.AttributeClass?.Name == STREAMKEY_SHORT_NAME ||
             a.AttributeClass?.ToDisplayString() == STREAMKEY_ATTRIBUTE ||
             a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{STREAMKEY_ATTRIBUTE}");
 
@@ -161,8 +163,8 @@ public class StreamKeyGenerator : IIncrementalGenerator {
     // Check if has [StreamKey] anywhere
     var hasStreamKeyOnProperty = typeSymbol.GetMembers().OfType<IPropertySymbol>().Any(p =>
         p.GetAttributes().Any(a =>
-            a.AttributeClass?.Name == "StreamKeyAttribute" ||
-            a.AttributeClass?.Name == "StreamKey" ||
+            a.AttributeClass?.Name == STREAMKEY_ATTRIBUTE_NAME ||
+            a.AttributeClass?.Name == STREAMKEY_SHORT_NAME ||
             a.AttributeClass?.ToDisplayString() == STREAMKEY_ATTRIBUTE ||
             a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{STREAMKEY_ATTRIBUTE}"));
 
@@ -173,8 +175,8 @@ public class StreamKeyGenerator : IIncrementalGenerator {
     var hasStreamKeyOnParameter = typeSymbol.Constructors.Any(ctor =>
         ctor.Parameters.Any(param =>
             param.GetAttributes().Any(a =>
-                a.AttributeClass?.Name == "StreamKeyAttribute" ||
-                a.AttributeClass?.Name == "StreamKey" ||
+                a.AttributeClass?.Name == STREAMKEY_ATTRIBUTE_NAME ||
+                a.AttributeClass?.Name == STREAMKEY_SHORT_NAME ||
                 a.AttributeClass?.ToDisplayString() == STREAMKEY_ATTRIBUTE ||
                 a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{STREAMKEY_ATTRIBUTE}")));
 
