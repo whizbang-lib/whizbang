@@ -55,136 +55,42 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Look for IPerspectiveFor<TModel, TEvent1..5> interfaces (single-stream)
-    // Format: Whizbang.Core.Perspectives.IPerspectiveFor<TModel, TEvent1> (2 type args)
-    // Format: Whizbang.Core.Perspectives.IPerspectiveFor<TModel, TEvent1, TEvent2> (3 type args)
-    // Format: Whizbang.Core.Perspectives.IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3> (4 type args)
-    // Format: Whizbang.Core.Perspectives.IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4> (5 type args)
-    // Format: Whizbang.Core.Perspectives.IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5> (6 type args)
-    var singleStreamInterfaces = classSymbol.AllInterfaces
-        .Where(i => {
-          var originalDef = i.OriginalDefinition.ToDisplayString();
-          return (originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1>" ||
-                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2>" ||
-                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2, TEvent3>" ||
-                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2, TEvent3, TEvent4>" ||
-                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5>")
-                 && i.TypeArguments.Length >= 2;
-        })
-        .ToList();
-
-    // Look for IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1..3> interfaces (multi-stream)
-    // Format: Whizbang.Core.Perspectives.IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1> (3 type args)
-    var globalInterfaces = classSymbol.AllInterfaces
-        .Where(i => {
-          var originalDef = i.OriginalDefinition.ToDisplayString();
-          return (originalDef == GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent1>" ||
-                  originalDef == GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent1, TEvent2>" ||
-                  originalDef == GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent1, TEvent2, TEvent3>")
-                 && i.TypeArguments.Length >= 3;
-        })
-        .ToList();
+    // Extract perspective interfaces
+    var singleStreamInterfaces = _extractSingleStreamInterfaces(classSymbol);
+    var globalInterfaces = _extractGlobalInterfaces(classSymbol);
 
     if (singleStreamInterfaces.Count == 0 && globalInterfaces.Count == 0) {
       return null;
     }
 
-    // Extract model type (first type argument in both IPerspectiveFor and IGlobalPerspectiveFor)
-    ITypeSymbol? modelType = null;
-    if (singleStreamInterfaces.Count > 0) {
-      modelType = singleStreamInterfaces[0].TypeArguments[0];
-    } else if (globalInterfaces.Count > 0) {
-      modelType = globalInterfaces[0].TypeArguments[0];
-    }
-
+    // Extract model type
+    var modelType = _extractModelType(singleStreamInterfaces, globalInterfaces);
     if (modelType is null) {
       return null;
     }
 
     var modelTypeName = modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
-    // Extract event types from all interfaces and collect event symbols
-    var eventTypes = new List<string>();
-    var eventTypeSymbols = new List<ITypeSymbol>();
-
-    // Extract from single-stream: skip TModel (index 0), all others are events
-    foreach (var iface in singleStreamInterfaces) {
-      for (int i = 1; i < iface.TypeArguments.Length; i++) {
-        var eventTypeSymbol = iface.TypeArguments[i];
-        var eventType = eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-        if (!eventTypes.Contains(eventType)) {
-          eventTypes.Add(eventType);
-          eventTypeSymbols.Add(eventTypeSymbol);
-        }
-      }
-    }
-
-    // Extract from global: skip TModel (index 0) and TPartitionKey (index 1), rest are events
-    foreach (var iface in globalInterfaces) {
-      for (int i = 2; i < iface.TypeArguments.Length; i++) {
-        var eventTypeSymbol = iface.TypeArguments[i];
-        var eventType = eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-        if (!eventTypes.Contains(eventType)) {
-          eventTypes.Add(eventType);
-          eventTypeSymbols.Add(eventTypeSymbol);
-        }
-      }
-    }
+    // Extract event types from all interfaces
+    var (eventTypes, eventTypeSymbols) = _extractEventTypesFromInterfaces(singleStreamInterfaces, globalInterfaces);
 
     if (eventTypes.Count == 0) {
       return null;
     }
 
-    // Find property with [StreamKey] attribute on the model
-    string? streamKeyPropertyName = null;
-    foreach (var member in modelType.GetMembers()) {
-      if (member is IPropertySymbol property) {
-        var hasStreamKeyAttribute = property.GetAttributes()
-            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
-
-        if (hasStreamKeyAttribute) {
-          streamKeyPropertyName = property.Name;
-          break;
-        }
-      }
-    }
-
+    // Find StreamKey property on model
+    var streamKeyPropertyName = _findModelStreamKeyProperty(modelType);
     if (streamKeyPropertyName is null) {
       // Cannot generate runner without StreamKey - skip silently
       return null;
     }
 
-    // Extract StreamKey property from each event type (for StreamId extraction)
-    var eventStreamKeys = new List<EventStreamKeyInfo>();
-    for (int i = 0; i < eventTypes.Count; i++) {
-      var eventTypeName = eventTypes[i];
-      var eventTypeSymbol = eventTypeSymbols[i];
+    // Extract StreamKey properties from event types
+    var eventStreamKeys = _extractEventStreamKeysFromTypes(eventTypes, eventTypeSymbols);
 
-      // Extract StreamKey property name from event
-      var eventStreamKeyProp = _extractStreamKeyProperty(eventTypeSymbol);
-      if (eventStreamKeyProp != null) {
-        eventStreamKeys.Add(new EventStreamKeyInfo(
-            EventTypeName: eventTypeName,
-            StreamKeyPropertyName: eventStreamKeyProp
-        ));
-      }
-    }
-
-    // Build full interface type arguments for registration
+    // Build type arguments and message type names
     var typeArguments = new[] { modelTypeName }.Concat(eventTypes).ToArray();
-
-    // Calculate DATABASE FORMAT (TypeName, AssemblyName - no global:: prefix)
-    // This generator doesn't use database registration, but we need to provide the parameter
-    var messageTypeNames = eventTypeSymbols
-        .Select(t => {
-          var typeName = t.ToDisplayString(new SymbolDisplayFormat(
-              typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
-              genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters
-          ));
-          var assemblyName = t.ContainingAssembly.Name;
-          return $"{typeName}, {assemblyName}";
-        })
-        .ToArray();
+    var messageTypeNames = _buildMessageTypeNames(eventTypeSymbols);
 
     return new PerspectiveInfo(
         ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
@@ -311,6 +217,146 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = result.Replace("__PERSPECTIVE_SIMPLE_NAME__", perspectiveSimpleName);
 
     return result;
+  }
+
+  // ========================================
+  // Helper Methods for _extractPerspectiveInfo Complexity Reduction
+  // ========================================
+
+  /// <summary>
+  /// Extracts single-stream IPerspectiveFor interfaces from a class symbol.
+  /// </summary>
+  private static List<INamedTypeSymbol> _extractSingleStreamInterfaces(INamedTypeSymbol classSymbol) {
+    return classSymbol.AllInterfaces
+        .Where(i => {
+          var originalDef = i.OriginalDefinition.ToDisplayString();
+          return (originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1>" ||
+                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2>" ||
+                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2, TEvent3>" ||
+                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2, TEvent3, TEvent4>" ||
+                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5>")
+                 && i.TypeArguments.Length >= 2;
+        })
+        .ToList();
+  }
+
+  /// <summary>
+  /// Extracts global IGlobalPerspectiveFor interfaces from a class symbol.
+  /// </summary>
+  private static List<INamedTypeSymbol> _extractGlobalInterfaces(INamedTypeSymbol classSymbol) {
+    return classSymbol.AllInterfaces
+        .Where(i => {
+          var originalDef = i.OriginalDefinition.ToDisplayString();
+          return (originalDef == GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent1>" ||
+                  originalDef == GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent1, TEvent2>" ||
+                  originalDef == GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent1, TEvent2, TEvent3>")
+                 && i.TypeArguments.Length >= 3;
+        })
+        .ToList();
+  }
+
+  /// <summary>
+  /// Extracts model type (first type argument) from perspective interfaces.
+  /// </summary>
+  private static ITypeSymbol? _extractModelType(List<INamedTypeSymbol> singleStreamInterfaces, List<INamedTypeSymbol> globalInterfaces) {
+    if (singleStreamInterfaces.Count > 0) {
+      return singleStreamInterfaces[0].TypeArguments[0];
+    }
+    if (globalInterfaces.Count > 0) {
+      return globalInterfaces[0].TypeArguments[0];
+    }
+    return null;
+  }
+
+  /// <summary>
+  /// Extracts event types from all perspective interfaces.
+  /// Returns both event type names and their symbols.
+  /// </summary>
+  private static (List<string> EventTypes, List<ITypeSymbol> EventTypeSymbols) _extractEventTypesFromInterfaces(
+      List<INamedTypeSymbol> singleStreamInterfaces,
+      List<INamedTypeSymbol> globalInterfaces) {
+
+    var eventTypes = new List<string>();
+    var eventTypeSymbols = new List<ITypeSymbol>();
+
+    // Extract from single-stream: skip TModel (index 0), all others are events
+    foreach (var iface in singleStreamInterfaces) {
+      for (int i = 1; i < iface.TypeArguments.Length; i++) {
+        var eventTypeSymbol = iface.TypeArguments[i];
+        var eventType = eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        if (!eventTypes.Contains(eventType)) {
+          eventTypes.Add(eventType);
+          eventTypeSymbols.Add(eventTypeSymbol);
+        }
+      }
+    }
+
+    // Extract from global: skip TModel (index 0) and TPartitionKey (index 1), rest are events
+    foreach (var iface in globalInterfaces) {
+      for (int i = 2; i < iface.TypeArguments.Length; i++) {
+        var eventTypeSymbol = iface.TypeArguments[i];
+        var eventType = eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        if (!eventTypes.Contains(eventType)) {
+          eventTypes.Add(eventType);
+          eventTypeSymbols.Add(eventTypeSymbol);
+        }
+      }
+    }
+
+    return (eventTypes, eventTypeSymbols);
+  }
+
+  /// <summary>
+  /// Finds the property with [StreamKey] attribute on a model type.
+  /// </summary>
+  private static string? _findModelStreamKeyProperty(ITypeSymbol modelType) {
+    foreach (var member in modelType.GetMembers()) {
+      if (member is IPropertySymbol property) {
+        var hasStreamKeyAttribute = property.GetAttributes()
+            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
+
+        if (hasStreamKeyAttribute) {
+          return property.Name;
+        }
+      }
+    }
+    return null;
+  }
+
+  /// <summary>
+  /// Extracts StreamKey properties from event types.
+  /// </summary>
+  private static List<EventStreamKeyInfo> _extractEventStreamKeysFromTypes(List<string> eventTypes, List<ITypeSymbol> eventTypeSymbols) {
+    var eventStreamKeys = new List<EventStreamKeyInfo>();
+    for (int i = 0; i < eventTypes.Count; i++) {
+      var eventTypeName = eventTypes[i];
+      var eventTypeSymbol = eventTypeSymbols[i];
+
+      var eventStreamKeyProp = _extractStreamKeyProperty(eventTypeSymbol);
+      if (eventStreamKeyProp != null) {
+        eventStreamKeys.Add(new EventStreamKeyInfo(
+            EventTypeName: eventTypeName,
+            StreamKeyPropertyName: eventStreamKeyProp
+        ));
+      }
+    }
+    return eventStreamKeys;
+  }
+
+  /// <summary>
+  /// Builds message type names in database format (TypeName, AssemblyName).
+  /// </summary>
+  private static string[] _buildMessageTypeNames(List<ITypeSymbol> eventTypeSymbols) {
+    return eventTypeSymbols
+        .Select(t => {
+          var typeName = t.ToDisplayString(new SymbolDisplayFormat(
+              typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
+              genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters
+          ));
+          var assemblyName = t.ContainingAssembly.Name;
+          return $"{typeName}, {assemblyName}";
+        })
+        .ToArray();
   }
 
   /// <summary>
