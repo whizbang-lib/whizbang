@@ -391,9 +391,9 @@ public partial class WorkCoordinatorPublisherWorker(
         OutboxFailures = failuresToSend,
         InboxCompletions = [],
         InboxFailures = [],
-        ReceptorCompletions = [],  // TODO: Add receptor processing support
+        ReceptorCompletions = [],  // FUTURE: Add receptor processing support
         ReceptorFailures = [],
-        PerspectiveCompletions = [],  // TODO: Add perspective checkpoint support
+        PerspectiveCompletions = [],  // FUTURE: Add perspective checkpoint support
         PerspectiveFailures = [],
         NewOutboxMessages = [],  // Not used in publisher worker (dispatcher handles new messages)
         NewInboxMessages = [],   // Not used in publisher worker (consumer handles new messages)
@@ -501,7 +501,7 @@ public partial class WorkCoordinatorPublisherWorker(
     }
 
     // Process inbox work
-    // TODO: Implement inbox processing - requires deserializing to typed messages and invoking receptors
+    // FUTURE: Implement inbox processing - requires deserializing to typed messages and invoking receptors
     // For now, mark as failed to prevent infinite retry loops
     if (workBatch.InboxWork.Count > 0) {
       foreach (var inboxMessage in workBatch.InboxWork) {

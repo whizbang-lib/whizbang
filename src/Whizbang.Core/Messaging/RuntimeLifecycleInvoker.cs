@@ -58,7 +58,7 @@ public sealed class RuntimeLifecycleInvoker : ILifecycleInvoker {
       } catch (Exception ex) {
         // Log error but don't stop processing other receptors
         // In production, this should use ILogger, but for now we'll rethrow to catch test issues
-        // TODO: Add ILogger support for error logging
+        // FUTURE: Add ILogger support for error logging
         throw new InvalidOperationException(
           $"Lifecycle receptor failed at stage {stage} for message type {messageType.Name}: {ex.Message}",
           ex);

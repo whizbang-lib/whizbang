@@ -168,7 +168,7 @@ public class ServiceCollectionExtensionsTests : IAsyncDisposable {
     var serviceProvider = services.BuildServiceProvider();
     var healthCheckService = serviceProvider.GetService<Microsoft.Extensions.Diagnostics.HealthChecks.HealthCheckService>();
 
-    // TODO: Implement full health check validation
+    // FUTURE: Implement full health check validation
     // This is a stub test - needs implementation to verify PostgresHealthCheck registration
     await Assert.That(healthCheckService).IsNotNull();
   }

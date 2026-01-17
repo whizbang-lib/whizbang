@@ -70,6 +70,6 @@ public class PathResolverTests {
     }
   }
 
-  // TODO: Add tests for sibling directory discovery (requires temporary git repository setup)
-  // TODO: Add tests for edge cases (no git root, no parent directory, etc.)
+  // FUTURE: Add tests for sibling directory discovery (requires temporary git repository setup)
+  // FUTURE: Add tests for edge cases (no git root, no parent directory, etc.)
 }

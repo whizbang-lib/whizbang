@@ -284,9 +284,9 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
         OutboxFailures = outboxFailures,
         InboxCompletions = inboxCompletions,
         InboxFailures = inboxFailures,
-        ReceptorCompletions = [],  // TODO: Add receptor processing support
+        ReceptorCompletions = [],  // FUTURE: Add receptor processing support
         ReceptorFailures = [],
-        PerspectiveCompletions = [],  // TODO: Add perspective checkpoint support
+        PerspectiveCompletions = [],  // FUTURE: Add perspective checkpoint support
         PerspectiveFailures = [],
         NewOutboxMessages = outboxMessages,
         NewInboxMessages = inboxMessages,

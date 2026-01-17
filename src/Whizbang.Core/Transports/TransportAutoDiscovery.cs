@@ -113,7 +113,7 @@ public class TransportAutoDiscovery {
   /// </summary>
   /// <tests>tests/Whizbang.Transports.Tests/TransportAutoDiscoveryTests.cs:TransportAutoDiscovery_DiscoverReceptors_ShouldNotThrowAsync</tests>
   public static void DiscoverReceptors() {
-    // TODO: Integrate with source generator to get all IReceptor<TMessage> types
+    // FUTURE: Integrate with source generator to get all IReceptor<TMessage> types
     // For each receptor found:
     //   - Extract TMessage type
     //   - Add to explicit types if ShouldSubscribe(TMessage) returns true

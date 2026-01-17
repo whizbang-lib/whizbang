@@ -89,5 +89,5 @@ public interface IPerspectiveFor<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEv
   TModel Apply(TModel currentData, TEvent5 eventData);
 }
 
-// TODO: Generate remaining variants (6-50 event types) via source generator or T4 template
+// FUTURE: Generate remaining variants (6-50 event types) via source generator or T4 template
 // For now, we have enough to validate the pattern works

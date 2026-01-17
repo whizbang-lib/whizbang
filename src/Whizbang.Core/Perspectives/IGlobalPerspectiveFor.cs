@@ -80,5 +80,5 @@ public interface IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1, TEvent2, 
   TModel Apply(TModel currentData, TEvent3 eventData);
 }
 
-// TODO: Generate remaining variants (4-50 event types) via source generator or T4 template
+// FUTURE: Generate remaining variants (4-50 event types) via source generator or T4 template
 // For now, we have enough to validate the pattern works

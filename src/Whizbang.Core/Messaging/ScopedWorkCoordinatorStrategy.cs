@@ -174,14 +174,14 @@ public partial class ScopedWorkCoordinatorStrategy : IWorkCoordinatorStrategy, I
       ServiceName = _instanceProvider.ServiceName,
       HostName = _instanceProvider.HostName,
       ProcessId = _instanceProvider.ProcessId,
-      Metadata = null,  // TODO: Add metadata support to WorkCoordinatorOptions
+      Metadata = null,  // FUTURE: Add metadata support to WorkCoordinatorOptions
       OutboxCompletions = [.. _queuedOutboxCompletions],
       OutboxFailures = [.. _queuedOutboxFailures],
       InboxCompletions = [.. _queuedInboxCompletions],
       InboxFailures = [.. _queuedInboxFailures],
-      ReceptorCompletions = [],  // TODO: Add receptor processing support
+      ReceptorCompletions = [],  // FUTURE: Add receptor processing support
       ReceptorFailures = [],
-      PerspectiveCompletions = [],  // TODO: Add perspective checkpoint support
+      PerspectiveCompletions = [],  // FUTURE: Add perspective checkpoint support
       PerspectiveFailures = [],
       NewOutboxMessages = [.. _queuedOutboxMessages],
       NewInboxMessages = [.. _queuedInboxMessages],

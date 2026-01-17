@@ -68,9 +68,9 @@ public class WorkBatchCoordinator : IWorkBatchCoordinator {
       RenewOutboxLeaseIds = [],
       RenewInboxLeaseIds = [],
       Flags = WorkBatchFlags.None,
-      PartitionCount = 16,  // TODO: Make configurable
-      LeaseSeconds = 30,    // TODO: Make configurable
-      StaleThresholdSeconds = 300  // TODO: Make configurable
+      PartitionCount = 16,  // FUTURE: Make configurable
+      LeaseSeconds = 30,    // FUTURE: Make configurable
+      StaleThresholdSeconds = 300  // FUTURE: Make configurable
     };
     var workBatch = await _workCoordinator.ProcessWorkBatchAsync(request, ct);
 
@@ -84,7 +84,7 @@ public class WorkBatchCoordinator : IWorkBatchCoordinator {
       await _perspectiveChannel.WriteAsync(perspectiveWork, ct);
     }
 
-    // TODO: Distribute inbox work when IInboxChannelWriter is created
+    // FUTURE: Distribute inbox work when IInboxChannelWriter is created
     // foreach (var inboxWork in workBatch.InboxWork) {
     //   await _inboxChannel.WriteAsync(inboxWork, ct);
     // }

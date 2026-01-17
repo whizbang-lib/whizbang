@@ -442,7 +442,7 @@ public class DispatcherReceptorIntegrationTests {
     await Assert.That(userResult).IsNotNull();
   }
 
-  // TODO: These tests are placeholders for v0.2.0 Dispatcher integration with MessageEnvelope/Hops
+  // FUTURE: These tests are placeholders for v0.2.0 Dispatcher integration with MessageEnvelope/Hops
   // Currently skipped as v0.1.0 Dispatcher doesn't create envelopes yet
   // Uncomment and implement when Dispatcher is upgraded to work with MessageEnvelope
 
