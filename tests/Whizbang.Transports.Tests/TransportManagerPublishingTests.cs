@@ -17,7 +17,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task PublishToTargetsAsync_WithSingleTarget_ShouldPublishAsync() {
     // Arrange
-    var manager = new TransportManager(new JsonMessageSerializer(WhizbangJsonContext.CreateOptions()));
+    var manager = new TransportManager();
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 
@@ -55,7 +55,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task PublishToTargetsAsync_WithMultipleTargets_ShouldPublishToAllAsync() {
     // Arrange
-    var manager = new TransportManager(new JsonMessageSerializer(WhizbangJsonContext.CreateOptions()));
+    var manager = new TransportManager();
     var transport1 = new InProcessTransport();
     var transport2 = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport1);
@@ -107,7 +107,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task PublishToTargetsAsync_WithRoutingKey_ShouldIncludeInDestinationAsync() {
     // Arrange
-    var manager = new TransportManager(new JsonMessageSerializer(WhizbangJsonContext.CreateOptions()));
+    var manager = new TransportManager();
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 
@@ -138,7 +138,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task PublishToTargetsAsync_WithCustomContext_ShouldUseProvidedContextAsync() {
     // Arrange
-    var manager = new TransportManager(new JsonMessageSerializer(WhizbangJsonContext.CreateOptions()));
+    var manager = new TransportManager();
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 
@@ -183,7 +183,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task PublishToTargetsAsync_CreatesEnvelopeWithHopsAsync() {
     // Arrange
-    var manager = new TransportManager(new JsonMessageSerializer(WhizbangJsonContext.CreateOptions()));
+    var manager = new TransportManager();
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 
@@ -224,7 +224,7 @@ public class TransportManagerPublishingTests {
   [Test]
   public async Task PublishToTargetsAsync_WhenTransportNotRegistered_ShouldThrowAsync() {
     // Arrange
-    var manager = new TransportManager(new JsonMessageSerializer(WhizbangJsonContext.CreateOptions()));
+    var manager = new TransportManager();
     var message = new TestMessage { Content = "fail", Value = 1 };
     var targets = new List<PublishTarget> {
       new() {
@@ -239,28 +239,23 @@ public class TransportManagerPublishingTests {
   }
 
   [Test]
+  [Skip("TransportManager no longer uses custom serializers")]
   public async Task Constructor_WithCustomSerializer_ShouldUseSerializerAsync() {
-    // Arrange
-    var customSerializer = new InMemorySerializer();
-    var manager = new TransportManager(customSerializer);
-    var transport = new InProcessTransport();
-    manager.AddTransport(TransportType.InProcess, transport);
-
-    // Act - Adding transport should work with custom serializer
-    await Assert.That(manager.HasTransport(TransportType.InProcess)).IsTrue();
+    // Test no longer applicable - TransportManager no longer takes serializer parameter
+    await Task.CompletedTask;
   }
 
   [Test]
+  [Skip("TransportManager no longer has required parameters")]
   public async Task Constructor_WithNullSerializer_ShouldThrowAsync() {
-    // Act & Assert
-    await Assert.That(() => new TransportManager(null!))
-      .ThrowsExactly<ArgumentNullException>();
+    // Test no longer applicable - TransportManager no longer requires serializer
+    await Task.CompletedTask;
   }
 
   [Test]
   public async Task Constructor_Default_ShouldCreateWithJsonSerializerAsync() {
     // Arrange & Act
-    var manager = new TransportManager(new JsonMessageSerializer(WhizbangJsonContext.CreateOptions()));
+    var manager = new TransportManager();
     var transport = new InProcessTransport();
     manager.AddTransport(TransportType.InProcess, transport);
 

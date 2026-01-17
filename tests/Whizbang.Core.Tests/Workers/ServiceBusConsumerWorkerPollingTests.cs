@@ -44,7 +44,6 @@ public class ServiceBusConsumerWorkerPollingTests {
     };
 
     var worker = new ServiceBusConsumerWorker(
-      serviceProvider.GetRequiredService<IServiceInstanceProvider>(),
       transport,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       new JsonSerializerOptions(),
@@ -81,7 +80,6 @@ public class ServiceBusConsumerWorkerPollingTests {
     };
 
     var worker = new ServiceBusConsumerWorker(
-      serviceProvider.GetRequiredService<IServiceInstanceProvider>(),
       transport,
       serviceProvider.GetRequiredService<IServiceScopeFactory>(),
       new JsonSerializerOptions(),

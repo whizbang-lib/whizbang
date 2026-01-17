@@ -45,7 +45,6 @@ public abstract class Dispatcher(
   IServiceProvider serviceProvider,
   IServiceInstanceProvider instanceProvider,
   ITraceStore? traceStore = null,
-  ITransport? transport = null,
   JsonSerializerOptions? jsonOptions = null,
   Routing.ITopicRegistry? topicRegistry = null,
   Routing.ITopicRoutingStrategy? topicRoutingStrategy = null,
@@ -57,7 +56,6 @@ public abstract class Dispatcher(
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly ITraceStore? _traceStore = traceStore;
-  private readonly ITransport? _transport = transport;
   private readonly JsonSerializerOptions? _jsonOptions = jsonOptions;
   private readonly Routing.ITopicRegistry? _topicRegistry = topicRegistry;
   private readonly Routing.ITopicRoutingStrategy _topicRoutingStrategy = topicRoutingStrategy ?? Routing.PassthroughRoutingStrategy.Instance;
@@ -1231,41 +1229,6 @@ public abstract class Dispatcher(
     }
 
     return outboxMessage;
-  }
-
-  /// <summary>
-  /// Serializes envelope metadata (MessageId + Hops) to JSON string.
-  /// </summary>
-  private string _serializeEnvelopeMetadata(IMessageEnvelope envelope) {
-    if (_jsonOptions == null) {
-      throw new InvalidOperationException("JsonSerializerOptions required for metadata serialization");
-    }
-
-    var metadata = new EnvelopeMetadata {
-      MessageId = envelope.MessageId,
-      Hops = envelope.Hops.ToList()
-    };
-
-    var metadataTypeInfo = (JsonTypeInfo<EnvelopeMetadata>)_jsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
-    return JsonSerializer.Serialize(metadata, metadataTypeInfo);
-  }
-
-  /// <summary>
-  /// Serializes security scope (tenant, user) from first hop's security context.
-  /// Returns null if no security context is present.
-  /// </summary>
-  private static string? _serializeSecurityScope(IMessageEnvelope envelope) {
-    // Extract security context from first hop if available
-    var firstHop = envelope.Hops.FirstOrDefault();
-    if (firstHop?.SecurityContext == null) {
-      return null;
-    }
-
-    // Manual JSON construction for AOT compatibility
-    var userId = firstHop.SecurityContext.UserId?.ToString();
-    var tenantId = firstHop.SecurityContext.TenantId?.ToString();
-
-    return $"{{\"UserId\":{(userId == null ? "null" : $"\"{userId}\"")},\"TenantId\":{(tenantId == null ? "null" : $"\"{tenantId}\"")}}}";
   }
 
   /// <summary>

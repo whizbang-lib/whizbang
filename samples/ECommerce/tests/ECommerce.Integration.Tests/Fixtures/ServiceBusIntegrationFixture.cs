@@ -464,7 +464,6 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton(inventoryConsumerOptions);
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
       new ServiceBusConsumerWorker(
-        sp.GetRequiredService<IServiceInstanceProvider>(),
         sp.GetRequiredService<ITransport>(),
         sp.GetRequiredService<IServiceScopeFactory>(),
         jsonOptions,  // Pass JSON options for event deserialization
@@ -624,7 +623,6 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton(consumerOptions);
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
       new ServiceBusConsumerWorker(
-        sp.GetRequiredService<IServiceInstanceProvider>(),
         sp.GetRequiredService<ITransport>(),
         sp.GetRequiredService<IServiceScopeFactory>(),
         jsonOptions,  // Pass JSON options for event deserialization

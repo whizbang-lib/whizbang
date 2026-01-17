@@ -31,7 +31,7 @@ public class DispatcherTransportBridgeTests {
     var serializer = new JsonMessageSerializer(options);
     var dispatcher = _createTestDispatcher();
     var instanceProvider = new TestServiceInstanceProvider();
-    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer, instanceProvider);
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
     var destination = new TransportDestination("remote-service");
 
     var messageReceived = false;
@@ -71,7 +71,7 @@ public class DispatcherTransportBridgeTests {
     var serializer = new JsonMessageSerializer(options);
     var dispatcher = _createTestDispatcher();
     var instanceProvider = new TestServiceInstanceProvider();
-    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer, instanceProvider);
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
     var destination = new TransportDestination("remote-service");
 
     byte[]? serializedBytes = null;
@@ -104,7 +104,7 @@ public class DispatcherTransportBridgeTests {
     var serializer = new JsonMessageSerializer(options);
     var dispatcher = _createTestDispatcher();
     var instanceProvider = new TestServiceInstanceProvider();
-    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer, instanceProvider);
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
     var destination = new TransportDestination("remote-calculator");
 
     // Setup remote responder (simulates remote service)
@@ -155,7 +155,7 @@ public class DispatcherTransportBridgeTests {
     var serializer = new JsonMessageSerializer(options);
     var dispatcher = _createTestDispatcher();
     var instanceProvider = new TestServiceInstanceProvider();
-    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer, instanceProvider);
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
     var destination = new TransportDestination("local-commands");
 
     var dispatcherInvoked = false;
@@ -210,7 +210,7 @@ public class DispatcherTransportBridgeTests {
     var serializer = new JsonMessageSerializer(options);
     var dispatcher = _createTestDispatcher();
     var instanceProvider = new TestServiceInstanceProvider();
-    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer, instanceProvider);
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
     var destination = new TransportDestination("local-commands");
 
     TestCommand? receivedMessage = null;
@@ -267,7 +267,7 @@ public class DispatcherTransportBridgeTests {
     var serializer = new JsonMessageSerializer(options);
     var dispatcher = _createTestDispatcher();
     var instanceProvider = new TestServiceInstanceProvider();
-    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer, instanceProvider);
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
     var destination = new TransportDestination("remote-service");
     var correlationId = CorrelationId.New();
 
@@ -304,7 +304,7 @@ public class DispatcherTransportBridgeTests {
     var serializer = new JsonMessageSerializer(options);
     var dispatcher = _createTestDispatcher();
     var instanceProvider = new TestServiceInstanceProvider();
-    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer, instanceProvider);
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
     var destination = new TransportDestination("remote-service");
 
     IMessageEnvelope? receivedEnvelope = null;
@@ -337,7 +337,7 @@ public class DispatcherTransportBridgeTests {
     var serializer = new JsonMessageSerializer(options);
     var dispatcher = _createTestDispatcher();
     var instanceProvider = new TestServiceInstanceProvider();
-    var bridge = new DispatcherTransportBridge(dispatcher, transport, serializer, instanceProvider);
+    var bridge = new DispatcherTransportBridge(dispatcher, transport, instanceProvider);
     var destination = new TransportDestination("remote-calculator");
     var correlationId = CorrelationId.New();
 

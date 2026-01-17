@@ -106,7 +106,6 @@ public class VoidReceptorBenchmarks {
       providerNoTracing,
       new ServiceInstanceProvider(Guid.NewGuid(), "BenchmarkService", BENCHMARK_HOST, BENCHMARK_PROCESS_ID),
       traceStore: null,  // No tracing = fast path
-      transport: null,
       jsonOptions: null
     );
 

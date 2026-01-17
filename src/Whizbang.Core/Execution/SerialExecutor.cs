@@ -95,8 +95,6 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
     state.Initialize(envelope, context, handler, source);
 
     var workItem = new WorkItem(
-      envelope: envelope,
-      context: context,
       executeAsync: _executeWithPooledStateAsync<TResult>,
       state: state,
       cancellationToken: ct
@@ -234,14 +232,10 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
   }
 
   private readonly struct WorkItem(
-    IMessageEnvelope envelope,
-    PolicyContext context,
     Func<object?, ValueTask> executeAsync,
     object? state,
     CancellationToken cancellationToken
     ) {
-    public readonly IMessageEnvelope Envelope = envelope;
-    public readonly PolicyContext Context = context;
     public readonly Func<object?, ValueTask> ExecuteAsync = executeAsync;
     public readonly object? State = state;
     public readonly CancellationToken CancellationToken = cancellationToken;

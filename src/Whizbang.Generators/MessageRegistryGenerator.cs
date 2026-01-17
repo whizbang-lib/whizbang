@@ -733,13 +733,17 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   }
 
   private sealed class CodeTestsMapData {
+#pragma warning disable S1144 // Used by JSON deserialization
     public Dictionary<string, TestLinkMapping[]>? CodeToTests { get; init; }
+#pragma warning restore S1144
   }
 
   private sealed class TestLinkMapping {
     public string TestFile { get; set; } = "";
     public string TestMethod { get; set; } = "";
+#pragma warning disable S1144 // Used by JSON deserialization
     public int TestLine { get; set; }
+#pragma warning restore S1144
     public string TestClass { get; set; } = "";
   }
 }

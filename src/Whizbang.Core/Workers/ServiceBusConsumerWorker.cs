@@ -16,7 +16,6 @@ namespace Whizbang.Core.Workers;
 /// Events from remote services are stored in inbox via process_work_batch and perspectives are invoked with ordering guarantees.
 /// </summary>
 public partial class ServiceBusConsumerWorker(
-  IServiceInstanceProvider instanceProvider,
   ITransport transport,
   IServiceScopeFactory scopeFactory,
   JsonSerializerOptions jsonOptions,
@@ -27,7 +26,6 @@ public partial class ServiceBusConsumerWorker(
   ILifecycleMessageDeserializer? lifecycleMessageDeserializer = null,
   IEnvelopeSerializer? envelopeSerializer = null
   ) : BackgroundService {
-  private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
   private readonly IServiceScopeFactory _scopeFactory = scopeFactory ?? throw new ArgumentNullException(nameof(scopeFactory));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
@@ -402,41 +400,6 @@ public partial class ServiceBusConsumerWorker(
       LogFailedToDeserializeEvent(_logger, work.MessageId, ex);
       return null;
     }
-  }
-
-  /// <summary>
-  /// Serializes envelope metadata (MessageId + Hops) to JSON string.
-  /// </summary>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
-  private string _serializeEnvelopeMetadata(IMessageEnvelope envelope) {
-    var metadata = new EnvelopeMetadata {
-      MessageId = envelope.MessageId,
-      Hops = envelope.Hops.ToList()
-    };
-
-    var metadataTypeInfo = (System.Text.Json.Serialization.Metadata.JsonTypeInfo<EnvelopeMetadata>)_jsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
-    return JsonSerializer.Serialize(metadata, metadataTypeInfo);
-  }
-
-  /// <summary>
-  /// Serializes security scope (tenant, user) from first hop's security context.
-  /// Returns null if no security context is present.
-  /// </summary>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_InvokesPerspectives_BeforeScopeDisposalAsync</tests>
-  /// <tests>Whizbang.Core.Tests/Workers/ServiceBusConsumerWorkerTests.cs:HandleMessage_AlreadyProcessed_SkipsPerspectiveInvocationAsync</tests>
-  private static string? _serializeSecurityScope(IMessageEnvelope envelope) {
-    // Extract security context from first hop if available
-    var firstHop = envelope.Hops.FirstOrDefault();
-    if (firstHop?.SecurityContext == null) {
-      return null;
-    }
-
-    // Manual JSON construction for AOT compatibility
-    var userId = firstHop.SecurityContext.UserId?.ToString();
-    var tenantId = firstHop.SecurityContext.TenantId?.ToString();
-
-    return $"{{\"UserId\":{(userId == null ? "null" : $"\"{userId}\"")},\"TenantId\":{(tenantId == null ? "null" : $"\"{tenantId}\"")}}}";
   }
 
   /// <summary>
