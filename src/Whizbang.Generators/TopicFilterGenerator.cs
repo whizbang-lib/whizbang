@@ -121,7 +121,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
     var filters = ImmutableArray.CreateBuilder<TopicFilterInfo>();
 
     foreach (var attr in topicFilterAttrs) {
-      var filterString = _extractFilterString(attr, cancellationToken);
+      var filterString = _extractFilterString(attr);
       if (filterString is not null) {
         filters.Add(new TopicFilterInfo(commandType, filterString));
       }
@@ -135,9 +135,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
   /// For string-based attributes: uses constructor argument directly.
   /// For enum-based attributes: extracts Description attribute or uses enum symbol name.
   /// </summary>
-  private static string? _extractFilterString(
-      AttributeData attribute,
-      System.Threading.CancellationToken cancellationToken) {
+  private static string? _extractFilterString(AttributeData attribute) {
 
     if (attribute.ConstructorArguments.Length == 0) {
       return null;  // No constructor arguments

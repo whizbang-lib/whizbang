@@ -310,7 +310,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     factories.Append(_generateListFactories(assembly, listTypes));
 
     // Discover WhizbangId converters by examining message property types
-    var converters = _discoverWhizbangIdConverters(allTypes, compilation);
+    var converters = _discoverWhizbangIdConverters(allTypes);
 
     // Generate and replace each region
     template = TemplateUtilities.ReplaceRegion(template, "LAZY_FIELDS", lazyFields.ToString());
@@ -318,7 +318,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     template = TemplateUtilities.ReplaceRegion(template, "ASSEMBLY_AWARE_HELPER", _generateAssemblyAwareHelper(assembly, converters, messages, compilation));
     template = TemplateUtilities.ReplaceRegion(template, "GET_DISCOVERED_TYPE_INFO", _generateGetTypeInfo(assembly, allTypes, listTypes));
     template = TemplateUtilities.ReplaceRegion(template, "HELPER_METHODS", _generateHelperMethods(assembly));
-    template = TemplateUtilities.ReplaceRegion(template, "GET_TYPE_INFO_BY_NAME", _generateGetTypeInfoByName(assembly, allTypes, compilation));
+    template = TemplateUtilities.ReplaceRegion(template, "GET_TYPE_INFO_BY_NAME", _generateGetTypeInfoByName(allTypes, compilation));
     template = TemplateUtilities.ReplaceRegion(template, "CORE_TYPE_FACTORIES", _generateCoreTypeFactories(assembly));
     template = TemplateUtilities.ReplaceRegion(template, "MESSAGE_TYPE_FACTORIES", factories.ToString());
     template = TemplateUtilities.ReplaceRegion(template, "MESSAGE_ENVELOPE_FACTORIES", _generateMessageEnvelopeFactories(assembly, messages));
@@ -513,7 +513,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// This avoids IL2057 trimming warnings by using static type references.
   /// NOTE: Deprecated in favor of JsonContextRegistry.GetTypeInfoByName for cross-assembly support.
   /// </summary>
-  private static string _generateGetTypeInfoByName(Assembly assembly, ImmutableArray<JsonMessageTypeInfo> allTypes, Compilation compilation) {
+  private static string _generateGetTypeInfoByName(ImmutableArray<JsonMessageTypeInfo> allTypes, Compilation compilation) {
     var sb = new StringBuilder();
 
     // Get the actual assembly name from the compilation
@@ -927,8 +927,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Returns info about converters that need to be registered in JsonSerializerOptions.
   /// </summary>
   private static ImmutableArray<WhizbangIdTypeInfo> _discoverWhizbangIdConverters(
-      ImmutableArray<JsonMessageTypeInfo> allTypes,
-      Compilation compilation) {
+      ImmutableArray<JsonMessageTypeInfo> allTypes) {
 
     var converters = new Dictionary<string, WhizbangIdTypeInfo>();
 
