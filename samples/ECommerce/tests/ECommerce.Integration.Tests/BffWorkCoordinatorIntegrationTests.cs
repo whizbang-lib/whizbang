@@ -165,20 +165,21 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
       var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
       await workCoordinator.ProcessWorkBatchAsync(
-        _instanceId,
-        "BFF.API",
-        "test-host",
-        12345,
-        metadata: null,
-        outboxCompletions: [],
-        outboxFailures: [],
-        inboxCompletions: [],
-        inboxFailures: [],
-        receptorCompletions: [],
-        receptorFailures: [],
-        perspectiveCompletions: [],
-        perspectiveFailures: [],
-        newOutboxMessages: [
+        new ProcessWorkBatchRequest {
+          InstanceId = _instanceId,
+          ServiceName = "BFF.API",
+          HostName = "test-host",
+          ProcessId = 12345,
+          Metadata = null,
+          OutboxCompletions = [],
+          OutboxFailures = [],
+          InboxCompletions = [],
+          InboxFailures = [],
+          ReceptorCompletions = [],
+          ReceptorFailures = [],
+          PerspectiveCompletions = [],
+          PerspectiveFailures = [],
+          NewOutboxMessages = [
           new OutboxMessage {
             MessageId = messageId.Value,
             Destination = "products",
@@ -193,11 +194,10 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
             }
           }
         ],
-        newInboxMessages: [],
-        renewOutboxLeaseIds: [],
-        renewInboxLeaseIds: [],
-        leaseSeconds: -1  // Immediately expired - worker can reclaim
-      );
+          NewInboxMessages = [],
+          RenewOutboxLeaseIds = [],
+          RenewInboxLeaseIds = []
+        });
     }
 
     // Act - Start the application (including WorkCoordinatorPublisherWorker)
@@ -276,20 +276,21 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
       var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
       await workCoordinator.ProcessWorkBatchAsync(
-        _instanceId,
-        "BFF.API",
-        "test-host",
-        12345,
-        metadata: null,
-        outboxCompletions: [],
-        outboxFailures: [],
-        inboxCompletions: [],
-        inboxFailures: [],
-        receptorCompletions: [],
-        receptorFailures: [],
-        perspectiveCompletions: [],
-        perspectiveFailures: [],
-        newOutboxMessages: [
+        new ProcessWorkBatchRequest {
+          InstanceId = _instanceId,
+          ServiceName = "BFF.API",
+          HostName = "test-host",
+          ProcessId = 12345,
+          Metadata = null,
+          OutboxCompletions = [],
+          OutboxFailures = [],
+          InboxCompletions = [],
+          InboxFailures = [],
+          ReceptorCompletions = [],
+          ReceptorFailures = [],
+          PerspectiveCompletions = [],
+          PerspectiveFailures = [],
+          NewOutboxMessages = [
           new OutboxMessage {
             MessageId = messageId1.Value,
             Destination = "products",
@@ -330,11 +331,10 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
             }
           }
         ],
-        newInboxMessages: [],
-        renewOutboxLeaseIds: [],
-        renewInboxLeaseIds: [],
-        leaseSeconds: -1  // Immediately expired - worker can reclaim
-      );
+          NewInboxMessages = [],
+          RenewOutboxLeaseIds = [],
+          RenewInboxLeaseIds = []
+        });
     }
 
     // Act
@@ -383,20 +383,21 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
       var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
 
       await workCoordinator.ProcessWorkBatchAsync(
-        _instanceId,
-        "BFF.API",
-        "test-host",
-        12345,
-        metadata: null,
-        outboxCompletions: [],
-        outboxFailures: [],
-        inboxCompletions: [],
-        inboxFailures: [],
-        receptorCompletions: [],
-        receptorFailures: [],
-        perspectiveCompletions: [],
-        perspectiveFailures: [],
-        newOutboxMessages: [
+        new ProcessWorkBatchRequest {
+          InstanceId = _instanceId,
+          ServiceName = "BFF.API",
+          HostName = "test-host",
+          ProcessId = 12345,
+          Metadata = null,
+          OutboxCompletions = [],
+          OutboxFailures = [],
+          InboxCompletions = [],
+          InboxFailures = [],
+          ReceptorCompletions = [],
+          ReceptorFailures = [],
+          PerspectiveCompletions = [],
+          PerspectiveFailures = [],
+          NewOutboxMessages = [
           new OutboxMessage {
             MessageId = messageId.Value,
             Destination = "products",
@@ -411,11 +412,10 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
             }
           }
         ],
-        newInboxMessages: [],
-        renewOutboxLeaseIds: [],
-        renewInboxLeaseIds: [],
-        leaseSeconds: -1  // Immediately expired!
-      );
+          NewInboxMessages = [],
+          RenewOutboxLeaseIds = [],
+          RenewInboxLeaseIds = []
+        });
     }
 
     // Act - Start worker (should reclaim expired message)

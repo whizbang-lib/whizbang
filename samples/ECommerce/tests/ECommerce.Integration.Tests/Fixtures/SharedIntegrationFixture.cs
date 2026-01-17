@@ -319,7 +319,6 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     builder.Services.AddHostedService<PerspectiveWorker>();  // Processes perspective checkpoints
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
       new ServiceBusConsumerWorker(
-        sp.GetRequiredService<IServiceInstanceProvider>(),
         sp.GetRequiredService<ITransport>(),
         sp.GetRequiredService<IServiceScopeFactory>(),
         jsonOptions,  // Pass JSON options for event deserialization
@@ -446,7 +445,6 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     builder.Services.AddSingleton(consumerOptions);
     builder.Services.AddHostedService<ServiceBusConsumerWorker>(sp =>
       new ServiceBusConsumerWorker(
-        sp.GetRequiredService<IServiceInstanceProvider>(),
         sp.GetRequiredService<ITransport>(),
         sp.GetRequiredService<IServiceScopeFactory>(),
         jsonOptions,  // Pass JSON options for event deserialization

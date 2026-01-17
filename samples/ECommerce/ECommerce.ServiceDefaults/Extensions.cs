@@ -30,10 +30,12 @@ public static class Extensions {
     });
 
     // Uncomment the following to restrict the allowed schemes for service discovery.
+#pragma warning disable S125 // Commented code provides configuration example for users
     // builder.Services.Configure<ServiceDiscoveryOptions>(options =>
     // {
     //     options.AllowedSchemes = ["https"];
     // });
+#pragma warning restore S125
 
     return builder;
   }
@@ -53,7 +55,9 @@ public static class Extensions {
         .WithTracing(tracing => {
           tracing.AddAspNetCoreInstrumentation()
                   // Uncomment the following line to enable gRPC instrumentation (requires the OpenTelemetry.Instrumentation.GrpcNetClient package)
+#pragma warning disable S125 // Commented code provides configuration example for users
                   //.AddGrpcClientInstrumentation()
+#pragma warning restore S125
                   .AddHttpClientInstrumentation();
         });
 
@@ -70,11 +74,13 @@ public static class Extensions {
     }
 
     // Uncomment the following lines to enable the Azure Monitor exporter (requires the Azure.Monitor.OpenTelemetry.AspNetCore package)
+#pragma warning disable S125 // Commented code provides configuration example for users
     //if (!string.IsNullOrEmpty(builder.Configuration["APPLICATIONINSIGHTS_CONNECTION_STRING"]))
     //{
     //    builder.Services.AddOpenTelemetry()
     //       .UseAzureMonitor();
     //}
+#pragma warning restore S125
 
     return builder;
   }

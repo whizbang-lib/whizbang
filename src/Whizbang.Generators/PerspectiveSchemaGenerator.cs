@@ -31,7 +31,6 @@ namespace Whizbang.Generators;
 /// </summary>
 [Generator]
 public class PerspectiveSchemaGenerator : IIncrementalGenerator {
-  private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
   private const int SIZE_WARNING_THRESHOLD = 1500; // Warn before hitting 2KB compression threshold
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
@@ -94,7 +93,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
 
     // Estimate size based on properties in the MODEL type (first type argument)
     // For IPerspectiveFor<TModel, TEvent>, TModel is at index 0
-    var modelType = perspectiveInterfaces.First().TypeArguments[0];
+    var modelType = perspectiveInterfaces[0].TypeArguments[0];
     var propertyCount = modelType.GetMembers()
         .OfType<IPropertySymbol>()
         .Count(p => !p.IsStatic);

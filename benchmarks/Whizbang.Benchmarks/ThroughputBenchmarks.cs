@@ -28,6 +28,9 @@ public class ThroughputBenchmarks {
   private sealed record MediumCommand(string Id, int Value, string Data1, string Data2, string Data3);
   private sealed record LargeCommand(string Id, int Value, string Payload);
 
+  private const string BENCHMARK_HOST = "benchmark-host";
+  private const int BENCHMARK_PROCESS_ID = 12345;
+
   private List<SmallCommand> _smallMessages = null!;
   private List<MediumCommand> _mediumMessages = null!;
   private List<LargeCommand> _largeMessages = null!;
@@ -309,8 +312,8 @@ public class ThroughputBenchmarks {
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "BenchmarkPublisher",
         InstanceId = Guid.NewGuid(),
-        HostName = "benchmark-host",
-        ProcessId = 12345
+        HostName = BENCHMARK_HOST,
+        ProcessId = BENCHMARK_PROCESS_ID
       },
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow,
@@ -334,8 +337,8 @@ public class ThroughputBenchmarks {
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "BenchmarkPublisher",
         InstanceId = Guid.NewGuid(),
-        HostName = "benchmark-host",
-        ProcessId = 12345
+        HostName = BENCHMARK_HOST,
+        ProcessId = BENCHMARK_PROCESS_ID
       },
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow,

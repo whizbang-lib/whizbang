@@ -35,72 +35,51 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// <typeparam name="TDbContext">DbContext type containing outbox, inbox, and service instance tables</typeparam>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Work coordinator diagnostic logging - I/O bound database operations where LoggerMessage overhead isn't justified")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1845:Use span-based 'string.Concat'", Justification = "Debug logging with substring truncation - span-based operations not worth complexity for diagnostic output")]
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S2077:Formatting SQL queries is security-sensitive", Justification = "Schema name comes from EF Core model configuration (Model.FindEntityType().GetSchema()), not user input. Schema-qualified function names are required for multi-tenant PostgreSQL databases.")]
 public class EFCoreWorkCoordinator<TDbContext>(
   TDbContext dbContext,
   JsonSerializerOptions jsonOptions,
-  ILogger<EFCoreWorkCoordinator<TDbContext>>? logger = null,
-  string? connectionString = null
+  ILogger<EFCoreWorkCoordinator<TDbContext>>? logger = null
 ) : IWorkCoordinator
   where TDbContext : DbContext {
+  private const string DEFAULT_SCHEMA = "public";
+
   private readonly TDbContext _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<EFCoreWorkCoordinator<TDbContext>>? _logger = logger;
 
-  private readonly string _connectionString = connectionString
-    ?? dbContext.Database.GetConnectionString()
-    ?? throw new InvalidOperationException("DbContext must have a connection string configured");
-
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "S3776:Cognitive Complexity of methods should not be too high", Justification = "This method orchestrates complex work batch processing with multiple parameter preparations and SQL execution. Splitting would reduce clarity of the atomic database operation flow.")]
   public async Task<WorkBatch> ProcessWorkBatchAsync(
-    Guid instanceId,
-    string serviceName,
-    string hostName,
-    int processId,
-    Dictionary<string, JsonElement>? metadata,
-    MessageCompletion[] outboxCompletions,
-    MessageFailure[] outboxFailures,
-    MessageCompletion[] inboxCompletions,
-    MessageFailure[] inboxFailures,
-    ReceptorProcessingCompletion[] receptorCompletions,
-    ReceptorProcessingFailure[] receptorFailures,
-    PerspectiveCheckpointCompletion[] perspectiveCompletions,
-    PerspectiveCheckpointFailure[] perspectiveFailures,
-    OutboxMessage[] newOutboxMessages,
-    InboxMessage[] newInboxMessages,
-    Guid[] renewOutboxLeaseIds,
-    Guid[] renewInboxLeaseIds,
-    WorkBatchFlags flags = WorkBatchFlags.None,
-    int partitionCount = 10_000,
-    int leaseSeconds = 300,
-    int staleThresholdSeconds = 600,
+    ProcessWorkBatchRequest request,
     CancellationToken cancellationToken = default
   ) {
     _logger?.LogDebug(
       "Processing work batch for instance {InstanceId} ({ServiceName}@{HostName}:{ProcessId}): {OutboxCompletions} outbox completions, {OutboxFailures} outbox failures, {InboxCompletions} inbox completions, {InboxFailures} inbox failures, {NewOutbox} new outbox, {NewInbox} new inbox, Flags={Flags}",
-      instanceId,
-      serviceName,
-      hostName,
-      processId,
-      outboxCompletions.Length,
-      outboxFailures.Length,
-      inboxCompletions.Length,
-      inboxFailures.Length,
-      newOutboxMessages.Length,
-      newInboxMessages.Length,
-      flags
+      request.InstanceId,
+      request.ServiceName,
+      request.HostName,
+      request.ProcessId,
+      request.OutboxCompletions.Length,
+      request.OutboxFailures.Length,
+      request.InboxCompletions.Length,
+      request.InboxFailures.Length,
+      request.NewOutboxMessages.Length,
+      request.NewInboxMessages.Length,
+      request.Flags
     );
 
     // Convert to JSONB parameters
-    var outboxCompletionsJson = _serializeCompletions(outboxCompletions);
-    var outboxFailuresJson = _serializeFailures(outboxFailures);
-    var inboxCompletionsJson = _serializeCompletions(inboxCompletions);
-    var inboxFailuresJson = _serializeFailures(inboxFailures);
-    var perspectiveCompletionsJson = _serializePerspectiveCompletions(perspectiveCompletions);
-    var perspectiveFailuresJson = _serializePerspectiveFailures(perspectiveFailures);
-    var newOutboxJson = _serializeNewOutboxMessages(newOutboxMessages);
-    var newInboxJson = _serializeNewInboxMessages(newInboxMessages);
-    var metadataJson = _serializeMetadata(metadata);
-    var renewOutboxJson = _serializeLeaseRenewals(renewOutboxLeaseIds);
-    var renewInboxJson = _serializeLeaseRenewals(renewInboxLeaseIds);
+    var outboxCompletionsJson = _serializeCompletions(request.OutboxCompletions);
+    var outboxFailuresJson = _serializeFailures(request.OutboxFailures);
+    var inboxCompletionsJson = _serializeCompletions(request.InboxCompletions);
+    var inboxFailuresJson = _serializeFailures(request.InboxFailures);
+    var perspectiveCompletionsJson = _serializePerspectiveCompletions(request.PerspectiveCompletions);
+    var perspectiveFailuresJson = _serializePerspectiveFailures(request.PerspectiveFailures);
+    var newOutboxJson = _serializeNewOutboxMessages(request.NewOutboxMessages);
+    var newInboxJson = _serializeNewInboxMessages(request.NewInboxMessages);
+    var metadataJson = _serializeMetadata(request.Metadata);
+    var renewOutboxJson = _serializeLeaseRenewals(request.RenewOutboxLeaseIds);
+    var renewInboxJson = _serializeLeaseRenewals(request.RenewInboxLeaseIds);
 
     var outboxCompletionsParam = PostgresJsonHelper.JsonStringToJsonb(outboxCompletionsJson);
     outboxCompletionsParam.ParameterName = "p_outbox_completions";
@@ -153,8 +132,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // CRITICAL: Get schema from DbContext model to schema-qualify the function call
     // Functions are database-wide in PostgreSQL - multiple schemas sharing a database
     // must use schema-qualified function names to avoid calling the wrong function
-    var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? "public";
-    var functionName = string.IsNullOrEmpty(schema) || schema == "public"
+    var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? DEFAULT_SCHEMA;
+    var functionName = string.IsNullOrEmpty(schema) || schema == DEFAULT_SCHEMA
       ? "process_work_batch"
       : $"{schema}.process_work_batch";
 
@@ -190,24 +169,22 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // Hook PostgreSQL RAISE NOTICE messages for debugging
     // Access the underlying NpgsqlConnection from EF Core's DbContext
     var dbConnection = _dbContext.Database.GetDbConnection();
-    if (dbConnection is NpgsqlConnection npgsqlConnection) {
+    if (dbConnection is NpgsqlConnection npgsqlConnection && npgsqlConnection.State != System.Data.ConnectionState.Open) {
       // Wire up notice handler if not already connected
-      if (npgsqlConnection.State != System.Data.ConnectionState.Open) {
-        npgsqlConnection.Notice += _onNotice;
-      }
+      npgsqlConnection.Notice += _onNotice;
     }
 
     var results = await _dbContext.Database
       .SqlQueryRaw<WorkBatchRow>(
         sql,
-        new Npgsql.NpgsqlParameter("p_instance_id", instanceId),
-        new Npgsql.NpgsqlParameter("p_service_name", serviceName),
-        new Npgsql.NpgsqlParameter("p_host_name", hostName),
-        new Npgsql.NpgsqlParameter("p_process_id", processId),
+        new Npgsql.NpgsqlParameter("p_instance_id", request.InstanceId),
+        new Npgsql.NpgsqlParameter("p_service_name", request.ServiceName),
+        new Npgsql.NpgsqlParameter("p_host_name", request.HostName),
+        new Npgsql.NpgsqlParameter("p_process_id", request.ProcessId),
         metadataParam,
         new Npgsql.NpgsqlParameter("p_now", now),
-        new Npgsql.NpgsqlParameter("p_lease_duration_seconds", leaseSeconds),
-        new Npgsql.NpgsqlParameter("p_partition_count", partitionCount),
+        new Npgsql.NpgsqlParameter("p_lease_duration_seconds", request.LeaseSeconds),
+        new Npgsql.NpgsqlParameter("p_partition_count", request.PartitionCount),
         outboxCompletionsParam,
         inboxCompletionsParam,
         perspectiveEventCompletionsParam,
@@ -222,8 +199,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
         renewOutboxParam,
         renewInboxParam,
         renewPerspectiveEventLeaseIdsParam,
-        new Npgsql.NpgsqlParameter("p_flags", (int)flags),
-        new Npgsql.NpgsqlParameter("p_stale_threshold_seconds", staleThresholdSeconds)
+        new Npgsql.NpgsqlParameter("p_flags", (int)request.Flags),
+        new Npgsql.NpgsqlParameter("p_stale_threshold_seconds", request.StaleThresholdSeconds)
       )
       .ToListAsync(cancellationToken);
 
@@ -234,6 +211,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <summary>
   /// Processes the query results and maps them to a WorkBatch
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "S3776:Cognitive Complexity of methods should not be too high", Justification = "This method deserializes and categorizes work batch results across three work types (outbox, inbox, perspective). The branching logic is inherent to the data mapping process.")]
   private WorkBatch _processResults(List<WorkBatchRow> results) {
 
     // Check for storage failure rows (error tracking from Phase 4.5)
@@ -522,32 +500,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
   }
 
   /// <summary>
-  /// Serializes receptor processing completions to JSON for database storage.
-  /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync</tests>
-  private string _serializeReceptorCompletions(ReceptorProcessingCompletion[] completions) {
-    if (completions.Length == 0) {
-      return "[]";
-    }
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(ReceptorProcessingCompletion[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for ReceptorProcessingCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
-    return JsonSerializer.Serialize(completions, typeInfo);
-  }
-
-  /// <summary>
-  /// Serializes receptor processing failures to JSON for database storage.
-  /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync</tests>
-  private string _serializeReceptorFailures(ReceptorProcessingFailure[] failures) {
-    if (failures.Length == 0) {
-      return "[]";
-    }
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(ReceptorProcessingFailure[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for ReceptorProcessingFailure[]. Ensure the type is registered in InfrastructureJsonContext.");
-    return JsonSerializer.Serialize(failures, typeInfo);
-  }
-
-  /// <summary>
   /// Serializes perspective checkpoint completions to JSON for database storage.
   /// </summary>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync</tests>
@@ -636,7 +588,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     try {
       // Get schema from DbContext configuration for schema-qualified function call
-      var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? "public";
+      var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? DEFAULT_SCHEMA;
       var sql = string.Format(System.Globalization.CultureInfo.InvariantCulture, "SELECT {0}.complete_perspective_checkpoint_work({{0}}, {{1}}, {{2}}, {{3}}, {{4}}::text)", schema);
 
       await _dbContext.Database.ExecuteSqlRawAsync(
@@ -709,7 +661,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     // Get schema from DbContext configuration for schema-qualified function call
-    var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? "public";
+    var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? DEFAULT_SCHEMA;
     var sql = string.Format(System.Globalization.CultureInfo.InvariantCulture, "SELECT {0}.complete_perspective_checkpoint_work({{0}}, {{1}}, {{2}}, {{3}}, {{4}}::text)", schema);
 
     await _dbContext.Database.ExecuteSqlRawAsync(
@@ -728,7 +680,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
 
     // Get schema from OutboxRecord entity (all Whizbang tables share the same schema)
-    var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? "public";
+    var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? DEFAULT_SCHEMA;
     var sql = string.Format(System.Globalization.CultureInfo.InvariantCulture,
       "SELECT stream_id, perspective_name, last_event_id, status FROM {0}.wh_perspective_checkpoints WHERE stream_id = {{0}} AND perspective_name = {{1}}",
       schema);

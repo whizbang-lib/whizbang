@@ -40,7 +40,7 @@ public class DapperPostgresEventStoreTests : EventStoreContractTests, IDisposabl
   protected override Task<IEventStore> CreateEventStoreAsync() {
     var jsonOptions = WhizbangJsonContext.CreateOptions();
     var adapter = new EventEnvelopeJsonbAdapter(jsonOptions);
-    var sizeValidator = new JsonbSizeValidator(NullLogger<JsonbSizeValidator>.Instance, jsonOptions);
+    var sizeValidator = new JsonbSizeValidator(NullLogger<JsonbSizeValidator>.Instance);
     var policyEngine = new PolicyEngine();
     var logger = NullLogger<DapperPostgresEventStore>.Instance;
 

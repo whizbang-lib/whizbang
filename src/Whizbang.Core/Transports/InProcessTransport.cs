@@ -166,7 +166,7 @@ public class InProcessTransport : ITransport {
   /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_Dispose_RemovesHandlerFromTransportAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:Subscription_DisposeMultipleTimes_IsIdempotentAsync</tests>
   /// <tests>tests/Whizbang.Transports.Tests/InProcessTransportTests.cs:SubscribeAndDispose_Concurrent_ThreadSafeAsync</tests>
-  private class InProcessSubscription(Action onDispose) : ISubscription {
+  private sealed class InProcessSubscription(Action onDispose) : ISubscription {
     private readonly Action _onDispose = onDispose;
     private bool _isDisposed;
 

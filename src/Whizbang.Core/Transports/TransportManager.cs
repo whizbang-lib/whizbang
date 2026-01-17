@@ -28,13 +28,11 @@ namespace Whizbang.Core.Transports;
 /// Manages multiple transport instances and handles publishing/subscribing across them.
 /// </summary>
 /// <remarks>
-/// Creates a new TransportManager with a custom serializer.
+/// Creates a new TransportManager.
 /// </remarks>
-/// <param name="serializer">The message serializer to use</param>
 /// <param name="instanceProvider">Optional service instance provider for message tracing</param>
-public class TransportManager(IMessageSerializer serializer, IServiceInstanceProvider? instanceProvider = null) : ITransportManager {
+public class TransportManager(IServiceInstanceProvider? instanceProvider = null) : ITransportManager {
   private readonly Dictionary<TransportType, ITransport> _transports = [];
-  private readonly IMessageSerializer _serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
   private readonly IServiceInstanceProvider? _instanceProvider = instanceProvider;
 
   /// <inheritdoc />

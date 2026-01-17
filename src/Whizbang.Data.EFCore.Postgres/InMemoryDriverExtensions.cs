@@ -33,6 +33,7 @@ public static class InMemoryDriverExtensions {
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InMemoryDriverExtensionsTests.cs:InMemory_WithValidEFCoreSelector_ReturnsWhizbangPerspectiveBuilderAsync</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InMemoryDriverExtensionsTests.cs:InMemory_ReturnedBuilder_HasSameServicesAsync</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/InMemoryDriverExtensionsTests.cs:InMemory_WithNonEFCoreDriverOptions_ThrowsInvalidOperationExceptionAsync</tests>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "S2325:Methods and properties that don't access instance data should be static", Justification = "C# 14 extension property - cannot be static. SonarCloud doesn't recognize extension member syntax.")]
     public WhizbangPerspectiveBuilder InMemory {
       get {
         if (options is not EFCoreDriverSelector selector) {

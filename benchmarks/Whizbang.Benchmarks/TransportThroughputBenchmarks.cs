@@ -15,6 +15,9 @@ namespace Whizbang.Benchmarks;
 [MemoryDiagnoser]
 [MinColumn, MaxColumn]
 public class TransportThroughputBenchmarks {
+  private const string BENCHMARK_HOST = "benchmark-host";
+  private const int BENCHMARK_PROCESS_ID = 12345;
+
   private ITransportManager _transportManager = null!;
   private ITransport _transport = null!;
   private ServiceProvider _serviceProvider = null!;
@@ -311,8 +314,8 @@ public class TransportThroughputBenchmarks {
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "TransportBenchmark",
         InstanceId = Guid.NewGuid(),
-        HostName = "benchmark-host",
-        ProcessId = 12345
+        HostName = BENCHMARK_HOST,
+        ProcessId = BENCHMARK_PROCESS_ID
       },
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow,

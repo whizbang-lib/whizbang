@@ -50,27 +50,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
     public List<_processWorkBatchCall> Calls { get; } = [];
 
     public async Task<WorkBatch> ProcessWorkBatchAsync(
-      Guid instanceId,
-      string serviceName,
-      string hostName,
-      int processId,
-      Dictionary<string, JsonElement>? metadata,
-      MessageCompletion[] outboxCompletions,
-      MessageFailure[] outboxFailures,
-      MessageCompletion[] inboxCompletions,
-      MessageFailure[] inboxFailures,
-      ReceptorProcessingCompletion[] receptorCompletions,
-      ReceptorProcessingFailure[] receptorFailures,
-      PerspectiveCheckpointCompletion[] perspectiveCompletions,
-      PerspectiveCheckpointFailure[] perspectiveFailures,
-      OutboxMessage[] newOutboxMessages,
-      InboxMessage[] newInboxMessages,
-      Guid[] renewOutboxLeaseIds,
-      Guid[] renewInboxLeaseIds,
-      WorkBatchFlags flags = WorkBatchFlags.None,
-      int partitionCount = 10000,
-      int leaseSeconds = 300,
-      int staleThresholdSeconds = 600,
+      ProcessWorkBatchRequest request,
       CancellationToken cancellationToken = default) {
 
       // Simulate realistic database latency
@@ -81,7 +61,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
       lock (_lock) {
         Calls.Add(new _processWorkBatchCall {
           CallNumber = callCount,
-          InstanceId = instanceId,
+          InstanceId = request.InstanceId,
           Timestamp = DateTimeOffset.UtcNow,
           LatencyMs = latencyMs
         });
@@ -103,20 +83,20 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
         }
 
         // Remove completed messages
-        foreach (var completion in outboxCompletions) {
+        foreach (var completion in request.OutboxCompletions) {
           AvailableWork.RemoveAll(w => w.MessageId == completion.MessageId);
           _claimedMessages.TryRemove(completion.MessageId, out _);
         }
 
         // Unclaim failed messages so they can be retried on next poll
-        foreach (var failure in outboxFailures) {
+        foreach (var failure in request.OutboxFailures) {
           _claimedMessages.TryRemove(failure.MessageId, out _);
           // Message stays in AvailableWork for retry
         }
 
         // Handle lease renewals (for retryable failures like TransportException)
         // The worker renews the lease instead of failing, allowing retry on next poll
-        foreach (var messageId in renewOutboxLeaseIds) {
+        foreach (var messageId in request.RenewOutboxLeaseIds) {
           _claimedMessages.TryRemove(messageId, out _);
           // Message stays in AvailableWork for retry
         }

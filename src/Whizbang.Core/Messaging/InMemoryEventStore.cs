@@ -19,12 +19,8 @@ namespace Whizbang.Core.Messaging;
 /// NOT suitable for production use across multiple processes.
 /// Stream ID is inferred from event's [AggregateId] property.
 /// </summary>
-public class InMemoryEventStore(
-  IPolicyEngine policyEngine,
-  IPerspectiveInvoker? perspectiveInvoker = null) : IEventStore {
+public class InMemoryEventStore : IEventStore {
   private readonly ConcurrentDictionary<Guid, StreamData> _streams = new();
-  private readonly IPolicyEngine _policyEngine = policyEngine ?? throw new ArgumentNullException(nameof(policyEngine));
-  private readonly IPerspectiveInvoker? _perspectiveInvoker = perspectiveInvoker;
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
@@ -215,7 +211,7 @@ public class InMemoryEventStore(
   /// <summary>
   /// Thread-safe stream data container.
   /// </summary>
-  private class StreamData {
+  private sealed class StreamData {
     private readonly Lock _lock = new();
     private readonly List<EventRecord> _events = [];
     private long _currentSequence = -1;
@@ -273,5 +269,5 @@ public class InMemoryEventStore(
     }
   }
 
-  private record EventRecord(long Version, Guid EventId, IMessageEnvelope Envelope);
+  private sealed record EventRecord(long Version, Guid EventId, IMessageEnvelope Envelope);
 }

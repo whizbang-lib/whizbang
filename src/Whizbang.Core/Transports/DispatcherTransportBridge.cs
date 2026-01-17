@@ -32,17 +32,14 @@ namespace Whizbang.Core.Transports;
 /// </remarks>
 /// <param name="dispatcher">The local dispatcher for message handling</param>
 /// <param name="transport">The transport for remote messaging</param>
-/// <param name="serializer">The serializer for message envelopes</param>
 /// <param name="instanceProvider">Optional instance provider for service identity</param>
 public class DispatcherTransportBridge(
   IDispatcher dispatcher,
   ITransport transport,
-  IMessageSerializer serializer,
   IServiceInstanceProvider instanceProvider
   ) {
   private readonly IDispatcher _dispatcher = dispatcher ?? throw new ArgumentNullException(nameof(dispatcher));
   private readonly ITransport _transport = transport ?? throw new ArgumentNullException(nameof(transport));
-  private readonly IMessageSerializer _serializer = serializer ?? throw new ArgumentNullException(nameof(serializer));
   private readonly IServiceInstanceProvider _instanceProvider = instanceProvider ?? throw new ArgumentNullException(nameof(instanceProvider));
 
   /// <summary>

@@ -381,30 +381,30 @@ public partial class WorkCoordinatorPublisherWorker(
       // - Claims orphaned work via modulo-based partition distribution
       // - Renews leases for buffered messages awaiting transport readiness
       // - Returns work for this instance to process
-      workBatch = await workCoordinator.ProcessWorkBatchAsync(
-        _instanceProvider.InstanceId,
-        _instanceProvider.ServiceName,
-        _instanceProvider.HostName,
-        _instanceProvider.ProcessId,
-        metadata: _options.InstanceMetadata,
-        outboxCompletions: completionsToSend,
-        outboxFailures: failuresToSend,
-        inboxCompletions: [],
-        inboxFailures: [],
-        receptorCompletions: [],  // TODO: Add receptor processing support
-        receptorFailures: [],
-        perspectiveCompletions: [],  // TODO: Add perspective checkpoint support
-        perspectiveFailures: [],
-        newOutboxMessages: [],  // Not used in publisher worker (dispatcher handles new messages)
-        newInboxMessages: [],   // Not used in publisher worker (consumer handles new messages)
-        renewOutboxLeaseIds: leaseRenewalsToSend,
-        renewInboxLeaseIds: [],
-        flags: _options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None,
-        partitionCount: _options.PartitionCount,
-        leaseSeconds: _options.LeaseSeconds,
-        staleThresholdSeconds: _options.StaleThresholdSeconds,
-        cancellationToken: cancellationToken
-      );
+      var request = new ProcessWorkBatchRequest {
+        InstanceId = _instanceProvider.InstanceId,
+        ServiceName = _instanceProvider.ServiceName,
+        HostName = _instanceProvider.HostName,
+        ProcessId = _instanceProvider.ProcessId,
+        Metadata = _options.InstanceMetadata,
+        OutboxCompletions = completionsToSend,
+        OutboxFailures = failuresToSend,
+        InboxCompletions = [],
+        InboxFailures = [],
+        ReceptorCompletions = [],  // FUTURE: Add receptor processing support
+        ReceptorFailures = [],
+        PerspectiveCompletions = [],  // FUTURE: Add perspective checkpoint support
+        PerspectiveFailures = [],
+        NewOutboxMessages = [],  // Not used in publisher worker (dispatcher handles new messages)
+        NewInboxMessages = [],   // Not used in publisher worker (consumer handles new messages)
+        RenewOutboxLeaseIds = leaseRenewalsToSend,
+        RenewInboxLeaseIds = [],
+        Flags = _options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None,
+        PartitionCount = _options.PartitionCount,
+        LeaseSeconds = _options.LeaseSeconds,
+        StaleThresholdSeconds = _options.StaleThresholdSeconds
+      };
+      workBatch = await workCoordinator.ProcessWorkBatchAsync(request, cancellationToken);
     } catch (Exception ex) {
       // Database failure: Completions remain in 'Sent' status
       // ResetStale() will move them back to 'Pending' after timeout
@@ -501,7 +501,7 @@ public partial class WorkCoordinatorPublisherWorker(
     }
 
     // Process inbox work
-    // TODO: Implement inbox processing - requires deserializing to typed messages and invoking receptors
+    // FUTURE: Implement inbox processing - requires deserializing to typed messages and invoking receptors
     // For now, mark as failed to prevent infinite retry loops
     if (workBatch.InboxWork.Count > 0) {
       foreach (var inboxMessage in workBatch.InboxWork) {

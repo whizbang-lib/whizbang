@@ -120,8 +120,6 @@ public abstract class DapperRequestResponseStoreBase : IRequestResponseStore {
   /// <tests>tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs:WaitForResponseAsync_WithCancellation_ShouldRespectCancellationAsync</tests>
   public async Task<MessageEnvelope<TMessage>?> WaitForResponseAsync<TMessage>(CorrelationId correlationId, CancellationToken cancellationToken = default) {
     try {
-      var startTime = DateTimeOffset.UtcNow;
-
       while (!cancellationToken.IsCancellationRequested) {
         using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
         EnsureConnectionOpen(connection);

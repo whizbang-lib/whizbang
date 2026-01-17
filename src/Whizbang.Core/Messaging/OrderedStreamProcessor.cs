@@ -249,7 +249,7 @@ public partial class OrderedStreamProcessor {
   /// <summary>
   /// Represents a batch of messages from a single stream, ordered by sequence.
   /// </summary>
-  private record StreamBatch<TWork> {
+  private sealed record StreamBatch<TWork> {
     public required Guid StreamId { get; init; }
     public required List<TWork> Messages { get; init; }
   }

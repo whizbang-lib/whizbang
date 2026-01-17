@@ -76,45 +76,45 @@ public static class OutboxSchema {
         DefaultValue: DefaultValue.Boolean(false)
       ),
       new ColumnDefinition(
-        Name: "status",
+        Name: Columns.STATUS,
         DataType: WhizbangDataType.INTEGER,
         Nullable: false,
         DefaultValue: DefaultValue.Integer(1)
       ),
       new ColumnDefinition(
-        Name: "attempts",
+        Name: Columns.ATTEMPTS,
         DataType: WhizbangDataType.INTEGER,
         Nullable: false,
         DefaultValue: DefaultValue.Integer(0)
       ),
       new ColumnDefinition(
-        Name: "error",
+        Name: Columns.ERROR,
         DataType: WhizbangDataType.STRING,
         Nullable: true
       ),
       new ColumnDefinition(
-        Name: "instance_id",
+        Name: Columns.INSTANCE_ID,
         DataType: WhizbangDataType.UUID,
         Nullable: true
       ),
       new ColumnDefinition(
-        Name: "lease_expiry",
+        Name: Columns.LEASE_EXPIRY,
         DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: true
       ),
       new ColumnDefinition(
-        Name: "failure_reason",
+        Name: Columns.FAILURE_REASON,
         DataType: WhizbangDataType.INTEGER,
         Nullable: false,
         DefaultValue: DefaultValue.Integer(99)
       ),
       new ColumnDefinition(
-        Name: "scheduled_for",
+        Name: Columns.SCHEDULED_FOR,
         DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: true
       ),
       new ColumnDefinition(
-        Name: "created_at",
+        Name: Columns.CREATED_AT,
         DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
@@ -133,40 +133,40 @@ public static class OutboxSchema {
     Indexes: ImmutableArray.Create(
       new IndexDefinition(
         Name: "idx_outbox_status_created_at",
-        Columns: ImmutableArray.Create("status", "created_at")
+        Columns: ImmutableArray.Create(Columns.STATUS, Columns.CREATED_AT)
       ),
       new IndexDefinition(
         Name: "idx_outbox_published_at",
-        Columns: ImmutableArray.Create("published_at")
+        Columns: ImmutableArray.Create(Columns.PUBLISHED_AT)
       ),
       new IndexDefinition(
         Name: "idx_outbox_lease_expiry",
-        Columns: ImmutableArray.Create("lease_expiry"),
+        Columns: ImmutableArray.Create(Columns.LEASE_EXPIRY),
         WhereClause: "lease_expiry IS NOT NULL"
       ),
       new IndexDefinition(
         Name: "idx_outbox_status_lease",
-        Columns: ImmutableArray.Create("status", "lease_expiry"),
+        Columns: ImmutableArray.Create(Columns.STATUS, Columns.LEASE_EXPIRY),
         WhereClause: "(status & 32768) = 0 AND (status & 4) != 4"
       ),
       new IndexDefinition(
         Name: "idx_outbox_failure_reason",
-        Columns: ImmutableArray.Create("failure_reason"),
+        Columns: ImmutableArray.Create(Columns.FAILURE_REASON),
         WhereClause: "(status & 32768) = 32768"
       ),
       new IndexDefinition(
         Name: "idx_outbox_scheduled_for",
-        Columns: ImmutableArray.Create("stream_id", "scheduled_for", "created_at"),
+        Columns: ImmutableArray.Create(Columns.STREAM_ID, Columns.SCHEDULED_FOR, Columns.CREATED_AT),
         WhereClause: "scheduled_for IS NOT NULL"
       ),
       new IndexDefinition(
         Name: "idx_outbox_partition_claiming",
-        Columns: ImmutableArray.Create("partition_number", "scheduled_for", "created_at"),
+        Columns: ImmutableArray.Create(Columns.PARTITION_NUMBER, Columns.SCHEDULED_FOR, Columns.CREATED_AT),
         WhereClause: "(status & 4) != 4 AND (status & 32768) = 0"
       ),
       new IndexDefinition(
         Name: "idx_outbox_instance_lease",
-        Columns: ImmutableArray.Create("instance_id", "lease_expiry"),
+        Columns: ImmutableArray.Create(Columns.INSTANCE_ID, Columns.LEASE_EXPIRY),
         WhereClause: "instance_id IS NOT NULL AND lease_expiry IS NOT NULL"
       )
     )

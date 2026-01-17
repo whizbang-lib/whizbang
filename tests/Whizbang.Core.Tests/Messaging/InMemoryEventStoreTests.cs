@@ -10,8 +10,6 @@ namespace Whizbang.Core.Tests.Messaging;
 [InheritsTests]
 public class InMemoryEventStoreTests : EventStoreContractTests {
   protected override Task<IEventStore> CreateEventStoreAsync() {
-    // Create policy engine with default configuration
-    var policyEngine = new PolicyEngine();
-    return Task.FromResult<IEventStore>(new InMemoryEventStore(policyEngine));
+    return Task.FromResult<IEventStore>(new InMemoryEventStore());
   }
 }

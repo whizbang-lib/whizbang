@@ -13,6 +13,9 @@ namespace Whizbang.Benchmarks;
 [MemoryDiagnoser]
 [MarkdownExporter]
 public class SimpleBenchmarks {
+  private const string BENCHMARK_HOST = "benchmark-host";
+  private const int BENCHMARK_PROCESS_ID = 12345;
+
   private sealed record TestCommand(string Id, int Value);
   private InMemorySequenceProvider _sequenceProvider = null!;
   private InMemoryTraceStore _traceStore = null!;
@@ -54,8 +57,8 @@ public class SimpleBenchmarks {
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "TestService",
         InstanceId = Guid.NewGuid(),
-        HostName = "benchmark-host",
-        ProcessId = 12345
+        HostName = BENCHMARK_HOST,
+        ProcessId = BENCHMARK_PROCESS_ID
       },
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow
@@ -68,8 +71,8 @@ public class SimpleBenchmarks {
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "TestService",
         InstanceId = Guid.NewGuid(),
-        HostName = "benchmark-host",
-        ProcessId = 12345
+        HostName = BENCHMARK_HOST,
+        ProcessId = BENCHMARK_PROCESS_ID
       },
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow,
@@ -93,8 +96,8 @@ public class SimpleBenchmarks {
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "TestService",
         InstanceId = Guid.NewGuid(),
-        HostName = "benchmark-host",
-        ProcessId = 12345
+        HostName = BENCHMARK_HOST,
+        ProcessId = BENCHMARK_PROCESS_ID
       },
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow

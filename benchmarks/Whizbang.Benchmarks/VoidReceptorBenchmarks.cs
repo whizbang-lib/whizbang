@@ -20,6 +20,9 @@ namespace Whizbang.Benchmarks;
 [MemoryDiagnoser]
 [MarkdownExporter]
 public class VoidReceptorBenchmarks {
+  private const string BENCHMARK_HOST = "benchmark-host";
+  private const int BENCHMARK_PROCESS_ID = 12345;
+
   private Benchmarks.Generated.GeneratedDispatcher _dispatcherWithTracing = null!;
   private Benchmarks.Generated.GeneratedDispatcher _dispatcherNoTracing = null!;
 
@@ -86,7 +89,7 @@ public class VoidReceptorBenchmarks {
     var providerWithTracing = servicesWithTracing.BuildServiceProvider();
     _dispatcherWithTracing = new Benchmarks.Generated.GeneratedDispatcher(
       providerWithTracing,
-      new ServiceInstanceProvider(Guid.NewGuid(), "BenchmarkService", "benchmark-host", 12345),
+      new ServiceInstanceProvider(Guid.NewGuid(), "BenchmarkService", BENCHMARK_HOST, BENCHMARK_PROCESS_ID),
       new InMemoryTraceStore(),
       null,  // transport
       null   // jsonOptions
@@ -101,9 +104,8 @@ public class VoidReceptorBenchmarks {
     var providerNoTracing = servicesNoTracing.BuildServiceProvider();
     _dispatcherNoTracing = new Benchmarks.Generated.GeneratedDispatcher(
       providerNoTracing,
-      new ServiceInstanceProvider(Guid.NewGuid(), "BenchmarkService", "benchmark-host", 12345),
+      new ServiceInstanceProvider(Guid.NewGuid(), "BenchmarkService", BENCHMARK_HOST, BENCHMARK_PROCESS_ID),
       traceStore: null,  // No tracing = fast path
-      transport: null,
       jsonOptions: null
     );
 

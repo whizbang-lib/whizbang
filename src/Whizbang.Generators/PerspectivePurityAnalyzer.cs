@@ -120,7 +120,6 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
 
     // Check 1: Apply method must not return Task
     if (_returnsTask(methodSymbol)) {
-      var returnType = methodSymbol.ReturnType.ToDisplayString();
       var modelType = _extractModelTypeFromTask(methodSymbol.ReturnType);
 
       var diagnostic = Diagnostic.Create(

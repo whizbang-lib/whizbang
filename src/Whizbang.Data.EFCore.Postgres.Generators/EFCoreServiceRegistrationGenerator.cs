@@ -38,7 +38,7 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// </summary>
 [Generator]
 public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
-  private const string PERSPECTIVE_ROW_TYPE = "Whizbang.Core.Lenses.PerspectiveRow<TModel>";
+  private const string DIAGNOSTIC_CATEGORY = "Whizbang.Generator";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Generate marker file to confirm generator is running
@@ -71,7 +71,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         static (ctx, data) => {
           var perspectives = data.Left.Left;
           var dbContexts = data.Left.Right;
-          var compilation = data.Right;
 
           try {
             // Filter nulls to ensure type safety - OfType<> both filters and changes type to non-nullable
@@ -83,7 +82,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
                 id: "EFCORE104",
                 title: "EFCore Generator Running",
                 messageFormat: "EFCoreServiceRegistrationGenerator found {0} perspective(s) with models",
-                category: "Whizbang.Generator",
+                category: DIAGNOSTIC_CATEGORY,
                 defaultSeverity: DiagnosticSeverity.Info,
                 isEnabledByDefault: true);
             ctx.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, validPerspectives.Length));
@@ -94,7 +93,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
                   id: "EFCORE105",
                   title: "Perspective Model Discovered",
                   messageFormat: "Found perspective {0} with model {1} (table: {2})",
-                  category: "Whizbang.Generator",
+                  category: DIAGNOSTIC_CATEGORY,
                   defaultSeverity: DiagnosticSeverity.Info,
                   isEnabledByDefault: true);
               ctx.ReportDiagnostic(Diagnostic.Create(modelDescriptor, Location.None,
@@ -109,7 +108,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
                 id: "EFCORE997",
                 title: "EFCore Generator Error",
                 messageFormat: "Error in GenerateDbContextPartial: {0}",
-                category: "Whizbang.Generator",
+                category: DIAGNOSTIC_CATEGORY,
                 defaultSeverity: DiagnosticSeverity.Error,
                 isEnabledByDefault: true);
             ctx.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, ex.Message));
@@ -135,7 +134,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
                 id: "EFCORE996",
                 title: "EFCore Generator Error",
                 messageFormat: "Error in GenerateRegistrationMetadata: {0}",
-                category: "Whizbang.Generator",
+                category: DIAGNOSTIC_CATEGORY,
                 defaultSeverity: DiagnosticSeverity.Error,
                 isEnabledByDefault: true);
             ctx.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, ex.Message));
@@ -161,7 +160,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
                 id: "EFCORE995",
                 title: "EFCore Generator Error",
                 messageFormat: "Error in GenerateSchemaExtensions: {0}",
-                category: "Whizbang.Generator",
+                category: DIAGNOSTIC_CATEGORY,
                 defaultSeverity: DiagnosticSeverity.Error,
                 isEnabledByDefault: true);
             ctx.ReportDiagnostic(Diagnostic.Create(descriptor, Location.None, ex.Message));
@@ -269,12 +268,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     var lastSegment = segments[segments.Length - 1];
 
     // If last segment is generic (API, Service, etc.), take second-to-last
-    if (lastSegment.Equals("API", StringComparison.OrdinalIgnoreCase) ||
-        lastSegment.Equals("Service", StringComparison.OrdinalIgnoreCase) ||
-        lastSegment.Equals("Worker", StringComparison.OrdinalIgnoreCase)) {
-      if (segments.Length > 1) {
-        lastSegment = segments[segments.Length - 2];
-      }
+    if ((lastSegment.Equals("API", StringComparison.OrdinalIgnoreCase) ||
+         lastSegment.Equals("Service", StringComparison.OrdinalIgnoreCase) ||
+         lastSegment.Equals("Worker", StringComparison.OrdinalIgnoreCase)) &&
+        segments.Length > 1) {
+      lastSegment = segments[segments.Length - 2];
     }
 
     // Remove common suffixes (case-insensitive)
@@ -439,7 +437,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           id: "WHIZ703",
           title: "No DbContext Found",
           messageFormat: "Could not find any DbContext classes with [WhizbangDbContext] attribute. Partial class generation requires explicit opt-in.",
-          category: "Whizbang.Generator",
+          category: DIAGNOSTIC_CATEGORY,
           defaultSeverity: DiagnosticSeverity.Info,
           isEnabledByDefault: true);
       context.ReportDiagnostic(Diagnostic.Create(noDbContextDescriptor, Location.None));
@@ -459,7 +457,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
             id: "EFCORE109",
             title: "DbContext Has No Matching Perspectives",
             messageFormat: "DbContext '{0}' with keys [{1}] matched zero perspectives (will still generate partial class for core Whizbang entities)",
-            category: "Whizbang.Generator",
+            category: DIAGNOSTIC_CATEGORY,
             defaultSeverity: DiagnosticSeverity.Info,
             isEnabledByDefault: true);
         var keysDisplay = string.Join(", ", dbContext.Keys.Select(k => $"\"{k}\""));
@@ -539,7 +537,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           id: "EFCORE103",
           title: "DbContext Partial Class Generated",
           messageFormat: "Generated DbContext partial class '{0}' with {1} DbSet properties (keys: [{2}])",
-          category: "Whizbang.Generator",
+          category: DIAGNOSTIC_CATEGORY,
           defaultSeverity: DiagnosticSeverity.Info,
           isEnabledByDefault: true);
 
@@ -564,7 +562,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         id: "EFCORE106",
         title: "GenerateRegistrationMetadata Running",
         messageFormat: "GenerateRegistrationMetadata: Found {0} perspectives, {1} DbContexts",
-        category: "Whizbang.Generator",
+        category: DIAGNOSTIC_CATEGORY,
         defaultSeverity: DiagnosticSeverity.Info,
         isEnabledByDefault: true);
     context.ReportDiagnostic(Diagnostic.Create(debugDescriptor, Location.None, perspectives.Length, dbContexts.Length));
@@ -613,7 +611,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           id: "EFCORE999",
           title: "Failed to Load Snippets",
           messageFormat: "Failed to load snippets from EFCoreSnippets.cs: {0}",
-          category: "Whizbang.Generator",
+          category: DIAGNOSTIC_CATEGORY,
           defaultSeverity: DiagnosticSeverity.Error,
           isEnabledByDefault: true);
       context.ReportDiagnostic(Diagnostic.Create(errorDescriptor, Location.None, ex.Message));
@@ -695,7 +693,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         id: "EFCORE100",
         title: "EF Core Registration Metadata Generated",
         messageFormat: "Generated EF Core registration metadata for {0} model type(s) across {1} DbContext(s)",
-        category: "Whizbang.Generator",
+        category: DIAGNOSTIC_CATEGORY,
         defaultSeverity: DiagnosticSeverity.Info,
         isEnabledByDefault: true);
 
@@ -784,7 +782,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
           id: "EFCORE102",
           title: "DbContext Schema Extension Generated",
           messageFormat: "Generated EnsureWhizbangDatabaseInitializedAsync() extension for '{0}' with {1} matching perspective(s)",
-          category: "Whizbang.Generator",
+          category: DIAGNOSTIC_CATEGORY,
           defaultSeverity: DiagnosticSeverity.Info,
           isEnabledByDefault: true);
 
@@ -816,7 +814,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
         id: "WHIZ702",
         title: "EF Core Migration Files Discovery",
         messageFormat: "Found {0} migration files in {1} (prefix: {2}): {3}",
-        category: "Whizbang.Generator",
+        category: DIAGNOSTIC_CATEGORY,
         defaultSeverity: DiagnosticSeverity.Info,
         isEnabledByDefault: true);
     var resourceList = string.Join(", ", migrationResources.Take(5).Select(r => r.Substring(resourcePrefix.Length)));
@@ -941,7 +939,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       id: "EFCORE206",
       title: "Perspective Tables Schema Generated",
       messageFormat: "Successfully generated schema for {0} perspective table(s) ({1} characters)",
-      category: "Whizbang.Generator",
+      category: DIAGNOSTIC_CATEGORY,
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true
     );

@@ -39,6 +39,21 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private const string RECEPTOR_INTERFACE_NAME = "Whizbang.Core.IReceptor";
   private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
 
+  // Template and placeholder constants
+  private const string TEMPLATE_SNIPPET_FILE = "DispatcherSnippets.cs";
+  private const string PLACEHOLDER_RECEPTOR_INTERFACE = "__RECEPTOR_INTERFACE__";
+  private const string PLACEHOLDER_MESSAGE_TYPE = "__MESSAGE_TYPE__";
+  private const string PLACEHOLDER_RESPONSE_TYPE = "__RESPONSE_TYPE__";
+  private const string PLACEHOLDER_RECEPTOR_CLASS = "__RECEPTOR_CLASS__";
+  private const string PLACEHOLDER_LIFECYCLE_STAGE = "__LIFECYCLE_STAGE__";
+  private const string PLACEHOLDER_INDEX = "__INDEX__";
+  private const string PLACEHOLDER_RECEPTOR_NAME = "__RECEPTOR_NAME__";
+  private const string PLACEHOLDER_MESSAGE_NAME = "__MESSAGE_NAME__";
+  private const string PLACEHOLDER_RESPONSE_NAME = "__RESPONSE_NAME__";
+  private const string REGION_NAMESPACE = "NAMESPACE";
+  private const string PLACEHOLDER_RECEPTOR_COUNT = "{{RECEPTOR_COUNT}}";
+  private const string DEFAULT_NAMESPACE = "Whizbang.Core";
+
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Pipeline 1: Discover IReceptor implementations
     var receptorCandidates = context.SyntaxProvider.CreateSyntaxProvider(
@@ -270,7 +285,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// </summary>
   private static string _generateRegistrationSource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
     // Determine namespace from assembly name
-    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var assemblyName = compilation.AssemblyName ?? DEFAULT_NAMESPACE;
     var namespaceName = $"{assemblyName}.Generated";
 
     // Load template from embedded resource
@@ -282,13 +297,13 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Load registration snippets
     var registrationSnippet = TemplateUtilities.ExtractSnippet(
         typeof(ReceptorDiscoveryGenerator).Assembly,
-        "DispatcherSnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "RECEPTOR_REGISTRATION_SNIPPET"
     );
 
     var voidRegistrationSnippet = TemplateUtilities.ExtractSnippet(
         typeof(ReceptorDiscoveryGenerator).Assembly,
-        "DispatcherSnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "VOID_RECEPTOR_REGISTRATION_SNIPPET"
     );
 
@@ -300,16 +315,16 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       if (receptor.IsVoid) {
         // Void receptor: IReceptor<TMessage>
         generatedCode = voidRegistrationSnippet
-            .Replace("__RECEPTOR_INTERFACE__", RECEPTOR_INTERFACE_NAME)
-            .Replace("__MESSAGE_TYPE__", receptor.MessageType)
-            .Replace("__RECEPTOR_CLASS__", receptor.ClassName);
+            .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+            .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
+            .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName);
       } else {
         // Regular receptor: IReceptor<TMessage, TResponse>
         generatedCode = registrationSnippet
-            .Replace("__RECEPTOR_INTERFACE__", RECEPTOR_INTERFACE_NAME)
-            .Replace("__MESSAGE_TYPE__", receptor.MessageType)
-            .Replace("__RESPONSE_TYPE__", receptor.ResponseType!)
-            .Replace("__RECEPTOR_CLASS__", receptor.ClassName);
+            .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+            .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
+            .Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType!)
+            .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName);
       }
 
       registrations.AppendLine(TemplateUtilities.IndentCode(generatedCode, "            "));
@@ -318,8 +333,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Replace template markers
     var result = template;
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(ReceptorDiscoveryGenerator).Assembly, result);
-    result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName} {{");
-    result = result.Replace("{{RECEPTOR_COUNT}}", receptors.Length.ToString(CultureInfo.InvariantCulture));
+    result = TemplateUtilities.ReplaceRegion(result, REGION_NAMESPACE, $"namespace {namespaceName} {{");
+    result = result.Replace(PLACEHOLDER_RECEPTOR_COUNT, receptors.Length.ToString(CultureInfo.InvariantCulture));
     result = TemplateUtilities.ReplaceRegion(result, "RECEPTOR_REGISTRATIONS", registrations.ToString());
 
     return result;
@@ -333,7 +348,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// </summary>
   private static string _generateDispatcherSource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
     // Determine namespace from assembly name
-    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var assemblyName = compilation.AssemblyName ?? DEFAULT_NAMESPACE;
     var namespaceName = $"{assemblyName}.Generated";
     // Separate void receptors from regular receptors
     var regularReceptors = receptors.Where(r => !r.IsVoid).ToImmutableArray();
@@ -358,7 +373,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Load Send routing snippet from template
     var sendSnippet = TemplateUtilities.ExtractSnippet(
         typeof(ReceptorDiscoveryGenerator).Assembly,
-        "DispatcherSnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "SEND_ROUTING_SNIPPET"
     );
 
@@ -370,9 +385,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
       // Replace placeholders with actual types
       var generatedCode = sendSnippet
-          .Replace("__MESSAGE_TYPE__", messageType)
-          .Replace("__RESPONSE_TYPE__", firstReceptor.ResponseType!)
-          .Replace("__RECEPTOR_INTERFACE__", RECEPTOR_INTERFACE_NAME);
+          .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
+          .Replace(PLACEHOLDER_RESPONSE_TYPE, firstReceptor.ResponseType!)
+          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME);
 
       sendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
     }
@@ -380,7 +395,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Load void Send routing snippet from template
     var voidSendSnippet = TemplateUtilities.ExtractSnippet(
         typeof(ReceptorDiscoveryGenerator).Assembly,
-        "DispatcherSnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "VOID_SEND_ROUTING_SNIPPET"
     );
 
@@ -389,8 +404,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     foreach (var messageType in voidReceptorsByMessage.Keys) {
       // Replace placeholders with actual types
       var generatedCode = voidSendSnippet
-          .Replace("__MESSAGE_TYPE__", messageType)
-          .Replace("__RECEPTOR_INTERFACE__", RECEPTOR_INTERFACE_NAME);
+          .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
+          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME);
 
       voidSendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
     }
@@ -398,7 +413,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Load Publish routing snippet from template
     var publishSnippet = TemplateUtilities.ExtractSnippet(
         typeof(ReceptorDiscoveryGenerator).Assembly,
-        "DispatcherSnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "PUBLISH_ROUTING_SNIPPET"
     );
 
@@ -413,8 +428,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     foreach (var messageType in allMessageTypes) {
       // Replace placeholders with actual types
       var generatedCode = publishSnippet
-          .Replace("__MESSAGE_TYPE__", messageType)
-          .Replace("__RECEPTOR_INTERFACE__", RECEPTOR_INTERFACE_NAME);
+          .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
+          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME);
 
       publishRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
     }
@@ -427,10 +442,10 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(ReceptorDiscoveryGenerator).Assembly, result);
 
     // Replace namespace with assembly-specific namespace
-    result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName};");
+    result = TemplateUtilities.ReplaceRegion(result, REGION_NAMESPACE, $"namespace {namespaceName};");
 
     // Replace {{VARIABLE}} markers with simple string replacement
-    result = result.Replace("{{RECEPTOR_COUNT}}", receptors.Length.ToString(CultureInfo.InvariantCulture));
+    result = result.Replace(PLACEHOLDER_RECEPTOR_COUNT, receptors.Length.ToString(CultureInfo.InvariantCulture));
 
     // Replace #region markers using shared utilities (robust against whitespace)
     result = TemplateUtilities.ReplaceRegion(result, "SEND_ROUTING", sendRouting.ToString());
@@ -448,7 +463,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// </summary>
   private static string _generateLifecycleInvokerSource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
     // Determine namespace from assembly name
-    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var assemblyName = compilation.AssemblyName ?? DEFAULT_NAMESPACE;
     var namespaceName = $"{assemblyName}.Generated";
 
     // Read template from embedded resource
@@ -460,13 +475,13 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Load snippets for lifecycle routing
     var voidSnippet = TemplateUtilities.ExtractSnippet(
         typeof(ReceptorDiscoveryGenerator).Assembly,
-        "DispatcherSnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "LIFECYCLE_ROUTING_VOID_SNIPPET"
     );
 
     var responseSnippet = TemplateUtilities.ExtractSnippet(
         typeof(ReceptorDiscoveryGenerator).Assembly,
-        "DispatcherSnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "LIFECYCLE_ROUTING_RESPONSE_SNIPPET"
     );
 
@@ -491,16 +506,16 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       if (receptor.IsVoid) {
         // Void receptor: IReceptor<TMessage>
         generatedCode = voidSnippet
-            .Replace("__RECEPTOR_INTERFACE__", RECEPTOR_INTERFACE_NAME)
-            .Replace("__MESSAGE_TYPE__", receptor.MessageType)
-            .Replace("__LIFECYCLE_STAGE__", stage);
+            .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+            .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
+            .Replace(PLACEHOLDER_LIFECYCLE_STAGE, stage);
       } else {
         // Regular receptor: IReceptor<TMessage, TResponse>
         generatedCode = responseSnippet
-            .Replace("__RECEPTOR_INTERFACE__", RECEPTOR_INTERFACE_NAME)
-            .Replace("__MESSAGE_TYPE__", receptor.MessageType)
-            .Replace("__RESPONSE_TYPE__", receptor.ResponseType!)
-            .Replace("__LIFECYCLE_STAGE__", stage);
+            .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+            .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
+            .Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType!)
+            .Replace(PLACEHOLDER_LIFECYCLE_STAGE, stage);
       }
 
       routingCode.AppendLine(TemplateUtilities.IndentCode(generatedCode, "    "));
@@ -509,8 +524,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Replace template markers
     var result = template;
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(ReceptorDiscoveryGenerator).Assembly, result);
-    result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName};");
-    result = result.Replace("{{RECEPTOR_COUNT}}", receptors.Length.ToString(CultureInfo.InvariantCulture));
+    result = TemplateUtilities.ReplaceRegion(result, REGION_NAMESPACE, $"namespace {namespaceName};");
+    result = result.Replace(PLACEHOLDER_RECEPTOR_COUNT, receptors.Length.ToString(CultureInfo.InvariantCulture));
     result = TemplateUtilities.ReplaceRegion(result, "LIFECYCLE_ROUTING", routingCode.ToString());
 
     return result;
@@ -524,7 +539,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   /// </summary>
   private static string _generateDiagnosticsSource(Compilation compilation, ImmutableArray<ReceptorInfo> receptors) {
     // Determine namespace from assembly name
-    var assemblyName = compilation.AssemblyName ?? "Whizbang.Core";
+    var assemblyName = compilation.AssemblyName ?? DEFAULT_NAMESPACE;
     var namespaceName = $"{assemblyName}.Generated";
 
     var timestamp = System.DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss UTC", CultureInfo.InvariantCulture);
@@ -538,7 +553,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Load diagnostic message snippet
     var messageSnippet = TemplateUtilities.ExtractSnippet(
         typeof(ReceptorDiscoveryGenerator).Assembly,
-        "DispatcherSnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "DIAGNOSTIC_MESSAGE_SNIPPET"
     );
 
@@ -548,10 +563,10 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       var receptor = receptors[i];
       var responseTypeName = receptor.IsVoid ? "void" : _getSimpleName(receptor.ResponseType!);
       var generatedCode = messageSnippet
-          .Replace("__INDEX__", (i + 1).ToString(CultureInfo.InvariantCulture))
-          .Replace("__RECEPTOR_NAME__", _getSimpleName(receptor.ClassName))
-          .Replace("__MESSAGE_NAME__", _getSimpleName(receptor.MessageType))
-          .Replace("__RESPONSE_NAME__", responseTypeName);
+          .Replace(PLACEHOLDER_INDEX, (i + 1).ToString(CultureInfo.InvariantCulture))
+          .Replace(PLACEHOLDER_RECEPTOR_NAME, _getSimpleName(receptor.ClassName))
+          .Replace(PLACEHOLDER_MESSAGE_NAME, _getSimpleName(receptor.MessageType))
+          .Replace(PLACEHOLDER_RESPONSE_NAME, responseTypeName);
 
       messages.Append(TemplateUtilities.IndentCode(generatedCode, "            "));
 
@@ -564,8 +579,8 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Replace template markers
     var result = template;
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(ReceptorDiscoveryGenerator).Assembly, result);
-    result = TemplateUtilities.ReplaceRegion(result, "NAMESPACE", $"namespace {namespaceName} {{");
-    result = result.Replace("{{RECEPTOR_COUNT}}", receptors.Length.ToString(CultureInfo.InvariantCulture));
+    result = TemplateUtilities.ReplaceRegion(result, REGION_NAMESPACE, $"namespace {namespaceName} {{");
+    result = result.Replace(PLACEHOLDER_RECEPTOR_COUNT, receptors.Length.ToString(CultureInfo.InvariantCulture));
     result = result.Replace("{{TIMESTAMP}}", timestamp);
     result = TemplateUtilities.ReplaceRegion(result, "DIAGNOSTIC_MESSAGES", messages.ToString());
 

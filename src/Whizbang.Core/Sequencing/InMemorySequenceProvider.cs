@@ -24,7 +24,7 @@ public class InMemorySequenceProvider : ISequenceProvider {
   /// Holds a sequence counter that can be safely incremented with Interlocked operations.
   /// Using a class (reference type) allows Interlocked.Increment to work on the Value field.
   /// </summary>
-  private class SequenceCounter {
+  private sealed class SequenceCounter {
     public long Value = -1; // Start at -1 so first increment returns 0
   }
 

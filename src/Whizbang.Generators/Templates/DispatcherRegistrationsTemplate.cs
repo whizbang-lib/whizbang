@@ -60,7 +60,6 @@ namespace Whizbang.Core.Generated {
       services.AddSingleton<IDispatcher>(sp => {
         var instanceProvider = sp.GetRequiredService<IServiceInstanceProvider>();
         var traceStore = sp.GetService<ITraceStore>();
-        var transport = sp.GetService<ITransport>();
         var jsonOptions = sp.GetService<JsonSerializerOptions>();
         var topicRegistry = sp.GetService<Whizbang.Core.Routing.ITopicRegistry>();
         var topicRoutingStrategy = sp.GetService<Whizbang.Core.Routing.ITopicRoutingStrategy>();
@@ -70,7 +69,7 @@ namespace Whizbang.Core.Generated {
 
         // Do NOT resolve IEventStore or IWorkCoordinatorStrategy here - they may be Scoped
         // The Dispatcher will resolve them per-call from the active service provider
-        return new GeneratedDispatcher(sp, instanceProvider, traceStore, transport, jsonOptions, topicRegistry, topicRoutingStrategy, aggregateIdExtractor, lifecycleInvoker, envelopeSerializer);
+        return new GeneratedDispatcher(sp, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, aggregateIdExtractor, lifecycleInvoker, envelopeSerializer);
       });
       services.AddSingleton<global::Whizbang.Core.Dispatcher>(sp => (GeneratedDispatcher)sp.GetRequiredService<IDispatcher>());
       return services;

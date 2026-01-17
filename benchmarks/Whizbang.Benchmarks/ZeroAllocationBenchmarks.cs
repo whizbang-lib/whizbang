@@ -33,6 +33,9 @@ public class ZeroAllocationBenchmarks {
     DateTimeOffset Timestamp
   );
 
+  private const string BENCHMARK_HOST = "benchmark-host";
+  private const int BENCHMARK_PROCESS_ID = 12345;
+
   [GlobalSetup]
   public async Task SetupAsync() {
     _serialExecutor = new SerialExecutor();
@@ -52,8 +55,8 @@ public class ZeroAllocationBenchmarks {
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "Benchmark",
         InstanceId = Guid.NewGuid(),
-        HostName = "benchmark-host",
-        ProcessId = 12345
+        HostName = BENCHMARK_HOST,
+        ProcessId = BENCHMARK_PROCESS_ID
       },
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow,
@@ -82,8 +85,8 @@ public class ZeroAllocationBenchmarks {
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "Benchmark",
         InstanceId = Guid.NewGuid(),
-        HostName = "benchmark-host",
-        ProcessId = 12345
+        HostName = BENCHMARK_HOST,
+        ProcessId = BENCHMARK_PROCESS_ID
       },
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow,

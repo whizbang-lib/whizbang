@@ -351,33 +351,13 @@ public class ScopedWorkCoordinatorStrategyTests {
     public MessageFailure[] LastInboxFailures { get; private set; } = [];
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
-      Guid instanceId,
-      string serviceName,
-      string hostName,
-      int processId,
-      Dictionary<string, JsonElement>? metadata,
-      MessageCompletion[] outboxCompletions,
-      MessageFailure[] outboxFailures,
-      MessageCompletion[] inboxCompletions,
-      MessageFailure[] inboxFailures,
-      ReceptorProcessingCompletion[] receptorCompletions,
-      ReceptorProcessingFailure[] receptorFailures,
-      PerspectiveCheckpointCompletion[] perspectiveCompletions,
-      PerspectiveCheckpointFailure[] perspectiveFailures,
-      OutboxMessage[] newOutboxMessages,
-      InboxMessage[] newInboxMessages,
-      Guid[] renewOutboxLeaseIds,
-      Guid[] renewInboxLeaseIds,
-      WorkBatchFlags flags = WorkBatchFlags.None,
-      int partitionCount = 10000,
-      int leaseSeconds = 300,
-      int staleThresholdSeconds = 300,
+      ProcessWorkBatchRequest request,
       CancellationToken cancellationToken = default) {
       ProcessWorkBatchCallCount++;
-      LastNewOutboxMessages = newOutboxMessages;
-      LastNewInboxMessages = newInboxMessages;
-      LastOutboxCompletions = outboxCompletions;
-      LastInboxFailures = inboxFailures;
+      LastNewOutboxMessages = request.NewOutboxMessages;
+      LastNewInboxMessages = request.NewInboxMessages;
+      LastOutboxCompletions = request.OutboxCompletions;
+      LastInboxFailures = request.InboxFailures;
 
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],

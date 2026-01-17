@@ -32,14 +32,13 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
     IServiceProvider serviceProvider,
     IServiceInstanceProvider instanceProvider,
     ITraceStore? traceStore = null,
-    ITransport? transport = null,
     JsonSerializerOptions? jsonOptions = null,
     global::Whizbang.Core.Routing.ITopicRegistry? topicRegistry = null,
     global::Whizbang.Core.Routing.ITopicRoutingStrategy? topicRoutingStrategy = null,
     IAggregateIdExtractor? aggregateIdExtractor = null,
     ILifecycleInvoker? lifecycleInvoker = null,
     IEnvelopeSerializer? envelopeSerializer = null
-  ) : base(serviceProvider, instanceProvider, traceStore, transport, jsonOptions, topicRegistry, topicRoutingStrategy, aggregateIdExtractor, lifecycleInvoker, envelopeSerializer) {
+  ) : base(serviceProvider, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, aggregateIdExtractor, lifecycleInvoker, envelopeSerializer) {
   }
 
   /// <summary>

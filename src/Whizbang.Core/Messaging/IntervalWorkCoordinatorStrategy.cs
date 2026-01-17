@@ -274,30 +274,30 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
       );
 
       // Call process_work_batch with snapshot
-      var workBatch = await _coordinator.ProcessWorkBatchAsync(
-        _instanceProvider.InstanceId,
-        _instanceProvider.ServiceName,
-        _instanceProvider.HostName,
-        _instanceProvider.ProcessId,
-        metadata: null,
-        outboxCompletions: outboxCompletions,
-        outboxFailures: outboxFailures,
-        inboxCompletions: inboxCompletions,
-        inboxFailures: inboxFailures,
-        receptorCompletions: [],  // TODO: Add receptor processing support
-        receptorFailures: [],
-        perspectiveCompletions: [],  // TODO: Add perspective checkpoint support
-        perspectiveFailures: [],
-        newOutboxMessages: outboxMessages,
-        newInboxMessages: inboxMessages,
-        renewOutboxLeaseIds: [],
-        renewInboxLeaseIds: [],
-        flags: flags | (_options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None),
-        partitionCount: _options.PartitionCount,
-        leaseSeconds: _options.LeaseSeconds,
-        staleThresholdSeconds: _options.StaleThresholdSeconds,
-        cancellationToken: ct
-      );
+      var request = new ProcessWorkBatchRequest {
+        InstanceId = _instanceProvider.InstanceId,
+        ServiceName = _instanceProvider.ServiceName,
+        HostName = _instanceProvider.HostName,
+        ProcessId = _instanceProvider.ProcessId,
+        Metadata = null,
+        OutboxCompletions = outboxCompletions,
+        OutboxFailures = outboxFailures,
+        InboxCompletions = inboxCompletions,
+        InboxFailures = inboxFailures,
+        ReceptorCompletions = [],  // FUTURE: Add receptor processing support
+        ReceptorFailures = [],
+        PerspectiveCompletions = [],  // FUTURE: Add perspective checkpoint support
+        PerspectiveFailures = [],
+        NewOutboxMessages = outboxMessages,
+        NewInboxMessages = inboxMessages,
+        RenewOutboxLeaseIds = [],
+        RenewInboxLeaseIds = [],
+        Flags = flags | (_options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None),
+        PartitionCount = _options.PartitionCount,
+        LeaseSeconds = _options.LeaseSeconds,
+        StaleThresholdSeconds = _options.StaleThresholdSeconds
+      };
+      var workBatch = await _coordinator.ProcessWorkBatchAsync(request, ct);
 
       if (_logger != null) {
         LogIntervalFlushCompleted(_logger, workBatch.OutboxWork.Count, workBatch.InboxWork.Count);
@@ -363,21 +363,20 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
 
     // Flush any remaining queued operations
     lock (_lock) {
-      if (_queuedOutboxMessages.Count > 0 ||
+      if (_logger != null &&
+          (_queuedOutboxMessages.Count > 0 ||
           _queuedInboxMessages.Count > 0 ||
           _queuedOutboxCompletions.Count > 0 ||
           _queuedOutboxFailures.Count > 0 ||
           _queuedInboxCompletions.Count > 0 ||
-          _queuedInboxFailures.Count > 0) {
-        if (_logger != null) {
-          LogDisposingWithUnflushedOperations(
-            _logger,
-            _queuedOutboxMessages.Count,
-            _queuedInboxMessages.Count,
-            _queuedOutboxCompletions.Count + _queuedInboxCompletions.Count,
-            _queuedOutboxFailures.Count + _queuedInboxFailures.Count
-          );
-        }
+          _queuedInboxFailures.Count > 0)) {
+        LogDisposingWithUnflushedOperations(
+          _logger,
+          _queuedOutboxMessages.Count,
+          _queuedInboxMessages.Count,
+          _queuedOutboxCompletions.Count + _queuedInboxCompletions.Count,
+          _queuedOutboxFailures.Count + _queuedInboxFailures.Count
+        );
       }
     }
 

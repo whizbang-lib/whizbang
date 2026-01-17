@@ -57,42 +57,22 @@ public class DapperWorkCoordinator(
   private readonly ILogger<DapperWorkCoordinator>? _logger = logger;
 
   public async Task<WorkBatch> ProcessWorkBatchAsync(
-    Guid instanceId,
-    string serviceName,
-    string hostName,
-    int processId,
-    Dictionary<string, JsonElement>? metadata,
-    MessageCompletion[] outboxCompletions,
-    MessageFailure[] outboxFailures,
-    MessageCompletion[] inboxCompletions,
-    MessageFailure[] inboxFailures,
-    ReceptorProcessingCompletion[] receptorCompletions,
-    ReceptorProcessingFailure[] receptorFailures,
-    PerspectiveCheckpointCompletion[] perspectiveCompletions,
-    PerspectiveCheckpointFailure[] perspectiveFailures,
-    OutboxMessage[] newOutboxMessages,
-    InboxMessage[] newInboxMessages,
-    Guid[] renewOutboxLeaseIds,
-    Guid[] renewInboxLeaseIds,
-    WorkBatchFlags flags = WorkBatchFlags.None,
-    int partitionCount = 10_000,
-    int leaseSeconds = 300,
-    int staleThresholdSeconds = 600,
+    ProcessWorkBatchRequest request,
     CancellationToken cancellationToken = default
   ) {
     _logger?.LogDebug(
       "Processing work batch for instance {InstanceId} ({ServiceName}@{HostName}:{ProcessId}): {OutboxCompletions} outbox completions, {OutboxFailures} outbox failures, {InboxCompletions} inbox completions, {InboxFailures} inbox failures, {NewOutbox} new outbox, {NewInbox} new inbox, Flags={Flags}",
-      instanceId,
-      serviceName,
-      hostName,
-      processId,
-      outboxCompletions.Length,
-      outboxFailures.Length,
-      inboxCompletions.Length,
-      inboxFailures.Length,
-      newOutboxMessages.Length,
-      newInboxMessages.Length,
-      flags
+      request.InstanceId,
+      request.ServiceName,
+      request.HostName,
+      request.ProcessId,
+      request.OutboxCompletions.Length,
+      request.OutboxFailures.Length,
+      request.InboxCompletions.Length,
+      request.InboxFailures.Length,
+      request.NewOutboxMessages.Length,
+      request.NewInboxMessages.Length,
+      request.Flags
     );
 
     await using var connection = new NpgsqlConnection(_connectionString);
@@ -103,18 +83,8 @@ public class DapperWorkCoordinator(
 
     await connection.OpenAsync(cancellationToken);
 
-    // Convert to JSON
-    var outboxCompletionsJson = _serializeCompletions(outboxCompletions);
-    var outboxFailuresJson = _serializeFailures(outboxFailures);
-    var inboxCompletionsJson = _serializeCompletions(inboxCompletions);
-    var inboxFailuresJson = _serializeFailures(inboxFailures);
-    var perspectiveCompletionsJson = _serializePerspectiveCompletions(perspectiveCompletions);
-    var perspectiveFailuresJson = _serializePerspectiveFailures(perspectiveFailures);
-    var newOutboxJson = _serializeNewOutboxMessages(newOutboxMessages);
-    var newInboxJson = _serializeNewInboxMessages(newInboxMessages);
-    var metadataJson = _serializeMetadata(metadata);
-    var renewOutboxJson = _serializeLeaseRenewals(renewOutboxLeaseIds);
-    var renewInboxJson = _serializeLeaseRenewals(renewInboxLeaseIds);
+    // Serialize all work batch data
+    var serializedData = _serializeWorkBatchData(request);
 
     // Execute the process_work_batch function (new signature after decomposition)
     var now = DateTimeOffset.UtcNow;
@@ -147,30 +117,30 @@ public class DapperWorkCoordinator(
       )";
 
     var parameters = new {
-      p_instance_id = instanceId,
-      p_service_name = serviceName,
-      p_host_name = hostName,
-      p_process_id = processId,
-      p_metadata = metadataJson,
+      p_instance_id = request.InstanceId,
+      p_service_name = request.ServiceName,
+      p_host_name = request.HostName,
+      p_process_id = request.ProcessId,
+      p_metadata = serializedData.Metadata,
       p_now = now,
-      p_lease_duration_seconds = leaseSeconds,
-      p_partition_count = partitionCount,
-      p_outbox_completions = outboxCompletionsJson,
-      p_inbox_completions = inboxCompletionsJson,
+      p_lease_duration_seconds = request.LeaseSeconds,
+      p_partition_count = request.PartitionCount,
+      p_outbox_completions = serializedData.OutboxCompletions,
+      p_inbox_completions = serializedData.InboxCompletions,
       p_perspective_event_completions = "[]",  // Not used - perspective events managed internally
-      p_perspective_completions = perspectiveCompletionsJson,  // Checkpoint-level completions
-      p_outbox_failures = outboxFailuresJson,
-      p_inbox_failures = inboxFailuresJson,
+      p_perspective_completions = serializedData.PerspectiveCompletions,  // Checkpoint-level completions
+      p_outbox_failures = serializedData.OutboxFailures,
+      p_inbox_failures = serializedData.InboxFailures,
       p_perspective_event_failures = "[]",  // Not used - perspective events managed internally
-      p_perspective_failures = perspectiveFailuresJson,  // Checkpoint-level failures
-      p_new_outbox_messages = newOutboxJson,
-      p_new_inbox_messages = newInboxJson,
+      p_perspective_failures = serializedData.PerspectiveFailures,  // Checkpoint-level failures
+      p_new_outbox_messages = serializedData.NewOutboxMessages,
+      p_new_inbox_messages = serializedData.NewInboxMessages,
       p_new_perspective_events = "[]",
-      p_renew_outbox_lease_ids = renewOutboxJson,
-      p_renew_inbox_lease_ids = renewInboxJson,
+      p_renew_outbox_lease_ids = serializedData.RenewOutboxLeaseIds,
+      p_renew_inbox_lease_ids = serializedData.RenewInboxLeaseIds,
       p_renew_perspective_event_lease_ids = "[]",
-      p_flags = (int)flags,
-      p_stale_threshold_seconds = staleThresholdSeconds
+      p_flags = (int)request.Flags,
+      p_stale_threshold_seconds = request.StaleThresholdSeconds
     };
 
     var commandDefinition = new CommandDefinition(
@@ -373,24 +343,6 @@ public class DapperWorkCoordinator(
     return JsonSerializer.Serialize(messageIds, typeInfo);
   }
 
-  private string _serializeReceptorCompletions(ReceptorProcessingCompletion[] completions) {
-    if (completions.Length == 0) {
-      return "[]";
-    }
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(ReceptorProcessingCompletion[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for ReceptorProcessingCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
-    return JsonSerializer.Serialize(completions, typeInfo);
-  }
-
-  private string _serializeReceptorFailures(ReceptorProcessingFailure[] failures) {
-    if (failures.Length == 0) {
-      return "[]";
-    }
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(ReceptorProcessingFailure[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for ReceptorProcessingFailure[]. Ensure the type is registered in InfrastructureJsonContext.");
-    return JsonSerializer.Serialize(failures, typeInfo);
-  }
-
   private string _serializePerspectiveCompletions(PerspectiveCheckpointCompletion[] completions) {
     if (completions.Length == 0) {
       return "[]";
@@ -534,6 +486,25 @@ public class DapperWorkCoordinator(
     _logger?.LogDebug("PostgreSQL Notice [{Severity}]: {Message}",
       args.Notice.Severity, args.Notice.MessageText);
   }
+
+  /// <summary>
+  /// Serializes all work batch data into JSON format for database function call.
+  /// </summary>
+  private SerializedWorkBatchData _serializeWorkBatchData(ProcessWorkBatchRequest request) {
+    return new SerializedWorkBatchData(
+      OutboxCompletions: _serializeCompletions(request.OutboxCompletions),
+      OutboxFailures: _serializeFailures(request.OutboxFailures),
+      InboxCompletions: _serializeCompletions(request.InboxCompletions),
+      InboxFailures: _serializeFailures(request.InboxFailures),
+      PerspectiveCompletions: _serializePerspectiveCompletions(request.PerspectiveCompletions),
+      PerspectiveFailures: _serializePerspectiveFailures(request.PerspectiveFailures),
+      NewOutboxMessages: _serializeNewOutboxMessages(request.NewOutboxMessages),
+      NewInboxMessages: _serializeNewInboxMessages(request.NewInboxMessages),
+      Metadata: _serializeMetadata(request.Metadata),
+      RenewOutboxLeaseIds: _serializeLeaseRenewals(request.RenewOutboxLeaseIds),
+      RenewInboxLeaseIds: _serializeLeaseRenewals(request.RenewInboxLeaseIds)
+    );
+  }
 }
 
 /// <summary>
@@ -570,4 +541,22 @@ internal class CheckpointQueryResult {
   public Guid? last_event_id { get; set; }
   public short status { get; set; }
 }
+
+/// <summary>
+/// Holds all serialized JSON data for the database function call.
+/// Extracted from ProcessWorkBatchAsync to reduce cognitive complexity.
+/// </summary>
+internal sealed record SerializedWorkBatchData(
+  string OutboxCompletions,
+  string OutboxFailures,
+  string InboxCompletions,
+  string InboxFailures,
+  string PerspectiveCompletions,
+  string PerspectiveFailures,
+  string NewOutboxMessages,
+  string NewInboxMessages,
+  string Metadata,
+  string RenewOutboxLeaseIds,
+  string RenewInboxLeaseIds
+);
 

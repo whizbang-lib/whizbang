@@ -118,26 +118,13 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     }
 
     // Get model type and StreamKey property (same across all interfaces for this class)
-    var modelType = perspectiveInterfaces.First().TypeArguments[0];
-
-    string? streamKeyPropertyName = null;
-    foreach (var member in modelType.GetMembers()) {
-      if (member is IPropertySymbol property) {
-        var hasStreamKeyAttribute = property.GetAttributes()
-            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
-
-        if (hasStreamKeyAttribute) {
-          streamKeyPropertyName = property.Name;
-          break;
-        }
-      }
-    }
+    var modelType = perspectiveInterfaces[0].TypeArguments[0];
+    var streamKeyPropertyName = _findStreamKeyProperty(modelType);
 
     var className = classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-    var results = new List<PerspectiveInfo>();
 
     // Generate one PerspectiveInfo per implemented interface
-    foreach (var perspectiveInterface in perspectiveInterfaces) {
+    var results = perspectiveInterfaces.Select(perspectiveInterface => {
       // Extract all type arguments: [TModel, TEvent1, TEvent2, ...]
       // Use FullyQualifiedFormat for CODE GENERATION (includes global:: prefix)
       var typeArguments = perspectiveInterface.TypeArguments
@@ -156,27 +143,10 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
           .Select(t => _formatTypeNameForRuntime(t))
           .ToArray();
 
-      // Validate StreamKey for each event type and collect errors + StreamKey info
-      var validationErrors = new List<EventValidationError>();
-      var eventStreamKeys = new List<EventStreamKeyInfo>();
+      // Validate event types and extract StreamKey information
+      var (validationErrors, eventStreamKeys) = _validateAndExtractEventInfo(eventTypeSymbols);
 
-      foreach (var eventTypeSymbol in eventTypeSymbols) {
-        var error = _validateEventStreamKey(eventTypeSymbol);
-        if (error != null) {
-          validationErrors.Add(error);
-        } else {
-          // Extract StreamKey property name (only if valid)
-          var streamKeyProp = _extractStreamKeyProperty(eventTypeSymbol);
-          if (streamKeyProp != null) {
-            eventStreamKeys.Add(new EventStreamKeyInfo(
-                EventTypeName: eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-                StreamKeyPropertyName: streamKeyProp
-            ));
-          }
-        }
-      }
-
-      results.Add(new PerspectiveInfo(
+      return new PerspectiveInfo(
           ClassName: className,
           InterfaceTypeArguments: typeArguments,
           EventTypes: eventTypes,
@@ -184,10 +154,57 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
           StreamKeyPropertyName: streamKeyPropertyName,
           EventStreamKeys: eventStreamKeys.Count > 0 ? eventStreamKeys.ToArray() : null,
           EventValidationErrors: validationErrors.Count > 0 ? validationErrors.ToArray() : null
-      ));
+      );
+    }).ToArray();
+
+    return results;
+  }
+
+  /// <summary>
+  /// Finds the StreamKey property in a model type.
+  /// Returns the property name if found, null otherwise.
+  /// </summary>
+  private static string? _findStreamKeyProperty(ITypeSymbol modelType) {
+    foreach (var member in modelType.GetMembers()) {
+      if (member is IPropertySymbol property) {
+        var hasStreamKeyAttribute = property.GetAttributes()
+            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
+
+        if (hasStreamKeyAttribute) {
+          return property.Name;
+        }
+      }
+    }
+    return null;
+  }
+
+  /// <summary>
+  /// Validates event types and extracts StreamKey information.
+  /// Returns validation errors and StreamKey info for valid events.
+  /// </summary>
+  private static (List<EventValidationError> ValidationErrors, List<EventStreamKeyInfo> StreamKeys) _validateAndExtractEventInfo(
+      ITypeSymbol[] eventTypeSymbols) {
+
+    var validationErrors = new List<EventValidationError>();
+    var eventStreamKeys = new List<EventStreamKeyInfo>();
+
+    foreach (var eventTypeSymbol in eventTypeSymbols) {
+      var error = _validateEventStreamKey(eventTypeSymbol);
+      if (error != null) {
+        validationErrors.Add(error);
+      } else {
+        // Extract StreamKey property name (only if valid)
+        var streamKeyProp = _extractStreamKeyProperty(eventTypeSymbol);
+        if (streamKeyProp != null) {
+          eventStreamKeys.Add(new EventStreamKeyInfo(
+              EventTypeName: eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+              StreamKeyPropertyName: streamKeyProp
+          ));
+        }
+      }
     }
 
-    return results.ToArray();
+    return (validationErrors, eventStreamKeys);
   }
 
   /// <summary>
@@ -451,12 +468,12 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
             ? eventType["global::".Length..]
             : eventType;
 
-        // Generate: if (typeof(TModel) == typeof(global::ModelType) && typeof(TEvent) == typeof(global::EventType)) {
+        // Generate type-check condition for model and event types
         sb.AppendLine($"    if (typeof(TModel) == typeof({modelType}) && typeof(TEvent) == typeof({eventType})) {{");
         sb.AppendLine($"      return new[] {{");
         sb.AppendLine($"        new PerspectiveAssociationInfo<TModel, TEvent>(");
         sb.AppendLine($"          \"{cleanEventType}\",");
-        sb.AppendLine($"          \"{perspective.ClassName.Split('.').Last()}\",");
+        sb.AppendLine($"          \"{perspective.ClassName.Split('.')[^1]}\",");
         sb.AppendLine($"          \"{serviceName}\",");
         sb.AppendLine($"          (model, evt) => {{");
         sb.AppendLine($"            var perspective = new {perspective.ClassName}();");
@@ -478,40 +495,6 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     return sb.ToString();
   }
 
-  /// <summary>
-  /// Extracts the assembly name from a fully qualified type name.
-  /// Uses convention: for "Namespace.Events.TypeName" or "Namespace.Commands.TypeName",
-  /// assembly name is "Namespace.Contracts" (assuming contracts assembly naming).
-  /// For other patterns, takes first two segments of namespace.
-  /// E.g., "ECommerce.Contracts.Events.ProductCreatedEvent" -> "ECommerce.Contracts"
-  /// </summary>
-  private static string _extractAssemblyName(string fullyQualifiedName) {
-    // Split by dots to extract namespace segments
-    var parts = fullyQualifiedName.Split('.');
-
-    // For patterns like "Namespace.Contracts.Events.TypeName", return "Namespace.Contracts"
-    if (parts.Length >= 3 && (parts[2] == "Events" || parts[2] == "Commands")) {
-      return $"{parts[0]}.{parts[1]}";
-    }
-
-    // For patterns like "Namespace.Events.TypeName", return "Namespace"
-    if (parts.Length >= 2 && (parts[1] == "Events" || parts[1] == "Commands")) {
-      return parts[0];
-    }
-
-    // For patterns like "Namespace.TypeName" (only 2 parts), return first segment only
-    // The second part is the type name itself, not a namespace segment
-    if (parts.Length == 2) {
-      return parts[0];
-    }
-
-    // Fallback: for longer namespaces without Events/Commands, return first two segments
-    if (parts.Length >= 3) {
-      return $"{parts[0]}.{parts[1]}";
-    }
-
-    return parts[0];
-  }
 
   /// <summary>
   /// Gets the simple name from a fully qualified type name.

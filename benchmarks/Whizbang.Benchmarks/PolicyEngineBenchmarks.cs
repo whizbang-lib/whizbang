@@ -19,6 +19,10 @@ public class PolicyEngineBenchmarks {
   private sealed record PaymentCommand(string PaymentId, decimal Amount);
   private sealed record NotificationCommand(string UserId, string Message);
 
+  private const string BENCHMARK_HOST = "benchmark-host";
+  private const int BENCHMARK_PROCESS_ID = 12345;
+  private const string BENCHMARK_ENVIRONMENT = "benchmark";
+
   private PolicyEngine _engine1Policy = null!;
   private PolicyEngine _engine5Policies = null!;
   private PolicyEngine _engine20Policies = null!;
@@ -33,11 +37,11 @@ public class PolicyEngineBenchmarks {
     // Setup contexts
     var orderMessage = new OrderCommand("order-123", 100m);
     var orderEnvelope = _createEnvelope(orderMessage);
-    _orderContext = new PolicyContext(orderMessage, orderEnvelope, serviceProvider, "benchmark");
+    _orderContext = new PolicyContext(orderMessage, orderEnvelope, serviceProvider, BENCHMARK_ENVIRONMENT);
 
     var paymentMessage = new PaymentCommand("payment-456", 200m);
     var paymentEnvelope = _createEnvelope(paymentMessage);
-    _paymentContext = new PolicyContext(paymentMessage, paymentEnvelope, serviceProvider, "benchmark");
+    _paymentContext = new PolicyContext(paymentMessage, paymentEnvelope, serviceProvider, BENCHMARK_ENVIRONMENT);
 
     // Engine with 1 policy
     _engine1Policy = new PolicyEngine();
@@ -69,8 +73,8 @@ public class PolicyEngineBenchmarks {
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "Benchmark",
         InstanceId = Guid.NewGuid(),
-        HostName = "benchmark-host",
-        ProcessId = 12345
+        HostName = BENCHMARK_HOST,
+        ProcessId = BENCHMARK_PROCESS_ID
       },
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow,

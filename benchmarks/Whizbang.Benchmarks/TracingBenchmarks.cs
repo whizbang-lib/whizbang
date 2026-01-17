@@ -15,6 +15,9 @@ namespace Whizbang.Benchmarks;
 [MemoryDiagnoser]
 [MarkdownExporter]
 public class TracingBenchmarks {
+  private const string BENCHMARK_HOST = "benchmark-host";
+  private const int BENCHMARK_PROCESS_ID = 12345;
+
   private sealed record TestCommand(string Id, int Value);
 
   [Benchmark(Baseline = true)]
@@ -33,8 +36,8 @@ public class TracingBenchmarks {
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "TestService",
         InstanceId = Guid.NewGuid(),
-        HostName = "benchmark-host",
-        ProcessId = 12345
+        HostName = BENCHMARK_HOST,
+        ProcessId = BENCHMARK_PROCESS_ID
       },
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow,
@@ -57,8 +60,8 @@ public class TracingBenchmarks {
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "TestService",
         InstanceId = Guid.NewGuid(),
-        HostName = "benchmark-host",
-        ProcessId = 12345
+        HostName = BENCHMARK_HOST,
+        ProcessId = BENCHMARK_PROCESS_ID
       },
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow
@@ -87,8 +90,8 @@ public class TracingBenchmarks {
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "TestService",
         InstanceId = Guid.NewGuid(),
-        HostName = "benchmark-host",
-        ProcessId = 12345
+        HostName = BENCHMARK_HOST,
+        ProcessId = BENCHMARK_PROCESS_ID
       },
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow,
@@ -113,8 +116,8 @@ public class TracingBenchmarks {
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "Service1",
         InstanceId = Guid.NewGuid(),
-        HostName = "benchmark-host",
-        ProcessId = 12345
+        HostName = BENCHMARK_HOST,
+        ProcessId = BENCHMARK_PROCESS_ID
       },
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow
@@ -123,8 +126,8 @@ public class TracingBenchmarks {
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "Service2",
         InstanceId = Guid.NewGuid(),
-        HostName = "benchmark-host",
-        ProcessId = 12345
+        HostName = BENCHMARK_HOST,
+        ProcessId = BENCHMARK_PROCESS_ID
       },
       Type = HopType.Causation,
       Timestamp = DateTimeOffset.UtcNow.AddSeconds(-1),
@@ -135,8 +138,8 @@ public class TracingBenchmarks {
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "Service3",
         InstanceId = Guid.NewGuid(),
-        HostName = "benchmark-host",
-        ProcessId = 12345
+        HostName = BENCHMARK_HOST,
+        ProcessId = BENCHMARK_PROCESS_ID
       },
       Type = HopType.Causation,
       Timestamp = DateTimeOffset.UtcNow.AddSeconds(-2),
@@ -205,8 +208,8 @@ public class TracingBenchmarks {
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "TestService",
         InstanceId = Guid.NewGuid(),
-        HostName = "benchmark-host",
-        ProcessId = 12345
+        HostName = BENCHMARK_HOST,
+        ProcessId = BENCHMARK_PROCESS_ID
       },
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow,
@@ -227,8 +230,8 @@ public class TracingBenchmarks {
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "Service1",
         InstanceId = Guid.NewGuid(),
-        HostName = "benchmark-host",
-        ProcessId = 12345
+        HostName = BENCHMARK_HOST,
+        ProcessId = BENCHMARK_PROCESS_ID
       },
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow
@@ -237,8 +240,8 @@ public class TracingBenchmarks {
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "Service2",
         InstanceId = Guid.NewGuid(),
-        HostName = "benchmark-host",
-        ProcessId = 12345
+        HostName = BENCHMARK_HOST,
+        ProcessId = BENCHMARK_PROCESS_ID
       },
       Type = HopType.Causation,
       Timestamp = DateTimeOffset.UtcNow.AddSeconds(-1)
@@ -247,8 +250,8 @@ public class TracingBenchmarks {
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "Service3",
         InstanceId = Guid.NewGuid(),
-        HostName = "benchmark-host",
-        ProcessId = 12345
+        HostName = BENCHMARK_HOST,
+        ProcessId = BENCHMARK_PROCESS_ID
       },
       Type = HopType.Causation,
       Timestamp = DateTimeOffset.UtcNow.AddSeconds(-2)

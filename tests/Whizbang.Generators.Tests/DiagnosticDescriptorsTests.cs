@@ -201,6 +201,6 @@ public class DiagnosticDescriptorsTests {
     await Assert.That(descriptor.DefaultSeverity).IsEqualTo(DiagnosticSeverity.Warning);
   }
 
-  // TODO: Add tests for message format validation (ensure placeholder counts match)
-  // TODO: Add tests for diagnostic ID range allocation (WHIZ001-003, WHIZ004-006, etc.)
+  // FUTURE: Add tests for message format validation (ensure placeholder counts match)
+  // FUTURE: Add tests for diagnostic ID range allocation (WHIZ001-003, WHIZ004-006, etc.)
 }

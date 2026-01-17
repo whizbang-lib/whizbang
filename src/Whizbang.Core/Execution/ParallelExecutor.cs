@@ -28,7 +28,6 @@ public class ParallelExecutor : IExecutionStrategy, IAsyncDisposable {
   private readonly int _maxConcurrency;
   private State _state = State.NotStarted;
   private readonly Lock _stateLock = new();
-  private readonly ConcurrentBag<Task> _runningTasks = [];
   private bool _disposed;
 
   public ParallelExecutor(int maxConcurrency = 10) {

@@ -13,7 +13,7 @@ namespace Whizbang.Core.Data;
 /// </summary>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStoreTests.cs:CreateEventStoreAsync</tests>
 /// <tests>tests/Whizbang.Data.Postgres.Tests/DapperPostgresEventStore.RetryTests.cs:SetupAsync</tests>
-public partial class JsonbSizeValidator(ILogger<JsonbSizeValidator> logger, JsonSerializerOptions jsonOptions) {
+public partial class JsonbSizeValidator(ILogger<JsonbSizeValidator> logger) {
   /// <summary>
   /// TOAST compression threshold: PostgreSQL begins compressing columns > 2KB.
   /// Performance impact: ~2× slower than uncompressed.
@@ -28,7 +28,6 @@ public partial class JsonbSizeValidator(ILogger<JsonbSizeValidator> logger, Json
   private const int TOAST_EXTERNALIZATION_THRESHOLD = 7_000;
 
   private readonly ILogger<JsonbSizeValidator> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-  private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
 
   /// <summary>
   /// Validates JSONB size and adds warning to metadata if threshold crossed.

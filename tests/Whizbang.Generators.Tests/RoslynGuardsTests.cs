@@ -177,6 +177,6 @@ public class RoslynGuardsTests {
     await Assert.That(result).IsFalse();
   }
 
-  // TODO: Add tests for exception paths (requires malformed compilation units or mocking)
+  // FUTURE: Add tests for exception paths (requires malformed compilation units or mocking)
   // These are intentionally excluded from coverage as they test Roslyn compiler bugs
 }

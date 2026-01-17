@@ -359,12 +359,11 @@ public class TransportConsumerWorker : BackgroundService {
   /// </summary>
   private static Guid _extractStreamId(IMessageEnvelope envelope) {
     var firstHop = envelope.Hops.FirstOrDefault();
-    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var aggregateIdElem)) {
-      if (aggregateIdElem.ValueKind == JsonValueKind.String) {
-        var aggregateIdStr = aggregateIdElem.GetString();
-        if (aggregateIdStr != null && Guid.TryParse(aggregateIdStr, out var parsedAggregateId)) {
-          return parsedAggregateId;
-        }
+    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var aggregateIdElem) &&
+        aggregateIdElem.ValueKind == JsonValueKind.String) {
+      var aggregateIdStr = aggregateIdElem.GetString();
+      if (aggregateIdStr != null && Guid.TryParse(aggregateIdStr, out var parsedAggregateId)) {
+        return parsedAggregateId;
       }
     }
 

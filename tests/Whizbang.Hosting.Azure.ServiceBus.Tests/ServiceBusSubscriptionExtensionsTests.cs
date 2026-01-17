@@ -19,7 +19,7 @@ public class ServiceBusSubscriptionExtensionsTests {
   public async Task WithDestinationFilter_AddsCorrelationFilterRule_WithDestinationPropertyAsync() {
     // NOTE: This test verifies the behavior exists but doesn't fully test Aspire internals
     // A full integration test would require Aspire infrastructure setup
-    // TODO: Implement proper test assertions once WithDestinationFilter is implemented
+    // FUTURE: Implement proper test assertions once WithDestinationFilter is implemented
 
     await Task.CompletedTask;
   }

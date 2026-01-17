@@ -164,30 +164,30 @@ public partial class ImmediateWorkCoordinatorStrategy : IWorkCoordinatorStrategy
       ct
     );
 
-    var workBatch = await _coordinator.ProcessWorkBatchAsync(
-      _instanceProvider.InstanceId,
-      _instanceProvider.ServiceName,
-      _instanceProvider.HostName,
-      _instanceProvider.ProcessId,
-      metadata: null,
-      outboxCompletions: [.. _queuedOutboxCompletions],
-      outboxFailures: [.. _queuedOutboxFailures],
-      inboxCompletions: [.. _queuedInboxCompletions],
-      inboxFailures: [.. _queuedInboxFailures],
-      receptorCompletions: [],  // TODO: Add receptor processing support
-      receptorFailures: [],
-      perspectiveCompletions: [],  // TODO: Add perspective checkpoint support
-      perspectiveFailures: [],
-      newOutboxMessages: [.. _queuedOutboxMessages],
-      newInboxMessages: [.. _queuedInboxMessages],
-      renewOutboxLeaseIds: [],
-      renewInboxLeaseIds: [],
-      flags: flags | (_options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None),
-      partitionCount: _options.PartitionCount,
-      leaseSeconds: _options.LeaseSeconds,
-      staleThresholdSeconds: _options.StaleThresholdSeconds,
-      cancellationToken: ct
-    );
+    var request = new ProcessWorkBatchRequest {
+      InstanceId = _instanceProvider.InstanceId,
+      ServiceName = _instanceProvider.ServiceName,
+      HostName = _instanceProvider.HostName,
+      ProcessId = _instanceProvider.ProcessId,
+      Metadata = null,
+      OutboxCompletions = [.. _queuedOutboxCompletions],
+      OutboxFailures = [.. _queuedOutboxFailures],
+      InboxCompletions = [.. _queuedInboxCompletions],
+      InboxFailures = [.. _queuedInboxFailures],
+      ReceptorCompletions = [],  // FUTURE: Add receptor processing support
+      ReceptorFailures = [],
+      PerspectiveCompletions = [],  // FUTURE: Add perspective checkpoint support
+      PerspectiveFailures = [],
+      NewOutboxMessages = [.. _queuedOutboxMessages],
+      NewInboxMessages = [.. _queuedInboxMessages],
+      RenewOutboxLeaseIds = [],
+      RenewInboxLeaseIds = [],
+      Flags = flags | (_options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None),
+      PartitionCount = _options.PartitionCount,
+      LeaseSeconds = _options.LeaseSeconds,
+      StaleThresholdSeconds = _options.StaleThresholdSeconds
+    };
+    var workBatch = await _coordinator.ProcessWorkBatchAsync(request, ct);
 
     // PostDistribute lifecycle stages (after ProcessWorkBatchAsync)
     await LifecycleInvocationHelper.InvokeDistributeLifecycleStagesAsync(

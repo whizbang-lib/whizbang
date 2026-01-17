@@ -161,30 +161,30 @@ public partial class PerspectiveWorker(
     // 4. Call ProcessWorkBatchAsync (may throw or return partial acknowledgement)
     WorkBatch workBatch;
     try {
-      workBatch = await workCoordinator.ProcessWorkBatchAsync(
-        _instanceProvider.InstanceId,
-        _instanceProvider.ServiceName,
-        _instanceProvider.HostName,
-        _instanceProvider.ProcessId,
-        metadata: _options.InstanceMetadata,
-        outboxCompletions: [],
-        outboxFailures: [],
-        inboxCompletions: [],
-        inboxFailures: [],
-        receptorCompletions: [],
-        receptorFailures: [],
-        perspectiveCompletions: completionsToSend,
-        perspectiveFailures: failuresToSend,
-        newOutboxMessages: [],
-        newInboxMessages: [],
-        renewOutboxLeaseIds: [],
-        renewInboxLeaseIds: [],
-        flags: _options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None,
-        partitionCount: _options.PartitionCount,
-        leaseSeconds: _options.LeaseSeconds,
-        staleThresholdSeconds: _options.StaleThresholdSeconds,
-        cancellationToken: cancellationToken
-      );
+      var request = new ProcessWorkBatchRequest {
+        InstanceId = _instanceProvider.InstanceId,
+        ServiceName = _instanceProvider.ServiceName,
+        HostName = _instanceProvider.HostName,
+        ProcessId = _instanceProvider.ProcessId,
+        Metadata = _options.InstanceMetadata,
+        OutboxCompletions = [],
+        OutboxFailures = [],
+        InboxCompletions = [],
+        InboxFailures = [],
+        ReceptorCompletions = [],
+        ReceptorFailures = [],
+        PerspectiveCompletions = completionsToSend,
+        PerspectiveFailures = failuresToSend,
+        NewOutboxMessages = [],
+        NewInboxMessages = [],
+        RenewOutboxLeaseIds = [],
+        RenewInboxLeaseIds = [],
+        Flags = _options.DebugMode ? WorkBatchFlags.DebugMode : WorkBatchFlags.None,
+        PartitionCount = _options.PartitionCount,
+        LeaseSeconds = _options.LeaseSeconds,
+        StaleThresholdSeconds = _options.StaleThresholdSeconds
+      };
+      workBatch = await workCoordinator.ProcessWorkBatchAsync(request, cancellationToken);
     } catch (Exception ex) when (ex is not OperationCanceledException) {
       // Database failure: Completions remain in 'Sent' status
       // ResetStale() will move them back to 'Pending' after timeout
@@ -249,7 +249,6 @@ public partial class PerspectiveWorker(
     foreach (var group in groupedWork) {
       var streamId = group.Key.StreamId;
       var perspectiveName = group.Key.PerspectiveName;
-      var workItems = group.ToList();
 
       try {
         // Look up the checkpoint to get the LastProcessedEventId

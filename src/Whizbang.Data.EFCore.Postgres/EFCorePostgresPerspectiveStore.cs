@@ -141,6 +141,7 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
   /// Supports Guid (identity), string (deterministic hash), int, etc.
   /// </summary>
   [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "CA5351:Do Not Use Broken Cryptographic Algorithms", Justification = "MD5 used for deterministic GUID generation, not for cryptographic security")]
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S4790:Using weak hashing algorithms is security-sensitive", Justification = "MD5 used for deterministic partition key hashing, not for cryptographic security. Partition keys are user-controlled identifiers, not secrets.")]
   private static Guid _convertPartitionKeyToGuid<TPartitionKey>(TPartitionKey partitionKey)
       where TPartitionKey : notnull {
 

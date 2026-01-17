@@ -145,12 +145,11 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     var lastSegment = segments[segments.Length - 1];
 
     // If last segment is generic (API, Service, etc.), take second-to-last
-    if (lastSegment.Equals("API", StringComparison.OrdinalIgnoreCase) ||
-        lastSegment.Equals("Service", StringComparison.OrdinalIgnoreCase) ||
-        lastSegment.Equals("Worker", StringComparison.OrdinalIgnoreCase)) {
-      if (segments.Length > 1) {
-        lastSegment = segments[segments.Length - 2];
-      }
+    if ((lastSegment.Equals("API", StringComparison.OrdinalIgnoreCase) ||
+         lastSegment.Equals("Service", StringComparison.OrdinalIgnoreCase) ||
+         lastSegment.Equals("Worker", StringComparison.OrdinalIgnoreCase)) &&
+        segments.Length > 1) {
+      lastSegment = segments[segments.Length - 2];
     }
 
     // Remove common suffixes (case-insensitive)
@@ -180,12 +179,6 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     if (symbol is null) {
       return null;
     }
-
-    // DEBUG: Log all interfaces this class implements
-    // var allInterfacesDebug = string.Join(", ", symbol.AllInterfaces.Select(i => i.OriginalDefinition.ToDisplayString()));
-    // context.ReportDiagnostic(Diagnostic.Create(
-    //     new DiagnosticDescriptor("EF DEBUG001", "Class interfaces", $"Class {symbol.Name} implements: {allInterfacesDebug}", "Debug", DiagnosticSeverity.Warning, true),
-    //     Location.None));
 
     // Check if class implements IPerspectiveFor<TModel> base interface or any variant
     // IPerspectiveFor has multiple overloads:

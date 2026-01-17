@@ -5,6 +5,153 @@ using Whizbang.Core.Observability;
 namespace Whizbang.Core.Messaging;
 
 /// <summary>
+/// Parameter object for ProcessWorkBatchAsync to reduce method complexity.
+/// Groups related parameters for better maintainability and caller ergonomics.
+/// </summary>
+public sealed record ProcessWorkBatchRequest {
+  /// <summary>
+  /// Unique ID for the service instance (should be UUIDv7 for time-ordered IDs).
+  /// Used for partition assignment and work claiming.
+  /// </summary>
+  public required Guid InstanceId { get; init; }
+
+  /// <summary>
+  /// Name of the service (e.g., "OrderService").
+  /// Used for monitoring and instance identification.
+  /// </summary>
+  public required string ServiceName { get; init; }
+
+  /// <summary>
+  /// Host name where service is running (e.g., "web-server-01").
+  /// Used for monitoring and debugging.
+  /// </summary>
+  public required string HostName { get; init; }
+
+  /// <summary>
+  /// Operating system process ID.
+  /// Used for monitoring and debugging.
+  /// </summary>
+  public required int ProcessId { get; init; }
+
+  /// <summary>
+  /// Optional JSONB metadata dictionary to persist with the instance.
+  /// Includes acknowledgement counts for completion tracking (outbox_completions_processed, inbox_completions_processed, etc.).
+  /// Pass null for no metadata.
+  /// </summary>
+  public Dictionary<string, JsonElement>? Metadata { get; init; }
+
+  /// <summary>
+  /// Array of outbox message completions to report.
+  /// Indicates which outbox messages were successfully published.
+  /// Empty array if no completions.
+  /// </summary>
+  public required MessageCompletion[] OutboxCompletions { get; init; }
+
+  /// <summary>
+  /// Array of outbox message failures to report.
+  /// Includes error details and partial completion tracking.
+  /// Empty array if no failures.
+  /// </summary>
+  public required MessageFailure[] OutboxFailures { get; init; }
+
+  /// <summary>
+  /// Array of inbox message completions to report.
+  /// Indicates which inbox messages were successfully processed.
+  /// Empty array if no completions.
+  /// </summary>
+  public required MessageCompletion[] InboxCompletions { get; init; }
+
+  /// <summary>
+  /// Array of inbox message failures to report.
+  /// Includes error details and partial completion tracking.
+  /// Empty array if no failures.
+  /// </summary>
+  public required MessageFailure[] InboxFailures { get; init; }
+
+  /// <summary>
+  /// Array of receptor processing completions (event handler completions).
+  /// Many receptors can process the same event.
+  /// Empty array if no completions.
+  /// </summary>
+  public required ReceptorProcessingCompletion[] ReceptorCompletions { get; init; }
+
+  /// <summary>
+  /// Array of receptor processing failures (event handler failures).
+  /// Includes error details for debugging.
+  /// Empty array if no failures.
+  /// </summary>
+  public required ReceptorProcessingFailure[] ReceptorFailures { get; init; }
+
+  /// <summary>
+  /// Array of perspective checkpoint completions (read model projection checkpoints).
+  /// Tracks last processed event per stream.
+  /// Empty array if no completions.
+  /// </summary>
+  public required PerspectiveCheckpointCompletion[] PerspectiveCompletions { get; init; }
+
+  /// <summary>
+  /// Array of perspective checkpoint failures (read model projection failures).
+  /// Includes error details and last attempted event.
+  /// Empty array if no failures.
+  /// </summary>
+  public required PerspectiveCheckpointFailure[] PerspectiveFailures { get; init; }
+
+  /// <summary>
+  /// Array of new outbox messages to store.
+  /// These will be immediately returned as work in the same call (immediate processing pattern).
+  /// Empty array if no new messages.
+  /// </summary>
+  public required OutboxMessage[] NewOutboxMessages { get; init; }
+
+  /// <summary>
+  /// Array of new inbox messages to store.
+  /// Includes atomic deduplication (ON CONFLICT DO NOTHING) and optional event store integration.
+  /// Empty array if no new messages.
+  /// </summary>
+  public required InboxMessage[] NewInboxMessages { get; init; }
+
+  /// <summary>
+  /// Array of outbox message IDs to renew leases for.
+  /// Extends the lease expiry time to prevent orphan detection.
+  /// Empty array if no renewals needed.
+  /// </summary>
+  public required Guid[] RenewOutboxLeaseIds { get; init; }
+
+  /// <summary>
+  /// Array of inbox message IDs to renew leases for.
+  /// Extends the lease expiry time to prevent orphan detection.
+  /// Empty array if no renewals needed.
+  /// </summary>
+  public required Guid[] RenewInboxLeaseIds { get; init; }
+
+  /// <summary>
+  /// Work batch flags for controlling behavior.
+  /// Examples: SkipNewWork, ForceClaimAll.
+  /// Defaults to None for normal operation.
+  /// </summary>
+  public WorkBatchFlags Flags { get; init; } = WorkBatchFlags.None;
+
+  /// <summary>
+  /// Total number of virtual partitions for consistent hashing (default: 10,000).
+  /// Determines partition number range [0, PartitionCount-1].
+  /// Higher values provide better distribution but increase computation.
+  /// </summary>
+  public int PartitionCount { get; init; } = 10_000;
+
+  /// <summary>
+  /// How long to hold work leases in seconds (default: 300 = 5 minutes).
+  /// Messages with expired leases become orphaned and can be reclaimed by other instances.
+  /// </summary>
+  public int LeaseSeconds { get; init; } = 300;
+
+  /// <summary>
+  /// How long before an instance is considered stale in seconds (default: 600 = 10 minutes).
+  /// Instances with expired heartbeats are cleaned up and their work redistributed.
+  /// </summary>
+  public int StaleThresholdSeconds { get; init; } = 600;
+}
+
+/// <summary>
 /// Coordinates work processing across multiple service instances using virtual partition assignment with consistent hashing.
 /// Provides atomic operations for heartbeat updates, message completion tracking,
 /// event store integration, and orphaned work recovery.
@@ -36,27 +183,7 @@ public interface IWorkCoordinator {
   ///
   /// This minimizes database round-trips and ensures consistency.
   /// </summary>
-  /// <param name="instanceId">Service instance ID</param>
-  /// <param name="serviceName">Service name (e.g., 'InventoryWorker')</param>
-  /// <param name="hostName">Host machine name</param>
-  /// <param name="processId">Operating system process ID</param>
-  /// <param name="metadata">Optional instance metadata (e.g., version, environment). Supports any JSON value type via JsonElement.</param>
-  /// <param name="outboxCompletions">Outbox message completions with granular status</param>
-  /// <param name="outboxFailures">Outbox message failures with partial completion tracking</param>
-  /// <param name="inboxCompletions">Inbox message completions with granular status</param>
-  /// <param name="inboxFailures">Inbox message failures with partial completion tracking</param>
-  /// <param name="receptorCompletions">Receptor processing completions (event processing by receptors)</param>
-  /// <param name="receptorFailures">Receptor processing failures (failed event processing by receptors)</param>
-  /// <param name="perspectiveCompletions">Perspective checkpoint completions (perspective catch-up progress)</param>
-  /// <param name="perspectiveFailures">Perspective checkpoint failures (failed perspective updates)</param>
-  /// <param name="newOutboxMessages">Outbox messages to store (for immediate processing)</param>
-  /// <param name="newInboxMessages">Inbox messages to store (with deduplication)</param>
-  /// <param name="renewOutboxLeaseIds">Message IDs to renew lease for (outbox) - for buffered messages awaiting transport</param>
-  /// <param name="renewInboxLeaseIds">Message IDs to renew lease for (inbox) - for buffered messages awaiting processing</param>
-  /// <param name="flags">Work batch flags (e.g., DebugMode to preserve completed messages)</param>
-  /// <param name="partitionCount">Total number of partitions (default 10,000)</param>
-  /// <param name="leaseSeconds">Lease duration in seconds (default 300 = 5 minutes)</param>
-  /// <param name="staleThresholdSeconds">Stale instance threshold in seconds (default 600 = 10 minutes)</param>
+  /// <param name="request">Parameter object containing all work batch configuration and data</param>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <returns>Work batch containing messages that need processing (including newly stored messages for immediate processing)</returns>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync</tests>
@@ -112,27 +239,7 @@ public interface IWorkCoordinator {
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorMessageProcessingTests.cs:MessagesWithExpiredLease_AreReclaimed_InSubsequentCallAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WorkCoordinatorMessageProcessingTests.cs:MessagesWithValidLease_SameInstance_AreNotReturnedAgainAsync</tests>
   Task<WorkBatch> ProcessWorkBatchAsync(
-    Guid instanceId,
-    string serviceName,
-    string hostName,
-    int processId,
-    Dictionary<string, JsonElement>? metadata,
-    MessageCompletion[] outboxCompletions,
-    MessageFailure[] outboxFailures,
-    MessageCompletion[] inboxCompletions,
-    MessageFailure[] inboxFailures,
-    ReceptorProcessingCompletion[] receptorCompletions,
-    ReceptorProcessingFailure[] receptorFailures,
-    PerspectiveCheckpointCompletion[] perspectiveCompletions,
-    PerspectiveCheckpointFailure[] perspectiveFailures,
-    OutboxMessage[] newOutboxMessages,
-    InboxMessage[] newInboxMessages,
-    Guid[] renewOutboxLeaseIds,
-    Guid[] renewInboxLeaseIds,
-    WorkBatchFlags flags = WorkBatchFlags.None,
-    int partitionCount = 10_000,
-    int leaseSeconds = 300,
-    int staleThresholdSeconds = 600,
+    ProcessWorkBatchRequest request,
     CancellationToken cancellationToken = default
   );
 
