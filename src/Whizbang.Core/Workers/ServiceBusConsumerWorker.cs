@@ -411,13 +411,11 @@ public partial class ServiceBusConsumerWorker(
   private static Guid _extractStreamId(IMessageEnvelope envelope) {
     // Check first hop for aggregate ID or stream key
     var firstHop = envelope.Hops.FirstOrDefault();
-    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var aggregateIdElem)) {
-      // Try to parse as GUID from JsonElement
-      if (aggregateIdElem.ValueKind == JsonValueKind.String) {
-        var aggregateIdStr = aggregateIdElem.GetString();
-        if (aggregateIdStr != null && Guid.TryParse(aggregateIdStr, out var parsedAggregateId)) {
-          return parsedAggregateId;
-        }
+    if (firstHop?.Metadata != null && firstHop.Metadata.TryGetValue("AggregateId", out var aggregateIdElem) &&
+        aggregateIdElem.ValueKind == JsonValueKind.String) {
+      var aggregateIdStr = aggregateIdElem.GetString();
+      if (aggregateIdStr != null && Guid.TryParse(aggregateIdStr, out var parsedAggregateId)) {
+        return parsedAggregateId;
       }
     }
 

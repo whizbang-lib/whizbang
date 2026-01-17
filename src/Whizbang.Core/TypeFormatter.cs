@@ -42,14 +42,12 @@ public static class TypeFormatter {
     }
 
     // Step 2: Add namespace if requested
-    if (qualification.HasFlag(TypeQualification.Namespace)) {
-      if (!string.IsNullOrEmpty(type.Namespace)) {
-        result.Append(type.Namespace);
+    if (qualification.HasFlag(TypeQualification.Namespace) && !string.IsNullOrEmpty(type.Namespace)) {
+      result.Append(type.Namespace);
 
-        // Add separator before type name if type name will be included
-        if (qualification.HasFlag(TypeQualification.TypeName)) {
-          result.Append('.');
-        }
+      // Add separator before type name if type name will be included
+      if (qualification.HasFlag(TypeQualification.TypeName)) {
+        result.Append('.');
       }
     }
 

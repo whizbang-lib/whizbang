@@ -363,21 +363,20 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
 
     // Flush any remaining queued operations
     lock (_lock) {
-      if (_queuedOutboxMessages.Count > 0 ||
+      if (_logger != null &&
+          (_queuedOutboxMessages.Count > 0 ||
           _queuedInboxMessages.Count > 0 ||
           _queuedOutboxCompletions.Count > 0 ||
           _queuedOutboxFailures.Count > 0 ||
           _queuedInboxCompletions.Count > 0 ||
-          _queuedInboxFailures.Count > 0) {
-        if (_logger != null) {
-          LogDisposingWithUnflushedOperations(
-            _logger,
-            _queuedOutboxMessages.Count,
-            _queuedInboxMessages.Count,
-            _queuedOutboxCompletions.Count + _queuedInboxCompletions.Count,
-            _queuedOutboxFailures.Count + _queuedInboxFailures.Count
-          );
-        }
+          _queuedInboxFailures.Count > 0)) {
+        LogDisposingWithUnflushedOperations(
+          _logger,
+          _queuedOutboxMessages.Count,
+          _queuedInboxMessages.Count,
+          _queuedOutboxCompletions.Count + _queuedInboxCompletions.Count,
+          _queuedOutboxFailures.Count + _queuedInboxFailures.Count
+        );
       }
     }
 

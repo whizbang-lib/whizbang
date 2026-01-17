@@ -169,11 +169,9 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // Hook PostgreSQL RAISE NOTICE messages for debugging
     // Access the underlying NpgsqlConnection from EF Core's DbContext
     var dbConnection = _dbContext.Database.GetDbConnection();
-    if (dbConnection is NpgsqlConnection npgsqlConnection) {
+    if (dbConnection is NpgsqlConnection npgsqlConnection && npgsqlConnection.State != System.Data.ConnectionState.Open) {
       // Wire up notice handler if not already connected
-      if (npgsqlConnection.State != System.Data.ConnectionState.Open) {
-        npgsqlConnection.Notice += _onNotice;
-      }
+      npgsqlConnection.Notice += _onNotice;
     }
 
     var results = await _dbContext.Database
