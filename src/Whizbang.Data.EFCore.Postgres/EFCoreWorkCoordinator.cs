@@ -35,6 +35,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// <typeparam name="TDbContext">DbContext type containing outbox, inbox, and service instance tables</typeparam>
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1848:Use the LoggerMessage delegates", Justification = "Work coordinator diagnostic logging - I/O bound database operations where LoggerMessage overhead isn't justified")]
 [System.Diagnostics.CodeAnalysis.SuppressMessage("Performance", "CA1845:Use span-based 'string.Concat'", Justification = "Debug logging with substring truncation - span-based operations not worth complexity for diagnostic output")]
+[System.Diagnostics.CodeAnalysis.SuppressMessage("Security", "S2077:Formatting SQL queries is security-sensitive", Justification = "Schema name comes from EF Core model configuration (Model.FindEntityType().GetSchema()), not user input. Schema-qualified function names are required for multi-tenant PostgreSQL databases.")]
 public class EFCoreWorkCoordinator<TDbContext>(
   TDbContext dbContext,
   JsonSerializerOptions jsonOptions,
@@ -47,6 +48,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<EFCoreWorkCoordinator<TDbContext>>? _logger = logger;
 
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "S3776:Cognitive Complexity of methods should not be too high", Justification = "This method orchestrates complex work batch processing with multiple parameter preparations and SQL execution. Splitting would reduce clarity of the atomic database operation flow.")]
   public async Task<WorkBatch> ProcessWorkBatchAsync(
     ProcessWorkBatchRequest request,
     CancellationToken cancellationToken = default
@@ -211,6 +213,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
   /// <summary>
   /// Processes the query results and maps them to a WorkBatch
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Maintainability", "S3776:Cognitive Complexity of methods should not be too high", Justification = "This method deserializes and categorizes work batch results across three work types (outbox, inbox, perspective). The branching logic is inherent to the data mapping process.")]
   private WorkBatch _processResults(List<WorkBatchRow> results) {
 
     // Check for storage failure rows (error tracking from Phase 4.5)
