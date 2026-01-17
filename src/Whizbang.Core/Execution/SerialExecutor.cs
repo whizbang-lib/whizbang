@@ -141,7 +141,9 @@ public class SerialExecutor : IExecutionStrategy, IAsyncDisposable {
       }
     }
 
-    _workerCts?.Cancel();
+    if (_workerCts != null) {
+      await _workerCts.CancelAsync();
+    }
 
     if (_workerTask != null) {
       try {

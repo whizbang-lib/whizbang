@@ -179,7 +179,7 @@ public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy, IAsyncDisposable 
     }
 
     // Stop flush loop
-    _disposeCts.Cancel();
+    await _disposeCts.CancelAsync();
 
     // Wait for flush task to complete
     try {
