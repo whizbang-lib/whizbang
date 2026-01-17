@@ -1,3 +1,10 @@
-﻿/Users/philcarbone/src/whizbang/tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs
-/Users/philcarbone/src/whizbang/tests/Whizbang.Partitioning.Tests/PartitionRouterContractTests.cs
+﻿/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Custom/DapperDbExecutor.cs
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Custom/DapperEventStoreBase.cs
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Custom/DapperRequestResponseStoreBase.cs
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Custom/DapperSequenceProviderBase.cs
 /Users/philcarbone/src/whizbang/README.md
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Custom/Migrations/001_initial_schema.postgresql.sql
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Custom/Migrations/001_initial_schema.sqlite.sql
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Custom/Migrations/001_initial_schema.sqlserver.sql
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Custom/Migrations/002_add_message_queue_leasing.postgresql.sql
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Custom/Migrations/002_add_message_queue_leasing.sqlite.sql

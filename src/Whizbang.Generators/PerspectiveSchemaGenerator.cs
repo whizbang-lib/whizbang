@@ -93,7 +93,7 @@ public class PerspectiveSchemaGenerator : IIncrementalGenerator {
 
     // Estimate size based on properties in the MODEL type (first type argument)
     // For IPerspectiveFor<TModel, TEvent>, TModel is at index 0
-    var modelType = perspectiveInterfaces.First().TypeArguments[0];
+    var modelType = perspectiveInterfaces[0].TypeArguments[0];
     var propertyCount = modelType.GetMembers()
         .OfType<IPropertySymbol>()
         .Count(p => !p.IsStatic);

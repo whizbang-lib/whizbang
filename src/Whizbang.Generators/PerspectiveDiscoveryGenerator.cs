@@ -118,7 +118,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     }
 
     // Get model type and StreamKey property (same across all interfaces for this class)
-    var modelType = perspectiveInterfaces.First().TypeArguments[0];
+    var modelType = perspectiveInterfaces[0].TypeArguments[0];
     var streamKeyPropertyName = _findStreamKeyProperty(modelType);
 
     var className = classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
@@ -474,7 +474,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
         sb.AppendLine($"      return new[] {{");
         sb.AppendLine($"        new PerspectiveAssociationInfo<TModel, TEvent>(");
         sb.AppendLine($"          \"{cleanEventType}\",");
-        sb.AppendLine($"          \"{perspective.ClassName.Split('.').Last()}\",");
+        sb.AppendLine($"          \"{perspective.ClassName.Split('.')[^1]}\",");
         sb.AppendLine($"          \"{serviceName}\",");
         sb.AppendLine($"          (model, evt) => {{");
         sb.AppendLine($"            var perspective = new {perspective.ClassName}();");

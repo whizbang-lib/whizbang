@@ -206,7 +206,7 @@ public class StreamKeyGenerator : IIncrementalGenerator {
 
     // Report diagnostics for events with stream keys
     foreach (var info in eventsWithStreamKey) {
-      var simpleName = info.EventType.Split('.').Last().Replace("global::", "");
+      var simpleName = info.EventType.Split('.')[^1].Replace("global::", "");
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.StreamKeyDiscovered,
           Location.None,
@@ -217,7 +217,7 @@ public class StreamKeyGenerator : IIncrementalGenerator {
 
     // Report diagnostics for events without stream keys
     foreach (var info in eventsWithoutStreamKey) {
-      var simpleName = info.EventType.Split('.').Last().Replace("global::", "");
+      var simpleName = info.EventType.Split('.')[^1].Replace("global::", "");
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.MissingStreamKeyAttribute,
           info.Location,  // Use actual location for proper suppression support
@@ -262,7 +262,7 @@ public class StreamKeyGenerator : IIncrementalGenerator {
       var extractorsCode = new StringBuilder();
       for (int i = 0; i < eventsWithStreamKey.Length; i++) {
         var info = eventsWithStreamKey[i];
-        var simpleName = info.EventType.Split('.').Last().Replace("global::", "");
+        var simpleName = info.EventType.Split('.')[^1].Replace("global::", "");
         var propertyTypeName = info.PropertyType;
 
         // Check if property type is nullable (ends with ? or is a reference type)

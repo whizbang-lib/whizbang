@@ -1,6 +1,10 @@
-﻿/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.PaymentWorker/PaymentDbContext.cs
-/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.PaymentWorker/Program.cs
-/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.PaymentWorker/Receptors/ProcessPaymentReceptor.cs
-/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.PaymentWorker/obj/Release/net10.0/ECommerce.PaymentWorker.GlobalUsings.g.cs
-/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.PaymentWorker/obj/Release/net10.0/.NETCoreApp,Version=v10.0.AssemblyAttributes.cs
-/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.PaymentWorker/obj/Release/net10.0/ECommerce.PaymentWorker.AssemblyInfo.cs
+﻿/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.NotificationWorker/NotificationDbContext.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.NotificationWorker/Program.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.NotificationWorker/Receptors/SendNotificationReceptor.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.NotificationWorker/Worker.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.NotificationWorker/obj/Release/net10.0/ECommerce.NotificationWorker.GlobalUsings.g.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.NotificationWorker/obj/Release/net10.0/.NETCoreApp,Version=v10.0.AssemblyAttributes.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.NotificationWorker/obj/Release/net10.0/ECommerce.NotificationWorker.AssemblyInfo.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.NotificationWorker/appsettings.Development.json
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.NotificationWorker/appsettings.json
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.NotificationWorker/Properties/launchSettings.json

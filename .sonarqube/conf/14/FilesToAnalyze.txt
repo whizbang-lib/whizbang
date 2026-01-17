@@ -1,7 +1,2 @@
-﻿/Users/philcarbone/src/whizbang/tests/Whizbang.Policies.Tests/PolicyConfigurationExtensionsTests.cs
-/Users/philcarbone/src/whizbang/tests/Whizbang.Policies.Tests/PolicyConfigurationTransportTests.cs
-/Users/philcarbone/src/whizbang/tests/Whizbang.Policies.Tests/PolicyContextPoolTests.cs
-/Users/philcarbone/src/whizbang/tests/Whizbang.Policies.Tests/PolicyContextTests.cs
-/Users/philcarbone/src/whizbang/tests/Whizbang.Policies.Tests/PolicyDecisionTests.cs
-/Users/philcarbone/src/whizbang/tests/Whizbang.Policies.Tests/PolicyEngineTests.cs
+﻿/Users/philcarbone/src/whizbang/test-diagnostics/Program.cs
 /Users/philcarbone/src/whizbang/README.md
