@@ -1,3 +1,10 @@
-﻿/Users/philcarbone/src/whizbang/tests/Whizbang.Hosting.Azure.ServiceBus.Tests/ServiceBusReadinessCheckTests.cs
-/Users/philcarbone/src/whizbang/tests/Whizbang.Hosting.Azure.ServiceBus.Tests/ServiceBusSubscriptionExtensionsTests.cs
-/Users/philcarbone/src/whizbang/README.md
+﻿/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.Contracts.Tests/Commands/AdjustInventoryCommandTests.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.Contracts.Tests/Commands/CreateProductCommandTests.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.Contracts.Tests/Commands/DeleteProductCommandTests.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.Contracts.Tests/Commands/RestockInventoryCommandTests.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.Contracts.Tests/Commands/UpdateProductCommandTests.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.Contracts.Tests/Events/InventoryAdjustedEventTests.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.Contracts.Tests/Events/InventoryRestockedEventTests.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.Contracts.Tests/Events/ProductCreatedEventTests.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.Contracts.Tests/Events/ProductDeletedEventTests.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.Contracts.Tests/Events/ProductUpdatedEventTests.cs

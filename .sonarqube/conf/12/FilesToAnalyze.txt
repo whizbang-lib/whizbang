@@ -1,3 +1,2 @@
-﻿/Users/philcarbone/src/whizbang/src/Whizbang.Hosting.Azure.ServiceBus/ServiceBusReadinessCheck.cs
-/Users/philcarbone/src/whizbang/src/Whizbang.Hosting.Azure.ServiceBus/ServiceBusSubscriptionExtensions.cs
+﻿/Users/philcarbone/src/whizbang/test-diagnostics/Program.cs
 /Users/philcarbone/src/whizbang/README.md

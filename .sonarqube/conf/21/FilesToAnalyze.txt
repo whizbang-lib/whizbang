@@ -1,7 +1,10 @@
-﻿/Users/philcarbone/src/whizbang/tests/Whizbang.Policies.Tests/PolicyConfigurationExtensionsTests.cs
-/Users/philcarbone/src/whizbang/tests/Whizbang.Policies.Tests/PolicyConfigurationTransportTests.cs
-/Users/philcarbone/src/whizbang/tests/Whizbang.Policies.Tests/PolicyContextPoolTests.cs
-/Users/philcarbone/src/whizbang/tests/Whizbang.Policies.Tests/PolicyContextTests.cs
-/Users/philcarbone/src/whizbang/tests/Whizbang.Policies.Tests/PolicyDecisionTests.cs
-/Users/philcarbone/src/whizbang/tests/Whizbang.Policies.Tests/PolicyEngineTests.cs
+﻿/Users/philcarbone/src/whizbang/tests/Whizbang.Observability.Tests/MessageHopTests.cs
+/Users/philcarbone/src/whizbang/tests/Whizbang.Observability.Tests/MessageTracingTests.cs
+/Users/philcarbone/src/whizbang/tests/Whizbang.Observability.Tests/PolicyDecisionTrailTests.cs
+/Users/philcarbone/src/whizbang/tests/Whizbang.Observability.Tests/SecurityContextTests.cs
+/Users/philcarbone/src/whizbang/tests/Whizbang.Observability.Tests/SerializationTests.cs
+/Users/philcarbone/src/whizbang/tests/Whizbang.Observability.Tests/TraceStore/InMemoryTraceStoreTests.cs
+/Users/philcarbone/src/whizbang/tests/Whizbang.Observability.Tests/TraceStore/TraceStoreContractTests.cs
+/Users/philcarbone/src/whizbang/tests/Whizbang.Observability.Tests/WhizbangActivitySourceTests.cs
 /Users/philcarbone/src/whizbang/README.md
+/Users/philcarbone/src/whizbang/tests/Whizbang.Observability.Tests/MessageTracingTests.cs.bak

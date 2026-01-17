@@ -20,12 +20,15 @@ public static class WhizbangModelBuilderExtensions {
     /// Call this from your DbContext.OnModelCreating() before adding perspective configurations.
     /// Schema is set via HasDefaultSchema() in generated code.
     /// </summary>
+    /// <param name="schema">Unused parameter for backward compatibility with generated code. Schema is set via HasDefaultSchema().</param>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs:ConfigureWhizbangInfrastructure_ConfiguresInboxEntityAsync</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs:ConfigureWhizbangInfrastructure_ConfiguresOutboxEntityAsync</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs:ConfigureWhizbangInfrastructure_ConfiguresEventStoreEntityAsync</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs:ConfigureWhizbangInfrastructure_ConfiguresServiceInstanceEntityAsync</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs:ConfigureWhizbangInfrastructure_ConfiguresMessageDeduplicationEntityAsync</tests>
-    public ModelBuilder ConfigureWhizbangInfrastructure() {
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Parameter retained for backward compatibility with generated code")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "S1172:Unused method parameters should be removed", Justification = "Parameter retained for backward compatibility with generated code")]
+    public ModelBuilder ConfigureWhizbangInfrastructure(string? schema = null) {
       _configureInbox(modelBuilder);
       _configureOutbox(modelBuilder);
       _configureEventStore(modelBuilder);
