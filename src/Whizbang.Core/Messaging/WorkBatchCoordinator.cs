@@ -84,9 +84,6 @@ public class WorkBatchCoordinator : IWorkBatchCoordinator {
       await _perspectiveChannel.WriteAsync(perspectiveWork, ct);
     }
 
-    // FUTURE: Distribute inbox work when IInboxChannelWriter is created
-    // foreach (var inboxWork in workBatch.InboxWork) {
-    //   await _inboxChannel.WriteAsync(inboxWork, ct);
-    // }
+    // FUTURE: Distribute inbox work to IInboxChannelWriter when implemented (similar to perspective work distribution above)
   }
 }
