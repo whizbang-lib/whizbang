@@ -42,6 +42,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
   string? connectionString = null
 ) : IWorkCoordinator
   where TDbContext : DbContext {
+  private const string DEFAULT_SCHEMA = "public";
+
   private readonly TDbContext _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<EFCoreWorkCoordinator<TDbContext>>? _logger = logger;
@@ -133,8 +135,8 @@ public class EFCoreWorkCoordinator<TDbContext>(
     // CRITICAL: Get schema from DbContext model to schema-qualify the function call
     // Functions are database-wide in PostgreSQL - multiple schemas sharing a database
     // must use schema-qualified function names to avoid calling the wrong function
-    var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? "public";
-    var functionName = string.IsNullOrEmpty(schema) || schema == "public"
+    var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? DEFAULT_SCHEMA;
+    var functionName = string.IsNullOrEmpty(schema) || schema == DEFAULT_SCHEMA
       ? "process_work_batch"
       : $"{schema}.process_work_batch";
 
@@ -616,7 +618,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
 
     try {
       // Get schema from DbContext configuration for schema-qualified function call
-      var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? "public";
+      var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? DEFAULT_SCHEMA;
       var sql = string.Format(System.Globalization.CultureInfo.InvariantCulture, "SELECT {0}.complete_perspective_checkpoint_work({{0}}, {{1}}, {{2}}, {{3}}, {{4}}::text)", schema);
 
       await _dbContext.Database.ExecuteSqlRawAsync(
@@ -689,7 +691,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     }
 
     // Get schema from DbContext configuration for schema-qualified function call
-    var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? "public";
+    var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? DEFAULT_SCHEMA;
     var sql = string.Format(System.Globalization.CultureInfo.InvariantCulture, "SELECT {0}.complete_perspective_checkpoint_work({{0}}, {{1}}, {{2}}, {{3}}, {{4}}::text)", schema);
 
     await _dbContext.Database.ExecuteSqlRawAsync(
@@ -708,7 +710,7 @@ public class EFCoreWorkCoordinator<TDbContext>(
     CancellationToken cancellationToken = default) {
 
     // Get schema from OutboxRecord entity (all Whizbang tables share the same schema)
-    var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? "public";
+    var schema = _dbContext.Model.FindEntityType(typeof(OutboxRecord))?.GetSchema() ?? DEFAULT_SCHEMA;
     var sql = string.Format(System.Globalization.CultureInfo.InvariantCulture,
       "SELECT stream_id, perspective_name, last_event_id, status FROM {0}.wh_perspective_checkpoints WHERE stream_id = {{0}} AND perspective_name = {{1}}",
       schema);

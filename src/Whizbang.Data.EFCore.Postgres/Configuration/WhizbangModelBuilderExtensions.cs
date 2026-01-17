@@ -10,6 +10,8 @@ namespace Whizbang.Data.EFCore.Postgres.Configuration;
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs</tests>
 public static class WhizbangModelBuilderExtensions {
   private const string COLUMN_TYPE_JSONB = "jsonb";
+  private const string COLUMN_NAME_METADATA = "metadata";
+  private const string COLUMN_NAME_STREAM_ID = "stream_id";
 
   extension(ModelBuilder modelBuilder) {
 
@@ -45,7 +47,7 @@ public static class WhizbangModelBuilderExtensions {
       entity.Property(e => e.HandlerName).HasColumnName("handler_name").IsRequired();
       entity.Property(e => e.MessageType).HasColumnName("event_type").IsRequired();
       entity.Property(e => e.MessageData).HasColumnName("event_data").HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
-      entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
+      entity.Property(e => e.Metadata).HasColumnName(COLUMN_NAME_METADATA).HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
       entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType(COLUMN_TYPE_JSONB);
       entity.Property(e => e.StatusFlags).HasColumnName("status").IsRequired();
       entity.Property(e => e.Attempts).HasColumnName("attempts");
@@ -54,7 +56,7 @@ public static class WhizbangModelBuilderExtensions {
       entity.Property(e => e.ProcessedAt).HasColumnName("processed_at");
       entity.Property(e => e.InstanceId).HasColumnName("instance_id");
       entity.Property(e => e.LeaseExpiry).HasColumnName("lease_expiry");
-      entity.Property(e => e.StreamId).HasColumnName("stream_id");
+      entity.Property(e => e.StreamId).HasColumnName(COLUMN_NAME_STREAM_ID);
       entity.Property(e => e.PartitionNumber).HasColumnName("partition_number");
       entity.Property(e => e.FailureReason).HasColumnName("failure_reason").IsRequired();
       entity.Property(e => e.ScheduledFor).HasColumnName("scheduled_for");
@@ -74,7 +76,7 @@ public static class WhizbangModelBuilderExtensions {
       entity.Property(e => e.Destination).HasColumnName("destination").IsRequired();
       entity.Property(e => e.MessageType).HasColumnName("event_type").IsRequired();
       entity.Property(e => e.MessageData).HasColumnName("event_data").HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
-      entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
+      entity.Property(e => e.Metadata).HasColumnName(COLUMN_NAME_METADATA).HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
       entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType(COLUMN_TYPE_JSONB);
       entity.Property(e => e.StatusFlags).HasColumnName("status").IsRequired();
       entity.Property(e => e.Attempts).HasColumnName("attempts");
@@ -84,7 +86,7 @@ public static class WhizbangModelBuilderExtensions {
       entity.Property(e => e.ProcessedAt).HasColumnName("processed_at");
       entity.Property(e => e.InstanceId).HasColumnName("instance_id");
       entity.Property(e => e.LeaseExpiry).HasColumnName("lease_expiry");
-      entity.Property(e => e.StreamId).HasColumnName("stream_id");
+      entity.Property(e => e.StreamId).HasColumnName(COLUMN_NAME_STREAM_ID);
       entity.Property(e => e.PartitionNumber).HasColumnName("partition_number");
       entity.Property(e => e.FailureReason).HasColumnName("failure_reason").IsRequired();
       entity.Property(e => e.ScheduledFor).HasColumnName("scheduled_for");
@@ -102,13 +104,13 @@ public static class WhizbangModelBuilderExtensions {
       entity.HasKey(e => e.Id);
 
       entity.Property(e => e.Id).HasColumnName("event_id");
-      entity.Property(e => e.StreamId).HasColumnName("stream_id").IsRequired();
+      entity.Property(e => e.StreamId).HasColumnName(COLUMN_NAME_STREAM_ID).IsRequired();
       entity.Property(e => e.AggregateId).HasColumnName("aggregate_id").IsRequired();
       entity.Property(e => e.AggregateType).HasColumnName("aggregate_type").IsRequired();
       entity.Property(e => e.Version).HasColumnName("version").IsRequired();
       entity.Property(e => e.EventType).HasColumnName("event_type").IsRequired();
       entity.Property(e => e.EventData).HasColumnName("event_data").HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
-      entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
+      entity.Property(e => e.Metadata).HasColumnName(COLUMN_NAME_METADATA).HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
       entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType(COLUMN_TYPE_JSONB);
       entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
 
@@ -131,7 +133,7 @@ public static class WhizbangModelBuilderExtensions {
       entity.Property(e => e.ProcessId).HasColumnName("process_id").IsRequired();
       entity.Property(e => e.StartedAt).HasColumnName("started_at").IsRequired();
       entity.Property(e => e.LastHeartbeatAt).HasColumnName("last_heartbeat_at").IsRequired();
-      entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType(COLUMN_TYPE_JSONB);
+      entity.Property(e => e.Metadata).HasColumnName(COLUMN_NAME_METADATA).HasColumnType(COLUMN_TYPE_JSONB);
 
       entity.HasIndex(e => new { e.ServiceName, e.LastHeartbeatAt });
       entity.HasIndex(e => e.LastHeartbeatAt);
@@ -181,7 +183,7 @@ public static class WhizbangModelBuilderExtensions {
       entity.ToTable("wh_perspective_checkpoints");
       entity.HasKey(e => new { e.StreamId, e.PerspectiveName });
 
-      entity.Property(e => e.StreamId).HasColumnName("stream_id").IsRequired();
+      entity.Property(e => e.StreamId).HasColumnName(COLUMN_NAME_STREAM_ID).IsRequired();
       entity.Property(e => e.PerspectiveName).HasColumnName("perspective_name").IsRequired().HasMaxLength(500);
       entity.Property(e => e.LastEventId).HasColumnName("last_event_id").IsRequired();
       entity.Property(e => e.Status).HasColumnName("status").IsRequired();
