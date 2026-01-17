@@ -38,6 +38,7 @@ namespace Whizbang.Generators;
 [Generator]
 public class AggregateIdGenerator : IIncrementalGenerator {
   private const string AGGREGATE_ID_ATTRIBUTE = "Whizbang.Core.AggregateIdAttribute";
+  private const string SYSTEM_GUID = "System.Guid";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover properties with [AggregateId] attribute
@@ -143,8 +144,8 @@ public class AggregateIdGenerator : IIncrementalGenerator {
 
     var propertyType = property.Type;
     var isGuid = propertyType.SpecialType == SpecialType.None &&
-                 propertyType.ToDisplayString() == "System.Guid";
-    var isNullableGuid = RoslynGuards.IsNullableOfType(propertyType, "System.Guid");
+                 propertyType.ToDisplayString() == SYSTEM_GUID;
+    var isNullableGuid = RoslynGuards.IsNullableOfType(propertyType, SYSTEM_GUID);
 
     // Check if property type has a .Value property that returns Guid or Guid?
     // This supports WhizbangId types which are value objects wrapping Guid
@@ -164,8 +165,8 @@ public class AggregateIdGenerator : IIncrementalGenerator {
       var valueType = valueProp.Type;
       hasValueProperty =
           (valueType.SpecialType == SpecialType.None &&
-           valueType.ToDisplayString() == "System.Guid") ||
-          RoslynGuards.IsNullableOfType(valueType, "System.Guid");
+           valueType.ToDisplayString() == SYSTEM_GUID) ||
+          RoslynGuards.IsNullableOfType(valueType, SYSTEM_GUID);
     }
 
     // Strategy 2: If Value property not visible, use heuristic for generated WhizbangId types
@@ -183,7 +184,7 @@ public class AggregateIdGenerator : IIncrementalGenerator {
     }
 
     var usesValueProperty = !isGuid && !isNullableGuid && hasValueProperty;
-    var valueIsNullable = usesValueProperty && valueProp != null && RoslynGuards.IsNullableOfType(valueProp.Type, "System.Guid");
+    var valueIsNullable = usesValueProperty && valueProp != null && RoslynGuards.IsNullableOfType(valueProp.Type, SYSTEM_GUID);
     var hasInvalidType = !isGuid && !isNullableGuid && !hasValueProperty;
 
     return new PropertyTypeValidation(
