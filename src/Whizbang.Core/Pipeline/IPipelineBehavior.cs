@@ -73,6 +73,7 @@ public abstract class PipelineBehavior<TRequest, TResponse> : IPipelineBehavior<
   /// Executes the next behavior or handler in the pipeline.
   /// Use this helper method to clearly separate pre/post processing logic.
   /// </summary>
+  [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "S2325:Methods and properties that don't access instance data should be static", Justification = "Intentional instance method for API ergonomics - allows derived classes to call ExecuteNextAsync() directly without static qualification.")]
   protected async Task<TResponse> ExecuteNextAsync(Func<Task<TResponse>> continuation) {
     return await continuation();
   }

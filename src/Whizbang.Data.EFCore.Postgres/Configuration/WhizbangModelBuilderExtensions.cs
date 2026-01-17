@@ -28,6 +28,7 @@ public static class WhizbangModelBuilderExtensions {
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs:ConfigureWhizbangInfrastructure_ConfiguresMessageDeduplicationEntityAsync</tests>
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "IDE0060:Remove unused parameter", Justification = "Parameter retained for backward compatibility with generated code")]
     [System.Diagnostics.CodeAnalysis.SuppressMessage("Style", "S1172:Unused method parameters should be removed", Justification = "Parameter retained for backward compatibility with generated code")]
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "S2325:Methods and properties that don't access instance data should be static", Justification = "C# 14 extension member - cannot be static. SonarCloud doesn't recognize extension member syntax.")]
     public ModelBuilder ConfigureWhizbangInfrastructure(string? schema = null) {
       _configureInbox(modelBuilder);
       _configureOutbox(modelBuilder);

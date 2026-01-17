@@ -41,6 +41,7 @@ public static class EFCoreExtensions {
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreExtensionsTests.cs:WithEFCore_CanChainToWithDriverAsync</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreExtensionsTests.cs:WithEFCore_MultipleContextTypes_CreatesDistinctSelectorsAsync</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreExtensionsTests.cs:WithEFCore_ReturnedSelector_ImplementsIDriverOptionsAsync</tests>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "S2325:Methods and properties that don't access instance data should be static", Justification = "C# 14 extension member - cannot be static. SonarCloud doesn't recognize extension member syntax.")]
     public EFCoreDriverSelector WithEFCore<TDbContext>()
         where TDbContext : DbContext {
       return new EFCoreDriverSelector(builder.Services, typeof(TDbContext));
@@ -71,6 +72,7 @@ public static class EFCoreExtensions {
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreExtensionsTests.cs:WithEFCore_CanChainToWithDriverAsync</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreExtensionsTests.cs:WithEFCore_MultipleContextTypes_CreatesDistinctSelectorsAsync</tests>
     /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreExtensionsTests.cs:WithEFCore_ReturnedSelector_ImplementsIDriverOptionsAsync</tests>
+    [System.Diagnostics.CodeAnalysis.SuppressMessage("Design", "S2325:Methods and properties that don't access instance data should be static", Justification = "C# 14 extension member - cannot be static. SonarCloud doesn't recognize extension member syntax.")]
     public EFCoreDriverSelector WithEFCore<TDbContext>()
         where TDbContext : DbContext {
       return new EFCoreDriverSelector(builder.Services, typeof(TDbContext));
