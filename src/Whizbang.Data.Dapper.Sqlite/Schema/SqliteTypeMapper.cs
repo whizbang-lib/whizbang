@@ -33,6 +33,8 @@ namespace Whizbang.Data.Dapper.Sqlite.Schema;
 /// - Booleans stored as INTEGER (0 = false, 1 = true)
 /// </summary>
 public static class SqliteTypeMapper {
+  private const string SQLITE_TYPE_INTEGER = "INTEGER";
+
   /// <summary>
   /// Maps WhizbangDataType to SQLite SQL type.
   /// </summary>
@@ -53,10 +55,10 @@ public static class SqliteTypeMapper {
       Whizbang.Data.Schema.WhizbangDataType.STRING => "TEXT",      // No length enforcement
       Whizbang.Data.Schema.WhizbangDataType.TIMESTAMP_TZ => "TEXT", // ISO8601 format: 'YYYY-MM-DD HH:MM:SS.SSS'
       Whizbang.Data.Schema.WhizbangDataType.JSON => "TEXT",        // JSON as text (use JSON1 extension for querying)
-      Whizbang.Data.Schema.WhizbangDataType.BIG_INT => "INTEGER",   // 64-bit signed integer
-      Whizbang.Data.Schema.WhizbangDataType.INTEGER => "INTEGER",  // Stored as INTEGER affinity
-      Whizbang.Data.Schema.WhizbangDataType.SMALL_INT => "INTEGER", // 16-bit integer stored as INTEGER affinity
-      Whizbang.Data.Schema.WhizbangDataType.BOOLEAN => "INTEGER",  // 0 or 1
+      Whizbang.Data.Schema.WhizbangDataType.BIG_INT => SQLITE_TYPE_INTEGER,   // 64-bit signed integer
+      Whizbang.Data.Schema.WhizbangDataType.INTEGER => SQLITE_TYPE_INTEGER,  // Stored as INTEGER affinity
+      Whizbang.Data.Schema.WhizbangDataType.SMALL_INT => SQLITE_TYPE_INTEGER, // 16-bit integer stored as INTEGER affinity
+      Whizbang.Data.Schema.WhizbangDataType.BOOLEAN => SQLITE_TYPE_INTEGER,  // 0 or 1
       _ => throw new ArgumentOutOfRangeException(nameof(dataType), dataType, "Unknown data type")
     };
   }

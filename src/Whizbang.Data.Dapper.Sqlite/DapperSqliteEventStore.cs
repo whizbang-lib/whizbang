@@ -127,13 +127,8 @@ public class DapperSqliteEventStore(
     using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
 
-    // NOTE: SQLite doesn't have built-in UUID comparison, so we convert to binary for comparison
-    var sql = fromEventId == null
-      ? @"SELECT envelope AS Envelope
-          FROM whizbang_event_store
-          WHERE stream_id = @StreamId
-          ORDER BY created_at, rowid"
-      : @"SELECT envelope AS Envelope
+    // NOTE: SQLite doesn't have built-in UUID comparison, so we filter in C# after deserialization
+    const string sql = @"SELECT envelope AS Envelope
           FROM whizbang_event_store
           WHERE stream_id = @StreamId
           ORDER BY created_at, rowid";
@@ -172,12 +167,8 @@ public class DapperSqliteEventStore(
     using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
     EnsureConnectionOpen(connection);
 
-    var sql = fromEventId == null
-      ? @"SELECT envelope AS Envelope
-          FROM whizbang_event_store
-          WHERE stream_id = @StreamId
-          ORDER BY created_at, rowid"
-      : @"SELECT envelope AS Envelope
+    // NOTE: SQLite doesn't have built-in UUID comparison, so we filter in C# after deserialization
+    const string sql = @"SELECT envelope AS Envelope
           FROM whizbang_event_store
           WHERE stream_id = @StreamId
           ORDER BY created_at, rowid";
