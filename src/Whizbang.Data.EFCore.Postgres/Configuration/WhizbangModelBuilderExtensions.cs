@@ -9,6 +9,7 @@ namespace Whizbang.Data.EFCore.Postgres.Configuration;
 /// </summary>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/WhizbangModelBuilderExtensionsTests.cs</tests>
 public static class WhizbangModelBuilderExtensions {
+  private const string COLUMN_TYPE_JSONB = "jsonb";
 
   extension(ModelBuilder modelBuilder) {
 
@@ -43,9 +44,9 @@ public static class WhizbangModelBuilderExtensions {
       entity.Property(e => e.MessageId).HasColumnName("message_id").IsRequired();
       entity.Property(e => e.HandlerName).HasColumnName("handler_name").IsRequired();
       entity.Property(e => e.MessageType).HasColumnName("event_type").IsRequired();
-      entity.Property(e => e.MessageData).HasColumnName("event_data").HasColumnType("jsonb").IsRequired();
-      entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType("jsonb").IsRequired();
-      entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType("jsonb");
+      entity.Property(e => e.MessageData).HasColumnName("event_data").HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
+      entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
+      entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType(COLUMN_TYPE_JSONB);
       entity.Property(e => e.StatusFlags).HasColumnName("status").IsRequired();
       entity.Property(e => e.Attempts).HasColumnName("attempts");
       entity.Property(e => e.Error).HasColumnName("error");
@@ -72,9 +73,9 @@ public static class WhizbangModelBuilderExtensions {
       entity.Property(e => e.MessageId).HasColumnName("message_id").IsRequired();
       entity.Property(e => e.Destination).HasColumnName("destination").IsRequired();
       entity.Property(e => e.MessageType).HasColumnName("event_type").IsRequired();
-      entity.Property(e => e.MessageData).HasColumnName("event_data").HasColumnType("jsonb").IsRequired();
-      entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType("jsonb").IsRequired();
-      entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType("jsonb");
+      entity.Property(e => e.MessageData).HasColumnName("event_data").HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
+      entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
+      entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType(COLUMN_TYPE_JSONB);
       entity.Property(e => e.StatusFlags).HasColumnName("status").IsRequired();
       entity.Property(e => e.Attempts).HasColumnName("attempts");
       entity.Property(e => e.Error).HasColumnName("error");
@@ -106,9 +107,9 @@ public static class WhizbangModelBuilderExtensions {
       entity.Property(e => e.AggregateType).HasColumnName("aggregate_type").IsRequired();
       entity.Property(e => e.Version).HasColumnName("version").IsRequired();
       entity.Property(e => e.EventType).HasColumnName("event_type").IsRequired();
-      entity.Property(e => e.EventData).HasColumnName("event_data").HasColumnType("jsonb").IsRequired();
-      entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType("jsonb").IsRequired();
-      entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType("jsonb");
+      entity.Property(e => e.EventData).HasColumnName("event_data").HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
+      entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType(COLUMN_TYPE_JSONB).IsRequired();
+      entity.Property(e => e.Scope).HasColumnName("scope").HasColumnType(COLUMN_TYPE_JSONB);
       entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
 
       entity.HasIndex(e => new { e.StreamId, e.Version }).IsUnique();  // Required for ON CONFLICT in process_work_batch
@@ -130,7 +131,7 @@ public static class WhizbangModelBuilderExtensions {
       entity.Property(e => e.ProcessId).HasColumnName("process_id").IsRequired();
       entity.Property(e => e.StartedAt).HasColumnName("started_at").IsRequired();
       entity.Property(e => e.LastHeartbeatAt).HasColumnName("last_heartbeat_at").IsRequired();
-      entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType("jsonb");
+      entity.Property(e => e.Metadata).HasColumnName("metadata").HasColumnType(COLUMN_TYPE_JSONB);
 
       entity.HasIndex(e => new { e.ServiceName, e.LastHeartbeatAt });
       entity.HasIndex(e => e.LastHeartbeatAt);

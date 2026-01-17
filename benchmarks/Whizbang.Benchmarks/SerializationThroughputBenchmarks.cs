@@ -15,6 +15,9 @@ namespace Whizbang.Benchmarks;
 [MemoryDiagnoser]
 [MinColumn, MaxColumn]
 public class SerializationThroughputBenchmarks {
+  private const string BENCHMARK_HOST = "benchmark-host";
+  private const int BENCHMARK_PROCESS_ID = 12345;
+
   private JsonMessageSerializer _serializer = null!;
 
   // Test message types
@@ -207,8 +210,8 @@ public class SerializationThroughputBenchmarks {
           ServiceInstance = new ServiceInstanceInfo {
             ServiceName = "BenchmarkService",
             InstanceId = Guid.NewGuid(),
-            HostName = "benchmark-host",
-            ProcessId = 12345
+            HostName = BENCHMARK_HOST,
+            ProcessId = BENCHMARK_PROCESS_ID
           },
           Type = HopType.Current,
           Timestamp = DateTimeOffset.UtcNow,
@@ -303,8 +306,8 @@ public class SerializationThroughputBenchmarks {
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "BenchmarkService",
         InstanceId = Guid.NewGuid(),
-        HostName = "benchmark-host",
-        ProcessId = 12345
+        HostName = BENCHMARK_HOST,
+        ProcessId = BENCHMARK_PROCESS_ID
       },
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow,
@@ -327,8 +330,8 @@ public class SerializationThroughputBenchmarks {
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "CurrentService",
         InstanceId = Guid.NewGuid(),
-        HostName = "benchmark-host",
-        ProcessId = 12345
+        HostName = BENCHMARK_HOST,
+        ProcessId = BENCHMARK_PROCESS_ID
       },
       Type = HopType.Current,
       Timestamp = DateTimeOffset.UtcNow,
@@ -341,8 +344,8 @@ public class SerializationThroughputBenchmarks {
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "ParentService",
         InstanceId = Guid.NewGuid(),
-        HostName = "benchmark-host",
-        ProcessId = 12345
+        HostName = BENCHMARK_HOST,
+        ProcessId = BENCHMARK_PROCESS_ID
       },
       Type = HopType.Causation,
       Timestamp = DateTimeOffset.UtcNow.AddMilliseconds(-100),
@@ -354,8 +357,8 @@ public class SerializationThroughputBenchmarks {
       ServiceInstance = new ServiceInstanceInfo {
         ServiceName = "OriginService",
         InstanceId = Guid.NewGuid(),
-        HostName = "benchmark-host",
-        ProcessId = 12345
+        HostName = BENCHMARK_HOST,
+        ProcessId = BENCHMARK_PROCESS_ID
       },
       Type = HopType.Causation,
       Timestamp = DateTimeOffset.UtcNow.AddMilliseconds(-200),
