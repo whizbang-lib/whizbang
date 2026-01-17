@@ -786,63 +786,30 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   }
 
   private static string _generateAssemblyAwareHelper(Assembly assembly, ImmutableArray<WhizbangIdTypeInfo> converters, ImmutableArray<JsonMessageTypeInfo> messages, Compilation compilation) {
-    // Load snippet
+    // Load snippet template
     var createOptionsSnippet = TemplateUtilities.ExtractSnippet(
         assembly,
         TEMPLATE_SNIPPET_FILE,
         "HELPER_CREATE_OPTIONS");
 
-    // Get the actual assembly name from the compilation
+    // Get assembly name for type registrations
     var actualAssemblyName = compilation.AssemblyName ?? "Unknown";
 
-    // Generate converter instance registration code for ModuleInitializer (no reflection - AOT compatible!)
-    var converterRegistrations = new System.Text.StringBuilder();
-    if (!converters.IsEmpty) {
-      foreach (var converter in converters) {
-        converterRegistrations.AppendLine($"  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterConverter(new global::{converter.FullyQualifiedTypeName}());");
-      }
-    }
+    // Build all registrations using helper methods
+    var registrations = new System.Text.StringBuilder();
 
-    // Generate type name registration code for ModuleInitializer (no reflection - AOT compatible!)
-    // Register message types (commands/events) AND serializable types (lens DTOs) for cross-assembly resolution
-    // This enables cross-assembly type resolution via JsonContextRegistry.GetTypeInfoByName()
+    // Generate converter registrations (WhizbangId types)
+    _generateConverterRegistrations(registrations, converters);
+
+    // Generate message type registrations for cross-assembly resolution
     var messageTypes = messages.Where(m => m.IsCommand || m.IsEvent || m.IsSerializable).ToList();
-    if (messageTypes.Count > 0) {
-      converterRegistrations.AppendLine();
-      converterRegistrations.AppendLine("  // Register type name mappings for cross-assembly resolution");
-      foreach (var message in messageTypes) {
-        // Generate type name without "global::" prefix for assembly-qualified name
-        // e.g., "MyApp.Commands.CreateOrder, MyApp.Contracts"
-        var typeNameWithoutGlobal = message.FullyQualifiedName.Replace(PLACEHOLDER_GLOBAL, "");
-        var assemblyQualifiedName = $"{typeNameWithoutGlobal}, {actualAssemblyName}";
+    _generateMessageTypeRegistrations(registrations, messageTypes, actualAssemblyName);
 
-        converterRegistrations.AppendLine($"  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(");
-        converterRegistrations.AppendLine($"    \"{assemblyQualifiedName}\",");
-        converterRegistrations.AppendLine($"    typeof({message.FullyQualifiedName}),");
-        converterRegistrations.AppendLine($"    MessageJsonContext.Default);");
-      }
+    // Generate MessageEnvelope<T> wrapper type registrations for transport
+    _generateEnvelopeTypeRegistrations(registrations, messageTypes, actualAssemblyName);
 
-      // Register MessageEnvelope<T> wrapper types for transport deserialization
-      // When messages are published to Azure Service Bus, the envelope type is stored in metadata
-      // The receiving side needs to deserialize the envelope using JsonContextRegistry.GetTypeInfoByName()
-      converterRegistrations.AppendLine();
-      converterRegistrations.AppendLine("  // Register MessageEnvelope<T> wrapper types for transport deserialization");
-      foreach (var message in messageTypes) {
-        var typeNameWithoutGlobal = message.FullyQualifiedName.Replace(PLACEHOLDER_GLOBAL, "");
-        // Format: Whizbang.Core.Observability.MessageEnvelope`1[[PayloadType, Assembly]], Whizbang.Core
-        var envelopeTypeName = $"Whizbang.Core.Observability.MessageEnvelope`1[[{typeNameWithoutGlobal}, {actualAssemblyName}]], Whizbang.Core";
-
-        converterRegistrations.AppendLine($"  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(");
-        converterRegistrations.AppendLine($"    \"{envelopeTypeName}\",");
-        converterRegistrations.AppendLine($"    typeof(global::Whizbang.Core.Observability.MessageEnvelope<{message.FullyQualifiedName}>),");
-        converterRegistrations.AppendLine($"    MessageJsonContext.Default);");
-      }
-    }
-
-    // Replace __CONVERTER_REGISTRATIONS__ placeholder
-    createOptionsSnippet = createOptionsSnippet.Replace("__CONVERTER_REGISTRATIONS__", converterRegistrations.ToString());
-
-    return createOptionsSnippet;
+    // Replace placeholder and return
+    return createOptionsSnippet.Replace("__CONVERTER_REGISTRATIONS__", registrations.ToString());
   }
 
   /// <summary>
@@ -1172,5 +1139,77 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         c.Parameters.Length == properties.Length &&
         c.Parameters.All(p => properties.Any(prop =>
             prop.Name.Equals(p.Name, System.StringComparison.OrdinalIgnoreCase))));
+  }
+
+  // ========================================
+  // Helper Methods for _generateAssemblyAwareHelper Complexity Reduction
+  // ========================================
+
+  /// <summary>
+  /// Generates converter registration code for ModuleInitializer.
+  /// </summary>
+  private static void _generateConverterRegistrations(
+      System.Text.StringBuilder sb,
+      ImmutableArray<WhizbangIdTypeInfo> converters) {
+
+    if (converters.IsEmpty) {
+      return;
+    }
+
+    foreach (var converter in converters) {
+      sb.AppendLine($"  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterConverter(new global::{converter.FullyQualifiedTypeName}());");
+    }
+  }
+
+  /// <summary>
+  /// Generates message type registration code for cross-assembly resolution.
+  /// </summary>
+  private static void _generateMessageTypeRegistrations(
+      System.Text.StringBuilder sb,
+      List<JsonMessageTypeInfo> messageTypes,
+      string actualAssemblyName) {
+
+    if (messageTypes.Count == 0) {
+      return;
+    }
+
+    sb.AppendLine();
+    sb.AppendLine("  // Register type name mappings for cross-assembly resolution");
+
+    foreach (var message in messageTypes) {
+      var typeNameWithoutGlobal = message.FullyQualifiedName.Replace(PLACEHOLDER_GLOBAL, "");
+      var assemblyQualifiedName = $"{typeNameWithoutGlobal}, {actualAssemblyName}";
+
+      sb.AppendLine($"  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(");
+      sb.AppendLine($"    \"{assemblyQualifiedName}\",");
+      sb.AppendLine($"    typeof({message.FullyQualifiedName}),");
+      sb.AppendLine($"    MessageJsonContext.Default);");
+    }
+  }
+
+  /// <summary>
+  /// Generates MessageEnvelope wrapper type registrations for transport deserialization.
+  /// </summary>
+  private static void _generateEnvelopeTypeRegistrations(
+      System.Text.StringBuilder sb,
+      List<JsonMessageTypeInfo> messageTypes,
+      string actualAssemblyName) {
+
+    if (messageTypes.Count == 0) {
+      return;
+    }
+
+    sb.AppendLine();
+    sb.AppendLine("  // Register MessageEnvelope<T> wrapper types for transport deserialization");
+
+    foreach (var message in messageTypes) {
+      var typeNameWithoutGlobal = message.FullyQualifiedName.Replace(PLACEHOLDER_GLOBAL, "");
+      var envelopeTypeName = $"Whizbang.Core.Observability.MessageEnvelope`1[[{typeNameWithoutGlobal}, {actualAssemblyName}]], Whizbang.Core";
+
+      sb.AppendLine($"  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(");
+      sb.AppendLine($"    \"{envelopeTypeName}\",");
+      sb.AppendLine($"    typeof(global::Whizbang.Core.Observability.MessageEnvelope<{message.FullyQualifiedName}>),");
+      sb.AppendLine($"    MessageJsonContext.Default);");
+    }
   }
 }
