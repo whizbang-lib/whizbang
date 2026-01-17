@@ -857,57 +857,28 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
     foreach (var message in messages) {
       foreach (var property in message.Properties) {
-        // Extract type symbol from the property's fully qualified type name
+        // Extract element type from generic collections
         var elementTypeName = _extractElementType(property.Type);
         if (elementTypeName == null) {
           continue;
         }
 
-        // Skip if already discovered
-        if (nestedTypes.ContainsKey(elementTypeName)) {
+        // Check if this type should be skipped
+        if (_shouldSkipNestedType(elementTypeName, nestedTypes, messages)) {
           continue;
         }
 
-        if (messages.Any(m => m.FullyQualifiedName == elementTypeName)) {
-          continue;
-        }
-
-        // Skip primitive and framework types
-        if (_isPrimitiveOrFrameworkType(elementTypeName)) {
-          continue;
-        }
-
-        // Try to find the type symbol in the compilation
-        var typeSymbol = compilation.GetTypeByMetadataName(elementTypeName.Replace(PLACEHOLDER_GLOBAL, ""));
+        // Try to get public type symbol
+        var typeSymbol = _tryGetPublicTypeSymbol(elementTypeName, compilation);
         if (typeSymbol == null) {
           continue;
         }
 
-        // Skip non-public types
-        if (typeSymbol.DeclaredAccessibility != Accessibility.Public) {
-          continue;
-        }
+        // Extract properties and detect constructor
+        var nestedProperties = _extractPropertiesFromType(typeSymbol);
+        bool hasParameterizedConstructor = _hasMatchingParameterizedConstructor(typeSymbol, nestedProperties);
 
-        // Extract property information
-        // Use custom format that includes nullability annotations to avoid CS8619/CS8603 warnings
-        var nestedProperties = typeSymbol.GetMembers()
-            .OfType<IPropertySymbol>()
-            .Where(p => p.DeclaredAccessibility == Accessibility.Public && !p.IsStatic)
-            .Select(p => new PropertyInfo(
-                Name: p.Name,
-                Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
-                IsValueType: _isValueType(p.Type),
-                IsInitOnly: p.SetMethod?.IsInitOnly ?? false
-            ))
-            .ToArray();
-
-        // Detect parameterized constructor
-        bool hasParameterizedConstructor = typeSymbol.Constructors.Any(c =>
-            c.DeclaredAccessibility == Accessibility.Public &&
-            c.Parameters.Length == nestedProperties.Length &&
-            c.Parameters.All(p => nestedProperties.Any(prop =>
-                prop.Name.Equals(p.Name, System.StringComparison.OrdinalIgnoreCase))));
-
+        // Build nested type info
         var nestedTypeInfo = new JsonMessageTypeInfo(
             FullyQualifiedName: elementTypeName,
             SimpleName: typeSymbol.Name,
@@ -1126,5 +1097,80 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     return sb.ToString();
+  }
+
+  // ========================================
+  // Helper Methods for _discoverNestedTypes Complexity Reduction
+  // ========================================
+
+  /// <summary>
+  /// Checks if a nested type should be skipped during discovery.
+  /// </summary>
+  private static bool _shouldSkipNestedType(
+      string elementTypeName,
+      Dictionary<string, JsonMessageTypeInfo> nestedTypes,
+      ImmutableArray<JsonMessageTypeInfo> messages) {
+
+    // Skip if already discovered
+    if (nestedTypes.ContainsKey(elementTypeName)) {
+      return true;
+    }
+
+    // Skip if it's already a message type
+    if (messages.Any(m => m.FullyQualifiedName == elementTypeName)) {
+      return true;
+    }
+
+    // Skip primitive and framework types
+    if (_isPrimitiveOrFrameworkType(elementTypeName)) {
+      return true;
+    }
+
+    return false;
+  }
+
+  /// <summary>
+  /// Attempts to get a public type symbol from the compilation.
+  /// Returns null if type doesn't exist or isn't public.
+  /// </summary>
+  private static INamedTypeSymbol? _tryGetPublicTypeSymbol(string elementTypeName, Compilation compilation) {
+    var typeSymbol = compilation.GetTypeByMetadataName(elementTypeName.Replace(PLACEHOLDER_GLOBAL, ""));
+    if (typeSymbol == null) {
+      return null;
+    }
+
+    // Skip non-public types
+    if (typeSymbol.DeclaredAccessibility != Accessibility.Public) {
+      return null;
+    }
+
+    return typeSymbol;
+  }
+
+  /// <summary>
+  /// Extracts property information from a type symbol.
+  /// </summary>
+  private static PropertyInfo[] _extractPropertiesFromType(INamedTypeSymbol typeSymbol) {
+    return typeSymbol.GetMembers()
+        .OfType<IPropertySymbol>()
+        .Where(p => p.DeclaredAccessibility == Accessibility.Public && !p.IsStatic)
+        .Select(p => new PropertyInfo(
+            Name: p.Name,
+            Type: p.Type.ToDisplayString(_fullyQualifiedWithNullabilityFormat),
+            IsValueType: _isValueType(p.Type),
+            IsInitOnly: p.SetMethod?.IsInitOnly ?? false
+        ))
+        .ToArray();
+  }
+
+  /// <summary>
+  /// Checks if a type has a parameterized constructor matching its properties.
+  /// </summary>
+  private static bool _hasMatchingParameterizedConstructor(INamedTypeSymbol typeSymbol, PropertyInfo[] properties) {
+    return typeSymbol.Constructors.Any(c =>
+        c.DeclaredAccessibility == Accessibility.Public &&
+        c.Parameters.Length == properties.Length &&
+        c.Parameters.All(p => properties.Any(prop =>
+            prop.Name.Equals(p.Name, System.StringComparison.OrdinalIgnoreCase))));
   }
 }
