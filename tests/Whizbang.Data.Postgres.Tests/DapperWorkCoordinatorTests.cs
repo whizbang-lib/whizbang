@@ -70,25 +70,24 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
+      leaseSeconds: 300);
 
     // Assert
     await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
@@ -112,25 +111,27 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [
+        new MessageCompletion { MessageId = messageId1, Status = MessageProcessingStatus.Published },
+        new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.Published }
+      ],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
+      flags: WorkBatchFlags.DebugMode);  // Keep completed messages in database for verification
 
     // Assert
     await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
@@ -152,25 +153,29 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [
+        new MessageFailure {
+          MessageId = messageId,
+          CompletedStatus = MessageProcessingStatus.Stored,  // What succeeded before failure
+          Error = "Network timeout"
+        }
+      ],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert
     await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
@@ -194,25 +199,26 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [
+        new MessageCompletion { MessageId = messageId1, Status = MessageProcessingStatus.EventStored },
+        new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.EventStored }
+      ],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert
     await Assert.That(result.InboxWork).Count().IsEqualTo(0);
@@ -236,25 +242,29 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [
+        new MessageFailure {
+          MessageId = messageId,
+          CompletedStatus = MessageProcessingStatus.Stored,  // What succeeded before failure
+          Error = "Handler exception"
+        }
+      ],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert
     await Assert.That(result.InboxWork).Count().IsEqualTo(0);
@@ -308,25 +318,23 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Should return 2 work items, not the active one
     await Assert.That(result.OutboxWork).Count().IsEqualTo(2);
@@ -376,25 +384,23 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert
     await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
@@ -449,25 +455,40 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [
+        new MessageCompletion { MessageId = completedOutboxId, Status = MessageProcessingStatus.Published }
+      ],
+      outboxFailures: [
+        new MessageFailure {
+          MessageId = failedOutboxId,
+          CompletedStatus = MessageProcessingStatus.Stored,
+          Error = "Outbox error"
+        }
+      ],
+      inboxCompletions: [
+        new MessageCompletion { MessageId = completedInboxId, Status = MessageProcessingStatus.EventStored }
+      ],
+      inboxFailures: [
+        new MessageFailure {
+          MessageId = failedInboxId,
+          CompletedStatus = MessageProcessingStatus.Stored,
+          Error = "Inbox error"
+        }
+      ],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
+      flags: WorkBatchFlags.DebugMode);  // Keep completed messages in database for verification
 
     // Assert
     await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
@@ -518,25 +539,23 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [newOutboxMessage],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Message should be stored AND returned for immediate processing
     await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
@@ -568,47 +587,43 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act - First call should store and return work
     var result1 = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [newInboxMessage],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Act - Second call with same message ID should return empty (duplicate)
     var result2 = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [newInboxMessage],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - First call returns work
     await Assert.That(result1.InboxWork).Count().IsEqualTo(1);
@@ -641,25 +656,23 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [newInboxMessage],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert
     await Assert.That(result.InboxWork).Count().IsEqualTo(1);
@@ -694,25 +707,23 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [newOutboxMessage],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert
     await Assert.That(result.OutboxWork).Count().IsEqualTo(1);
@@ -751,25 +762,23 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act - Create new outbox message with IsEvent=true
     var result = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [newOutboxMessage],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Event should be persisted to event store
     var eventVersion = await _getEventStoreVersionAsync(streamId, expectedVersion: 1);
@@ -798,25 +807,23 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act - Create new inbox message with IsEvent=true
     var result = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [newInboxMessage],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Event should be persisted to event store
     var eventVersion = await _getEventStoreVersionAsync(streamId, expectedVersion: 1);
@@ -849,25 +856,23 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act - Try to create new inbox message (should handle version conflict)
     var result = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [newInboxMessage],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Should handle optimistic concurrency (sequential versioning)
     var event1 = await _getEventStoreVersionAsync(streamId, expectedVersion: 1);
@@ -935,25 +940,23 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act - Create all three messages in a single batch
     var result = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: newOutboxMessages,
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Events should have sequential versions
     var version1 = await _getEventStoreVersionAsync(streamId, expectedVersion: 1);
@@ -988,25 +991,23 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act - Create new outbox message with IsEvent=false
     var result = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [newOutboxMessage],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Non-event should NOT be persisted to event store
     var eventVersion = await _getEventStoreVersionAsync(streamId, expectedVersion: 1);
@@ -1050,25 +1051,23 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       };
 
       await _sut.ProcessWorkBatchAsync(
-              new ProcessWorkBatchRequest {
-                InstanceId = _instanceId,
-                ServiceName = "TestService",
-                HostName = "test-host",
-                ProcessId = 12345,
-                Metadata = null,
-                OutboxCompletions = [],
-                OutboxFailures = [],
-                InboxCompletions = [],
-                InboxFailures = [],
-                ReceptorCompletions = [],
-                ReceptorFailures = [],
-                PerspectiveCompletions = [],
-                PerspectiveFailures = [],
-                NewOutboxMessages = [],
-                NewInboxMessages = [],
-                RenewOutboxLeaseIds = [],
-                RenewInboxLeaseIds = []
-              });
+        _instanceId,
+        "TestService",
+        "test-host",
+        12345,
+        metadata: null,
+        outboxCompletions: [],
+        outboxFailures: [],
+        inboxCompletions: [],
+        inboxFailures: [],
+        [],  // receptorCompletions
+        [],  // receptorFailures
+        [],  // perspectiveCompletions
+        [],  // perspectiveFailures
+        newOutboxMessages: [newOutboxMessage],
+        newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
     }
 
     // Assert - All messages should have same partition_number
@@ -1111,25 +1110,23 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       };
 
       await _sut.ProcessWorkBatchAsync(
-              new ProcessWorkBatchRequest {
-                InstanceId = _instanceId,
-                ServiceName = "TestService",
-                HostName = "test-host",
-                ProcessId = 12345,
-                Metadata = null,
-                OutboxCompletions = [],
-                OutboxFailures = [],
-                InboxCompletions = [],
-                InboxFailures = [],
-                ReceptorCompletions = [],
-                ReceptorFailures = [],
-                PerspectiveCompletions = [],
-                PerspectiveFailures = [],
-                NewOutboxMessages = [],
-                NewInboxMessages = [],
-                RenewOutboxLeaseIds = [],
-                RenewInboxLeaseIds = []
-              });
+        _instanceId,
+        "TestService",
+        "test-host",
+        12345,
+        metadata: null,
+        outboxCompletions: [],
+        outboxFailures: [],
+        inboxCompletions: [],
+        inboxFailures: [],
+        [],  // receptorCompletions
+        [],  // receptorFailures
+        [],  // perspectiveCompletions
+        [],  // perspectiveFailures
+        newOutboxMessages: [newOutboxMessage],
+        newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
     }
 
     // Assert - All partition_numbers in range 0-9999
@@ -1173,67 +1170,52 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act - Each instance claims work
     var result1 = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = instance1,
-            ServiceName = "Service1",
-            HostName = "host1",
-            ProcessId = 1,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      instance1, "Service1", "host1", 1,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     var result2 = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = instance2,
-            ServiceName = "Service2",
-            HostName = "host2",
-            ProcessId = 2,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      instance2, "Service2", "host2", 2,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     var result3 = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = instance3,
-            ServiceName = "Service3",
-            HostName = "host3",
-            ProcessId = 3,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      instance3, "Service3", "host3", 3,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - ALL messages must be claimed
     // With rank-based partition claiming, every partition (0-9999) is assigned to exactly one instance.
@@ -1285,25 +1267,20 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Instance A claims work
     var resultA = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = instanceA,
-            ServiceName = "ServiceA",
-            HostName = "hostA",
-            ProcessId = 1,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      instanceA, "ServiceA", "hostA", 1,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Note: With random stream IDs and hash-based partition distribution,
     // Instance A may not claim all 10 messages initially
@@ -1322,25 +1299,20 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Instance B calls ProcessWorkBatchAsync
     var resultB = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = instanceB,
-            ServiceName = "ServiceB",
-            HostName = "hostB",
-            ProcessId = 2,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      instanceB, "ServiceB", "hostB", 2,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Instance B claims the orphaned partitions that Instance A had claimed
     await Assert.That(resultB.OutboxWork.Count).IsGreaterThan(0)
@@ -1373,25 +1345,26 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act 1 - Complete with Stored status
     await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [
+        new MessageCompletion { MessageId = messageId, Status = MessageProcessingStatus.Stored }
+      ],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
+      flags: WorkBatchFlags.DebugMode);  // Keep message in database for verification
 
     // Verify status after first completion in debug mode
     var status1 = await _getOutboxStatusFlagsAsync(messageId);
@@ -1400,25 +1373,26 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act 2 - Complete with Published status (simulating next stage)
     await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [
+        new MessageCompletion { MessageId = messageId, Status = MessageProcessingStatus.Published }
+      ],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
+      flags: WorkBatchFlags.DebugMode);  // Keep message in database for verification
 
     // Assert - Status should accumulate (bitwise OR) in debug mode
     var status2 = await _getOutboxStatusFlagsAsync(messageId);
@@ -1445,26 +1419,31 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       isEvent: true);
 
     // Act - Fail message with CompletedStatus = Stored | EventStored
+    var partialStatus = MessageProcessingStatus.Stored | MessageProcessingStatus.EventStored;
     await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [
+        new MessageFailure {
+          MessageId = messageId,
+          CompletedStatus = partialStatus,
+          Error = "Failed at receptor processing"
+        }
+      ],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Database should reflect partial completion
     var status = await _getInboxStatusFlagsAsync(messageId);
@@ -1513,25 +1492,23 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [newOutboxMessage],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Check flags for both messages
     var newMessage = result.OutboxWork.FirstOrDefault(w => w.MessageId == newMessageId);
@@ -1568,25 +1545,24 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act - Active instance calls ProcessWorkBatchAsync (triggers cleanup)
     var result = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = activeInstanceId,
-            ServiceName = "ActiveService",
-            HostName = "active-host",
-            ProcessId = 123,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      activeInstanceId,
+      "ActiveService",
+      "active-host",
+      123,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
+      staleThresholdSeconds: 300);
 
     // Assert - Stale instance should be deleted
     var staleExists = await _serviceInstanceExistsAsync(staleInstanceId);
@@ -1610,25 +1586,24 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act - Instance 1 calls ProcessWorkBatchAsync
     var result = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = instance1,
-            ServiceName = "Service1",
-            HostName = "host1",
-            ProcessId = 111,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      instance1,
+      "Service1",
+      "host1",
+      111,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: [],
+      staleThresholdSeconds: 300);
 
     // Assert - Both instances should still exist
     var exists1 = await _serviceInstanceExistsAsync(instance1);
@@ -1666,25 +1641,23 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [newOutboxMessage],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Verify is_event flag is stored correctly
     var isEvent = await _getOutboxIsEventAsync(messageId);
@@ -1714,25 +1687,23 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [newOutboxMessage],
+      newInboxMessages: [],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Verify is_event flag is stored correctly
     var isEvent = await _getOutboxIsEventAsync(messageId);
@@ -1758,25 +1729,23 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [newInboxMessage],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Verify is_event flag is stored correctly
     var isEvent = await _getInboxIsEventAsync(messageId);
@@ -1802,25 +1771,23 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     // Act
     var result = await _sut.ProcessWorkBatchAsync(
-          new ProcessWorkBatchRequest {
-            InstanceId = _instanceId,
-            ServiceName = "TestService",
-            HostName = "test-host",
-            ProcessId = 12345,
-            Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
-            ReceptorCompletions = [],
-            ReceptorFailures = [],
-            PerspectiveCompletions = [],
-            PerspectiveFailures = [],
-            NewOutboxMessages = [],
-            NewInboxMessages = [],
-            RenewOutboxLeaseIds = [],
-            RenewInboxLeaseIds = []
-          });
+      _instanceId,
+      "TestService",
+      "test-host",
+      12345,
+      metadata: null,
+      outboxCompletions: [],
+      outboxFailures: [],
+      inboxCompletions: [],
+      inboxFailures: [],
+      [],  // receptorCompletions
+      [],  // receptorFailures
+      [],  // perspectiveCompletions
+      [],  // perspectiveFailures
+      newOutboxMessages: [],
+      newInboxMessages: [newInboxMessage],
+      renewOutboxLeaseIds: [],
+      renewInboxLeaseIds: []);
 
     // Assert - Verify is_event flag is stored correctly
     var isEvent = await _getInboxIsEventAsync(messageId);

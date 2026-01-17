@@ -816,3 +816,63 @@ public record PerspectiveWork {
   /// </summary>
   public Dictionary<string, JsonElement>? Metadata { get; init; }
 }
+
+/// <summary>
+/// Extension methods for IWorkCoordinator providing backwards-compatible parameter styles.
+/// </summary>
+public static class WorkCoordinatorExtensions {
+  /// <summary>
+  /// Backwards-compatible overload using positional parameters.
+  /// Converts to ProcessWorkBatchRequest internally.
+  /// </summary>
+  public static Task<WorkBatch> ProcessWorkBatchAsync(
+    this IWorkCoordinator coordinator,
+    Guid instanceId,
+    string serviceName,
+    string hostName,
+    int processId,
+    Dictionary<string, JsonElement>? metadata,
+    MessageCompletion[] outboxCompletions,
+    MessageFailure[] outboxFailures,
+    MessageCompletion[] inboxCompletions,
+    MessageFailure[] inboxFailures,
+    ReceptorProcessingCompletion[] receptorCompletions,
+    ReceptorProcessingFailure[] receptorFailures,
+    PerspectiveCheckpointCompletion[] perspectiveCompletions,
+    PerspectiveCheckpointFailure[] perspectiveFailures,
+    OutboxMessage[] newOutboxMessages,
+    InboxMessage[] newInboxMessages,
+    Guid[] renewOutboxLeaseIds,
+    Guid[] renewInboxLeaseIds,
+    WorkBatchFlags flags = WorkBatchFlags.None,
+    int partitionCount = 10_000,
+    int leaseSeconds = 300,
+    int staleThresholdSeconds = 600,
+    CancellationToken cancellationToken = default
+  ) {
+    var request = new ProcessWorkBatchRequest {
+      InstanceId = instanceId,
+      ServiceName = serviceName,
+      HostName = hostName,
+      ProcessId = processId,
+      Metadata = metadata,
+      OutboxCompletions = outboxCompletions,
+      OutboxFailures = outboxFailures,
+      InboxCompletions = inboxCompletions,
+      InboxFailures = inboxFailures,
+      ReceptorCompletions = receptorCompletions,
+      ReceptorFailures = receptorFailures,
+      PerspectiveCompletions = perspectiveCompletions,
+      PerspectiveFailures = perspectiveFailures,
+      NewOutboxMessages = newOutboxMessages,
+      NewInboxMessages = newInboxMessages,
+      RenewOutboxLeaseIds = renewOutboxLeaseIds,
+      RenewInboxLeaseIds = renewInboxLeaseIds,
+      Flags = flags,
+      PartitionCount = partitionCount,
+      LeaseSeconds = leaseSeconds,
+      StaleThresholdSeconds = staleThresholdSeconds
+    };
+    return coordinator.ProcessWorkBatchAsync(request, cancellationToken);
+  }
+}
