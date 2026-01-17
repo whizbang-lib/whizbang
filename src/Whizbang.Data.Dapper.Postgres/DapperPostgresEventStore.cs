@@ -33,8 +33,6 @@ public class DapperPostgresEventStore(
   private readonly IJsonbPersistenceAdapter<IMessageEnvelope> _adapter = adapter ?? throw new ArgumentNullException(nameof(adapter));
   private readonly JsonbSizeValidator _sizeValidator = sizeValidator ?? throw new ArgumentNullException(nameof(sizeValidator));
   private readonly IPolicyEngine _policyEngine = policyEngine ?? throw new ArgumentNullException(nameof(policyEngine));
-  private readonly IPerspectiveInvoker? _perspectiveInvoker = perspectiveInvoker;
-  private readonly ILogger<DapperPostgresEventStore> _logger = logger ?? throw new ArgumentNullException(nameof(logger));
 
   /// <summary>
   /// Appends an event to the specified stream (AOT-compatible).

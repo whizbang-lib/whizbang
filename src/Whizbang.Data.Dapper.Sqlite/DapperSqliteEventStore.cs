@@ -23,7 +23,6 @@ public class DapperSqliteEventStore(
   IDbExecutor executor,
   JsonSerializerOptions jsonOptions,
   IPolicyEngine policyEngine) : DapperEventStoreBase(connectionFactory, executor, jsonOptions) {
-  private readonly IPolicyEngine _policyEngine = policyEngine ?? throw new ArgumentNullException(nameof(policyEngine));
 
   /// <summary>
   /// Appends an event to the specified stream (AOT-compatible).

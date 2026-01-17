@@ -343,24 +343,6 @@ public class DapperWorkCoordinator(
     return JsonSerializer.Serialize(messageIds, typeInfo);
   }
 
-  private string _serializeReceptorCompletions(ReceptorProcessingCompletion[] completions) {
-    if (completions.Length == 0) {
-      return "[]";
-    }
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(ReceptorProcessingCompletion[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for ReceptorProcessingCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
-    return JsonSerializer.Serialize(completions, typeInfo);
-  }
-
-  private string _serializeReceptorFailures(ReceptorProcessingFailure[] failures) {
-    if (failures.Length == 0) {
-      return "[]";
-    }
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(ReceptorProcessingFailure[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for ReceptorProcessingFailure[]. Ensure the type is registered in InfrastructureJsonContext.");
-    return JsonSerializer.Serialize(failures, typeInfo);
-  }
-
   private string _serializePerspectiveCompletions(PerspectiveCheckpointCompletion[] completions) {
     if (completions.Length == 0) {
       return "[]";
