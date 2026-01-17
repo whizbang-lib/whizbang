@@ -24,7 +24,7 @@ public static class PerspectiveEventsSchema {
         Nullable: false
       ),
       new ColumnDefinition(
-        Name: "stream_id",
+        Name: Columns.STREAM_ID,
         DataType: WhizbangDataType.UUID,
         Nullable: false
       ),
@@ -105,11 +105,11 @@ public static class PerspectiveEventsSchema {
       ),
       new IndexDefinition(
         Name: "idx_perspective_event_order",
-        Columns: ImmutableArray.Create("stream_id", "perspective_name", "sequence_number")
+        Columns: ImmutableArray.Create(Columns.STREAM_ID, Columns.PERSPECTIVE_NAME, Columns.SEQUENCE_NUMBER)
       ),
       new IndexDefinition(
         Name: "idx_perspective_event_stream",
-        Columns: ImmutableArray.Create("stream_id")
+        Columns: ImmutableArray.Create(Columns.STREAM_ID)
       )
     )
   );

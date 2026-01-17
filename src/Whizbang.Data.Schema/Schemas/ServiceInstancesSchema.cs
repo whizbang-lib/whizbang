@@ -10,6 +10,20 @@ namespace Whizbang.Data.Schema.Schemas;
 /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ServiceInstancesSchemaTests.cs</tests>
 public static class ServiceInstancesSchema {
   /// <summary>
+  /// Column name constants for type-safe access.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ServiceInstancesSchemaTests.cs:Columns_ShouldProvideAllConstantsAsync</tests>
+  public static class Columns {
+    public const string INSTANCE_ID = "instance_id";
+    public const string SERVICE_NAME = "service_name";
+    public const string HOST_NAME = "host_name";
+    public const string PROCESS_ID = "process_id";
+    public const string STARTED_AT = "started_at";
+    public const string LAST_HEARTBEAT_AT = "last_heartbeat_at";
+    public const string METADATA = "metadata";
+  }
+
+  /// <summary>
   /// Complete service_instances table definition.
   /// </summary>
   /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ServiceInstancesSchemaTests.cs:Table_HasCorrectNameAsync</tests>
@@ -54,7 +68,7 @@ public static class ServiceInstancesSchema {
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
       ),
       new ColumnDefinition(
-        Name: "last_heartbeat_at",
+        Name: Columns.LAST_HEARTBEAT_AT,
         DataType: WhizbangDataType.TIMESTAMP_TZ,
         Nullable: false,
         DefaultValue: DefaultValue.Function(DefaultValueFunction.DATE_TIME__NOW)
@@ -68,26 +82,12 @@ public static class ServiceInstancesSchema {
     Indexes: ImmutableArray.Create(
       new IndexDefinition(
         Name: "idx_service_instances_service_name",
-        Columns: ImmutableArray.Create("service_name", "last_heartbeat_at")
+        Columns: ImmutableArray.Create(Columns.SERVICE_NAME, Columns.LAST_HEARTBEAT_AT)
       ),
       new IndexDefinition(
         Name: "idx_service_instances_heartbeat",
-        Columns: ImmutableArray.Create("last_heartbeat_at")
+        Columns: ImmutableArray.Create(Columns.LAST_HEARTBEAT_AT)
       )
     )
   );
-
-  /// <summary>
-  /// Column name constants for type-safe access.
-  /// </summary>
-  /// <tests>tests/Whizbang.Data.Schema.Tests/Schemas/ServiceInstancesSchemaTests.cs:Columns_HasAllConstantsAsync</tests>
-  public static class Columns {
-    public const string INSTANCE_ID = "instance_id";
-    public const string SERVICE_NAME = "service_name";
-    public const string HOST_NAME = "host_name";
-    public const string PROCESS_ID = "process_id";
-    public const string STARTED_AT = "started_at";
-    public const string LAST_HEARTBEAT_AT = "last_heartbeat_at";
-    public const string METADATA = "metadata";
-  }
 }

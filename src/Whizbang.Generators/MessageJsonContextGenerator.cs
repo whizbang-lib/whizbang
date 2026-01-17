@@ -44,6 +44,20 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string I_EVENT = "Whizbang.Core.IEvent";
   private const string WHIZBANG_SERIALIZABLE = "Whizbang.WhizbangSerializableAttribute";
 
+  // Template placeholders
+  private const string TEMPLATE_SNIPPET_FILE = "JsonContextSnippets.cs";
+  private const string PLACEHOLDER_TYPE_NAME = "__TYPE_NAME__";
+  private const string PLACEHOLDER_MESSAGE_ID = "MessageId";
+  private const string PLACEHOLDER_FULLY_QUALIFIED_NAME = "__FULLY_QUALIFIED_NAME__";
+  private const string PLACEHOLDER_SIMPLE_NAME = "__SIMPLE_NAME__";
+  private const string PLACEHOLDER_GLOBAL = "global::";
+  private const string PLACEHOLDER_INDEX = "__INDEX__";
+  private const string PLACEHOLDER_PROPERTY_TYPE = "__PROPERTY_TYPE__";
+  private const string PLACEHOLDER_PROPERTY_NAME = "__PROPERTY_NAME__";
+  private const string PLACEHOLDER_MESSAGE_TYPE = "__MESSAGE_TYPE__";
+  private const string PLACEHOLDER_SETTER = "__SETTER__";
+  private const string PLACEHOLDER_PARAMETER_NAME = "__PARAMETER_NAME__";
+
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover message types (commands, events, and types with [WhizbangSerializable])
     var messageTypes = context.SyntaxProvider.CreateSyntaxProvider(
@@ -345,29 +359,29 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Load snippets
     var valueObjectFieldSnippet = TemplateUtilities.ExtractSnippet(
         assembly,
-        "JsonContextSnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "LAZY_FIELD_VALUE_OBJECT");
 
     var messageFieldSnippet = TemplateUtilities.ExtractSnippet(
         assembly,
-        "JsonContextSnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "LAZY_FIELD_MESSAGE");
 
     var envelopeFieldSnippet = TemplateUtilities.ExtractSnippet(
         assembly,
-        "JsonContextSnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "LAZY_FIELD_MESSAGE_ENVELOPE");
 
     // Core Whizbang types that require custom converters (Vogen value objects)
-    sb.AppendLine(valueObjectFieldSnippet.Replace("__TYPE_NAME__", "MessageId"));
-    sb.AppendLine(valueObjectFieldSnippet.Replace("__TYPE_NAME__", "CorrelationId"));
+    sb.AppendLine(valueObjectFieldSnippet.Replace(PLACEHOLDER_TYPE_NAME, PLACEHOLDER_MESSAGE_ID));
+    sb.AppendLine(valueObjectFieldSnippet.Replace(PLACEHOLDER_TYPE_NAME, "CorrelationId"));
     sb.AppendLine();
 
     // Discovered types (messages + nested types) - need JsonTypeInfo for AOT
     foreach (var type in allTypes) {
       var field = messageFieldSnippet
-          .Replace("__FULLY_QUALIFIED_NAME__", type.FullyQualifiedName)
-          .Replace("__SIMPLE_NAME__", type.SimpleName);
+          .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, type.FullyQualifiedName)
+          .Replace(PLACEHOLDER_SIMPLE_NAME, type.SimpleName);
       sb.AppendLine(field);
     }
     sb.AppendLine();
@@ -375,8 +389,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // MessageEnvelope<T> ONLY for actual message types (commands/events), not nested types
     foreach (var type in allTypes.Where(t => t.IsCommand || t.IsEvent)) {
       var field = envelopeFieldSnippet
-          .Replace("__FULLY_QUALIFIED_NAME__", type.FullyQualifiedName)
-          .Replace("__SIMPLE_NAME__", type.SimpleName);
+          .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, type.FullyQualifiedName)
+          .Replace(PLACEHOLDER_SIMPLE_NAME, type.SimpleName);
       sb.AppendLine(field);
     }
 
@@ -394,22 +408,22 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Load snippets
     var valueObjectCheckSnippet = TemplateUtilities.ExtractSnippet(
         assembly,
-        "JsonContextSnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "GET_TYPE_INFO_VALUE_OBJECT");
 
     var messageCheckSnippet = TemplateUtilities.ExtractSnippet(
         assembly,
-        "JsonContextSnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "GET_TYPE_INFO_MESSAGE");
 
     var envelopeCheckSnippet = TemplateUtilities.ExtractSnippet(
         assembly,
-        "JsonContextSnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "GET_TYPE_INFO_MESSAGE_ENVELOPE");
 
     var listCheckSnippet = TemplateUtilities.ExtractSnippet(
         assembly,
-        "JsonContextSnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "GET_TYPE_INFO_LIST");
 
     // Implement IJsonTypeInfoResolver.GetTypeInfo(Type, JsonSerializerOptions)
@@ -429,16 +443,16 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Shared implementation
     sb.AppendLine("private JsonTypeInfo? GetTypeInfoInternal(Type type, JsonSerializerOptions options) {");
     sb.AppendLine("  // Core Whizbang value objects with custom converters");
-    sb.AppendLine(valueObjectCheckSnippet.Replace("__TYPE_NAME__", "MessageId"));
-    sb.AppendLine(valueObjectCheckSnippet.Replace("__TYPE_NAME__", "CorrelationId"));
+    sb.AppendLine(valueObjectCheckSnippet.Replace(PLACEHOLDER_TYPE_NAME, PLACEHOLDER_MESSAGE_ID));
+    sb.AppendLine(valueObjectCheckSnippet.Replace(PLACEHOLDER_TYPE_NAME, "CorrelationId"));
     sb.AppendLine();
 
     // All discovered types (messages + nested types)
     sb.AppendLine("  // Discovered types (messages + nested types)");
     foreach (var type in allTypes) {
       var check = messageCheckSnippet
-          .Replace("__FULLY_QUALIFIED_NAME__", type.FullyQualifiedName)
-          .Replace("__SIMPLE_NAME__", type.SimpleName);
+          .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, type.FullyQualifiedName)
+          .Replace(PLACEHOLDER_SIMPLE_NAME, type.SimpleName);
       sb.AppendLine(check);
       sb.AppendLine();
     }
@@ -447,8 +461,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine("  // MessageEnvelope<T> for discovered message types");
     foreach (var type in allTypes.Where(t => t.IsCommand || t.IsEvent)) {
       var check = envelopeCheckSnippet
-          .Replace("__FULLY_QUALIFIED_NAME__", type.FullyQualifiedName)
-          .Replace("__SIMPLE_NAME__", type.SimpleName);
+          .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, type.FullyQualifiedName)
+          .Replace(PLACEHOLDER_SIMPLE_NAME, type.SimpleName);
       sb.AppendLine(check);
       sb.AppendLine();
     }
@@ -478,12 +492,12 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Load helper snippets
     var createPropertySnippet = TemplateUtilities.ExtractSnippet(
         assembly,
-        "JsonContextSnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "HELPER_CREATE_PROPERTY");
 
     var getOrCreateTypeInfoSnippet = TemplateUtilities.ExtractSnippet(
         assembly,
-        "JsonContextSnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "HELPER_GET_OR_CREATE_TYPE_INFO");
 
     sb.AppendLine(createPropertySnippet);
@@ -552,7 +566,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Load snippet
     var coreTypeFactorySnippet = TemplateUtilities.ExtractSnippet(
         assembly,
-        "JsonContextSnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "CORE_TYPE_FACTORY");
 
     // MessageId factory - use custom AOT-compatible converter
@@ -574,12 +588,12 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Load snippets
     var propertyCreationSnippet = TemplateUtilities.ExtractSnippet(
         assembly,
-        "JsonContextSnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "PROPERTY_CREATION_CALL");
 
     var parameterInfoSnippet = TemplateUtilities.ExtractSnippet(
         assembly,
-        "JsonContextSnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "PARAMETER_INFO_VALUES");
 
     foreach (var message in messages) {
@@ -596,11 +610,11 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
             : $"(obj, value) => (({message.FullyQualifiedName})obj).{prop.Name} = value,";
 
         var propertyCode = propertyCreationSnippet
-            .Replace("__INDEX__", i.ToString(CultureInfo.InvariantCulture))
-            .Replace("__PROPERTY_TYPE__", prop.Type)
-            .Replace("__PROPERTY_NAME__", prop.Name)
-            .Replace("__MESSAGE_TYPE__", message.FullyQualifiedName)
-            .Replace("__SETTER__", setter);
+            .Replace(PLACEHOLDER_INDEX, i.ToString(CultureInfo.InvariantCulture))
+            .Replace(PLACEHOLDER_PROPERTY_TYPE, prop.Type)
+            .Replace(PLACEHOLDER_PROPERTY_NAME, prop.Name)
+            .Replace(PLACEHOLDER_MESSAGE_TYPE, message.FullyQualifiedName)
+            .Replace(PLACEHOLDER_SETTER, setter);
 
         sb.AppendLine(propertyCode);
         sb.AppendLine();
@@ -614,9 +628,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         for (int i = 0; i < message.Properties.Length; i++) {
           var prop = message.Properties[i];
           var parameterCode = parameterInfoSnippet
-              .Replace("__INDEX__", i.ToString(CultureInfo.InvariantCulture))
-              .Replace("__PARAMETER_NAME__", prop.Name)
-              .Replace("__PROPERTY_TYPE__", _getTypeOfExpression(prop));
+              .Replace(PLACEHOLDER_INDEX, i.ToString(CultureInfo.InvariantCulture))
+              .Replace(PLACEHOLDER_PARAMETER_NAME, prop.Name)
+              .Replace(PLACEHOLDER_PROPERTY_TYPE, _getTypeOfExpression(prop));
 
           sb.AppendLine(parameterCode);
         }
@@ -642,9 +656,9 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         for (int i = 0; i < message.Properties.Length; i++) {
           var prop = message.Properties[i];
           var parameterCode = parameterInfoSnippet
-              .Replace("__INDEX__", i.ToString(CultureInfo.InvariantCulture))
-              .Replace("__PARAMETER_NAME__", prop.Name)
-              .Replace("__PROPERTY_TYPE__", _getTypeOfExpression(prop));
+              .Replace(PLACEHOLDER_INDEX, i.ToString(CultureInfo.InvariantCulture))
+              .Replace(PLACEHOLDER_PARAMETER_NAME, prop.Name)
+              .Replace(PLACEHOLDER_PROPERTY_TYPE, _getTypeOfExpression(prop));
 
           sb.AppendLine(parameterCode);
         }
@@ -682,12 +696,12 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Load snippets
     var propertyCreationSnippet = TemplateUtilities.ExtractSnippet(
         assembly,
-        "JsonContextSnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "PROPERTY_CREATION_CALL");
 
     var parameterInfoSnippet = TemplateUtilities.ExtractSnippet(
         assembly,
-        "JsonContextSnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "PARAMETER_INFO_VALUES");
 
     foreach (var message in messages) {
@@ -699,31 +713,31 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
       // Property 0: MessageId using snippet
       var messageIdProperty = propertyCreationSnippet
-          .Replace("__INDEX__", "0")
-          .Replace("__PROPERTY_TYPE__", "MessageId")
-          .Replace("__PROPERTY_NAME__", "MessageId")
-          .Replace("__MESSAGE_TYPE__", $"MessageEnvelope<{message.FullyQualifiedName}>")
-          .Replace("__SETTER__", "null,  // MessageEnvelope uses constructor, no setter needed");
+          .Replace(PLACEHOLDER_INDEX, "0")
+          .Replace(PLACEHOLDER_PROPERTY_TYPE, "MessageId")
+          .Replace(PLACEHOLDER_PROPERTY_NAME, "MessageId")
+          .Replace(PLACEHOLDER_MESSAGE_TYPE, $"MessageEnvelope<{message.FullyQualifiedName}>")
+          .Replace(PLACEHOLDER_SETTER, "null,  // MessageEnvelope uses constructor, no setter needed");
       sb.AppendLine(messageIdProperty);
       sb.AppendLine();
 
       // Property 1: Payload using snippet
       var payloadProperty = propertyCreationSnippet
-          .Replace("__INDEX__", "1")
-          .Replace("__PROPERTY_TYPE__", message.FullyQualifiedName)
-          .Replace("__PROPERTY_NAME__", "Payload")
-          .Replace("__MESSAGE_TYPE__", $"MessageEnvelope<{message.FullyQualifiedName}>")
-          .Replace("__SETTER__", "null,  // MessageEnvelope uses constructor, no setter needed");
+          .Replace(PLACEHOLDER_INDEX, "1")
+          .Replace(PLACEHOLDER_PROPERTY_TYPE, message.FullyQualifiedName)
+          .Replace(PLACEHOLDER_PROPERTY_NAME, "Payload")
+          .Replace(PLACEHOLDER_MESSAGE_TYPE, $"MessageEnvelope<{message.FullyQualifiedName}>")
+          .Replace(PLACEHOLDER_SETTER, "null,  // MessageEnvelope uses constructor, no setter needed");
       sb.AppendLine(payloadProperty);
       sb.AppendLine();
 
       // Property 2: Hops using snippet
       var hopsProperty = propertyCreationSnippet
-          .Replace("__INDEX__", "2")
-          .Replace("__PROPERTY_TYPE__", "List<MessageHop>")
-          .Replace("__PROPERTY_NAME__", "Hops")
-          .Replace("__MESSAGE_TYPE__", $"MessageEnvelope<{message.FullyQualifiedName}>")
-          .Replace("__SETTER__", "null,  // MessageEnvelope uses constructor, no setter needed");
+          .Replace(PLACEHOLDER_INDEX, "2")
+          .Replace(PLACEHOLDER_PROPERTY_TYPE, "List<MessageHop>")
+          .Replace(PLACEHOLDER_PROPERTY_NAME, "Hops")
+          .Replace(PLACEHOLDER_MESSAGE_TYPE, $"MessageEnvelope<{message.FullyQualifiedName}>")
+          .Replace(PLACEHOLDER_SETTER, "null,  // MessageEnvelope uses constructor, no setter needed");
       sb.AppendLine(hopsProperty);
       sb.AppendLine();
 
@@ -731,21 +745,21 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       sb.AppendLine("  var ctorParams = new JsonParameterInfoValues[3];");
 
       var messageIdParam = parameterInfoSnippet
-          .Replace("__INDEX__", "0")
-          .Replace("__PARAMETER_NAME__", "messageId")
-          .Replace("__PROPERTY_TYPE__", "MessageId");
+          .Replace(PLACEHOLDER_INDEX, "0")
+          .Replace(PLACEHOLDER_PARAMETER_NAME, "messageId")
+          .Replace(PLACEHOLDER_PROPERTY_TYPE, "MessageId");
       sb.AppendLine(messageIdParam);
 
       var payloadParam = parameterInfoSnippet
-          .Replace("__INDEX__", "1")
-          .Replace("__PARAMETER_NAME__", "payload")
-          .Replace("__PROPERTY_TYPE__", message.FullyQualifiedName);
+          .Replace(PLACEHOLDER_INDEX, "1")
+          .Replace(PLACEHOLDER_PARAMETER_NAME, "payload")
+          .Replace(PLACEHOLDER_PROPERTY_TYPE, message.FullyQualifiedName);
       sb.AppendLine(payloadParam);
 
       var hopsParam = parameterInfoSnippet
-          .Replace("__INDEX__", "2")
-          .Replace("__PARAMETER_NAME__", "hops")
-          .Replace("__PROPERTY_TYPE__", "List<MessageHop>");
+          .Replace(PLACEHOLDER_INDEX, "2")
+          .Replace(PLACEHOLDER_PARAMETER_NAME, "hops")
+          .Replace(PLACEHOLDER_PROPERTY_TYPE, "List<MessageHop>");
       sb.AppendLine(hopsParam);
       sb.AppendLine();
 
@@ -775,7 +789,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     // Load snippet
     var createOptionsSnippet = TemplateUtilities.ExtractSnippet(
         assembly,
-        "JsonContextSnippets.cs",
+        TEMPLATE_SNIPPET_FILE,
         "HELPER_CREATE_OPTIONS");
 
     // Get the actual assembly name from the compilation
@@ -1075,7 +1089,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine("#pragma warning disable CS0169  // Field is never used");
     sb.AppendLine();
 
-    var snippet = TemplateUtilities.ExtractSnippet(assembly, "JsonContextSnippets.cs", "LAZY_FIELD_LIST");
+    var snippet = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "LAZY_FIELD_LIST");
 
     foreach (var listType in listTypes) {
       var field = snippet
@@ -1101,7 +1115,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     }
 
     var sb = new System.Text.StringBuilder();
-    var snippet = TemplateUtilities.ExtractSnippet(assembly, "JsonContextSnippets.cs", "LIST_TYPE_FACTORY");
+    var snippet = TemplateUtilities.ExtractSnippet(assembly, TEMPLATE_SNIPPET_FILE, "LIST_TYPE_FACTORY");
 
     foreach (var listType in listTypes) {
       var factory = snippet
