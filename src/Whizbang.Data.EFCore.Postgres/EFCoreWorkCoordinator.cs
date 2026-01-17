@@ -38,8 +38,7 @@ namespace Whizbang.Data.EFCore.Postgres;
 public class EFCoreWorkCoordinator<TDbContext>(
   TDbContext dbContext,
   JsonSerializerOptions jsonOptions,
-  ILogger<EFCoreWorkCoordinator<TDbContext>>? logger = null,
-  string? connectionString = null
+  ILogger<EFCoreWorkCoordinator<TDbContext>>? logger = null
 ) : IWorkCoordinator
   where TDbContext : DbContext {
   private const string DEFAULT_SCHEMA = "public";
@@ -47,10 +46,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
   private readonly TDbContext _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
   private readonly JsonSerializerOptions _jsonOptions = jsonOptions ?? throw new ArgumentNullException(nameof(jsonOptions));
   private readonly ILogger<EFCoreWorkCoordinator<TDbContext>>? _logger = logger;
-
-  private readonly string _connectionString = connectionString
-    ?? dbContext.Database.GetConnectionString()
-    ?? throw new InvalidOperationException("DbContext must have a connection string configured");
 
   public async Task<WorkBatch> ProcessWorkBatchAsync(
     ProcessWorkBatchRequest request,
@@ -501,32 +496,6 @@ public class EFCoreWorkCoordinator<TDbContext>(
     var typeInfo = _jsonOptions.GetTypeInfo(typeof(Guid[]))
       ?? throw new InvalidOperationException("No JsonTypeInfo found for Guid[]. Ensure the type is registered in InfrastructureJsonContext.");
     return JsonSerializer.Serialize(messageIds, typeInfo);
-  }
-
-  /// <summary>
-  /// Serializes receptor processing completions to JSON for database storage.
-  /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync</tests>
-  private string _serializeReceptorCompletions(ReceptorProcessingCompletion[] completions) {
-    if (completions.Length == 0) {
-      return "[]";
-    }
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(ReceptorProcessingCompletion[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for ReceptorProcessingCompletion[]. Ensure the type is registered in InfrastructureJsonContext.");
-    return JsonSerializer.Serialize(completions, typeInfo);
-  }
-
-  /// <summary>
-  /// Serializes receptor processing failures to JSON for database storage.
-  /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCoreWorkCoordinatorTests.cs:ProcessWorkBatchAsync_NoWork_UpdatesHeartbeatAsync</tests>
-  private string _serializeReceptorFailures(ReceptorProcessingFailure[] failures) {
-    if (failures.Length == 0) {
-      return "[]";
-    }
-    var typeInfo = _jsonOptions.GetTypeInfo(typeof(ReceptorProcessingFailure[]))
-      ?? throw new InvalidOperationException("No JsonTypeInfo found for ReceptorProcessingFailure[]. Ensure the type is registered in InfrastructureJsonContext.");
-    return JsonSerializer.Serialize(failures, typeInfo);
   }
 
   /// <summary>
