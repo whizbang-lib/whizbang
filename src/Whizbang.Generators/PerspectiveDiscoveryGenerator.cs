@@ -122,10 +122,9 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     var streamKeyPropertyName = _findStreamKeyProperty(modelType);
 
     var className = classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-    var results = new List<PerspectiveInfo>();
 
     // Generate one PerspectiveInfo per implemented interface
-    foreach (var perspectiveInterface in perspectiveInterfaces) {
+    var results = perspectiveInterfaces.Select(perspectiveInterface => {
       // Extract all type arguments: [TModel, TEvent1, TEvent2, ...]
       // Use FullyQualifiedFormat for CODE GENERATION (includes global:: prefix)
       var typeArguments = perspectiveInterface.TypeArguments
@@ -147,7 +146,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       // Validate event types and extract StreamKey information
       var (validationErrors, eventStreamKeys) = _validateAndExtractEventInfo(eventTypeSymbols);
 
-      results.Add(new PerspectiveInfo(
+      return new PerspectiveInfo(
           ClassName: className,
           InterfaceTypeArguments: typeArguments,
           EventTypes: eventTypes,
@@ -155,10 +154,10 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
           StreamKeyPropertyName: streamKeyPropertyName,
           EventStreamKeys: eventStreamKeys.Count > 0 ? eventStreamKeys.ToArray() : null,
           EventValidationErrors: validationErrors.Count > 0 ? validationErrors.ToArray() : null
-      ));
-    }
+      );
+    }).ToArray();
 
-    return results.ToArray();
+    return results;
   }
 
   /// <summary>

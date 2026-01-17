@@ -276,32 +276,27 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
       List<INamedTypeSymbol> singleStreamInterfaces,
       List<INamedTypeSymbol> globalInterfaces) {
 
-    var eventTypes = new List<string>();
-    var eventTypeSymbols = new List<ITypeSymbol>();
-
     // Extract from single-stream: skip TModel (index 0), all others are events
-    foreach (var iface in singleStreamInterfaces) {
-      for (int i = 1; i < iface.TypeArguments.Length; i++) {
-        var eventTypeSymbol = iface.TypeArguments[i];
-        var eventType = eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-        if (!eventTypes.Contains(eventType)) {
-          eventTypes.Add(eventType);
-          eventTypeSymbols.Add(eventTypeSymbol);
-        }
-      }
-    }
+    var singleStreamEvents = singleStreamInterfaces
+        .SelectMany(iface => iface.TypeArguments.Skip(1))
+        .Select(symbol => (symbol, fqn: symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)))
+        .GroupBy(x => x.fqn)
+        .Select(g => g.First());
 
     // Extract from global: skip TModel (index 0) and TPartitionKey (index 1), rest are events
-    foreach (var iface in globalInterfaces) {
-      for (int i = 2; i < iface.TypeArguments.Length; i++) {
-        var eventTypeSymbol = iface.TypeArguments[i];
-        var eventType = eventTypeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-        if (!eventTypes.Contains(eventType)) {
-          eventTypes.Add(eventType);
-          eventTypeSymbols.Add(eventTypeSymbol);
-        }
-      }
-    }
+    var globalEvents = globalInterfaces
+        .SelectMany(iface => iface.TypeArguments.Skip(2))
+        .Select(symbol => (symbol, fqn: symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)))
+        .GroupBy(x => x.fqn)
+        .Select(g => g.First());
+
+    // Combine and deduplicate all events
+    var allEvents = singleStreamEvents.Concat(globalEvents)
+        .GroupBy(x => x.fqn)
+        .Select(g => g.First())
+        .ToList();
+    var eventTypes = allEvents.Select(x => x.fqn).ToList();
+    var eventTypeSymbols = allEvents.Select(x => x.symbol).ToList();
 
     return (eventTypes, eventTypeSymbols);
   }

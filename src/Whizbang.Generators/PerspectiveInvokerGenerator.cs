@@ -174,16 +174,14 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
     );
 
     // Generate routing code
-    var routingCode = new StringBuilder();
-
-    foreach (var group in perspectivesByEvent) {
+    var routingCode = string.Join("\n", perspectivesByEvent.Select(group => {
       var eventType = group.Key;
       var generatedCode = routingSnippet
           .Replace("__EVENT_TYPE__", eventType)
           .Replace("__PERSPECTIVE_INTERFACE__", PERSPECTIVE_INTERFACE_NAME);
 
-      routingCode.AppendLine(TemplateUtilities.IndentCode(generatedCode, "    "));
-    }
+      return TemplateUtilities.IndentCode(generatedCode, "    ");
+    }));
 
     // Replace template regions
     var result = template;

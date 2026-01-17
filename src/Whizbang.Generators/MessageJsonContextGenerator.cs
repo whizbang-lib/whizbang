@@ -541,15 +541,16 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine("  var typeInfo = assemblyQualifiedTypeName switch {");
 
     // Only generate mappings for actual message types (commands/events), not nested types
-    var messageTypes = allTypes.Where(t => t.IsCommand || t.IsEvent).ToList();
-    foreach (var type in messageTypes) {
+    var messageTypes = allTypes.Where(t => t.IsCommand || t.IsEvent);
+    var typeMappings = messageTypes.Select(type => {
       // Get assembly-qualified name using the ACTUAL compilation assembly name
       // FullyQualifiedName is like "global::MyApp.Commands.CreateOrder"
       // We need "MyApp.Commands.CreateOrder, MyApp.Contracts" (actual assembly name)
       var typeNameWithoutGlobal = type.FullyQualifiedName.Replace(PLACEHOLDER_GLOBAL, "");
 
-      sb.AppendLine($"    \"{typeNameWithoutGlobal}, {actualAssemblyName}\" => context.GetTypeInfoInternal(typeof({type.FullyQualifiedName}), options),");
-    }
+      return $"    \"{typeNameWithoutGlobal}, {actualAssemblyName}\" => context.GetTypeInfoInternal(typeof({type.FullyQualifiedName}), options),";
+    });
+    sb.AppendLine(string.Join("\n", typeMappings));
 
     sb.AppendLine("    _ => (JsonTypeInfo?)null  // Type not found in this assembly");
     sb.AppendLine("  };");
@@ -878,14 +879,15 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       "global::System.Collections.Generic.IEnumerable<"
     };
 
-    foreach (var genericPrefix in genericTypes) {
-      if (fullyQualifiedTypeName.StartsWith(genericPrefix, StringComparison.Ordinal)) {
-        // Extract the type argument between < and >
-        var startIndex = genericPrefix.Length;
-        var endIndex = fullyQualifiedTypeName.LastIndexOf('>');
-        if (endIndex > startIndex) {
-          return fullyQualifiedTypeName[startIndex..endIndex];
-        }
+    var matchingPrefix = genericTypes.FirstOrDefault(prefix =>
+        fullyQualifiedTypeName.StartsWith(prefix, StringComparison.Ordinal));
+
+    if (matchingPrefix != null) {
+      // Extract the type argument between < and >
+      var startIndex = matchingPrefix.Length;
+      var endIndex = fullyQualifiedTypeName.LastIndexOf('>');
+      if (endIndex > startIndex) {
+        return fullyQualifiedTypeName[startIndex..endIndex];
       }
     }
 
@@ -929,52 +931,37 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private static ImmutableArray<WhizbangIdTypeInfo> _discoverWhizbangIdConverters(
       ImmutableArray<JsonMessageTypeInfo> allTypes) {
 
-    var converters = new Dictionary<string, WhizbangIdTypeInfo>();
+    var converters = allTypes
+        .SelectMany(type => type.Properties)
+        .Where(property => !_isPrimitiveOrFrameworkType(property.Type))
+        .Where(property => _extractElementType(property.Type) == null)
+        .Select(property => {
+          // Extract simple type name from fully qualified name
+          // e.g., "global::ECommerce.Contracts.Commands.ProductId" -> "ProductId"
+          var parts = property.Type.Replace(PLACEHOLDER_GLOBAL, "").Split('.');
+          var typeName = parts[^1];
+          return (property, parts, typeName);
+        })
+        .Where(x => x.typeName.EndsWith("Id", StringComparison.Ordinal))
+        .Select(x => {
+          // Infer converter name: {TypeName}JsonConverter
+          var converterTypeName = $"{x.typeName}JsonConverter";
 
-    foreach (var type in allTypes) {
-      foreach (var property in type.Properties) {
-        // Skip primitive and framework types
-        if (_isPrimitiveOrFrameworkType(property.Type)) {
-          continue;
-        }
+          // Infer converter namespace (same as the property type)
+          var propertyTypeNamespace = string.Join(".", x.parts.Take(x.parts.Length - 1));
+          var converterFullName = $"{propertyTypeNamespace}.{converterTypeName}";
 
-        // Skip collection types
-        if (_extractElementType(property.Type) != null) {
-          continue;
-        }
+          // Add the converter (optimistic registration - if it doesn't exist, compilation will fail with clear error)
+          return new WhizbangIdTypeInfo(
+              TypeName: converterTypeName,
+              FullyQualifiedTypeName: converterFullName
+          );
+        })
+        .GroupBy(c => c.TypeName)
+        .Select(g => g.First())
+        .ToImmutableArray();
 
-        // Extract simple type name from fully qualified name
-        // e.g., "global::ECommerce.Contracts.Commands.ProductId" -> "ProductId"
-        var parts = property.Type.Replace(PLACEHOLDER_GLOBAL, "").Split('.');
-        var typeName = parts[^1];
-
-        // Heuristic: If type name ends with "Id", it's likely a WhizbangId type with a generated converter
-        // This includes types like ProductId, OrderId, CustomerId, MessageId, CorrelationId, etc.
-        if (!typeName.EndsWith("Id", StringComparison.Ordinal)) {
-          continue;
-        }
-
-        // Infer converter name: {TypeName}JsonConverter
-        var converterTypeName = $"{typeName}JsonConverter";
-
-        // Check if converter already discovered
-        if (converters.ContainsKey(converterTypeName)) {
-          continue;
-        }
-
-        // Infer converter namespace (same as the property type)
-        var propertyTypeNamespace = string.Join(".", parts.Take(parts.Length - 1));
-        var converterFullName = $"{propertyTypeNamespace}.{converterTypeName}";
-
-        // Add the converter (optimistic registration - if it doesn't exist, compilation will fail with clear error)
-        converters[converterTypeName] = new WhizbangIdTypeInfo(
-            TypeName: converterTypeName,
-            FullyQualifiedTypeName: converterFullName
-        );
-      }
-    }
-
-    return converters.Values.ToImmutableArray();
+    return converters;
   }
 
   /// <summary>
@@ -1175,15 +1162,16 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine();
     sb.AppendLine("  // Register type name mappings for cross-assembly resolution");
 
-    foreach (var message in messageTypes) {
+    var typeRegistrations = messageTypes.Select(message => {
       var typeNameWithoutGlobal = message.FullyQualifiedName.Replace(PLACEHOLDER_GLOBAL, "");
       var assemblyQualifiedName = $"{typeNameWithoutGlobal}, {actualAssemblyName}";
 
-      sb.AppendLine($"  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(");
-      sb.AppendLine($"    \"{assemblyQualifiedName}\",");
-      sb.AppendLine($"    typeof({message.FullyQualifiedName}),");
-      sb.AppendLine($"    MessageJsonContext.Default);");
-    }
+      return $"  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n" +
+             $"    \"{assemblyQualifiedName}\",\n" +
+             $"    typeof({message.FullyQualifiedName}),\n" +
+             $"    MessageJsonContext.Default);";
+    });
+    sb.AppendLine(string.Join("\n", typeRegistrations));
   }
 
   /// <summary>
@@ -1201,14 +1189,15 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine();
     sb.AppendLine("  // Register MessageEnvelope<T> wrapper types for transport deserialization");
 
-    foreach (var message in messageTypes) {
+    var envelopeRegistrations = messageTypes.Select(message => {
       var typeNameWithoutGlobal = message.FullyQualifiedName.Replace(PLACEHOLDER_GLOBAL, "");
       var envelopeTypeName = $"Whizbang.Core.Observability.MessageEnvelope`1[[{typeNameWithoutGlobal}, {actualAssemblyName}]], Whizbang.Core";
 
-      sb.AppendLine($"  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(");
-      sb.AppendLine($"    \"{envelopeTypeName}\",");
-      sb.AppendLine($"    typeof(global::Whizbang.Core.Observability.MessageEnvelope<{message.FullyQualifiedName}>),");
-      sb.AppendLine($"    MessageJsonContext.Default);");
-    }
+      return $"  global::Whizbang.Core.Serialization.JsonContextRegistry.RegisterTypeName(\n" +
+             $"    \"{envelopeTypeName}\",\n" +
+             $"    typeof(global::Whizbang.Core.Observability.MessageEnvelope<{message.FullyQualifiedName}>),\n" +
+             $"    MessageJsonContext.Default);";
+    });
+    sb.AppendLine(string.Join("\n", envelopeRegistrations));
   }
 }
