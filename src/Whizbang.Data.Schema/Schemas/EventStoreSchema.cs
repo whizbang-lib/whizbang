@@ -89,7 +89,7 @@ public static class EventStoreSchema {
       new ColumnDefinition(
         Name: Columns.SEQUENCE_NUMBER,
         DataType: WhizbangDataType.BIG_INT,
-        Nullable: false
+        Nullable: true  // TODO: Should use BIGSERIAL or sequence for auto-generation
       ),
       new ColumnDefinition(
         Name: Columns.VERSION,
