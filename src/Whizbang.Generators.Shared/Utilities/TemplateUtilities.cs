@@ -62,7 +62,8 @@ public static class TemplateUtilities {
     // #endregion      - Match '#endregion'
     var pattern = $@"(\s*)#region\s+{Regex.Escape(regionName)}\s*(?:[^\r\n]*)[\r\n]+.*?\s*#endregion";
 
-    var match = Regex.Match(template, pattern, RegexOptions.Singleline);
+    // Timeout added to prevent ReDoS attacks (S6444)
+    var match = Regex.Match(template, pattern, RegexOptions.Singleline, TimeSpan.FromSeconds(1));
     if (!match.Success) {
       // Fallback: region not found, return original
       return template;
@@ -78,7 +79,8 @@ public static class TemplateUtilities {
     var escapedReplacement = indentedReplacement.Replace("$", "$$");
 
     // Replace the entire region block with the indented code
-    return Regex.Replace(template, pattern, escapedReplacement, RegexOptions.Singleline);
+    // Timeout added to prevent ReDoS attacks (S6444)
+    return Regex.Replace(template, pattern, escapedReplacement, RegexOptions.Singleline, TimeSpan.FromSeconds(1));
   }
 
   /// <summary>
@@ -121,7 +123,8 @@ public static class TemplateUtilities {
     // Pattern to extract content between #region and #endregion
     var pattern = $@"(\s*)#region\s+{Regex.Escape(regionName)}[^\r\n]*[\r\n]+(.*?)[\r\n]+\s*#endregion";
 
-    var match = Regex.Match(template, pattern, RegexOptions.Singleline);
+    // Timeout added to prevent ReDoS attacks (S6444)
+    var match = Regex.Match(template, pattern, RegexOptions.Singleline, TimeSpan.FromSeconds(1));
     if (!match.Success) {
       return $"// ERROR: Snippet region '{regionName}' not found in {templateName}";
     }
