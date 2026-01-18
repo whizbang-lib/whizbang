@@ -10,7 +10,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Uses WhizbangDbContext attribute to trigger source generation of core entity configurations.
 /// No perspectives needed - just the core infrastructure entities.
 /// </summary>
-[WhizbangDbContext]
+[WhizbangDbContext(Schema = "public")]
 public partial class WorkCoordinationDbContext : DbContext {
   public WorkCoordinationDbContext(DbContextOptions<WorkCoordinationDbContext> options) : base(options) { }
 

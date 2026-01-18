@@ -46,7 +46,8 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
   public string BuildCreateTable(TableDefinition table, string prefix, string? schema = null) {
     var sb = new StringBuilder();
     var tableName = $"{prefix}{table.Name}";
-    var qualifiedTableName = string.IsNullOrEmpty(schema) ? tableName : $"{schema}.{tableName}";
+    // "public" is the default Postgres schema - no qualification needed
+    var qualifiedTableName = string.IsNullOrEmpty(schema) || schema == "public" ? tableName : $"{schema}.{tableName}";
 
     sb.AppendLine($"CREATE TABLE IF NOT EXISTS {qualifiedTableName} (");
 
@@ -130,7 +131,8 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
   /// <tests>tests/Whizbang.Data.Schema.Tests/PostgresSchemaBuilderTests.cs:BuildCreateIndex_UniqueIndex_GeneratesUniqueIndexAsync</tests>
   public string BuildCreateIndex(IndexDefinition index, string tableName, string prefix, string? schema = null) {
     var fullTableName = $"{prefix}{tableName}";
-    var qualifiedTableName = string.IsNullOrEmpty(schema) ? fullTableName : $"{schema}.{fullTableName}";
+    // "public" is the default Postgres schema - no qualification needed
+    var qualifiedTableName = string.IsNullOrEmpty(schema) || schema == "public" ? fullTableName : $"{schema}.{fullTableName}";
     var unique = index.Unique ? "UNIQUE " : "";
     var columns = string.Join(", ", index.Columns);
     var whereClause = index.WhereClause != null ? $" WHERE {index.WhereClause}" : "";
@@ -147,7 +149,8 @@ public class PostgresSchemaBuilder : ISchemaBuilder {
   /// <returns>Complete CREATE SEQUENCE statement</returns>
   public string BuildCreateSequence(SequenceDefinition sequence, string prefix, string? schema = null) {
     var sequenceName = $"{prefix}{sequence.Name}";
-    var qualifiedSequenceName = string.IsNullOrEmpty(schema) ? sequenceName : $"{schema}.{sequenceName}";
+    // "public" is the default Postgres schema - no qualification needed
+    var qualifiedSequenceName = string.IsNullOrEmpty(schema) || schema == "public" ? sequenceName : $"{schema}.{sequenceName}";
     return $"CREATE SEQUENCE IF NOT EXISTS {qualifiedSequenceName} START WITH {sequence.StartValue} INCREMENT BY {sequence.IncrementBy};";
   }
 

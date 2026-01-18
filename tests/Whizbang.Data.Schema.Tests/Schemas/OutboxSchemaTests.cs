@@ -26,8 +26,8 @@ public class OutboxSchemaTests {
     // Arrange & Act
     var columns = OutboxSchema.Table.Columns;
 
-    // Assert - Verify column count
-    await Assert.That(columns).Count().IsEqualTo(19);
+    // Assert - Verify column count (20 columns total)
+    await Assert.That(columns).Count().IsEqualTo(20);
 
     // Verify each column definition
     var messageId = columns[0];
@@ -40,25 +40,31 @@ public class OutboxSchemaTests {
     await Assert.That(destination.Name).IsEqualTo("destination");
     await Assert.That(destination.DataType).IsEqualTo(WhizbangDataType.STRING);
     await Assert.That(destination.MaxLength).IsEqualTo(500);
-    await Assert.That(destination.Nullable).IsFalse();
+    await Assert.That(destination.Nullable).IsTrue();  // Events don't have destinations, only commands do
 
-    var eventType = columns[2];
-    await Assert.That(eventType.Name).IsEqualTo("event_type");
-    await Assert.That(eventType.DataType).IsEqualTo(WhizbangDataType.STRING);
-    await Assert.That(eventType.MaxLength).IsEqualTo(500);
-    await Assert.That(eventType.Nullable).IsFalse();
+    var messageType = columns[2];
+    await Assert.That(messageType.Name).IsEqualTo("message_type");
+    await Assert.That(messageType.DataType).IsEqualTo(WhizbangDataType.STRING);
+    await Assert.That(messageType.MaxLength).IsEqualTo(500);
+    await Assert.That(messageType.Nullable).IsFalse();
 
-    var eventData = columns[3];
+    var envelopeType = columns[3];
+    await Assert.That(envelopeType.Name).IsEqualTo("envelope_type");
+    await Assert.That(envelopeType.DataType).IsEqualTo(WhizbangDataType.STRING);
+    await Assert.That(envelopeType.MaxLength).IsEqualTo(500);
+    await Assert.That(envelopeType.Nullable).IsTrue();
+
+    var eventData = columns[4];
     await Assert.That(eventData.Name).IsEqualTo("event_data");
     await Assert.That(eventData.DataType).IsEqualTo(WhizbangDataType.JSON);
     await Assert.That(eventData.Nullable).IsFalse();
 
-    var metadata = columns[4];
+    var metadata = columns[5];
     await Assert.That(metadata.Name).IsEqualTo("metadata");
     await Assert.That(metadata.DataType).IsEqualTo(WhizbangDataType.JSON);
     await Assert.That(metadata.Nullable).IsFalse();
 
-    var scope = columns[5];
+    var scope = columns[6];
     await Assert.That(scope.Name).IsEqualTo("scope");
     await Assert.That(scope.DataType).IsEqualTo(WhizbangDataType.JSON);
     await Assert.That(scope.Nullable).IsTrue();
@@ -123,7 +129,7 @@ public class OutboxSchemaTests {
     // Arrange & Act - Get all column constants
     var messageId = OutboxSchema.Columns.MESSAGE_ID;
     var destination = OutboxSchema.Columns.DESTINATION;
-    var eventType = OutboxSchema.Columns.EVENT_TYPE;
+    var messageType = OutboxSchema.Columns.MESSAGE_TYPE;
     var eventData = OutboxSchema.Columns.EVENT_DATA;
     var metadata = OutboxSchema.Columns.METADATA;
     var scope = OutboxSchema.Columns.SCOPE;
@@ -135,7 +141,7 @@ public class OutboxSchemaTests {
     // Assert - Verify constants match column names
     await Assert.That(messageId).IsEqualTo("message_id");
     await Assert.That(destination).IsEqualTo("destination");
-    await Assert.That(eventType).IsEqualTo("event_type");
+    await Assert.That(messageType).IsEqualTo("message_type");
     await Assert.That(eventData).IsEqualTo("event_data");
     await Assert.That(metadata).IsEqualTo("metadata");
     await Assert.That(scope).IsEqualTo("scope");

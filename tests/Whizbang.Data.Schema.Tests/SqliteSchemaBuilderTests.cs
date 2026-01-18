@@ -204,9 +204,9 @@ public class SqliteSchemaBuilderTests : ISchemaBuilderContractTests {
     await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_outbox_published_at");
 
     // EventStore indexes
+    await Assert.That(sql).Contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_event_store_stream");
     await Assert.That(sql).Contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_event_store_aggregate");
     await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_event_store_aggregate_type");
-    await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_event_store_sequence");
 
     // RequestResponse indexes
     await Assert.That(sql).Contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_request_response_correlation");
@@ -224,7 +224,7 @@ public class SqliteSchemaBuilderTests : ISchemaBuilderContractTests {
 
     // Assert
     await Assert.That(sql).Contains("message_id TEXT NOT NULL PRIMARY KEY");
-    await Assert.That(sql).Contains("event_type TEXT NOT NULL");
+    await Assert.That(sql).Contains("message_type TEXT NOT NULL");
     await Assert.That(sql).Contains("event_data TEXT NOT NULL");
     await Assert.That(sql).Contains("metadata TEXT NOT NULL");
     await Assert.That(sql).Contains("scope TEXT");
@@ -240,8 +240,8 @@ public class SqliteSchemaBuilderTests : ISchemaBuilderContractTests {
     // Act
     var sql = SqliteSchemaBuilder.Instance.BuildInfrastructureSchema(config);
 
-    // Assert
-    await Assert.That(sql).Contains("status TEXT NOT NULL DEFAULT 'Pending'");
+    // Assert - OutboxSchema uses integer status with bitflags
+    await Assert.That(sql).Contains("status INTEGER NOT NULL DEFAULT 1");
     await Assert.That(sql).Contains("attempts INTEGER NOT NULL DEFAULT 0");
   }
 

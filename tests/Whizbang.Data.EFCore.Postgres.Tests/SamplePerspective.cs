@@ -1,3 +1,4 @@
+using System;
 using System.Threading;
 using System.Threading.Tasks;
 using Whizbang.Core;
@@ -10,8 +11,20 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Listens to OrderCreatedEvent and maintains an Order read model.
 /// Generator will discover this and create EF Core configuration for PerspectiveRow&lt;Order&gt;.
 /// </summary>
-public class OrderPerspective(IPerspectiveStore<Order> store) : IPerspectiveFor<Order, SampleOrderCreatedEvent> {
-  private readonly IPerspectiveStore<Order> _store = store;
+public class OrderPerspective : IPerspectiveFor<Order, SampleOrderCreatedEvent> {
+  private readonly IPerspectiveStore<Order>? _store;
+
+  /// <summary>
+  /// Parameterless constructor for generator-based Apply calls.
+  /// </summary>
+  public OrderPerspective() { }
+
+  /// <summary>
+  /// Constructor with store for full Update functionality.
+  /// </summary>
+  public OrderPerspective(IPerspectiveStore<Order> store) {
+    _store = store;
+  }
 
   public Order Apply(Order currentData, SampleOrderCreatedEvent @event) {
     // Create new read model from the event (pure function - no I/O)
@@ -23,6 +36,10 @@ public class OrderPerspective(IPerspectiveStore<Order> store) : IPerspectiveFor<
   }
 
   public async Task Update(SampleOrderCreatedEvent @event, CancellationToken cancellationToken = default) {
+    if (_store == null) {
+      throw new InvalidOperationException("Update requires a store. Use the constructor that accepts IPerspectiveStore<Order>.");
+    }
+
     // Get current model or create new one
     var streamId = @event.OrderId.Value;
     var current = await _store.GetByStreamIdAsync(streamId, cancellationToken) ?? new Order {

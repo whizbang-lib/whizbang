@@ -35,8 +35,7 @@ public class EventStorageFailureHandlingTests {
         IsOrphaned = false,
         Error = null,
         FailureReason = null,
-        PerspectiveName = null,
-        SequenceNumber = null
+        PerspectiveName = null
       },
       // Error row (storage failure)
       new WorkBatchRow {
@@ -57,8 +56,7 @@ public class EventStorageFailureHandlingTests {
         IsOrphaned = false,
         Error = "Event storage failed",
         FailureReason = (int)MessageFailureReason.EventStorageFailure,
-        PerspectiveName = null,
-        SequenceNumber = null
+        PerspectiveName = null
       }
     };
 
@@ -94,8 +92,7 @@ public class EventStorageFailureHandlingTests {
       IsOrphaned = false,
       Error = "Test error message",
       FailureReason = (int)MessageFailureReason.EventStorageFailure,
-      PerspectiveName = null,
-      SequenceNumber = null
+      PerspectiveName = null
     };
 
     // Assert
@@ -146,8 +143,7 @@ public class EventStorageFailureHandlingTests {
       IsOrphaned = false,
       Error = null, // No error
       FailureReason = null, // No failure
-      PerspectiveName = null,
-      SequenceNumber = null
+      PerspectiveName = null
     };
 
     // Assert

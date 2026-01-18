@@ -204,9 +204,9 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
     await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_outbox_published_at");
 
     // EventStore indexes
+    await Assert.That(sql).Contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_event_store_stream");
     await Assert.That(sql).Contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_event_store_aggregate");
     await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_event_store_aggregate_type");
-    await Assert.That(sql).Contains("CREATE INDEX IF NOT EXISTS idx_event_store_sequence");
 
     // RequestResponse indexes
     await Assert.That(sql).Contains("CREATE UNIQUE INDEX IF NOT EXISTS idx_request_response_correlation");
@@ -224,7 +224,7 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
 
     // Assert
     await Assert.That(sql).Contains("message_id UUID NOT NULL PRIMARY KEY");
-    await Assert.That(sql).Contains("event_type VARCHAR(500) NOT NULL");
+    await Assert.That(sql).Contains("message_type VARCHAR(500) NOT NULL");
     await Assert.That(sql).Contains("event_data JSONB NOT NULL");
     await Assert.That(sql).Contains("metadata JSONB NOT NULL");
     await Assert.That(sql).Contains("scope JSONB");
@@ -240,8 +240,8 @@ public class PostgresSchemaBuilderTests : ISchemaBuilderContractTests {
     // Act
     var sql = PostgresSchemaBuilder.Instance.BuildInfrastructureSchema(config);
 
-    // Assert
-    await Assert.That(sql).Contains("status VARCHAR(50) NOT NULL DEFAULT 'Pending'");
+    // Assert - OutboxSchema uses integer status with bitflags
+    await Assert.That(sql).Contains("status INTEGER NOT NULL DEFAULT 1");
     await Assert.That(sql).Contains("attempts INTEGER NOT NULL DEFAULT 0");
   }
 

@@ -105,13 +105,13 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     // Assert
     var events = context.Set<EventStoreRecord>()
       .Where(e => e.StreamId == streamId)
-      .OrderBy(e => e.Sequence)
+      .OrderBy(e => e.Version)
       .ToList();
 
     await Assert.That(events).Count().IsEqualTo(3);
-    await Assert.That(events[0].Sequence).IsEqualTo(0);
-    await Assert.That(events[1].Sequence).IsEqualTo(1);
-    await Assert.That(events[2].Sequence).IsEqualTo(2);
+    await Assert.That(events[0].Version).IsEqualTo(0);
+    await Assert.That(events[1].Version).IsEqualTo(1);
+    await Assert.That(events[2].Version).IsEqualTo(2);
   }
 
   [Test]

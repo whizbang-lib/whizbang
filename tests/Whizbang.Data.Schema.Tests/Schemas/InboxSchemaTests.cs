@@ -42,11 +42,11 @@ public class InboxSchemaTests {
     await Assert.That(handlerName.MaxLength).IsEqualTo(500);
     await Assert.That(handlerName.Nullable).IsFalse();
 
-    var eventType = columns[2];
-    await Assert.That(eventType.Name).IsEqualTo("event_type");
-    await Assert.That(eventType.DataType).IsEqualTo(WhizbangDataType.STRING);
-    await Assert.That(eventType.MaxLength).IsEqualTo(500);
-    await Assert.That(eventType.Nullable).IsFalse();
+    var messageType = columns[2];
+    await Assert.That(messageType.Name).IsEqualTo("message_type");
+    await Assert.That(messageType.DataType).IsEqualTo(WhizbangDataType.STRING);
+    await Assert.That(messageType.MaxLength).IsEqualTo(500);
+    await Assert.That(messageType.Nullable).IsFalse();
 
     var eventData = columns[3];
     await Assert.That(eventData.Name).IsEqualTo("event_data");
@@ -114,7 +114,7 @@ public class InboxSchemaTests {
     // Arrange & Act - Get all column constants
     var messageId = InboxSchema.Columns.MESSAGE_ID;
     var handlerName = InboxSchema.Columns.HANDLER_NAME;
-    var eventType = InboxSchema.Columns.EVENT_TYPE;
+    var messageType = InboxSchema.Columns.MESSAGE_TYPE;
     var eventData = InboxSchema.Columns.EVENT_DATA;
     var metadata = InboxSchema.Columns.METADATA;
     var scope = InboxSchema.Columns.SCOPE;
@@ -133,7 +133,7 @@ public class InboxSchemaTests {
     // Assert - Verify constants match column names
     await Assert.That(messageId).IsEqualTo("message_id");
     await Assert.That(handlerName).IsEqualTo("handler_name");
-    await Assert.That(eventType).IsEqualTo("event_type");
+    await Assert.That(messageType).IsEqualTo("message_type");
     await Assert.That(eventData).IsEqualTo("event_data");
     await Assert.That(metadata).IsEqualTo("metadata");
     await Assert.That(scope).IsEqualTo("scope");

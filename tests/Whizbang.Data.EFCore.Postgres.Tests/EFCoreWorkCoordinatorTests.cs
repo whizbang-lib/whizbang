@@ -1202,12 +1202,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       renewInboxLeaseIds: []);
 
     // Assert - If instance 1 claimed any messages, instance 2 should NOT claim later messages in the same stream
-    var claimed1 = result1.OutboxWork.OrderBy(w => w.SequenceOrder).ToList();
-    var claimed2 = result2.OutboxWork.OrderBy(w => w.SequenceOrder).ToList();
+    // Use MessageId for ordering (UUIDv7 IDs are time-ordered)
+    var claimed1 = result1.OutboxWork.OrderBy(w => w.MessageId).ToList();
+    var claimed2 = result2.OutboxWork.OrderBy(w => w.MessageId).ToList();
 
     if (claimed1.Any()) {
-      var earliestClaimed1Time = claimed1.Min(w => w.SequenceOrder);
-      var latestClaimed1Time = claimed1.Max(w => w.SequenceOrder);
+      var earliestClaimed1Id = claimed1.Min(w => w.MessageId);
 
       // Instance 2 should NOT have claimed any messages that are LATER in the stream than instance 1's earliest
       // This validates the cross-instance stream ordering NOT EXISTS check
@@ -1217,7 +1217,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
         // 2. Instance 1 has no pending messages (all released/completed)
 
         // Since we haven't released instance 1's leases, instance 2 should only have earlier messages
-        await Assert.That(work2.SequenceOrder).IsLessThan(earliestClaimed1Time)
+        await Assert.That(work2.MessageId).IsLessThan(earliestClaimed1Id)
           .Because("Instance 2 cannot claim messages that come after messages held by instance 1 in the same stream");
       }
     }
