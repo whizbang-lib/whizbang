@@ -164,5 +164,9 @@ jobs:
           /d:sonar.issue.ignore.multicriteria.e5.resourceKey="src/Whizbang.Generators.Shared/**" \
           /d:sonar.issue.ignore.multicriteria.e6.ruleKey="csharpsquid:S3776" \
           /d:sonar.issue.ignore.multicriteria.e6.resourceKey="src/Whizbang.Generators/**"
-        dotnet build --configuration Release --no-incremental
+
+        # Clean first to avoid file locking issues, then build with single CPU to serialize
+        dotnet clean --configuration Release
+        dotnet build --configuration Release -maxcpucount:1
+
         dotnet-sonarscanner end /d:sonar.token="${SONAR_TOKEN}"
