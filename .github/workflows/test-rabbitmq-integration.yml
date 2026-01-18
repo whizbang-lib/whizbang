@@ -67,7 +67,8 @@ jobs:
             dotnet test --project samples/ECommerce/tests/ECommerce.RabbitMQ.Integration.Tests/ \
               --configuration Release \
               --max-parallel-test-modules 4 \
-              --report-trx
+              --report-trx \
+              --coverage --coverage-output-format cobertura
 
             exit_code=$?
 
@@ -101,6 +102,14 @@ jobs:
           name: rabbitmq-integration-test-results
           path: '**/TestResults/*.trx'
           retention-days: 30
+
+      - name: Upload Coverage for SonarCloud
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: coverage-rabbitmq-integration
+          path: '**/TestResults/*.cobertura.xml'
+          retention-days: 1
 
       - name: Publish Test Results
         if: always()
