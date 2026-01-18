@@ -277,8 +277,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Remove common suffixes (case-insensitive)
     // Use regex for case-insensitive replacement (netstandard2.0 doesn't have String.Replace with StringComparison)
-    lastSegment = System.Text.RegularExpressions.Regex.Replace(lastSegment, "Worker", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
-    lastSegment = System.Text.RegularExpressions.Regex.Replace(lastSegment, "Service", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    // Timeout added to prevent ReDoS attacks (S6444)
+    lastSegment = System.Text.RegularExpressions.Regex.Replace(lastSegment, "Worker", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
+    lastSegment = System.Text.RegularExpressions.Regex.Replace(lastSegment, "Service", "", System.Text.RegularExpressions.RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
 
     // Convert to lowercase
     return lastSegment.ToLowerInvariant();

@@ -66,7 +66,8 @@ public class NamespacePattern(string pattern) {
     // Anchor to start and end
     regexPattern = $"^{regexPattern}$";
 
-    return new Regex(regexPattern, RegexOptions.Compiled | RegexOptions.IgnoreCase);
+    // Timeout added to prevent ReDoS attacks (S6444)
+    return new Regex(regexPattern, RegexOptions.Compiled | RegexOptions.IgnoreCase, TimeSpan.FromSeconds(1));
   }
 
   /// <summary>

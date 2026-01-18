@@ -36,11 +36,13 @@ public static class EventTypeMatchingHelper {
 
     // Pattern matches: ", Version=X, Culture=Y, PublicKeyToken=Z" or any subset
     // This works for both simple types and nested generic types
+    // Timeout added to prevent ReDoS attacks (S6444)
     var result = System.Text.RegularExpressions.Regex.Replace(
       assemblyQualifiedTypeName,
       @",\s*Version=[^,\]]+(?:,\s*Culture=[^,\]]+)?(?:,\s*PublicKeyToken=[^,\]]+)?",
       "",
-      System.Text.RegularExpressions.RegexOptions.None
+      System.Text.RegularExpressions.RegexOptions.None,
+      TimeSpan.FromSeconds(1)
     );
 
     return result;
