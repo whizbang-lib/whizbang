@@ -40,7 +40,7 @@ jobs:
           /d:sonar.host.url="https://sonarcloud.io" \
           /d:sonar.exclusions="**/samples/**,**/benchmarks/**,**/*Generated.cs,**/.whizbang-generated/**" \
           /d:sonar.coverage.exclusions="**/samples/**,**/benchmarks/**,**/tests/**" \
-          /d:sonar.cs.opencover.reportsPaths="**/TestResults/**/*.xml" \
+          /d:sonar.cs.vscoveragexml.reportsPaths="**/TestResults/**/*.xml" \
           /d:sonar.issue.ignore.multicriteria="e1,e2,e3,e4,e5,e6" \
           /d:sonar.issue.ignore.multicriteria.e1.ruleKey="csharpsquid:S1192" \
           /d:sonar.issue.ignore.multicriteria.e1.resourceKey="src/Whizbang.Generators/**" \
@@ -71,7 +71,7 @@ jobs:
           tests/Whizbang.Transports.Tests
         do
           dotnet test --project "$project" --no-build --configuration Release \
-            --coverage --coverage-output-format opencover || true
+            --coverage --coverage-output-format xml || true
         done
 
         dotnet-sonarscanner end /d:sonar.token="${SONAR_TOKEN}"
