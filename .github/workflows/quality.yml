@@ -1,17 +1,13 @@
 name: Quality
 
 on:
-  # Trigger after all test workflows complete
+  # Trigger after the slowest test workflow completes (ensures all tests are done)
+  # Azure Service Bus Integration Tests (~20min) is the longest running test
   workflow_run:
     workflows:
-      - "Test"
-      - "PostgreSQL Integration Tests"
-      - "InMemory Integration Tests"
-      - "RabbitMQ Integration Tests"
       - "Azure Service Bus Integration Tests"
     types:
       - completed
-    # No branch filter - run for any branch including PR branches
 
   # Also allow manual trigger
   workflow_dispatch:
