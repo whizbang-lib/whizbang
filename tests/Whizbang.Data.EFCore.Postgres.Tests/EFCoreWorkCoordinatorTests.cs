@@ -734,7 +734,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     dbContext.Set<OutboxRecord>().Add(new OutboxRecord {
       MessageId = messageId,
       Destination = destination,
-      MessageType = envelopeTypeFullName,  // Store envelope type (maps to event_type column)
+      MessageType = envelopeTypeFullName,  // Store envelope type (maps to message_type column)
       MessageData = outboxMessageData,  // Store complete envelope (maps to event_data column)
       Metadata = envelopeMetadata,
       Scope = null,
@@ -824,7 +824,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     dbContext.Set<InboxRecord>().Add(new InboxRecord {
       MessageId = messageId,
       HandlerName = handlerName,
-      MessageType = envelopeTypeFullName,  // Store envelope type (maps to event_type column)
+      MessageType = envelopeTypeFullName,  // Store envelope type (maps to message_type column)
       MessageData = inboxMessageData,  // Store complete envelope (maps to event_data column)
       Metadata = envelopeMetadata,
       Scope = null,
@@ -2409,7 +2409,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     dbContext.Set<OutboxRecord>().Add(new OutboxRecord {
       MessageId = messageId,
       Destination = destination,
-      MessageType = envelopeTypeFullName,  // Store envelope type (maps to event_type column)
+      MessageType = envelopeTypeFullName,  // Store envelope type (maps to message_type column)
       MessageData = timestampOutboxMessageData,  // Store complete envelope (maps to event_data column)
       Metadata = timestampEnvelopeMetadata,
       Scope = null,

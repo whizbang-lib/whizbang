@@ -67,11 +67,11 @@ public abstract class DapperTestBase : IDisposable, IAsyncDisposable {
     // Read and execute SQLite migration script
     var schema = @"
 -- Inbox table for message ingestion staging (receives from remote outbox)
--- Uses JSONB pattern with separate columns for event_type, event_data, metadata, scope
+-- Uses JSONB pattern with separate columns for message_type, event_data, metadata, scope
 CREATE TABLE IF NOT EXISTS whizbang_inbox (
     message_id TEXT PRIMARY KEY,
     handler_name TEXT NOT NULL,
-    event_type TEXT NOT NULL,
+    message_type TEXT NOT NULL,
     event_data TEXT NOT NULL,
     metadata TEXT NOT NULL,
     scope TEXT NULL,
@@ -83,11 +83,11 @@ CREATE INDEX IF NOT EXISTS ix_whizbang_inbox_processed_at ON whizbang_inbox(proc
 CREATE INDEX IF NOT EXISTS ix_whizbang_inbox_received_at ON whizbang_inbox(received_at);
 
 -- Outbox table for transactional outbox pattern (ExactlyOnce sending)
--- Uses JSONB pattern with separate columns for event_type, event_data, metadata, scope
+-- Uses JSONB pattern with separate columns for message_type, event_data, metadata, scope
 CREATE TABLE IF NOT EXISTS whizbang_outbox (
     message_id TEXT PRIMARY KEY,
     destination TEXT NOT NULL,
-    event_type TEXT NOT NULL,
+    message_type TEXT NOT NULL,
     event_data TEXT NOT NULL,
     metadata TEXT NOT NULL,
     scope TEXT NULL,

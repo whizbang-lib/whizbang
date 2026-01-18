@@ -17,7 +17,6 @@ public static class InboxSchema {
     public const string MESSAGE_ID = "message_id";
     public const string HANDLER_NAME = "handler_name";
     public const string MESSAGE_TYPE = "message_type";
-    public const string EVENT_TYPE = "event_type"; // Alias for MESSAGE_TYPE used by tests
     public const string EVENT_DATA = "event_data";
     public const string METADATA = "metadata";
     public const string SCOPE = "scope";
@@ -59,7 +58,7 @@ public static class InboxSchema {
         Nullable: false
       ),
       new ColumnDefinition(
-        Name: "event_type",
+        Name: "message_type",
         DataType: WhizbangDataType.STRING,
         MaxLength: 500,
         Nullable: false
