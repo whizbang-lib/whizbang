@@ -59,9 +59,9 @@ jobs:
 
     - name: Convert coverage to SonarQube format
       run: |
-        # Coverage files are in each test project's bin/Release/coverage/ directory
+        # Coverage files are in bin/Release/net10.0/TestResults/ with GUID filenames
         reportgenerator \
-          "-reports:tests/**/bin/Release/coverage/*.cobertura.xml" \
+          "-reports:tests/**/bin/Release/net10.0/TestResults/*.cobertura.xml" \
           "-targetdir:coverage/sonarqube" \
           "-reporttypes:SonarQube"
 
