@@ -88,7 +88,7 @@ jobs:
           /d:sonar.token="${SONAR_TOKEN}" \
           /d:sonar.host.url="https://sonarcloud.io" \
           /d:sonar.exclusions="**/samples/**,**/benchmarks/**,**/*Generated.cs,**/.whizbang-generated/**" \
-          /d:sonar.coverage.exclusions="**/samples/**,**/benchmarks/**,**/tests/**,**/Workers/**,**/Transports/**,**/Execution/**" \
+          /d:sonar.coverage.exclusions="**/samples/**,**/benchmarks/**,**/tests/**,**/Workers/**,**/Transports/**,**/Execution/**,**/Generators/**,**/Generators.Shared/**,**/Data.Schema/**,**/Data.EFCore.Postgres.Generators/**,**/Hosting.Azure.ServiceBus/**,**/Hosting.RabbitMQ/**,**/Data.Dapper.Postgres/**" \
           /d:sonar.coverageReportPaths="coverage/sonarqube/SonarQube.xml" \
           /d:sonar.issue.ignore.multicriteria="e1,e2,e3,e4,e5,e6" \
           /d:sonar.issue.ignore.multicriteria.e1.ruleKey="csharpsquid:S1192" \
