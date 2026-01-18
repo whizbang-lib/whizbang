@@ -858,24 +858,30 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   /// This replaces ServiceBusConsumerWorker for InProcessTransport scenarios.
   /// Without subscriptions, published messages are delivered to nobody and perspectives never materialize.
   /// </summary>
+  /// <remarks>
+  /// CRITICAL: Both hosts use GenericTopicRoutingStrategy which routes events to topic-00/topic-01.
+  /// Both hosts MUST subscribe to these generic topics to receive events.
+  /// Each host has its own subscription name to simulate independent Service Bus subscriptions.
+  /// </remarks>
   private async Task _setupTransportSubscriptionsAsync(CancellationToken cancellationToken) {
-    // Subscribe InventoryWorker to "products" and "inventory" topics
+    // Subscribe InventoryWorker to generic topics (topic-00, topic-01)
+    // CRITICAL: Must match GenericTopicRoutingStrategy which routes events to these topics
     await _transport.SubscribeAsync(
       async (envelope, envelopeType, ct) => await _handleMessageForHostAsync(_inventoryHost!, envelope, envelopeType, ct),
-      new TransportDestination("products", "inventory-worker"),
+      new TransportDestination("topic-00", "inventory-worker"),
       cancellationToken
     );
 
     await _transport.SubscribeAsync(
       async (envelope, envelopeType, ct) => await _handleMessageForHostAsync(_inventoryHost!, envelope, envelopeType, ct),
-      new TransportDestination("inventory", "inventory-worker"),
+      new TransportDestination("topic-01", "inventory-worker"),
       cancellationToken
     );
 
-    Console.WriteLine("[InMemoryFixture] InventoryWorker subscribed to 'products' and 'inventory' topics");
+    Console.WriteLine("[InMemoryFixture] InventoryWorker subscribed to 'topic-00' and 'topic-01' (generic topics via routing strategy)");
 
-    // Subscribe BFF to generic topics (topic-00, topic-01) to match GenericTopicRoutingStrategy
-    // The routing strategy maps all events to these generic topics for Azure Service Bus emulator compatibility
+    // Subscribe BFF to generic topics (topic-00, topic-01) with different subscription name
+    // This simulates independent Service Bus subscriptions for each service
     await _transport.SubscribeAsync(
       async (envelope, envelopeType, ct) => await _handleMessageForHostAsync(_bffHost!, envelope, envelopeType, ct),
       new TransportDestination("topic-00", "bff-service"),
