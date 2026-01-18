@@ -532,7 +532,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorFailures = [],
             PerspectiveCompletions = [],
             PerspectiveFailures = [],
-            NewOutboxMessages = [],
+            NewOutboxMessages = [newOutboxMessage],
             NewInboxMessages = [],
             RenewOutboxLeaseIds = [],
             RenewInboxLeaseIds = []
@@ -583,7 +583,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             PerspectiveCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
-            NewInboxMessages = [],
+            NewInboxMessages = [newInboxMessage],
             RenewOutboxLeaseIds = [],
             RenewInboxLeaseIds = []
           });
@@ -605,7 +605,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             PerspectiveCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
-            NewInboxMessages = [],
+            NewInboxMessages = [newInboxMessage],
             RenewOutboxLeaseIds = [],
             RenewInboxLeaseIds = []
           });
@@ -656,7 +656,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             PerspectiveCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
-            NewInboxMessages = [],
+            NewInboxMessages = [newInboxMessage],
             RenewOutboxLeaseIds = [],
             RenewInboxLeaseIds = []
           });
@@ -708,7 +708,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorFailures = [],
             PerspectiveCompletions = [],
             PerspectiveFailures = [],
-            NewOutboxMessages = [],
+            NewOutboxMessages = [newOutboxMessage],
             NewInboxMessages = [],
             RenewOutboxLeaseIds = [],
             RenewInboxLeaseIds = []
@@ -765,7 +765,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorFailures = [],
             PerspectiveCompletions = [],
             PerspectiveFailures = [],
-            NewOutboxMessages = [],
+            NewOutboxMessages = [newOutboxMessage],
             NewInboxMessages = [],
             RenewOutboxLeaseIds = [],
             RenewInboxLeaseIds = []
@@ -813,7 +813,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             PerspectiveCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
-            NewInboxMessages = [],
+            NewInboxMessages = [newInboxMessage],
             RenewOutboxLeaseIds = [],
             RenewInboxLeaseIds = []
           });
@@ -864,7 +864,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             PerspectiveCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
-            NewInboxMessages = [],
+            NewInboxMessages = [newInboxMessage],
             RenewOutboxLeaseIds = [],
             RenewInboxLeaseIds = []
           });
@@ -949,7 +949,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorFailures = [],
             PerspectiveCompletions = [],
             PerspectiveFailures = [],
-            NewOutboxMessages = [],
+            NewOutboxMessages = newOutboxMessages,
             NewInboxMessages = [],
             RenewOutboxLeaseIds = [],
             RenewInboxLeaseIds = []
@@ -1002,7 +1002,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorFailures = [],
             PerspectiveCompletions = [],
             PerspectiveFailures = [],
-            NewOutboxMessages = [],
+            NewOutboxMessages = [newOutboxMessage],
             NewInboxMessages = [],
             RenewOutboxLeaseIds = [],
             RenewInboxLeaseIds = []
@@ -1064,7 +1064,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
                 ReceptorFailures = [],
                 PerspectiveCompletions = [],
                 PerspectiveFailures = [],
-                NewOutboxMessages = [],
+                NewOutboxMessages = [newOutboxMessage],
                 NewInboxMessages = [],
                 RenewOutboxLeaseIds = [],
                 RenewInboxLeaseIds = []
@@ -1125,7 +1125,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
                 ReceptorFailures = [],
                 PerspectiveCompletions = [],
                 PerspectiveFailures = [],
-                NewOutboxMessages = [],
+                NewOutboxMessages = [newOutboxMessage],
                 NewInboxMessages = [],
                 RenewOutboxLeaseIds = [],
                 RenewInboxLeaseIds = []
@@ -1379,7 +1379,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             HostName = "test-host",
             ProcessId = 12345,
             Metadata = null,
-            OutboxCompletions = [],
+            OutboxCompletions = [new MessageCompletion {
+              MessageId = messageId,
+              Status = MessageProcessingStatus.Stored
+            }],
             OutboxFailures = [],
             InboxCompletions = [],
             InboxFailures = [],
@@ -1406,7 +1409,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             HostName = "test-host",
             ProcessId = 12345,
             Metadata = null,
-            OutboxCompletions = [],
+            OutboxCompletions = [new MessageCompletion {
+              MessageId = messageId,
+              Status = MessageProcessingStatus.Published
+            }],
             OutboxFailures = [],
             InboxCompletions = [],
             InboxFailures = [],
@@ -1455,7 +1461,11 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             OutboxCompletions = [],
             OutboxFailures = [],
             InboxCompletions = [],
-            InboxFailures = [],
+            InboxFailures = [new MessageFailure {
+              MessageId = messageId,
+              CompletedStatus = MessageProcessingStatus.Stored | MessageProcessingStatus.EventStored,
+              Error = "Test failure - partial completion"
+            }],
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
@@ -1527,7 +1537,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorFailures = [],
             PerspectiveCompletions = [],
             PerspectiveFailures = [],
-            NewOutboxMessages = [],
+            NewOutboxMessages = [newOutboxMessage],
             NewInboxMessages = [],
             RenewOutboxLeaseIds = [],
             RenewInboxLeaseIds = []
@@ -1680,7 +1690,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorFailures = [],
             PerspectiveCompletions = [],
             PerspectiveFailures = [],
-            NewOutboxMessages = [],
+            NewOutboxMessages = [newOutboxMessage],
             NewInboxMessages = [],
             RenewOutboxLeaseIds = [],
             RenewInboxLeaseIds = []
@@ -1728,7 +1738,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ReceptorFailures = [],
             PerspectiveCompletions = [],
             PerspectiveFailures = [],
-            NewOutboxMessages = [],
+            NewOutboxMessages = [newOutboxMessage],
             NewInboxMessages = [],
             RenewOutboxLeaseIds = [],
             RenewInboxLeaseIds = []
@@ -1773,7 +1783,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             PerspectiveCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
-            NewInboxMessages = [],
+            NewInboxMessages = [newInboxMessage],
             RenewOutboxLeaseIds = [],
             RenewInboxLeaseIds = []
           });
@@ -1817,7 +1827,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             PerspectiveCompletions = [],
             PerspectiveFailures = [],
             NewOutboxMessages = [],
-            NewInboxMessages = [],
+            NewInboxMessages = [newInboxMessage],
             RenewOutboxLeaseIds = [],
             RenewInboxLeaseIds = []
           });
