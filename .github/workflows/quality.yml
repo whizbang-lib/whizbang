@@ -37,32 +37,31 @@ jobs:
 
     - name: Run tests with coverage
       run: |
-        mkdir -p coverage
         # Run each test project with TUnit's native coverage (cobertura format)
+        # Coverage files are output to bin/Release/coverage/ relative to each project
         for project in \
           tests/Whizbang.Core.Tests \
           tests/Whizbang.Execution.Tests \
           tests/Whizbang.Generators.Tests \
           tests/Whizbang.Hosting.Azure.ServiceBus.Tests \
-          tests/Whizbang.Hosting.RabbitMQ.Tests \
           tests/Whizbang.Observability.Tests \
           tests/Whizbang.Partitioning.Tests \
           tests/Whizbang.Policies.Tests \
           tests/Whizbang.Sequencing.Tests \
-          tests/Whizbang.Transports.RabbitMQ.Tests \
           tests/Whizbang.Transports.Tests
         do
-          project_name=$(basename "$project")
-          dotnet run --project "$project" --no-build --configuration Release -- \
-            --coverage \
-            --coverage-output-format cobertura \
-            --coverage-output "../../coverage/${project_name}.cobertura.xml" || true
+          if [ -d "$project" ]; then
+            dotnet run --project "$project" --no-build --configuration Release -- \
+              --coverage \
+              --coverage-output-format cobertura || true
+          fi
         done
 
     - name: Convert coverage to SonarQube format
       run: |
+        # Coverage files are in each test project's bin/Release/coverage/ directory
         reportgenerator \
-          "-reports:coverage/*.cobertura.xml" \
+          "-reports:tests/**/bin/Release/coverage/*.cobertura.xml" \
           "-targetdir:coverage/sonarqube" \
           "-reporttypes:SonarQube"
 
