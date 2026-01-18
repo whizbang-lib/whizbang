@@ -703,9 +703,13 @@ public abstract class Dispatcher(
   [StackTraceHidden]
 #endif
   public async Task PublishAsync<TEvent>(TEvent eventData) {
+    // S2955 suppressed: TEvent is constrained to IEvent in practice (always reference types)
+    // Adding where TEvent : class would be a breaking API change
+#pragma warning disable S2955 // Generic parameters not constrained to reference types should not be compared to 'null'
     if (eventData == null) {
       throw new ArgumentNullException(nameof(eventData));
     }
+#pragma warning restore S2955
 
     var eventType = eventData.GetType();
 
@@ -814,13 +818,9 @@ public abstract class Dispatcher(
       }
     }
 
-    // baseTopic should never be null here due to convention fallback, but add defensive check
-    if (baseTopic == null) {
-      throw new InvalidOperationException($"Unable to resolve base topic for event type {eventType.Name}");
-    }
-
     // 3. Apply routing strategy (pool suffix, tenant prefix, etc.)
     // _topicRoutingStrategy is never null (defaults to PassthroughRoutingStrategy if not provided)
+    // baseTopic is never null here: either from registry or convention fallback always assigns a value
     var resolvedTopic = _topicRoutingStrategy!.ResolveTopic(eventType, baseTopic, context);
     return resolvedTopic;
   }

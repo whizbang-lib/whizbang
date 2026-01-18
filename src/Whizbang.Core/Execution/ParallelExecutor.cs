@@ -54,7 +54,13 @@ public class ParallelExecutor : IExecutionStrategy, IAsyncDisposable {
     }
 
     // Fast path: try synchronous acquire (zero allocation if successful)
+    // S2222 suppressed: Semaphore is correctly released on all paths:
+    // - Sync completion: line 66
+    // - Async completion: _awaitAndReleaseAsync releases in finally block
+    // - Exception: catch block releases
+#pragma warning disable S2222 // Locks should be released on all paths
     if (_semaphore.Wait(0, ct)) {
+#pragma warning restore S2222
       try {
         var result = handler(envelope, context);
 
