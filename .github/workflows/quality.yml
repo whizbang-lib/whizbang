@@ -65,6 +65,13 @@ jobs:
           "-targetdir:coverage/sonarqube" \
           "-reporttypes:SonarQube"
 
+        # Convert absolute paths to relative paths for SonarCloud
+        # Replace /home/runner/work/whizbang/whizbang/ with empty string
+        sed -i 's|/home/runner/work/whizbang/whizbang/||g' coverage/sonarqube/SonarQube.xml
+
+        # Debug: show first few lines to verify paths
+        head -20 coverage/sonarqube/SonarQube.xml
+
     - name: SonarCloud analysis
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
