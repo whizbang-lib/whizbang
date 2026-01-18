@@ -27,10 +27,46 @@ jobs:
         key: ${{ runner.os }}-sonar
         restore-keys: ${{ runner.os }}-sonar
 
-    - name: Install SonarCloud scanner
-      run: dotnet tool install --global dotnet-sonarscanner
+    - name: Install tools
+      run: |
+        dotnet tool install --global dotnet-sonarscanner
+        dotnet tool install --global dotnet-reportgenerator-globaltool
 
-    - name: Build and analyze
+    - name: Build
+      run: dotnet build --configuration Release
+
+    - name: Run tests with coverage
+      run: |
+        mkdir -p coverage
+        # Run each test project with TUnit's native coverage (cobertura format)
+        for project in \
+          tests/Whizbang.Core.Tests \
+          tests/Whizbang.Execution.Tests \
+          tests/Whizbang.Generators.Tests \
+          tests/Whizbang.Hosting.Azure.ServiceBus.Tests \
+          tests/Whizbang.Hosting.RabbitMQ.Tests \
+          tests/Whizbang.Observability.Tests \
+          tests/Whizbang.Partitioning.Tests \
+          tests/Whizbang.Policies.Tests \
+          tests/Whizbang.Sequencing.Tests \
+          tests/Whizbang.Transports.RabbitMQ.Tests \
+          tests/Whizbang.Transports.Tests
+        do
+          project_name=$(basename "$project")
+          dotnet run --project "$project" --no-build --configuration Release -- \
+            --coverage \
+            --coverage-output-format cobertura \
+            --coverage-output "../../coverage/${project_name}.cobertura.xml" || true
+        done
+
+    - name: Convert coverage to SonarQube format
+      run: |
+        reportgenerator \
+          "-reports:coverage/*.cobertura.xml" \
+          "-targetdir:coverage/sonarqube" \
+          "-reporttypes:SonarQube"
+
+    - name: SonarCloud analysis
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -39,6 +75,8 @@ jobs:
           /d:sonar.token="${SONAR_TOKEN}" \
           /d:sonar.host.url="https://sonarcloud.io" \
           /d:sonar.exclusions="**/samples/**,**/benchmarks/**,**/*Generated.cs,**/.whizbang-generated/**" \
+          /d:sonar.coverage.exclusions="**/samples/**,**/benchmarks/**,**/tests/**" \
+          /d:sonar.coverageReportPaths="coverage/sonarqube/SonarQube.xml" \
           /d:sonar.issue.ignore.multicriteria="e1,e2,e3,e4,e5,e6" \
           /d:sonar.issue.ignore.multicriteria.e1.ruleKey="csharpsquid:S1192" \
           /d:sonar.issue.ignore.multicriteria.e1.resourceKey="src/Whizbang.Generators/**" \
@@ -52,5 +90,5 @@ jobs:
           /d:sonar.issue.ignore.multicriteria.e5.resourceKey="src/Whizbang.Generators.Shared/**" \
           /d:sonar.issue.ignore.multicriteria.e6.ruleKey="csharpsquid:S3776" \
           /d:sonar.issue.ignore.multicriteria.e6.resourceKey="src/Whizbang.Generators/**"
-        dotnet build --configuration Release
+        dotnet build --configuration Release --no-incremental
         dotnet-sonarscanner end /d:sonar.token="${SONAR_TOKEN}"
