@@ -39,6 +39,8 @@ jobs:
           /d:sonar.token="${SONAR_TOKEN}" \
           /d:sonar.host.url="https://sonarcloud.io" \
           /d:sonar.exclusions="**/samples/**,**/benchmarks/**,**/*Generated.cs,**/.whizbang-generated/**" \
+          /d:sonar.coverage.exclusions="**/samples/**,**/benchmarks/**,**/tests/**" \
+          /d:sonar.cs.opencover.reportsPaths="**/TestResults/**/coverage.opencover.xml" \
           /d:sonar.issue.ignore.multicriteria="e1,e2,e3,e4,e5,e6" \
           /d:sonar.issue.ignore.multicriteria.e1.ruleKey="csharpsquid:S1192" \
           /d:sonar.issue.ignore.multicriteria.e1.resourceKey="src/Whizbang.Generators/**" \
@@ -53,4 +55,24 @@ jobs:
           /d:sonar.issue.ignore.multicriteria.e6.ruleKey="csharpsquid:S3776" \
           /d:sonar.issue.ignore.multicriteria.e6.resourceKey="src/Whizbang.Generators/**"
         dotnet build --configuration Release
+
+        # Run unit tests with Coverlet collector for SonarCloud coverage
+        for project in \
+          tests/Whizbang.Core.Tests \
+          tests/Whizbang.Execution.Tests \
+          tests/Whizbang.Generators.Tests \
+          tests/Whizbang.Hosting.Azure.ServiceBus.Tests \
+          tests/Whizbang.Hosting.RabbitMQ.Tests \
+          tests/Whizbang.Observability.Tests \
+          tests/Whizbang.Partitioning.Tests \
+          tests/Whizbang.Policies.Tests \
+          tests/Whizbang.Sequencing.Tests \
+          tests/Whizbang.Transports.RabbitMQ.Tests \
+          tests/Whizbang.Transports.Tests
+        do
+          dotnet test "$project" --no-build --configuration Release \
+            --collect:"XPlat Code Coverage" \
+            -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover || true
+        done
+
         dotnet-sonarscanner end /d:sonar.token="${SONAR_TOKEN}"
