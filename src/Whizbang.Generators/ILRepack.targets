@@ -73,9 +73,8 @@
     />
   </Target>
 
-  <!-- Clean up the Shared DLL after merging -->
-  <Target Name="CleanupMergedAssemblies" AfterTargets="MergeSharedAssembly">
-    <Delete Files="$(OutputPath)Whizbang.Generators.Shared.dll;$(OutputPath)Whizbang.Generators.Shared.pdb;$(OutputPath)Whizbang.Generators.Shared.xml" />
-    <Message Text="ILRepack: Cleaned up merged Shared DLL files" Importance="High" />
-  </Target>
+  <!-- Note: Cleanup disabled to prevent race conditions during parallel builds.
+       The merged Shared DLL remains in output but doesn't affect functionality.
+       See: https://github.com/whizbang-lib/whizbang/issues/XX -->
+
 </Project>
