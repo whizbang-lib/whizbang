@@ -44,14 +44,25 @@
   <!-- Override GenerateDepsFile target to add retry logic -->
   <Target Name="_GenerateDepsFileWithRetry" BeforeTargets="GenerateDepsFile">
     <PropertyGroup>
-      <DepsFilePath Condition="'$(DepsFilePath)' == ''">$(IntermediateOutputPath)$(TargetName).deps.json</DepsFilePath>
+      <!-- Check both intermediate and output paths for file locks -->
+      <IntermediateDepsFilePath>$(IntermediateOutputPath)$(TargetName).deps.json</IntermediateDepsFilePath>
+      <OutputDepsFilePath>$(OutputPath)$(TargetName).deps.json</OutputDepsFilePath>
     </PropertyGroup>
 
+    <!-- Retry on intermediate path -->
     <RetryFileOperation
-      FilePath="$(DepsFilePath)"
+      FilePath="$(IntermediateDepsFilePath)"
       MaxRetries="5"
-      Condition="Exists('$(DepsFilePath)')">
-      <Output TaskParameter="Success" PropertyName="DepsFileAccessible" />
+      Condition="Exists('$(IntermediateDepsFilePath)')">
+      <Output TaskParameter="Success" PropertyName="IntermediateDepsFileAccessible" />
+    </RetryFileOperation>
+
+    <!-- Retry on output path (where the actual lock often occurs) -->
+    <RetryFileOperation
+      FilePath="$(OutputDepsFilePath)"
+      MaxRetries="5"
+      Condition="Exists('$(OutputDepsFilePath)')">
+      <Output TaskParameter="Success" PropertyName="OutputDepsFileAccessible" />
     </RetryFileOperation>
   </Target>
 
