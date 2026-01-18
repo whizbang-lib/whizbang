@@ -27,7 +27,7 @@ jobs:
   servicebus-integration-tests:
     name: Azure Service Bus Integration Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     permissions:
       contents: read
       checks: write
