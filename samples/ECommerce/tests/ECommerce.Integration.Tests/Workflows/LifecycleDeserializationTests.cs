@@ -114,21 +114,26 @@ public class LifecycleDeserializationTests {
       }
     };
 
-    var receivedEvents = new System.Collections.Concurrent.ConcurrentBag<ProductCreatedEvent>();
+    // Use ConcurrentDictionary to deduplicate by ProductId (Service Bus has at-least-once delivery)
+    var receivedEvents = new System.Collections.Concurrent.ConcurrentDictionary<Guid, ProductCreatedEvent>();
     var completionSource = new TaskCompletionSource<bool>();
     var expectedCount = commands.Length;
-    var actualCount = 0;
     var expectedProductIds = commands.Select(c => c.ProductId.Value).ToHashSet();  // Extract Guid from ProductId value object
 
     var receptor = new DistributeStageTestReceptor(new TaskCompletionSource<ProductCreatedEvent>());
 
     // Create a custom receptor that counts events ONLY for products sent in THIS test
     // This prevents counting stale events from previous tests or concurrent processes
+    // Deduplicates by ProductId since Service Bus may deliver same message multiple times
     var countingReceptor = new CustomDistributeReceptor((evt) => {
       if (expectedProductIds.Contains(evt.ProductId)) {
-        receivedEvents.Add(evt);
-        if (System.Threading.Interlocked.Increment(ref actualCount) >= expectedCount) {
-          completionSource.TrySetResult(true);
+        // TryAdd returns true only for first occurrence - deduplicates retries
+        if (receivedEvents.TryAdd(evt.ProductId, evt)) {
+          if (receivedEvents.Count >= expectedCount) {
+            completionSource.TrySetResult(true);
+          }
+        } else {
+          Console.WriteLine($"[TEST] Duplicate event received for ProductId={evt.ProductId} (Service Bus retry)");
         }
       } else {
         Console.WriteLine($"[TEST] Ignoring event for ProductId={evt.ProductId} (not in this test's expected set)");
@@ -147,16 +152,16 @@ public class LifecycleDeserializationTests {
       // Wait for all events to be received
       await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(20));
 
-      // Assert - Verify all events were deserialized
+      // Assert - Verify all events were deserialized (unique by ProductId)
       await Assert.That(receivedEvents.Count).IsEqualTo(expectedCount);
 
       foreach (var command in commands) {
-        var matchingEvent = receivedEvents.FirstOrDefault(e => e.ProductId == command.ProductId);
-        await Assert.That(matchingEvent).IsNotNull();
+        var hasEvent = receivedEvents.TryGetValue(command.ProductId.Value, out var matchingEvent);
+        await Assert.That(hasEvent).IsTrue();
         await Assert.That(matchingEvent!.Name).IsEqualTo(command.Name);
       }
 
-      Console.WriteLine($"[TEST SUCCESS] All {expectedCount} events successfully deserialized");
+      Console.WriteLine($"[TEST SUCCESS] All {expectedCount} unique events successfully deserialized");
     } finally {
       // Cleanup
       registry.Unregister<ProductCreatedEvent>(countingReceptor, LifecycleStage.PostDistributeInline);
