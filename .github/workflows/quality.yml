@@ -37,43 +37,22 @@ jobs:
 
     - name: Run tests with coverage
       run: |
-        # Run each test project with TUnit's native coverage (cobertura format)
-        # Coverage files are output to bin/Release/coverage/ relative to each project
-        for project in \
-          tests/Whizbang.Core.Tests \
-          tests/Whizbang.Data.EFCore.Postgres.Tests \
-          tests/Whizbang.Data.Postgres.Tests \
-          tests/Whizbang.Data.Schema.Tests \
-          tests/Whizbang.Data.Tests \
-          tests/Whizbang.Documentation.Tests \
-          tests/Whizbang.Execution.Tests \
-          tests/Whizbang.Generators.Tests \
-          tests/Whizbang.Hosting.Azure.ServiceBus.Tests \
-          tests/Whizbang.Hosting.RabbitMQ.Tests \
-          tests/Whizbang.Observability.Tests \
-          tests/Whizbang.Partitioning.Tests \
-          tests/Whizbang.Policies.Tests \
-          tests/Whizbang.Sequencing.Tests \
-          tests/Whizbang.Transports.RabbitMQ.Tests \
-          tests/Whizbang.Transports.Tests
-        do
-          if [ -d "$project" ]; then
-            dotnet run --project "$project" --no-build --configuration Release -- \
-              --coverage \
-              --coverage-output-format cobertura || true
-          fi
-        done
+        # Run unit tests with TUnit's native coverage (cobertura format)
+        # Note: Tests run in parallel using dotnet test for better performance
+        dotnet test --configuration Release --no-build \
+          --coverage --coverage-output-format cobertura \
+          --filter "Category!=Integration" \
+          -- --parallel
 
     - name: Convert coverage to SonarQube format
       run: |
-        # Coverage files are in bin/Release/net10.0/TestResults/ with GUID filenames
+        # Coverage files are in TestResults/ directories
         reportgenerator \
-          "-reports:tests/**/bin/Release/net10.0/TestResults/*.cobertura.xml" \
+          "-reports:**/TestResults/*.cobertura.xml" \
           "-targetdir:coverage/sonarqube" \
           "-reporttypes:SonarQube"
 
         # Convert absolute paths to relative paths for SonarCloud
-        # Replace /home/runner/work/whizbang/whizbang/ with empty string
         sed -i 's|/home/runner/work/whizbang/whizbang/||g' coverage/sonarqube/SonarQube.xml
 
         # Debug: show first few lines to verify paths
