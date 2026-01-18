@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Generated;
+using ECommerce.Integration.Tests.Fixtures;
 using ECommerce.InventoryWorker.Generated;
 using ECommerce.InventoryWorker.Lenses;
 using Microsoft.EntityFrameworkCore;
@@ -18,7 +19,7 @@ using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
 
-namespace ECommerce.Integration.Tests.Fixtures;
+namespace ECommerce.InMemory.Integration.Tests.Fixtures;
 
 /// <summary>
 /// In-memory integration test fixture using InProcessTransport for fast, deterministic testing.

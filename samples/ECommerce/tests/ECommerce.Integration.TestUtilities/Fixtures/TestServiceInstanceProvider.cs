@@ -6,7 +6,7 @@ namespace ECommerce.Integration.Tests.Fixtures;
 /// <summary>
 /// Test service instance provider with fixed instance ID and service name.
 /// </summary>
-internal sealed class TestServiceInstanceProvider : IServiceInstanceProvider {
+public sealed class TestServiceInstanceProvider : IServiceInstanceProvider {
   public TestServiceInstanceProvider(Guid instanceId, string serviceName) {
     InstanceId = instanceId;
     ServiceName = serviceName;

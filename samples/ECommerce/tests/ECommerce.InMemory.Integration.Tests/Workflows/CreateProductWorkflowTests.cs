@@ -1,9 +1,9 @@
 using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
 using ECommerce.Contracts.Events;
-using ECommerce.Integration.Tests.Fixtures;
+using ECommerce.InMemory.Integration.Tests.Fixtures;
 
-namespace ECommerce.Integration.Tests.Workflows.InMemory;
+namespace ECommerce.InMemory.Integration.Tests.Workflows;
 
 /// <summary>
 /// End-to-end integration tests for the CreateProduct workflow using InProcessTransport.

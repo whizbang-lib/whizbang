@@ -1,6 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 
-namespace ECommerce.Integration.Tests.Fixtures;
+namespace ECommerce.InMemory.Integration.Tests.Fixtures;
 
 /// <summary>
 /// Provides a shared InMemoryIntegrationFixture for all in-memory integration test classes.

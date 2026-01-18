@@ -24,7 +24,9 @@
   </Folder>
   <Folder Name="/samples/ECommerce/tests/">
     <Project Path="samples/ECommerce/tests/ECommerce.BFF.API.Tests/ECommerce.BFF.API.Tests.csproj" />
+    <Project Path="samples/ECommerce/tests/ECommerce.InMemory.Integration.Tests/ECommerce.InMemory.Integration.Tests.csproj" />
     <Project Path="samples/ECommerce/tests/ECommerce.Integration.Tests/ECommerce.Integration.Tests.csproj" />
+    <Project Path="samples/ECommerce/tests/ECommerce.Integration.TestUtilities/ECommerce.Integration.TestUtilities.csproj" />
     <Project Path="samples/ECommerce/tests/ECommerce.InventoryWorker.Tests/ECommerce.InventoryWorker.Tests.csproj" />
     <Project Path="samples/ECommerce/tests/ECommerce.NotificationWorker.Tests/ECommerce.NotificationWorker.Tests.csproj" />
     <Project Path="samples/ECommerce/tests/ECommerce.OrderService.Tests/ECommerce.OrderService.Tests.csproj" />

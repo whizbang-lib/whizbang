@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+    <NoWarn>$(NoWarn);TUnit0015;TUnit0023</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="TUnit.Assertions" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\ECommerce.InventoryWorker\ECommerce.InventoryWorker.csproj" />
+    <ProjectReference Include="..\..\ECommerce.BFF.API\ECommerce.BFF.API.csproj" />
+    <ProjectReference Include="..\..\ECommerce.Contracts\ECommerce.Contracts.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Whizbang.Core\Whizbang.Core.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Whizbang.Data.EFCore.Postgres\Whizbang.Data.EFCore.Postgres.csproj" />
+    <ProjectReference Include="..\ECommerce.Integration.TestUtilities\ECommerce.Integration.TestUtilities.csproj" />
+    <!-- Source generators for runtime receptor registration support -->
+    <ProjectReference Include="..\..\..\..\src\Whizbang.Generators\Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>
