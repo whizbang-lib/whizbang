@@ -41,13 +41,20 @@ jobs:
         # Coverage files are output to bin/Release/coverage/ relative to each project
         for project in \
           tests/Whizbang.Core.Tests \
+          tests/Whizbang.Data.EFCore.Postgres.Tests \
+          tests/Whizbang.Data.Postgres.Tests \
+          tests/Whizbang.Data.Schema.Tests \
+          tests/Whizbang.Data.Tests \
+          tests/Whizbang.Documentation.Tests \
           tests/Whizbang.Execution.Tests \
           tests/Whizbang.Generators.Tests \
           tests/Whizbang.Hosting.Azure.ServiceBus.Tests \
+          tests/Whizbang.Hosting.RabbitMQ.Tests \
           tests/Whizbang.Observability.Tests \
           tests/Whizbang.Partitioning.Tests \
           tests/Whizbang.Policies.Tests \
           tests/Whizbang.Sequencing.Tests \
+          tests/Whizbang.Transports.RabbitMQ.Tests \
           tests/Whizbang.Transports.Tests
         do
           if [ -d "$project" ]; then
