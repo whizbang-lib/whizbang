@@ -388,15 +388,30 @@ try {
         $stackTraceLines = @()
 
         # Progress tracking
+        # Two separate tracking systems:
+        # 1. In-progress counts (highest seen from progress lines) - approximate, for display during execution
+        # 2. Completed counts (from summary lines) - accurate, for final reporting
         $startTime = Get-Date
         $lastProgressTime = $startTime
+        $lastOutputTime = $startTime
         $lastTotalTests = 0
         $lastTotalFailed = 0
         $lineCounter = 0
 
+        # Track completed project results separately (from summary lines)
+        $completedPassed = 0
+        $completedFailed = 0
+        $completedSkipped = 0
+
+        # Track in-progress estimates (highest seen from progress lines)
+        $inProgressPassed = 0
+        $inProgressFailed = 0
+        $inProgressSkipped = 0
+
         & dotnet @testArgs 2>&1 | ForEach-Object {
             $lineStr = $_.ToString()
             $lineCounter++
+            $lastOutputTime = Get-Date
 
             # Capture test counts from TUnit progress format: [+passed/xfailed/?skipped]
             # Note: Multiple test projects run in parallel, we track the highest seen for approximate progress
@@ -405,26 +420,44 @@ try {
                 $failed = [int]$matches[2]
                 $skipped = [int]$matches[3]
 
-                # Track highest values seen across parallel projects (approximate total)
-                if ($passed -gt $totalPassed) { $totalPassed = $passed }
-                if ($failed -gt $totalFailed) { $totalFailed = $failed }
-                if ($skipped -gt $totalSkipped) { $totalSkipped = $skipped }
-                $totalTests = $totalPassed + $totalFailed + $totalSkipped
+                # Track highest values seen across parallel projects (approximate in-progress total)
+                if ($passed -gt $inProgressPassed) { $inProgressPassed = $passed }
+                if ($failed -gt $inProgressFailed) { $inProgressFailed = $failed }
+                if ($skipped -gt $inProgressSkipped) { $inProgressSkipped = $skipped }
             }
-            # Capture final summary lines and accumulate totals across test projects
+            # Capture final summary lines - these are the accurate completed counts
+            # Reset in-progress tracking when a project completes to avoid double-counting
             elseif ($lineStr -match "^\s*succeeded:\s+(\d+)\s*$") {
-                # When a project completes, add its results to cumulative total
-                $totalPassed += [int]$matches[1]
-                $totalTests = $totalPassed + $totalFailed + $totalSkipped
+                $completedPassed += [int]$matches[1]
+                # Reset in-progress since this project's tests moved to completed
+                $inProgressPassed = 0
             }
             elseif ($lineStr -match "^\s*failed:\s+(\d+)\s*$") {
-                $totalFailed += [int]$matches[1]
-                $totalTests = $totalPassed + $totalFailed + $totalSkipped
+                $completedFailed += [int]$matches[1]
+                $inProgressFailed = 0
             }
             elseif ($lineStr -match "^\s*skipped:\s+(\d+)\s*$") {
-                $totalSkipped += [int]$matches[1]
-                $totalTests = $totalPassed + $totalFailed + $totalSkipped
+                $completedSkipped += [int]$matches[1]
+                $inProgressSkipped = 0
             }
+
+            # Calculate display totals
+            # Use completed counts as authoritative; in-progress is just an activity indicator
+            # This avoids double-counting (a project's progress lines overlap with its summary)
+            $completedTotal = $completedPassed + $completedFailed + $completedSkipped
+            $inProgressTotal = $inProgressPassed + $inProgressFailed + $inProgressSkipped
+
+            # For display, prefer completed if available, otherwise show in-progress
+            if ($completedTotal -gt 0) {
+                $totalPassed = $completedPassed
+                $totalFailed = $completedFailed
+                $totalSkipped = $completedSkipped
+            } else {
+                $totalPassed = $inProgressPassed
+                $totalFailed = $inProgressFailed
+                $totalSkipped = $inProgressSkipped
+            }
+            $totalTests = $totalPassed + $totalFailed + $totalSkipped
 
             # Smart progress updates
             # Check time every 100 lines OR when counts change (if LiveUpdates enabled)
@@ -443,10 +476,17 @@ try {
                 if ($shouldShow) {
                     $elapsedMinutes = [Math]::Floor(($now - $startTime).TotalMinutes)
 
-                    if ($totalTests -gt 0) {
+                    if ($totalTests -gt 0 -or $inProgressTotal -gt 0) {
                         # Show test progress
                         $failureIndicator = if ($totalFailed -gt 0) { " ⚠️" } else { "" }
-                        Write-Host "[$($elapsedMinutes)m] Progress: $totalPassed passed, $totalFailed failed, $totalSkipped skipped$failureIndicator" -ForegroundColor Gray
+                        # Show running indicator if there's in-progress activity beyond completed
+                        if ($completedTotal -gt 0 -and $inProgressTotal -gt 0) {
+                            Write-Host "[$($elapsedMinutes)m] Progress: $totalPassed passed, $totalFailed failed, $totalSkipped skipped$failureIndicator (+$inProgressTotal running)" -ForegroundColor Gray
+                        } elseif ($completedTotal -eq 0 -and $inProgressTotal -gt 0) {
+                            Write-Host "[$($elapsedMinutes)m] Progress: ~$totalPassed passed, ~$totalFailed failed, ~$totalSkipped skipped$failureIndicator (in progress)" -ForegroundColor Gray
+                        } else {
+                            Write-Host "[$($elapsedMinutes)m] Progress: $totalPassed passed, $totalFailed failed, $totalSkipped skipped$failureIndicator" -ForegroundColor Gray
+                        }
                     } else {
                         # Show heartbeat (building/not yet testing)
                         Write-Host "[$($elapsedMinutes)m] Running... (building or preparing tests)" -ForegroundColor DarkGray

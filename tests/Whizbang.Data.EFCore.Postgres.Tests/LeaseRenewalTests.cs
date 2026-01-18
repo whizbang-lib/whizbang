@@ -25,7 +25,7 @@ public class LeaseRenewalTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     var insertSql = @"
-      INSERT INTO wh_outbox (message_id, destination, event_type, event_data, metadata, status, attempts, created_at, instance_id, lease_expiry, stream_id, partition_number)
+      INSERT INTO wh_outbox (message_id, destination, message_type, event_data, metadata, status, attempts, created_at, instance_id, lease_expiry, stream_id, partition_number)
       VALUES
         (@id1, 'test-topic', 'TestEvent', '{}', '{}', 1, 0, NOW(), @instance_id, NOW() + INTERVAL '10 seconds', @stream_id, 0),
         (@id2, 'test-topic', 'TestEvent', '{}', '{}', 1, 0, NOW(), @instance_id, NOW() + INTERVAL '10 seconds', @stream_id, 0)";
@@ -106,7 +106,7 @@ public class LeaseRenewalTests : EFCoreTestBase {
     await connection.OpenAsync();
 
     var insertSql = @"
-      INSERT INTO wh_inbox (message_id, handler_name, event_type, event_data, metadata, status, attempts, received_at, instance_id, lease_expiry, stream_id, partition_number)
+      INSERT INTO wh_inbox (message_id, handler_name, message_type, event_data, metadata, status, attempts, received_at, instance_id, lease_expiry, stream_id, partition_number)
       VALUES (@id, 'TestHandler', 'TestEvent', '{}', '{}', 1, 0, NOW(), @instance_id, NOW() + INTERVAL '10 seconds', @stream_id, 0)";
 
     await using var insertCmd = new NpgsqlCommand(insertSql, connection);
@@ -178,7 +178,7 @@ public class LeaseRenewalTests : EFCoreTestBase {
     await registerCmd.ExecuteNonQueryAsync();
 
     var insertSql = @"
-      INSERT INTO wh_outbox (message_id, destination, event_type, event_data, metadata, status, attempts, created_at, instance_id, lease_expiry, partition_number)
+      INSERT INTO wh_outbox (message_id, destination, message_type, event_data, metadata, status, attempts, created_at, instance_id, lease_expiry, partition_number)
       VALUES (@id, 'test-topic', 'TestEvent', '{}', '{}', 1, 0, NOW(), @instance_id, NOW() + INTERVAL '10 seconds', 0)";
 
     await using var insertCmd = new NpgsqlCommand(insertSql, connection);

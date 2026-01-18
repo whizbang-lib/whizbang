@@ -40,6 +40,39 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
     return envelope;
   }
 
+  /// <summary>
+  /// Inserts a message directly into the outbox without claiming it.
+  /// This allows the worker to pick it up as orphaned work.
+  /// </summary>
+  private async Task _insertUnclaimedMessageAsync(
+    BffDbContext dbContext,
+    JsonSerializerOptions jsonOptions,
+    Guid messageId,
+    Guid streamId,
+    string destination = "products",
+    string messageType = "TestMessage, TestAssembly") {
+
+    var envelope = _createTestEnvelope(messageId);
+    // Use Whizbang JSON options to ensure MessageId is serialized as a string
+    var envelopeJson = JsonSerializer.Serialize(envelope, jsonOptions);
+    var metadata = new EnvelopeMetadata {
+      MessageId = MessageId.From(messageId),
+      Hops = new List<MessageHop>()
+    };
+    var metadataJson = JsonSerializer.Serialize(metadata, jsonOptions);
+
+    // Insert directly with NULL instance_id and lease_expiry (unclaimed)
+    await dbContext.Database.ExecuteSqlRawAsync(@"
+      INSERT INTO bff.wh_outbox (
+        message_id, destination, message_type, event_data, metadata,
+        status, created_at, instance_id, lease_expiry, is_event, stream_id
+      ) VALUES (
+        {0}, {1}, {2}, {3}::jsonb, {4}::jsonb,
+        1, NOW(), NULL, NULL, true, {5}
+      )",
+      messageId, destination, messageType, envelopeJson, metadataJson, streamId);
+  }
+
   [Before(Test)]
   public async Task SetupAsync() {
     // Start PostgreSQL container
@@ -157,47 +190,15 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
     // 3. Worker publishes to transport
     // 4. Database status is updated
 
-    // Arrange - Store message in outbox (simulating what Dispatcher does)
+    // Arrange - Store message in outbox WITHOUT claiming it
+    // (simulating what Dispatcher does, but allowing worker to claim)
     var messageId = MessageId.New();
     var streamId = Guid.CreateVersion7();
 
     using (var scope = _testHost!.Services.CreateScope()) {
-      var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-
-      await workCoordinator.ProcessWorkBatchAsync(
-        new ProcessWorkBatchRequest {
-          InstanceId = _instanceId,
-          ServiceName = "BFF.API",
-          HostName = "test-host",
-          ProcessId = 12345,
-          Metadata = null,
-          OutboxCompletions = [],
-          OutboxFailures = [],
-          InboxCompletions = [],
-          InboxFailures = [],
-          ReceptorCompletions = [],
-          ReceptorFailures = [],
-          PerspectiveCompletions = [],
-          PerspectiveFailures = [],
-          NewOutboxMessages = [
-          new OutboxMessage {
-            MessageId = messageId.Value,
-            Destination = "products",
-            Envelope = _createTestEnvelope(messageId.Value),
-            EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
-            IsEvent = true,
-            StreamId = streamId,
-            MessageType = "TestMessage, TestAssembly",
-            Metadata = new EnvelopeMetadata {
-              MessageId = messageId,
-              Hops = new List<MessageHop>()
-            }
-          }
-        ],
-          NewInboxMessages = [],
-          RenewOutboxLeaseIds = [],
-          RenewInboxLeaseIds = []
-        });
+      var dbContext = scope.ServiceProvider.GetRequiredService<BffDbContext>();
+      var jsonOptions = scope.ServiceProvider.GetRequiredService<JsonSerializerOptions>();
+      await _insertUnclaimedMessageAsync(dbContext, jsonOptions, messageId.Value, streamId);
     }
 
     // Act - Start the application (including WorkCoordinatorPublisherWorker)
@@ -263,7 +264,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
   public async Task BffApplication_MultipleMessages_ProcessedInOrderAsync() {
     // Verify UUIDv7 ordering works in the application
 
-    // Arrange - Store 3 messages in sequence
+    // Arrange - Store 3 messages in sequence WITHOUT claiming them
     var messageId1 = MessageId.New();
     await Task.Delay(2); // Ensure different UUIDv7 timestamps
     var messageId2 = MessageId.New();
@@ -273,68 +274,11 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
     var streamId = Guid.CreateVersion7();
 
     using (var scope = _testHost!.Services.CreateScope()) {
-      var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-
-      await workCoordinator.ProcessWorkBatchAsync(
-        new ProcessWorkBatchRequest {
-          InstanceId = _instanceId,
-          ServiceName = "BFF.API",
-          HostName = "test-host",
-          ProcessId = 12345,
-          Metadata = null,
-          OutboxCompletions = [],
-          OutboxFailures = [],
-          InboxCompletions = [],
-          InboxFailures = [],
-          ReceptorCompletions = [],
-          ReceptorFailures = [],
-          PerspectiveCompletions = [],
-          PerspectiveFailures = [],
-          NewOutboxMessages = [
-          new OutboxMessage {
-            MessageId = messageId1.Value,
-            Destination = "products",
-            Envelope = _createTestEnvelope(messageId1.Value),
-            EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
-            IsEvent = true,
-            StreamId = streamId,
-            MessageType = "TestMessage, TestAssembly",
-            Metadata = new EnvelopeMetadata {
-              MessageId = messageId1,
-              Hops = new List<MessageHop>()
-            }
-          },
-          new OutboxMessage {
-            MessageId = messageId2.Value,
-            Destination = "products",
-            Envelope = _createTestEnvelope(messageId2.Value),
-            EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
-            IsEvent = true,
-            StreamId = streamId,
-            MessageType = "TestMessage, TestAssembly",
-            Metadata = new EnvelopeMetadata {
-              MessageId = messageId2,
-              Hops = new List<MessageHop>()
-            }
-          },
-          new OutboxMessage {
-            MessageId = messageId3.Value,
-            Destination = "products",
-            Envelope = _createTestEnvelope(messageId3.Value),
-            EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
-            IsEvent = true,
-            StreamId = streamId,
-            MessageType = "TestMessage, TestAssembly",
-            Metadata = new EnvelopeMetadata {
-              MessageId = messageId3,
-              Hops = new List<MessageHop>()
-            }
-          }
-        ],
-          NewInboxMessages = [],
-          RenewOutboxLeaseIds = [],
-          RenewInboxLeaseIds = []
-        });
+      var dbContext = scope.ServiceProvider.GetRequiredService<BffDbContext>();
+      var jsonOptions = scope.ServiceProvider.GetRequiredService<JsonSerializerOptions>();
+      await _insertUnclaimedMessageAsync(dbContext, jsonOptions, messageId1.Value, streamId);
+      await _insertUnclaimedMessageAsync(dbContext, jsonOptions, messageId2.Value, streamId);
+      await _insertUnclaimedMessageAsync(dbContext, jsonOptions, messageId3.Value, streamId);
     }
 
     // Act
@@ -375,50 +319,17 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
   public async Task BffApplication_ExpiredLeaseMessages_AreReclaimedAsync() {
     // Verify that messages with expired leases (like those in user's CSV) get reclaimed
 
-    // Arrange - Store message with very short lease (immediately expired)
+    // Arrange - Store message WITHOUT claiming it (simulates orphaned work)
     var messageId = MessageId.New();
     var streamId = Guid.CreateVersion7();
 
     using (var scope = _testHost!.Services.CreateScope()) {
-      var workCoordinator = scope.ServiceProvider.GetRequiredService<IWorkCoordinator>();
-
-      await workCoordinator.ProcessWorkBatchAsync(
-        new ProcessWorkBatchRequest {
-          InstanceId = _instanceId,
-          ServiceName = "BFF.API",
-          HostName = "test-host",
-          ProcessId = 12345,
-          Metadata = null,
-          OutboxCompletions = [],
-          OutboxFailures = [],
-          InboxCompletions = [],
-          InboxFailures = [],
-          ReceptorCompletions = [],
-          ReceptorFailures = [],
-          PerspectiveCompletions = [],
-          PerspectiveFailures = [],
-          NewOutboxMessages = [
-          new OutboxMessage {
-            MessageId = messageId.Value,
-            Destination = "products",
-            Envelope = _createTestEnvelope(messageId.Value),
-            EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
-            IsEvent = true,
-            StreamId = streamId,
-            MessageType = "TestMessage, TestAssembly",
-            Metadata = new EnvelopeMetadata {
-              MessageId = messageId,
-              Hops = new List<MessageHop>()
-            }
-          }
-        ],
-          NewInboxMessages = [],
-          RenewOutboxLeaseIds = [],
-          RenewInboxLeaseIds = []
-        });
+      var dbContext = scope.ServiceProvider.GetRequiredService<BffDbContext>();
+      var jsonOptions = scope.ServiceProvider.GetRequiredService<JsonSerializerOptions>();
+      await _insertUnclaimedMessageAsync(dbContext, jsonOptions, messageId.Value, streamId);
     }
 
-    // Act - Start worker (should reclaim expired message)
+    // Act - Start worker (should reclaim orphaned message)
     await _testHost.StartAsync();
 
     var testTransport = _testHost.Services.GetRequiredService<TestTransport>();

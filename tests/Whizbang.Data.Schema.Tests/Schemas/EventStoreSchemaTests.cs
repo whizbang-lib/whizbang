@@ -27,7 +27,7 @@ public class EventStoreSchemaTests {
     var columns = EventStoreSchema.Table.Columns;
 
     // Assert - Verify column count
-    await Assert.That(columns).Count().IsEqualTo(11);
+    await Assert.That(columns).Count().IsEqualTo(10);
 
     // Verify each column definition
     var eventId = columns[0];
@@ -73,17 +73,12 @@ public class EventStoreSchemaTests {
     await Assert.That(scope.DataType).IsEqualTo(WhizbangDataType.JSON);
     await Assert.That(scope.Nullable).IsTrue();
 
-    var sequenceNumber = columns[8];
-    await Assert.That(sequenceNumber.Name).IsEqualTo("sequence_number");
-    await Assert.That(sequenceNumber.DataType).IsEqualTo(WhizbangDataType.BIG_INT);
-    await Assert.That(sequenceNumber.Nullable).IsFalse();
-
-    var version = columns[9];
+    var version = columns[8];
     await Assert.That(version.Name).IsEqualTo("version");
     await Assert.That(version.DataType).IsEqualTo(WhizbangDataType.INTEGER);
     await Assert.That(version.Nullable).IsFalse();
 
-    var createdAt = columns[10];
+    var createdAt = columns[9];
     await Assert.That(createdAt.Name).IsEqualTo("created_at");
     await Assert.That(createdAt.DataType).IsEqualTo(WhizbangDataType.TIMESTAMP_TZ);
     await Assert.That(createdAt.Nullable).IsFalse();
@@ -96,7 +91,7 @@ public class EventStoreSchemaTests {
     var indexes = EventStoreSchema.Table.Indexes;
 
     // Assert - Verify index count
-    await Assert.That(indexes).Count().IsEqualTo(4);
+    await Assert.That(indexes).Count().IsEqualTo(3);
 
     // Verify unique stream index
     var streamIndex = indexes[0];
@@ -120,12 +115,6 @@ public class EventStoreSchemaTests {
     await Assert.That(aggregateTypeIndex.Columns).Count().IsEqualTo(2);
     await Assert.That(aggregateTypeIndex.Columns[0]).IsEqualTo("aggregate_type");
     await Assert.That(aggregateTypeIndex.Columns[1]).IsEqualTo("created_at");
-
-    // Verify sequence index
-    var sequenceIndex = indexes[3];
-    await Assert.That(sequenceIndex.Name).IsEqualTo("idx_event_store_sequence");
-    await Assert.That(sequenceIndex.Columns).Count().IsEqualTo(1);
-    await Assert.That(sequenceIndex.Columns[0]).IsEqualTo("sequence_number");
   }
 
   [Test]
@@ -168,7 +157,6 @@ public class EventStoreSchemaTests {
     var eventData = EventStoreSchema.Columns.EVENT_DATA;
     var metadata = EventStoreSchema.Columns.METADATA;
     var scope = EventStoreSchema.Columns.SCOPE;
-    var sequenceNumber = EventStoreSchema.Columns.SEQUENCE_NUMBER;
     var version = EventStoreSchema.Columns.VERSION;
     var createdAt = EventStoreSchema.Columns.CREATED_AT;
 
@@ -181,7 +169,6 @@ public class EventStoreSchemaTests {
     await Assert.That(eventData).IsEqualTo("event_data");
     await Assert.That(metadata).IsEqualTo("metadata");
     await Assert.That(scope).IsEqualTo("scope");
-    await Assert.That(sequenceNumber).IsEqualTo("sequence_number");
     await Assert.That(version).IsEqualTo("version");
     await Assert.That(createdAt).IsEqualTo("created_at");
   }

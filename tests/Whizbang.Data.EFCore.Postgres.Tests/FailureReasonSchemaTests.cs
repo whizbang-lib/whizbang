@@ -128,7 +128,7 @@ public class FailureReasonSchemaTests : EFCoreTestBase {
     foreach (var reasonValue in testValues) {
       var insertSql = @"
         INSERT INTO wh_outbox (
-          message_id, destination, event_type, event_data, metadata,
+          message_id, destination, message_type, event_data, metadata,
           status, created_at, failure_reason
         ) VALUES (
           @message_id, 'test-topic', 'TestEvent', '{}', '{}',
