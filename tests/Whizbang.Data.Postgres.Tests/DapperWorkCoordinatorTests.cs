@@ -110,7 +110,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await _insertOutboxMessageAsync(messageId1, "topic1", "TestEvent", "{}", status: "Publishing", instanceId: _instanceId);
     await _insertOutboxMessageAsync(messageId2, "topic2", "TestEvent", "{}", status: "Publishing", instanceId: _instanceId);
 
-    // Act
+    // Act - Complete the messages with Published status
     var result = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
@@ -118,7 +118,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             HostName = "test-host",
             ProcessId = 12345,
             Metadata = null,
-            OutboxCompletions = [],
+            OutboxCompletions = [
+              new MessageCompletion { MessageId = messageId1, Status = MessageProcessingStatus.Published },
+              new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.Published }
+            ],
             OutboxFailures = [],
             InboxCompletions = [],
             InboxFailures = [],
@@ -150,7 +153,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     await _insertOutboxMessageAsync(messageId, "topic1", "TestEvent", "{}", status: "Publishing", instanceId: _instanceId);
 
-    // Act
+    // Act - Fail the message
     var result = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
@@ -159,7 +162,11 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             ProcessId = 12345,
             Metadata = null,
             OutboxCompletions = [],
-            OutboxFailures = [],
+            OutboxFailures = [new MessageFailure {
+              MessageId = messageId,
+              CompletedStatus = MessageProcessingStatus.Stored,
+              Error = "Network timeout during publish"
+            }],
             InboxCompletions = [],
             InboxFailures = [],
             ReceptorCompletions = [],
@@ -192,7 +199,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
     await _insertInboxMessageAsync(messageId1, "Handler1", "TestEvent", "{}", status: "Processing", instanceId: _instanceId);
     await _insertInboxMessageAsync(messageId2, "Handler2", "TestEvent", "{}", status: "Processing", instanceId: _instanceId);
 
-    // Act
+    // Act - Complete the messages (Published status to trigger deletion)
     var result = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
@@ -202,7 +209,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             Metadata = null,
             OutboxCompletions = [],
             OutboxFailures = [],
-            InboxCompletions = [],
+            InboxCompletions = [
+              new MessageCompletion { MessageId = messageId1, Status = MessageProcessingStatus.Published },
+              new MessageCompletion { MessageId = messageId2, Status = MessageProcessingStatus.Published }
+            ],
             InboxFailures = [],
             ReceptorCompletions = [],
             ReceptorFailures = [],
@@ -234,7 +244,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
 
     await _insertInboxMessageAsync(messageId, "Handler1", "TestEvent", "{}", status: "Processing", instanceId: _instanceId);
 
-    // Act
+    // Act - Fail the message
     var result = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
@@ -245,7 +255,11 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             OutboxCompletions = [],
             OutboxFailures = [],
             InboxCompletions = [],
-            InboxFailures = [],
+            InboxFailures = [new MessageFailure {
+              MessageId = messageId,
+              CompletedStatus = MessageProcessingStatus.Stored,
+              Error = "Handler exception during processing"
+            }],
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
@@ -447,7 +461,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       leaseExpiry: DateTimeOffset.UtcNow.AddMinutes(-10),
       streamId: _idProvider.NewGuid());
 
-    // Act
+    // Act - Process completions, failures, and claim orphaned messages
     var result = await _sut.ProcessWorkBatchAsync(
           new ProcessWorkBatchRequest {
             InstanceId = _instanceId,
@@ -455,10 +469,10 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
             HostName = "test-host",
             ProcessId = 12345,
             Metadata = null,
-            OutboxCompletions = [],
-            OutboxFailures = [],
-            InboxCompletions = [],
-            InboxFailures = [],
+            OutboxCompletions = [new MessageCompletion { MessageId = completedOutboxId, Status = MessageProcessingStatus.Published }],
+            OutboxFailures = [new MessageFailure { MessageId = failedOutboxId, CompletedStatus = MessageProcessingStatus.Stored, Error = "Test failure" }],
+            InboxCompletions = [new MessageCompletion { MessageId = completedInboxId, Status = MessageProcessingStatus.Stored | MessageProcessingStatus.EventStored }],
+            InboxFailures = [new MessageFailure { MessageId = failedInboxId, CompletedStatus = MessageProcessingStatus.Stored, Error = "Test failure" }],
             ReceptorCompletions = [],
             ReceptorFailures = [],
             PerspectiveCompletions = [],
