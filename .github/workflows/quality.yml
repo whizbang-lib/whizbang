@@ -11,7 +11,7 @@ on:
       - "Azure Service Bus Integration Tests"
     types:
       - completed
-    branches: [ main, develop ]
+    # No branch filter - run for any branch including PR branches
 
   # Also allow manual trigger
   workflow_dispatch:
