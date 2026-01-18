@@ -48,7 +48,7 @@ jobs:
 
       - name: Run InMemory Integration Tests
         run: |
-          dotnet test samples/ECommerce/tests/ECommerce.InMemory.Integration.Tests/ECommerce.InMemory.Integration.Tests.csproj \
+          dotnet test --project samples/ECommerce/tests/ECommerce.InMemory.Integration.Tests/ECommerce.InMemory.Integration.Tests.csproj \
             --no-build \
             --configuration Release \
             --report-trx \
