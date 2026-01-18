@@ -137,13 +137,14 @@ public class CreateProductWorkflowTests {
 
     // Act - Create each product and wait for event processing
     // This ensures events are processed in order and perspectives are updated before the next product
+    // NOTE: Both hosts subscribe to same topics, so BFF also receives InventoryRestockedEvent
     foreach (var command in commands) {
       using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(
         inventoryPerspectives: 2,
         bffPerspectives: 2);
       using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(
         inventoryPerspectives: 1,
-        bffPerspectives: 0);
+        bffPerspectives: 1);  // BFF also has InventoryLevelsPerspective
       await fixture.Dispatcher.SendAsync(command);
       await productWaiter.WaitAsync(timeoutMilliseconds: 15000);
       await restockWaiter.WaitAsync(timeoutMilliseconds: 15000);
