@@ -130,6 +130,13 @@ jobs:
         find coverage -name "*.cobertura.xml" -o -name "*.xml" 2>/dev/null || echo "No coverage files found"
         ls -laR coverage/ || echo "Coverage directory empty or missing"
 
+    - name: Build project to generate all source-generated files
+      run: |
+        echo "Building project to ensure all source-generated files exist before merging coverage..."
+        dotnet clean --configuration Release
+        dotnet build --configuration Release -maxcpucount:1
+        echo "Build complete - all source-generated files now exist"
+
     - name: Merge coverage reports
       run: |
         # Find all cobertura XML files
@@ -197,7 +204,8 @@ jobs:
           /d:sonar.issue.ignore.multicriteria.e6.ruleKey="csharpsquid:S3776" \
           /d:sonar.issue.ignore.multicriteria.e6.resourceKey="src/Whizbang.Generators/**"
 
-        # Clean first to avoid file locking issues, then build with single CPU to serialize
+        # Build again for SonarScanner to analyze code
+        # (Note: We already built once above to generate source files for coverage merge)
         dotnet clean --configuration Release
         dotnet build --configuration Release -maxcpucount:1
 
