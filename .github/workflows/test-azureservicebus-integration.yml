@@ -61,41 +61,37 @@ jobs:
 
       - name: Run Azure Service Bus Integration Tests
         # Tests will start ServiceBus emulator via docker-compose automatically
+        # Strategy: retry failed tests 2 times, if still failing, full rerun once
         run: |
           set +e  # Don't exit on error, we'll handle retries
-          max_attempts=3
-          attempt=1
-          exit_code=0
 
-          while [ $attempt -le $max_attempts ]; do
-            echo "Attempt $attempt of $max_attempts..."
+          echo "=== Running tests with automatic retry of failed tests (up to 2 retries per test) ==="
+          dotnet test --project samples/ECommerce/tests/ECommerce.Integration.Tests/ \
+            --configuration Release \
+            --max-parallel-test-modules 1 \
+            --retry-failed-tests 2 \
+            --report-trx \
+            --coverage --coverage-output-format cobertura
 
-            dotnet test --project samples/ECommerce/tests/ECommerce.Integration.Tests/ \
-              --configuration Release \
-              --max-parallel-test-modules 1 \
-              --report-trx \
-              --coverage --coverage-output-format cobertura
+          exit_code=$?
 
-            exit_code=$?
-
-            if [ $exit_code -eq 0 ]; then
-              echo "Tests passed on attempt $attempt"
-              break
-            else
-              echo "Tests failed on attempt $attempt with exit code $exit_code"
-              if [ $attempt -lt $max_attempts ]; then
-                echo "Waiting 10 seconds before retry..."
-                sleep 10
-              fi
-            fi
-
-            attempt=$((attempt + 1))
-          done
-
-          if [ $exit_code -ne 0 ]; then
-            echo "All $max_attempts attempts failed"
-            exit $exit_code
+          if [ $exit_code -eq 0 ]; then
+            echo "Tests passed"
+            exit 0
           fi
+
+          echo "=== Some tests still failing after retries, doing one full rerun ==="
+          sleep 10
+
+          # Full rerun as last resort
+          dotnet test --project samples/ECommerce/tests/ECommerce.Integration.Tests/ \
+            --configuration Release \
+            --max-parallel-test-modules 1 \
+            --retry-failed-tests 2 \
+            --report-trx \
+            --coverage --coverage-output-format cobertura
+
+          exit $?
 
       - name: Upload Test Results
         if: always()
