@@ -80,7 +80,7 @@ jobs:
         done
 
     - name: Download coverage from Unit Tests
-      uses: dawidd6/action-download-artifact@80620a5d27ce0ae443b965134db88467fc607b43 # v7
+      uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
       with:
         workflow: test.yml
         name: coverage-unit-tests
@@ -89,7 +89,7 @@ jobs:
         commit: ${{ github.event.pull_request.head.sha || github.sha }}
 
     - name: Download coverage from PostgreSQL Integration Tests
-      uses: dawidd6/action-download-artifact@80620a5d27ce0ae443b965134db88467fc607b43 # v7
+      uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
       with:
         workflow: test-postgres-integration.yml
         name: coverage-postgres-integration
@@ -98,7 +98,7 @@ jobs:
         commit: ${{ github.event.pull_request.head.sha || github.sha }}
 
     - name: Download coverage from InMemory Integration Tests
-      uses: dawidd6/action-download-artifact@80620a5d27ce0ae443b965134db88467fc607b43 # v7
+      uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
       with:
         workflow: test-inmemory-integration.yml
         name: coverage-inmemory-integration
@@ -107,7 +107,7 @@ jobs:
         commit: ${{ github.event.pull_request.head.sha || github.sha }}
 
     - name: Download coverage from RabbitMQ Integration Tests
-      uses: dawidd6/action-download-artifact@80620a5d27ce0ae443b965134db88467fc607b43 # v7
+      uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
       with:
         workflow: test-rabbitmq-integration.yml
         name: coverage-rabbitmq-integration
@@ -116,7 +116,7 @@ jobs:
         commit: ${{ github.event.pull_request.head.sha || github.sha }}
 
     - name: Download coverage from Azure Service Bus Integration Tests
-      uses: dawidd6/action-download-artifact@80620a5d27ce0ae443b965134db88467fc607b43 # v7
+      uses: dawidd6/action-download-artifact@0bd50d53a6d7fb5cb921e607957e9cc12b4ce392 # v12
       with:
         workflow: test-azureservicebus-integration.yml
         name: coverage-servicebus-integration
