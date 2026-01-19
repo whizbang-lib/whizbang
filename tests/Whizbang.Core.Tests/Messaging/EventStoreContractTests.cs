@@ -271,7 +271,7 @@ public abstract class EventStoreContractTests {
   // ========================================
 
   [Test]
-  public async Task ReadPolymorphicAsync_ShouldReturnIEventEnvelopesAsync() {
+  public virtual async Task ReadPolymorphicAsync_ShouldReturnIEventEnvelopesAsync() {
     // Arrange
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
@@ -291,7 +291,7 @@ public abstract class EventStoreContractTests {
   }
 
   [Test]
-  public async Task ReadPolymorphicAsync_EmptyStream_ShouldReturnEmptyAsync() {
+  public virtual async Task ReadPolymorphicAsync_EmptyStream_ShouldReturnEmptyAsync() {
     // Arrange
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
@@ -312,7 +312,7 @@ public abstract class EventStoreContractTests {
   // ========================================
 
   [Test]
-  public async Task GetEventsBetweenAsync_ShouldReturnEventsInRangeAsync() {
+  public virtual async Task GetEventsBetweenAsync_ShouldReturnEventsInRangeAsync() {
     // Arrange
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
@@ -335,7 +335,7 @@ public abstract class EventStoreContractTests {
   }
 
   [Test]
-  public async Task GetEventsBetweenAsync_EmptyStream_ShouldReturnEmptyListAsync() {
+  public virtual async Task GetEventsBetweenAsync_EmptyStream_ShouldReturnEmptyListAsync() {
     // Arrange
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
@@ -351,7 +351,7 @@ public abstract class EventStoreContractTests {
   }
 
   [Test]
-  public async Task GetEventsBetweenPolymorphicAsync_ShouldReturnIEventEnvelopesAsync() {
+  public virtual async Task GetEventsBetweenPolymorphicAsync_ShouldReturnIEventEnvelopesAsync() {
     // Arrange
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
@@ -374,7 +374,7 @@ public abstract class EventStoreContractTests {
   }
 
   [Test]
-  public async Task GetEventsBetweenPolymorphicAsync_EmptyStream_ShouldReturnEmptyListAsync() {
+  public virtual async Task GetEventsBetweenPolymorphicAsync_EmptyStream_ShouldReturnEmptyListAsync() {
     // Arrange
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
@@ -392,7 +392,7 @@ public abstract class EventStoreContractTests {
   }
 
   [Test]
-  public async Task GetEventsBetweenPolymorphicAsync_WithNullEventTypes_ShouldThrowAsync() {
+  public virtual async Task GetEventsBetweenPolymorphicAsync_WithNullEventTypes_ShouldThrowAsync() {
     // Arrange
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();

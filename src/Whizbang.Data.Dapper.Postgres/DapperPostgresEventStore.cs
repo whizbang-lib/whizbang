@@ -358,12 +358,12 @@ public class DapperPostgresEventStore(
   /// Returns the PostgreSQL-specific SQL for querying events between two checkpoint IDs.
   /// </summary>
   protected override string GetEventsBetweenSql() => @"
-    SELECT event_type AS EventType, event_data AS EventData, metadata AS Metadata, scope AS Scope
+    SELECT event_type AS EventType, event_data::text AS EventData, metadata::text AS Metadata, scope::text AS Scope
     FROM wh_event_store
     WHERE stream_id = @StreamId
-      AND id <= @UpToEventId
-      AND (@AfterEventId IS NULL OR id > @AfterEventId)
-    ORDER BY id";
+      AND event_id <= @UpToEventId
+      AND (@AfterEventId IS NULL OR event_id > @AfterEventId)
+    ORDER BY event_id";
 
   /// <summary>
   /// Returns the PostgreSQL-specific SQL for retrieving the last sequence number in a stream.
