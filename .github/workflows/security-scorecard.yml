@@ -22,7 +22,7 @@ jobs:
 
     steps:
     - name: Checkout repository
-      uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      uses: actions/checkout@d23878f2db70c5e9e78e3d4e7d1b1dd40c46b99f # v6.0.1
       with:
         persist-credentials: false
 
