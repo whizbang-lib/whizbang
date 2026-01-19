@@ -30,6 +30,8 @@
 
   <!-- Package Metadata -->
   <PropertyGroup>
+    <!-- Use SoftwareExtravaganza prefix to avoid NuGet naming conflicts -->
+    <PackageId>SoftwareExtravaganza.$(MSBuildProjectName)</PackageId>
     <Version>0.1.0</Version>
     <Authors>Phil Carbone</Authors>
     <Company>whizbang-lib</Company>
