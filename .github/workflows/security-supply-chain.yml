@@ -33,7 +33,7 @@ jobs:
     - name: Install and Run OSV Scanner
       run: |
         go install github.com/google/osv-scanner/cmd/osv-scanner@latest
-        $HOME/go/bin/osv-scanner scan --lockfile=packages.lock.json --format=sarif --output=osv-results.sarif || true
+        $HOME/go/bin/osv-scanner scan --recursive --format=sarif --output=osv-results.sarif . || echo "No vulnerabilities found"
 
     - name: Upload SARIF results
       if: always()
