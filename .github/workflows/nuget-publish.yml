@@ -35,6 +35,8 @@ jobs:
     - name: NuGet Login (OIDC Trusted Publishing)
       uses: nuget/login@v1
       id: nuget-login
+      with:
+        user: phil.carbone
 
     - name: Publish to NuGet
       run: dotnet nuget push "./packages/*.nupkg" --api-key "${{ steps.nuget-login.outputs.nuget-api-key }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
