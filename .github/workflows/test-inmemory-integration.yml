@@ -47,15 +47,14 @@ jobs:
         run: dotnet build --no-restore --configuration Release
 
       - name: Run InMemory Integration Tests
-        # Strategy: retry failed tests 2 times, if still failing, full rerun once
+        # Retry strategy: run tests, if failure wait and retry once
         run: |
           set +e  # Don't exit on error, we'll handle retries
 
-          echo "=== Running tests with automatic retry of failed tests (up to 2 retries per test) ==="
+          echo "=== Running InMemory integration tests ==="
           dotnet test --project samples/ECommerce/tests/ECommerce.InMemory.Integration.Tests/ECommerce.InMemory.Integration.Tests.csproj \
             --no-build \
             --configuration Release \
-            --retry-failed-tests 2 \
             --report-trx \
             --report-trx-filename inmemory-integration-tests.trx \
             --coverage --coverage-output-format cobertura
@@ -67,14 +66,12 @@ jobs:
             exit 0
           fi
 
-          echo "=== Some tests still failing after retries, doing one full rerun ==="
+          echo "=== Tests failed, retrying once after 10 seconds ==="
           sleep 10
 
-          # Full rerun as last resort
           dotnet test --project samples/ECommerce/tests/ECommerce.InMemory.Integration.Tests/ECommerce.InMemory.Integration.Tests.csproj \
             --no-build \
             --configuration Release \
-            --retry-failed-tests 2 \
             --report-trx \
             --report-trx-filename inmemory-integration-tests.trx \
             --coverage --coverage-output-format cobertura
