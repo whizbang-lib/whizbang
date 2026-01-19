@@ -26,7 +26,7 @@ jobs:
       run: dotnet build --configuration Release --no-restore
 
     - name: Pack NuGet packages
-      run: dotnet pack --configuration Release --no-build --output ./packages
+      run: dotnet pack --configuration Release --output ./packages
 
     - name: Publish to NuGet
       run: dotnet nuget push "./packages/*.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json --skip-duplicate
