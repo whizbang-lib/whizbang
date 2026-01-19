@@ -32,7 +32,7 @@ jobs:
 
     - name: Install and Run OSV Scanner
       run: |
-        go install github.com/google/osv-scanner/cmd/osv-scanner@v2.3.2
+        go install github.com/google/osv-scanner/cmd/osv-scanner@latest
         $HOME/go/bin/osv-scanner scan --lockfile=packages.lock.json --format=sarif --output=osv-results.sarif || true
 
     - name: Upload SARIF results
