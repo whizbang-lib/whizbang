@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@d23878f2db70c5e9e78e3d4e7d1b1dd40c46b99f # v6.0.1
+    - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
     - name: Setup .NET
       uses: actions/setup-dotnet@3b51094c18e35fe4e5a0e98f09bf427d53e2e56f # v5.1.0 # v4.3.1
@@ -45,7 +45,7 @@ jobs:
       run: ls -la ./packages
 
     - name: Upload packages as artifacts
-      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v6.0.0 # v4.6.2
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 # v4.6.2
       with:
         name: nuget-packages
         path: ./packages/*.nupkg
