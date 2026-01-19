@@ -204,6 +204,208 @@ public abstract class EventStoreContractTests {
     await Assert.That(events).Count().IsEqualTo(10);
   }
 
+  // ========================================
+  // EVENT ID BASED READ TESTS
+  // ========================================
+
+  [Test]
+  public async Task ReadAsync_ByEventId_FromNull_ShouldReturnAllEventsAsync() {
+    // Arrange
+    var eventStore = await CreateEventStoreAsync();
+    var streamId = Guid.NewGuid();
+    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, "event-1"));
+    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, "event-2"));
+    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, "event-3"));
+
+    // Act - Read with null fromEventId
+    var events = new List<IMessageEnvelope>();
+    await foreach (var evt in eventStore.ReadAsync<TestEvent>(streamId, fromEventId: null)) {
+      events.Add(evt);
+    }
+
+    // Assert
+    await Assert.That(events).Count().IsEqualTo(3);
+  }
+
+  [Test]
+  public async Task ReadAsync_ByEventId_FromSpecificEvent_ShouldReturnEventsAfterItAsync() {
+    // Arrange
+    var eventStore = await CreateEventStoreAsync();
+    var streamId = Guid.NewGuid();
+    var envelope1 = _createTestEnvelope(streamId, "event-1");
+    var envelope2 = _createTestEnvelope(streamId, "event-2");
+    var envelope3 = _createTestEnvelope(streamId, "event-3");
+
+    await eventStore.AppendAsync(streamId, envelope1);
+    await eventStore.AppendAsync(streamId, envelope2);
+    await eventStore.AppendAsync(streamId, envelope3);
+
+    // Act - Read from after envelope1
+    var events = new List<IMessageEnvelope>();
+    await foreach (var evt in eventStore.ReadAsync<TestEvent>(streamId, fromEventId: envelope1.MessageId.Value)) {
+      events.Add(evt);
+    }
+
+    // Assert - Should return events after envelope1
+    await Assert.That(events).Count().IsGreaterThanOrEqualTo(1);
+  }
+
+  [Test]
+  public async Task ReadAsync_ByEventId_EmptyStream_ShouldReturnEmptyAsync() {
+    // Arrange
+    var eventStore = await CreateEventStoreAsync();
+    var streamId = Guid.NewGuid();
+
+    // Act
+    var events = new List<IMessageEnvelope>();
+    await foreach (var evt in eventStore.ReadAsync<TestEvent>(streamId, fromEventId: null)) {
+      events.Add(evt);
+    }
+
+    // Assert
+    await Assert.That(events).Count().IsEqualTo(0);
+  }
+
+  // ========================================
+  // POLYMORPHIC READ TESTS
+  // ========================================
+
+  [Test]
+  public async Task ReadPolymorphicAsync_ShouldReturnIEventEnvelopesAsync() {
+    // Arrange
+    var eventStore = await CreateEventStoreAsync();
+    var streamId = Guid.NewGuid();
+
+    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, "event-1"));
+    await eventStore.AppendAsync(streamId, _createTestEnvelope(streamId, "event-2"));
+
+    // Act
+    var eventTypes = new List<Type> { typeof(TestEvent) };
+    var events = new List<IMessageEnvelope>();
+    await foreach (var evt in eventStore.ReadPolymorphicAsync(streamId, fromEventId: null, eventTypes)) {
+      events.Add(evt);
+    }
+
+    // Assert
+    await Assert.That(events).Count().IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task ReadPolymorphicAsync_EmptyStream_ShouldReturnEmptyAsync() {
+    // Arrange
+    var eventStore = await CreateEventStoreAsync();
+    var streamId = Guid.NewGuid();
+
+    // Act
+    var eventTypes = new List<Type> { typeof(TestEvent) };
+    var events = new List<IMessageEnvelope>();
+    await foreach (var evt in eventStore.ReadPolymorphicAsync(streamId, fromEventId: null, eventTypes)) {
+      events.Add(evt);
+    }
+
+    // Assert
+    await Assert.That(events).Count().IsEqualTo(0);
+  }
+
+  // ========================================
+  // GET EVENTS BETWEEN TESTS
+  // ========================================
+
+  [Test]
+  public async Task GetEventsBetweenAsync_ShouldReturnEventsInRangeAsync() {
+    // Arrange
+    var eventStore = await CreateEventStoreAsync();
+    var streamId = Guid.NewGuid();
+    var envelope1 = _createTestEnvelope(streamId, "event-1");
+    var envelope2 = _createTestEnvelope(streamId, "event-2");
+    var envelope3 = _createTestEnvelope(streamId, "event-3");
+
+    await eventStore.AppendAsync(streamId, envelope1);
+    await eventStore.AppendAsync(streamId, envelope2);
+    await eventStore.AppendAsync(streamId, envelope3);
+
+    // Act - Get events up to envelope2
+    var events = await eventStore.GetEventsBetweenAsync<TestEvent>(
+      streamId,
+      afterEventId: null,
+      upToEventId: envelope2.MessageId.Value);
+
+    // Assert - Should return events up to and including envelope2
+    await Assert.That(events).Count().IsGreaterThanOrEqualTo(1);
+  }
+
+  [Test]
+  public async Task GetEventsBetweenAsync_EmptyStream_ShouldReturnEmptyListAsync() {
+    // Arrange
+    var eventStore = await CreateEventStoreAsync();
+    var streamId = Guid.NewGuid();
+
+    // Act
+    var events = await eventStore.GetEventsBetweenAsync<TestEvent>(
+      streamId,
+      afterEventId: null,
+      upToEventId: Guid.NewGuid());
+
+    // Assert
+    await Assert.That(events).Count().IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task GetEventsBetweenPolymorphicAsync_ShouldReturnIEventEnvelopesAsync() {
+    // Arrange
+    var eventStore = await CreateEventStoreAsync();
+    var streamId = Guid.NewGuid();
+    var envelope1 = _createTestEnvelope(streamId, "event-1");
+    var envelope2 = _createTestEnvelope(streamId, "event-2");
+
+    await eventStore.AppendAsync(streamId, envelope1);
+    await eventStore.AppendAsync(streamId, envelope2);
+
+    // Act
+    var eventTypes = new List<Type> { typeof(TestEvent) };
+    var events = await eventStore.GetEventsBetweenPolymorphicAsync(
+      streamId,
+      afterEventId: null,
+      upToEventId: envelope2.MessageId.Value,
+      eventTypes);
+
+    // Assert
+    await Assert.That(events).Count().IsGreaterThanOrEqualTo(1);
+  }
+
+  [Test]
+  public async Task GetEventsBetweenPolymorphicAsync_EmptyStream_ShouldReturnEmptyListAsync() {
+    // Arrange
+    var eventStore = await CreateEventStoreAsync();
+    var streamId = Guid.NewGuid();
+
+    // Act
+    var eventTypes = new List<Type> { typeof(TestEvent) };
+    var events = await eventStore.GetEventsBetweenPolymorphicAsync(
+      streamId,
+      afterEventId: null,
+      upToEventId: Guid.NewGuid(),
+      eventTypes);
+
+    // Assert
+    await Assert.That(events).Count().IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task GetEventsBetweenPolymorphicAsync_WithNullEventTypes_ShouldThrowAsync() {
+    // Arrange
+    var eventStore = await CreateEventStoreAsync();
+    var streamId = Guid.NewGuid();
+
+    // Act & Assert
+    await Assert.That(async () => await eventStore.GetEventsBetweenPolymorphicAsync(
+      streamId,
+      afterEventId: null,
+      upToEventId: Guid.NewGuid(),
+      eventTypes: null!))
+      .ThrowsExactly<ArgumentNullException>();
+  }
+
   /// <summary>
   /// Helper method to create a test message envelope with TestEvent payload.
   /// </summary>
