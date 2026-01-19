@@ -10,6 +10,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Policies;
+using Whizbang.Core.ValueObjects;
 using Whizbang.Data.Dapper.Custom;
 
 namespace Whizbang.Data.Dapper.Postgres;
@@ -275,23 +276,37 @@ public class DapperPostgresEventStore(
         throw new InvalidOperationException($"Failed to deserialize event of type {concreteType.FullName}");
       }
 
-      // Deserialize metadata
-      var metadataTypeInfo = JsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
-      if (metadataTypeInfo == null) {
-        throw new InvalidOperationException("No JsonTypeInfo found for EnvelopeMetadata");
+      // Deserialize metadata using dictionary approach (matches FromJsonb pattern)
+      // Stored metadata uses snake_case keys: message_id, correlation_id, causation_id, hops
+      var metadataDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>));
+      if (metadataDictTypeInfo == null) {
+        throw new InvalidOperationException("No JsonTypeInfo found for Dictionary<string, JsonElement>");
       }
 
-      var metadata = JsonSerializer.Deserialize(jsonb.MetadataJson, metadataTypeInfo);
-      if (metadata == null) {
-        throw new InvalidOperationException("Failed to deserialize envelope metadata");
+      var metadataDict = JsonSerializer.Deserialize(jsonb.MetadataJson, metadataDictTypeInfo) as Dictionary<string, JsonElement>
+                         ?? throw new InvalidOperationException("Failed to deserialize metadata JSON");
+
+      // Extract message_id from metadata
+      var messageId = metadataDict.TryGetValue("message_id", out var msgIdElem)
+        ? Guid.Parse(msgIdElem.GetString()!)
+        : throw new InvalidOperationException("message_id not found in metadata");
+
+      // Deserialize hops from metadata
+      List<MessageHop> hops;
+      if (metadataDict.TryGetValue("hops", out var hopsElem)) {
+        var hopsTypeInfo = JsonOptions.GetTypeInfo(typeof(List<MessageHop>))
+                           ?? throw new InvalidOperationException("No JsonTypeInfo found for List<MessageHop>");
+        hops = JsonSerializer.Deserialize(hopsElem.GetRawText(), hopsTypeInfo) as List<MessageHop> ?? [];
+      } else {
+        hops = [];
       }
 
       // Cast to IEvent and construct envelope
       if (eventData is IEvent eventPayload) {
         var typedEnvelope = new MessageEnvelope<IEvent> {
-          MessageId = ((EnvelopeMetadata)metadata).MessageId,
+          MessageId = MessageId.From(messageId),
           Payload = eventPayload,
-          Hops = ((EnvelopeMetadata)metadata).Hops
+          Hops = hops
         };
         yield return typedEnvelope;
       }

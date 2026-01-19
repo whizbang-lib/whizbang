@@ -8,6 +8,7 @@ using Whizbang.Core;
 using Whizbang.Core.Data;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
+using Whizbang.Core.ValueObjects;
 
 namespace Whizbang.Data.Dapper.Custom;
 
@@ -195,7 +196,9 @@ public abstract class DapperEventStoreBase : IEventStore {
       typeLookup[type.FullName ?? type.Name] = typeInfo;
     }
 
-    var metadataTypeInfo = JsonOptions.GetTypeInfo(typeof(EnvelopeMetadata));
+    // Use dictionary approach for metadata deserialization (matches ToJsonb snake_case keys)
+    var metadataDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>));
+    var hopsTypeInfo = JsonOptions.GetTypeInfo(typeof(List<MessageHop>));
 
     foreach (var row in rows) {
       // Normalize event type name (remove assembly version/culture/publickey if present)
@@ -218,15 +221,27 @@ public abstract class DapperEventStoreBase : IEventStore {
         throw new InvalidOperationException($"Failed to deserialize event of type {row.EventType}");
       }
 
-      var metadata = JsonSerializer.Deserialize(row.Metadata, metadataTypeInfo);
-      if (metadata == null) {
-        throw new InvalidOperationException($"Failed to deserialize metadata for event type {row.EventType}");
+      // Deserialize metadata using dictionary approach (stored with snake_case keys)
+      var metadataDict = JsonSerializer.Deserialize(row.Metadata, metadataDictTypeInfo) as Dictionary<string, JsonElement>
+                         ?? throw new InvalidOperationException($"Failed to deserialize metadata for event type {row.EventType}");
+
+      // Extract message_id from metadata
+      var messageId = metadataDict.TryGetValue("message_id", out var msgIdElem)
+        ? Guid.Parse(msgIdElem.GetString()!)
+        : throw new InvalidOperationException("message_id not found in metadata");
+
+      // Deserialize hops from metadata
+      List<MessageHop> hops;
+      if (metadataDict.TryGetValue("hops", out var hopsElem)) {
+        hops = JsonSerializer.Deserialize(hopsElem.GetRawText(), hopsTypeInfo) as List<MessageHop> ?? [];
+      } else {
+        hops = [];
       }
 
       envelopes.Add(new MessageEnvelope<IEvent> {
-        MessageId = ((EnvelopeMetadata)metadata).MessageId,
+        MessageId = MessageId.From(messageId),
         Payload = (IEvent)eventData,
-        Hops = ((EnvelopeMetadata)metadata).Hops
+        Hops = hops
       });
     }
 
