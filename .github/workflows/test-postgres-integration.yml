@@ -50,6 +50,9 @@ jobs:
       - name: Restore Dependencies
         run: dotnet restore
 
+      - name: Clean Solution
+        run: dotnet clean --configuration Release
+
       - name: Build Solution
         run: dotnet build --no-restore --configuration Release -maxcpucount:1
 
