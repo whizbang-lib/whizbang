@@ -31,7 +31,7 @@ jobs:
       run: dotnet restore
 
     - name: Run OSV Scanner
-      uses: google/osv-scanner-action@1fe9e01b5d2c70a92db70d6113e7dc2b17edca4d # v1.10.1
+      uses: google/osv-scanner-action@2a387edfbe02a11d856b89172f6e978100177eb4 # v2.3.2
       with:
         scan-args: |-
           --lockfile=packages.lock.json
