@@ -39,7 +39,7 @@ jobs:
         user: phil.carbone
 
     - name: Publish to NuGet
-      run: dotnet nuget push "./packages/*.nupkg" --api-key "${{ steps.nuget-login.outputs.nuget-api-key }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
+      run: dotnet nuget push "./packages/*.nupkg" --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
 
     - name: Create GitHub Release
       uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
