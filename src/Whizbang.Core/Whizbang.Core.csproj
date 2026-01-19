@@ -9,6 +9,13 @@
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
     <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
   </PropertyGroup>
+  <!-- Include message registry as content in NuGet package -->
+  <ItemGroup>
+    <None Include=".whizbang/message-registry.json" Pack="true" PackagePath="content/.whizbang/" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include=".whizbang/message-registry.json" Pack="true" PackagePath="contentFiles/any/any/.whizbang/" CopyToOutputDirectory="PreserveNewest">
+      <PackageCopyToOutput>true</PackageCopyToOutput>
+    </Content>
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Medo.Uuid7" />
     <PackageReference Include="Microsoft.Extensions.DependencyInjection.Abstractions" />
