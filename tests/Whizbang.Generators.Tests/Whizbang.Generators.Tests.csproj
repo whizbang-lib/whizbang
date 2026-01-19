@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- Enable viewing generated files -->
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
+    <!-- Don't capture test output so Console.WriteLine appears in terminal -->
+    <TestingPlatformCaptureOutput>false</TestingPlatformCaptureOutput>
+    <!-- Suppress CA1707: Test method names use underscores for readability (Given_When_Then pattern) -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <!-- Exclude generated files from compilation -->
+    <Compile Remove=".whizbang-generated/**/*.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Reference to the generator projects we're testing -->
+    <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj" />
+    <!-- Shared library for testing shared utility types (use extern alias to avoid conflicts with ILRepack merged types) -->
+    <ProjectReference Include="../../src/Whizbang.Generators.Shared/Whizbang.Generators.Shared.csproj">
+      <Aliases>shared</Aliases>
+    </ProjectReference>
+    <ProjectReference Include="../../src/Whizbang.Data.EFCore.Postgres.Generators/Whizbang.Data.EFCore.Postgres.Generators.csproj" />
+    <!-- Core for interfaces like ICommand, IEvent, etc. -->
+    <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
+    <!-- EFCore.Custom for WhizbangDbContextAttribute -->
+    <ProjectReference Include="../../src/Whizbang.Data.EFCore.Custom/Whizbang.Data.EFCore.Custom.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Testing framework -->
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="TUnit" />
+    <!-- Roslyn for source generator testing -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" />
+    <!-- EF Core for DbContext testing -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+  </ItemGroup>
+</Project>

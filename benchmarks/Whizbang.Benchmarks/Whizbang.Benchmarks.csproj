@@ -1,0 +1,28 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <OutputType>Exe</OutputType>
+    <!-- Suppress CA rules that conflict with BenchmarkDotNet requirements -->
+    <!-- CA1707: Benchmark method names use underscores for readability -->
+    <!-- CA1822: Benchmark methods cannot be static (BenchmarkDotNet requirement) -->
+    <!-- CA1051: BenchmarkDotNet requires public fields for [Params] and [GlobalSetup] data -->
+    <!-- CA1001: Benchmarks intentionally don't dispose resources (managed by BenchmarkDotNet) -->
+    <!-- CA2012: Benchmarks may access ValueTask results directly for accurate measurement -->
+    <!-- CA1805: Explicit initialization to default can be clearer in benchmark setup -->
+    <NoWarn>$(NoWarn);CA1707;CA1822;CA1051;CA1001;CA2012;CA1805</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="BenchmarkDotNet" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

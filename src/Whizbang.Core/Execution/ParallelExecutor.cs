@@ -1,0 +1,173 @@
+using System.Collections.Concurrent;
+using Whizbang.Core.Observability;
+using Whizbang.Core.Policies;
+
+namespace Whizbang.Core.Execution;
+
+/// <summary>
+/// Executes handlers concurrently with no ordering guarantees.
+/// Supports configurable concurrency limits via SemaphoreSlim.
+/// </summary>
+/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:Constructor_WithValidMaxConcurrency_CreatesExecutorWithCorrectNameAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:Constructor_WithInvalidMaxConcurrency_ThrowsArgumentOutOfRangeExceptionAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:ExecuteAsync_WhenNotRunning_ThrowsInvalidOperationExceptionAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:StateTransitions_IdempotentOperations_SucceedAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:StartAsync_AfterStop_ThrowsInvalidOperationExceptionAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:ExecuteAsync_FastPath_SynchronousHandler_ExecutesImmediatelyAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:ExecuteAsync_SlowPath_AsyncHandler_AwaitsCorrectlyAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:ExecuteAsync_ExceptionInHandler_ReleasesSemaphoreAndRethrowsAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:ExecuteAsync_RespectsConcurrencyLimit_OnlyMaxConcurrentExecutionsAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:DrainAsync_WaitsForAllInFlightWork_CompletesAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:DrainAsync_WhenNotRunning_ReturnsImmediatelyAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:ExecuteAsync_ParallelExecution_RunsConcurrentlyAsync</tests>
+/// <tests>tests/Whizbang.Execution.Tests/ParallelExecutorTests.cs:ExecuteAsync_CancellationToken_CancelsSemaphoreWaitAsync</tests>
+public class ParallelExecutor : IExecutionStrategy, IAsyncDisposable {
+  private enum State { NotStarted, Running, Stopped }
+
+  private readonly SemaphoreSlim _semaphore;
+  private readonly int _maxConcurrency;
+  private State _state = State.NotStarted;
+  private readonly Lock _stateLock = new();
+  private bool _disposed;
+
+  public ParallelExecutor(int maxConcurrency = 10) {
+    if (maxConcurrency <= 0) {
+      throw new ArgumentOutOfRangeException(nameof(maxConcurrency), "Max concurrency must be greater than zero");
+    }
+
+    _maxConcurrency = maxConcurrency;
+    _semaphore = new SemaphoreSlim(maxConcurrency, maxConcurrency);
+  }
+
+  public string Name => $"Parallel(max:{_maxConcurrency})";
+
+  public ValueTask<TResult> ExecuteAsync<TResult>(
+    IMessageEnvelope envelope,
+    Func<IMessageEnvelope, PolicyContext, ValueTask<TResult>> handler,
+    PolicyContext context,
+    CancellationToken ct = default
+  ) {
+    lock (_stateLock) {
+      if (_state != State.Running) {
+        throw new InvalidOperationException("ParallelExecutor is not running. Call StartAsync first.");
+      }
+    }
+
+    // Fast path: try synchronous acquire (zero allocation if successful)
+    // S2222 suppressed: Semaphore is correctly released on all paths:
+    // - Sync completion: line 66
+    // - Async completion: _awaitAndReleaseAsync releases in finally block
+    // - Exception: catch block releases
+#pragma warning disable S2222 // Locks should be released on all paths
+    if (_semaphore.Wait(0, ct)) {
+#pragma warning restore S2222
+      try {
+        var result = handler(envelope, context);
+
+        // If handler completed synchronously, return directly (zero allocation)
+        if (result.IsCompleted) {
+          _semaphore.Release();
+          return result;
+        }
+
+        // Handler is async, await it
+        return _awaitAndReleaseAsync(result, _semaphore);
+      } catch {
+        _semaphore.Release();
+        throw;
+      }
+    }
+
+    // Slow path: async wait (allocates if we need to wait)
+    return _slowPathAsync(envelope, handler, context, ct);
+  }
+
+  private static async ValueTask<TResult> _awaitAndReleaseAsync<TResult>(
+    ValueTask<TResult> task,
+    SemaphoreSlim semaphore
+  ) {
+    try {
+      return await task;
+    } finally {
+      semaphore.Release();
+    }
+  }
+
+  private async ValueTask<TResult> _slowPathAsync<TResult>(
+    IMessageEnvelope envelope,
+    Func<IMessageEnvelope, PolicyContext, ValueTask<TResult>> handler,
+    PolicyContext context,
+    CancellationToken ct
+  ) {
+    await _semaphore.WaitAsync(ct);
+    try {
+      return await handler(envelope, context);
+    } finally {
+      _semaphore.Release();
+    }
+  }
+
+  public Task StartAsync(CancellationToken ct = default) {
+    lock (_stateLock) {
+      if (_state == State.Running) {
+        return Task.CompletedTask; // Idempotent
+      }
+
+      if (_state == State.Stopped) {
+        throw new InvalidOperationException("Cannot restart a stopped ParallelExecutor");
+      }
+
+      _state = State.Running;
+    }
+
+    return Task.CompletedTask;
+  }
+
+  public Task StopAsync(CancellationToken ct = default) {
+    lock (_stateLock) {
+      if (_state == State.Stopped) {
+        return Task.CompletedTask; // Already stopped
+      }
+
+      if (_state == State.NotStarted) {
+        _state = State.Stopped;
+        return Task.CompletedTask;
+      }
+
+      _state = State.Stopped;
+    }
+
+    return Task.CompletedTask;
+  }
+
+  public async Task DrainAsync(CancellationToken ct = default) {
+    lock (_stateLock) {
+      if (_state != State.Running) {
+        return; // Nothing to drain
+      }
+    }
+
+    // Wait for all semaphore slots to be available (all work complete)
+    for (int i = 0; i < _maxConcurrency; i++) {
+      await _semaphore.WaitAsync(ct);
+    }
+
+    // Release all slots back
+    _semaphore.Release(_maxConcurrency);
+  }
+
+  public async ValueTask DisposeAsync() {
+    if (_disposed) {
+      return;
+    }
+
+    // Stop the executor if running
+    await StopAsync();
+
+    // Dispose the semaphore
+    _semaphore.Dispose();
+
+    _disposed = true;
+    GC.SuppressFinalize(this);
+  }
+}

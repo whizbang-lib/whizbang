@@ -1,0 +1,51 @@
+/Users/philcarbone/src/whizbang/samples/ECommerce/tests/ECommerce.BFF.API.Tests/ECommerce.BFF.API.Tests.csproj : warning NU1603: ECommerce.BFF.API.Tests depends on Microsoft.CodeAnalysis.BannedApiAnalyzers (>= 3.11.0) but Microsoft.CodeAnalysis.BannedApiAnalyzers 3.11.0 was not found. Microsoft.CodeAnalysis.BannedApiAnalyzers 4.14.0 was resolved instead.
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.ServiceDefaults/ECommerce.ServiceDefaults.csproj : warning NU1603: ECommerce.ServiceDefaults depends on Microsoft.CodeAnalysis.BannedApiAnalyzers (>= 3.11.0) but Microsoft.CodeAnalysis.BannedApiAnalyzers 3.11.0 was not found. Microsoft.CodeAnalysis.BannedApiAnalyzers 4.14.0 was resolved instead. [/Users/philcarbone/src/whizbang/samples/ECommerce/tests/ECommerce.BFF.API.Tests/ECommerce.BFF.API.Tests.csproj]
+/Users/philcarbone/src/whizbang/src/Whizbang.Generators/Whizbang.Generators.csproj : warning NU1603: Whizbang.Generators depends on Microsoft.CodeAnalysis.BannedApiAnalyzers (>= 3.11.0) but Microsoft.CodeAnalysis.BannedApiAnalyzers 3.11.0 was not found. Microsoft.CodeAnalysis.BannedApiAnalyzers 4.14.0 was resolved instead. [/Users/philcarbone/src/whizbang/samples/ECommerce/tests/ECommerce.BFF.API.Tests/ECommerce.BFF.API.Tests.csproj]
+/Users/philcarbone/src/whizbang/src/Whizbang.Core/Whizbang.Core.csproj : warning NU1603: Whizbang.Core depends on Microsoft.CodeAnalysis.BannedApiAnalyzers (>= 3.11.0) but Microsoft.CodeAnalysis.BannedApiAnalyzers 3.11.0 was not found. Microsoft.CodeAnalysis.BannedApiAnalyzers 4.14.0 was resolved instead. [/Users/philcarbone/src/whizbang/samples/ECommerce/tests/ECommerce.BFF.API.Tests/ECommerce.BFF.API.Tests.csproj]
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Custom/Whizbang.Data.Dapper.Custom.csproj : warning NU1603: Whizbang.Data.Dapper.Custom depends on Microsoft.CodeAnalysis.BannedApiAnalyzers (>= 3.11.0) but Microsoft.CodeAnalysis.BannedApiAnalyzers 3.11.0 was not found. Microsoft.CodeAnalysis.BannedApiAnalyzers 4.14.0 was resolved instead. [/Users/philcarbone/src/whizbang/samples/ECommerce/tests/ECommerce.BFF.API.Tests/ECommerce.BFF.API.Tests.csproj]
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.Contracts/ECommerce.Contracts.csproj : warning NU1603: ECommerce.Contracts depends on Microsoft.CodeAnalysis.BannedApiAnalyzers (>= 3.11.0) but Microsoft.CodeAnalysis.BannedApiAnalyzers 3.11.0 was not found. Microsoft.CodeAnalysis.BannedApiAnalyzers 4.14.0 was resolved instead. [/Users/philcarbone/src/whizbang/samples/ECommerce/tests/ECommerce.BFF.API.Tests/ECommerce.BFF.API.Tests.csproj]
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Postgres/Whizbang.Data.Dapper.Postgres.csproj : warning NU1603: Whizbang.Data.Dapper.Postgres depends on Microsoft.CodeAnalysis.BannedApiAnalyzers (>= 3.11.0) but Microsoft.CodeAnalysis.BannedApiAnalyzers 3.11.0 was not found. Microsoft.CodeAnalysis.BannedApiAnalyzers 4.14.0 was resolved instead. [/Users/philcarbone/src/whizbang/samples/ECommerce/tests/ECommerce.BFF.API.Tests/ECommerce.BFF.API.Tests.csproj]
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.BFF.API/ECommerce.BFF.API.csproj : warning NU1603: ECommerce.BFF.API depends on Microsoft.CodeAnalysis.BannedApiAnalyzers (>= 3.11.0) but Microsoft.CodeAnalysis.BannedApiAnalyzers 3.11.0 was not found. Microsoft.CodeAnalysis.BannedApiAnalyzers 4.14.0 was resolved instead. [/Users/philcarbone/src/whizbang/samples/ECommerce/tests/ECommerce.BFF.API.Tests/ECommerce.BFF.API.Tests.csproj]
+/Users/philcarbone/src/whizbang/src/Whizbang.Transports.AzureServiceBus/Whizbang.Transports.AzureServiceBus.csproj : warning NU1603: Whizbang.Transports.AzureServiceBus depends on Microsoft.CodeAnalysis.BannedApiAnalyzers (>= 3.11.0) but Microsoft.CodeAnalysis.BannedApiAnalyzers 3.11.0 was not found. Microsoft.CodeAnalysis.BannedApiAnalyzers 4.14.0 was resolved instead. [/Users/philcarbone/src/whizbang/samples/ECommerce/tests/ECommerce.BFF.API.Tests/ECommerce.BFF.API.Tests.csproj]
+/Users/philcarbone/src/whizbang/samples/ECommerce/tests/ECommerce.BFF.API.Tests/ECommerce.BFF.API.Tests.csproj : warning NU1603: ECommerce.BFF.API.Tests depends on Microsoft.CodeAnalysis.BannedApiAnalyzers (>= 3.11.0) but Microsoft.CodeAnalysis.BannedApiAnalyzers 3.11.0 was not found. Microsoft.CodeAnalysis.BannedApiAnalyzers 4.14.0 was resolved instead.
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Custom/Whizbang.Data.Dapper.Custom.csproj : warning NU1603: Whizbang.Data.Dapper.Custom depends on Microsoft.CodeAnalysis.BannedApiAnalyzers (>= 3.11.0) but Microsoft.CodeAnalysis.BannedApiAnalyzers 3.11.0 was not found. Microsoft.CodeAnalysis.BannedApiAnalyzers 4.14.0 was resolved instead.
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.BFF.API/ECommerce.BFF.API.csproj : warning NU1603: ECommerce.BFF.API depends on Microsoft.CodeAnalysis.BannedApiAnalyzers (>= 3.11.0) but Microsoft.CodeAnalysis.BannedApiAnalyzers 3.11.0 was not found. Microsoft.CodeAnalysis.BannedApiAnalyzers 4.14.0 was resolved instead.
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Postgres/Whizbang.Data.Dapper.Postgres.csproj : warning NU1603: Whizbang.Data.Dapper.Postgres depends on Microsoft.CodeAnalysis.BannedApiAnalyzers (>= 3.11.0) but Microsoft.CodeAnalysis.BannedApiAnalyzers 3.11.0 was not found. Microsoft.CodeAnalysis.BannedApiAnalyzers 4.14.0 was resolved instead.
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.Contracts/ECommerce.Contracts.csproj : warning NU1603: ECommerce.Contracts depends on Microsoft.CodeAnalysis.BannedApiAnalyzers (>= 3.11.0) but Microsoft.CodeAnalysis.BannedApiAnalyzers 3.11.0 was not found. Microsoft.CodeAnalysis.BannedApiAnalyzers 4.14.0 was resolved instead.
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.ServiceDefaults/ECommerce.ServiceDefaults.csproj : warning NU1603: ECommerce.ServiceDefaults depends on Microsoft.CodeAnalysis.BannedApiAnalyzers (>= 3.11.0) but Microsoft.CodeAnalysis.BannedApiAnalyzers 3.11.0 was not found. Microsoft.CodeAnalysis.BannedApiAnalyzers 4.14.0 was resolved instead.
+/Users/philcarbone/src/whizbang/src/Whizbang.Core/Whizbang.Core.csproj : warning NU1603: Whizbang.Core depends on Microsoft.CodeAnalysis.BannedApiAnalyzers (>= 3.11.0) but Microsoft.CodeAnalysis.BannedApiAnalyzers 3.11.0 was not found. Microsoft.CodeAnalysis.BannedApiAnalyzers 4.14.0 was resolved instead.
+/Users/philcarbone/src/whizbang/src/Whizbang.Transports.AzureServiceBus/Whizbang.Transports.AzureServiceBus.csproj : warning NU1603: Whizbang.Transports.AzureServiceBus depends on Microsoft.CodeAnalysis.BannedApiAnalyzers (>= 3.11.0) but Microsoft.CodeAnalysis.BannedApiAnalyzers 3.11.0 was not found. Microsoft.CodeAnalysis.BannedApiAnalyzers 4.14.0 was resolved instead.
+/Users/philcarbone/src/whizbang/src/Whizbang.Generators/Whizbang.Generators.csproj : warning NU1603: Whizbang.Generators depends on Microsoft.CodeAnalysis.BannedApiAnalyzers (>= 3.11.0) but Microsoft.CodeAnalysis.BannedApiAnalyzers 3.11.0 was not found. Microsoft.CodeAnalysis.BannedApiAnalyzers 4.14.0 was resolved instead.
+
+████████╗██╗   ██╗███╗   ██╗██╗████████╗
+╚══██╔══╝██║   ██║████╗  ██║██║╚══██╔══╝
+   ██║   ██║   ██║██╔██╗ ██║██║   ██║
+   ██║   ██║   ██║██║╚██╗██║██║   ██║
+   ██║   ╚██████╔╝██║ ╚████║██║   ██║
+   ╚═╝    ╚═════╝ ╚═╝  ╚═══╝╚═╝   ╚═╝
+
+   TUnit v0.88.0.0 | 64-bit | macOS 26.1.0 | osx-arm64 | .NET 10.0.0 | Microsoft Testing Platform v2.0.1
+
+   Engine Mode: SourceGenerated
+
+[+0/x0/?0] ECommerce.BFF.API.Tests.dll (net10.0|arm64)(3s)
+
+[+0/x0/?0] ECommerce.BFF.API.Tests.dll (net10.0|arm64)(6s)
+
+[+0/x0/?0] ECommerce.BFF.API.Tests.dll (net10.0|arm64)(9s)
+
+[+37/x0/?0] ECommerce.BFF.API.Tests.dll (net10.0|arm64) - 31 tests running (12s)
+
+[+37/x0/?0] ECommerce.BFF.API.Tests.dll (net10.0|arm64) - 31 tests running (15s)
+
+[+37/x0/?0] ECommerce.BFF.API.Tests.dll (net10.0|arm64) - 31 tests running (18s)
+
+[+48/x0/?0] ECommerce.BFF.API.Tests.dll (net10.0|arm64) - 20 tests running (21s)
+
+
+Test run summary: Passed! - /Users/philcarbone/src/whizbang/samples/ECommerce/tests/ECommerce.BFF.API.Tests/bin/Debug/net10.0/ECommerce.BFF.API.Tests.dll (net10.0|arm64)
+  total: 68
+  failed: 0
+  succeeded: 68
+  skipped: 0
+  duration: 22s 433ms

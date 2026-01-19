@@ -1,0 +1,3 @@
+﻿/Users/philcarbone/src/whizbang/tests/Whizbang.Partitioning.Tests/HashPartitionRouterTests.cs
+/Users/philcarbone/src/whizbang/tests/Whizbang.Partitioning.Tests/PartitionRouterContractTests.cs
+/Users/philcarbone/src/whizbang/README.md

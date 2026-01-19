@@ -1,0 +1,35 @@
+<clr-main-container>
+  <clr-header class="header-6">
+    <div class="branding">
+      <a routerLink="/catalog" class="nav-link">
+        <span class="title">ECommerce - BFF Demo</span>
+      </a>
+    </div>
+    <div class="header-nav">
+      <a routerLink="/catalog" routerLinkActive="active" class="nav-link nav-text">Catalog</a>
+      <a routerLink="/cart" routerLinkActive="active" class="nav-link nav-text">Cart</a>
+      <a routerLink="/orders" routerLinkActive="active" class="nav-link nav-text">Orders</a>
+      <a routerLink="/admin" routerLinkActive="active" class="nav-link nav-text">Admin</a>
+    </div>
+    <div class="header-actions">
+      <clr-dropdown>
+        <button class="nav-icon" clrDropdownTrigger>
+          <cds-icon shape="user"></cds-icon>
+          <cds-icon shape="angle" direction="down"></cds-icon>
+        </button>
+        <clr-dropdown-menu *clrIfOpen clrPosition="bottom-right">
+          <a href="#" clrDropdownItem>Profile</a>
+          <a href="#" clrDropdownItem>Settings</a>
+          <div class="dropdown-divider"></div>
+          <a href="#" clrDropdownItem>Sign Out</a>
+        </clr-dropdown-menu>
+      </clr-dropdown>
+    </div>
+  </clr-header>
+
+  <div class="content-container">
+    <div class="content-area">
+      <router-outlet />
+    </div>
+  </div>
+</clr-main-container>

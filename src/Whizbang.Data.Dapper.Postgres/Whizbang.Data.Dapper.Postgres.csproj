@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>Whizbang.Data.Dapper.Postgres</RootNamespace>
+    <IsTrimmable>true</IsTrimmable>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <EnableSingleFileAnalyzer>true</EnableSingleFileAnalyzer>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Npgsql" />
+    <PackageReference Include="Microsoft.Extensions.Diagnostics.HealthChecks" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Whizbang.Data.Dapper.Custom/Whizbang.Data.Dapper.Custom.csproj" />
+    <ProjectReference Include="../Whizbang.Data.Schema/Whizbang.Data.Schema.csproj" />
+    <ProjectReference Include="../Whizbang.Data.Postgres/Whizbang.Data.Postgres.csproj" />
+  </ItemGroup>
+
+</Project>

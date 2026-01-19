@@ -1,0 +1,70 @@
+<Solution>
+  <Configurations>
+    <Platform Name="Any CPU" />
+    <Platform Name="x64" />
+    <Platform Name="x86" />
+  </Configurations>
+  <Folder Name="/benchmarks/">
+    <Project Path="benchmarks/Whizbang.Benchmarks/Whizbang.Benchmarks.csproj" />
+  </Folder>
+  <Folder Name="/samples/" />
+  <Folder Name="/samples/ECommerce/">
+    <Project Path="samples/ECommerce/ECommerce.AppHost/ECommerce.AppHost.csproj" />
+    <Project Path="samples/ECommerce/ECommerce.BFF.API/ECommerce.BFF.API.csproj" />
+    <Project Path="samples/ECommerce/ECommerce.Contracts.Tests/ECommerce.Contracts.Tests.csproj" />
+    <Project Path="samples/ECommerce/ECommerce.Contracts/ECommerce.Contracts.csproj" />
+    <Project Path="samples/ECommerce/ECommerce.IntegrationTests/ECommerce.IntegrationTests.csproj" />
+    <Project Path="samples/ECommerce/ECommerce.InventoryWorker/ECommerce.InventoryWorker.csproj" />
+    <Project Path="samples/ECommerce/ECommerce.NotificationWorker/ECommerce.NotificationWorker.csproj" />
+    <Project Path="samples/ECommerce/ECommerce.OrderService.API/ECommerce.OrderService.API.csproj" />
+    <Project Path="samples/ECommerce/ECommerce.PaymentWorker/ECommerce.PaymentWorker.csproj" />
+    <Project Path="samples/ECommerce/ECommerce.ServiceDefaults/ECommerce.ServiceDefaults.csproj" />
+    <Project Path="samples/ECommerce/ECommerce.ShippingWorker/ECommerce.ShippingWorker.csproj" />
+    <Project Path="samples/ECommerce/ECommerce.UI/ECommerce.UI.csproj" />
+  </Folder>
+  <Folder Name="/samples/ECommerce/tests/">
+    <Project Path="samples/ECommerce/tests/ECommerce.BFF.API.Tests/ECommerce.BFF.API.Tests.csproj" />
+    <Project Path="samples/ECommerce/tests/ECommerce.InMemory.Integration.Tests/ECommerce.InMemory.Integration.Tests.csproj" />
+    <Project Path="samples/ECommerce/tests/ECommerce.Integration.Tests/ECommerce.Integration.Tests.csproj" />
+    <Project Path="samples/ECommerce/tests/ECommerce.Integration.TestUtilities/ECommerce.Integration.TestUtilities.csproj" />
+    <Project Path="samples/ECommerce/tests/ECommerce.InventoryWorker.Tests/ECommerce.InventoryWorker.Tests.csproj" />
+    <Project Path="samples/ECommerce/tests/ECommerce.NotificationWorker.Tests/ECommerce.NotificationWorker.Tests.csproj" />
+    <Project Path="samples/ECommerce/tests/ECommerce.OrderService.Tests/ECommerce.OrderService.Tests.csproj" />
+    <Project Path="samples/ECommerce/tests/ECommerce.PaymentWorker.Tests/ECommerce.PaymentWorker.Tests.csproj" />
+    <Project Path="samples/ECommerce/tests/ECommerce.ShippingWorker.Tests/ECommerce.ShippingWorker.Tests.csproj" />
+  </Folder>
+  <Folder Name="/src/">
+    <Project Path="src/Whizbang.Core/Whizbang.Core.csproj" />
+    <Project Path="src/Whizbang.Data.Dapper.Postgres/Whizbang.Data.Dapper.Postgres.csproj" />
+    <Project Path="src/Whizbang.Data.Dapper.Sqlite/Whizbang.Data.Dapper.Sqlite.csproj" />
+    <Project Path="src/Whizbang.Data.EFCore.Custom/Whizbang.Data.EFCore.Custom.csproj" />
+    <Project Path="src/Whizbang.Data.EFCore.Postgres.Generators/Whizbang.Data.EFCore.Postgres.Generators.csproj" />
+    <Project Path="src/Whizbang.Data.EFCore.Postgres/Whizbang.Data.EFCore.Postgres.csproj" />
+    <Project Path="src/Whizbang.Data.Postgres/Whizbang.Data.Postgres.csproj" />
+    <Project Path="src/Whizbang.Data.Schema/Whizbang.Data.Schema.csproj" />
+    <Project Path="src/Whizbang.Generators.Shared/Whizbang.Generators.Shared.csproj" />
+    <Project Path="src/Whizbang.Generators/Whizbang.Generators.csproj" />
+    <Project Path="src/Whizbang.Hosting.Azure.ServiceBus/Whizbang.Hosting.Azure.ServiceBus.csproj" />
+    <Project Path="src/Whizbang.Transports.AzureServiceBus/Whizbang.Transports.AzureServiceBus.csproj" />
+  </Folder>
+  <Folder Name="/test-diagnostics/">
+    <Project Path="test-diagnostics/DiagnosticsTest.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Whizbang.Core.Tests/Whizbang.Core.Tests.csproj" />
+    <Project Path="tests/Whizbang.Data.Postgres.Tests/Whizbang.Data.Postgres.Tests.csproj" />
+    <Project Path="tests/Whizbang.Data.Tests/Whizbang.Data.Tests.csproj" />
+    <Project Path="tests/Whizbang.Documentation.Tests/Whizbang.Documentation.Tests.csproj" />
+    <Project Path="tests/Whizbang.Execution.Tests/Whizbang.Execution.Tests.csproj" />
+    <Project Path="tests/Whizbang.Generators.Tests/Whizbang.Generators.Tests.csproj" />
+    <Project Path="tests/Whizbang.Hosting.Azure.ServiceBus.Tests/Whizbang.Hosting.Azure.ServiceBus.Tests.csproj" />
+    <Project Path="tests/Whizbang.Observability.Tests/Whizbang.Observability.Tests.csproj" />
+    <Project Path="tests/Whizbang.Partitioning.Tests/Whizbang.Partitioning.Tests.csproj" />
+    <Project Path="tests/Whizbang.Policies.Tests/Whizbang.Policies.Tests.csproj" />
+    <Project Path="tests/Whizbang.Sequencing.Tests/Whizbang.Sequencing.Tests.csproj" />
+    <Project Path="tests/Whizbang.Transports.Tests/Whizbang.Transports.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/Whizbang.CLI/Whizbang.CLI.csproj" />
+  </Folder>
+</Solution>

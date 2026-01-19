@@ -1,0 +1,8 @@
+{
+  "recommendations": [
+    "SonarSource.sonarlint-vscode",
+    "ms-dotnettools.csharp",
+    "ms-dotnettools.csdevkit",
+    "ms-vscode.powershell"
+  ]
+}

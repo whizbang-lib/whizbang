@@ -1,0 +1,95 @@
+<Project>
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+
+    <!-- Enforce .editorconfig code style rules during build -->
+    <!-- This makes IDE1006 (naming violations) fail compilation when severity = error -->
+    <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>
+
+    <!-- Enable comprehensive code analysis with latest rules (CA warnings) -->
+    <!-- Uses compound value: latest = SDK version, Recommended = curated rule set -->
+    <!-- Options: latest-minimum, latest-recommended, latest-all -->
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+
+    <!-- Treat code analysis warnings as errors (separate from compiler warnings) -->
+    <!-- This ensures CA rules fail the build just like compiler errors -->
+    <CodeAnalysisTreatWarningsAsErrors>true</CodeAnalysisTreatWarningsAsErrors>
+
+    <!-- Treat specific "easy-to-avoid" warnings as errors to prevent regression -->
+    <!-- These are warnings we've cleaned up and don't want reintroduced -->
+    <WarningsAsErrors>$(WarningsAsErrors);CS0105;CS0219;CS0649;CS0618</WarningsAsErrors>
+    <!-- CS0105: Duplicate using directives -->
+    <!-- CS0219: Variable assigned but never used -->
+    <!-- CS0649: Field never assigned -->
+    <!-- CS0618: Obsolete API usage -->
+  </PropertyGroup>
+
+  <!-- Package Metadata -->
+  <PropertyGroup>
+    <Version>0.1.0</Version>
+    <Authors>Phil Carbone</Authors>
+    <Company>whizbang-lib</Company>
+    <Product>Whizbang</Product>
+    <Copyright>Copyright © 2025 whizbang-lib</Copyright>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://whizbang-lib.github.io</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/whizbang-lib/whizbang</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>event-driven;cqrs;event-sourcing;aot;dotnet;zero-reflection;messaging;dispatcher;postgresql;efcore;dapper;azure-servicebus</PackageTags>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+
+    <!-- Source Link -->
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+
+    <!-- Symbols -->
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+
+    <!-- Deterministic builds -->
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
+  </PropertyGroup>
+
+  <!-- Include README in packages -->
+  <ItemGroup>
+    <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+  <!-- AOT Compatibility Settings (Production Code Only) -->
+  <!-- TEMP: Excluding Whizbang.Core while completing Phases 4-5 (JSON + Dispatcher) -->
+  <!-- Exclude all source generator projects (netstandard2.0) - they run at compile-time, not runtime -->
+  <!-- Exclude test and benchmark projects - they may use reflection for test infrastructure -->
+  <!-- Only apply to .NET 8.0+ targets (AOT is not supported on netstandard2.0) -->
+  <PropertyGroup Condition="'$(IsTestProject)' != 'true' and !$(MSBuildProjectName.Contains('Generators')) and !$(MSBuildProjectName.Contains('.Tests')) and !$(MSBuildProjectName.Contains('Benchmarks')) and '$(MSBuildProjectName)' != 'Whizbang.Core' and $([MSBuild]::IsTargetFrameworkCompatible('$(TargetFramework)', 'net8.0'))">
+    <!-- Enable AOT analyzers to detect reflection and trim incompatibilities -->
+    <IsAotCompatible>true</IsAotCompatible>
+    <EnableAotAnalyzer>true</EnableAotAnalyzer>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+
+    <!-- Make AOT warnings errors to enforce zero reflection -->
+    <!-- IL2026: RequiresUnreferencedCode usage -->
+    <!-- IL2046: RequiresUnreferencedCode mismatch in implementations -->
+    <!-- IL2075: DynamicallyAccessedMembers mismatch -->
+    <WarningsAsErrors>$(WarningsAsErrors);IL2026;IL2046;IL2075</WarningsAsErrors>
+  </PropertyGroup>
+
+  <!-- BannedApiAnalyzers - Ban reflection attributes (except in test and benchmark projects) -->
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.BannedApiAnalyzers" PrivateAssets="all" />
+    <!-- Only include BannedSymbols.txt for production code projects -->
+    <!-- Exclude: test projects, benchmark projects (need RequiresDynamicCode/RequiresUnreferencedCode for test infrastructure) -->
+    <AdditionalFiles Include="$(MSBuildThisFileDirectory)BannedSymbols.txt" Condition="'$(IsTestProject)' != 'true' and !$(MSBuildProjectName.Contains('.Tests')) and !$(MSBuildProjectName.Contains('Benchmarks'))" />
+  </ItemGroup>
+
+  <!-- Roslynator Analyzers - Code quality and style enforcement -->
+  <ItemGroup>
+    <PackageReference Include="Roslynator.Analyzers" PrivateAssets="all" />
+    <PackageReference Include="Roslynator.CodeAnalysis.Analyzers" PrivateAssets="all" />
+    <PackageReference Include="Roslynator.Formatting.Analyzers" PrivateAssets="all" />
+  </ItemGroup>
+
+</Project>

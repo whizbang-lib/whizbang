@@ -1,0 +1,8 @@
+# Whizbang.Transports.Tests - Test project configuration
+
+root = false
+
+[*.cs]
+# WHIZ009: Test message types implement IEvent for transport serialization only,
+# not for event sourcing. They don't need [StreamKey] attributes.
+dotnet_diagnostic.WHIZ009.severity = none

@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\Whizbang.Core\Whizbang.Core.csproj" />
+    <ProjectReference Include="..\Whizbang.Data.Schema\Whizbang.Data.Schema.csproj" />
+    <ProjectReference Include="..\Whizbang.Data.EFCore.Custom\Whizbang.Data.EFCore.Custom.csproj" />
+    <ProjectReference Include="..\Whizbang.Data.Postgres\Whizbang.Data.Postgres.csproj" />
+    <!-- Reference the generator project -->
+    <ProjectReference Include="..\Whizbang.Data.EFCore.Postgres.Generators\Whizbang.Data.EFCore.Postgres.Generators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Whizbang.Data.EFCore.Postgres.Tests" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,8 @@
+/* You can add global styles to this file, and also import other style files */
+
+// Clarity Design System CSS - Core styles and icons
+@import '@cds/core/global.min.css';
+@import '@cds/core/styles/theme.dark.min.css';
+
+// Clarity UI (Angular components)
+@import '@clr/ui/clr-ui.min.css';

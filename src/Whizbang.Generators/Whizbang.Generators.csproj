@@ -1,0 +1,59 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <RootNamespace>Whizbang.Generators</RootNamespace>
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <IsRoslynComponent>true</IsRoslynComponent>
+    <LangVersion>latest</LangVersion>
+    <!-- Enable viewing generated files -->
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
+    <!-- Enable performance reporting -->
+    <ReportAnalyzer>true</ReportAnalyzer>
+    <!-- Suppress release tracking warnings for early development -->
+    <NoWarn>$(NoWarn);RS2008</NoWarn>
+    <!-- Enable ILRepack to merge Shared DLL into generator DLL -->
+    <ILRepackEnabled>true</ILRepackEnabled>
+    <!-- Exclude System.Index and System.Range from ILRepack merge -->
+    <!-- These types are part of .NET runtime and should not be merged -->
+    <ILRepackExcludeFilters>System.Index;System.Range</ILRepackExcludeFilters>
+    <!-- Disable TypeForwardedTo generation for polyfills to avoid conflicts with .NET 10 test project -->
+    <!-- See: https://github.com/Sergio0694/PolySharp/issues/103 -->
+    <PolySharpExcludeTypeForwardedToDeclarations>true</PolySharpExcludeTypeForwardedToDeclarations>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="PolySharp" PrivateAssets="all" />
+    <PackageReference Include="System.Text.Json" PrivateAssets="all" />
+    <!-- ILRepack to merge Shared DLL into generator DLL -->
+    <PackageReference Include="ILRepack.Lib.MSBuild.Task" PrivateAssets="all" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Reference the shared library and ensure it's packaged with the generator -->
+    <ProjectReference Include="../Whizbang.Generators.Shared/Whizbang.Generators.Shared.csproj">
+      <PrivateAssets>all</PrivateAssets>
+      <ReferenceOutputAssembly>true</ReferenceOutputAssembly>
+      <!-- Don't use OutputItemType=Analyzer for Shared - it needs to be copied as a regular dependency -->
+      <SetTargetFramework>TargetFramework=netstandard2.0</SetTargetFramework>
+    </ProjectReference>
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Template files - these are real C# code that gets full analyzer support -->
+    <!-- BUT they must be excluded from compilation since they reference types not in this project -->
+    <Compile Remove="Templates\**\*.cs" />
+    <!-- Include as content so IDE can analyze them -->
+    <None Include="Templates\**\*.cs" />
+    <!-- Embed as resources so generator can read them at runtime -->
+    <EmbeddedResource Include="Templates\**\*.cs" />
+
+    <!-- SQL template files - embedded as resources for generator access -->
+    <None Include="Templates\**\*.sql" />
+    <EmbeddedResource Include="Templates\**\*.sql" />
+  </ItemGroup>
+
+</Project>
