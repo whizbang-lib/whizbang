@@ -73,21 +73,32 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
       // Start containers
       await _runDockerComposeAsync("up -d", cancellationToken, tempDockerComposeFile);
 
-      // Wait for emulator to be ready (check health)
-      Console.WriteLine("[DirectEmulator] Waiting for emulator to be ready (60 seconds)...");
-      await Task.Delay(TimeSpan.FromSeconds(60), cancellationToken);
-
-      // Verify emulator is up by checking docker logs
+      // Wait for emulator to be ready with polling (adaptive wait)
+      Console.WriteLine("[DirectEmulator] Waiting for emulator to be ready (polling with 120s timeout)...");
       var containerName = $"servicebus-emulator-{_port}";
-      var logs = await _getDockerLogsAsync(containerName, cancellationToken);
-      if (!logs.Contains("Emulator Service is Successfully Up!")) {
-        throw new InvalidOperationException(
-          $"Service Bus Emulator failed to start. Check logs:\n{logs}"
-        );
+      var maxWaitTime = TimeSpan.FromSeconds(120);
+      var pollInterval = TimeSpan.FromSeconds(5);
+      var stopwatch = Stopwatch.StartNew();
+
+      while (stopwatch.Elapsed < maxWaitTime) {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var logs = await _getDockerLogsAsync(containerName, cancellationToken);
+        if (logs.Contains("Emulator Service is Successfully Up!")) {
+          Console.WriteLine($"[DirectEmulator] ✅ Emulator is ready! (took {stopwatch.Elapsed.TotalSeconds:F1}s)");
+          _isInitialized = true;
+          return;
+        }
+
+        Console.WriteLine($"[DirectEmulator] Still waiting... ({stopwatch.Elapsed.TotalSeconds:F0}s elapsed)");
+        await Task.Delay(pollInterval, cancellationToken);
       }
 
-      Console.WriteLine("[DirectEmulator] ✅ Emulator is ready!");
-      _isInitialized = true;
+      // Timeout - get final logs for diagnostics
+      var finalLogs = await _getDockerLogsAsync(containerName, cancellationToken);
+      throw new InvalidOperationException(
+        $"Service Bus Emulator failed to start within {maxWaitTime.TotalSeconds}s. Last logs:\n{finalLogs}"
+      );
     } finally {
       // Clean up temp docker-compose file
       if (File.Exists(tempDockerComposeFile)) {
