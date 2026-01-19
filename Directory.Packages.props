@@ -16,7 +16,7 @@
       <PrivateAssets>all</PrivateAssets>
     </PackageVersion>
     <PackageVersion Include="Dapper" Version="2.1.66" />
-    <PackageVersion Include="FastEndpoints" Version="7.1.1" />
+    <PackageVersion Include="FastEndpoints" Version="7.2.0" />
     <PackageVersion Include="FastEndpoints.Swagger" Version="7.1.1" />
     <PackageVersion Include="HotChocolate.AspNetCore" Version="15.1.11" />
     <PackageVersion Include="HotChocolate.Data" Version="15.1.11" />
