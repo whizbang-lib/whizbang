@@ -148,8 +148,17 @@ public class ServiceBusIntegrationFixtureSanityTests {
     await Assert.That(inventoryProduct).IsNotNull();
     await Assert.That(inventoryProduct!.Name).IsEqualTo("Inventory Perspective Test");
 
-    // Assert - Verify inventory level materialized
-    var inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(testProductId);
+    // Assert - Verify inventory level materialized (with retry for commit timing)
+    ECommerce.Contracts.Lenses.InventoryLevelDto? inventoryLevel = null;
+    for (int i = 0; i < 10; i++) {
+      inventoryLevel = await fixture.InventoryLens.GetByProductIdAsync(testProductId);
+      if (inventoryLevel?.Quantity == 10) {
+        break;
+      }
+
+      await Task.Delay(500); // Wait for perspective to commit
+    }
+
     await Assert.That(inventoryLevel).IsNotNull();
     await Assert.That(inventoryLevel!.Quantity).IsEqualTo(10);
 
