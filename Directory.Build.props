@@ -38,7 +38,7 @@
     <Product>Whizbang</Product>
     <Copyright>Copyright © 2025 whizbang-lib</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://whizbang-lib.github.io</PackageProjectUrl>
+    <PackageProjectUrl>https://whizba.ng</PackageProjectUrl>
     <RepositoryUrl>https://github.com/whizbang-lib/whizbang</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>event-driven;cqrs;event-sourcing;aot;dotnet;zero-reflection;messaging;dispatcher;postgresql;efcore;dapper;azure-servicebus</PackageTags>
