@@ -32,17 +32,18 @@
   <PropertyGroup>
     <!-- Use SoftwareExtravaganza prefix to avoid NuGet naming conflicts -->
     <PackageId>SoftwareExtravaganza.$(MSBuildProjectName)</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.1.1</Version>
     <Authors>Phil Carbone</Authors>
     <Company>whizbang-lib</Company>
     <Product>Whizbang</Product>
     <Copyright>Copyright © 2025 whizbang-lib</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
-    <PackageProjectUrl>https://whizbang-lib.github.io</PackageProjectUrl>
+    <PackageProjectUrl>https://whizba.ng</PackageProjectUrl>
     <RepositoryUrl>https://github.com/whizbang-lib/whizbang</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
     <PackageTags>event-driven;cqrs;event-sourcing;aot;dotnet;zero-reflection;messaging;dispatcher;postgresql;efcore;dapper;azure-servicebus</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>logo.png</PackageIcon>
 
     <!-- Source Link -->
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
@@ -56,9 +57,10 @@
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>
 
-  <!-- Include README in packages -->
+  <!-- Include README and logo in packages -->
   <ItemGroup>
     <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" />
+    <None Include="$(MSBuildThisFileDirectory)assets/logo.png" Pack="true" PackagePath="\" />
   </ItemGroup>
 
   <!-- AOT Compatibility Settings (Production Code Only) -->
