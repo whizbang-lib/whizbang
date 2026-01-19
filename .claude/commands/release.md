@@ -118,6 +118,19 @@ For each approved warning suppression with wishlist:
 4. Report if any suppressions can now be removed
 5. Update "Last Checked" dates in documentation
 
+## Merge Strategy
+
+When merging PRs during release workflows, follow these conventions:
+
+| Merge Type | Strategy | Reason |
+|------------|----------|--------|
+| **feature → develop** | **Squash merge** | Clean atomic commits, hides iterative development |
+| **bugfix → develop** | **Squash merge** | Clean atomic commits |
+| **develop → main (release)** | **Squash merge** | Single clean release commit |
+| **hotfix → main/develop** | **Merge commit** | Preserves audit trail for critical fixes |
+
+**Default to squash merge** for all PRs except hotfixes. This keeps branch history clean and meaningful.
+
 ## Implementation Notes
 
 **Required capabilities:**

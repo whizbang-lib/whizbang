@@ -1527,33 +1527,46 @@ We use GitFlow:
 - **release/** - Release preparation (branch from develop)
 - **hotfix/** - Critical fixes (branch from main)
 
+### Merge Strategy
+
+| Merge Type | Strategy | Reason |
+|------------|----------|--------|
+| **feature → develop** | **Squash merge** | Clean atomic commits, hides iterative development |
+| **bugfix → develop** | **Squash merge** | Clean atomic commits |
+| **develop → main (release)** | **Squash merge** | Single clean release commit |
+| **hotfix → main/develop** | **Merge commit** | Preserves audit trail for critical fixes |
+
+**Squash merge** is the default for all PRs except hotfixes. This keeps the main branch history clean and meaningful.
+
 ### Workflow
 
 #### Feature Development
 1. Branch from `develop`: `git checkout -b feature/my-feature develop`
 2. Develop and test
 3. Create PR to `develop`
-4. After review and CI pass, merge to `develop`
+4. After review and CI pass, **squash merge** to `develop`
 
 #### Bug Fixes
 1. Branch from `develop`: `git checkout -b bugfix/issue-123 develop`
 2. Fix and test
 3. Create PR to `develop`
-4. After review and CI pass, merge to `develop`
+4. After review and CI pass, **squash merge** to `develop`
 
 #### Release Preparation
 1. Branch from `develop`: `git checkout -b release/v0.1.0 develop`
 2. Final testing, documentation updates, version bumps
-3. Create PR to `main` AND `develop`
-4. After approval, merge to both branches
-5. Tag main: `git tag -a v0.1.0 -m "Release v0.1.0"`
-6. Push tag: `git push origin v0.1.0`
+3. Create PR to `main`
+4. After all CI passes, **squash merge** to `main` with message: `release: v0.1.0`
+5. Tag main: `git tag v0.1.0`
+6. Push tag: `git push origin v0.1.0` (triggers NuGet publish)
+7. Merge main back to develop (if needed)
 
 #### Hotfixes
 1. Branch from `main`: `git checkout -b hotfix/critical-issue main`
 2. Fix and test
 3. Create PR to `main` AND `develop`
-4. After approval, merge to both branches
+4. After approval, **merge commit** (not squash) to both branches
+   - Use merge commit to preserve the full audit trail for critical fixes
 5. Tag main: `git tag -a v0.1.1 -m "Hotfix v0.1.1"`
 6. Push tag: `git push origin v0.1.1`
 ```
