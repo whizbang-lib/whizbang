@@ -395,7 +395,10 @@ public class UpdateProductWorkflowTests {
     ECommerce.Contracts.Lenses.InventoryLevelDto? initialInventory = null;
     for (int i = 0; i < 10; i++) {
       initialInventory = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
-      if (initialInventory?.Quantity == 75) break;
+      if (initialInventory?.Quantity == 75) {
+        break;
+      }
+
       await Task.Delay(500); // Wait for perspective to commit
     }
     await Assert.That(initialInventory).IsNotNull();
