@@ -309,12 +309,289 @@ public class DispatcherOutboxTests {
   }
 
   // ========================================
+  // ROUTING STRATEGY TESTS
+  // ========================================
+
+  [Test]
+  public async Task SendAsync_WithRoutingStrategy_TransformsDestinationAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var routingStrategy = new PoolSuffixRoutingStrategy("-pool1");
+    var dispatcher = _createDispatcherWithStrategy(strategy, routingStrategy: routingStrategy);
+    var command = new CreateProductCommand("Test Product");
+
+    // Act
+    var receipt = await dispatcher.SendAsync(command);
+
+    // Assert - Routing strategy should add pool suffix to "products" -> "products-pool1"
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
+    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("products-pool1");
+  }
+
+  [Test]
+  public async Task PublishAsync_WithRoutingStrategy_TransformsTopicAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var routingStrategy = new PoolSuffixRoutingStrategy("-pool2");
+    var dispatcher = _createDispatcherWithStrategy(strategy, routingStrategy: routingStrategy);
+    var @event = new ProductCreatedEvent(Guid.NewGuid());
+
+    // Act
+    await dispatcher.PublishAsync(@event);
+
+    // Assert - Routing strategy should add pool suffix to "products" -> "products-pool2"
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
+    await Assert.That(strategy.QueuedOutboxMessages[0].Destination).IsEqualTo("products-pool2");
+  }
+
+  // ========================================
+  // AGGREGATE ID EXTRACTION TESTS
+  // ========================================
+
+  // Test message with AggregateId attribute
+  public record OrderCommandWithAggregateId([property: AggregateId] Guid OrderId, string Description);
+
+  [Test]
+  public async Task SendAsync_WithAggregateId_ExtractsStreamIdAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var aggregateIdExtractor = new StubAggregateIdExtractor();
+    var dispatcher = _createDispatcherWithStrategy(strategy, aggregateIdExtractor: aggregateIdExtractor);
+    var orderId = Guid.NewGuid();
+    var command = new OrderCommandWithAggregateId(orderId, "Test Order");
+
+    // Act
+    await dispatcher.SendAsync(command);
+
+    // Assert - Stream ID should be extracted aggregate ID
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
+    await Assert.That(strategy.QueuedOutboxMessages[0].StreamId).IsEqualTo(orderId);
+  }
+
+  [Test]
+  public async Task PublishAsync_WithAggregateId_ExtractsStreamIdAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var aggregateIdExtractor = new StubAggregateIdExtractor();
+    var dispatcher = _createDispatcherWithStrategy(strategy, aggregateIdExtractor: aggregateIdExtractor);
+    var productId = Guid.NewGuid();
+    var @event = new ProductCreatedEvent(productId);
+
+    // Act
+    await dispatcher.PublishAsync(@event);
+
+    // Assert - Stream ID should be the product ID from aggregate ID attribute
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
+    await Assert.That(strategy.QueuedOutboxMessages[0].StreamId).IsEqualTo(productId);
+  }
+
+  [Test]
+  public async Task SendAsync_WithoutAggregateId_UsesMessageIdAsStreamIdAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    // No aggregate ID extractor - should fall back to message ID
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var command = new CustomCommand("test");
+
+    // Act
+    var receipt = await dispatcher.SendAsync(command);
+
+    // Assert - Stream ID should be the message ID (since no aggregate ID extracted)
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
+    var outboxMessage = strategy.QueuedOutboxMessages[0];
+    await Assert.That(outboxMessage.StreamId).IsEqualTo(outboxMessage.MessageId);
+  }
+
+  // ========================================
+  // ENVELOPE METADATA TESTS
+  // ========================================
+
+  [Test]
+  public async Task SendAsync_WithAggregateIdExtractor_CreatesHopMetadataAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var aggregateIdExtractor = new StubAggregateIdExtractor();
+    var dispatcher = _createDispatcherWithStrategy(strategy, aggregateIdExtractor: aggregateIdExtractor);
+    var productId = Guid.NewGuid();
+    var @event = new ProductCreatedEvent(productId);
+
+    // Act
+    await dispatcher.PublishAsync(@event);
+
+    // Assert - Envelope metadata should contain AggregateId
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
+    var metadata = strategy.QueuedOutboxMessages[0].Metadata;
+    await Assert.That(metadata).IsNotNull();
+    await Assert.That(metadata!.Hops).Count().IsGreaterThanOrEqualTo(1);
+  }
+
+  // ========================================
+  // FLUSH BEHAVIOR TESTS
+  // ========================================
+
+  [Test]
+  public async Task SendAsync_CallsFlushOnStrategyAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var command = new CreateProductCommand("Test");
+
+    // Act
+    await dispatcher.SendAsync(command);
+
+    // Assert - Flush should be called
+    await Assert.That(strategy.FlushCount).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task PublishAsync_CallsFlushOnStrategyAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var @event = new ProductCreatedEvent(Guid.NewGuid());
+
+    // Act
+    await dispatcher.PublishAsync(@event);
+
+    // Assert - Flush should be called
+    await Assert.That(strategy.FlushCount).IsEqualTo(1);
+  }
+
+  // ========================================
+  // OUTBOX MESSAGE PROPERTIES TESTS
+  // ========================================
+
+  [Test]
+  public async Task PublishAsync_SetsIsEventTrueAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var @event = new ProductCreatedEvent(Guid.NewGuid());
+
+    // Act
+    await dispatcher.PublishAsync(@event);
+
+    // Assert - IsEvent should be true for events
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
+    await Assert.That(strategy.QueuedOutboxMessages[0].IsEvent).IsTrue();
+  }
+
+  [Test]
+  public async Task SendAsync_SetsIsEventFalseAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var command = new CreateProductCommand("Test");
+
+    // Act
+    await dispatcher.SendAsync(command);
+
+    // Assert - IsEvent should be false for commands
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
+    await Assert.That(strategy.QueuedOutboxMessages[0].IsEvent).IsFalse();
+  }
+
+  [Test]
+  public async Task SendAsync_SetsMessageTypeAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var command = new CreateProductCommand("Test");
+
+    // Act
+    await dispatcher.SendAsync(command);
+
+    // Assert - MessageType should contain the command type name
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
+    var messageType = strategy.QueuedOutboxMessages[0].MessageType;
+    await Assert.That(messageType).Contains("CreateProductCommand");
+  }
+
+  [Test]
+  public async Task PublishAsync_SetsEnvelopeTypeAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var @event = new ProductCreatedEvent(Guid.NewGuid());
+
+    // Act
+    await dispatcher.PublishAsync(@event);
+
+    // Assert - EnvelopeType should be set
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
+    var envelopeType = strategy.QueuedOutboxMessages[0].EnvelopeType;
+    await Assert.That(envelopeType).Contains("MessageEnvelope");
+  }
+
+  // ========================================
+  // DELIVERY RECEIPT TESTS
+  // ========================================
+
+  [Test]
+  public async Task SendAsync_ReturnsAcceptedReceiptAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var command = new CreateProductCommand("Test");
+
+    // Act
+    var receipt = await dispatcher.SendAsync(command);
+
+    // Assert
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Accepted);
+    await Assert.That(receipt.Destination).IsEqualTo("products");
+  }
+
+  [Test]
+  public async Task SendAsync_ReturnsMessageIdInReceiptAsync() {
+    // Arrange
+    var strategy = new StubWorkCoordinatorStrategy();
+    var dispatcher = _createDispatcherWithStrategy(strategy);
+    var command = new CreateProductCommand("Test");
+
+    // Act
+    var receipt = await dispatcher.SendAsync(command);
+
+    // Assert - Receipt's message ID should match the queued message
+    await Assert.That(strategy.QueuedOutboxMessages).Count().IsEqualTo(1);
+    await Assert.That(receipt.MessageId).IsEqualTo(MessageId.From(strategy.QueuedOutboxMessages[0].MessageId));
+  }
+
+  // ========================================
+  // STUB IMPLEMENTATIONS
+  // ========================================
+
+  // Stub routing strategy for testing
+  private sealed class PoolSuffixRoutingStrategy(string suffix) : ITopicRoutingStrategy {
+    public string ResolveTopic(Type messageType, string baseTopic, IReadOnlyDictionary<string, object>? context = null) {
+      return baseTopic + suffix;
+    }
+  }
+
+  // Stub aggregate ID extractor for testing
+  private sealed class StubAggregateIdExtractor : IAggregateIdExtractor {
+    public Guid? ExtractAggregateId(object message, Type messageType) {
+      // Check for ProductCreatedEvent
+      if (message is ProductCreatedEvent pce) {
+        return pce.ProductId;
+      }
+      // Check for OrderCommandWithAggregateId
+      if (message is OrderCommandWithAggregateId oca) {
+        return oca.OrderId;
+      }
+      return null;
+    }
+  }
+
+  // ========================================
   // HELPER METHODS
   // ========================================
 
   private static IDispatcher _createDispatcherWithStrategy(
     IWorkCoordinatorStrategy strategy,
-    ITopicRegistry? registry = null
+    ITopicRegistry? registry = null,
+    ITopicRoutingStrategy? routingStrategy = null,
+    IAggregateIdExtractor? aggregateIdExtractor = null
   ) {
     var services = new ServiceCollection();
 
@@ -331,6 +608,16 @@ public class DispatcherOutboxTests {
     // Register topic registry if provided
     if (registry != null) {
       services.AddSingleton(registry);
+    }
+
+    // Register routing strategy if provided
+    if (routingStrategy != null) {
+      services.AddSingleton(routingStrategy);
+    }
+
+    // Register aggregate ID extractor if provided
+    if (aggregateIdExtractor != null) {
+      services.AddSingleton(aggregateIdExtractor);
     }
 
     // Register receptors and dispatcher

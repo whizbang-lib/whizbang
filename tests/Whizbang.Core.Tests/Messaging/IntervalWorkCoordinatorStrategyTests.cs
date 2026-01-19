@@ -243,6 +243,320 @@ public class IntervalWorkCoordinatorStrategyTests {
   }
 
   // ========================================
+  // INBOX MESSAGE TESTS
+  // ========================================
+
+  [Test]
+  public async Task QueueInboxMessage_ShouldBatchWithOutboxMessagesAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 5000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300,
+      DebugMode = false
+    };
+
+    var sut = new IntervalWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    var inboxMessageId = _idProvider.NewGuid();
+    var inboxEnvelope = _createTestEnvelope(inboxMessageId);
+
+    // Act - Queue inbox message
+    sut.QueueInboxMessage(new InboxMessage {
+      MessageId = inboxMessageId,
+      HandlerName = "TestHandler",
+      Envelope = inboxEnvelope,
+      EnvelopeType = "TestEnvelope",
+      MessageType = "TestMessage"
+    });
+
+    // Manual flush
+    await sut.FlushAsync(WorkBatchFlags.None);
+
+    // Assert
+    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
+    await Assert.That(fakeCoordinator.LastNewInboxMessages).Count().IsEqualTo(1);
+    await Assert.That(fakeCoordinator.LastNewInboxMessages[0].MessageId).IsEqualTo(inboxMessageId);
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  // ========================================
+  // COMPLETION AND FAILURE TESTS
+  // ========================================
+
+  [Test]
+  public async Task QueueOutboxCompletion_ShouldBeIncludedInFlushAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 5000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300,
+      DebugMode = false
+    };
+
+    var sut = new IntervalWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    var messageId = _idProvider.NewGuid();
+
+    // Act
+    sut.QueueOutboxCompletion(messageId, MessageProcessingStatus.Published);
+    await sut.FlushAsync(WorkBatchFlags.None);
+
+    // Assert
+    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
+    await Assert.That(fakeCoordinator.LastOutboxCompletions).Count().IsEqualTo(1);
+    await Assert.That(fakeCoordinator.LastOutboxCompletions[0].MessageId).IsEqualTo(messageId);
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  [Test]
+  public async Task QueueInboxCompletion_ShouldBeIncludedInFlushAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 5000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300,
+      DebugMode = false
+    };
+
+    var sut = new IntervalWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    var messageId = _idProvider.NewGuid();
+
+    // Act
+    sut.QueueInboxCompletion(messageId, MessageProcessingStatus.Published);
+    await sut.FlushAsync(WorkBatchFlags.None);
+
+    // Assert
+    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
+    await Assert.That(fakeCoordinator.LastInboxCompletions).Count().IsEqualTo(1);
+    await Assert.That(fakeCoordinator.LastInboxCompletions[0].MessageId).IsEqualTo(messageId);
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  [Test]
+  public async Task QueueOutboxFailure_ShouldBeIncludedInFlushAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 5000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300,
+      DebugMode = false
+    };
+
+    var sut = new IntervalWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    var messageId = _idProvider.NewGuid();
+
+    // Act
+    sut.QueueOutboxFailure(messageId, MessageProcessingStatus.Failed, "Test error");
+    await sut.FlushAsync(WorkBatchFlags.None);
+
+    // Assert
+    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
+    await Assert.That(fakeCoordinator.LastOutboxFailures).Count().IsEqualTo(1);
+    await Assert.That(fakeCoordinator.LastOutboxFailures[0].MessageId).IsEqualTo(messageId);
+    await Assert.That(fakeCoordinator.LastOutboxFailures[0].Error).IsEqualTo("Test error");
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  [Test]
+  public async Task QueueInboxFailure_ShouldBeIncludedInFlushAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 5000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300,
+      DebugMode = false
+    };
+
+    var sut = new IntervalWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    var messageId = _idProvider.NewGuid();
+
+    // Act
+    sut.QueueInboxFailure(messageId, MessageProcessingStatus.Failed, "Inbox error");
+    await sut.FlushAsync(WorkBatchFlags.None);
+
+    // Assert
+    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(1);
+    await Assert.That(fakeCoordinator.LastInboxFailures).Count().IsEqualTo(1);
+    await Assert.That(fakeCoordinator.LastInboxFailures[0].MessageId).IsEqualTo(messageId);
+    await Assert.That(fakeCoordinator.LastInboxFailures[0].Error).IsEqualTo("Inbox error");
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  // ========================================
+  // EDGE CASE TESTS
+  // ========================================
+
+  [Test]
+  public async Task FlushAsync_WithNoQueuedOperations_ShouldReturnEmptyBatchAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 5000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300,
+      DebugMode = false
+    };
+
+    var sut = new IntervalWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    // Act - Flush with nothing queued
+    var result = await sut.FlushAsync(WorkBatchFlags.None);
+
+    // Assert - Should return empty batch without calling coordinator
+    await Assert.That(result.OutboxWork).Count().IsEqualTo(0);
+    await Assert.That(result.InboxWork).Count().IsEqualTo(0);
+    await Assert.That(fakeCoordinator.ProcessWorkBatchCallCount).IsEqualTo(0);
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  [Test]
+  public async Task QueueOutboxMessage_AfterDispose_ShouldThrowObjectDisposedExceptionAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 5000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300,
+      DebugMode = false
+    };
+
+    var sut = new IntervalWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    await sut.DisposeAsync();
+
+    // Act & Assert
+    var messageId = _idProvider.NewGuid();
+    var envelope = _createTestEnvelope(messageId);
+
+    await Assert.That(() => sut.QueueOutboxMessage(new OutboxMessage {
+      MessageId = messageId,
+      Destination = "test",
+      Envelope = envelope,
+      EnvelopeType = "Test",
+      StreamId = _idProvider.NewGuid(),
+      IsEvent = false,
+      MessageType = "Test",
+      Metadata = new EnvelopeMetadata { MessageId = MessageId.From(messageId), Hops = [] }
+    })).ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task FlushAsync_AfterDispose_ShouldThrowObjectDisposedExceptionAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 5000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300,
+      DebugMode = false
+    };
+
+    var sut = new IntervalWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    await sut.DisposeAsync();
+
+    // Act & Assert
+    await Assert.That(async () => await sut.FlushAsync(WorkBatchFlags.None))
+      .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task DisposeAsync_CalledMultipleTimes_ShouldNotThrowAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 5000,
+      PartitionCount = 10000,
+      LeaseSeconds = 300,
+      StaleThresholdSeconds = 300,
+      DebugMode = false
+    };
+
+    var sut = new IntervalWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    // Act - Dispose multiple times
+    await sut.DisposeAsync();
+    await sut.DisposeAsync();
+    await sut.DisposeAsync();
+
+    // Assert - Should not throw
+  }
+
+  // ========================================
   // Test Fakes
   // ========================================
 
@@ -250,6 +564,10 @@ public class IntervalWorkCoordinatorStrategyTests {
     public int ProcessWorkBatchCallCount { get; private set; }
     public OutboxMessage[] LastNewOutboxMessages { get; private set; } = [];
     public InboxMessage[] LastNewInboxMessages { get; private set; } = [];
+    public MessageCompletion[] LastOutboxCompletions { get; private set; } = [];
+    public MessageCompletion[] LastInboxCompletions { get; private set; } = [];
+    public MessageFailure[] LastOutboxFailures { get; private set; } = [];
+    public MessageFailure[] LastInboxFailures { get; private set; } = [];
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
@@ -257,6 +575,10 @@ public class IntervalWorkCoordinatorStrategyTests {
       ProcessWorkBatchCallCount++;
       LastNewOutboxMessages = request.NewOutboxMessages;
       LastNewInboxMessages = request.NewInboxMessages;
+      LastOutboxCompletions = request.OutboxCompletions;
+      LastInboxCompletions = request.InboxCompletions;
+      LastOutboxFailures = request.OutboxFailures;
+      LastInboxFailures = request.InboxFailures;
 
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
