@@ -13,6 +13,18 @@
     <ReportAnalyzer>true</ReportAnalyzer>
     <!-- Suppress release tracking warnings for early development -->
     <NoWarn>$(NoWarn);RS2008</NoWarn>
+    <!-- NuGet packaging: Place in analyzers folder, not lib -->
+    <!-- NoPackageAnalysis skips NU5017 false positive for analyzer packages -->
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <NoPackageAnalysis>true</NoPackageAnalysis>
+    <DevelopmentDependency>true</DevelopmentDependency>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+  </PropertyGroup>
+  <!-- Package the generator DLL in the analyzers folder -->
+  <ItemGroup>
+    <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+  </ItemGroup>
+  <PropertyGroup>
     <!-- Enable ILRepack to merge Shared DLL into generator DLL -->
     <ILRepackEnabled>true</ILRepackEnabled>
     <!-- Exclude System.Index and System.Range from ILRepack merge -->
