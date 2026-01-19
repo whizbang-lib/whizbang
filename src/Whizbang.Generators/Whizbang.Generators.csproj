@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <IsPackable>true</IsPackable>
+    <Description>Roslyn source generators for zero-reflection, AOT-compatible code generation including dispatcher routing, message registry, and diagnostics infrastructure.</Description>
     <TargetFramework>netstandard2.0</TargetFramework>
     <RootNamespace>Whizbang.Generators</RootNamespace>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>

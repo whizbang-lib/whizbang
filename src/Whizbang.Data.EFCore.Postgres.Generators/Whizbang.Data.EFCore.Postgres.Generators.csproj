@@ -2,6 +2,7 @@
 
   <PropertyGroup>
     <IsPackable>true</IsPackable>
+    <Description>Source generators for Entity Framework Core PostgreSQL integration including DbContext and service registration generation.</Description>
     <TargetFramework>netstandard2.0</TargetFramework>
     <RootNamespace>Whizbang.Data.EFCore.Postgres.Generators</RootNamespace>
     <LangVersion>latest</LangVersion>

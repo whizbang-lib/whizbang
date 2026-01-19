@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <IsPackable>true</IsPackable>
+    <Description>Core types, interfaces, and messaging infrastructure for building event-driven, CQRS, and event-sourced applications with zero reflection and AOT compatibility.</Description>
     <RootNamespace>Whizbang.Core</RootNamespace>
     <IsTrimmable>true</IsTrimmable>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>

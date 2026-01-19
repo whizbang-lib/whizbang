@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
+    <Description>RabbitMQ transport implementation for Whizbang messaging with health checks and connection management.</Description>
   </PropertyGroup>
 
   <ItemGroup>
