@@ -33,7 +33,7 @@ jobs:
       run: dotnet pack --configuration Release --output ./packages
 
     - name: NuGet Login (OIDC Trusted Publishing)
-      uses: nuget/login@v1
+      uses: nuget/login@d22cc5f58ff5b88bf9bd452535b4335137e24544 # v1
       id: nuget-login
       with:
         user: phil.carbone
