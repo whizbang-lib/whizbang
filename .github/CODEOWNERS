@@ -1,0 +1,20 @@
+# CODEOWNERS - Require approval for all changes
+# https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for everything
+* @philcarbone
+
+# Critical files - require explicit approval
+.github/ @philcarbone
+Directory.Build.props @philcarbone
+Directory.Build.targets @philcarbone
+Directory.Packages.props @philcarbone
+*.sln @philcarbone
+
+# Source generators (security sensitive - could inject code)
+src/Whizbang.Generators/ @philcarbone
+src/Whizbang.Generators.Shared/ @philcarbone
+
+# Package configuration
+**/*.csproj @philcarbone
+**/nuget.config @philcarbone
