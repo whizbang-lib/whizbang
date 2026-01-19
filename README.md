@@ -4,6 +4,9 @@
 [![Tests](https://github.com/whizbang-lib/whizbang/actions/workflows/test.yml/badge.svg)](https://github.com/whizbang-lib/whizbang/actions/workflows/test.yml)
 [![codecov](https://codecov.io/gh/whizbang-lib/whizbang/branch/main/graph/badge.svg)](https://codecov.io/gh/whizbang-lib/whizbang)
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=whizbang-lib_whizbang&metric=alert_status)](https://sonarcloud.io/dashboard?id=whizbang-lib_whizbang)
+[![Secret Scanning](https://github.com/whizbang-lib/whizbang/actions/workflows/security-secrets.yml/badge.svg)](https://github.com/whizbang-lib/whizbang/actions/workflows/security-secrets.yml)
+[![Supply Chain](https://github.com/whizbang-lib/whizbang/actions/workflows/security-supply-chain.yml/badge.svg)](https://github.com/whizbang-lib/whizbang/actions/workflows/security-supply-chain.yml)
+[![OSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/whizbang-lib/whizbang/badge)](https://securityscorecards.dev/viewer/?uri=github.com/whizbang-lib/whizbang)
 [![NuGet](https://img.shields.io/nuget/v/Whizbang.Core.svg)](https://www.nuget.org/packages/Whizbang.Core/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 

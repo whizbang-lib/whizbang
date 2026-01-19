@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <IsPackable>true</IsPackable>
+    <Description>Core types, interfaces, and messaging infrastructure for building event-driven, CQRS, and event-sourced applications with zero reflection and AOT compatibility.</Description>
     <RootNamespace>Whizbang.Core</RootNamespace>
     <IsTrimmable>true</IsTrimmable>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
@@ -24,7 +25,14 @@
     <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" />
   </ItemGroup>
   <ItemGroup>
-    <!-- Reference source generators -->
+    <!-- Reference source generators for build-time code generation -->
     <ProjectReference Include="../Whizbang.Generators/Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <!-- Bundle the source generators in this package so users don't need to install separately -->
+  <ItemGroup>
+    <None Include="$(MSBuildProjectDirectory)/../Whizbang.Generators/bin/$(Configuration)/netstandard2.0/Whizbang.Generators.dll"
+          Pack="true"
+          PackagePath="analyzers/dotnet/cs"
+          Visible="false" />
   </ItemGroup>
 </Project>
