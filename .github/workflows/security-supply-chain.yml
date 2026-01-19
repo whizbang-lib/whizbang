@@ -30,15 +30,10 @@ jobs:
     - name: Restore dependencies to generate lockfile
       run: dotnet restore
 
-    - name: Install OSV Scanner
+    - name: Install and Run OSV Scanner
       run: |
-        wget -qO- https://github.com/google/osv-scanner/releases/download/v2.3.2/osv-scanner_2.3.2_linux_amd64.tar.gz | tar xzf - -C /tmp
-        sudo mv /tmp/osv-scanner /usr/local/bin/
-        osv-scanner --version
-
-    - name: Run OSV Scanner
-      run: |
-        osv-scanner scan --lockfile=packages.lock.json --format=sarif --output=osv-results.sarif || true
+        go install github.com/google/osv-scanner/cmd/osv-scanner@v2.3.2
+        $HOME/go/bin/osv-scanner scan --lockfile=packages.lock.json --format=sarif --output=osv-results.sarif || true
 
     - name: Upload SARIF results
       if: always()
