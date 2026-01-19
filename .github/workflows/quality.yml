@@ -1,23 +1,22 @@
 name: Quality
 
 on:
-  # Trigger after the slowest test workflow completes (ensures all tests are done)
-  # Azure Service Bus Integration Tests (~20min) is the longest running test
-  workflow_run:
-    workflows:
-      - "Azure Service Bus Integration Tests"
-    types:
-      - completed
-
-  # Also allow manual trigger
+  push:
+    branches: [ main, develop ]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - '.github/workflows/quality.yml'
+  pull_request:
+    branches: [ main, develop ]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - '.github/workflows/quality.yml'
   workflow_dispatch:
 
 jobs:
   sonarcloud:
-    # Only run if ALL triggering workflows succeeded (or on manual trigger)
-    if: >
-      github.event_name == 'workflow_dispatch' ||
-      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
 
     steps:
