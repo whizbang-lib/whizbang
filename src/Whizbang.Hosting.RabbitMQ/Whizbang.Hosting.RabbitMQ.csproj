@@ -5,6 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <IsPackable>true</IsPackable>
+    <Description>Aspire hosting extensions for Whizbang RabbitMQ integration with automatic topology configuration.</Description>
   </PropertyGroup>
 
   <ItemGroup>

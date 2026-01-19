@@ -1,6 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <IsPackable>true</IsPackable>
+    <Description>Roslyn source generators for zero-reflection, AOT-compatible code generation including dispatcher routing, message registry, and diagnostics infrastructure.</Description>
     <TargetFramework>netstandard2.0</TargetFramework>
     <RootNamespace>Whizbang.Generators</RootNamespace>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
@@ -13,6 +14,12 @@
     <ReportAnalyzer>true</ReportAnalyzer>
     <!-- Suppress release tracking warnings for early development -->
     <NoWarn>$(NoWarn);RS2008</NoWarn>
+    <!-- NuGet packaging: Place in analyzers folder, not lib -->
+    <!-- NoPackageAnalysis skips NU5017 false positive for analyzer packages -->
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <NoPackageAnalysis>true</NoPackageAnalysis>
+    <DevelopmentDependency>true</DevelopmentDependency>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
     <!-- Enable ILRepack to merge Shared DLL into generator DLL -->
     <ILRepackEnabled>true</ILRepackEnabled>
     <!-- Exclude System.Index and System.Range from ILRepack merge -->
@@ -22,6 +29,10 @@
     <!-- See: https://github.com/Sergio0694/PolySharp/issues/103 -->
     <PolySharpExcludeTypeForwardedToDeclarations>true</PolySharpExcludeTypeForwardedToDeclarations>
   </PropertyGroup>
+  <!-- Package the generator DLL in the analyzers folder -->
+  <ItemGroup>
+    <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+  </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
     <PackageReference Include="Microsoft.CodeAnalysis.Analyzers">
