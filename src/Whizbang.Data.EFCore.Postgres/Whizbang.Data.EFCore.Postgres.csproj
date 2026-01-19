@@ -26,5 +26,11 @@
   <ItemGroup>
     <InternalsVisibleTo Include="Whizbang.Data.EFCore.Postgres.Tests" />
   </ItemGroup>
-
+  <!-- Bundle the source generators in this package so users don't need to install separately -->
+  <ItemGroup>
+    <None Include="$(MSBuildProjectDirectory)/../Whizbang.Data.EFCore.Postgres.Generators/bin/$(Configuration)/netstandard2.0/Whizbang.Data.EFCore.Postgres.Generators.dll"
+          Pack="true"
+          PackagePath="analyzers/dotnet/cs"
+          Visible="false" />
+  </ItemGroup>
 </Project>
