@@ -2,7 +2,6 @@
 
   <PropertyGroup>
     <IsPackable>true</IsPackable>
-    <Description>Source generators for Entity Framework Core PostgreSQL integration including DbContext and service registration generation.</Description>
     <TargetFramework>netstandard2.0</TargetFramework>
     <RootNamespace>Whizbang.Data.EFCore.Postgres.Generators</RootNamespace>
     <LangVersion>latest</LangVersion>
@@ -25,7 +24,9 @@
     <!-- See: https://github.com/Sergio0694/PolySharp/issues/103 -->
     <PolySharpExcludeTypeForwardedToDeclarations>true</PolySharpExcludeTypeForwardedToDeclarations>
     <!-- NuGet packaging: Place in analyzers folder, not lib -->
+    <!-- NoPackageAnalysis skips NU5017 false positive for analyzer packages -->
     <IncludeBuildOutput>false</IncludeBuildOutput>
+    <NoPackageAnalysis>true</NoPackageAnalysis>
     <DevelopmentDependency>true</DevelopmentDependency>
     <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
   </PropertyGroup>

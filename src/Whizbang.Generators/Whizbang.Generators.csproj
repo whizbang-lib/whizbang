@@ -14,6 +14,12 @@
     <ReportAnalyzer>true</ReportAnalyzer>
     <!-- Suppress release tracking warnings for early development -->
     <NoWarn>$(NoWarn);RS2008</NoWarn>
+    <!-- NuGet packaging: Place in analyzers folder, not lib -->
+    <!-- NoPackageAnalysis skips NU5017 false positive for analyzer packages -->
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <NoPackageAnalysis>true</NoPackageAnalysis>
+    <DevelopmentDependency>true</DevelopmentDependency>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
     <!-- Enable ILRepack to merge Shared DLL into generator DLL -->
     <ILRepackEnabled>true</ILRepackEnabled>
     <!-- Exclude System.Index and System.Range from ILRepack merge -->
@@ -22,10 +28,6 @@
     <!-- Disable TypeForwardedTo generation for polyfills to avoid conflicts with .NET 10 test project -->
     <!-- See: https://github.com/Sergio0694/PolySharp/issues/103 -->
     <PolySharpExcludeTypeForwardedToDeclarations>true</PolySharpExcludeTypeForwardedToDeclarations>
-    <!-- NuGet packaging: Place in analyzers folder, not lib -->
-    <IncludeBuildOutput>false</IncludeBuildOutput>
-    <DevelopmentDependency>true</DevelopmentDependency>
-    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
   </PropertyGroup>
   <!-- Package the generator DLL in the analyzers folder -->
   <ItemGroup>
