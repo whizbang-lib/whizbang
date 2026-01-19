@@ -47,7 +47,7 @@ jobs:
         done
 
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@af2ee03a4e3e11499d866845a1e6c5a11f85cf4e # v4.5.0
+      uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v4.5.0
       with:
         token: ${{ secrets.CODECOV_TOKEN }}
         files: '**/TestResults/**/*.cobertura.xml'
