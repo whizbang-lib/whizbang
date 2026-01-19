@@ -43,6 +43,7 @@
     <RepositoryType>git</RepositoryType>
     <PackageTags>event-driven;cqrs;event-sourcing;aot;dotnet;zero-reflection;messaging;dispatcher;postgresql;efcore;dapper;azure-servicebus</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageIcon>logo.png</PackageIcon>
 
     <!-- Source Link -->
     <PublishRepositoryUrl>true</PublishRepositoryUrl>
@@ -56,9 +57,10 @@
     <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
   </PropertyGroup>
 
-  <!-- Include README in packages -->
+  <!-- Include README and logo in packages -->
   <ItemGroup>
     <None Include="$(MSBuildThisFileDirectory)README.md" Pack="true" PackagePath="\" />
+    <None Include="$(MSBuildThisFileDirectory)assets/logo.png" Pack="true" PackagePath="\" />
   </ItemGroup>
 
   <!-- AOT Compatibility Settings (Production Code Only) -->
