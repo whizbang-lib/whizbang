@@ -1,0 +1,73 @@
+using ECommerce.BFF.API.Endpoints.Admin;
+using ECommerce.BFF.API.Lenses;
+
+namespace ECommerce.BFF.API.Tests;
+
+/// <summary>
+/// Unit tests for admin endpoints
+/// </summary>
+public class AdminEndpointTests {
+  [Test]
+  public async Task GetAllOrdersEndpoint_CanBeConstructedAsync() {
+    // Arrange & Act
+    var mockLens = new MockOrderLens([]);
+    var endpoint = new GetAllOrdersEndpoint(mockLens);
+
+    // Assert
+    await Assert.That(endpoint).IsNotNull();
+  }
+
+  [Test]
+  public async Task GetOrdersByStatusEndpoint_CanBeConstructedAsync() {
+    // Arrange & Act
+    var mockLens = new MockOrderLens([]);
+    var endpoint = new GetOrdersByStatusEndpoint(mockLens);
+
+    // Assert
+    await Assert.That(endpoint).IsNotNull();
+  }
+
+  [Test]
+  public async Task Admin_GetOrderByIdEndpoint_CanBeConstructedAsync() {
+    // Arrange & Act
+    var mockLens = new MockOrderLens([]);
+    var endpoint = new GetOrderByIdEndpoint(mockLens);
+
+    // Assert
+    await Assert.That(endpoint).IsNotNull();
+  }
+
+  /// <summary>
+  /// Mock implementation of IOrderLens for testing
+  /// </summary>
+  private class MockOrderLens(List<OrderReadModel> orders) : IOrderLens {
+    private readonly List<OrderReadModel> _orders = orders;
+
+    public Task<IEnumerable<OrderReadModel>> GetByCustomerIdAsync(string customerId, CancellationToken cancellationToken = default) {
+      var result = _orders.Where(o => o.CustomerId.ToString() == customerId);
+      return Task.FromResult(result);
+    }
+
+    public Task<OrderReadModel?> GetByIdAsync(string orderId, CancellationToken cancellationToken = default) {
+      return Task.FromResult(_orders.FirstOrDefault(o => o.OrderId.ToString() == orderId));
+    }
+
+    public Task<IEnumerable<OrderReadModel>> GetByTenantIdAsync(string tenantId, CancellationToken cancellationToken = default) {
+      var result = _orders.Where(o => o.TenantId == tenantId);
+      return Task.FromResult(result);
+    }
+
+    public Task<IEnumerable<OrderReadModel>> GetByStatusAsync(string tenantId, string status, CancellationToken cancellationToken = default) {
+      var result = _orders.Where(o => o.TenantId == tenantId && o.Status == status);
+      return Task.FromResult(result);
+    }
+
+    public Task<IEnumerable<OrderStatusHistory>> GetStatusHistoryAsync(string orderId, CancellationToken cancellationToken = default) {
+      return Task.FromResult(Enumerable.Empty<OrderStatusHistory>());
+    }
+
+    public Task<IEnumerable<OrderReadModel>> GetRecentOrdersAsync(int limit = 100, CancellationToken cancellationToken = default) {
+      return Task.FromResult(_orders.Take(limit).AsEnumerable());
+    }
+  }
+}

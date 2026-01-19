@@ -1,0 +1,1003 @@
+-- Migration: 029_ProcessWorkBatch.sql
+-- Date: 2025-12-28
+-- Description: Creates process_work_batch orchestrator function.
+--              This is the single authoritative creation of process_work_batch.
+--              (Migration 007 removed per pre-v1.0 consolidation rule)
+--              Calls all decomposed functions in dependency order and returns aggregated results.
+--              Uses log_event() function for tracking idempotent event conflicts.
+-- Dependencies: 009-028 (foundation, completion, failure, storage, cleanup, claiming functions, and error tracking)
+
+-- Drop old monolithic version from migration 007 (different signature)
+DROP FUNCTION IF EXISTS __SCHEMA__.process_work_batch CASCADE;
+
+CREATE OR REPLACE FUNCTION __SCHEMA__.process_work_batch(
+  -- Instance identification
+  p_instance_id UUID,
+  p_service_name TEXT,
+  p_host_name TEXT,
+  p_process_id INTEGER,
+  p_metadata JSONB,
+
+  -- Timing parameters
+  p_now TIMESTAMPTZ,
+  p_lease_duration_seconds INTEGER DEFAULT 300,
+
+  -- Partitioning
+  p_partition_count INTEGER DEFAULT 10000,
+
+  -- Completions
+  p_outbox_completions JSONB DEFAULT '[]'::JSONB,
+  p_inbox_completions JSONB DEFAULT '[]'::JSONB,
+  p_perspective_event_completions JSONB DEFAULT '[]'::JSONB,
+  p_perspective_completions JSONB DEFAULT '[]'::JSONB,  -- Direct checkpoint completions (StreamId, PerspectiveName, LastEventId, Status)
+
+  -- Failures
+  p_outbox_failures JSONB DEFAULT '[]'::JSONB,
+  p_inbox_failures JSONB DEFAULT '[]'::JSONB,
+  p_perspective_event_failures JSONB DEFAULT '[]'::JSONB,
+  p_perspective_failures JSONB DEFAULT '[]'::JSONB,  -- Direct checkpoint failures (StreamId, PerspectiveName, LastEventId, Status, Error)
+
+  -- Storage (new work)
+  p_new_outbox_messages JSONB DEFAULT '[]'::JSONB,
+  p_new_inbox_messages JSONB DEFAULT '[]'::JSONB,
+  p_new_perspective_events JSONB DEFAULT '[]'::JSONB,
+
+  -- Lease renewals
+  p_renew_outbox_lease_ids JSONB DEFAULT '[]'::JSONB,
+  p_renew_inbox_lease_ids JSONB DEFAULT '[]'::JSONB,
+  p_renew_perspective_event_lease_ids JSONB DEFAULT '[]'::JSONB,
+
+  -- Flags
+  p_flags INTEGER DEFAULT 0,
+
+  -- Thresholds
+  p_stale_threshold_seconds INTEGER DEFAULT 600
+) RETURNS TABLE(
+  -- Heartbeat results
+  instance_rank INTEGER,
+  active_instance_count INTEGER,
+
+  -- Work results (unified format)
+  source VARCHAR(20),           -- 'outbox', 'inbox', 'receptor', 'perspective'
+  work_id UUID,                 -- message_id or event_work_id or processing_id
+  work_stream_id UUID,          -- Renamed from stream_id to avoid PL/pgSQL ambiguity
+  partition_number INTEGER,     -- Partition assignment for load balancing
+  destination VARCHAR(200),     -- Topic name (outbox) or handler name (inbox)
+  message_type VARCHAR(500),    -- For outbox/inbox
+  envelope_type VARCHAR(500),   -- Assembly-qualified name of envelope type (for outbox only)
+  message_data TEXT,
+  metadata JSONB,
+  status INTEGER,               -- MessageProcessingStatus flags
+  attempts INTEGER,
+  is_newly_stored BOOLEAN,
+  is_orphaned BOOLEAN,
+
+  -- Error tracking (for failed storage operations)
+  error TEXT,                   -- Error message (NULL if no error)
+  failure_reason INTEGER,       -- MessageFailureReason enum value (NULL if no failure)
+
+  -- Perspective-specific fields (NULL for non-perspective work)
+  perspective_name VARCHAR(200)
+) AS $$
+DECLARE
+  v_lease_expiry TIMESTAMPTZ;
+  v_stale_cutoff TIMESTAMPTZ;
+  v_rank INTEGER;
+  v_count INTEGER;
+  v_completed_events JSONB;
+  v_completion RECORD;
+
+  -- Arrays to track successfully stored events (for Phase 4.6 and 4.7 filtering)
+  v_stored_outbox_events UUID[] := '{}';
+  v_stored_inbox_events UUID[] := '{}';
+
+  -- Conflict tracking for logging
+  v_outbox_conflict_count INTEGER := 0;
+  v_outbox_conflict_types TEXT[];
+  v_inbox_conflict_count INTEGER := 0;
+  v_inbox_conflict_types TEXT[];
+
+  -- Acknowledgement counts for completion tracking
+  v_ack_counts JSONB;
+BEGIN
+  -- Calculate lease expiry and stale cutoff
+  v_lease_expiry := p_now + (p_lease_duration_seconds || ' seconds')::INTERVAL;
+  v_stale_cutoff := p_now - (p_stale_threshold_seconds || ' seconds')::INTERVAL;
+
+  -- Create temporary tables for tracking work
+  CREATE TEMP TABLE IF NOT EXISTS temp_completed_perspectives (
+    stream_id UUID,
+    perspective_name VARCHAR(200),
+    PRIMARY KEY (stream_id, perspective_name)
+  ) ON COMMIT DROP;
+
+  CREATE TEMP TABLE IF NOT EXISTS temp_new_outbox (
+    message_id UUID PRIMARY KEY,
+    stream_id UUID
+  ) ON COMMIT DROP;
+
+  CREATE TEMP TABLE IF NOT EXISTS temp_new_inbox (
+    message_id UUID PRIMARY KEY,
+    stream_id UUID
+  ) ON COMMIT DROP;
+
+  CREATE TEMP TABLE IF NOT EXISTS temp_new_perspective_events (
+    event_work_id UUID PRIMARY KEY,
+    stream_id UUID,
+    perspective_name VARCHAR(200)
+  ) ON COMMIT DROP;
+
+  CREATE TEMP TABLE IF NOT EXISTS temp_orphaned_outbox (
+    message_id UUID PRIMARY KEY,
+    stream_id UUID
+  ) ON COMMIT DROP;
+
+  CREATE TEMP TABLE IF NOT EXISTS temp_orphaned_inbox (
+    message_id UUID PRIMARY KEY,
+    stream_id UUID
+  ) ON COMMIT DROP;
+
+  CREATE TEMP TABLE IF NOT EXISTS temp_orphaned_receptor (
+    processing_id UUID PRIMARY KEY,
+    stream_id UUID
+  ) ON COMMIT DROP;
+
+  CREATE TEMP TABLE IF NOT EXISTS temp_orphaned_perspective_events (
+    event_work_id UUID PRIMARY KEY,
+    stream_id UUID,
+    perspective_name VARCHAR(200)
+  ) ON COMMIT DROP;
+
+  -- ========================================
+  -- Phase 1: Foundation (Heartbeat & Cleanup)
+  -- ========================================
+
+  -- Register heartbeat and get rank
+  PERFORM __SCHEMA__.register_instance_heartbeat(
+    p_instance_id,
+    p_service_name,
+    p_host_name,
+    p_process_id,
+    p_metadata,
+    p_now,
+    v_lease_expiry
+  );
+
+  -- Cleanup stale instances
+  PERFORM __SCHEMA__.cleanup_stale_instances(v_stale_cutoff);
+
+  -- Calculate rank
+  SELECT cir.instance_rank, cir.active_instance_count INTO v_rank, v_count
+  FROM __SCHEMA__.calculate_instance_rank(p_instance_id, v_stale_cutoff) AS cir;
+
+  -- Cleanup completed streams
+  PERFORM __SCHEMA__.cleanup_completed_streams(p_now);
+
+  -- ========================================
+  -- Phase 2: Completions
+  -- ========================================
+
+  -- Process outbox completions
+  PERFORM __SCHEMA__.process_outbox_completions(p_outbox_completions, p_now, (p_flags & 4) != 0);
+
+  -- Process inbox completions
+  PERFORM __SCHEMA__.process_inbox_completions(p_inbox_completions, p_now, (p_flags & 4) != 0);
+
+  -- Process perspective event completions: CRITICAL ORDER
+  -- 1. Mark events as processed (set processed_at and status)
+  -- 2. Collect stream/perspective pairs for checkpoint updates
+  -- 3. Update checkpoints WHILE events still exist
+  -- 4. Delete processed events (ephemeral pattern)
+
+  -- Step 1 & 2: Mark as processed and collect completion info
+  -- Use debug mode temporarily to prevent deletion
+  INSERT INTO temp_completed_perspectives (stream_id, perspective_name)
+  SELECT DISTINCT
+    pec.stream_id,
+    pec.perspective_name
+  FROM __SCHEMA__.process_perspective_event_completions(
+    p_perspective_event_completions,
+    p_now,
+    TRUE  -- Always use debug mode initially to retain events for checkpoint update
+  ) AS pec
+  WHERE pec.stream_id IS NOT NULL
+    AND pec.perspective_name IS NOT NULL
+  ON CONFLICT DO NOTHING;
+
+  -- Step 3: Update perspective checkpoints BEFORE deleting events
+  v_completed_events := (
+    SELECT jsonb_agg(
+      jsonb_build_object(
+        'StreamId', tcp.stream_id,
+        'PerspectiveName', tcp.perspective_name
+      )
+    )
+    FROM temp_completed_perspectives tcp
+  );
+
+  IF v_completed_events IS NOT NULL THEN
+    PERFORM __SCHEMA__.update_perspective_checkpoints(v_completed_events, (p_flags & 4) != 0);
+  END IF;
+
+  -- Step 4: Delete processed events (if not in debug mode)
+  -- Now safe to delete since checkpoints are already updated
+  IF (p_flags & 4) = 0 THEN
+    DELETE FROM wh_perspective_events pe
+    WHERE pe.processed_at IS NOT NULL
+      AND (pe.stream_id, pe.perspective_name) IN (
+        SELECT tcp.stream_id, tcp.perspective_name
+        FROM temp_completed_perspectives tcp
+      );
+  END IF;
+
+  -- Process perspective checkpoint completions (direct completion reports from perspective runners)
+  IF jsonb_array_length(p_perspective_completions) > 0 THEN
+    FOR v_completion IN
+      SELECT
+        (elem->>'StreamId')::UUID as stream_id,
+        elem->>'PerspectiveName' as perspective_name,
+        (elem->>'LastEventId')::UUID as last_event_id,
+        (elem->>'Status')::SMALLINT as status
+      FROM jsonb_array_elements(p_perspective_completions) as elem
+    LOOP
+      -- CRITICAL: Skip if no events were processed (LastEventId = 00000000-0000-0000-0000-000000000000)
+      -- This prevents FK constraint violation when event doesn't exist in wh_event_store
+      IF v_completion.last_event_id != '00000000-0000-0000-0000-000000000000'::UUID THEN
+        PERFORM __SCHEMA__.complete_perspective_checkpoint_work(
+          v_completion.stream_id,
+          v_completion.perspective_name,
+          v_completion.last_event_id,
+          v_completion.status,
+          NULL::TEXT
+        );
+      END IF;
+    END LOOP;
+  END IF;
+
+  -- ========================================
+  -- Phase 3: Failures
+  -- ========================================
+
+  -- Process outbox failures
+  PERFORM __SCHEMA__.process_outbox_failures(p_outbox_failures, p_now);
+
+  -- Process inbox failures
+  PERFORM __SCHEMA__.process_inbox_failures(p_inbox_failures, p_now);
+
+  -- Process perspective event failures
+  PERFORM __SCHEMA__.process_perspective_event_failures(p_perspective_event_failures, p_now);
+
+  -- Process perspective checkpoint failures (direct failure reports from perspective runners)
+  IF jsonb_array_length(p_perspective_failures) > 0 THEN
+    FOR v_completion IN
+      SELECT
+        (elem->>'StreamId')::UUID as stream_id,
+        elem->>'PerspectiveName' as perspective_name,
+        (elem->>'LastEventId')::UUID as last_event_id,
+        (elem->>'Status')::SMALLINT as status,
+        elem->>'Error' as error_message
+      FROM jsonb_array_elements(p_perspective_failures) as elem
+    LOOP
+      -- CRITICAL: Skip if no events were processed (LastEventId = 00000000-0000-0000-0000-000000000000)
+      -- This prevents FK constraint violation when event doesn't exist in wh_event_store
+      IF v_completion.last_event_id != '00000000-0000-0000-0000-000000000000'::UUID THEN
+        PERFORM __SCHEMA__.complete_perspective_checkpoint_work(
+          v_completion.stream_id,
+          v_completion.perspective_name,
+          v_completion.last_event_id,
+          v_completion.status,
+          v_completion.error_message
+        );
+      END IF;
+    END LOOP;
+  END IF;
+
+  -- ========================================
+  -- Phase 2.5: Calculate Acknowledgement Counts
+  -- ========================================
+  -- Count how many completions/failures were processed
+  -- These counts are returned in metadata to C# for acknowledgement tracking
+
+  v_ack_counts := jsonb_build_object(
+    'outbox_completions_processed', jsonb_array_length(COALESCE(p_outbox_completions, '[]'::JSONB)),
+    'outbox_failures_processed', jsonb_array_length(COALESCE(p_outbox_failures, '[]'::JSONB)),
+    'inbox_completions_processed', jsonb_array_length(COALESCE(p_inbox_completions, '[]'::JSONB)),
+    'inbox_failures_processed', jsonb_array_length(COALESCE(p_inbox_failures, '[]'::JSONB)),
+    'perspective_completions_processed', jsonb_array_length(COALESCE(p_perspective_completions, '[]'::JSONB)),
+    'perspective_failures_processed', jsonb_array_length(COALESCE(p_perspective_failures, '[]'::JSONB)),
+    'outbox_lease_renewals_processed', jsonb_array_length(COALESCE(p_renew_outbox_lease_ids, '[]'::JSONB)),
+    'inbox_lease_renewals_processed', jsonb_array_length(COALESCE(p_renew_inbox_lease_ids, '[]'::JSONB))
+  );
+
+  -- ========================================
+  -- Phase 4: Storage (New Work)
+  -- ========================================
+
+  -- Store new outbox messages and track
+  INSERT INTO temp_new_outbox (message_id, stream_id)
+  SELECT som.message_id, som.stream_id
+  FROM __SCHEMA__.store_outbox_messages(
+    p_new_outbox_messages,
+    p_instance_id,
+    v_lease_expiry,
+    p_now,
+    p_partition_count
+  ) AS som
+  WHERE som.was_newly_created = true;
+
+  -- DIAGNOSTIC: Log how many new outbox messages were stored
+  RAISE NOTICE '[process_work_batch] Stored % new outbox messages (instance_id=%)',
+    (SELECT COUNT(*) FROM temp_new_outbox), p_instance_id;
+
+  -- Store new inbox messages and track
+  -- DIAGNOSTIC: Log what's being passed to store_inbox_messages
+  RAISE NOTICE '[Phase 4] Calling store_inbox_messages with % inbox messages',
+    jsonb_array_length(p_new_inbox_messages);
+
+  INSERT INTO temp_new_inbox (message_id, stream_id)
+  SELECT sim.message_id, sim.stream_id
+  FROM __SCHEMA__.store_inbox_messages(
+    p_new_inbox_messages,
+    p_instance_id,
+    v_lease_expiry,
+    p_now,
+    p_partition_count
+  ) AS sim
+  WHERE sim.was_newly_created = true;
+
+  -- DIAGNOSTIC: Log how many new inbox messages were tracked
+  RAISE NOTICE '[Phase 4] Stored % new inbox messages to temp_new_inbox (instance_id=%)',
+    (SELECT COUNT(*) FROM temp_new_inbox), p_instance_id;
+  RAISE NOTICE '[Phase 4] Debug: SELECT COUNT(*) from store_inbox_messages result would be: %',
+    (SELECT COUNT(*)
+     FROM __SCHEMA__.store_inbox_messages(
+       p_new_inbox_messages,
+       p_instance_id,
+       v_lease_expiry,
+       p_now,
+       p_partition_count
+     ));
+
+  -- Store new perspective events and track
+  INSERT INTO temp_new_perspective_events (event_work_id, stream_id, perspective_name)
+  SELECT spe.event_work_id, spe.stream_id, spe.perspective_name
+  FROM __SCHEMA__.store_perspective_events(
+    p_new_perspective_events,
+    p_instance_id,
+    v_lease_expiry,
+    p_now
+  ) AS spe
+  WHERE spe.was_newly_created = true;
+
+  -- ========================================
+  -- Phase 4.5: Event Storage
+  -- ========================================
+  -- Store events from newly created outbox/inbox messages to wh_event_store
+  -- with sequential versioning and optimistic concurrency control.
+  -- This is the authoritative event storage - all events flow through process_work_batch.
+  -- Uses array tracking to capture successfully stored events for Phase 4.6/4.7 filtering.
+
+  -- Phase 4.5A: Store events from outbox messages with tracking
+  WITH outbox_events AS (
+    SELECT
+      o.message_id,
+      o.stream_id,
+      o.message_type,
+      o.event_data,
+      o.metadata,
+      o.scope,
+      o.created_at,
+      ROW_NUMBER() OVER (PARTITION BY o.stream_id ORDER BY o.created_at) as row_num
+    FROM wh_outbox o
+    WHERE o.message_id IN (SELECT message_id FROM temp_new_outbox)
+      AND o.is_event = true
+      AND o.stream_id IS NOT NULL
+  ),
+  outbox_base_versions AS (
+    SELECT
+      oe.stream_id,
+      oe.message_id,
+      oe.message_type,
+      oe.event_data,
+      oe.metadata,
+      oe.scope,
+      oe.created_at,
+      oe.row_num,
+      COALESCE(
+        (SELECT MAX(version) FROM wh_event_store WHERE wh_event_store.stream_id = oe.stream_id),
+        0
+      ) as base_version
+    FROM outbox_events oe
+  ),
+  stored_events AS (
+    INSERT INTO wh_event_store (
+      event_id,
+      stream_id,
+      aggregate_id,
+      aggregate_type,
+      event_type,
+      event_data,
+      metadata,
+      scope,
+      version,
+      created_at
+    )
+    SELECT
+      bv.message_id as event_id,
+      bv.stream_id,
+      bv.stream_id as aggregate_id,
+      SPLIT_PART(__SCHEMA__.normalize_event_type(bv.message_type), ',', 1) as aggregate_type,
+      __SCHEMA__.normalize_event_type(bv.message_type),
+      -- Extract just the Payload from the envelope for event_data
+      (bv.event_data::jsonb -> 'Payload') as event_data,
+      -- Build EnvelopeMetadata structure (MessageId + Hops) for metadata
+      jsonb_build_object(
+        'MessageId', bv.event_data::jsonb -> 'MessageId',
+        'Hops', COALESCE(bv.event_data::jsonb -> 'Hops', '[]'::jsonb)
+      ) as metadata,
+      bv.scope,
+      bv.base_version + bv.row_num as version,
+      p_now
+    FROM outbox_base_versions bv
+    ON CONFLICT (event_id) DO NOTHING
+    RETURNING event_id, event_type
+  ),
+  conflict_events AS (
+    -- Find events that conflicted (were skipped due to idempotency)
+    SELECT
+      bv.message_id,
+      bv.message_type
+    FROM outbox_base_versions bv
+    WHERE NOT EXISTS (
+      SELECT 1 FROM stored_events se WHERE se.event_id = bv.message_id
+    )
+  )
+  SELECT
+    array_agg(se.event_id),
+    (SELECT COUNT(*) FROM conflict_events),
+    (SELECT array_agg(DISTINCT ce.message_type) FROM conflict_events ce)
+  INTO v_stored_outbox_events, v_outbox_conflict_count, v_outbox_conflict_types
+  FROM stored_events se;
+
+  -- Ensure array is never NULL
+  v_stored_outbox_events := COALESCE(v_stored_outbox_events, '{}');
+
+  -- Log warnings for idempotent conflicts (if any)
+  -- TODO: Implement log_event() function for tracking idempotent conflicts
+  -- IF v_outbox_conflict_count > 0 THEN
+  --   PERFORM __SCHEMA__.log_event(
+  --     2,  -- Warning level
+  --     'process_work_batch',
+  --     format('Event already exists (idempotent): %s outbox events skipped', v_outbox_conflict_count),
+  --     NULL,  -- No specific event_id (multiple)
+  --     NULL,  -- No specific message_id
+  --     NULL,  -- No specific event_type
+  --     jsonb_build_object(
+  --       'phase', '4.5A',
+  --       'source', 'outbox',
+  --       'skipped_count', v_outbox_conflict_count,
+  --       'event_types', v_outbox_conflict_types
+  --     )
+  --   );
+  -- END IF;
+
+  -- Phase 4.5B: Store events from inbox messages with tracking
+  -- DIAGNOSTIC: Log inbox event candidates
+  RAISE NOTICE '[Phase 4.5B] Checking inbox events from temp_new_inbox';
+  RAISE NOTICE '[Phase 4.5B] Total temp_new_inbox count: %', (SELECT COUNT(*) FROM temp_new_inbox);
+  RAISE NOTICE '[Phase 4.5B] Inbox events matching criteria (is_event=true AND stream_id IS NOT NULL): %',
+    (SELECT COUNT(*) FROM wh_inbox i
+     WHERE i.message_id IN (SELECT message_id FROM temp_new_inbox)
+       AND i.is_event = true
+       AND i.stream_id IS NOT NULL);
+
+  WITH inbox_events AS (
+    SELECT
+      i.message_id,
+      i.stream_id,
+      i.message_type,
+      i.event_data,
+      i.metadata,
+      i.scope,
+      i.received_at,
+      ROW_NUMBER() OVER (PARTITION BY i.stream_id ORDER BY i.received_at) as row_num
+    FROM wh_inbox i
+    WHERE i.message_id IN (SELECT message_id FROM temp_new_inbox)
+      AND i.is_event = true
+      AND i.stream_id IS NOT NULL
+  ),
+  inbox_base_versions AS (
+    SELECT
+      ie.stream_id,
+      ie.message_id,
+      ie.message_type,
+      ie.event_data,
+      ie.metadata,
+      ie.scope,
+      ie.received_at,
+      ie.row_num,
+      COALESCE(
+        (SELECT MAX(version) FROM wh_event_store WHERE wh_event_store.stream_id = ie.stream_id),
+        0
+      ) as base_version
+    FROM inbox_events ie
+  ),
+  stored_events AS (
+    INSERT INTO wh_event_store (
+      event_id,
+      stream_id,
+      aggregate_id,
+      aggregate_type,
+      event_type,
+      event_data,
+      metadata,
+      scope,
+      version,
+      created_at
+    )
+    SELECT
+      bv.message_id as event_id,
+      bv.stream_id,
+      bv.stream_id as aggregate_id,
+      SPLIT_PART(__SCHEMA__.normalize_event_type(bv.message_type), ',', 1) as aggregate_type,
+      __SCHEMA__.normalize_event_type(bv.message_type),
+      -- Extract just the Payload from the envelope for event_data
+      (bv.event_data::jsonb -> 'Payload') as event_data,
+      -- Build EnvelopeMetadata structure (MessageId + Hops) for metadata
+      jsonb_build_object(
+        'MessageId', bv.event_data::jsonb -> 'MessageId',
+        'Hops', COALESCE(bv.event_data::jsonb -> 'Hops', '[]'::jsonb)
+      ) as metadata,
+      bv.scope,
+      bv.base_version + bv.row_num as version,
+      p_now
+    FROM inbox_base_versions bv
+    ON CONFLICT (event_id) DO NOTHING
+    RETURNING event_id, event_type
+  ),
+  conflict_events AS (
+    -- Find events that conflicted (were skipped due to idempotency)
+    SELECT
+      bv.message_id,
+      bv.message_type
+    FROM inbox_base_versions bv
+    WHERE NOT EXISTS (
+      SELECT 1 FROM stored_events se WHERE se.event_id = bv.message_id
+    )
+  )
+  SELECT
+    array_agg(se.event_id),
+    (SELECT COUNT(*) FROM conflict_events),
+    (SELECT array_agg(DISTINCT ce.message_type) FROM conflict_events ce)
+  INTO v_stored_inbox_events, v_inbox_conflict_count, v_inbox_conflict_types
+  FROM stored_events se;
+
+  -- Ensure array is never NULL
+  v_stored_inbox_events := COALESCE(v_stored_inbox_events, '{}');
+
+  -- DIAGNOSTIC: Log storage results
+  RAISE NOTICE '[Phase 4.5B] Stored % inbox events to wh_event_store', array_length(v_stored_inbox_events, 1);
+  RAISE NOTICE '[Phase 4.5B] Conflict count: %', v_inbox_conflict_count;
+
+  -- Log warnings for idempotent conflicts (if any)
+  -- TODO: Implement log_event() function for tracking idempotent conflicts
+  -- IF v_inbox_conflict_count > 0 THEN
+  --   PERFORM __SCHEMA__.log_event(
+  --     2,  -- Warning level
+  --     'process_work_batch',
+  --     format('Event already exists (idempotent): %s inbox events skipped', v_inbox_conflict_count),
+  --     NULL,  -- No specific event_id (multiple)
+  --     NULL,  -- No specific message_id
+  --     NULL,  -- No specific event_type
+  --     jsonb_build_object(
+  --       'phase', '4.5B',
+  --       'source', 'inbox',
+  --       'skipped_count', v_inbox_conflict_count,
+  --       'event_types', v_inbox_conflict_types
+  --     )
+  --   );
+  -- END IF;
+
+  -- ========================================
+  -- Phase 4.6: Auto-Create Perspective Events
+  -- ========================================
+  -- When events are stored, automatically create perspective event work items for any events
+  -- that match perspective associations. This ensures perspectives get notified of relevant events.
+  -- Uses fuzzy type matching to handle different .NET type name formats.
+  -- Only processes events successfully stored in Phase 4.5 (tracked via arrays).
+  INSERT INTO wh_perspective_events (
+    event_work_id,
+    stream_id,
+    perspective_name,
+    event_id,
+    status,
+    attempts,
+    created_at,
+    instance_id,
+    lease_expiry
+  )
+  SELECT DISTINCT
+    gen_random_uuid() as event_work_id,
+    es.stream_id,
+    ma.target_name as perspective_name,
+    es.event_id,
+    1 as status,  -- Stored flag
+    0 as attempts,
+    p_now as created_at,
+    p_instance_id as instance_id,  -- Immediate lease to current instance
+    v_lease_expiry as lease_expiry
+  FROM wh_event_store es
+  INNER JOIN wh_message_associations ma
+    ON (
+      -- Strategy 1: Exact match (fastest, try first)
+      es.event_type = ma.message_type
+      OR
+      -- Strategy 2: Fuzzy match on "TypeName, AssemblyName" portion
+      (
+        CASE
+          WHEN POSITION(', Version=' IN es.event_type) > 0
+            THEN SUBSTRING(es.event_type FROM 1 FOR POSITION(', Version=' IN es.event_type) - 1)
+          WHEN POSITION(', Culture=' IN es.event_type) > 0
+            THEN SUBSTRING(es.event_type FROM 1 FOR POSITION(', Culture=' IN es.event_type) - 1)
+          WHEN POSITION(', PublicKeyToken=' IN es.event_type) > 0
+            THEN SUBSTRING(es.event_type FROM 1 FOR POSITION(', PublicKeyToken=' IN es.event_type) - 1)
+          ELSE es.event_type
+        END
+        =
+        CASE
+          WHEN POSITION(', Version=' IN ma.message_type) > 0
+            THEN SUBSTRING(ma.message_type FROM 1 FOR POSITION(', Version=' IN ma.message_type) - 1)
+          WHEN POSITION(', Culture=' IN ma.message_type) > 0
+            THEN SUBSTRING(ma.message_type FROM 1 FOR POSITION(', Culture=' IN ma.message_type) - 1)
+          WHEN POSITION(', PublicKeyToken=' IN ma.message_type) > 0
+            THEN SUBSTRING(ma.message_type FROM 1 FOR POSITION(', PublicKeyToken=' IN ma.message_type) - 1)
+          ELSE ma.message_type
+        END
+      )
+    )
+    AND ma.association_type = 'perspective'
+  WHERE es.event_id = ANY(v_stored_outbox_events || v_stored_inbox_events)
+    AND NOT EXISTS (
+      SELECT 1 FROM wh_perspective_events pe_check
+      WHERE pe_check.stream_id = es.stream_id
+        AND pe_check.perspective_name = ma.target_name
+        AND pe_check.event_id = es.event_id
+    )
+  ON CONFLICT ON CONSTRAINT uq_perspective_event DO NOTHING;  -- Idempotency
+
+  -- ========================================
+  -- Phase 4.7: Auto-Create Perspective Checkpoints
+  -- ========================================
+  -- When events are stored, automatically create checkpoint rows for any streams
+  -- that have events matching perspective associations but don't have checkpoints yet.
+  -- Uses fuzzy type matching to handle different .NET type name formats.
+  -- Only processes events successfully stored in Phase 4.5 (tracked via arrays).
+  INSERT INTO __SCHEMA__.wh_perspective_checkpoints (
+    stream_id,
+    perspective_name,
+    last_event_id,
+    status
+  )
+  SELECT DISTINCT
+    es.stream_id,
+    ma.target_name,  -- perspective_name
+    NULL::uuid,      -- last_event_id = NULL (not processed yet)
+    0                -- status = 0 (PerspectiveProcessingStatus.None)
+  FROM wh_event_store es
+  INNER JOIN wh_message_associations ma
+    ON (
+      -- Strategy 1: Exact match (fastest, try first)
+      es.event_type = ma.message_type
+      OR
+      -- Strategy 2: Fuzzy match on "TypeName, AssemblyName" portion
+      -- Ignores Version, Culture, PublicKeyToken differences
+      (
+        -- Extract core identifier from event_type (up to first ", Version=" if present)
+        CASE
+          WHEN POSITION(', Version=' IN es.event_type) > 0
+            THEN SUBSTRING(es.event_type FROM 1 FOR POSITION(', Version=' IN es.event_type) - 1)
+          WHEN POSITION(', Culture=' IN es.event_type) > 0
+            THEN SUBSTRING(es.event_type FROM 1 FOR POSITION(', Culture=' IN es.event_type) - 1)
+          WHEN POSITION(', PublicKeyToken=' IN es.event_type) > 0
+            THEN SUBSTRING(es.event_type FROM 1 FOR POSITION(', PublicKeyToken=' IN es.event_type) - 1)
+          ELSE es.event_type
+        END
+        =
+        -- Extract core identifier from message_type
+        CASE
+          WHEN POSITION(', Version=' IN ma.message_type) > 0
+            THEN SUBSTRING(ma.message_type FROM 1 FOR POSITION(', Version=' IN ma.message_type) - 1)
+          WHEN POSITION(', Culture=' IN ma.message_type) > 0
+            THEN SUBSTRING(ma.message_type FROM 1 FOR POSITION(', Culture=' IN ma.message_type) - 1)
+          WHEN POSITION(', PublicKeyToken=' IN ma.message_type) > 0
+            THEN SUBSTRING(ma.message_type FROM 1 FOR POSITION(', PublicKeyToken=' IN ma.message_type) - 1)
+          ELSE ma.message_type
+        END
+      )
+    )
+    AND ma.association_type = 'perspective'
+  WHERE es.event_id = ANY(v_stored_outbox_events || v_stored_inbox_events)
+    AND NOT EXISTS (
+      SELECT 1 FROM __SCHEMA__.wh_perspective_checkpoints pc_check
+      WHERE pc_check.stream_id = es.stream_id
+        AND pc_check.perspective_name = ma.target_name
+    )
+  ON CONFLICT DO NOTHING;  -- Idempotency - relies on primary key (stream_id, perspective_name)
+
+  -- ========================================
+  -- Phase 5: Claiming (Orphaned Work)
+  -- ========================================
+
+  -- Claim orphaned outbox and track
+  INSERT INTO temp_orphaned_outbox (message_id, stream_id)
+  SELECT coo.message_id, coo.stream_id
+  FROM __SCHEMA__.claim_orphaned_outbox(
+    p_instance_id,
+    v_rank,
+    v_count,
+    v_lease_expiry,
+    p_now,
+    p_partition_count
+  ) AS coo;
+
+  -- Claim orphaned inbox and track
+  INSERT INTO temp_orphaned_inbox (message_id, stream_id)
+  SELECT coi.message_id, coi.stream_id
+  FROM __SCHEMA__.claim_orphaned_inbox(
+    p_instance_id,
+    v_rank,
+    v_count,
+    v_lease_expiry,
+    p_now,
+    p_partition_count
+  ) AS coi;
+
+  -- Claim orphaned receptor work and track
+  INSERT INTO temp_orphaned_receptor (processing_id, stream_id)
+  SELECT cor.processing_id, cor.stream_id
+  FROM __SCHEMA__.claim_orphaned_receptor_work(
+    p_instance_id,
+    v_rank,
+    v_count,
+    v_lease_expiry,
+    p_now
+  ) AS cor;
+
+  -- Claim orphaned perspective events and track
+  INSERT INTO temp_orphaned_perspective_events (event_work_id, stream_id, perspective_name)
+  SELECT cope.event_work_id, cope.stream_id, cope.perspective_name
+  FROM __SCHEMA__.claim_orphaned_perspective_events(
+    p_instance_id,
+    v_lease_expiry,
+    p_now
+  ) AS cope;
+
+  -- ========================================
+  -- Phase 6: Lease Renewals
+  -- ========================================
+
+  -- Renew outbox leases
+  UPDATE wh_outbox
+  SET lease_expiry = v_lease_expiry
+  WHERE instance_id = p_instance_id
+    AND message_id = ANY(
+      SELECT (elem::TEXT)::UUID
+      FROM jsonb_array_elements_text(p_renew_outbox_lease_ids) as elem
+    );
+
+  -- Renew inbox leases
+  UPDATE wh_inbox
+  SET lease_expiry = v_lease_expiry
+  WHERE instance_id = p_instance_id
+    AND message_id = ANY(
+      SELECT (elem::TEXT)::UUID
+      FROM jsonb_array_elements_text(p_renew_inbox_lease_ids) as elem
+    );
+
+  -- Renew perspective event leases
+  UPDATE wh_perspective_events
+  SET lease_expiry = v_lease_expiry
+  WHERE instance_id = p_instance_id
+    AND event_work_id = ANY(
+      SELECT (elem::TEXT)::UUID
+      FROM jsonb_array_elements_text(p_renew_perspective_event_lease_ids) as elem
+    );
+
+  -- ========================================
+  -- Phase 7: Return Results
+  -- ========================================
+
+  -- DIAGNOSTIC: Log counts before returning results
+  RAISE NOTICE '[process_work_batch] About to return results: temp_new_outbox=%', (SELECT COUNT(*) FROM temp_new_outbox);
+  RAISE NOTICE '[process_work_batch] Checking wh_outbox: total_in_temp_new=%, matching_instance_id=%',
+    (SELECT COUNT(*) FROM wh_outbox o INNER JOIN temp_new_outbox t ON o.message_id = t.message_id),
+    (SELECT COUNT(*) FROM wh_outbox o INNER JOIN temp_new_outbox t ON o.message_id = t.message_id WHERE o.instance_id = p_instance_id);
+  RAISE NOTICE '[process_work_batch] Instance check: p_instance_id=%, first_outbox_instance_id=%',
+    p_instance_id,
+    (SELECT o.instance_id FROM wh_outbox o INNER JOIN temp_new_outbox t ON o.message_id = t.message_id LIMIT 1);
+
+  -- Return outbox work (first row includes acknowledgement counts)
+  RETURN QUERY
+  WITH ordered_outbox AS (
+    SELECT
+      o.*,
+      temp_new.message_id as new_message_id,
+      temp_orphaned.message_id as orphaned_message_id,
+      ROW_NUMBER() OVER (ORDER BY o.message_id) as row_num
+    FROM wh_outbox o
+    LEFT JOIN temp_new_outbox temp_new ON o.message_id = temp_new.message_id
+    LEFT JOIN temp_orphaned_outbox temp_orphaned ON o.message_id = temp_orphaned.message_id
+    WHERE (temp_new.message_id IS NOT NULL OR temp_orphaned.message_id IS NOT NULL)
+      AND o.instance_id = p_instance_id
+      AND o.lease_expiry > p_now
+      AND o.processed_at IS NULL
+  )
+  SELECT
+    v_rank as instance_rank,
+    v_count as active_instance_count,
+    'outbox'::VARCHAR(20) as source,
+    o.message_id as work_id,
+    o.stream_id as work_stream_id,
+    o.partition_number,
+    o.destination as destination,
+    o.message_type as message_type,
+    o.envelope_type as envelope_type,
+    o.event_data::TEXT as message_data,
+    -- CRITICAL: First row includes acknowledgement counts in metadata
+    CASE WHEN o.row_num = 1 THEN COALESCE(o.metadata, '{}'::JSONB) || v_ack_counts ELSE o.metadata END as metadata,
+    o.status,
+    o.attempts,
+    CASE WHEN o.new_message_id IS NOT NULL THEN true ELSE false END as is_newly_stored,
+    CASE WHEN o.orphaned_message_id IS NOT NULL THEN true ELSE false END as is_orphaned,
+    NULL::TEXT as error,
+    NULL::INTEGER as failure_reason,
+    NULL::VARCHAR(200) as perspective_name
+  FROM ordered_outbox o;
+
+  -- Return inbox work (first row includes acknowledgement counts if no outbox work)
+  RETURN QUERY
+  WITH has_outbox AS (
+    SELECT EXISTS(SELECT 1 FROM wh_outbox o
+      LEFT JOIN temp_new_outbox temp_new ON o.message_id = temp_new.message_id
+      LEFT JOIN temp_orphaned_outbox temp_orphaned ON o.message_id = temp_orphaned.message_id
+      WHERE (temp_new.message_id IS NOT NULL OR temp_orphaned.message_id IS NOT NULL)
+        AND o.instance_id = p_instance_id
+        AND o.lease_expiry > p_now
+        AND o.processed_at IS NULL) as exists
+  ),
+  ordered_inbox AS (
+    SELECT
+      i.*,
+      temp_new.message_id as new_message_id,
+      temp_orphaned.message_id as orphaned_message_id,
+      ROW_NUMBER() OVER (ORDER BY i.message_id) as row_num
+    FROM wh_inbox i
+    LEFT JOIN temp_new_inbox temp_new ON i.message_id = temp_new.message_id
+    LEFT JOIN temp_orphaned_inbox temp_orphaned ON i.message_id = temp_orphaned.message_id
+    WHERE (temp_new.message_id IS NOT NULL OR temp_orphaned.message_id IS NOT NULL)
+      AND i.instance_id = p_instance_id
+      AND i.lease_expiry > p_now
+      AND i.processed_at IS NULL
+  )
+  SELECT
+    v_rank as instance_rank,
+    v_count as active_instance_count,
+    'inbox'::VARCHAR(20) as source,
+    i.message_id as work_id,
+    i.stream_id as work_stream_id,
+    i.partition_number,
+    i.handler_name as destination,
+    i.message_type as message_type,
+    NULL::VARCHAR(500) as envelope_type,
+    i.event_data::TEXT as message_data,
+    -- CRITICAL: First row includes ack counts if no outbox work
+    CASE WHEN i.row_num = 1 AND NOT (SELECT exists FROM has_outbox)
+      THEN COALESCE(i.metadata, '{}'::JSONB) || v_ack_counts
+      ELSE i.metadata END as metadata,
+    i.status,
+    i.attempts,
+    CASE WHEN i.new_message_id IS NOT NULL THEN true ELSE false END as is_newly_stored,
+    CASE WHEN i.orphaned_message_id IS NOT NULL THEN true ELSE false END as is_orphaned,
+    NULL::TEXT as error,
+    NULL::INTEGER as failure_reason,
+    NULL::VARCHAR(200) as perspective_name
+  FROM ordered_inbox i;
+
+  -- Return receptor work
+  RETURN QUERY
+  SELECT
+    v_rank as instance_rank,
+    v_count as active_instance_count,
+    'receptor'::VARCHAR(20) as source,
+    rp.id as work_id,
+    rp.stream_id as work_stream_id,
+    rp.partition_number,
+    NULL::VARCHAR(200) as destination,
+    NULL::VARCHAR(500) as message_type,
+    NULL::VARCHAR(500) as envelope_type,
+    NULL::TEXT as message_data,
+    NULL::JSONB as metadata,
+    rp.status::INTEGER,
+    rp.attempts,
+    false as is_newly_stored,  -- Receptor work created out-of-band
+    CASE WHEN temp_orphaned.processing_id IS NOT NULL THEN true ELSE false END as is_orphaned,
+    NULL::TEXT as error,
+    NULL::INTEGER as failure_reason,
+    NULL::VARCHAR(200) as perspective_name
+  FROM wh_receptor_processing rp
+  LEFT JOIN temp_orphaned_receptor temp_orphaned ON rp.id = temp_orphaned.processing_id
+  WHERE rp.instance_id = p_instance_id
+    AND rp.lease_expiry > p_now
+    AND rp.completed_at IS NULL;
+
+  -- Return perspective work (first row includes acknowledgement counts if no outbox/inbox work)
+  RETURN QUERY
+  WITH has_outbox_or_inbox AS (
+    SELECT EXISTS(
+      SELECT 1 FROM wh_outbox o
+      LEFT JOIN temp_new_outbox temp_new ON o.message_id = temp_new.message_id
+      LEFT JOIN temp_orphaned_outbox temp_orphaned ON o.message_id = temp_orphaned.message_id
+      WHERE (temp_new.message_id IS NOT NULL OR temp_orphaned.message_id IS NOT NULL)
+        AND o.instance_id = p_instance_id
+        AND o.lease_expiry > p_now
+        AND o.processed_at IS NULL
+      UNION ALL
+      SELECT 1 FROM wh_inbox i
+      LEFT JOIN temp_new_inbox temp_new ON i.message_id = temp_new.message_id
+      LEFT JOIN temp_orphaned_inbox temp_orphaned ON i.message_id = temp_orphaned.message_id
+      WHERE (temp_new.message_id IS NOT NULL OR temp_orphaned.message_id IS NOT NULL)
+        AND i.instance_id = p_instance_id
+        AND i.lease_expiry > p_now
+        AND i.processed_at IS NULL
+    ) as exists
+  ),
+  ordered_perspective AS (
+    SELECT
+      pe.*,
+      temp_new.event_work_id as new_event_work_id,
+      temp_orphaned.event_work_id as orphaned_event_work_id,
+      es.event_type,  -- Get event_type from event_store for perspective worker
+      ROW_NUMBER() OVER (ORDER BY pe.stream_id, pe.perspective_name, pe.event_id) as row_num
+    FROM wh_perspective_events pe
+    INNER JOIN __SCHEMA__.wh_event_store es ON pe.event_id = es.event_id  -- JOIN to get event_type
+    LEFT JOIN temp_new_perspective_events temp_new ON pe.event_work_id = temp_new.event_work_id
+    LEFT JOIN temp_orphaned_perspective_events temp_orphaned ON pe.event_work_id = temp_orphaned.event_work_id
+    LEFT JOIN __SCHEMA__.wh_perspective_checkpoints pc
+      ON pe.stream_id = pc.stream_id
+      AND pe.perspective_name = pc.perspective_name
+    WHERE pe.instance_id = p_instance_id
+      AND pe.lease_expiry > p_now
+      AND pe.processed_at IS NULL
+      -- Note: pe.processed_at IS NULL already prevents re-processing individual events
+      -- Checkpoint status (pc.status) tracks the LAST processed event, not THIS event
+      -- Filtering on checkpoint status would block all subsequent events in the stream
+  )
+  SELECT
+    v_rank as instance_rank,
+    v_count as active_instance_count,
+    'perspective'::VARCHAR(20) as source,
+    pe.event_work_id as work_id,
+    pe.stream_id as work_stream_id,
+    NULL::INTEGER as partition_number,  -- Perspectives don't use partition-based load balancing
+    NULL::VARCHAR(200) as destination,
+    pe.event_type as message_type,  -- Event type from wh_event_store JOIN
+    NULL::VARCHAR(500) as envelope_type, -- Event envelope type comes from wh_event_store
+    NULL::TEXT as message_data,          -- Event data comes from wh_event_store
+    -- CRITICAL: First row includes ack counts if no outbox/inbox work
+    CASE WHEN pe.row_num = 1 AND NOT (SELECT exists FROM has_outbox_or_inbox)
+      THEN v_ack_counts
+      ELSE NULL::JSONB END as metadata,
+    pe.status,
+    pe.attempts,
+    CASE WHEN pe.new_event_work_id IS NOT NULL THEN true ELSE false END as is_newly_stored,
+    CASE WHEN pe.orphaned_event_work_id IS NOT NULL THEN true ELSE false END as is_orphaned,
+    NULL::TEXT as error,
+    NULL::INTEGER as failure_reason,
+    pe.perspective_name
+  FROM ordered_perspective pe
+  ORDER BY pe.stream_id, pe.perspective_name, pe.event_id;
+END;
+$$ LANGUAGE plpgsql;
+
+COMMENT ON FUNCTION __SCHEMA__.process_work_batch IS
+'Orchestrator function that coordinates all work batch processing. Returns acknowledgement counts in first result row metadata for C# completion tracking. Registers heartbeat, processes completions/failures, stores new work, claims orphaned work, renews leases, and returns aggregated work batch. All operations occur in a single transaction for atomicity.';

@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Whizbang.Data.Schema\Whizbang.Data.Schema.csproj" />
+    <ProjectReference Include="..\..\src\Whizbang.Data.Dapper.Postgres\Whizbang.Data.Dapper.Postgres.csproj" />
+    <ProjectReference Include="..\..\src\Whizbang.Data.Dapper.Sqlite\Whizbang.Data.Dapper.Sqlite.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <!-- Package as global .NET tool -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>whizbang</ToolCommandName>
+    <PackageId>Whizbang.CLI</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Whizbang Contributors</Authors>
+    <Description>Command-line tool for Whizbang schema management and utilities</Description>
+    <PackageTags>whizbang;cli;schema;database</PackageTags>
+    <PackageProjectUrl>https://github.com/whizbang-lib/whizbang</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/whizbang-lib/whizbang</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+  </PropertyGroup>
+
+</Project>

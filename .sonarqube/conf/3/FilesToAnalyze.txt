@@ -1,0 +1,6 @@
+﻿/Users/philcarbone/src/whizbang/src/Whizbang.Generators.Shared/Discovery/DbContextDiscovery.cs
+/Users/philcarbone/src/whizbang/src/Whizbang.Generators.Shared/Discovery/PerspectiveDiscovery.cs
+/Users/philcarbone/src/whizbang/src/Whizbang.Generators.Shared/Models/DbContextInfo.cs
+/Users/philcarbone/src/whizbang/src/Whizbang.Generators.Shared/Models/PerspectiveInfo.cs
+/Users/philcarbone/src/whizbang/src/Whizbang.Generators.Shared/Utilities/TemplateUtilities.cs
+/Users/philcarbone/src/whizbang/README.md

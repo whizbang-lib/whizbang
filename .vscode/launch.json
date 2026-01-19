@@ -1,0 +1,98 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "Debug Tests",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "dotnet",
+      "args": [
+        "exec",
+        "${workspaceFolder}/tests/Whizbang.Core.Tests/bin/Debug/net10.0/Whizbang.Core.Tests.dll",
+        "--maximum-parallel-tests",
+        "1",
+        "--fail-fast"
+      ],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Debug Tests (with diagnostics)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "dotnet",
+      "args": [
+        "exec",
+        "${workspaceFolder}/tests/Whizbang.Core.Tests/bin/Debug/net10.0/Whizbang.Core.Tests.dll"
+      ],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "console": "integratedTerminal",
+      "justMyCode": false,
+      "env": {
+        "WHIZBANG_SHOW_DIAGNOSTICS": "1"
+      }
+    },
+    {
+      "name": "Debug Specific Test",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "build",
+      "program": "dotnet",
+      "args": [
+        "exec",
+        "${workspaceFolder}/tests/Whizbang.Core.Tests/bin/Debug/net10.0/Whizbang.Core.Tests.dll",
+        "--treenode-filter",
+        "/*/*/*/${input:testFilter}"
+      ],
+      "cwd": "${workspaceFolder}",
+      "stopAtEntry": false,
+      "console": "integratedTerminal",
+      "justMyCode": false
+    },
+    {
+      "name": "Launch ECommerce Sample (Aspire)",
+      "type": "dotnet",
+      "request": "launch",
+      "projectPath": "${workspaceFolder}/samples/ECommerce/ECommerce.AppHost/ECommerce.AppHost.csproj"
+    },
+    {
+      "name": "Launch ECommerce Sample (Aspire - detailed)",
+      "type": "coreclr",
+      "request": "launch",
+      "preLaunchTask": "setup and build ECommerce AppHost",
+      "program": "${workspaceFolder}/samples/ECommerce/ECommerce.AppHost/bin/Debug/net10.0/ECommerce.AppHost.dll",
+      "args": [],
+      "cwd": "${workspaceFolder}/samples/ECommerce/ECommerce.AppHost",
+      "stopAtEntry": false,
+      "console": "internalConsole",
+      "env": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "DOTNET_ENVIRONMENT": "Development",
+        "DOTNET_DASHBOARD_OTLP_ENDPOINT_URL": "https://localhost:21030",
+        "DOTNET_RESOURCE_SERVICE_ENDPOINT_URL": "https://localhost:22246",
+        "ASPNETCORE_URLS": "https://localhost:17286;http://localhost:15195",
+        "ASPIRE_ALLOW_UNSECURED_TRANSPORT": "true"
+      },
+      "launchBrowser": {
+        "enabled": true,
+        "args": "${auto-detect-url}",
+        "osx": {
+          "command": "open"
+        }
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "id": "testFilter",
+      "type": "promptString",
+      "description": "Test method name (e.g., Publish_WithEvent_ShouldNotifyAllHandlersAsync)",
+      "default": ""
+    }
+  ]
+}

@@ -1,0 +1,30 @@
+{
+  "UserConfig": {
+    "Namespaces": [
+      {
+        "Name": "sbemulatorns",
+        "Topics": [
+          {
+            "Name": "test-topic",
+            "Subscriptions": [
+              {
+                "Name": "test-subscription",
+                "Rules": [
+                  {
+                    "Name": "$Default",
+                    "Filter": {
+                      "FilterType": "TrueFilter"
+                    }
+                  }
+                ]
+              }
+            ]
+          }
+        ]
+      }
+    ],
+    "Logging": {
+      "Type": "File"
+    }
+  }
+}

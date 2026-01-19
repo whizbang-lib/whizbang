@@ -1,0 +1,3 @@
+﻿/Users/philcarbone/src/whizbang/src/Whizbang.Hosting.RabbitMQ/AspireExtensions.cs
+/Users/philcarbone/src/whizbang/src/Whizbang.Hosting.RabbitMQ/RabbitMQReadinessCheck.cs
+/Users/philcarbone/src/whizbang/README.md

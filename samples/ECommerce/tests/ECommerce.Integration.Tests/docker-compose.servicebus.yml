@@ -1,0 +1,23 @@
+services:
+  servicebus-emulator:
+    container_name: servicebus-emulator
+    image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
+    ports:
+      - "5672:5672"
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=ServiceBus!Pass
+      - SQL_SERVER=mssql
+    depends_on:
+      - mssql
+    mem_limit: 4g
+
+  mssql:
+    container_name: mssql-servicebus
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    ports:
+      - "1433:1433"
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=ServiceBus!Pass
+    mem_limit: 4g

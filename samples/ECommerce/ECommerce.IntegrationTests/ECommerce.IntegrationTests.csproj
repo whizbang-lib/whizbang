@@ -1,0 +1,33 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- TUnit Testing Framework -->
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="TUnit.Assertions" />
+
+    <!-- Testcontainers for integration testing -->
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="Testcontainers.Azurite" />
+
+    <!-- ASP.NET Core Testing -->
+    <PackageReference Include="Microsoft.AspNetCore.Mvc.Testing" />
+
+    <!-- Aspire Testing -->
+    <PackageReference Include="Aspire.Hosting.Testing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ECommerce.OrderService.API\ECommerce.OrderService.API.csproj" />
+    <ProjectReference Include="..\ECommerce.Contracts\ECommerce.Contracts.csproj" />
+    <ProjectReference Include="..\ECommerce.AppHost\ECommerce.AppHost.csproj" />
+  </ItemGroup>
+
+</Project>

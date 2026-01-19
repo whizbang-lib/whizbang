@@ -1,0 +1,7 @@
+﻿/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.ShippingWorker/Program.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.ShippingWorker/Receptors/CreateShipmentReceptor.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.ShippingWorker/Receptors/PaymentShippingReceptor.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.ShippingWorker/ShippingDbContext.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.ShippingWorker/obj/Release/net10.0/ECommerce.ShippingWorker.GlobalUsings.g.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.ShippingWorker/obj/Release/net10.0/.NETCoreApp,Version=v10.0.AssemblyAttributes.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/ECommerce.ShippingWorker/obj/Release/net10.0/ECommerce.ShippingWorker.AssemblyInfo.cs

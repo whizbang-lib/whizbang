@@ -1,0 +1,6 @@
+# Whizbang Tests - Shared test project configuration
+
+root = false
+
+[*.cs]
+# Test-specific editorconfig settings

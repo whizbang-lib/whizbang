@@ -1,0 +1,3 @@
+﻿/Users/philcarbone/src/whizbang/samples/ECommerce/tests/ECommerce.Integration.Tests.AppHost/Program.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/tests/ECommerce.Integration.Tests.AppHost/Properties/launchSettings.json
+/Users/philcarbone/src/whizbang/samples/ECommerce/tests/ECommerce.Integration.Tests.AppHost/servicebus-config.json

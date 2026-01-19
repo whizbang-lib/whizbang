@@ -1,0 +1,294 @@
+using System.Data;
+using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
+using System.Text.Json;
+using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
+using Whizbang.Core;
+using Whizbang.Core.Data;
+using Whizbang.Core.Messaging;
+using Whizbang.Core.Observability;
+using Whizbang.Core.ValueObjects;
+
+namespace Whizbang.Data.Dapper.Custom;
+
+/// <summary>
+/// Base class for Dapper-based IEventStore implementations.
+/// Provides common implementation logic while allowing derived classes to provide database-specific SQL.
+/// </summary>
+/// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs</tests>
+public abstract class DapperEventStoreBase : IEventStore {
+  private readonly IDbConnectionFactory _connectionFactory;
+  private readonly IDbExecutor _executor;
+  private readonly JsonSerializerOptions _jsonOptions;
+
+  protected DapperEventStoreBase(
+    IDbConnectionFactory connectionFactory,
+    IDbExecutor executor,
+    JsonSerializerOptions jsonOptions
+  ) {
+    ArgumentNullException.ThrowIfNull(connectionFactory);
+    ArgumentNullException.ThrowIfNull(executor);
+    ArgumentNullException.ThrowIfNull(jsonOptions);
+
+    _connectionFactory = connectionFactory;
+    _executor = executor;
+    _jsonOptions = jsonOptions;
+  }
+
+  protected IDbConnectionFactory ConnectionFactory => _connectionFactory;
+  protected IDbExecutor Executor => _executor;
+  protected JsonSerializerOptions JsonOptions => _jsonOptions;
+
+  /// <summary>
+  /// Ensures the connection is open. Handles both pre-opened and closed connections.
+  /// </summary>
+  protected static void EnsureConnectionOpen(IDbConnection connection) {
+    if (connection.State != ConnectionState.Open) {
+      connection.Open();
+    }
+  }
+
+  /// <summary>
+  /// Gets the SQL command to append a new event to a stream.
+  /// Parameters: @EventId (Guid), @StreamId (Guid), @SequenceNumber (long),
+  ///             @EventType (string), @EventData (string), @Metadata (string),
+  ///             @Scope (string), @CreatedAt (DateTimeOffset)
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_WithNullEnvelope_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_DifferentStreams_ShouldBeIndependentAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ConcurrentAppends_ShouldBeThreadSafeAsync</tests>
+  protected abstract string GetAppendSql();
+
+  /// <summary>
+  /// Gets the SQL query to read events from a stream.
+  /// Should return: EventData, Metadata, Scope (all as JSONB/string)
+  /// Parameters: @StreamId (Guid), @FromSequence (long)
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_FromEmptyStream_ShouldReturnEmptyAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_FromMiddle_ShouldReturnSubsetAsync</tests>
+  protected abstract string GetReadSql();
+
+  /// <summary>
+  /// Gets the SQL query to get the last version number for a stream.
+  /// Should return MAX(version) or -1 if stream doesn't exist.
+  /// Parameters: @StreamId (Guid)
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:GetLastSequenceAsync_EmptyStream_ShouldReturnMinusOneAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:GetLastSequenceAsync_AfterAppends_ShouldReturnCorrectSequenceAsync</tests>
+  protected abstract string GetLastSequenceSql();
+
+  /// <summary>
+  /// AOT-compatible append with explicit stream ID.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_WithNullEnvelope_ShouldThrowAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_DifferentStreams_ShouldBeIndependentAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ConcurrentAppends_ShouldBeThreadSafeAsync</tests>
+  public abstract Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Reads events from a stream starting from a specific sequence number.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_FromEmptyStream_ShouldReturnEmptyAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_ShouldReturnEventsInOrderAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_FromMiddle_ShouldReturnSubsetAsync</tests>
+  public abstract IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
+    Guid streamId,
+    long fromSequence,
+    CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Reads events from a stream starting after a specific event ID (UUIDv7-based).
+  /// </summary>
+  public abstract IAsyncEnumerable<MessageEnvelope<TMessage>> ReadAsync<TMessage>(
+    Guid streamId,
+    Guid? fromEventId,
+    CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Reads events from a stream polymorphically, deserializing each event to its concrete type.
+  /// </summary>
+  public abstract IAsyncEnumerable<MessageEnvelope<IEvent>> ReadPolymorphicAsync(
+    Guid streamId,
+    Guid? fromEventId,
+    IReadOnlyList<Type> eventTypes,
+    CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Database-specific SQL for querying events between two checkpoint IDs (exclusive start, inclusive end).
+  /// </summary>
+  protected abstract string GetEventsBetweenSql();
+
+  /// <inheritdoc />
+  public async Task<List<MessageEnvelope<TMessage>>> GetEventsBetweenAsync<TMessage>(
+      Guid streamId,
+      Guid? afterEventId,
+      Guid upToEventId,
+      CancellationToken cancellationToken = default) {
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+
+    var sql = GetEventsBetweenSql();
+    var parameters = new {
+      StreamId = streamId,
+      AfterEventId = afterEventId,
+      UpToEventId = upToEventId
+    };
+
+    var rows = await Executor.QueryAsync<EventRow>(connection, sql, parameters, cancellationToken: cancellationToken);
+    var envelopes = new List<MessageEnvelope<TMessage>>();
+
+    var eventTypeInfo = JsonOptions.GetTypeInfo(typeof(TMessage));
+    // Use dictionary approach for metadata deserialization (matches ToJsonb snake_case keys)
+    var metadataDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>));
+    var hopsTypeInfo = JsonOptions.GetTypeInfo(typeof(List<MessageHop>));
+
+    foreach (var row in rows) {
+      var eventData = JsonSerializer.Deserialize(row.EventData, eventTypeInfo);
+      if (eventData == null) {
+        throw new InvalidOperationException($"Failed to deserialize event of type {row.EventType}");
+      }
+
+      // Deserialize metadata using dictionary approach (stored with snake_case keys)
+      var metadataDict = JsonSerializer.Deserialize(row.Metadata, metadataDictTypeInfo) as Dictionary<string, JsonElement>
+                         ?? throw new InvalidOperationException($"Failed to deserialize metadata for event type {row.EventType}");
+
+      // Extract message_id from metadata
+      var messageId = metadataDict.TryGetValue("message_id", out var msgIdElem)
+        ? Guid.Parse(msgIdElem.GetString()!)
+        : throw new InvalidOperationException("message_id not found in metadata");
+
+      // Deserialize hops from metadata
+      List<MessageHop> hops;
+      if (metadataDict.TryGetValue("hops", out var hopsElem)) {
+        hops = JsonSerializer.Deserialize(hopsElem.GetRawText(), hopsTypeInfo) as List<MessageHop> ?? [];
+      } else {
+        hops = [];
+      }
+
+      envelopes.Add(new MessageEnvelope<TMessage> {
+        MessageId = MessageId.From(messageId),
+        Payload = (TMessage)eventData,
+        Hops = hops
+      });
+    }
+
+    return envelopes;
+  }
+
+  /// <inheritdoc />
+  public async Task<List<MessageEnvelope<IEvent>>> GetEventsBetweenPolymorphicAsync(
+      Guid streamId,
+      Guid? afterEventId,
+      Guid upToEventId,
+      IReadOnlyList<Type> eventTypes,
+      CancellationToken cancellationToken = default) {
+
+    ArgumentNullException.ThrowIfNull(eventTypes);
+
+    using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+
+    var sql = GetEventsBetweenSql();
+    var parameters = new {
+      StreamId = streamId,
+      AfterEventId = afterEventId,
+      UpToEventId = upToEventId
+    };
+
+    var rows = await Executor.QueryAsync<EventRow>(connection, sql, parameters, cancellationToken: cancellationToken);
+    var envelopes = new List<MessageEnvelope<IEvent>>();
+
+    // Build type lookup dictionary for fast O(1) lookups (AOT-compatible)
+    var typeLookup = new Dictionary<string, JsonTypeInfo>(eventTypes.Count);
+    foreach (var type in eventTypes) {
+      var typeInfo = JsonOptions.GetTypeInfo(type);
+      typeLookup[type.FullName ?? type.Name] = typeInfo;
+    }
+
+    // Use dictionary approach for metadata deserialization (matches ToJsonb snake_case keys)
+    var metadataDictTypeInfo = JsonOptions.GetTypeInfo(typeof(Dictionary<string, JsonElement>));
+    var hopsTypeInfo = JsonOptions.GetTypeInfo(typeof(List<MessageHop>));
+
+    foreach (var row in rows) {
+      // Normalize event type name (remove assembly version/culture/publickey if present)
+      // EventType column stores "TypeName, AssemblyName" or full assembly-qualified name
+      // We need to match against FullName (TypeName only) in our dictionary
+      var storedTypeName = row.EventType;
+      var commaIndex = storedTypeName.IndexOf(',');
+      var normalizedTypeName = commaIndex > 0 ? storedTypeName.Substring(0, commaIndex).Trim() : storedTypeName;
+
+      // Look up the concrete type based on normalized EventType
+      if (!typeLookup.TryGetValue(normalizedTypeName, out var eventTypeInfo)) {
+        throw new InvalidOperationException(
+          $"Unknown event type '{row.EventType}' (normalized: '{normalizedTypeName}'). " +
+          $"Provided event types: [{string.Join(", ", eventTypes.Select(t => t.FullName ?? t.Name))}]"
+        );
+      }
+
+      var eventData = JsonSerializer.Deserialize(row.EventData, eventTypeInfo);
+      if (eventData == null) {
+        throw new InvalidOperationException($"Failed to deserialize event of type {row.EventType}");
+      }
+
+      // Deserialize metadata using dictionary approach (stored with snake_case keys)
+      var metadataDict = JsonSerializer.Deserialize(row.Metadata, metadataDictTypeInfo) as Dictionary<string, JsonElement>
+                         ?? throw new InvalidOperationException($"Failed to deserialize metadata for event type {row.EventType}");
+
+      // Extract message_id from metadata
+      var messageId = metadataDict.TryGetValue("message_id", out var msgIdElem)
+        ? Guid.Parse(msgIdElem.GetString()!)
+        : throw new InvalidOperationException("message_id not found in metadata");
+
+      // Deserialize hops from metadata
+      List<MessageHop> hops;
+      if (metadataDict.TryGetValue("hops", out var hopsElem)) {
+        hops = JsonSerializer.Deserialize(hopsElem.GetRawText(), hopsTypeInfo) as List<MessageHop> ?? [];
+      } else {
+        hops = [];
+      }
+
+      envelopes.Add(new MessageEnvelope<IEvent> {
+        MessageId = MessageId.From(messageId),
+        Payload = (IEvent)eventData,
+        Hops = hops
+      });
+    }
+
+    return envelopes;
+  }
+
+  /// <summary>
+  /// Gets the last sequence number for a stream. Returns -1 if stream doesn't exist.
+  /// </summary>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:GetLastSequenceAsync_EmptyStream_ShouldReturnMinusOneAsync</tests>
+  /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:GetLastSequenceAsync_AfterAppends_ShouldReturnCorrectSequenceAsync</tests>
+  public async Task<long> GetLastSequenceAsync(Guid streamId, CancellationToken cancellationToken = default) {
+    using var connection = await ConnectionFactory.CreateConnectionAsync(cancellationToken);
+    EnsureConnectionOpen(connection);
+
+    var sql = GetLastSequenceSql();
+
+    var lastSequence = await Executor.ExecuteScalarAsync<long?>(
+      connection,
+      sql,
+      new { StreamId = streamId },
+      cancellationToken: cancellationToken);
+
+    return lastSequence ?? -1;
+  }
+
+  /// <summary>
+  /// Internal row structure for Dapper mapping (3-column JSONB pattern).
+  /// </summary>
+  protected class EventRow {
+    public string EventType { get; set; } = string.Empty;
+    public string EventData { get; set; } = string.Empty;
+    public string Metadata { get; set; } = string.Empty;
+    public string? Scope { get; set; }
+  }
+}

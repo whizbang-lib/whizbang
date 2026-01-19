@@ -1,0 +1,144 @@
+using System.Diagnostics.CodeAnalysis;
+using ECommerce.Contracts.Generated;
+using ECommerce.InventoryWorker;
+using ECommerce.InventoryWorker.Generated;
+using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
+using Npgsql;
+using Testcontainers.PostgreSql;
+using Whizbang.Core;
+using Whizbang.Core.Lenses;
+using Whizbang.Core.Perspectives;
+using Whizbang.Data.EFCore.Postgres;
+
+namespace ECommerce.InventoryWorker.Tests.TestHelpers;
+
+/// <summary>
+/// Helper class for managing PostgreSQL test containers and EF Core infrastructure for InventoryWorker tests.
+/// Provides DbContext, ILensQuery, and IPerspectiveStore instances for testing.
+/// </summary>
+public sealed class DatabaseTestHelper : IAsyncDisposable {
+  private readonly PostgreSqlContainer _container;
+  private bool _isInitialized;
+  private IServiceProvider? _serviceProvider;
+
+  public DatabaseTestHelper() {
+    _container = new PostgreSqlBuilder()
+      .WithImage("postgres:17-alpine")
+      .WithDatabase("whizbang_test")
+      .WithUsername("whizbang_user")
+      .WithPassword("whizbang_pass")
+      .Build();
+  }
+
+  /// <summary>
+  /// Creates and returns a configured IServiceProvider with all EF Core infrastructure registered.
+  /// </summary>
+  [RequiresDynamicCode("EF Core in tests may use dynamic code")]
+  [RequiresUnreferencedCode("EF Core in tests may use unreferenced code")]
+  public async Task<IServiceProvider> CreateServiceProviderAsync(CancellationToken cancellationToken = default) {
+    if (!_isInitialized) {
+      await _container.StartAsync(cancellationToken);
+      var connectionString = _container.GetConnectionString();
+
+      var services = new ServiceCollection();
+
+      // Register JsonSerializerOptions for Npgsql JSONB serialization
+      var jsonOptions = ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions();
+      services.AddSingleton(jsonOptions);
+
+      // Register DbContext with NpgsqlDataSource
+      // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
+      // This registers WhizbangId JSON converters for JSONB serialization
+      var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
+      dataSourceBuilder.ConfigureJsonOptions(jsonOptions);
+      dataSourceBuilder.EnableDynamicJson();
+      var dataSource = dataSourceBuilder.Build();
+      services.AddSingleton(dataSource);
+
+      services.AddDbContext<InventoryDbContext>(options =>
+        options.UseNpgsql(dataSource));
+
+      // Register Whizbang infrastructure with EF Core + Postgres driver
+      _ = services.AddWhizbang()
+        .WithEFCore<InventoryDbContext>()
+        .WithDriver.Postgres;
+
+      // NOTE: InventoryWorker has NO perspectives (OLD OrderInventoryPerspective was removed)
+      // If perspectives are added in the future, call services.AddPerspectiveRunners()
+
+      // Register lenses (high-level query interfaces)
+      services.AddScoped<ECommerce.InventoryWorker.Lenses.IProductLens, ECommerce.InventoryWorker.Lenses.ProductLens>();
+      services.AddScoped<ECommerce.InventoryWorker.Lenses.IInventoryLens, ECommerce.InventoryWorker.Lenses.InventoryLens>();
+
+      // Register generated services (from ECommerce.Contracts)
+      services.AddReceptors();
+      services.AddWhizbangAggregateIdExtractor();
+      services.AddWhizbangDispatcher();
+
+      // Add NullLogger for all logger dependencies
+      services.AddSingleton(typeof(ILogger<>), typeof(NullLogger<>));
+
+      // Register JsonSerializerOptions for Npgsql JSONB serialization
+      services.AddSingleton(ECommerce.Contracts.Generated.WhizbangJsonContext.CreateOptions());
+
+      _serviceProvider = services.BuildServiceProvider();
+
+      // Initialize schema (creates tables + PostgreSQL functions)
+      await using var scope = _serviceProvider.CreateAsyncScope();
+      var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+      await dbContext.EnsureWhizbangDatabaseInitializedAsync();
+
+      _isInitialized = true;
+    }
+
+    return _serviceProvider!;
+  }
+
+  /// <summary>
+  /// Gets the connection string for raw SQL operations if needed.
+  /// </summary>
+  [RequiresUnreferencedCode("Test code - reflection allowed")]
+  [RequiresDynamicCode("Test code - reflection allowed")]
+  public async Task<string> GetConnectionStringAsync(CancellationToken cancellationToken = default) {
+    if (!_isInitialized) {
+      await CreateServiceProviderAsync(cancellationToken);
+    }
+    return _container.GetConnectionString();
+  }
+
+  /// <summary>
+  /// Cleans up all test data from the database.
+  /// </summary>
+  public async Task CleanupDatabaseAsync(CancellationToken cancellationToken = default) {
+    if (!_isInitialized || _serviceProvider == null) {
+      return;
+    }
+
+    // Temporarily disabled to see actual test errors without cleanup noise
+    // await using var scope = _serviceProvider.CreateAsyncScope();
+    // var dbContext = scope.ServiceProvider.GetRequiredService<InventoryDbContext>();
+
+    // // Truncate all perspective tables
+    // await dbContext.Database.ExecuteSqlRawAsync(@"
+    //   TRUNCATE TABLE wh_per_product_dto CASCADE;
+    //   TRUNCATE TABLE wh_per_inventory_level_dto CASCADE;
+    //   TRUNCATE TABLE wh_outbox CASCADE;
+    //   TRUNCATE TABLE wh_inbox CASCADE;
+    //   TRUNCATE TABLE wh_event_store CASCADE;
+    // ", cancellationToken);
+    await Task.CompletedTask;
+  }
+
+  public async ValueTask DisposeAsync() {
+    if (_serviceProvider is IAsyncDisposable asyncDisposable) {
+      await asyncDisposable.DisposeAsync();
+    }
+
+    if (_isInitialized) {
+      await _container.DisposeAsync();
+    }
+  }
+}

@@ -1,0 +1,109 @@
+.orders-container {
+  padding: 1.5rem;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.orders-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #e8e8e8;
+
+  h2 {
+    margin: 0;
+  }
+
+  .header-actions {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+
+    .connection-status {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 0.25rem;
+
+      .badge {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+      }
+
+      .last-update {
+        font-size: 0.75rem;
+        color: #666;
+      }
+    }
+  }
+}
+
+.loading-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  min-height: 400px;
+}
+
+.orders-content {
+  .empty-state {
+    text-align: center;
+    padding: 3rem;
+    max-width: 600px;
+    margin: 0 auto;
+
+    clr-alert {
+      margin-bottom: 1.5rem;
+    }
+  }
+}
+
+.order-summary {
+  background: #f5f5f5;
+  padding: 1.5rem;
+  border-radius: 4px;
+  margin-bottom: 1.5rem;
+
+  .summary-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid #e8e8e8;
+
+    &:last-child {
+      border-bottom: none;
+    }
+
+    .label {
+      font-weight: 600;
+      color: #666;
+    }
+  }
+}
+
+.modal-body {
+  h4 {
+    margin-top: 1.5rem;
+    margin-bottom: 1rem;
+  }
+
+  .table {
+    width: 100%;
+    margin-bottom: 1rem;
+
+    tfoot {
+      border-top: 2px solid #333;
+
+      td {
+        padding-top: 0.75rem;
+      }
+    }
+
+    .text-right {
+      text-align: right;
+    }
+  }
+}

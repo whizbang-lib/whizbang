@@ -1,0 +1,51 @@
+<div class="catalog-container">
+  <div class="catalog-header">
+    <h2>Product Catalog</h2>
+    <div class="cart-summary">
+      <button class="btn btn-primary btn-sm" routerLink="/cart">
+        <cds-icon shape="shopping-cart"></cds-icon>
+        Cart ({{ cartStore.totalItems() }})
+        <span class="badge badge-info">{{ cartStore.totalPrice() | currency }}</span>
+      </button>
+    </div>
+  </div>
+
+  <div *ngIf="loading" class="loading-container">
+    <span class="spinner">Loading products...</span>
+  </div>
+
+  <div *ngIf="!loading" class="product-grid">
+    <div *ngFor="let product of products" class="card product-card">
+      <div class="card-img">
+        <img [src]="product.imageUrl" [alt]="product.name" />
+      </div>
+      <div class="card-block">
+        <h3 class="card-title">{{ product.name }}</h3>
+        <p class="card-text">{{ product.description }}</p>
+        <div class="product-details">
+          <div class="price">{{ product.price | currency }}</div>
+          <div class="stock">
+            <span
+              [class]="product.stock > 50 ? 'badge badge-success' : product.stock > 20 ? 'badge badge-warning' : 'badge badge-danger'">
+              {{ product.stock }} in stock
+            </span>
+          </div>
+        </div>
+      </div>
+      <div class="card-footer">
+        <button
+          *ngIf="!isInCart(product.productId)"
+          class="btn btn-sm btn-success-outline"
+          (click)="addToCart(product)"
+          [disabled]="product.stock === 0">
+          <cds-icon shape="shopping-cart"></cds-icon>
+          Add to Cart
+        </button>
+        <div *ngIf="isInCart(product.productId)" class="in-cart-indicator">
+          <cds-icon shape="check-circle" status="success"></cds-icon>
+          In Cart ({{ getCartQuantity(product.productId) }})
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

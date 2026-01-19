@@ -1,0 +1,10 @@
+﻿/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Sqlite/DapperSqliteEventStore.cs
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Sqlite/DapperSqliteRequestResponseStore.cs
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Sqlite/DapperSqliteSequenceProvider.cs
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Sqlite/Schema/SqliteSchemaBuilder.cs
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Sqlite/Schema/SqliteTypeMapper.cs
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Sqlite/SqliteConnectionFactory.cs
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Sqlite/SqliteDateTimeOffsetHandler.cs
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Sqlite/SqliteGuidHandler.cs
+/Users/philcarbone/src/whizbang/src/Whizbang.Data.Dapper.Sqlite/whizbang-schema.sql
+/Users/philcarbone/src/whizbang/README.md

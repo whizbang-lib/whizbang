@@ -1,0 +1,42 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\Whizbang.Core\Whizbang.Core.csproj" />
+    <ProjectReference Include="..\..\src\Whizbang.Data.EFCore.Postgres\Whizbang.Data.EFCore.Postgres.csproj" />
+    <ProjectReference Include="..\..\src\Whizbang.Data.Postgres\Whizbang.Data.Postgres.csproj" />
+    <ProjectReference Include="..\..\src\Whizbang.Data.Dapper.Postgres\Whizbang.Data.Dapper.Postgres.csproj" />
+    <!-- Reference the generator to discover perspectives in this project -->
+    <ProjectReference Include="..\..\src\Whizbang.Data.EFCore.Postgres.Generators\Whizbang.Data.EFCore.Postgres.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <!-- Reference the WhizbangId generator to generate strongly-typed test IDs -->
+    <ProjectReference Include="..\..\src\Whizbang.Generators\Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.InMemory" />
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="Microsoft.Testing.Extensions.Retry" />
+    <PackageReference Include="Npgsql" />
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="TUnit.Assertions" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- Suppress trimming warnings for test project using EF Core InMemory -->
+    <NoWarn>$(NoWarn);IL2026;IL3050</NoWarn>
+
+    <!-- Enable viewing generated files from source generators -->
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(BaseIntermediateOutputPath)/generated</CompilerGeneratedFilesOutputPath>
+    <!-- Suppress CA1707: Test method names use underscores for readability (Given_When_Then pattern) -->
+    <!-- Suppress pre-existing code style warnings -->
+    <NoWarn>$(NoWarn);CA1707;IDE1006;CA1816;CA1822;CA1859;CA1860</NoWarn>
+  </PropertyGroup>
+
+</Project>

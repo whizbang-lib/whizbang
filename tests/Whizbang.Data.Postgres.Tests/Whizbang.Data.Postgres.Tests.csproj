@@ -1,0 +1,35 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <RootNamespace>Whizbang.Data.Postgres.Tests</RootNamespace>
+    <!-- Enable viewing generated files -->
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
+    <!-- Don't capture test output so Console.WriteLine appears in terminal -->
+    <TestingPlatformCaptureOutput>false</TestingPlatformCaptureOutput>
+    <!-- Suppress CA1707: Test method names use underscores for readability (Given_When_Then pattern) -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Testing.Extensions.Retry" />
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Npgsql" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Data.Dapper.Postgres/Whizbang.Data.Dapper.Postgres.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+    <ProjectReference Include="../Whizbang.Core.Tests/Whizbang.Core.Tests.csproj" />
+    <ProjectReference Include="../Whizbang.Sequencing.Tests/Whizbang.Sequencing.Tests.csproj" />
+  </ItemGroup>
+
+</Project>

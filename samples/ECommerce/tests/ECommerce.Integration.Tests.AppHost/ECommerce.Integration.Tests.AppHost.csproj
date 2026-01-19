@@ -1,0 +1,19 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.0.0">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <OutputType>Exe</OutputType>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.AppHost" />
+    <PackageReference Include="Aspire.Hosting.PostgreSQL" />
+  </ItemGroup>
+
+  <!-- NOTE: Azure Service Bus Emulator references removed -->
+  <!-- Service Bus is now managed directly via DirectServiceBusEmulatorFixture (docker-compose) -->
+  <!-- to avoid Aspire's OOM issues with emulator orchestration on ARM64 -->
+
+</Project>

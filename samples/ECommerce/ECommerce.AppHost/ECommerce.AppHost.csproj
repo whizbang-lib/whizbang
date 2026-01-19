@@ -1,0 +1,30 @@
+<Project Sdk="Aspire.AppHost.Sdk/13.0.0">
+
+  <PropertyGroup>
+    <IsPackable>false</IsPackable>
+    <OutputType>Exe</OutputType>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <UserSecretsId>9976ad98-4dd7-41b4-9cd0-277a1817a5ba</UserSecretsId>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Aspire.Hosting.AppHost" />
+    <PackageReference Include="Aspire.Hosting.NodeJs" />
+    <PackageReference Include="Aspire.Hosting.PostgreSQL" />
+    <PackageReference Include="Aspire.Hosting.Azure.ServiceBus" />
+    <PackageReference Include="Aspire.Hosting.RabbitMQ" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ECommerce.OrderService.API\ECommerce.OrderService.API.csproj" />
+    <ProjectReference Include="..\ECommerce.InventoryWorker\ECommerce.InventoryWorker.csproj" />
+    <ProjectReference Include="..\ECommerce.NotificationWorker\ECommerce.NotificationWorker.csproj" />
+    <ProjectReference Include="..\ECommerce.PaymentWorker\ECommerce.PaymentWorker.csproj" />
+    <ProjectReference Include="..\ECommerce.ShippingWorker\ECommerce.ShippingWorker.csproj" />
+    <ProjectReference Include="..\ECommerce.BFF.API\ECommerce.BFF.API.csproj" />
+    <ProjectReference Include="..\..\..\src\Whizbang.Hosting.Azure.ServiceBus\Whizbang.Hosting.Azure.ServiceBus.csproj" IsAspireProjectResource="false" />
+    <ProjectReference Include="..\..\..\src\Whizbang.Hosting.RabbitMQ\Whizbang.Hosting.RabbitMQ.csproj" IsAspireProjectResource="false" />
+  </ItemGroup>
+
+</Project>

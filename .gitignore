@@ -42,6 +42,20 @@ bld/
 # Visual Studio 2017 auto generated files
 Generated\ Files/
 
+# Whizbang Source Generator output
+**/.whizbang-generated/
+**/.whizbang/
+
+# Whizbang Generated Schema Files (regenerated from C# schema definitions)
+# Note: Dapper.Sqlite needs whizbang-schema.sql as an embedded resource
+**/whizbang-schema.sql
+!src/Whizbang.Data.Dapper.Sqlite/whizbang-schema.sql
+**/whizbang-*-schema.sql
+sql-scripts/whizbang-*.sql
+
+# Generated schema files (generated at compile-time by source generators)
+src/Whizbang.Data.EFCore.Postgres.Generators/Resources/CoreInfrastructureSchema.sql
+
 # MSTest test Results
 [Tt]est[Rr]esult*/
 [Bb]uild[Ll]og.*
@@ -404,3 +418,17 @@ FodyWeavers.xsd
 
 # JetBrains Rider
 *.sln.iml
+.DS_Store
+# Migrations - commented to allow src/Whizbang.Data.EFCore.Postgres.Generators/Templates/Migrations/
+coverage[0-9\-a-zA-Z]*
+coverage
+
+# Development artifacts
+*.bak
+baseline-test-results.txt
+test-results.txt
+clean-warnings-and-errors.txt
+coverage_files.txt
+
+# SonarCloud local token (never commit this!)
+.sonarcloud.token.sonarqube/

@@ -1,0 +1,35 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- Enable viewing generated files -->
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
+    <!-- Don't capture test output so Console.WriteLine appears in terminal -->
+    <TestingPlatformCaptureOutput>false</TestingPlatformCaptureOutput>
+    <!-- Suppress CA1707: Test method names use underscores for readability (Given_When_Then pattern) -->
+    <NoWarn>$(NoWarn);CA1707</NoWarn>
+  </PropertyGroup>
+  <!-- Source generator output is automatically included in compilation -->
+  <!-- EmitCompilerGeneratedFiles just writes them to disk for viewing -->
+  <ItemGroup>
+    <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Data.Dapper.Postgres/Whizbang.Data.Dapper.Postgres.csproj" />
+    <!-- Source Generator reference -->
+    <ProjectReference Include="../../src/Whizbang.Generators/Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="coverlet.collector">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Rocks" />
+    <PackageReference Include="Bogus" />
+    <PackageReference Include="Microsoft.Extensions.DependencyInjection" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
+  </ItemGroup>
+</Project>

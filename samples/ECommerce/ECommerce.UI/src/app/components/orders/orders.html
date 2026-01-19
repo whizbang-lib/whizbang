@@ -1,0 +1,132 @@
+<div class="orders-container">
+  <div class="orders-header">
+    <h2>My Orders</h2>
+    <div class="header-actions">
+      <div class="connection-status">
+        <span
+          [class]="(signalRConnected$ | async) ? 'badge badge-success' : 'badge badge-warning'">
+          <cds-icon shape="dot-circle"></cds-icon>
+          {{ (signalRConnected$ | async) ? 'Live Updates Active' : 'Connecting...' }}
+        </span>
+        <span *ngIf="lastUpdate$ | async as lastUpdate" class="last-update">
+          Last update: {{ lastUpdate | date:'short' }}
+        </span>
+      </div>
+      <button class="btn btn-sm btn-primary" (click)="refreshOrders()">
+        <cds-icon shape="refresh"></cds-icon>
+        Refresh
+      </button>
+    </div>
+  </div>
+
+  <clr-alert *ngIf="error$ | async as error" [clrAlertType]="'danger'" [clrAlertClosable]="true">
+    <clr-alert-item>
+      <span class="alert-text">{{ error }}</span>
+    </clr-alert-item>
+  </clr-alert>
+
+  <div *ngIf="loading$ | async" class="loading-container">
+    <span class="spinner">Loading orders...</span>
+  </div>
+
+  <div *ngIf="!(loading$ | async)" class="orders-content">
+    <clr-datagrid>
+      <clr-dg-column>Order ID</clr-dg-column>
+      <clr-dg-column>Date</clr-dg-column>
+      <clr-dg-column>Items</clr-dg-column>
+      <clr-dg-column>Total</clr-dg-column>
+      <clr-dg-column>Status</clr-dg-column>
+      <clr-dg-column>Actions</clr-dg-column>
+
+      <clr-dg-row *ngFor="let order of orders$ | async">
+        <clr-dg-cell>{{ order.orderId }}</clr-dg-cell>
+        <clr-dg-cell>{{ order.createdAt | date:'short' }}</clr-dg-cell>
+        <clr-dg-cell>{{ order.items.length }} item(s)</clr-dg-cell>
+        <clr-dg-cell>{{ order.totalAmount | currency }}</clr-dg-cell>
+        <clr-dg-cell>
+          <span [class]="'badge ' + getStatusBadgeClass(order.status)">
+            {{ getStatusLabel(order.status) }}
+          </span>
+        </clr-dg-cell>
+        <clr-dg-cell>
+          <button class="btn btn-sm btn-link" (click)="viewOrderDetails(order.orderId)">
+            View Details
+          </button>
+        </clr-dg-cell>
+      </clr-dg-row>
+
+      <clr-dg-footer>
+        {{ (orders$ | async)?.length || 0 }} orders
+      </clr-dg-footer>
+    </clr-datagrid>
+
+    <div *ngIf="(orders$ | async)?.length === 0" class="empty-state">
+      <clr-alert [clrAlertType]="'info'" [clrAlertClosable]="false">
+        <clr-alert-item>
+          <span class="alert-text">
+            You don't have any orders yet. Start shopping to place your first order!
+          </span>
+        </clr-alert-item>
+      </clr-alert>
+      <button class="btn btn-primary" routerLink="/catalog">
+        Browse Products
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- Order Details Modal -->
+<clr-modal [clrModalOpen]="selectedOrderId !== null" (clrModalOpenChange)="selectedOrderId = $event ? selectedOrderId : null" [clrModalSize]="'lg'">
+  <h3 class="modal-title">Order Details</h3>
+  <div class="modal-body" *ngIf="selectedOrder$ | async as order">
+    <div class="order-summary">
+      <div class="summary-row">
+        <span class="label">Order ID:</span>
+        <span>{{ order.orderId }}</span>
+      </div>
+      <div class="summary-row">
+        <span class="label">Order Date:</span>
+        <span>{{ order.createdAt | date:'medium' }}</span>
+      </div>
+      <div class="summary-row">
+        <span class="label">Status:</span>
+        <span [class]="'badge ' + getStatusBadgeClass(order.status)">
+          {{ getStatusLabel(order.status) }}
+        </span>
+      </div>
+      <div class="summary-row">
+        <span class="label">Last Updated:</span>
+        <span>{{ order.updatedAt | date:'medium' }}</span>
+      </div>
+    </div>
+
+    <h4>Order Items</h4>
+    <table class="table table-compact">
+      <thead>
+        <tr>
+          <th>Product</th>
+          <th>Quantity</th>
+          <th>Price</th>
+          <th>Subtotal</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr *ngFor="let item of order.items">
+          <td>{{ item.productName }}</td>
+          <td>{{ item.quantity }}</td>
+          <td>{{ item.price | currency }}</td>
+          <td>{{ item.price * item.quantity | currency }}</td>
+        </tr>
+      </tbody>
+      <tfoot>
+        <tr>
+          <td colspan="3" class="text-right"><strong>Total:</strong></td>
+          <td><strong>{{ order.totalAmount | currency }}</strong></td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-outline" (click)="closeDetails()">Close</button>
+  </div>
+</clr-modal>

@@ -1,0 +1,218 @@
+using ECommerce.Contracts.Commands;
+using ECommerce.Contracts.Events;
+using ECommerce.InventoryWorker.Receptors;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+
+namespace ECommerce.InventoryWorker.Tests.Receptors;
+
+/// <summary>
+/// Tests for AdjustInventoryReceptor
+/// </summary>
+public class AdjustInventoryReceptorTests {
+  [Test]
+  public async Task HandleAsync_WithValidCommand_ReturnsInventoryAdjustedEventAsync() {
+    // Arrange
+    var dispatcher = new TestDispatcher();
+    var logger = new TestLogger<AdjustInventoryReceptor>();
+    var receptor = new AdjustInventoryReceptor(dispatcher, logger);
+
+    var command = new AdjustInventoryCommand {
+      
+ProductId = Guid.CreateVersion7(),
+      QuantityChange = -5,
+      Reason = "Damaged goods"
+    };
+
+    // Act
+    var result = await receptor.HandleAsync(command);
+
+    // Assert
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result.ProductId).IsEqualTo(productId);
+    await Assert.That(result.QuantityChange).IsEqualTo(-5);
+    await Assert.That(result.Reason).IsEqualTo("Damaged goods");
+  }
+
+  [Test]
+  public async Task HandleAsync_PublishesInventoryAdjustedEventAsync() {
+    // Arrange
+    var dispatcher = new TestDispatcher();
+    var logger = new TestLogger<AdjustInventoryReceptor>();
+    var receptor = new AdjustInventoryReceptor(dispatcher, logger);
+
+    var command = new AdjustInventoryCommand {
+      
+ProductId = Guid.CreateVersion7(),
+      QuantityChange = 10,
+      Reason = "Inventory correction"
+    };
+
+    // Act
+    await receptor.HandleAsync(command);
+
+    // Assert
+    await Assert.That(dispatcher.PublishedEvents).HasCount().EqualTo(1);
+    await Assert.That(dispatcher.PublishedEvents[0]).IsTypeOf<InventoryAdjustedEvent>();
+
+    var publishedEvent = (InventoryAdjustedEvent)dispatcher.PublishedEvents[0];
+    await Assert.That(publishedEvent.ProductId).IsEqualTo(productId);
+    await Assert.That(publishedEvent.QuantityChange).IsEqualTo(10);
+    await Assert.That(publishedEvent.Reason).IsEqualTo("Inventory correction");
+  }
+
+  [Test]
+  public async Task HandleAsync_WithNegativeAdjustment_MapsCorrectlyAsync() {
+    // Arrange
+    var dispatcher = new TestDispatcher();
+    var logger = new TestLogger<AdjustInventoryReceptor>();
+    var receptor = new AdjustInventoryReceptor(dispatcher, logger);
+
+    var command = new AdjustInventoryCommand {
+      
+ProductId = Guid.CreateVersion7(),
+      QuantityChange = -25,
+      Reason = "Lost inventory"
+    };
+
+    // Act
+    var result = await receptor.HandleAsync(command);
+
+    // Assert
+    await Assert.That(result.QuantityChange).IsEqualTo(-25);
+  }
+
+  [Test]
+  public async Task HandleAsync_WithPositiveAdjustment_MapsCorrectlyAsync() {
+    // Arrange
+    var dispatcher = new TestDispatcher();
+    var logger = new TestLogger<AdjustInventoryReceptor>();
+    var receptor = new AdjustInventoryReceptor(dispatcher, logger);
+
+    var command = new AdjustInventoryCommand {
+      
+ProductId = Guid.CreateVersion7(),
+      QuantityChange = 15,
+      Reason = "Found inventory"
+    };
+
+    // Act
+    var result = await receptor.HandleAsync(command);
+
+    // Assert
+    await Assert.That(result.QuantityChange).IsEqualTo(15);
+  }
+
+  [Test]
+  public async Task HandleAsync_SetsAdjustedAtTimestampAsync() {
+    // Arrange
+    var dispatcher = new TestDispatcher();
+    var logger = new TestLogger<AdjustInventoryReceptor>();
+    var receptor = new AdjustInventoryReceptor(dispatcher, logger);
+
+    var beforeCall = DateTime.UtcNow;
+
+    var command = new AdjustInventoryCommand {
+      
+ProductId = Guid.CreateVersion7(),
+      QuantityChange = 3,
+      Reason = "Time test"
+    };
+
+    // Act
+    var result = await receptor.HandleAsync(command);
+
+    var afterCall = DateTime.UtcNow;
+
+    // Assert
+    await Assert.That(result.AdjustedAt).IsGreaterThanOrEqualTo(beforeCall);
+    await Assert.That(result.AdjustedAt).IsLessThanOrEqualTo(afterCall);
+  }
+
+  [Test]
+  public async Task HandleAsync_LogsInformation_AboutAdjustmentAsync() {
+    // Arrange
+    var dispatcher = new TestDispatcher();
+    var logger = new TestLogger<AdjustInventoryReceptor>();
+    var receptor = new AdjustInventoryReceptor(dispatcher, logger);
+
+    var command = new AdjustInventoryCommand {
+      
+ProductId = Guid.CreateVersion7(),
+      QuantityChange = -2,
+      Reason = "Test logging"
+    };
+
+    // Act
+    await receptor.HandleAsync(command);
+
+    // Assert
+    await Assert.That(logger.LoggedMessages).HasCount().GreaterThanOrEqualTo(1);
+  }
+
+  [Test]
+  public async Task HandleAsync_WithCancellationToken_CompletesSuccessfullyAsync() {
+    // Arrange
+    var dispatcher = new TestDispatcher();
+    var logger = new TestLogger<AdjustInventoryReceptor>();
+    var receptor = new AdjustInventoryReceptor(dispatcher, logger);
+
+    var command = new AdjustInventoryCommand {
+      
+ProductId = Guid.CreateVersion7(),
+      QuantityChange = 1,
+      Reason = "Cancel test"
+    };
+
+    var cts = new CancellationTokenSource();
+
+    // Act
+    var result = await receptor.HandleAsync(command, cts.Token);
+
+    // Assert
+    await Assert.That(result).IsNotNull();
+  }
+
+  [Test]
+  public async Task HandleAsync_MapsNewTotalQuantityCorrectlyAsync() {
+    // Arrange
+    var dispatcher = new TestDispatcher();
+    var logger = new TestLogger<AdjustInventoryReceptor>();
+    var receptor = new AdjustInventoryReceptor(dispatcher, logger);
+
+    var command = new AdjustInventoryCommand {
+      
+ProductId = Guid.CreateVersion7(),
+      QuantityChange = -10,
+      Reason = "Adjustment test"
+    };
+
+    // Act
+    var result = await receptor.HandleAsync(command);
+
+    // Assert - For now, NewTotalQuantity should equal QuantityChange (no existing inventory)
+    await Assert.That(result.NewTotalQuantity).IsEqualTo(-10);
+  }
+
+  [Test]
+  public async Task HandleAsync_WithZeroAdjustment_MapsCorrectlyAsync() {
+    // Arrange
+    var dispatcher = new TestDispatcher();
+    var logger = new TestLogger<AdjustInventoryReceptor>();
+    var receptor = new AdjustInventoryReceptor(dispatcher, logger);
+
+    var command = new AdjustInventoryCommand {
+      
+ProductId = Guid.CreateVersion7(),
+      QuantityChange = 0,
+      Reason = "No change needed"
+    };
+
+    // Act
+    var result = await receptor.HandleAsync(command);
+
+    // Assert
+    await Assert.That(result.QuantityChange).IsEqualTo(0);
+    await Assert.That(result.NewTotalQuantity).IsEqualTo(0);
+  }
+}

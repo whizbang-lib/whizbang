@@ -1,0 +1,8 @@
+﻿/Users/philcarbone/src/whizbang/tests/Whizbang.Data.Tests/DapperEventStoreTests.cs
+/Users/philcarbone/src/whizbang/tests/Whizbang.Data.Tests/DapperRequestResponseStoreTests.cs
+/Users/philcarbone/src/whizbang/tests/Whizbang.Data.Tests/DapperSequenceProviderTests.cs
+/Users/philcarbone/src/whizbang/tests/Whizbang.Data.Tests/DapperTestBase.cs
+/Users/philcarbone/src/whizbang/tests/Whizbang.Data.Tests/NonDisposableSqliteConnection.cs
+/Users/philcarbone/src/whizbang/tests/Whizbang.Data.Tests/SharedSqliteConnectionFactory.cs
+/Users/philcarbone/src/whizbang/tests/Whizbang.Data.Tests/SqliteConnectionFactory.cs
+/Users/philcarbone/src/whizbang/README.md

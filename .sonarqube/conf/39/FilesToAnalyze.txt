@@ -1,0 +1,6 @@
+﻿/Users/philcarbone/src/whizbang/samples/ECommerce/tests/ECommerce.Integration.TestUtilities/Fixtures/CountingPerspectiveReceptor.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/tests/ECommerce.Integration.TestUtilities/Fixtures/DistributeStageTestReceptor.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/tests/ECommerce.Integration.TestUtilities/Fixtures/GenericLifecycleCompletionReceptor.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/tests/ECommerce.Integration.TestUtilities/Fixtures/LifecycleReceptorTestExtensions.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/tests/ECommerce.Integration.TestUtilities/Fixtures/PerspectiveCompletionReceptor.cs
+/Users/philcarbone/src/whizbang/samples/ECommerce/tests/ECommerce.Integration.TestUtilities/Fixtures/PerspectiveCompletionWaiter.cs
