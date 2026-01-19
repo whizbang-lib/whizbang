@@ -42,6 +42,43 @@ jobs:
         dotnet tool install --global dotnet-sonarscanner
         dotnet tool install --global dotnet-reportgenerator-globaltool
 
+    - name: Wait for test workflows to complete
+      if: github.event_name == 'pull_request' || github.event_name == 'push'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        echo "Waiting for test workflows to complete..."
+        COMMIT_SHA="${{ github.event.pull_request.head.sha || github.sha }}"
+        WORKFLOWS=("Test" "PostgreSQL Integration Tests" "InMemory Integration Tests" "RabbitMQ Integration Tests" "Azure Service Bus Integration Tests")
+
+        # Wait up to 25 minutes for all test workflows to complete
+        for i in {1..50}; do
+          ALL_COMPLETE=true
+
+          for workflow in "${WORKFLOWS[@]}"; do
+            # Get the most recent run of this workflow for this commit
+            STATUS=$(gh run list --workflow "$workflow" --commit "$COMMIT_SHA" --limit 1 --json status,conclusion --jq '.[0].status // "not_found"')
+            CONCLUSION=$(gh run list --workflow "$workflow" --commit "$COMMIT_SHA" --limit 1 --json status,conclusion --jq '.[0].conclusion // "none"')
+
+            if [ "$STATUS" != "completed" ]; then
+              echo "  $workflow: $STATUS (waiting...)"
+              ALL_COMPLETE=false
+            elif [ "$CONCLUSION" != "success" ]; then
+              echo "  $workflow: completed with $CONCLUSION (not success, but continuing)"
+            else
+              echo "  $workflow: completed successfully"
+            fi
+          done
+
+          if [ "$ALL_COMPLETE" = true ]; then
+            echo "All test workflows completed!"
+            break
+          fi
+
+          echo "Attempt $i/50: Some workflows still running. Waiting 30 seconds..."
+          sleep 30
+        done
+
     - name: Download coverage from Unit Tests
       uses: dawidd6/action-download-artifact@80620a5d27ce0ae443b965134db88467fc607b43 # v7
       with:
@@ -49,7 +86,7 @@ jobs:
         name: coverage-unit-tests
         path: coverage/unit-tests
         if_no_artifact_found: warn
-        branch: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+        commit: ${{ github.event.pull_request.head.sha || github.sha }}
 
     - name: Download coverage from PostgreSQL Integration Tests
       uses: dawidd6/action-download-artifact@80620a5d27ce0ae443b965134db88467fc607b43 # v7
@@ -58,7 +95,7 @@ jobs:
         name: coverage-postgres-integration
         path: coverage/postgres-integration
         if_no_artifact_found: warn
-        branch: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+        commit: ${{ github.event.pull_request.head.sha || github.sha }}
 
     - name: Download coverage from InMemory Integration Tests
       uses: dawidd6/action-download-artifact@80620a5d27ce0ae443b965134db88467fc607b43 # v7
@@ -67,7 +104,7 @@ jobs:
         name: coverage-inmemory-integration
         path: coverage/inmemory-integration
         if_no_artifact_found: warn
-        branch: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+        commit: ${{ github.event.pull_request.head.sha || github.sha }}
 
     - name: Download coverage from RabbitMQ Integration Tests
       uses: dawidd6/action-download-artifact@80620a5d27ce0ae443b965134db88467fc607b43 # v7
@@ -76,7 +113,7 @@ jobs:
         name: coverage-rabbitmq-integration
         path: coverage/rabbitmq-integration
         if_no_artifact_found: warn
-        branch: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+        commit: ${{ github.event.pull_request.head.sha || github.sha }}
 
     - name: Download coverage from Azure Service Bus Integration Tests
       uses: dawidd6/action-download-artifact@80620a5d27ce0ae443b965134db88467fc607b43 # v7
@@ -85,7 +122,7 @@ jobs:
         name: coverage-servicebus-integration
         path: coverage/servicebus-integration
         if_no_artifact_found: warn
-        branch: ${{ github.event.workflow_run.head_branch || github.ref_name }}
+        commit: ${{ github.event.pull_request.head.sha || github.sha }}
 
     - name: List downloaded coverage files
       run: |
