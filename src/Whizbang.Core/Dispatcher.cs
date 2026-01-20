@@ -35,6 +35,21 @@ public delegate ValueTask VoidReceptorInvoker(object message);
 public delegate Task ReceptorPublisher<in TEvent>(TEvent eventData);
 
 /// <summary>
+/// Delegate for invoking a synchronous receptor's Handle method.
+/// Generated code creates these delegates with proper type safety - zero reflection.
+/// The result is wrapped in a pre-completed ValueTask for uniform handling.
+/// </summary>
+/// <docs>core-concepts/receptors#synchronous-receptors</docs>
+public delegate TResult SyncReceptorInvoker<out TResult>(object message);
+
+/// <summary>
+/// Delegate for invoking a void synchronous receptor's Handle method.
+/// Generated code creates these delegates with proper type safety - zero reflection.
+/// </summary>
+/// <docs>core-concepts/receptors#synchronous-receptors</docs>
+public delegate void VoidSyncReceptorInvoker(object message);
+
+/// <summary>
 /// Base dispatcher class with core logic. The source generator creates a derived class
 /// that implements the abstract lookup methods, returning strongly-typed delegates.
 /// This achieves zero-reflection while keeping functional logic in the base class.
@@ -344,18 +359,59 @@ public abstract class Dispatcher(
 
     var messageType = message.GetType();
 
-    // Get strongly-typed delegate from generated code
-    var invoker = GetReceptorInvoker<TResult>(message, messageType) ?? throw new HandlerNotFoundException(messageType);
+    // Try async receptor first (async takes precedence)
+    var asyncInvoker = GetReceptorInvoker<TResult>(message, messageType);
+    if (asyncInvoker != null) {
+      // OPTIMIZATION: Skip envelope creation when trace store is null
+      // This achieves zero allocation for high-throughput scenarios
+      if (_traceStore != null || _lifecycleInvoker != null) {
+        return _localInvokeWithTracingAsync(message, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
+      }
 
-    // OPTIMIZATION: Skip envelope creation when trace store is null
-    // This achieves zero allocation for high-throughput scenarios
-    if (_traceStore != null || _lifecycleInvoker != null) {
-      return _localInvokeWithTracingAsync(message, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
+      // Fast path with cascade support for receptor tuple/array returns
+      // Invoke using delegate, then extract and publish any IEvent instances
+      return _localInvokeWithCascadeAsync(asyncInvoker, message);
     }
 
-    // Fast path with cascade support for receptor tuple/array returns
-    // Invoke using delegate, then extract and publish any IEvent instances
-    return _localInvokeWithCascadeAsync(invoker, message);
+    // Fallback to sync receptor
+    var syncInvoker = GetSyncReceptorInvoker<TResult>(message, messageType);
+    if (syncInvoker != null) {
+      return _localInvokeSyncWithCascadeAsync(syncInvoker, message);
+    }
+
+    throw new HandlerNotFoundException(messageType);
+  }
+
+  /// <summary>
+  /// Fast path for LocalInvoke with sync receptor and cascade support.
+  /// Invokes receptor synchronously, automatically publishes any IEvent instances from the return value,
+  /// and returns a pre-completed ValueTask (zero async overhead when cascade has no events).
+  /// </summary>
+  /// <docs>core-concepts/dispatcher#synchronous-invocation</docs>
+  private ValueTask<TResult> _localInvokeSyncWithCascadeAsync<TResult>(
+    SyncReceptorInvoker<TResult> syncInvoker,
+    object message
+  ) {
+    // Invoke synchronously
+    var result = syncInvoker(message);
+
+    // Auto-cascade any events (still async for publishing)
+    var cascadeTask = _cascadeEventsFromResultAsync(result);
+    if (!cascadeTask.IsCompletedSuccessfully) {
+      return _awaitCascadeAndReturnResultAsync(cascadeTask, result);
+    }
+
+    // Return pre-completed ValueTask (zero allocation)
+    return new ValueTask<TResult>(result);
+  }
+
+  /// <summary>
+  /// Helper method to await cascade task and return result.
+  /// This is a separate method to avoid state machine overhead in the fast path.
+  /// </summary>
+  private static async ValueTask<TResult> _awaitCascadeAndReturnResultAsync<TResult>(Task cascadeTask, TResult result) {
+    await cascadeTask;
+    return result;
   }
 
   /// <summary>
@@ -573,19 +629,30 @@ public abstract class Dispatcher(
 
     var messageType = message.GetType();
 
-    // Get strongly-typed void delegate from generated code
-    var invoker = GetVoidReceptorInvoker(message, messageType) ?? throw new HandlerNotFoundException(messageType);
+    // Try async receptor first (async takes precedence)
+    var asyncInvoker = GetVoidReceptorInvoker(message, messageType);
+    if (asyncInvoker != null) {
+      // OPTIMIZATION: Skip envelope creation when trace store is null
+      // This achieves zero allocation for high-throughput scenarios
+      if (_traceStore != null) {
+        return _localInvokeVoidWithTracingAsync(message, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
+      }
 
-    // OPTIMIZATION: Skip envelope creation when trace store is null
-    // This achieves zero allocation for high-throughput scenarios
-    if (_traceStore != null) {
-      return _localInvokeVoidWithTracingAsync(message, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
+      // FAST PATH: Zero allocation when no tracing
+      // Invoke using delegate - zero reflection, strongly typed
+      // Avoid async/await state machine allocation by returning task directly
+      return asyncInvoker(message);
     }
 
-    // FAST PATH: Zero allocation when no tracing
-    // Invoke using delegate - zero reflection, strongly typed
-    // Avoid async/await state machine allocation by returning task directly
-    return invoker(message);
+    // Fallback to void sync receptor
+    var syncInvoker = GetVoidSyncReceptorInvoker(message, messageType);
+    if (syncInvoker != null) {
+      // Invoke synchronously - returns pre-completed ValueTask
+      syncInvoker(message);
+      return ValueTask.CompletedTask;
+    }
+
+    throw new HandlerNotFoundException(messageType);
   }
 
   /// <summary>
@@ -635,19 +702,30 @@ public abstract class Dispatcher(
 
     var messageType = typeof(TMessage);
 
-    // Get strongly-typed void delegate from generated code
-    var invoker = GetVoidReceptorInvoker(message, messageType) ?? throw new HandlerNotFoundException(messageType);
+    // Try async receptor first (async takes precedence)
+    var asyncInvoker = GetVoidReceptorInvoker(message, messageType);
+    if (asyncInvoker != null) {
+      // OPTIMIZATION: Skip envelope creation when trace store AND lifecycle invoker are null
+      // This achieves zero allocation for high-throughput scenarios
+      if (_traceStore != null || _lifecycleInvoker != null) {
+        return _localInvokeVoidWithTracingAsyncInternalAsync<TMessage>(message, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
+      }
 
-    // OPTIMIZATION: Skip envelope creation when trace store AND lifecycle invoker are null
-    // This achieves zero allocation for high-throughput scenarios
-    if (_traceStore != null || _lifecycleInvoker != null) {
-      return _localInvokeVoidWithTracingAsyncInternalAsync<TMessage>(message, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
+      // FAST PATH: Zero allocation when no tracing and no lifecycle invoker
+      // Invoke using delegate - zero reflection, strongly typed
+      // Avoid async/await state machine allocation by returning task directly
+      return asyncInvoker(message);
     }
 
-    // FAST PATH: Zero allocation when no tracing and no lifecycle invoker
-    // Invoke using delegate - zero reflection, strongly typed
-    // Avoid async/await state machine allocation by returning task directly
-    return invoker(message);
+    // Fallback to void sync receptor
+    var syncInvoker = GetVoidSyncReceptorInvoker(message, messageType);
+    if (syncInvoker != null) {
+      // Invoke synchronously - returns pre-completed ValueTask
+      syncInvoker(message);
+      return ValueTask.CompletedTask;
+    }
+
+    throw new HandlerNotFoundException(messageType);
   }
 
   /// <summary>
@@ -1416,4 +1494,23 @@ public abstract class Dispatcher(
   /// <param name="eventType">The runtime type of the event (e.g., typeof(OrderCreatedEvent))</param>
   /// <returns>A delegate that publishes the event to all registered receptors, or null if no receptors registered</returns>
   protected abstract Func<object, Task>? GetUntypedReceptorPublisher(Type eventType);
+
+  /// <summary>
+  /// Implemented by generated code - returns a sync delegate for invoking a sync receptor.
+  /// The delegate encapsulates the receptor lookup and invocation with zero reflection.
+  /// Returns null if no sync receptor found (falls back to async).
+  /// </summary>
+  /// <docs>core-concepts/dispatcher#synchronous-invocation</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncTests.cs:LocalInvokeAsync_SyncReceptor_InvokesSynchronouslyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncTests.cs:LocalInvokeAsync_SyncReceptor_ReturnsCompletedValueTaskAsync</tests>
+  protected abstract SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType);
+
+  /// <summary>
+  /// Implemented by generated code - returns a void sync delegate for invoking a sync receptor.
+  /// The delegate encapsulates the receptor lookup and invocation with zero reflection.
+  /// Returns null if no void sync receptor found.
+  /// </summary>
+  /// <docs>core-concepts/dispatcher#synchronous-invocation</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncTests.cs:LocalInvokeAsync_VoidSyncReceptor_ExecutesSynchronouslyAsync</tests>
+  protected abstract VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType);
 }

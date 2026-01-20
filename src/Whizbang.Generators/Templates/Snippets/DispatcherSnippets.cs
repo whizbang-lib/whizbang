@@ -158,6 +158,74 @@ public class DispatcherSnippets {
   }
 
   /// <summary>
+  /// Example method showing snippet structure for sync receptor routing.
+  /// Invokes ISyncReceptor&lt;TMessage, TResponse&gt; synchronously and wraps result in ValueTask.
+  /// </summary>
+  protected SyncReceptorInvoker<TResult>? SyncSendRoutingExample<TResult>(object message, Type messageType) {
+    #region SYNC_SEND_ROUTING_SNIPPET
+    if (messageType == typeof(__MESSAGE_TYPE__)) {
+      var receptor = ServiceProvider.GetService<__SYNC_RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
+      if (receptor == null) {
+        return null;
+      }
+
+      [System.Diagnostics.DebuggerStepThrough]
+      TResult InvokeReceptor(object msg) {
+        var typedMsg = (__MESSAGE_TYPE__)msg;
+        return (TResult)(object)receptor.Handle(typedMsg)!;
+      }
+
+      return InvokeReceptor;
+    }
+    #endregion
+
+    return null;
+  }
+
+  /// <summary>
+  /// Example method showing snippet structure for void sync receptor routing.
+  /// Invokes ISyncReceptor&lt;TMessage&gt; synchronously.
+  /// </summary>
+  protected VoidSyncReceptorInvoker? VoidSyncSendRoutingExample(object message, Type messageType) {
+    #region VOID_SYNC_SEND_ROUTING_SNIPPET
+    if (messageType == typeof(__MESSAGE_TYPE__)) {
+      var receptor = ServiceProvider.GetService<__SYNC_RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
+      if (receptor == null) {
+        return null;
+      }
+
+      [System.Diagnostics.DebuggerStepThrough]
+      void InvokeReceptor(object msg) {
+        var typedMsg = (__MESSAGE_TYPE__)msg;
+        receptor.Handle(typedMsg);
+      }
+
+      return InvokeReceptor;
+    }
+    #endregion
+
+    return null;
+  }
+
+  /// <summary>
+  /// Example method showing snippet structure for sync receptor registration.
+  /// </summary>
+  public void SyncReceptorRegistrationExample(IServiceCollection services) {
+    #region SYNC_RECEPTOR_REGISTRATION_SNIPPET
+    services.AddTransient<__SYNC_RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>, __RECEPTOR_CLASS__>();
+    #endregion
+  }
+
+  /// <summary>
+  /// Example method showing snippet structure for void sync receptor registration.
+  /// </summary>
+  public void VoidSyncReceptorRegistrationExample(IServiceCollection services) {
+    #region VOID_SYNC_RECEPTOR_REGISTRATION_SNIPPET
+    services.AddTransient<__SYNC_RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>, __RECEPTOR_CLASS__>();
+    #endregion
+  }
+
+  /// <summary>
   /// Example method showing snippet structure for diagnostic messages.
   /// </summary>
   public void DiagnosticMessageExample(System.Text.StringBuilder message) {

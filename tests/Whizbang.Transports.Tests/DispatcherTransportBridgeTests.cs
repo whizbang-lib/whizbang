@@ -448,6 +448,14 @@ public class DispatcherTransportBridgeTests {
     protected override Func<object, Task>? GetUntypedReceptorPublisher(Type eventType) {
       return null;
     }
+
+    protected override SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType) {
+      return null;
+    }
+
+    protected override VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType) {
+      return null;
+    }
   }
 
   private sealed class TestServiceProvider : IServiceProvider {

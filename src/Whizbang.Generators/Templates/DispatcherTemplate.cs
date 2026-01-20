@@ -97,4 +97,32 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
 
     return null;
   }
+
+  /// <summary>
+  /// Generated lookup - returns a sync delegate that invokes the appropriate sync receptor.
+  /// Zero reflection - uses compile-time type matching and lambda expressions.
+  /// </summary>
+  [DebuggerStepThrough]
+  protected override SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType) {
+    // Generated routing for sync receptors - zero reflection!
+    #region SYNC_SEND_ROUTING
+    // This region will be replaced with generated sync receptor routing code
+    #endregion
+
+    return null;
+  }
+
+  /// <summary>
+  /// Generated lookup - returns a void sync delegate that invokes the appropriate void sync receptor.
+  /// Zero reflection - uses compile-time type matching and lambda expressions.
+  /// </summary>
+  [DebuggerStepThrough]
+  protected override VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType) {
+    // Generated routing for void sync receptors - zero reflection!
+    #region VOID_SYNC_SEND_ROUTING
+    // This region will be replaced with generated void sync receptor routing code
+    #endregion
+
+    return null;
+  }
 }
