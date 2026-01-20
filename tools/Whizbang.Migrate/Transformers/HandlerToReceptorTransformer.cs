@@ -30,6 +30,9 @@ public sealed class HandlerToReceptorTransformer : ICodeTransformer {
           warnings));
     }
 
+    // Check for handlers without async operations and suggest ISyncReceptor
+    _addSyncReceptorSuggestions(root, warnings);
+
     // Apply transformations
     var newRoot = root;
 
@@ -76,6 +79,50 @@ public sealed class HandlerToReceptorTransformer : ICodeTransformer {
     }
 
     return false;
+  }
+
+  private static void _addSyncReceptorSuggestions(SyntaxNode root, List<string> warnings) {
+    var classes = root.DescendantNodes().OfType<ClassDeclarationSyntax>();
+
+    foreach (var classDecl in classes) {
+      // Check if this is a handler class
+      var isHandler = classDecl.BaseList?.Types
+          .Any(t => t.Type.ToString().StartsWith("IHandle<", StringComparison.Ordinal)) ?? false;
+
+      if (!isHandler) {
+        continue;
+      }
+
+      // Find the Handle method
+      var handleMethod = classDecl.Members
+          .OfType<MethodDeclarationSyntax>()
+          .FirstOrDefault(m => m.Identifier.Text is "Handle" or "HandleAsync");
+
+      if (handleMethod == null) {
+        continue;
+      }
+
+      // Check if the method has any await expressions
+      var hasAwait = handleMethod.DescendantNodes()
+          .OfType<AwaitExpressionSyntax>()
+          .Any();
+
+      // Check if the method returns Task.CompletedTask or Task.FromResult
+      var hasTaskReturn = handleMethod.DescendantNodes()
+          .OfType<MemberAccessExpressionSyntax>()
+          .Any(m => m.ToString() is "Task.CompletedTask"
+              or "Task.FromResult"
+              or "ValueTask.FromResult");
+
+      // If no await and uses Task.CompletedTask/FromResult, suggest ISyncReceptor
+      if (!hasAwait || hasTaskReturn) {
+        var lineNumber = handleMethod.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+        var className = classDecl.Identifier.Text;
+        warnings.Add(
+            $"Line {lineNumber}: Handler '{className}' has no async operations. " +
+            "Consider using ISyncReceptor<TMessage, TResponse> instead of IReceptor for cleaner code.");
+      }
+    }
   }
 
   private static SyntaxNode _transformUsings(SyntaxNode root, List<CodeChange> changes) {
