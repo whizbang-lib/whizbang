@@ -742,10 +742,10 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     Console.WriteLine($"[WaitForPerspective] Waiting for {typeof(TEvent).Name} processing (Inventory={inventoryPerspectives}, BFF={bffPerspectives}, Total={totalPerspectives}, timeout={timeoutMilliseconds}ms)");
 
     var inventoryCompletionSource = new TaskCompletionSource<bool>();
-    var inventoryCompletedPerspectives = new System.Collections.Concurrent.ConcurrentBag<string>();
+    var inventoryCompletedPerspectives = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>();
 
     var bffCompletionSource = new TaskCompletionSource<bool>();
-    var bffCompletedPerspectives = new System.Collections.Concurrent.ConcurrentBag<string>();
+    var bffCompletedPerspectives = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>();
 
     var tasksToWait = new List<Task>();
     CountingPerspectiveReceptor<TEvent>? inventoryCountingReceptor = null;
