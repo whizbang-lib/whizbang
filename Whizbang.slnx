@@ -63,8 +63,10 @@
     <Project Path="tests/Whizbang.Policies.Tests/Whizbang.Policies.Tests.csproj" />
     <Project Path="tests/Whizbang.Sequencing.Tests/Whizbang.Sequencing.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.Tests/Whizbang.Transports.Tests.csproj" />
+    <Project Path="tests/Whizbang.Migrate.Tests/Whizbang.Migrate.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Whizbang.CLI/Whizbang.CLI.csproj" />
+    <Project Path="tools/Whizbang.Migrate/Whizbang.Migrate.csproj" />
   </Folder>
 </Solution>
