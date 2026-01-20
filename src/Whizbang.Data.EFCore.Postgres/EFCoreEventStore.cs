@@ -26,6 +26,10 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
   private readonly JsonSerializerOptions _jsonOptions;
   private readonly Whizbang.Core.Perspectives.IPerspectiveInvoker? _perspectiveInvoker;
 
+  // Diagnostic logging enabled via WHIZBANG_DEBUG environment variable
+  private static readonly bool _diagnosticLogging =
+    Environment.GetEnvironmentVariable("WHIZBANG_DEBUG") == "true";
+
   public EFCoreEventStore(
     TDbContext context,
     JsonSerializerOptions? jsonOptions = null,
@@ -216,6 +220,11 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
       IReadOnlyList<Type> eventTypes,
       [EnumeratorCancellation] CancellationToken cancellationToken = default) {
 
+    if (_diagnosticLogging) {
+      Console.WriteLine($"[EFCoreEventStore.ReadPolymorphicAsync DIAG] Query: streamId={streamId}, fromEventId={fromEventId}");
+      Console.WriteLine($"[EFCoreEventStore.ReadPolymorphicAsync DIAG] Event types ({eventTypes.Count}): [{string.Join(", ", eventTypes.Select(t => t.FullName))}]");
+    }
+
     // Build type lookup dictionary with multiple keys for flexible matching
     // Supports: TypeNameFormatter format (medium form), AssemblyQualifiedName (long form), FullName, and Name (short form)
     var typeMap = new Dictionary<string, Type>();
@@ -256,10 +265,16 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
         var typeAndAssembly = string.Join(", ", record.EventType.Split(',').Take(2).Select(s => s.Trim()));
         if (!string.IsNullOrEmpty(typeAndAssembly) && typeMap.TryGetValue(typeAndAssembly, out concreteType)) {
           // Found via simplified name
+          if (_diagnosticLogging) {
+            Console.WriteLine($"[EFCoreEventStore.ReadPolymorphicAsync DIAG] Event {record.Id} matched via simplified name: {record.EventType} -> {typeAndAssembly}");
+          }
         } else {
           // Event type not in the requested list - skip it
           // This allows perspectives to materialize subsets of events from shared streams
           // (e.g., ProductCatalogPerspective skips InventoryRestockedEvent in product streams)
+          if (_diagnosticLogging) {
+            Console.WriteLine($"[EFCoreEventStore.ReadPolymorphicAsync DIAG] ⚠️ SKIPPING event {record.Id} - type '{record.EventType}' not in requested types: [{string.Join(", ", eventTypes.Select(t => t.FullName))}]");
+          }
           continue;
         }
       }
@@ -356,6 +371,11 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
 
     ArgumentNullException.ThrowIfNull(eventTypes);
 
+    if (_diagnosticLogging) {
+      Console.WriteLine($"[EFCoreEventStore.GetEventsBetweenPolymorphicAsync DIAG] Query params: streamId={streamId}, afterEventId={afterEventId}, upToEventId={upToEventId}");
+      Console.WriteLine($"[EFCoreEventStore.GetEventsBetweenPolymorphicAsync DIAG] Event types: [{string.Join(", ", eventTypes.Select(t => t.FullName))}]");
+    }
+
     // Build query: after afterEventId (exclusive), up to upToEventId (inclusive)
     IQueryable<EventStoreRecord> query = _context.Set<EventStoreRecord>()
       .Where(e => e.StreamId == streamId && e.Id <= upToEventId);
@@ -368,6 +388,16 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     var records = await query
       .OrderBy(e => e.Id)
       .ToListAsync(cancellationToken);
+
+    if (_diagnosticLogging) {
+      Console.WriteLine($"[EFCoreEventStore.GetEventsBetweenPolymorphicAsync DIAG] Query returned {records.Count} records");
+      foreach (var r in records.Take(5)) {
+        Console.WriteLine($"[EFCoreEventStore.GetEventsBetweenPolymorphicAsync DIAG]   - ID={r.Id}, Type={r.EventType}");
+      }
+      if (records.Count > 5) {
+        Console.WriteLine($"[EFCoreEventStore.GetEventsBetweenPolymorphicAsync DIAG]   ... and {records.Count - 5} more");
+      }
+    }
 
     // Build type lookup dictionary for fast O(1) lookups (AOT-compatible)
     var typeLookup = new Dictionary<string, Type>(eventTypes.Count);

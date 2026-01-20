@@ -94,10 +94,19 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
       #endregion
     };
 
+    // Diagnostic logging enabled via WHIZBANG_DEBUG environment variable
+    var _diagnosticLogging = Environment.GetEnvironmentVariable("WHIZBANG_DEBUG") == "true";
+
     try {
       // Materialize events into list for PrePerspective peek and main processing
       // This allows PrePerspective receptors to receive the first event for type-based routing
       var events = new System.Collections.Generic.List<Whizbang.Core.Observability.MessageEnvelope<Whizbang.Core.IEvent>>();
+
+      if (_diagnosticLogging) {
+        Console.WriteLine($"[PerspectiveRunner DIAG] {perspectiveName} starting ReadPolymorphicAsync for stream {streamId}, lastProcessedEventId={lastProcessedEventId}");
+        Console.WriteLine($"[PerspectiveRunner DIAG] Event types ({eventTypes.Length}): [{string.Join(", ", eventTypes.Select(t => t.FullName))}]");
+      }
+
       await foreach (var envelope in _eventStore.ReadPolymorphicAsync(
           streamId,
           lastProcessedEventId,
@@ -105,6 +114,13 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
           cancellationToken)) {
 
         events.Add(envelope);
+      }
+
+      if (_diagnosticLogging) {
+        Console.WriteLine($"[PerspectiveRunner DIAG] {perspectiveName}/{streamId}: ReadPolymorphicAsync returned {events.Count} events");
+        if (events.Count == 0) {
+          Console.WriteLine($"[PerspectiveRunner DIAG] ⚠️ NO EVENTS FOUND - perspective will return None status");
+        }
       }
 
       // Invoke PrePerspective lifecycle receptors (fires once per batch, not per event)
@@ -243,12 +259,21 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         await Task.WhenAll(backgroundTasks);
       }
 
+      var resultStatus = eventsProcessed > 0 ? PerspectiveProcessingStatus.Completed : PerspectiveProcessingStatus.None;
+
+      if (_diagnosticLogging) {
+        Console.WriteLine($"[PerspectiveRunner DIAG] {perspectiveName}/{streamId}: Returning status={resultStatus}, eventsProcessed={eventsProcessed}, lastEventId={lastSuccessfulEventId ?? lastProcessedEventId ?? Guid.Empty}");
+        if (resultStatus == PerspectiveProcessingStatus.None) {
+          Console.WriteLine($"[PerspectiveRunner DIAG] ⚠️ Status is NONE - PostPerspectiveInline will NOT fire from PerspectiveWorker");
+        }
+      }
+
       return new PerspectiveCheckpointCompletion {
         StreamId = streamId,
         PerspectiveName = perspectiveName,
         PerspectiveType = typeof(__PERSPECTIVE_CLASS_NAME__),
         LastEventId = lastSuccessfulEventId ?? lastProcessedEventId ?? Guid.Empty,
-        Status = eventsProcessed > 0 ? PerspectiveProcessingStatus.Completed : PerspectiveProcessingStatus.None
+        Status = resultStatus
       };
 
     } catch (Exception ex) {
