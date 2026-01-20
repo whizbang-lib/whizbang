@@ -39,10 +39,10 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
     Console.WriteLine($"[PerspectiveWaiter] Creating waiter for {typeof(TEvent).Name} (Inventory={inventoryPerspectives}, BFF={bffPerspectives}, Total={totalPerspectives})");
 
     _inventoryCompletionSource = new TaskCompletionSource<bool>();
-    var inventoryCompletedPerspectives = new System.Collections.Concurrent.ConcurrentBag<string>();
+    var inventoryCompletedPerspectives = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>();
 
     _bffCompletionSource = new TaskCompletionSource<bool>();
-    var bffCompletedPerspectives = new System.Collections.Concurrent.ConcurrentBag<string>();
+    var bffCompletedPerspectives = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>();
 
     // Create separate receptor instances for each host
     _inventoryReceptor = new CountingPerspectiveReceptor<TEvent>(
