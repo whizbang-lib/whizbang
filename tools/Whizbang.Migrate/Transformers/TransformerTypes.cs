@@ -54,5 +54,8 @@ public enum ChangeType {
   TypeRename,
 
   /// <summary>Namespace was changed.</summary>
-  NamespaceChange
+  NamespaceChange,
+
+  /// <summary>Method call was replaced.</summary>
+  MethodCallReplacement
 }
