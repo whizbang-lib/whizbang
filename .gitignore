@@ -432,3 +432,4 @@ coverage_files.txt
 
 # SonarCloud local token (never commit this!)
 .sonarcloud.token.sonarqube/
+.mcp.json
