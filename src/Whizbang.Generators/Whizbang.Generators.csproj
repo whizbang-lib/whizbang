@@ -15,11 +15,10 @@
     <!-- Suppress release tracking warnings for early development -->
     <NoWarn>$(NoWarn);RS2008</NoWarn>
     <!-- NuGet packaging: Place in analyzers folder, not lib -->
-    <!-- NoPackageAnalysis skips NU5017 false positive for analyzer packages -->
-    <!-- NoWarn NU5017 needed for .NET 10 SDK which ignores NoPackageAnalysis -->
     <IncludeBuildOutput>false</IncludeBuildOutput>
-    <NoPackageAnalysis>true</NoPackageAnalysis>
-    <NoWarn>$(NoWarn);NU5017</NoWarn>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <!-- Use target to add analyzer DLL to correct path -->
+    <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);PackAnalyzerDll</TargetsForTfmSpecificContentInPackage>
     <DevelopmentDependency>true</DevelopmentDependency>
     <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
     <!-- Enable ILRepack to merge Shared DLL into generator DLL -->
@@ -31,10 +30,13 @@
     <!-- See: https://github.com/Sergio0694/PolySharp/issues/103 -->
     <PolySharpExcludeTypeForwardedToDeclarations>true</PolySharpExcludeTypeForwardedToDeclarations>
   </PropertyGroup>
-  <!-- Package the generator DLL in the analyzers folder -->
-  <ItemGroup>
-    <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
-  </ItemGroup>
+  <!-- Target to add the merged analyzer DLL to the package -->
+  <Target Name="PackAnalyzerDll">
+    <ItemGroup>
+      <TfmSpecificPackageFile Include="$(TargetPath)" PackagePath="analyzers/dotnet/cs/" />
+    </ItemGroup>
+  </Target>
+
   <ItemGroup>
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
     <PackageReference Include="Microsoft.CodeAnalysis.Analyzers">

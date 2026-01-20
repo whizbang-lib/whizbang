@@ -24,18 +24,19 @@
     <!-- See: https://github.com/Sergio0694/PolySharp/issues/103 -->
     <PolySharpExcludeTypeForwardedToDeclarations>true</PolySharpExcludeTypeForwardedToDeclarations>
     <!-- NuGet packaging: Place in analyzers folder, not lib -->
-    <!-- NoPackageAnalysis skips NU5017 false positive for analyzer packages -->
-    <!-- NoWarn NU5017 needed for .NET 10 SDK which ignores NoPackageAnalysis -->
     <IncludeBuildOutput>false</IncludeBuildOutput>
-    <NoPackageAnalysis>true</NoPackageAnalysis>
-    <NoWarn>$(NoWarn);NU5017</NoWarn>
-    <DevelopmentDependency>true</DevelopmentDependency>
     <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <DevelopmentDependency>true</DevelopmentDependency>
+    <!-- Use target to add analyzer DLL to correct path -->
+    <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);PackAnalyzerDll</TargetsForTfmSpecificContentInPackage>
   </PropertyGroup>
-  <!-- Package the generator DLL in the analyzers folder -->
-  <ItemGroup>
-    <None Include="$(OutputPath)\$(AssemblyName).dll" Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
-  </ItemGroup>
+
+  <!-- Target to add the merged analyzer DLL to the package -->
+  <Target Name="PackAnalyzerDll">
+    <ItemGroup>
+      <TfmSpecificPackageFile Include="$(TargetPath)" PackagePath="analyzers/dotnet/cs/" />
+    </ItemGroup>
+  </Target>
 
   <ItemGroup>
     <!-- Required packages for source generators -->
