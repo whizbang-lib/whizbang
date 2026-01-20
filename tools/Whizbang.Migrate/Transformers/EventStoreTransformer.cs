@@ -254,18 +254,20 @@ public sealed class EventStoreTransformer : ICodeTransformer {
             "/* TODO: var streamId = Guid.CreateVersion7(); await _eventStore.AppendAsync(streamId, @event, ct); */"));
       }
 
-      // session.Events.Append(streamId, event) → await _eventStore.AppendAsync(streamId, event, ct)
+      // session.Events.Append(streamId, event) → consider IDispatcher.PublishAsync vs IEventStore.AppendAsync
       if (expressionText.Contains(".Events.Append") && !expressionText.Contains("AppendAsync")) {
         _warnings.Add($"Line {node.GetLocation().GetLineSpan().StartLinePosition.Line + 1}: " +
-            "Events.Append() found. Convert to: await _eventStore.AppendAsync(streamId, @event, ct); " +
+            "Events.Append() found. In Whizbang, consider: " +
+            "(1) Use _dispatcher.PublishAsync(@event) for most cases (handles perspectives + outbox), or " +
+            "(2) Use _eventStore.AppendAsync() ONLY for direct persistence without immediate perspective updates. " +
             "Note: Remove the corresponding SaveChangesAsync() call.");
 
         _changes.Add(new CodeChange(
             node.GetLocation().GetLineSpan().StartLinePosition.Line + 1,
             ChangeType.MethodCallReplacement,
-            "Events.Append requires conversion to AppendAsync (remove SaveChangesAsync)",
+            "Events.Append - consider IDispatcher.PublishAsync vs IEventStore.AppendAsync",
             node.ToString(),
-            "/* TODO: await _eventStore.AppendAsync(streamId, @event, ct); */"));
+            "/* TODO: await _dispatcher.PublishAsync(@event, ct); // or _eventStore.AppendAsync for direct persistence */"));
       }
 
       // session.Events.FetchStreamAsync(streamId) → _eventStore.ReadAsync<IEvent>(streamId, 0, ct)

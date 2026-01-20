@@ -354,4 +354,34 @@ public class EventStoreTransformerTests {
     // Assert
     await Assert.That(result.Warnings.Any(w => w.Contains("IDocumentSession"))).IsTrue();
   }
+
+  [Test]
+  public async Task TransformAsync_EventsAppend_EmitsWarningAboutDispatcherPatternAsync() {
+    // Arrange
+    var transformer = new EventStoreTransformer();
+    var sourceCode = """
+      using Marten;
+
+      public class OrderService {
+        private readonly IDocumentStore _store;
+
+        public async Task CreateOrderAsync(Guid orderId) {
+          await using var session = _store.LightweightSession();
+          session.Events.Append(orderId, new OrderCreated());
+          await session.SaveChangesAsync();
+        }
+      }
+
+      public record OrderCreated();
+      """;
+
+    // Act
+    var result = await transformer.TransformAsync(sourceCode, "OrderService.cs");
+
+    // Assert
+    // Should emit a warning about considering IDispatcher.PublishAsync vs IEventStore.AppendAsync
+    await Assert.That(result.Warnings.Any(w =>
+        w.Contains("Events.Append") &&
+        (w.Contains("PublishAsync") || w.Contains("Dispatcher")))).IsTrue();
+  }
 }
