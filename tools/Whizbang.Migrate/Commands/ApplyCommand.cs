@@ -12,6 +12,7 @@ public sealed class ApplyCommand {
   private readonly MartenAnalyzer _martenAnalyzer = new();
   private readonly HandlerToReceptorTransformer _handlerTransformer = new();
   private readonly ProjectionToPerspectiveTransformer _projectionTransformer = new();
+  private readonly DIRegistrationTransformer _diTransformer = new();
 
   /// <summary>
   /// Executes the apply command on the specified directory.
@@ -55,6 +56,13 @@ public sealed class ApplyCommand {
         var projectionResult = await _projectionTransformer.TransformAsync(transformedCode, file, ct);
         transformedCode = projectionResult.TransformedCode;
         allChanges.AddRange(projectionResult.Changes);
+      }
+
+      // Apply DI registration transformations (for Program.cs and startup files)
+      var diResult = await _diTransformer.TransformAsync(transformedCode, file, ct);
+      if (diResult.Changes.Count > 0) {
+        transformedCode = diResult.TransformedCode;
+        allChanges.AddRange(diResult.Changes);
       }
 
       // Track changes
