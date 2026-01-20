@@ -98,54 +98,162 @@ async Task<int> _migrateAnalyzeAsync(string[] commandArgs) {
 }
 
 async Task<int> _migrateApplyAsync(string[] commandArgs) {
-  // Usage: whizbang migrate apply [--project <path>] [--dry-run]
+  // Usage: whizbang migrate apply [--project <path>] [--dry-run] [--guided]
   var projectPath = _parseProjectPath(commandArgs, 2) ?? Environment.CurrentDirectory;
   var dryRun = commandArgs.Any(a => a == "--dry-run" || a == "-n");
+  var guided = commandArgs.Any(a => a == "--guided" || a == "-g");
 
   Console.WriteLine("Whizbang Migration Tool");
   Console.WriteLine("=======================");
   Console.WriteLine();
   Console.WriteLine($"Project: {projectPath}");
-  Console.WriteLine($"Mode: {(dryRun ? "Dry run (no changes will be made)" : "Apply changes")}");
+  var modeDesc = dryRun ? "Dry run" : guided ? "Guided (interactive)" : "Apply all";
+  Console.WriteLine($"Mode: {modeDesc}");
   Console.WriteLine();
 
+  // In guided mode, first do a dry run to show what would change
   var command = new ApplyCommand();
-  var result = await command.ExecuteAsync(projectPath, dryRun);
+  var previewResult = await command.ExecuteAsync(projectPath, dryRun: true);
 
-  if (!result.Success) {
-    Console.WriteLine($"❌ Error: {result.ErrorMessage}");
+  if (!previewResult.Success) {
+    Console.WriteLine($"❌ Error: {previewResult.ErrorMessage}");
     return 1;
   }
 
-  if (result.TransformedFileCount == 0) {
+  if (previewResult.TransformedFileCount == 0) {
     Console.WriteLine("✓ No files needed transformation.");
     Console.WriteLine();
     return 0;
   }
 
-  Console.WriteLine($"Files {(dryRun ? "would be" : "")} transformed: {result.TransformedFileCount}");
+  Console.WriteLine($"Files to transform: {previewResult.TransformedFileCount}");
   Console.WriteLine();
 
-  foreach (var fileChange in result.Changes) {
-    var relativePath = Path.GetRelativePath(projectPath, fileChange.FilePath);
-    Console.WriteLine($"  {relativePath} ({fileChange.ChangeCount} changes)");
-    foreach (var change in fileChange.Changes.Take(3)) {
-      Console.WriteLine($"    - {change.Description}");
-    }
-    if (fileChange.Changes.Count > 3) {
-      Console.WriteLine($"    ... and {fileChange.Changes.Count - 3} more changes");
-    }
-  }
-  Console.WriteLine();
+  if (guided && !dryRun) {
+    // Guided mode: approve each file
+    var approvedFiles = new List<string>();
 
-  if (dryRun) {
-    Console.WriteLine("✓ Dry run complete. Run without --dry-run to apply changes.");
+    foreach (var fileChange in previewResult.Changes) {
+      var relativePath = Path.GetRelativePath(projectPath, fileChange.FilePath);
+      Console.WriteLine($"┌─ {relativePath} ({fileChange.ChangeCount} changes)");
+
+      foreach (var change in fileChange.Changes) {
+        Console.WriteLine($"│  • {change.Description}");
+        if (!string.IsNullOrEmpty(change.OriginalText) && !string.IsNullOrEmpty(change.NewText)) {
+          Console.WriteLine($"│    - {change.OriginalText}");
+          Console.WriteLine($"│    + {change.NewText}");
+        }
+      }
+
+      Console.WriteLine("└─");
+      Console.Write("  Apply changes to this file? [y/n/a(ll)/q(uit)]: ");
+
+      var response = Console.ReadLine()?.Trim().ToLower(System.Globalization.CultureInfo.InvariantCulture) ?? "";
+
+      if (response == "q" || response == "quit") {
+        Console.WriteLine();
+        Console.WriteLine("Migration aborted by user.");
+        return 1;
+      }
+
+      if (response == "a" || response == "all") {
+        // Apply all remaining files
+        approvedFiles.Add(fileChange.FilePath);
+        foreach (var remaining in previewResult.Changes.SkipWhile(c => c.FilePath != fileChange.FilePath).Skip(1)) {
+          approvedFiles.Add(remaining.FilePath);
+        }
+        break;
+      }
+
+      if (response == "y" || response == "yes") {
+        approvedFiles.Add(fileChange.FilePath);
+      }
+
+      Console.WriteLine();
+    }
+
+    if (approvedFiles.Count == 0) {
+      Console.WriteLine("No files were approved for transformation.");
+      return 0;
+    }
+
+    // Apply only approved files
+    Console.WriteLine();
+    Console.WriteLine($"Applying changes to {approvedFiles.Count} file(s)...");
+
+    var appliedCount = 0;
+    foreach (var filePath in approvedFiles) {
+      var sourceCode = await File.ReadAllTextAsync(filePath);
+      var transformResult = await _applyAllTransformersAsync(sourceCode, filePath);
+
+      if (transformResult.Changes.Count > 0) {
+        await File.WriteAllTextAsync(filePath, transformResult.TransformedCode);
+        appliedCount++;
+      }
+    }
+
+    Console.WriteLine();
+    Console.WriteLine($"✓ Migration complete! {appliedCount} file(s) transformed.");
   } else {
-    Console.WriteLine("✓ Migration complete!");
+    // Non-guided mode: show preview and apply all (or just preview for dry-run)
+    foreach (var fileChange in previewResult.Changes) {
+      var relativePath = Path.GetRelativePath(projectPath, fileChange.FilePath);
+      Console.WriteLine($"  {relativePath} ({fileChange.ChangeCount} changes)");
+      foreach (var change in fileChange.Changes.Take(3)) {
+        Console.WriteLine($"    - {change.Description}");
+      }
+      if (fileChange.Changes.Count > 3) {
+        Console.WriteLine($"    ... and {fileChange.Changes.Count - 3} more changes");
+      }
+    }
+    Console.WriteLine();
+
+    if (dryRun) {
+      Console.WriteLine("✓ Dry run complete. Run without --dry-run to apply changes.");
+    } else {
+      // Actually apply the changes
+      var result = await command.ExecuteAsync(projectPath, dryRun: false);
+      Console.WriteLine($"✓ Migration complete! {result.TransformedFileCount} file(s) transformed.");
+    }
   }
   Console.WriteLine();
 
   return 0;
+}
+
+async Task<Whizbang.Migrate.Transformers.TransformationResult> _applyAllTransformersAsync(
+    string sourceCode,
+    string filePath) {
+  var handlerTransformer = new Whizbang.Migrate.Transformers.HandlerToReceptorTransformer();
+  var projectionTransformer = new Whizbang.Migrate.Transformers.ProjectionToPerspectiveTransformer();
+  var diTransformer = new Whizbang.Migrate.Transformers.DIRegistrationTransformer();
+
+  var allChanges = new List<Whizbang.Migrate.Transformers.CodeChange>();
+  var transformedCode = sourceCode;
+
+  var handlerResult = await handlerTransformer.TransformAsync(transformedCode, filePath);
+  if (handlerResult.Changes.Count > 0) {
+    transformedCode = handlerResult.TransformedCode;
+    allChanges.AddRange(handlerResult.Changes);
+  }
+
+  var projectionResult = await projectionTransformer.TransformAsync(transformedCode, filePath);
+  if (projectionResult.Changes.Count > 0) {
+    transformedCode = projectionResult.TransformedCode;
+    allChanges.AddRange(projectionResult.Changes);
+  }
+
+  var diResult = await diTransformer.TransformAsync(transformedCode, filePath);
+  if (diResult.Changes.Count > 0) {
+    transformedCode = diResult.TransformedCode;
+    allChanges.AddRange(diResult.Changes);
+  }
+
+  return new Whizbang.Migrate.Transformers.TransformationResult(
+      sourceCode,
+      transformedCode,
+      allChanges,
+      []);
 }
 
 async Task<int> _migrateStatusAsync(string[] commandArgs) {
@@ -384,11 +492,13 @@ void _showMigrateHelp() {
   Console.WriteLine("Options:");
   Console.WriteLine("  --project, -p <path>  Project directory (default: current directory)");
   Console.WriteLine("  --dry-run, -n         Preview changes without modifying files (apply only)");
+  Console.WriteLine("  --guided, -g          Interactive mode: approve each file (apply only)");
   Console.WriteLine();
   Console.WriteLine("Examples:");
   Console.WriteLine("  whizbang migrate analyze");
   Console.WriteLine("  whizbang migrate analyze --project ./src/MyApp");
   Console.WriteLine("  whizbang migrate apply --dry-run");
+  Console.WriteLine("  whizbang migrate apply --guided");
   Console.WriteLine("  whizbang migrate apply --project ./src/MyApp");
   Console.WriteLine("  whizbang migrate status");
 }
