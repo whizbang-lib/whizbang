@@ -434,6 +434,25 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       publishRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
     }
 
+    // Load Untyped Publish routing snippet from template (for auto-cascade)
+    var untypedPublishSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(ReceptorDiscoveryGenerator).Assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "UNTYPED_PUBLISH_ROUTING_SNIPPET"
+    );
+
+    // Generate Untyped Publish routing code using snippet template
+    // This enables auto-cascade: events extracted from receptor return values are published
+    var untypedPublishRouting = new StringBuilder();
+    foreach (var messageType in allMessageTypes) {
+      // Replace placeholders with actual types
+      var generatedCode = untypedPublishSnippet
+          .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
+          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME);
+
+      untypedPublishRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
+    }
+
     // Replace template markers using regex for robustness
     // This handles variations in whitespace and formatting
     var result = template;
@@ -451,6 +470,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "SEND_ROUTING", sendRouting.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "VOID_SEND_ROUTING", voidSendRouting.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "PUBLISH_ROUTING", publishRouting.ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "UNTYPED_PUBLISH_ROUTING", untypedPublishRouting.ToString());
 
     return result;
   }

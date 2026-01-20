@@ -17,9 +17,12 @@ public static class TestConstants {
   /// - 5 receptors from TupleReturnTests.cs (OrderReceptor, OrderBusinessReceptor, OrderAuditReceptor,
   ///     PaymentReceptor, NotificationReceptor)
   /// - 3 receptors from ExecutionTests.cs (ProcessPaymentReceptor, SendEmailReceptor, LogEventReceptor)
+  /// - 9 receptors from DispatcherCascadeTests.cs (TupleReturningReceptor, ArrayReturningReceptor,
+  ///     MultiEventTupleReceptor, NestedTupleReceptor, NonEventReturningReceptor, EmptyArrayReceptor,
+  ///     EventTrackingReceptor, ShippedEventTrackingReceptor, NotificationEventTrackingReceptor)
   /// - 5 additional receptors from other test files
   ///
-  /// Total: 28 receptors
+  /// Total: 37 receptors
   /// </summary>
-  public const int EXPECTED_RECEPTOR_COUNT = 28;
+  public const int EXPECTED_RECEPTOR_COUNT = 37;
 }

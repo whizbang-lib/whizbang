@@ -82,4 +82,19 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
 
     return _ => Task.CompletedTask;
   }
+
+  /// <summary>
+  /// Generated lookup - returns a type-erased delegate that publishes to all receptors.
+  /// Used by auto-cascade to publish events extracted from receptor return values.
+  /// Zero reflection - uses compile-time type matching and lambda expressions.
+  /// </summary>
+  [DebuggerStepThrough]
+  protected override Func<object, Task>? GetUntypedReceptorPublisher(Type eventType) {
+    // Generated routing - zero reflection!
+    #region UNTYPED_PUBLISH_ROUTING
+    // This region will be replaced with generated untyped publish routing code
+    #endregion
+
+    return null;
+  }
 }

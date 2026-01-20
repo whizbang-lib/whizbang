@@ -153,9 +153,9 @@ public sealed class MessageBusToDispatcherTransformer : ICodeTransformer {
       if (expressionText.Contains(".PublishAsync") && isReceptor) {
         var lineNumber = invocation.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
         if (!warnings.Any(w => w.Contains("PublishAsync") && w.Contains($"Line {lineNumber}"))) {
-          warnings.Add($"Line {lineNumber}: PublishAsync found in receptor. Consider whether to use " +
-              "_dispatcher.PublishAsync (handles perspectives + outbox) or return the event directly " +
-              "(framework publishes automatically).");
+          warnings.Add($"Line {lineNumber}: PublishAsync found in receptor. PREFERRED: Return the event " +
+              "in a tuple instead (e.g., return (result, @event);) - the framework auto-publishes " +
+              "any IEvent instances in the return value. This is cleaner and more declarative.");
         }
       }
     }

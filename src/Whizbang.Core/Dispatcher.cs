@@ -158,7 +158,10 @@ public abstract class Dispatcher(
       }
 
       // Invoke using delegate - zero reflection, strongly typed
-      await invoker(message);
+      var result = await invoker(message);
+
+      // Auto-cascade: Extract and publish any IEvent instances from result (tuples, arrays, etc.)
+      await _cascadeEventsFromResultAsync(result);
 
       // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
       if (_lifecycleInvoker is not null) {
@@ -230,7 +233,10 @@ public abstract class Dispatcher(
       }
 
       // Invoke using delegate - zero reflection, strongly typed
-      await invoker(message);
+      var result = await invoker(message);
+
+      // Auto-cascade: Extract and publish any IEvent instances from result (tuples, arrays, etc.)
+      await _cascadeEventsFromResultAsync(result);
 
       // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
       if (_lifecycleInvoker is not null) {
@@ -347,10 +353,23 @@ public abstract class Dispatcher(
       return _localInvokeWithTracingAsync(message, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
     }
 
-    // FAST PATH: Zero allocation when no tracing and no lifecycle invoker
-    // Invoke using delegate - zero reflection, strongly typed
-    // Avoid async/await state machine allocation by returning task directly
-    return invoker(message);
+    // Fast path with cascade support for receptor tuple/array returns
+    // Invoke using delegate, then extract and publish any IEvent instances
+    return _localInvokeWithCascadeAsync(invoker, message);
+  }
+
+  /// <summary>
+  /// Fast path for LocalInvoke with cascade support.
+  /// Invokes receptor and automatically publishes any IEvent instances from the return value.
+  /// Supports tuples like (Result, Event), arrays like IEvent[], and nested structures.
+  /// </summary>
+  private async ValueTask<TResult> _localInvokeWithCascadeAsync<TResult>(
+    ReceptorInvoker<TResult> invoker,
+    object message
+  ) {
+    var result = await invoker(message);
+    await _cascadeEventsFromResultAsync(result);
+    return result;
   }
 
   /// <summary>
@@ -374,6 +393,10 @@ public abstract class Dispatcher(
 
       // Invoke using delegate - zero reflection, strongly typed
       var result = await invoker(message);
+
+      // Auto-cascade: Extract and publish any IEvent instances from receptor return value
+      // Supports tuples like (Result, Event), arrays like IEvent[], and nested structures
+      await _cascadeEventsFromResultAsync(result);
 
       // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
       if (_lifecycleInvoker is not null) {
@@ -424,10 +447,9 @@ public abstract class Dispatcher(
       return _localInvokeWithTracingAsyncInternalAsync<TMessage, TResult>(message, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
     }
 
-    // FAST PATH: Zero allocation when no tracing and no lifecycle invoker
-    // Invoke using delegate - zero reflection, strongly typed
-    // Avoid async/await state machine allocation by returning task directly
-    return invoker(message);
+    // Fast path with cascade support for receptor tuple/array returns
+    // Invoke using delegate, then extract and publish any IEvent instances
+    return _localInvokeWithCascadeAsync(invoker, message);
   }
 
   /// <summary>
@@ -452,6 +474,10 @@ public abstract class Dispatcher(
 
       // Invoke using delegate - zero reflection, strongly typed
       var result = await invoker(message!);
+
+      // Auto-cascade: Extract and publish any IEvent instances from receptor return value
+      // Supports tuples like (Result, Event), arrays like IEvent[], and nested structures
+      await _cascadeEventsFromResultAsync(result);
 
       // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
       if (_lifecycleInvoker is not null) {
@@ -740,6 +766,40 @@ public abstract class Dispatcher(
     return envelope;
   }
 
+  // ========================================
+  // AUTO-CASCADE - Automatic Event Publishing from Receptor Returns
+  // ========================================
+
+  /// <summary>
+  /// Extracts IEvent instances from receptor return values and publishes them.
+  /// Supports tuples, arrays, and nested structures via EventExtractor.
+  /// This enables the clean pattern: return (result, @event) - where @event is auto-published.
+  /// </summary>
+  /// <remarks>
+  /// Uses the AOT-compatible GetUntypedReceptorPublisher method which is implemented by
+  /// source-generated code. The generated code knows all event types at compile time and
+  /// returns type-erased delegates that cast internally.
+  /// </remarks>
+  /// <docs>core-concepts/dispatcher#automatic-event-cascade</docs>
+  /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherCascadeTests.cs:LocalInvokeAsync_TupleWithEvent_AutoPublishesEventAsync</tests>
+  private async Task _cascadeEventsFromResultAsync<TResult>(TResult result) {
+    // Fast path: Skip if result is null
+    if (result == null) {
+      return;
+    }
+
+    // Use EventExtractor to find all IEvent instances in the result
+    // This handles tuples, arrays, nested structures, etc. using ITuple interface (AOT-safe)
+    foreach (var evt in Internal.EventExtractor.ExtractEvents(result)) {
+      // Get an untyped publisher for the concrete event type (AOT-compatible)
+      // The generated code returns a delegate that casts the object to the correct type internally
+      var eventType = evt.GetType();
+      var publisher = GetUntypedReceptorPublisher(eventType);
+      if (publisher != null) {
+        await publisher(evt);
+      }
+    }
+  }
 
   /// <summary>
   /// Publishes an event to all registered handlers.
@@ -1346,4 +1406,14 @@ public abstract class Dispatcher(
   /// The delegate encapsulates finding all receptors and invoking them with zero reflection.
   /// </summary>
   protected abstract ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent eventData, Type eventType);
+
+  /// <summary>
+  /// Implemented by generated code - returns a type-erased delegate for publishing events.
+  /// Used by auto-cascade to publish events extracted from receptor return values.
+  /// The delegate accepts an object and internally casts to the correct event type.
+  /// AOT-compatible because the generated code knows all event types at compile time.
+  /// </summary>
+  /// <param name="eventType">The runtime type of the event (e.g., typeof(OrderCreatedEvent))</param>
+  /// <returns>A delegate that publishes the event to all registered receptors, or null if no receptors registered</returns>
+  protected abstract Func<object, Task>? GetUntypedReceptorPublisher(Type eventType);
 }

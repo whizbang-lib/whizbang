@@ -80,6 +80,34 @@ public class DispatcherSnippets {
   }
 
   /// <summary>
+  /// Example method showing snippet structure for untyped Publish routing.
+  /// Used by auto-cascade to publish events extracted from receptor return values.
+  /// </summary>
+  protected Func<object, Task>? UntypedPublishRoutingExample(Type eventType) {
+    #region UNTYPED_PUBLISH_ROUTING_SNIPPET
+    if (eventType == typeof(__MESSAGE_TYPE__)) {
+      var receptors = ServiceProvider.GetServices<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, object>>();
+      var voidReceptors = ServiceProvider.GetServices<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
+
+      [System.Diagnostics.DebuggerStepThrough]
+      async Task PublishToReceptorsUntyped(object evt) {
+        var typedEvt = (__MESSAGE_TYPE__)evt;
+        foreach (var receptor in receptors) {
+          await receptor.HandleAsync(typedEvt);
+        }
+        foreach (var voidReceptor in voidReceptors) {
+          await voidReceptor.HandleAsync(typedEvt);
+        }
+      }
+
+      return PublishToReceptorsUntyped;
+    }
+    #endregion
+
+    return null;
+  }
+
+  /// <summary>
   /// Example method showing snippet structure for receptor registration.
   /// </summary>
   public void ReceptorRegistrationExample(IServiceCollection services) {
