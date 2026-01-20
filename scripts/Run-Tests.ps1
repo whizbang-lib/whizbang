@@ -331,6 +331,35 @@ try {
         $testArgs += "minimal"
     }
 
+    # Pattern for identifying integration test DLLs: *Integration.Tests.dll or *IntegrationTests.dll
+    $integrationTestPattern = "Integration\.Tests\.dll$|IntegrationTests\.dll$"
+
+    # Helper function to test if a DLL name is an integration test
+    function Test-IsIntegrationTest {
+        param([string]$DllName)
+        return $DllName -match $integrationTestPattern
+    }
+
+    # Helper function to ensure build exists for dynamic DLL discovery
+    function Ensure-BuildExists {
+        $anyDll = Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "bin[/\\].*[/\\]Debug[/\\]net10\.0[/\\]" } |
+            Select-Object -First 1
+
+        if (-not $anyDll) {
+            if (-not $useAiOutput) {
+                Write-Host "No test DLLs found. Building solution first..." -ForegroundColor Yellow
+            } else {
+                Write-Host "Building solution..." -ForegroundColor Gray
+            }
+            & dotnet build --verbosity quiet
+            if ($LASTEXITCODE -ne 0) {
+                Write-Error "Build failed. Cannot discover test projects."
+                exit 1
+            }
+        }
+    }
+
     # Use --test-modules with globbing pattern for project filtering
     if ($ProjectFilter) {
         # Native .NET 10 globbing: **/bin/**/Debug/net10.0/*{Filter}*.dll
@@ -338,13 +367,43 @@ try {
         $testArgs += "**/bin/**/Debug/net10.0/*$ProjectFilter*.dll"
     } elseif ($onlyIntegrationTests) {
         # Run ONLY integration tests
-        $testArgs += "--test-modules"
-        $testArgs += "**/bin/**/Debug/net10.0/*Integration.Tests.dll"
+        Ensure-BuildExists
+        $integrationDlls = Get-ChildItem -Path $repoRoot -Recurse -Filter "*.dll" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "bin[/\\].*[/\\]Debug[/\\]net10\.0[/\\]" } |
+            Where-Object { Test-IsIntegrationTest $_.Name } |
+            Select-Object -ExpandProperty FullName
+
+        if ($integrationDlls.Count -gt 0) {
+            $testArgs += "--test-modules"
+            $testArgs += ($integrationDlls -join ";")
+
+            if (-not $useAiOutput) {
+                Write-Host "Discovered $($integrationDlls.Count) integration test projects" -ForegroundColor Gray
+            }
+        } else {
+            Write-Warning "No integration test DLLs found after build. Check that integration test projects exist."
+            exit 1
+        }
     } elseif (-not $includeIntegrationTests) {
-        # Exclude integration tests (they take 5-10+ minutes)
-        # Pattern matches: Whizbang.*.Tests.dll but NOT *Integration.Tests.dll
-        $testArgs += "--test-modules"
-        $testArgs += "**/bin/**/Debug/net10.0/Whizbang.*.Tests.dll"
+        # Exclude integration tests - find all *.Tests.dll and filter out integration tests
+        # This ensures all test projects are discovered while excluding slow integration tests
+        Ensure-BuildExists
+        $allTestDlls = Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "bin[/\\].*[/\\]Debug[/\\]net10\.0[/\\]" } |
+            Where-Object { -not (Test-IsIntegrationTest $_.Name) } |
+            Select-Object -ExpandProperty FullName
+
+        if ($allTestDlls.Count -gt 0) {
+            $testArgs += "--test-modules"
+            $testArgs += ($allTestDlls -join ";")
+
+            if (-not $useAiOutput) {
+                Write-Host "Discovered $($allTestDlls.Count) test projects (excluding integration tests)" -ForegroundColor Gray
+            }
+        } else {
+            Write-Warning "No test DLLs found after build. Check that test projects exist."
+            exit 1
+        }
     } else {
         # Use the main solution file (already filtered to test projects via <IsTestProject>)
         $testArgs += "--solution"
@@ -499,7 +558,8 @@ try {
             }
 
             # Capture failed test names (lines starting with "failed " followed by test name)
-            elseif ($lineStr -match "^failed\s+([^\(]+)\s+\(") {
+            # Note: This is an independent if block, not chained to progress display
+            if ($lineStr -match "^failed\s+([^\(]+)\s+\(") {
                 # Save previous test's stack trace if we were capturing
                 if ($currentFailedTest -and $stackTraceLines.Count -gt 0) {
                     $testDetails[$currentFailedTest]["StackTrace"] = $stackTraceLines -join "`n"

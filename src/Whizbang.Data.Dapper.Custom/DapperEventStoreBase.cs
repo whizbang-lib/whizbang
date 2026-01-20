@@ -90,6 +90,13 @@ public abstract class DapperEventStoreBase : IEventStore {
   public abstract Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Appends an event to the specified stream using a raw message.
+  /// Derived classes must implement this to handle envelope lookup from IEnvelopeRegistry
+  /// or create a minimal envelope if not found.
+  /// </summary>
+  public abstract Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull;
+
+  /// <summary>
   /// Reads events from a stream starting from a specific sequence number.
   /// </summary>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:ReadAsync_FromEmptyStream_ShouldReturnEmptyAsync</tests>

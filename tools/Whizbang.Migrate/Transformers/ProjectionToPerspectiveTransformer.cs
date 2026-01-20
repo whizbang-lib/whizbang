@@ -37,7 +37,7 @@ public sealed class ProjectionToPerspectiveTransformer : ICodeTransformer {
     newRoot = _transformUsings(newRoot, changes);
 
     // 2. Transform class declarations (projections -> perspectives)
-    newRoot = _transformClasses(newRoot, changes);
+    newRoot = _transformClasses(newRoot, changes, warnings);
 
     var transformedCode = newRoot.ToFullString();
 
@@ -108,8 +108,21 @@ public sealed class ProjectionToPerspectiveTransformer : ICodeTransformer {
     return compilationUnit.WithUsings(SyntaxFactory.List(newUsings));
   }
 
-  private static SyntaxNode _transformClasses(SyntaxNode root, List<CodeChange> changes) {
-    var rewriter = new ProjectionToPerspectiveRewriter(changes);
+  private static SyntaxNode _transformClasses(SyntaxNode root, List<CodeChange> changes, List<string> warnings) {
+    var rewriter = new ProjectionToPerspectiveRewriter(changes, warnings);
+    var transformed = rewriter.Visit(root);
+
+    // Transform ShouldDelete methods to ModelAction Apply methods
+    transformed = _transformShouldDeleteMethods(transformed, changes, warnings);
+
+    return transformed;
+  }
+
+  /// <summary>
+  /// Transforms Marten ShouldDelete methods to Whizbang Apply methods returning ModelAction.
+  /// </summary>
+  private static SyntaxNode _transformShouldDeleteMethods(SyntaxNode root, List<CodeChange> changes, List<string> warnings) {
+    var rewriter = new ShouldDeleteToModelActionRewriter(changes, warnings);
     return rewriter.Visit(root);
   }
 
@@ -118,9 +131,11 @@ public sealed class ProjectionToPerspectiveTransformer : ICodeTransformer {
   /// </summary>
   private sealed class ProjectionToPerspectiveRewriter : CSharpSyntaxRewriter {
     private readonly List<CodeChange> _changes;
+    private readonly List<string> _warnings;
 
-    public ProjectionToPerspectiveRewriter(List<CodeChange> changes) {
+    public ProjectionToPerspectiveRewriter(List<CodeChange> changes, List<string> warnings) {
       _changes = changes;
+      _warnings = warnings;
     }
 
     public override SyntaxNode? VisitClassDeclaration(ClassDeclarationSyntax node) {
@@ -135,9 +150,9 @@ public sealed class ProjectionToPerspectiveTransformer : ICodeTransformer {
         var typeName = baseType.Type.ToString();
 
         if (typeName.StartsWith("SingleStreamProjection<", StringComparison.Ordinal)) {
-          // Extract aggregate type and event types from Apply methods
+          // Extract aggregate type and event types from projection methods
           var aggregateType = _extractGenericArgument(typeName);
-          var eventTypes = _extractEventTypesFromClass(node);
+          var eventTypes = _extractEventTypesFromClass(node, aggregateType);
 
           // Build IPerspectiveFor<TAggregate, TEvent1, TEvent2, ...>
           var perspectiveType = eventTypes.Count > 0
@@ -187,10 +202,43 @@ public sealed class ProjectionToPerspectiveTransformer : ICodeTransformer {
       if (transformed) {
         var newBaseList = node.BaseList.WithTypes(
             SyntaxFactory.SeparatedList(newBaseTypes));
+
+        // Check Apply methods for [MustExist] suggestions
+        _checkForMustExistSuggestions(node);
+
         return node.WithBaseList(newBaseList);
       }
 
       return base.VisitClassDeclaration(node);
+    }
+
+    /// <summary>
+    /// Checks projection methods and suggests [MustExist] for non-creation methods.
+    /// Also warns about ShouldDelete methods that need manual handling.
+    /// </summary>
+    private void _checkForMustExistSuggestions(ClassDeclarationSyntax classDecl) {
+      var className = classDecl.Identifier.Text;
+      var projectionMethods = classDecl.Members
+          .OfType<MethodDeclarationSyntax>()
+          .Where(m => m.Identifier.Text is "Apply" or "Create" or "ShouldDelete");
+
+      // If there's a Create method, other Apply methods likely need [MustExist]
+      var hasCreateMethod = projectionMethods.Any(m => m.Identifier.Text == "Create");
+
+      foreach (var method in projectionMethods) {
+        var line = method.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+        var methodName = method.Identifier.Text;
+
+        if (methodName == "Apply" && hasCreateMethod) {
+          // If there's a Create method, Apply methods handle updates (need [MustExist])
+          _warnings.Add($"Line {line}: Consider adding [MustExist] attribute to Apply method in {className}. " +
+              "The [MustExist] attribute generates a null check before calling Apply, ensuring the model exists.");
+        } else if (methodName == "ShouldDelete") {
+          // ShouldDelete will be transformed to ModelAction return - add a note
+          _warnings.Add($"Line {line}: ShouldDelete method in {className} will be transformed to return ModelAction. " +
+              "Review the generated code - ModelAction.Delete for soft delete, ModelAction.Purge for hard delete.");
+        }
+      }
     }
 
     private static string _extractGenericArgument(string typeName) {
@@ -207,24 +255,219 @@ public sealed class ProjectionToPerspectiveTransformer : ICodeTransformer {
       return "unknown";
     }
 
-    private static List<string> _extractEventTypesFromClass(ClassDeclarationSyntax classDecl) {
+    /// <summary>
+    /// Extracts event types from all Marten projection methods.
+    /// Marten supports: Create, Apply, ShouldDelete with various signatures.
+    /// See: https://martendb.io/events/projections/aggregate-projections.html
+    /// </summary>
+    /// <param name="classDecl">The class declaration to analyze.</param>
+    /// <param name="aggregateType">The aggregate/document type to filter out.</param>
+    private static List<string> _extractEventTypesFromClass(ClassDeclarationSyntax classDecl, string aggregateType) {
       var eventTypes = new List<string>();
 
-      var applyMethods = classDecl.Members
+      // Marten projection method names
+      var projectionMethods = classDecl.Members
           .OfType<MethodDeclarationSyntax>()
-          .Where(m => m.Identifier.Text == "Apply");
+          .Where(m => m.Identifier.Text is "Apply" or "Create" or "ShouldDelete");
 
-      foreach (var method in applyMethods) {
+      foreach (var method in projectionMethods) {
         var parameters = method.ParameterList.Parameters;
-        if (parameters.Count >= 1) {
-          var eventType = parameters[0].Type?.ToString();
-          if (!string.IsNullOrEmpty(eventType) && !eventTypes.Contains(eventType)) {
-            eventTypes.Add(eventType);
+        if (parameters.Count == 0) {
+          continue;
+        }
+
+        // Marten supports both parameter orderings:
+        // - Apply(TEvent event, TDoc document) - event first
+        // - Apply(TDoc document, TEvent event) - document second
+        // - Create(TEvent event) - single parameter
+        // - ShouldDelete(TEvent event) or ShouldDelete(TEvent event, TDoc document)
+        //
+        // Filter out:
+        // 1. The aggregate/document type
+        // 2. IEvent metadata wrappers
+
+        foreach (var param in parameters) {
+          var paramType = param.Type?.ToString();
+          if (string.IsNullOrEmpty(paramType)) {
+            continue;
+          }
+
+          // Skip the aggregate/document type
+          if (paramType == aggregateType || paramType == $"{aggregateType}?") {
+            continue;
+          }
+
+          // Skip IEvent metadata parameters (used for accessing event metadata)
+          if (paramType == "IEvent" || paramType == "Marten.Events.IEvent" ||
+              paramType.StartsWith("IEvent<", StringComparison.Ordinal) ||
+              paramType.StartsWith("Marten.Events.IEvent<", StringComparison.Ordinal)) {
+            continue;
+          }
+
+          // Add the event type if not already present
+          if (!eventTypes.Contains(paramType)) {
+            eventTypes.Add(paramType);
           }
         }
       }
 
       return eventTypes;
+    }
+  }
+
+  /// <summary>
+  /// Rewriter that transforms ShouldDelete methods to Apply methods returning ModelAction.
+  /// </summary>
+  private sealed class ShouldDeleteToModelActionRewriter : CSharpSyntaxRewriter {
+    private readonly List<CodeChange> _changes;
+    private readonly List<string> _warnings;
+
+    public ShouldDeleteToModelActionRewriter(List<CodeChange> changes, List<string> warnings) {
+      _changes = changes;
+      _warnings = warnings;
+    }
+
+    public override SyntaxNode? VisitMethodDeclaration(MethodDeclarationSyntax node) {
+      // Only transform ShouldDelete methods
+      if (node.Identifier.Text != "ShouldDelete") {
+        return base.VisitMethodDeclaration(node);
+      }
+
+      var line = node.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+
+      // Extract event type from parameters
+      // Marten ShouldDelete signatures:
+      // - bool ShouldDelete(TEvent @event)
+      // - bool ShouldDelete(TEvent @event, TDoc document)
+      var eventType = _extractEventType(node);
+      var modelType = _extractModelType(node);
+
+      if (eventType == null || modelType == null) {
+        _warnings.Add($"Line {line}: Could not determine event type or model type for ShouldDelete transformation.");
+        return base.VisitMethodDeclaration(node);
+      }
+
+      // Determine what action the original method returns
+      // If it always returns true, use ModelAction.Delete
+      // If it has conditional logic, generate a comment to review
+      var (action, needsReview) = _analyzeShouldDeleteBody(node);
+
+      // Build the new Apply method
+      // public ModelAction Apply(TModel current, TEvent @event) => ModelAction.Delete;
+      var newMethod = SyntaxFactory.MethodDeclaration(
+              SyntaxFactory.ParseTypeName("ModelAction"),
+              SyntaxFactory.Identifier("Apply"))
+          .WithModifiers(SyntaxFactory.TokenList(
+              SyntaxFactory.Token(SyntaxKind.PublicKeyword)))
+          .WithParameterList(SyntaxFactory.ParameterList(
+              SyntaxFactory.SeparatedList(new[] {
+                  SyntaxFactory.Parameter(SyntaxFactory.Identifier("current"))
+                      .WithType(SyntaxFactory.ParseTypeName(modelType)),
+                  SyntaxFactory.Parameter(SyntaxFactory.Identifier("@event"))
+                      .WithType(SyntaxFactory.ParseTypeName(eventType))
+              })));
+
+      if (needsReview) {
+        // Add comment for complex logic that needs review
+        var leadingTrivia = node.GetLeadingTrivia()
+            .Add(SyntaxFactory.Comment("// TODO: Review - original ShouldDelete had conditional logic. Adjust ModelAction as needed."))
+            .Add(SyntaxFactory.CarriageReturnLineFeed);
+
+        newMethod = newMethod
+            .WithExpressionBody(SyntaxFactory.ArrowExpressionClause(
+                SyntaxFactory.ParseExpression($"ModelAction.{action}")))
+            .WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.SemicolonToken))
+            .WithLeadingTrivia(leadingTrivia);
+      } else {
+        newMethod = newMethod
+            .WithExpressionBody(SyntaxFactory.ArrowExpressionClause(
+                SyntaxFactory.ParseExpression($"ModelAction.{action}")))
+            .WithSemicolonToken(SyntaxFactory.Token(SyntaxKind.SemicolonToken))
+            .WithLeadingTrivia(node.GetLeadingTrivia());
+      }
+
+      newMethod = newMethod.WithTrailingTrivia(node.GetTrailingTrivia());
+
+      _changes.Add(new CodeChange(
+          line,
+          ChangeType.MethodTransformed,
+          $"Transformed ShouldDelete to Apply returning ModelAction.{action}",
+          node.ToString(),
+          newMethod.ToFullString()));
+
+      return newMethod;
+    }
+
+    private static string? _extractEventType(MethodDeclarationSyntax method) {
+      var parameters = method.ParameterList.Parameters;
+      if (parameters.Count == 0) {
+        return null;
+      }
+
+      // First parameter is usually the event
+      return parameters[0].Type?.ToString();
+    }
+
+    private static string? _extractModelType(MethodDeclarationSyntax method) {
+      // Try to find model type from second parameter
+      var parameters = method.ParameterList.Parameters;
+      if (parameters.Count >= 2) {
+        return parameters[1].Type?.ToString();
+      }
+
+      // Otherwise, try to infer from containing class's base type
+      var containingClass = method.Ancestors()
+          .OfType<ClassDeclarationSyntax>()
+          .FirstOrDefault();
+
+      if (containingClass?.BaseList != null) {
+        foreach (var baseType in containingClass.BaseList.Types) {
+          var typeName = baseType.Type.ToString();
+          if (typeName.StartsWith("IPerspectiveFor<", StringComparison.Ordinal)) {
+            // Extract first generic argument (model type)
+            var start = typeName.IndexOf('<');
+            var end = typeName.IndexOf(',');
+            if (end < 0) {
+              end = typeName.LastIndexOf('>');
+            }
+            if (start >= 0 && end > start) {
+              return typeName.Substring(start + 1, end - start - 1).Trim();
+            }
+          }
+        }
+      }
+
+      return null;
+    }
+
+    /// <summary>
+    /// Analyzes the body of ShouldDelete to determine the appropriate ModelAction.
+    /// </summary>
+    private static (string action, bool needsReview) _analyzeShouldDeleteBody(MethodDeclarationSyntax method) {
+      // Check if it's a simple return true
+      if (method.ExpressionBody != null) {
+        var expr = method.ExpressionBody.Expression.ToString();
+        if (expr == "true") {
+          return ("Delete", false);
+        }
+        // Has conditional logic
+        return ("Delete", true);
+      }
+
+      if (method.Body != null) {
+        // Check for simple "return true;"
+        var statements = method.Body.Statements;
+        if (statements.Count == 1 &&
+            statements[0] is ReturnStatementSyntax returnStmt &&
+            returnStmt.Expression?.ToString() == "true") {
+          return ("Delete", false);
+        }
+        // Has complex logic
+        return ("Delete", true);
+      }
+
+      // Default to Delete with review
+      return ("Delete", true);
     }
   }
 }

@@ -97,6 +97,25 @@ public sealed class EFCoreEventStore<TDbContext> : IEventStore
     // See: Stage 4 of perspective worker refactoring (2025-12-18)
   }
 
+  /// <inheritdoc />
+  public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull {
+    ArgumentNullException.ThrowIfNull(message);
+
+    // Create a minimal envelope - registry-based lookup would require constructor injection
+    var envelope = new MessageEnvelope<TMessage> {
+      MessageId = MessageId.New(),
+      Payload = message,
+      Hops = [
+        new MessageHop {
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Timestamp = DateTimeOffset.UtcNow
+        }
+      ]
+    };
+
+    return AppendAsync(streamId, envelope, cancellationToken);
+  }
+
   /// <summary>
   /// Reads events from a stream with strong typing.
   /// Returns events in sequence order starting from the specified sequence number.

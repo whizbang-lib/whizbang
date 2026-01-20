@@ -31,6 +31,7 @@
     <Project Path="samples/ECommerce/tests/ECommerce.NotificationWorker.Tests/ECommerce.NotificationWorker.Tests.csproj" />
     <Project Path="samples/ECommerce/tests/ECommerce.OrderService.Tests/ECommerce.OrderService.Tests.csproj" />
     <Project Path="samples/ECommerce/tests/ECommerce.PaymentWorker.Tests/ECommerce.PaymentWorker.Tests.csproj" />
+    <Project Path="samples/ECommerce/tests/ECommerce.RabbitMQ.Integration.Tests/ECommerce.RabbitMQ.Integration.Tests.csproj" />
     <Project Path="samples/ECommerce/tests/ECommerce.ShippingWorker.Tests/ECommerce.ShippingWorker.Tests.csproj" />
   </Folder>
   <Folder Name="/src/">
@@ -52,18 +53,22 @@
   </Folder>
   <Folder Name="/tests/">
     <Project Path="tests/Whizbang.Core.Tests/Whizbang.Core.Tests.csproj" />
+    <Project Path="tests/Whizbang.Data.EFCore.Postgres.Tests/Whizbang.Data.EFCore.Postgres.Tests.csproj" />
     <Project Path="tests/Whizbang.Data.Postgres.Tests/Whizbang.Data.Postgres.Tests.csproj" />
+    <Project Path="tests/Whizbang.Data.Schema.Tests/Whizbang.Data.Schema.Tests.csproj" />
     <Project Path="tests/Whizbang.Data.Tests/Whizbang.Data.Tests.csproj" />
     <Project Path="tests/Whizbang.Documentation.Tests/Whizbang.Documentation.Tests.csproj" />
     <Project Path="tests/Whizbang.Execution.Tests/Whizbang.Execution.Tests.csproj" />
     <Project Path="tests/Whizbang.Generators.Tests/Whizbang.Generators.Tests.csproj" />
     <Project Path="tests/Whizbang.Hosting.Azure.ServiceBus.Tests/Whizbang.Hosting.Azure.ServiceBus.Tests.csproj" />
+    <Project Path="tests/Whizbang.Hosting.RabbitMQ.Tests/Whizbang.Hosting.RabbitMQ.Tests.csproj" />
+    <Project Path="tests/Whizbang.Migrate.Tests/Whizbang.Migrate.Tests.csproj" />
     <Project Path="tests/Whizbang.Observability.Tests/Whizbang.Observability.Tests.csproj" />
     <Project Path="tests/Whizbang.Partitioning.Tests/Whizbang.Partitioning.Tests.csproj" />
     <Project Path="tests/Whizbang.Policies.Tests/Whizbang.Policies.Tests.csproj" />
     <Project Path="tests/Whizbang.Sequencing.Tests/Whizbang.Sequencing.Tests.csproj" />
+    <Project Path="tests/Whizbang.Transports.RabbitMQ.Tests/Whizbang.Transports.RabbitMQ.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.Tests/Whizbang.Transports.Tests.csproj" />
-    <Project Path="tests/Whizbang.Migrate.Tests/Whizbang.Migrate.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Whizbang.CLI/Whizbang.CLI.csproj" />

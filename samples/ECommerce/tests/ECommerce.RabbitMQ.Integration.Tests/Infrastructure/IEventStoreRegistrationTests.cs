@@ -1,10 +1,10 @@
+using System.Text.Json;
 using ECommerce.InventoryWorker;
 using ECommerce.RabbitMQ.Integration.Tests.Fixtures;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Npgsql;
-using System.Text.Json;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;

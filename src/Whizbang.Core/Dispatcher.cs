@@ -52,7 +52,8 @@ public abstract class Dispatcher(
   Routing.ITopicRoutingStrategy? topicRoutingStrategy = null,
   IAggregateIdExtractor? aggregateIdExtractor = null,
   ILifecycleInvoker? lifecycleInvoker = null,
-  IEnvelopeSerializer? envelopeSerializer = null
+  IEnvelopeSerializer? envelopeSerializer = null,
+  IEnvelopeRegistry? envelopeRegistry = null
   ) : IDispatcher {
   private readonly IServiceProvider _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -64,6 +65,8 @@ public abstract class Dispatcher(
   private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
   // Resolve from service provider if not injected (for backwards compatibility with generated code)
   private readonly IEnvelopeSerializer? _envelopeSerializer = envelopeSerializer ?? serviceProvider.GetService<IEnvelopeSerializer>();
+  // Resolve from service provider if not injected (for backwards compatibility with generated code)
+  private readonly IEnvelopeRegistry? _envelopeRegistry = envelopeRegistry ?? serviceProvider.GetService<IEnvelopeRegistry>();
 
   // Unused parameter retained for backward compatibility with generated code
   private readonly JsonSerializerOptions? _ = jsonOptions;
@@ -146,25 +149,32 @@ public abstract class Dispatcher(
     // Create envelope with hop for observability
     var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
 
-    // Store envelope if trace store is configured
-    if (_traceStore != null) {
-      await _traceStore.StoreAsync(envelope);
-    }
+    // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
+    _envelopeRegistry?.Register(envelope);
+    try {
+      // Store envelope if trace store is configured
+      if (_traceStore != null) {
+        await _traceStore.StoreAsync(envelope);
+      }
 
-    // Invoke using delegate - zero reflection, strongly typed
-    await invoker(message);
+      // Invoke using delegate - zero reflection, strongly typed
+      await invoker(message);
 
-    // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
-    if (_lifecycleInvoker is not null) {
-      var lifecycleContext = new LifecycleExecutionContext {
-        CurrentStage = LifecycleStage.ImmediateAsync,
-        EventId = null,
-        StreamId = null,
-        LastProcessedEventId = null,
-        MessageSource = MessageSource.Local,
-        AttemptNumber = 1 // Local dispatch is always first attempt
-      };
-      await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
+      if (_lifecycleInvoker is not null) {
+        var lifecycleContext = new LifecycleExecutionContext {
+          CurrentStage = LifecycleStage.ImmediateAsync,
+          EventId = null,
+          StreamId = null,
+          LastProcessedEventId = null,
+          MessageSource = MessageSource.Local,
+          AttemptNumber = 1 // Local dispatch is always first attempt
+        };
+        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      }
+    } finally {
+      // Unregister envelope after receptor completes (or throws)
+      _envelopeRegistry?.Unregister(envelope);
     }
 
     // Return delivery receipt
@@ -211,25 +221,32 @@ public abstract class Dispatcher(
     // Create envelope with hop for observability - generic version preserves type!
     var envelope = _createEnvelope<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
 
-    // Store envelope if trace store is configured
-    if (_traceStore != null) {
-      await _traceStore.StoreAsync(envelope);
-    }
+    // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
+    _envelopeRegistry?.Register(envelope);
+    try {
+      // Store envelope if trace store is configured
+      if (_traceStore != null) {
+        await _traceStore.StoreAsync(envelope);
+      }
 
-    // Invoke using delegate - zero reflection, strongly typed
-    await invoker(message);
+      // Invoke using delegate - zero reflection, strongly typed
+      await invoker(message);
 
-    // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
-    if (_lifecycleInvoker is not null) {
-      var lifecycleContext = new LifecycleExecutionContext {
-        CurrentStage = LifecycleStage.ImmediateAsync,
-        EventId = null,
-        StreamId = null,
-        LastProcessedEventId = null,
-        MessageSource = MessageSource.Local,
-        AttemptNumber = 1 // Local dispatch is always first attempt
-      };
-      await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
+      if (_lifecycleInvoker is not null) {
+        var lifecycleContext = new LifecycleExecutionContext {
+          CurrentStage = LifecycleStage.ImmediateAsync,
+          EventId = null,
+          StreamId = null,
+          LastProcessedEventId = null,
+          MessageSource = MessageSource.Local,
+          AttemptNumber = 1 // Local dispatch is always first attempt
+        };
+        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      }
+    } finally {
+      // Unregister envelope after receptor completes (or throws)
+      _envelopeRegistry?.Unregister(envelope);
     }
 
     // Return delivery receipt
@@ -349,25 +366,33 @@ public abstract class Dispatcher(
     int callerLineNumber
   ) {
     var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
-    await _traceStore!.StoreAsync(envelope);
 
-    // Invoke using delegate - zero reflection, strongly typed
-    var result = await invoker(message);
+    // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
+    _envelopeRegistry?.Register(envelope);
+    try {
+      await _traceStore!.StoreAsync(envelope);
 
-    // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
-    if (_lifecycleInvoker is not null) {
-      var lifecycleContext = new LifecycleExecutionContext {
-        CurrentStage = LifecycleStage.ImmediateAsync,
-        EventId = null,
-        StreamId = null,
-        LastProcessedEventId = null,
-        MessageSource = MessageSource.Local,
-        AttemptNumber = 1 // Local dispatch is always first attempt
-      };
-      await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      // Invoke using delegate - zero reflection, strongly typed
+      var result = await invoker(message);
+
+      // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
+      if (_lifecycleInvoker is not null) {
+        var lifecycleContext = new LifecycleExecutionContext {
+          CurrentStage = LifecycleStage.ImmediateAsync,
+          EventId = null,
+          StreamId = null,
+          LastProcessedEventId = null,
+          MessageSource = MessageSource.Local,
+          AttemptNumber = 1 // Local dispatch is always first attempt
+        };
+        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      }
+
+      return result;
+    } finally {
+      // Unregister envelope after receptor completes (or throws)
+      _envelopeRegistry?.Unregister(envelope);
     }
-
-    return result;
   }
 
   /// <summary>
@@ -419,23 +444,31 @@ public abstract class Dispatcher(
     int callerLineNumber
   ) {
     var envelope = _createEnvelope<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
-    await _traceStore!.StoreAsync(envelope);
 
-    // Invoke using delegate - zero reflection, strongly typed
-    var result = await invoker(message!);
+    // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
+    _envelopeRegistry?.Register(envelope);
+    try {
+      await _traceStore!.StoreAsync(envelope);
 
-    // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
-    if (_lifecycleInvoker is not null) {
-      var lifecycleContext = new LifecycleExecutionContext {
-        CurrentStage = LifecycleStage.ImmediateAsync,
-        EventId = null,
-        StreamId = null,
-        LastProcessedEventId = null
-      };
-      await _lifecycleInvoker.InvokeAsync(message!, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      // Invoke using delegate - zero reflection, strongly typed
+      var result = await invoker(message!);
+
+      // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
+      if (_lifecycleInvoker is not null) {
+        var lifecycleContext = new LifecycleExecutionContext {
+          CurrentStage = LifecycleStage.ImmediateAsync,
+          EventId = null,
+          StreamId = null,
+          LastProcessedEventId = null
+        };
+        await _lifecycleInvoker.InvokeAsync(message!, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      }
+
+      return result;
+    } finally {
+      // Unregister envelope after receptor completes (or throws)
+      _envelopeRegistry?.Unregister(envelope);
     }
-
-    return result;
   }
 
   // ========================================
@@ -542,10 +575,18 @@ public abstract class Dispatcher(
     int callerLineNumber
   ) {
     var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
-    await _traceStore!.StoreAsync(envelope);
 
-    // Invoke using delegate - zero reflection, strongly typed
-    await invoker(message);
+    // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
+    _envelopeRegistry?.Register(envelope);
+    try {
+      await _traceStore!.StoreAsync(envelope);
+
+      // Invoke using delegate - zero reflection, strongly typed
+      await invoker(message);
+    } finally {
+      // Unregister envelope after receptor completes (or throws)
+      _envelopeRegistry?.Unregister(envelope);
+    }
   }
 
   /// <summary>
@@ -597,22 +638,30 @@ public abstract class Dispatcher(
     int callerLineNumber
   ) {
     var envelope = _createEnvelope<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
-    if (_traceStore != null) {
-      await _traceStore.StoreAsync(envelope);
-    }
 
-    // Invoke using delegate - zero reflection, strongly typed
-    await invoker(message!);
+    // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
+    _envelopeRegistry?.Register(envelope);
+    try {
+      if (_traceStore != null) {
+        await _traceStore.StoreAsync(envelope);
+      }
 
-    // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
-    if (_lifecycleInvoker is not null) {
-      var lifecycleContext = new LifecycleExecutionContext {
-        CurrentStage = LifecycleStage.ImmediateAsync,
-        EventId = null,
-        StreamId = null,
-        LastProcessedEventId = null
-      };
-      await _lifecycleInvoker.InvokeAsync(message!, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      // Invoke using delegate - zero reflection, strongly typed
+      await invoker(message!);
+
+      // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
+      if (_lifecycleInvoker is not null) {
+        var lifecycleContext = new LifecycleExecutionContext {
+          CurrentStage = LifecycleStage.ImmediateAsync,
+          EventId = null,
+          StreamId = null,
+          LastProcessedEventId = null
+        };
+        await _lifecycleInvoker.InvokeAsync(message!, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      }
+    } finally {
+      // Unregister envelope after receptor completes (or throws)
+      _envelopeRegistry?.Unregister(envelope);
     }
   }
 

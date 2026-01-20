@@ -21,6 +21,24 @@ namespace Whizbang.Core.Messaging;
 /// </summary>
 public class InMemoryEventStore : IEventStore {
   private readonly ConcurrentDictionary<Guid, StreamData> _streams = new();
+  private readonly IEnvelopeRegistry? _envelopeRegistry;
+
+  /// <summary>
+  /// Creates an InMemoryEventStore without envelope registry support.
+  /// Messages passed to the raw AppendAsync overload will use minimal envelopes.
+  /// </summary>
+  public InMemoryEventStore() {
+  }
+
+  /// <summary>
+  /// Creates an InMemoryEventStore with envelope registry support.
+  /// Messages passed to the raw AppendAsync overload will have their envelopes
+  /// looked up from the registry, preserving tracing context.
+  /// </summary>
+  /// <param name="envelopeRegistry">The envelope registry for looking up envelopes by message</param>
+  public InMemoryEventStore(IEnvelopeRegistry envelopeRegistry) {
+    _envelopeRegistry = envelopeRegistry;
+  }
 
   /// <inheritdoc />
   /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:AppendAsync_ShouldStoreEventAsync</tests>
@@ -41,6 +59,33 @@ public class InMemoryEventStore : IEventStore {
     // See: Stage 4 of perspective worker refactoring (2025-12-18)
 
     return Task.CompletedTask;
+  }
+
+  /// <inheritdoc />
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:AppendAsync_WithMessage_ShouldStoreEventAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:AppendAsync_WithMessage_WhenEnvelopeRegistered_ShouldUseEnvelopeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:AppendAsync_WithMessage_WhenNoEnvelope_ShouldCreateMinimalEnvelopeAsync</tests>
+  public Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull {
+    ArgumentNullException.ThrowIfNull(message);
+
+    // Try to get the envelope from the registry (preserves tracing context)
+    var envelope = _envelopeRegistry?.TryGetEnvelope(message);
+
+    if (envelope is null) {
+      // No envelope registered - create a minimal envelope for backwards compatibility
+      envelope = new MessageEnvelope<TMessage> {
+        MessageId = MessageId.New(),
+        Payload = message,
+        Hops = [
+          new MessageHop {
+            ServiceInstance = ServiceInstanceInfo.Unknown,
+            Timestamp = DateTimeOffset.UtcNow
+          }
+        ]
+      };
+    }
+
+    return AppendAsync(streamId, envelope, cancellationToken);
   }
 
   /// <inheritdoc />

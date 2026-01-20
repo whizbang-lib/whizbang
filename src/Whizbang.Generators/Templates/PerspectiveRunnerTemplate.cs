@@ -84,7 +84,8 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
     var lastSuccessfulEventId = lastProcessedEventId;
     var processedEvents = new List<(object Event, Guid EventId)>();  // Track events for PostPerspectiveInline (fires AFTER save)
     var backgroundTasks = new List<Task>();  // Track async lifecycle tasks to ensure they complete
-    __MODEL_TYPE_NAME__ updatedModel = currentModel;
+    __MODEL_TYPE_NAME__? updatedModel = currentModel;
+    var pendingPurge = false;  // Track if model should be purged (hard deleted)
 
     // Build list of event types this perspective handles (for polymorphic deserialization)
     var eventTypes = new[] {
@@ -145,7 +146,28 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         var @event = envelope.Payload;
 
         // Apply event to model using perspective's pure Apply method
-        updatedModel = ApplyEvent(perspective, updatedModel, @event);
+        var (appliedModel, action) = ApplyEvent(perspective, updatedModel, @event);
+
+        // Handle action from Apply result
+        switch (action) {
+          case global::Whizbang.Core.Perspectives.ModelAction.Delete:
+            // Soft delete: Model should have DeletedAt set by perspective or caller
+            // For now, keep the model (it may have been modified by perspective)
+            updatedModel = appliedModel ?? updatedModel;
+            break;
+          case global::Whizbang.Core.Perspectives.ModelAction.Purge:
+            // Hard delete: Mark for purge, skip upsert
+            pendingPurge = true;
+            updatedModel = null;
+            break;
+          default:
+            // Normal update or no-change
+            if (appliedModel != null) {
+              updatedModel = appliedModel;
+            }
+            // else: null model with None = no change, keep existing
+            break;
+        }
 
         // Track event for PostPerspective lifecycle hooks (fire AFTER save completes)
         processedEvents.Add((@event, envelope.MessageId.Value));
@@ -157,12 +179,22 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
 
       // Unit of Work: Save model + checkpoint ONCE at end
       if (eventsProcessed > 0) {
-        await SaveModelAndCheckpointAsync(
-            streamId,
-            updatedModel,
-            lastSuccessfulEventId!.Value,
-            cancellationToken
-        );
+        if (pendingPurge) {
+          // Hard delete: Remove model from database entirely
+          await _perspectiveStore.PurgeAsync(streamId, cancellationToken);
+          _logger.LogInformation(
+              "Model purged for {PerspectiveName} stream {StreamId}",
+              perspectiveName,
+              streamId
+          );
+        } else if (updatedModel != null) {
+          await SaveModelAndCheckpointAsync(
+              streamId,
+              updatedModel,
+              lastSuccessfulEventId!.Value,
+              cancellationToken
+          );
+        }
 
         // CRITICAL: Explicitly flush all changes to ensure data is committed and queryable
         // PostgresUpsertStrategy.UpsertPerspectiveRowAsync() calls SaveChangesAsync() internally,
@@ -232,12 +264,15 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
         );
 
         try {
-          await SaveModelAndCheckpointAsync(
-              streamId,
-              updatedModel,
-              lastSuccessfulEventId.Value,
-              cancellationToken
-          );
+          // Only save if we have a model (skip if purge was pending)
+          if (updatedModel != null) {
+            await SaveModelAndCheckpointAsync(
+                streamId,
+                updatedModel,
+                lastSuccessfulEventId.Value,
+                cancellationToken
+            );
+          }
         } catch (Exception saveEx) {
           _logger.LogError(
               saveEx,
@@ -282,15 +317,17 @@ internal sealed class __RUNNER_CLASS_NAME__ : IPerspectiveRunner {
   /// <summary>
   /// Applies an event to the model using the perspective's synchronous Apply method.
   /// AOT-compatible: uses switch statement instead of reflection.
-  /// Apply methods are pure functions that return new model state.
+  /// Apply methods are pure functions that return new model state and optional action.
   /// </summary>
-  private __MODEL_TYPE_NAME__ ApplyEvent(
+  /// <returns>Tuple of (model, action) where action indicates Delete/Purge/None.</returns>
+  private (__MODEL_TYPE_NAME__?, global::Whizbang.Core.Perspectives.ModelAction) ApplyEvent(
       __PERSPECTIVE_CLASS_NAME__ perspective,
-      __MODEL_TYPE_NAME__ currentModel,
+      __MODEL_TYPE_NAME__? currentModel,
       IEvent @event) {
 
     // AOT-compatible switch on event type (no reflection)
     // Generator produces one case per event type the perspective handles
+    // Each case normalizes to (model?, action) tuple based on Apply return type
     switch (@event) {
       #region EVENT_APPLY_CASES
       // Generated switch cases go here
