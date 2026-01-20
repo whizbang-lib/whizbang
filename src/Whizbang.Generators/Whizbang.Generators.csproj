@@ -16,8 +16,10 @@
     <NoWarn>$(NoWarn);RS2008</NoWarn>
     <!-- NuGet packaging: Place in analyzers folder, not lib -->
     <!-- NoPackageAnalysis skips NU5017 false positive for analyzer packages -->
+    <!-- NoWarn NU5017 needed for .NET 10 SDK which ignores NoPackageAnalysis -->
     <IncludeBuildOutput>false</IncludeBuildOutput>
     <NoPackageAnalysis>true</NoPackageAnalysis>
+    <NoWarn>$(NoWarn);NU5017</NoWarn>
     <DevelopmentDependency>true</DevelopmentDependency>
     <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
     <!-- Enable ILRepack to merge Shared DLL into generator DLL -->
