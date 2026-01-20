@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+
+    <!-- Package as global .NET tool -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>whizbang-migrate</ToolCommandName>
+    <PackageId>SoftwareExtravaganza.Whizbang.Migrate</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>Whizbang Contributors</Authors>
+    <Description>Migration tool for converting Marten/Wolverine projects to Whizbang with git worktree isolation and journaling</Description>
+    <PackageTags>whizbang;migration;marten;wolverine;cli;roslyn</PackageTags>
+    <PackageProjectUrl>https://github.com/whizbang-lib/whizbang</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/whizbang-lib/whizbang</RepositoryUrl>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- System.CommandLine for CLI parsing -->
+    <PackageReference Include="System.CommandLine" />
+    <!-- Roslyn for code analysis and transformation -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" />
+    <!-- Git operations via LibGit2Sharp -->
+    <PackageReference Include="LibGit2Sharp" />
+  </ItemGroup>
+
+</Project>
