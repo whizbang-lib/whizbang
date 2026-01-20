@@ -73,16 +73,35 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
       // Start containers
       await _runDockerComposeAsync("up -d", cancellationToken, tempDockerComposeFile);
 
-      // Wait for emulator to be ready (check health)
-      Console.WriteLine("[DirectEmulator] Waiting for emulator to be ready (60 seconds)...");
-      await Task.Delay(TimeSpan.FromSeconds(60), cancellationToken);
-
-      // Verify emulator is up by checking docker logs
+      // Wait for emulator to be ready by polling logs until "Successfully Up!" appears
+      // SQL Server can take 60-120 seconds to start (especially on ARM64), and the emulator
+      // has built-in retries (15s each). Polling is more reliable than a fixed delay.
+      Console.WriteLine("[DirectEmulator] Waiting for emulator to be ready (polling up to 180 seconds)...");
       var containerName = $"servicebus-emulator-{_port}";
-      var logs = await _getDockerLogsAsync(containerName, cancellationToken);
-      if (!logs.Contains("Emulator Service is Successfully Up!")) {
+      var maxWaitSeconds = 180;
+      var pollIntervalSeconds = 5;
+      var elapsed = 0;
+
+      while (elapsed < maxWaitSeconds) {
+        var logs = await _getDockerLogsAsync(containerName, cancellationToken);
+        if (logs.Contains("Emulator Service is Successfully Up!")) {
+          Console.WriteLine($"[DirectEmulator] Emulator ready after {elapsed} seconds");
+          break;
+        }
+
+        if (elapsed % 30 == 0 && elapsed > 0) {
+          Console.WriteLine($"[DirectEmulator] Still waiting... ({elapsed}s elapsed)");
+        }
+
+        await Task.Delay(TimeSpan.FromSeconds(pollIntervalSeconds), cancellationToken);
+        elapsed += pollIntervalSeconds;
+      }
+
+      // Final verification
+      var finalLogs = await _getDockerLogsAsync(containerName, cancellationToken);
+      if (!finalLogs.Contains("Emulator Service is Successfully Up!")) {
         throw new InvalidOperationException(
-          $"Service Bus Emulator failed to start. Check logs:\n{logs}"
+          $"Service Bus Emulator failed to start within {maxWaitSeconds} seconds. Check logs:\n{finalLogs}"
         );
       }
 
