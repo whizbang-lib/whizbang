@@ -11,6 +11,9 @@ namespace Whizbang.Migrate.Wizard;
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
     UseStringEnumConverter = true)]
 [JsonSerializable(typeof(DecisionFile))]
+[JsonSerializable(typeof(SchemaDecisions))]
+[JsonSerializable(typeof(TenantDecisions))]
+[JsonSerializable(typeof(StreamIdDecisions))]
 internal sealed partial class DecisionFileJsonContext : JsonSerializerContext { }
 
 /// <summary>
@@ -266,6 +269,21 @@ public sealed class MigrationDecisions {
   /// DI registration decisions.
   /// </summary>
   public CategoryDecisions DiRegistration { get; set; } = new();
+
+  /// <summary>
+  /// Database schema configuration decisions.
+  /// </summary>
+  public SchemaDecisions Schema { get; set; } = new();
+
+  /// <summary>
+  /// Tenant context decisions.
+  /// </summary>
+  public TenantDecisions Tenant { get; set; } = new();
+
+  /// <summary>
+  /// Stream ID property decisions.
+  /// </summary>
+  public StreamIdDecisions StreamId { get; set; } = new();
 }
 
 /// <summary>
@@ -361,4 +379,134 @@ public enum DecisionChoice {
   /// Apply this decision to all similar items.
   /// </summary>
   ApplyToAll
+}
+
+/// <summary>
+/// Schema configuration decisions.
+/// </summary>
+public sealed class SchemaDecisions {
+  /// <summary>
+  /// The schema organization strategy.
+  /// </summary>
+  public SchemaStrategy Strategy { get; set; } = SchemaStrategy.SameDbDifferentSchema;
+
+  /// <summary>
+  /// Schema name to use (if applicable).
+  /// </summary>
+  public string SchemaName { get; set; } = "whizbang";
+
+  /// <summary>
+  /// Prefix for infrastructure tables.
+  /// </summary>
+  public string InfrastructurePrefix { get; set; } = "wb_";
+
+  /// <summary>
+  /// Prefix for perspective tables.
+  /// </summary>
+  public string PerspectivePrefix { get; set; } = "wb_per_";
+
+  /// <summary>
+  /// Connection string name to use (if different database).
+  /// </summary>
+  public string? ConnectionStringName { get; set; }
+}
+
+/// <summary>
+/// Schema organization strategy.
+/// </summary>
+public enum SchemaStrategy {
+  /// <summary>
+  /// Same database, different schema (e.g., mydb.whizbang.wb_event_store).
+  /// </summary>
+  SameDbDifferentSchema,
+
+  /// <summary>
+  /// Different database, default schema (e.g., whizbang_db.public.wb_event_store).
+  /// </summary>
+  DifferentDbDefaultSchema,
+
+  /// <summary>
+  /// Same database, same schema with prefix (e.g., mydb.public.wb_event_store).
+  /// </summary>
+  SameDbSameSchemaWithPrefix,
+
+  /// <summary>
+  /// Different database, different schema (e.g., whizbang_db.events.wb_event_store).
+  /// </summary>
+  DifferentDbDifferentSchema
+}
+
+/// <summary>
+/// Tenant context decisions.
+/// </summary>
+public sealed class TenantDecisions {
+  /// <summary>
+  /// Whether tenant context was detected in the codebase.
+  /// </summary>
+  public bool WasDetected { get; set; }
+
+  /// <summary>
+  /// The detected tenant property name (e.g., "TenantId", "OrganizationId").
+  /// </summary>
+  public string? DetectedProperty { get; set; }
+
+  /// <summary>
+  /// Whether Marten tenant features were detected.
+  /// </summary>
+  public bool UsesMartenTenantFeatures { get; set; }
+
+  /// <summary>
+  /// How tenant context should be handled.
+  /// </summary>
+  public TenantStrategy Strategy { get; set; } = TenantStrategy.ScopeField;
+
+  /// <summary>
+  /// User confirmed the tenant property choice.
+  /// </summary>
+  public bool Confirmed { get; set; }
+}
+
+/// <summary>
+/// Tenant handling strategy.
+/// </summary>
+public enum TenantStrategy {
+  /// <summary>
+  /// Store tenant context in event scope field (recommended).
+  /// </summary>
+  ScopeField,
+
+  /// <summary>
+  /// Use scoped DI with per-tenant IEventStore registration.
+  /// </summary>
+  ScopedDi,
+
+  /// <summary>
+  /// Manual configuration by the user.
+  /// </summary>
+  Manual
+}
+
+/// <summary>
+/// Stream ID property decisions.
+/// </summary>
+public sealed class StreamIdDecisions {
+  /// <summary>
+  /// Whether stream ID property was detected in the codebase.
+  /// </summary>
+  public bool WasDetected { get; set; }
+
+  /// <summary>
+  /// The detected stream ID property name (e.g., "OrderId", "StreamId").
+  /// </summary>
+  public string? DetectedProperty { get; set; }
+
+  /// <summary>
+  /// Whether the detected property is a strongly-typed ID.
+  /// </summary>
+  public bool IsStronglyTyped { get; set; }
+
+  /// <summary>
+  /// User confirmed the stream ID property choice.
+  /// </summary>
+  public bool Confirmed { get; set; }
 }
