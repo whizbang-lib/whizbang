@@ -384,4 +384,355 @@ public class EventStoreTransformerTests {
         w.Contains("Events.Append") &&
         (w.Contains("PublishAsync") || w.Contains("Dispatcher")))).IsTrue();
   }
+
+  // ============================================================
+  // Common Migration Scenarios (E01-E09)
+  // ============================================================
+
+  [Test]
+  public async Task TransformAsync_E01_StartStreamWithGuid_TransformsToAppendAsyncAsync() {
+    // Arrange - E01: StartStream with ID generation
+    var transformer = new EventStoreTransformer();
+    var sourceCode = """
+      using Marten;
+
+      public class OrderHandler {
+        private readonly IDocumentStore _store;
+
+        public async Task<Guid> CreateOrderAsync(CreateOrderCommand command, CancellationToken ct) {
+          await using var session = _store.LightweightSession();
+
+          var orderId = Guid.NewGuid();
+          session.Events.StartStream<Order>(
+              orderId,
+              new OrderCreated(orderId, command.CustomerId, command.Items)
+          );
+
+          await session.SaveChangesAsync(ct);
+          return orderId;
+        }
+      }
+
+      public class Order { }
+      public record CreateOrderCommand(Guid CustomerId, string[] Items);
+      public record OrderCreated(Guid OrderId, Guid CustomerId, string[] Items);
+      """;
+
+    // Act
+    var result = await transformer.TransformAsync(sourceCode, "Handler.cs");
+
+    // Assert
+    await Assert.That(result.TransformedCode).Contains("IEventStore");
+    await Assert.That(result.TransformedCode).DoesNotContain("LightweightSession");
+    await Assert.That(result.Warnings.Any(w => w.Contains("StartStream"))).IsTrue();
+    await Assert.That(result.Changes.Any(c =>
+        c.Description.Contains("StartStream") || c.Description.Contains("AppendAsync"))).IsTrue();
+  }
+
+  [Test]
+  public async Task TransformAsync_E02_AppendToStream_TransformsToAppendAsyncAsync() {
+    // Arrange - E02: Basic Append to existing stream
+    var transformer = new EventStoreTransformer();
+    var sourceCode = """
+      using Marten;
+
+      public class OrderHandler {
+        private readonly IDocumentStore _store;
+
+        public async Task ShipOrderAsync(Guid orderId, CancellationToken ct) {
+          await using var session = _store.LightweightSession();
+
+          session.Events.Append(orderId, new OrderShipped(orderId, DateTime.UtcNow));
+
+          await session.SaveChangesAsync(ct);
+        }
+      }
+
+      public record OrderShipped(Guid OrderId, DateTime ShippedAt);
+      """;
+
+    // Act
+    var result = await transformer.TransformAsync(sourceCode, "Handler.cs");
+
+    // Assert
+    await Assert.That(result.TransformedCode).Contains("IEventStore");
+    await Assert.That(result.TransformedCode).DoesNotContain("SaveChangesAsync");
+    await Assert.That(result.Warnings.Any(w => w.Contains("Events.Append"))).IsTrue();
+  }
+
+  [Test]
+  public async Task TransformAsync_E03_AppendExclusive_TransformsWithWarningAsync() {
+    // Arrange - E03: AppendExclusive with locking
+    var transformer = new EventStoreTransformer();
+    var sourceCode = """
+      using Marten;
+
+      public class OrderHandler {
+        private readonly IDocumentStore _store;
+
+        public async Task ProcessExclusiveAsync(Guid streamId, object @event, CancellationToken ct) {
+          await using var session = _store.LightweightSession();
+
+          // AppendExclusive takes a lock on the stream
+          session.Events.AppendExclusive(streamId, @event);
+
+          await session.SaveChangesAsync(ct);
+        }
+      }
+      """;
+
+    // Act
+    var result = await transformer.TransformAsync(sourceCode, "Handler.cs");
+
+    // Assert
+    await Assert.That(result.TransformedCode).Contains("IEventStore");
+    // Warning about AppendExclusive requiring review
+    await Assert.That(result.Warnings.Any(w =>
+        w.Contains("AppendExclusive") ||
+        w.Contains("exclusive") ||
+        w.Contains("lock"))).IsTrue();
+  }
+
+  [Test]
+  public async Task TransformAsync_E04_AppendOptimistic_TransformsWithExpectedSequenceAsync() {
+    // Arrange - E04: Optimistic concurrency append
+    var transformer = new EventStoreTransformer();
+    var sourceCode = """
+      using Marten;
+
+      public class OrderHandler {
+        private readonly IDocumentStore _store;
+
+        public async Task UpdateWithVersionAsync(Guid streamId, int expectedVersion, object @event, CancellationToken ct) {
+          await using var session = _store.LightweightSession();
+
+          session.Events.AppendOptimistic(streamId, @event);
+
+          await session.SaveChangesAsync(ct);
+        }
+      }
+      """;
+
+    // Act
+    var result = await transformer.TransformAsync(sourceCode, "Handler.cs");
+
+    // Assert
+    await Assert.That(result.TransformedCode).Contains("IEventStore");
+    // Warning about optimistic concurrency
+    await Assert.That(result.Warnings.Any(w =>
+        w.Contains("AppendOptimistic") ||
+        w.Contains("optimistic") ||
+        w.Contains("expectedSequence"))).IsTrue();
+  }
+
+  [Test]
+  public async Task TransformAsync_E05_CombGuidIdGeneration_TransformsToTrackedGuidAsync() {
+    // Arrange - E05: CombGuid ID generation
+    var transformer = new EventStoreTransformer();
+    var sourceCode = """
+      using Marten;
+      using Marten.Schema.Identity;
+
+      public class OrderHandler {
+        private readonly IDocumentStore _store;
+
+        public async Task<Guid> CreateWithCombGuidAsync(CreateCommand command, CancellationToken ct) {
+          await using var session = _store.LightweightSession();
+
+          // CombGuid generates sequential GUIDs for better index performance
+          var streamId = CombGuidIdGeneration.NewGuid();
+
+          session.Events.StartStream<MyAggregate>(streamId, new AggregateCreated(streamId));
+          await session.SaveChangesAsync(ct);
+
+          return streamId;
+        }
+      }
+
+      public class MyAggregate { }
+      public record CreateCommand();
+      public record AggregateCreated(Guid StreamId);
+      """;
+
+    // Act
+    var result = await transformer.TransformAsync(sourceCode, "Handler.cs");
+
+    // Assert
+    await Assert.That(result.TransformedCode).Contains("IEventStore");
+    // Warning about CombGuid to TrackedGuid migration
+    await Assert.That(result.Warnings.Any(w =>
+        w.Contains("CombGuid") ||
+        w.Contains("TrackedGuid") ||
+        w.Contains("sequential"))).IsTrue();
+  }
+
+  [Test]
+  public async Task TransformAsync_E06_CollisionRetry_SimplifiesToSingleAppendAsync() {
+    // Arrange - E06: Stream ID collision retry pattern
+    var transformer = new EventStoreTransformer();
+    var sourceCode = """
+      using Marten;
+
+      public class OrderHandler {
+        private readonly IDocumentStore _store;
+        private const int MaxRetryAttempts = 5;
+
+        public async Task<Guid> CreateWithRetryAsync(CreateCommand command, CancellationToken ct) {
+          for (var attempt = 0; attempt < MaxRetryAttempts; attempt++) {
+            try {
+              await using var session = _store.LightweightSession();
+
+              var streamId = Guid.NewGuid();
+              session.Events.StartStream<MyAggregate>(streamId, new AggregateCreated(streamId));
+              await session.SaveChangesAsync(ct);
+
+              return streamId;
+            }
+            catch (Exception ex) when (ex.Message.Contains("duplicate key")) {
+              if (attempt == MaxRetryAttempts - 1) throw;
+              // Retry with new ID on collision
+            }
+          }
+
+          throw new InvalidOperationException("Failed to create stream after max attempts");
+        }
+      }
+
+      public class MyAggregate { }
+      public record CreateCommand();
+      public record AggregateCreated(Guid StreamId);
+      """;
+
+    // Act
+    var result = await transformer.TransformAsync(sourceCode, "Handler.cs");
+
+    // Assert
+    await Assert.That(result.TransformedCode).Contains("IEventStore");
+    // Warning about collision retry being potentially unnecessary
+    await Assert.That(result.Warnings.Any(w =>
+        w.Contains("retry") ||
+        w.Contains("collision") ||
+        w.Contains("TrackedGuid"))).IsTrue();
+  }
+
+  [Test]
+  public async Task TransformAsync_E07_MultipleAppends_TransformsToAppendBatchAsync() {
+    // Arrange - E07: Multiple appends with single SaveChangesAsync
+    var transformer = new EventStoreTransformer();
+    var sourceCode = """
+      using Marten;
+
+      public class OrderHandler {
+        private readonly IDocumentStore _store;
+
+        public async Task ComplexOperationAsync(Guid orderId, CancellationToken ct) {
+          await using var session = _store.LightweightSession();
+
+          session.Events.Append(orderId, new OrderUpdated(orderId, "step1"));
+          session.Events.Append(orderId, new OrderUpdated(orderId, "step2"));
+          session.Events.Append(orderId, new OrderUpdated(orderId, "step3"));
+
+          // All events committed atomically
+          await session.SaveChangesAsync(ct);
+        }
+      }
+
+      public record OrderUpdated(Guid OrderId, string Step);
+      """;
+
+    // Act
+    var result = await transformer.TransformAsync(sourceCode, "Handler.cs");
+
+    // Assert
+    await Assert.That(result.TransformedCode).Contains("IEventStore");
+    // Warning about batch append pattern
+    await Assert.That(result.Warnings.Any(w =>
+        w.Contains("batch") ||
+        w.Contains("multiple") ||
+        w.Contains("AppendBatchAsync"))).IsTrue();
+  }
+
+  [Test]
+  public async Task TransformAsync_E08_BatchAppend_TransformsWithWorkCoordinatorAsync() {
+    // Arrange - E08: Batch create across multiple streams
+    var transformer = new EventStoreTransformer();
+    var sourceCode = """
+      using Marten;
+
+      public class OrderHandler {
+        private readonly IDocumentStore _store;
+
+        public async Task BatchCreateAsync(IReadOnlyList<CreateItemCommand> commands, CancellationToken ct) {
+          await using var session = _store.LightweightSession();
+
+          foreach (var command in commands) {
+            var itemId = Guid.NewGuid();
+            session.Events.StartStream<Item>(itemId, new ItemCreated(itemId, command.Name));
+          }
+
+          await session.SaveChangesAsync(ct);
+        }
+      }
+
+      public class Item { }
+      public record CreateItemCommand(string Name);
+      public record ItemCreated(Guid ItemId, string Name);
+      """;
+
+    // Act
+    var result = await transformer.TransformAsync(sourceCode, "Handler.cs");
+
+    // Assert
+    await Assert.That(result.TransformedCode).Contains("IEventStore");
+    // Warning about multi-stream transactions requiring IWorkCoordinator
+    await Assert.That(result.Warnings.Any(w =>
+        w.Contains("batch") ||
+        w.Contains("WorkCoordinator") ||
+        w.Contains("multi-stream") ||
+        w.Contains("cross-stream"))).IsTrue();
+  }
+
+  [Test]
+  public async Task TransformAsync_E09_TenantScopedSession_TransformsToScopedEventStoreAsync() {
+    // Arrange - E09: Tenant-scoped session
+    var transformer = new EventStoreTransformer();
+    var sourceCode = """
+      using Marten;
+
+      public class TenantAwareService {
+        private readonly IDocumentStore _store;
+        private readonly ITenantContext _tenantContext;
+
+        public TenantAwareService(IDocumentStore store, ITenantContext tenantContext) {
+          _store = store;
+          _tenantContext = tenantContext;
+        }
+
+        public async Task CreateAsync(CreateCommand command, CancellationToken ct) {
+          // Marten session scoped to tenant
+          await using var session = _store.LightweightSession(_tenantContext.TenantId);
+
+          var id = Guid.NewGuid();
+          session.Events.StartStream<MyAggregate>(id, new Created(id));
+          await session.SaveChangesAsync(ct);
+        }
+      }
+
+      public interface ITenantContext { string TenantId { get; } }
+      public class MyAggregate { }
+      public record CreateCommand();
+      public record Created(Guid Id);
+      """;
+
+    // Act
+    var result = await transformer.TransformAsync(sourceCode, "Service.cs");
+
+    // Assert
+    await Assert.That(result.TransformedCode).Contains("IEventStore");
+    // Warning about tenant-scoped session
+    await Assert.That(result.Warnings.Any(w =>
+        w.Contains("tenant") ||
+        w.Contains("Tenant") ||
+        w.Contains("scoped"))).IsTrue();
+  }
 }

@@ -26,8 +26,8 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
   public async Task FlushAsync_WithReturnedWork_WritesToChannelImmediatelyAsync(CancellationToken cancellationToken) {
     // Arrange
     var channelWriter = new TestWorkChannelWriter();
-    var messageId1 = System.Guid.NewGuid();
-    var messageId2 = System.Guid.NewGuid();
+    var messageId1 = System.Guid.CreateVersion7();
+    var messageId2 = System.Guid.CreateVersion7();
     var coordinator = new TestWorkCoordinator {
       WorkToReturn = [
         new OutboxWork {
@@ -56,7 +56,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     var strategy = new ScopedWorkCoordinatorStrategy(coordinator, instanceProvider, channelWriter, options);
 
     // Queue a message to trigger flush
-    var queuedMessageId = System.Guid.NewGuid();
+    var queuedMessageId = System.Guid.CreateVersion7();
     strategy.QueueOutboxMessage(new OutboxMessage {
       MessageId = queuedMessageId,
       Destination = "test-topic",
@@ -91,7 +91,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     var strategy = new ScopedWorkCoordinatorStrategy(coordinator, instanceProvider, channelWriter, options);
 
     // Queue a message to trigger flush
-    var queuedMessageId = System.Guid.NewGuid();
+    var queuedMessageId = System.Guid.CreateVersion7();
     strategy.QueueOutboxMessage(new OutboxMessage {
       MessageId = queuedMessageId,
       Destination = "test-topic",
@@ -122,15 +122,15 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     var strategy = new ScopedWorkCoordinatorStrategy(coordinator, instanceProvider, channelWriter, options);
 
     // Act - First flush with 2 messages
-    var msg1 = System.Guid.NewGuid();
-    var msg2 = System.Guid.NewGuid();
+    var msg1 = System.Guid.CreateVersion7();
+    var msg2 = System.Guid.CreateVersion7();
     coordinator.WorkToReturn = [
       new OutboxWork { MessageId = msg1, Destination = "topic1", EnvelopeType = "Whizbang.Core.Tests.Messaging.ScopedWorkCoordinatorStrategyImmediateProcessingTests+TestMessageEnvelope, Whizbang.Core.Tests",
       MessageType = "System.Text.Json.JsonElement, System.Text.Json", Envelope = _createTestEnvelope(msg1), Attempts = 0, Status = MessageProcessingStatus.None },
       new OutboxWork { MessageId = msg2, Destination = "topic1", EnvelopeType = "Whizbang.Core.Tests.Messaging.ScopedWorkCoordinatorStrategyImmediateProcessingTests+TestMessageEnvelope, Whizbang.Core.Tests",
       MessageType = "System.Text.Json.JsonElement, System.Text.Json", Envelope = _createTestEnvelope(msg2), Attempts = 0, Status = MessageProcessingStatus.None }
     ];
-    var queued1 = System.Guid.NewGuid();
+    var queued1 = System.Guid.CreateVersion7();
     strategy.QueueOutboxMessage(new OutboxMessage {
       MessageId = queued1,
       Destination = "topic1",
@@ -146,9 +146,9 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
 
     // Act - Second flush with 3 messages
-    var msg3 = System.Guid.NewGuid();
-    var msg4 = System.Guid.NewGuid();
-    var msg5 = System.Guid.NewGuid();
+    var msg3 = System.Guid.CreateVersion7();
+    var msg4 = System.Guid.CreateVersion7();
+    var msg5 = System.Guid.CreateVersion7();
     coordinator.WorkToReturn = [
       new OutboxWork { MessageId = msg3, Destination = "topic2", EnvelopeType = "Whizbang.Core.Tests.Messaging.ScopedWorkCoordinatorStrategyImmediateProcessingTests+TestMessageEnvelope, Whizbang.Core.Tests",
       MessageType = "System.Text.Json.JsonElement, System.Text.Json", Envelope = _createTestEnvelope(msg3), Attempts = 0, Status = MessageProcessingStatus.None },
@@ -157,7 +157,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
       new OutboxWork { MessageId = msg5, Destination = "topic2", EnvelopeType = "Whizbang.Core.Tests.Messaging.ScopedWorkCoordinatorStrategyImmediateProcessingTests+TestMessageEnvelope, Whizbang.Core.Tests",
       MessageType = "System.Text.Json.JsonElement, System.Text.Json", Envelope = _createTestEnvelope(msg5), Attempts = 0, Status = MessageProcessingStatus.None }
     ];
-    var queued2 = System.Guid.NewGuid();
+    var queued2 = System.Guid.CreateVersion7();
     strategy.QueueOutboxMessage(new OutboxMessage {
       MessageId = queued2,
       Destination = "topic2",
@@ -180,9 +180,9 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
   public async Task FlushAsync_WithOrderedWork_MaintainsOrderInChannelAsync(CancellationToken cancellationToken) {
     // Arrange
     var channelWriter = new TestWorkChannelWriter();
-    var messageId1 = System.Guid.NewGuid();
-    var messageId2 = System.Guid.NewGuid();
-    var messageId3 = System.Guid.NewGuid();
+    var messageId1 = System.Guid.CreateVersion7();
+    var messageId2 = System.Guid.CreateVersion7();
+    var messageId3 = System.Guid.CreateVersion7();
 
     var coordinator = new TestWorkCoordinator {
       WorkToReturn = [
@@ -199,7 +199,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
     var options = new WorkCoordinatorOptions();
     var strategy = new ScopedWorkCoordinatorStrategy(coordinator, instanceProvider, channelWriter, options);
 
-    var queuedMessageId = System.Guid.NewGuid();
+    var queuedMessageId = System.Guid.CreateVersion7();
     strategy.QueueOutboxMessage(new OutboxMessage {
       MessageId = queuedMessageId,
       Destination = "topic",
@@ -280,7 +280,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
 
   // Test helper - Mock service instance provider
   private sealed class TestServiceInstanceProvider : IServiceInstanceProvider {
-    public System.Guid InstanceId { get; } = System.Guid.NewGuid();
+    public System.Guid InstanceId { get; } = System.Guid.CreateVersion7();
     public string ServiceName { get; } = "TestService";
     public string HostName { get; } = "test-host";
     public int ProcessId { get; } = 12345;

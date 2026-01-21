@@ -6,6 +6,10 @@ namespace Whizbang.Migrate.Transformers;
 
 /// <summary>
 /// Transforms Marten projections to Whizbang perspectives.
+/// Handles:
+/// - SingleStreamProjection&lt;T&gt; → IPerspectiveFor&lt;T, ...&gt;
+/// - MultiStreamProjection&lt;T, TKey&gt; → IGlobalPerspectiveFor&lt;T&gt;
+/// - Emits warnings for Identity(), nested classes, Version, duplicates
 /// </summary>
 /// <docs>migration-guide/automated-migration</docs>
 public sealed class ProjectionToPerspectiveTransformer : ICodeTransformer {
@@ -58,6 +62,7 @@ public sealed class ProjectionToPerspectiveTransformer : ICodeTransformer {
 
       foreach (var baseType in classDecl.BaseList.Types) {
         var typeName = baseType.Type.ToString();
+        // Detect Marten projection base classes
         if (typeName.StartsWith("SingleStreamProjection<", StringComparison.Ordinal) ||
             typeName.StartsWith("MultiStreamProjection<", StringComparison.Ordinal)) {
           return true;
@@ -149,6 +154,7 @@ public sealed class ProjectionToPerspectiveTransformer : ICodeTransformer {
       foreach (var baseType in node.BaseList.Types) {
         var typeName = baseType.Type.ToString();
 
+        // Transform Marten SingleStreamProjection<T> to Whizbang IPerspectiveFor<T, ...>
         if (typeName.StartsWith("SingleStreamProjection<", StringComparison.Ordinal)) {
           // Extract aggregate type and event types from projection methods
           var aggregateType = _extractGenericArgument(typeName);
@@ -173,7 +179,9 @@ public sealed class ProjectionToPerspectiveTransformer : ICodeTransformer {
               $"Replaced '{typeName}' with '{perspectiveType}'",
               typeName,
               perspectiveType));
-        } else if (typeName.StartsWith("MultiStreamProjection<", StringComparison.Ordinal)) {
+        }
+        // Transform Marten MultiStreamProjection<T, TKey> to Whizbang IGlobalPerspectiveFor<T>
+        else if (typeName.StartsWith("MultiStreamProjection<", StringComparison.Ordinal)) {
           // Extract aggregate type
           var aggregateType = _extractGenericArgument(typeName);
 
@@ -206,10 +214,55 @@ public sealed class ProjectionToPerspectiveTransformer : ICodeTransformer {
         // Check Apply methods for [MustExist] suggestions
         _checkForMustExistSuggestions(node);
 
+        // Check for Marten-specific patterns (P03-P07)
+        _checkForMartenPatterns(node);
+
         return node.WithBaseList(newBaseList);
       }
 
       return base.VisitClassDeclaration(node);
+    }
+
+    /// <summary>
+    /// Checks for Marten-specific patterns that need warnings (P03-P07).
+    /// </summary>
+    private void _checkForMartenPatterns(ClassDeclarationSyntax classDecl) {
+      var className = classDecl.Identifier.Text;
+      var lineNumber = classDecl.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+
+      // P03: Check for Identity<T>() calls in constructor (Marten partition key pattern)
+      var constructors = classDecl.Members.OfType<ConstructorDeclarationSyntax>();
+      foreach (var constructor in constructors) {
+        var identityCalls = constructor.DescendantNodes()
+            .OfType<InvocationExpressionSyntax>()
+            .Where(inv => inv.Expression.ToString().StartsWith("Identity<", StringComparison.Ordinal));
+
+        foreach (var identityCall in identityCalls) {
+          var identityLine = identityCall.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+          _warnings.Add($"Line {identityLine}: Identity<T>() partition key extraction in {className}. " +
+              "In Whizbang, partition keys are extracted via [PartitionKey] attribute or IPartitionKeyExtractor interface. " +
+              "Review and migrate the partition key logic.");
+        }
+      }
+
+      // P04: Check if class is nested (common pattern in larger codebases)
+      var parentClass = classDecl.Parent as ClassDeclarationSyntax;
+      if (parentClass != null) {
+        _warnings.Add($"Line {lineNumber}: Found nested projection class '{className}' inside '{parentClass.Identifier.Text}'. " +
+            "Consider flattening to a top-level perspective class for better discoverability.");
+      }
+
+      // P07: Check for duplicate/cross-service comments
+      var classText = classDecl.ToFullString();
+      if (classText.Contains("Duplicate of") ||
+          classText.Contains("duplicate of") ||
+          classText.Contains("Copy of") ||
+          classText.Contains("copy of") ||
+          classText.Contains("Same as") ||
+          classText.Contains("same as")) {
+        _warnings.Add($"Line {lineNumber}: Potential cross-service duplicate projection detected in '{className}'. " +
+            "Consider consolidating to a single source of truth to avoid synchronization issues.");
+      }
     }
 
     /// <summary>

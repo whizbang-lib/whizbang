@@ -86,12 +86,12 @@ public class ScopedLensQueryIntegrationTests : EFCoreTestBase {
 
     // Seed initial data
     await using (var seedContext = CreateDbContext()) {
-      var orderId = TestOrderId.From(Guid.NewGuid());
+      var orderId = TestOrderId.New();
       await SeedOrderAsync(seedContext, orderId, 100.00m, "Created");
     }
 
     // Act - Query through IScopedLensQuery (auto-creates scope)
-    var orderId2 = TestOrderId.From(Guid.NewGuid());
+    var orderId2 = TestOrderId.New();
     var result = await scopedQuery.GetByIdAsync(orderId2.Value);
 
     // Assert - Should return null (no order with this ID)
@@ -119,9 +119,9 @@ public class ScopedLensQueryIntegrationTests : EFCoreTestBase {
 
     // Seed test data
     await using (var seedContext = CreateDbContext()) {
-      await SeedOrderAsync(seedContext, TestOrderId.From(Guid.NewGuid()), 100.00m, "Created");
-      await SeedOrderAsync(seedContext, TestOrderId.From(Guid.NewGuid()), 200.00m, "Shipped");
-      await SeedOrderAsync(seedContext, TestOrderId.From(Guid.NewGuid()), 300.00m, "Delivered");
+      await SeedOrderAsync(seedContext, TestOrderId.New(), 100.00m, "Created");
+      await SeedOrderAsync(seedContext, TestOrderId.New(), 200.00m, "Shipped");
+      await SeedOrderAsync(seedContext, TestOrderId.New(), 300.00m, "Delivered");
     }
 
     // Act - Execute query through IScopedLensQuery
@@ -150,9 +150,9 @@ public class ScopedLensQueryIntegrationTests : EFCoreTestBase {
 
     // Seed test data
     await using (var seedContext = CreateDbContext()) {
-      await SeedOrderAsync(seedContext, TestOrderId.From(Guid.NewGuid()), 100.00m, "Created");
-      await SeedOrderAsync(seedContext, TestOrderId.From(Guid.NewGuid()), 200.00m, "Shipped");
-      await SeedOrderAsync(seedContext, TestOrderId.From(Guid.NewGuid()), 300.00m, "Delivered");
+      await SeedOrderAsync(seedContext, TestOrderId.New(), 100.00m, "Created");
+      await SeedOrderAsync(seedContext, TestOrderId.New(), 200.00m, "Shipped");
+      await SeedOrderAsync(seedContext, TestOrderId.New(), 300.00m, "Delivered");
     }
 
     // Act - Create scope and run multiple queries within it
@@ -185,7 +185,7 @@ public class ScopedLensQueryIntegrationTests : EFCoreTestBase {
 
     // Seed test data
     await using (var seedContext = CreateDbContext()) {
-      await SeedOrderAsync(seedContext, TestOrderId.From(Guid.NewGuid()), 100.00m, "Created");
+      await SeedOrderAsync(seedContext, TestOrderId.New(), 100.00m, "Created");
     }
 
     // Act - Create two separate scopes
@@ -211,7 +211,7 @@ public class ScopedLensQueryIntegrationTests : EFCoreTestBase {
 
     // Seed test data
     await using (var seedContext = CreateDbContext()) {
-      await SeedOrderAsync(seedContext, TestOrderId.From(Guid.NewGuid()), 100.00m, "Created");
+      await SeedOrderAsync(seedContext, TestOrderId.New(), 100.00m, "Created");
     }
 
     // Act - Create scope, use it, and dispose
@@ -237,9 +237,9 @@ public class ScopedLensQueryIntegrationTests : EFCoreTestBase {
 
     // Seed test data
     await using (var seedContext = CreateDbContext()) {
-      await SeedOrderAsync(seedContext, TestOrderId.From(Guid.NewGuid()), 100.00m, "Created");
-      await SeedOrderAsync(seedContext, TestOrderId.From(Guid.NewGuid()), 200.00m, "Shipped");
-      await SeedOrderAsync(seedContext, TestOrderId.From(Guid.NewGuid()), 300.00m, "Delivered");
+      await SeedOrderAsync(seedContext, TestOrderId.New(), 100.00m, "Created");
+      await SeedOrderAsync(seedContext, TestOrderId.New(), 200.00m, "Shipped");
+      await SeedOrderAsync(seedContext, TestOrderId.New(), 300.00m, "Delivered");
     }
 
     // Act - Stream results through IScopedLensQuery

@@ -35,6 +35,9 @@ public sealed class EventStoreTransformer : ICodeTransformer {
           warnings));
     }
 
+    // Add Marten-specific pattern warnings
+    _addMartenPatternWarnings(root, warnings);
+
     // Apply transformations
     var newRoot = root;
 
@@ -79,6 +82,120 @@ public sealed class EventStoreTransformer : ICodeTransformer {
         .Any(u => u.Name?.ToString()?.StartsWith("Marten", StringComparison.Ordinal) == true);
 
     return hasDocumentStore || hasSessionEvents || hasMartenUsing;
+  }
+
+  private static void _addMartenPatternWarnings(SyntaxNode root, List<string> warnings) {
+    var invocations = root.DescendantNodes().OfType<InvocationExpressionSyntax>();
+
+    foreach (var invocation in invocations) {
+      var expressionText = invocation.Expression.ToString();
+      var lineNumber = invocation.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+
+      // E03: AppendExclusive detection
+      if (expressionText.Contains("AppendExclusive")) {
+        warnings.Add($"Line {lineNumber}: AppendExclusive() found. In Whizbang, exclusive locking is handled " +
+            "differently. Consider using optimistic concurrency with expectedSequence parameter on AppendAsync, " +
+            "or use distributed locking if exclusive access is truly required.");
+      }
+
+      // E04: AppendOptimistic detection
+      if (expressionText.Contains("AppendOptimistic")) {
+        warnings.Add($"Line {lineNumber}: AppendOptimistic() found. In Whizbang, use AppendAsync with the " +
+            "expectedSequence parameter for optimistic concurrency: " +
+            "await _eventStore.AppendAsync(streamId, events, expectedSequence, ct);");
+      }
+
+      // E05: CombGuidIdGeneration detection
+      if (expressionText.Contains("CombGuidIdGeneration")) {
+        warnings.Add($"Line {lineNumber}: CombGuidIdGeneration found. In Whizbang, use TrackedGuid.NewMedo() " +
+            "for sequential GUIDs with sub-millisecond precision. This provides similar benefits to Marten's " +
+            "CombGuid but with UUIDv7 compliance.");
+      }
+    }
+
+    // E06: Collision retry pattern (for loop with Guid.NewGuid)
+    var forStatements = root.DescendantNodes().OfType<ForStatementSyntax>();
+    foreach (var forLoop in forStatements) {
+      var bodyText = forLoop.ToString();
+      if ((bodyText.Contains("Guid.NewGuid") || bodyText.Contains("StreamId")) &&
+          (bodyText.Contains("retry") || bodyText.Contains("Retry") ||
+           bodyText.Contains("attempt") || bodyText.Contains("collision") ||
+           bodyText.Contains("duplicate key"))) {
+        var lineNumber = forLoop.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+        warnings.Add($"Line {lineNumber}: GUID collision retry pattern detected. TrackedGuid.NewMedo() " +
+            "uses timestamp-based UUIDs that are virtually collision-free, making retry logic typically " +
+            "unnecessary. Consider simplifying to a single ID generation call.");
+      }
+    }
+
+    // E07: Multiple consecutive Append calls (batch pattern)
+    var statements = root.DescendantNodes().OfType<BlockSyntax>()
+        .SelectMany(b => b.Statements);
+    var consecutiveAppends = 0;
+    ExpressionStatementSyntax? firstAppend = null;
+    foreach (var statement in statements) {
+      if (statement is ExpressionStatementSyntax expr &&
+          expr.Expression.ToString().Contains(".Events.Append")) {
+        consecutiveAppends++;
+        firstAppend ??= expr;
+      } else if (consecutiveAppends > 1 && firstAppend != null) {
+        var lineNumber = firstAppend.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+        warnings.Add($"Line {lineNumber}: Multiple consecutive Append calls detected. Consider using " +
+            "batch append with AppendBatchAsync for better performance, or use IDispatcher.PublishAsync " +
+            "for each event to leverage the built-in outbox.");
+        consecutiveAppends = 0;
+        firstAppend = null;
+      } else {
+        consecutiveAppends = 0;
+        firstAppend = null;
+      }
+    }
+    // Check final batch
+    if (consecutiveAppends > 1 && firstAppend != null) {
+      var lineNumber = firstAppend.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+      warnings.Add($"Line {lineNumber}: Multiple consecutive Append calls detected. Consider using " +
+          "batch append with AppendBatchAsync for better performance.");
+    }
+
+    // E08: WorkCoordinator or batch processing patterns (foreach with StartStream)
+    var foreachStatements = root.DescendantNodes().OfType<ForEachStatementSyntax>();
+    foreach (var foreachLoop in foreachStatements) {
+      var bodyText = foreachLoop.ToString();
+      if (bodyText.Contains("StartStream") || bodyText.Contains(".Events.Append")) {
+        var lineNumber = foreachLoop.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+        warnings.Add($"Line {lineNumber}: Batch processing with multiple stream operations detected. " +
+            "In Whizbang, use IWorkCoordinator with Perspectives for cross-stream or multi-stream " +
+            "processing. Each perspective handles its own stream automatically.");
+      }
+    }
+
+    // Also check for explicit WorkCoordinator or BatchProcessor references
+    var classDeclarations = root.DescendantNodes().OfType<ClassDeclarationSyntax>();
+    foreach (var classDecl in classDeclarations) {
+      var classText = classDecl.ToString();
+      if (classText.Contains("WorkCoordinator") || classText.Contains("BatchProcessor")) {
+        var lineNumber = classDecl.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+        warnings.Add($"Line {lineNumber}: WorkCoordinator or BatchProcessor pattern detected. " +
+            "In Whizbang, use IWorkCoordinator for cross-stream coordination.");
+      }
+    }
+
+    // E09: Tenant-scoped sessions (LightweightSession with tenant parameter or ForTenant)
+    var sessionInvocations = root.DescendantNodes()
+        .OfType<InvocationExpressionSyntax>()
+        .Where(inv => {
+          var text = inv.Expression.ToString();
+          return text.Contains("ForTenant") ||
+                 text.Contains("SetTenantId") ||
+                 (text.Contains("LightweightSession") && inv.ArgumentList.Arguments.Count > 0);
+        });
+
+    foreach (var tenantInvocation in sessionInvocations) {
+      var lineNumber = tenantInvocation.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+      warnings.Add($"Line {lineNumber}: Tenant-scoped session detected. In Whizbang, multi-tenancy " +
+          "is handled via scoped IEventStore registration and tenant context. Configure tenant " +
+          "isolation in your DI setup rather than per-operation tenant switching.");
+    }
   }
 
   private static SyntaxNode _transformUsings(SyntaxNode root, List<CodeChange> changes) {

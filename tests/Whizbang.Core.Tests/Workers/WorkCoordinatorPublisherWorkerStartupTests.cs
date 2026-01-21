@@ -115,9 +115,9 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     var instanceProvider = _createTestInstanceProvider();
 
     // 3 pending outbox messages to be claimed on startup
-    var message1Id = Guid.NewGuid();
-    var message2Id = Guid.NewGuid();
-    var message3Id = Guid.NewGuid();
+    var message1Id = Guid.CreateVersion7();
+    var message2Id = Guid.CreateVersion7();
+    var message3Id = Guid.CreateVersion7();
 
     workCoordinator.WorkToReturn = [
       _createOutboxWork(message1Id, "products"),
@@ -169,7 +169,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     var databaseReadiness = new TestDatabaseReadinessCheck { IsReady = false }; // Database NOT ready
     var instanceProvider = _createTestInstanceProvider();
 
-    workCoordinator.WorkToReturn = [_createOutboxWork(Guid.NewGuid(), "products")];
+    workCoordinator.WorkToReturn = [_createOutboxWork(Guid.CreateVersion7(), "products")];
 
     var services = _createServiceCollection(workCoordinator, publishStrategy, databaseReadiness, instanceProvider);
     var worker = new WorkCoordinatorPublisherWorker(
@@ -209,7 +209,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     // Create a coordinator that throws on first call, then succeeds
     var throwingCoordinator = new ThrowingWorkCoordinator {
       ThrowOnFirstCall = true,
-      WorkToReturn = [_createOutboxWork(Guid.NewGuid(), "products")]
+      WorkToReturn = [_createOutboxWork(Guid.CreateVersion7(), "products")]
     };
 
     var services = _createServiceCollection(throwingCoordinator, publishStrategy, databaseReadiness, instanceProvider);
@@ -286,7 +286,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
 
     // 12 pending messages (like the user's seeding scenario)
     for (int i = 0; i < 12; i++) {
-      workCoordinator.WorkToReturn.Add(_createOutboxWork(Guid.NewGuid(), "products"));
+      workCoordinator.WorkToReturn.Add(_createOutboxWork(Guid.CreateVersion7(), "products"));
     }
 
     var services = _createServiceCollection(workCoordinator, publishStrategy, databaseReadiness, instanceProvider);
@@ -326,7 +326,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",
       Envelope = _createTestEnvelope(messageId),
-      StreamId = Guid.NewGuid(),
+      StreamId = Guid.CreateVersion7(),
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,

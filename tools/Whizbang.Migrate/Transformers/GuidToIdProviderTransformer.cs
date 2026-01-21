@@ -90,6 +90,8 @@ public sealed class GuidToIdProviderTransformer : ICodeTransformer {
 
     var newUsing = SyntaxFactory.UsingDirective(
             SyntaxFactory.ParseName("Whizbang.Core"))
+        .WithUsingKeyword(SyntaxFactory.Token(SyntaxKind.UsingKeyword)
+            .WithTrailingTrivia(SyntaxFactory.Space))
         .WithTrailingTrivia(SyntaxFactory.CarriageReturnLineFeed);
 
     usings.Insert(insertIndex, newUsing);
@@ -152,11 +154,16 @@ public sealed class GuidToIdProviderTransformer : ICodeTransformer {
             .Any(p => p.Type?.ToString() == "IWhizbangIdProvider");
 
         if (!hasIdProvider) {
-          // Add IWhizbangIdProvider parameter
+          // Add IWhizbangIdProvider parameter with proper spacing
           var newParam = SyntaxFactory.Parameter(
                   SyntaxFactory.Identifier("idProvider"))
-              .WithType(SyntaxFactory.ParseTypeName("IWhizbangIdProvider ")
+              .WithType(SyntaxFactory.ParseTypeName("IWhizbangIdProvider")
                   .WithTrailingTrivia(SyntaxFactory.Space));
+
+          // Add leading space if there are existing parameters (for ", " spacing after comma)
+          if (node.ParameterList.Parameters.Count > 0) {
+            newParam = newParam.WithLeadingTrivia(SyntaxFactory.Space);
+          }
 
           var newParams = node.ParameterList.Parameters.Add(newParam);
           var newParamList = node.ParameterList.WithParameters(newParams);
@@ -202,10 +209,16 @@ public sealed class GuidToIdProviderTransformer : ICodeTransformer {
             .Any(p => p.Type?.ToString() == "IWhizbangIdProvider");
 
         if (!hasIdProvider) {
+          // Add IWhizbangIdProvider parameter with proper spacing
           var newParam = SyntaxFactory.Parameter(
                   SyntaxFactory.Identifier("idProvider"))
-              .WithType(SyntaxFactory.ParseTypeName("IWhizbangIdProvider ")
+              .WithType(SyntaxFactory.ParseTypeName("IWhizbangIdProvider")
                   .WithTrailingTrivia(SyntaxFactory.Space));
+
+          // Add leading space if there are existing parameters (for ", " spacing after comma)
+          if (node.ParameterList.Parameters.Count > 0) {
+            newParam = newParam.WithLeadingTrivia(SyntaxFactory.Space);
+          }
 
           var newParams = node.ParameterList.Parameters.Add(newParam);
           var newParamList = node.ParameterList.WithParameters(newParams);
