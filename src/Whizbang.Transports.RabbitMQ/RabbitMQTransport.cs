@@ -160,10 +160,10 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
         properties.Headers["CausationId"] = causationId.Value.Value.ToString();
       }
 
-      // Add custom metadata
+      // Add custom metadata (convert JsonElement to RabbitMQ-compatible types)
       if (destination.Metadata != null) {
         foreach (var (key, value) in destination.Metadata) {
-          properties.Headers[key] = value;
+          properties.Headers[key] = _convertJsonElementToRabbitMqValue(value);
         }
       }
 
@@ -475,6 +475,28 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
       "Request/response pattern is not supported by RabbitMQ transport in v0.1.0. " +
       "Use publish/subscribe pattern instead."
     );
+  }
+
+  /// <summary>
+  /// Converts a JsonElement to a RabbitMQ-compatible header value.
+  /// RabbitMQ headers support: string, int, long, bool, byte[], and nested tables.
+  /// </summary>
+  private static object? _convertJsonElementToRabbitMqValue(JsonElement element) {
+    return element.ValueKind switch {
+      JsonValueKind.String => element.GetString(),
+      JsonValueKind.Number when element.TryGetInt32(out var i) => i,
+      JsonValueKind.Number when element.TryGetInt64(out var l) => l,
+      JsonValueKind.Number => element.GetDouble(),
+      JsonValueKind.True => true,
+      JsonValueKind.False => false,
+      JsonValueKind.Null => null,
+      JsonValueKind.Array => element.EnumerateArray()
+        .Select(_convertJsonElementToRabbitMqValue)
+        .ToList(),
+      JsonValueKind.Object => element.EnumerateObject()
+        .ToDictionary(p => p.Name, p => _convertJsonElementToRabbitMqValue(p.Value)),
+      _ => element.GetRawText() // Fallback to string representation
+    };
   }
 
   public async ValueTask DisposeAsync() {
