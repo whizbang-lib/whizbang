@@ -44,6 +44,11 @@ public class ScopedLensFactoryGenerator : IIncrementalGenerator {
       return null;
     }
 
+    // Only process public types to avoid discovering test types
+    if (typeSymbol.DeclaredAccessibility != Accessibility.Public) {
+      return null;
+    }
+
     // Find ILensQuery<TModel> interface - check by name and namespace
     var lensInterface = typeSymbol.AllInterfaces
         .FirstOrDefault(i =>
@@ -118,7 +123,7 @@ public class ScopedLensFactoryGenerator : IIncrementalGenerator {
     sb.AppendLine("/// Auto-generated registry of lens types implementing ILensQuery.");
     sb.AppendLine("/// Provides AOT-compatible lens discovery and scope property information.");
     sb.AppendLine("/// </summary>");
-    sb.AppendLine("public static class LensRegistry {");
+    sb.AppendLine("file static class LensRegistry {");
     sb.AppendLine("  /// <summary>");
     sb.AppendLine("  /// All registered lens entries.");
     sb.AppendLine("  /// </summary>");
@@ -152,7 +157,7 @@ public class ScopedLensFactoryGenerator : IIncrementalGenerator {
     sb.AppendLine("/// <summary>");
     sb.AppendLine("/// Registration entry for a lens type with scope information.");
     sb.AppendLine("/// </summary>");
-    sb.AppendLine("public sealed record LensRegistration {");
+    sb.AppendLine("file sealed record LensRegistration {");
     sb.AppendLine("  /// <summary>The lens type (interface or class).</summary>");
     sb.AppendLine("  public required Type LensType { get; init; }");
     sb.AppendLine();

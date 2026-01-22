@@ -43,6 +43,11 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
       return null;
     }
 
+    // Only process public types to avoid discovering test types
+    if (typeSymbol.DeclaredAccessibility != Accessibility.Public) {
+      return null;
+    }
+
     // Find MessageTagAttribute or any derived attribute
     var tagAttribute = typeSymbol.GetAttributes()
         .FirstOrDefault(a => _inheritsFromMessageTagAttribute(a.AttributeClass));
@@ -151,7 +156,7 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("/// Auto-generated registry of message types with tag attributes.");
     sb.AppendLine("/// Provides AOT-compatible tag discovery with pre-compiled payload builders.");
     sb.AppendLine("/// </summary>");
-    sb.AppendLine("public static class MessageTagRegistry {");
+    sb.AppendLine("internal static class MessageTagRegistry {");
     sb.AppendLine("  /// <summary>");
     sb.AppendLine("  /// All registered message tag entries.");
     sb.AppendLine("  /// </summary>");
