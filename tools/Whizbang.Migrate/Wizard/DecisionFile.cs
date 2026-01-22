@@ -14,6 +14,7 @@ namespace Whizbang.Migrate.Wizard;
 [JsonSerializable(typeof(SchemaDecisions))]
 [JsonSerializable(typeof(TenantDecisions))]
 [JsonSerializable(typeof(StreamIdDecisions))]
+[JsonSerializable(typeof(RoutingDecisions))]
 internal sealed partial class DecisionFileJsonContext : JsonSerializerContext { }
 
 /// <summary>
@@ -284,6 +285,11 @@ public sealed class MigrationDecisions {
   /// Stream ID property decisions.
   /// </summary>
   public StreamIdDecisions StreamId { get; set; } = new();
+
+  /// <summary>
+  /// Routing configuration decisions.
+  /// </summary>
+  public RoutingDecisions Routing { get; set; } = new();
 }
 
 /// <summary>
@@ -509,4 +515,83 @@ public sealed class StreamIdDecisions {
   /// User confirmed the stream ID property choice.
   /// </summary>
   public bool Confirmed { get; set; }
+}
+
+/// <summary>
+/// Routing configuration decisions.
+/// </summary>
+public sealed class RoutingDecisions {
+  /// <summary>
+  /// Domains owned by this service.
+  /// Commands to owned domains are routed to this service's inbox.
+  /// </summary>
+  public List<string> OwnedDomains { get; set; } = [];
+
+  /// <summary>
+  /// Domains detected in the codebase (for user selection).
+  /// </summary>
+  public List<string> DetectedDomains { get; set; } = [];
+
+  /// <summary>
+  /// The inbox routing strategy to use.
+  /// </summary>
+  public InboxStrategyChoice InboxStrategy { get; set; } = InboxStrategyChoice.SharedTopic;
+
+  /// <summary>
+  /// Custom inbox topic name (when using SharedTopic strategy).
+  /// </summary>
+  public string? InboxTopic { get; set; }
+
+  /// <summary>
+  /// Custom inbox suffix (when using DomainTopics strategy).
+  /// </summary>
+  public string? InboxSuffix { get; set; }
+
+  /// <summary>
+  /// The outbox routing strategy to use.
+  /// </summary>
+  public OutboxStrategyChoice OutboxStrategy { get; set; } = OutboxStrategyChoice.DomainTopics;
+
+  /// <summary>
+  /// Custom outbox topic name (when using SharedTopic strategy).
+  /// </summary>
+  public string? OutboxTopic { get; set; }
+
+  /// <summary>
+  /// User confirmed the routing configuration.
+  /// </summary>
+  public bool Confirmed { get; set; }
+}
+
+/// <summary>
+/// Inbox routing strategy choice.
+/// </summary>
+public enum InboxStrategyChoice {
+  /// <summary>
+  /// All commands route to a single shared topic with broker-side filtering.
+  /// Default strategy - minimizes topic count.
+  /// </summary>
+  SharedTopic,
+
+  /// <summary>
+  /// Each domain has its own inbox topic.
+  /// JDNext-style - explicit inbox per domain.
+  /// </summary>
+  DomainTopics
+}
+
+/// <summary>
+/// Outbox routing strategy choice.
+/// </summary>
+public enum OutboxStrategyChoice {
+  /// <summary>
+  /// Each domain publishes to its own topic.
+  /// Default strategy - clear domain separation.
+  /// </summary>
+  DomainTopics,
+
+  /// <summary>
+  /// All events publish to a single shared topic with metadata.
+  /// </summary>
+  SharedTopic
 }
