@@ -46,6 +46,7 @@
     <Project Path="src/Whizbang.Generators.Shared/Whizbang.Generators.Shared.csproj" />
     <Project Path="src/Whizbang.Generators/Whizbang.Generators.csproj" />
     <Project Path="src/Whizbang.Hosting.Azure.ServiceBus/Whizbang.Hosting.Azure.ServiceBus.csproj" />
+    <Project Path="src/Whizbang.Observability/Whizbang.Observability.csproj" />
     <Project Path="src/Whizbang.Transports.AzureServiceBus/Whizbang.Transports.AzureServiceBus.csproj" />
   </Folder>
   <Folder Name="/test-diagnostics/">
