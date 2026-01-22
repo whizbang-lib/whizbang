@@ -1,10 +1,11 @@
+using System.Diagnostics.CodeAnalysis;
 using Whizbang.Core.Audit;
 
 namespace Whizbang.Core.Attributes;
 
 /// <summary>
-/// Marks an event type for selective auditing.
-/// Events with this attribute are captured by selective audit perspectives.
+/// Marks an event type for selective auditing via the message tag system.
+/// Events with this attribute are captured by audit hooks registered with TagOptions.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -12,22 +13,36 @@ namespace Whizbang.Core.Attributes;
 /// The <see cref="Reason"/> property documents why the event requires auditing.
 /// </para>
 /// <para>
-/// For auditing all events, use a global audit perspective without checking for this attribute.
+/// This attribute inherits from <see cref="MessageTagAttribute"/> to integrate with
+/// the message tag hook system. Register an <c>IMessageTagHook&lt;AuditEventAttribute&gt;</c>
+/// to capture audited events.
 /// </para>
 /// </remarks>
 /// <example>
 /// <code>
+/// // Mark an event for auditing
 /// [AuditEvent(Reason = "PII access", Level = AuditLevel.Warning)]
-/// public record CustomerDataViewed(Guid CustomerId, string ViewedBy);
+/// public record CustomerDataViewed(Guid CustomerId, string ViewedBy) : IEvent;
 ///
-/// [AuditEvent(Reason = "Payment processed")]
-/// public record PaymentCompleted(Guid PaymentId, decimal Amount);
+/// // Register audit hook
+/// services.AddWhizbang(options => {
+///   options.Tags.UseHook&lt;AuditEventAttribute, AuditTagHook&gt;();
+/// });
 /// </code>
 /// </example>
 /// <docs>core-concepts/audit-logging#selective-auditing</docs>
 /// <tests>Whizbang.Core.Tests/Audit/AuditEventAttributeTests.cs</tests>
 [AttributeUsage(AttributeTargets.Class | AttributeTargets.Struct, AllowMultiple = false, Inherited = true)]
-public sealed class AuditEventAttribute : Attribute {
+public sealed class AuditEventAttribute : MessageTagAttribute {
+  /// <summary>
+  /// Creates a new audit event attribute with default tag "audit".
+  /// </summary>
+  [SetsRequiredMembers]
+  public AuditEventAttribute() {
+    Tag = "audit";
+    IncludeEvent = true; // Always include full event body for audit
+  }
+
   /// <summary>
   /// Optional reason documenting why this event requires auditing.
   /// Stored in <see cref="AuditLogEntry.AuditReason"/>.

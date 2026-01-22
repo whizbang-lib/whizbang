@@ -18,9 +18,27 @@ namespace Whizbang.Core.Tests.Audit;
 public class AuditEventAttributeTests {
 
   [Test]
-  public async Task AuditEventAttribute_InheritsFromAttributeAsync() {
+  public async Task AuditEventAttribute_InheritsFromMessageTagAttributeAsync() {
     // Assert
-    await Assert.That(typeof(AuditEventAttribute).IsSubclassOf(typeof(Attribute))).IsTrue();
+    await Assert.That(typeof(AuditEventAttribute).IsSubclassOf(typeof(MessageTagAttribute))).IsTrue();
+  }
+
+  [Test]
+  public async Task AuditEventAttribute_Tag_DefaultsToAuditAsync() {
+    // Arrange & Act
+    var attr = new AuditEventAttribute();
+
+    // Assert
+    await Assert.That(attr.Tag).IsEqualTo("audit");
+  }
+
+  [Test]
+  public async Task AuditEventAttribute_IncludeEvent_DefaultsToTrueAsync() {
+    // Arrange & Act
+    var attr = new AuditEventAttribute();
+
+    // Assert
+    await Assert.That(attr.IncludeEvent).IsTrue();
   }
 
   [Test]
