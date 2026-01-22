@@ -47,6 +47,7 @@
     <Project Path="src/Whizbang.Generators/Whizbang.Generators.csproj" />
     <Project Path="src/Whizbang.Hosting.Azure.ServiceBus/Whizbang.Hosting.Azure.ServiceBus.csproj" />
     <Project Path="src/Whizbang.Observability/Whizbang.Observability.csproj" />
+    <Project Path="src/Whizbang.SignalR/Whizbang.SignalR.csproj" />
     <Project Path="src/Whizbang.Transports.AzureServiceBus/Whizbang.Transports.AzureServiceBus.csproj" />
   </Folder>
   <Folder Name="/test-diagnostics/">
@@ -68,6 +69,7 @@
     <Project Path="tests/Whizbang.Partitioning.Tests/Whizbang.Partitioning.Tests.csproj" />
     <Project Path="tests/Whizbang.Policies.Tests/Whizbang.Policies.Tests.csproj" />
     <Project Path="tests/Whizbang.Sequencing.Tests/Whizbang.Sequencing.Tests.csproj" />
+    <Project Path="tests/Whizbang.SignalR.Tests/Whizbang.SignalR.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.RabbitMQ.Tests/Whizbang.Transports.RabbitMQ.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.Tests/Whizbang.Transports.Tests.csproj" />
   </Folder>
