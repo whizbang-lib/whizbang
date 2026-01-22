@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Generic;
+using System.Reflection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core.Lenses;
+using Whizbang.Core.Security;
 
 namespace Whizbang.Core.Tests.Lenses;
 
@@ -25,7 +27,111 @@ public class ScopedLensFactoryTests {
   [Test]
   public async Task IScopedLensFactory_HasGetLensMethodAsync() {
     // Arrange
-    var method = typeof(IScopedLensFactory).GetMethod("GetLens");
+    var method = typeof(IScopedLensFactory).GetMethod("GetLens", [typeof(string)]);
+
+    // Assert
+    await Assert.That(method).IsNotNull();
+    await Assert.That(method!.IsGenericMethod).IsTrue();
+  }
+
+  // === New Composable Filter API Tests ===
+
+  [Test]
+  public async Task IScopedLensFactory_HasGetLens_ScopeFilter_MethodAsync() {
+    // Arrange
+    var method = typeof(IScopedLensFactory).GetMethod("GetLens", [typeof(ScopeFilter)]);
+
+    // Assert
+    await Assert.That(method).IsNotNull();
+    await Assert.That(method!.IsGenericMethod).IsTrue();
+  }
+
+  [Test]
+  public async Task IScopedLensFactory_HasGetLens_ScopeFilter_Permission_MethodAsync() {
+    // Arrange
+    var method = typeof(IScopedLensFactory).GetMethod("GetLens", [typeof(ScopeFilter), typeof(Permission)]);
+
+    // Assert
+    await Assert.That(method).IsNotNull();
+    await Assert.That(method!.IsGenericMethod).IsTrue();
+  }
+
+  [Test]
+  public async Task IScopedLensFactory_HasGetLens_ScopeFilter_PermissionArray_MethodAsync() {
+    // Arrange
+    var method = typeof(IScopedLensFactory).GetMethod("GetLens", [typeof(ScopeFilter), typeof(Permission[])]);
+
+    // Assert
+    await Assert.That(method).IsNotNull();
+    await Assert.That(method!.IsGenericMethod).IsTrue();
+  }
+
+  // === Convenience Method Tests ===
+
+  [Test]
+  public async Task IScopedLensFactory_HasGetGlobalLensMethodAsync() {
+    // Arrange
+    var method = typeof(IScopedLensFactory).GetMethod("GetGlobalLens");
+
+    // Assert
+    await Assert.That(method).IsNotNull();
+    await Assert.That(method!.IsGenericMethod).IsTrue();
+  }
+
+  [Test]
+  public async Task IScopedLensFactory_HasGetTenantLensMethodAsync() {
+    // Arrange
+    var method = typeof(IScopedLensFactory).GetMethod("GetTenantLens");
+
+    // Assert
+    await Assert.That(method).IsNotNull();
+    await Assert.That(method!.IsGenericMethod).IsTrue();
+  }
+
+  [Test]
+  public async Task IScopedLensFactory_HasGetUserLensMethodAsync() {
+    // Arrange
+    var method = typeof(IScopedLensFactory).GetMethod("GetUserLens");
+
+    // Assert
+    await Assert.That(method).IsNotNull();
+    await Assert.That(method!.IsGenericMethod).IsTrue();
+  }
+
+  [Test]
+  public async Task IScopedLensFactory_HasGetOrganizationLensMethodAsync() {
+    // Arrange
+    var method = typeof(IScopedLensFactory).GetMethod("GetOrganizationLens");
+
+    // Assert
+    await Assert.That(method).IsNotNull();
+    await Assert.That(method!.IsGenericMethod).IsTrue();
+  }
+
+  [Test]
+  public async Task IScopedLensFactory_HasGetCustomerLensMethodAsync() {
+    // Arrange
+    var method = typeof(IScopedLensFactory).GetMethod("GetCustomerLens");
+
+    // Assert
+    await Assert.That(method).IsNotNull();
+    await Assert.That(method!.IsGenericMethod).IsTrue();
+  }
+
+  [Test]
+  public async Task IScopedLensFactory_HasGetPrincipalLensMethodAsync() {
+    // Arrange
+    var method = typeof(IScopedLensFactory).GetMethod("GetPrincipalLens");
+
+    // Assert
+    await Assert.That(method).IsNotNull();
+    await Assert.That(method!.IsGenericMethod).IsTrue();
+  }
+
+  [Test]
+  public async Task IScopedLensFactory_HasGetMyOrSharedLensMethodAsync() {
+    // Arrange
+    var method = typeof(IScopedLensFactory).GetMethod("GetMyOrSharedLens");
 
     // Assert
     await Assert.That(method).IsNotNull();
