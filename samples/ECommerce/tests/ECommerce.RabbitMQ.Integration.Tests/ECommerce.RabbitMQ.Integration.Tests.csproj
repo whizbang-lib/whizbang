@@ -7,6 +7,8 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!-- Test fixtures use Guid.NewGuid() for test IDs - acceptable in test code -->
+    <NoWarn>$(NoWarn);WHIZ055;WHIZ056</NoWarn>
 
     <!-- Enable source generator output for debugging -->
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>

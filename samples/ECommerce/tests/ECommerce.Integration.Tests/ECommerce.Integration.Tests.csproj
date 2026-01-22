@@ -7,7 +7,7 @@
     <Nullable>enable</Nullable>
     <IsTestProject>true</IsTestProject>
     <IsPackable>false</IsPackable>
-    <NoWarn>$(NoWarn);TUnit0015;TUnit0023</NoWarn>
+    <NoWarn>$(NoWarn);TUnit0015;TUnit0023;WHIZ055;WHIZ056</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
