@@ -7,6 +7,7 @@ using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Data.EFCore.Postgres.Functions;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
@@ -70,7 +71,11 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
 
       // Configure DbContext options to use the data source
       var optionsBuilder = new DbContextOptionsBuilder<WorkCoordinationDbContext>();
-      optionsBuilder.UseNpgsql(_dataSource);
+      optionsBuilder.UseNpgsql(_dataSource, npgsqlOptions => {
+        // Register Whizbang's custom PostgreSQL function translators
+        // This enables optimized ?| array overlap for large principal sets
+        npgsqlOptions.UseWhizbangFunctions();
+      });
       DbContextOptions = optionsBuilder.Options;
 
       // Initialize database schema
