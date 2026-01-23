@@ -20,7 +20,7 @@ namespace Whizbang.Core.Generated;
 /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangJsonContextTests.cs:Initialize_RegistersContextsWithRegistry_Async</tests>
 /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangJsonContextTests.cs:Initialize_RegistersConverters_Async</tests>
 /// <tests>tests/Whizbang.Core.Tests/Generated/WhizbangJsonContextTests.cs:Initialize_RunsBeforeMain_ViaModuleInitializerAsync</tests>
-public static class WhizbangJsonContext {
+public static class WhizbangJsonContextInitializer {
   /// <summary>
   /// Module initializer that registers Whizbang.Core's JsonSerializerContext instances.
   /// Runs automatically when the assembly is loaded - no explicit call needed.
@@ -45,6 +45,12 @@ public static class WhizbangJsonContext {
     // This allows InfrastructureJsonContext to find them via TryGetTypeInfoForRuntimeCustomConverter
     JsonContextRegistry.RegisterConverter(new ValueObjects.MessageIdJsonConverter());
     JsonContextRegistry.RegisterConverter(new ValueObjects.CorrelationIdJsonConverter());
+
+    // Register SecurityPrincipalId converter for string serialization.
+    // This ensures AllowedPrincipals arrays serialize as ["user:alice", "group:sales"]
+    // rather than [{"Value": "user:alice"}, {"Value": "group:sales"}].
+    // Important for efficient JSONB array queries using PostgreSQL's containment operators.
+    JsonContextRegistry.RegisterConverter(new Security.SecurityPrincipalIdJsonConverter());
 
     // Register type name mappings for infrastructure types
     // This enables Azure Service Bus and other transports to deserialize messages by assembly-qualified name

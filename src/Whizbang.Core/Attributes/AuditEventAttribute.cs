@@ -53,4 +53,27 @@ public sealed class AuditEventAttribute : MessageTagAttribute {
   /// Audit severity level. Default is <see cref="AuditLevel.Info"/>.
   /// </summary>
   public AuditLevel Level { get; init; } = AuditLevel.Info;
+
+  /// <summary>
+  /// When <c>true</c>, excludes this event type from system audit.
+  /// Default is <c>false</c> (all events are audited when system audit is enabled).
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// When system audit is enabled via <c>options.SystemEvents.EnableAudit()</c>,
+  /// all domain events are audited by default. Use this property to opt-out
+  /// high-frequency or non-essential event types.
+  /// </para>
+  /// <para>
+  /// Consider setting <see cref="Reason"/> to document why the event is excluded.
+  /// </para>
+  /// </remarks>
+  /// <example>
+  /// <code>
+  /// // Exclude high-frequency event from audit
+  /// [AuditEvent(Exclude = true, Reason = "High-frequency heartbeat event")]
+  /// public record HeartbeatEvent(Guid ServiceId) : IEvent;
+  /// </code>
+  /// </example>
+  public bool Exclude { get; init; }
 }

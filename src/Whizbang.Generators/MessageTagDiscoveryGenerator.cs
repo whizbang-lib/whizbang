@@ -62,6 +62,12 @@ public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
     var includeEvent = _getAttributeValue<bool>(tagAttribute, "IncludeEvent");
     var extraJson = _getAttributeValue<string>(tagAttribute, "ExtraJson");
 
+    // Skip types with Exclude = true (e.g., system events that shouldn't trigger tag hooks)
+    var exclude = _getAttributeValue<bool>(tagAttribute, "Exclude");
+    if (exclude) {
+      return null;
+    }
+
     // Get type information
     var typeFullName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
     var attributeFullName = tagAttribute.AttributeClass!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
