@@ -1,14 +1,32 @@
+using System.Collections.Concurrent;
 using Microsoft.Extensions.Logging;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
 
-namespace ECommerce.Integration.Tests.Fixtures;
+namespace Whizbang.Testing.Lifecycle;
 
 /// <summary>
 /// Waiter that registers lifecycle receptors BEFORE sending commands to avoid race conditions.
 /// Receptors are registered immediately upon creation, then you can send commands and wait for completion.
 /// </summary>
-/// <typeparam name="TEvent">The event type to wait for</typeparam>
+/// <typeparam name="TEvent">The event type to wait for.</typeparam>
+/// <remarks>
+/// This class is designed for integration tests that need to wait for perspectives to complete
+/// across multiple hosts before making assertions.
+///
+/// Usage:
+/// <code>
+/// using var waiter = new PerspectiveCompletionWaiter&lt;ProductCreatedEvent&gt;(
+///   inventoryRegistry, bffRegistry,
+///   inventoryPerspectives: 2, bffPerspectives: 1);
+///
+/// // Send command that triggers event
+/// await dispatcher.SendAsync(new CreateProductCommand());
+///
+/// // Wait for perspectives to process
+/// await waiter.WaitAsync();
+/// </code>
+/// </remarks>
 public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
   where TEvent : IEvent {
 
@@ -22,6 +40,15 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
   private readonly int _bffPerspectives;
   private readonly ILogger<PerspectiveCompletionWaiter<TEvent>>? _logger;
 
+  /// <summary>
+  /// Creates a new perspective completion waiter for two hosts (inventory and BFF pattern).
+  /// Receptors are registered immediately - this must be done BEFORE sending commands.
+  /// </summary>
+  /// <param name="inventoryRegistry">Lifecycle registry for the inventory/backend host.</param>
+  /// <param name="bffRegistry">Lifecycle registry for the BFF/frontend host.</param>
+  /// <param name="inventoryPerspectives">Number of perspectives expected on inventory host.</param>
+  /// <param name="bffPerspectives">Number of perspectives expected on BFF host.</param>
+  /// <param name="logger">Optional logger.</param>
   public PerspectiveCompletionWaiter(
     ILifecycleReceptorRegistry inventoryRegistry,
     ILifecycleReceptorRegistry bffRegistry,
@@ -39,10 +66,10 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
     Console.WriteLine($"[PerspectiveWaiter] Creating waiter for {typeof(TEvent).Name} (Inventory={inventoryPerspectives}, BFF={bffPerspectives}, Total={totalPerspectives})");
 
     _inventoryCompletionSource = new TaskCompletionSource<bool>();
-    var inventoryCompletedPerspectives = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>();
+    var inventoryCompletedPerspectives = new ConcurrentDictionary<string, byte>();
 
     _bffCompletionSource = new TaskCompletionSource<bool>();
-    var bffCompletedPerspectives = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>();
+    var bffCompletedPerspectives = new ConcurrentDictionary<string, byte>();
 
     // Create separate receptor instances for each host
     _inventoryReceptor = new CountingPerspectiveReceptor<TEvent>(
@@ -77,7 +104,8 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
   /// <summary>
   /// Wait for all expected perspectives to complete processing.
   /// </summary>
-  /// <param name="timeoutMilliseconds">Timeout in milliseconds (default: 45000ms for Service Bus emulator latency)</param>
+  /// <param name="timeoutMilliseconds">Timeout in milliseconds (default: 45000ms for transport latency).</param>
+  /// <exception cref="TimeoutException">Thrown if perspectives don't complete within timeout.</exception>
   public async Task WaitAsync(int timeoutMilliseconds = 45000) {
     var totalPerspectives = _inventoryPerspectives + _bffPerspectives;
     Console.WriteLine($"[PerspectiveWaiter] Waiting for {typeof(TEvent).Name} processing (Inventory={_inventoryPerspectives}, BFF={_bffPerspectives}, Total={totalPerspectives}, timeout={timeoutMilliseconds}ms)");

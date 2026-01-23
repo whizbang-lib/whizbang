@@ -43,6 +43,10 @@
     Show progress immediately when test counts change (AI modes only)
     Without this flag, progress respects ProgressInterval for sparse updates
 
+.PARAMETER FailFast
+    Stop test execution on first failure. Useful for quickly identifying and fixing issues.
+    When enabled, adds --fail-fast flag to dotnet test command.
+
 .PARAMETER ExcludeIntegration
     DEPRECATED: Use -Mode instead. Exclude integration tests from the run.
 
@@ -100,6 +104,14 @@
 .EXAMPLE
     ./Run-Tests.ps1 -Mode Ai -ProjectFilter "EFCore.Postgres"
     Runs EFCore.Postgres tests with AI-optimized output
+
+.EXAMPLE
+    ./Run-Tests.ps1 -FailFast
+    Runs tests and stops immediately on first failure
+
+.EXAMPLE
+    ./Run-Tests.ps1 -Mode AiFull -FailFast
+    Runs all tests including integration tests, stops on first failure
 
 .EXAMPLE
     ./Run-Tests.ps1 -TestFilter "Lifecycle"
@@ -199,6 +211,7 @@ param(
 
     [int]$ProgressInterval = 60,  # Progress update interval in seconds (Ai modes only)
     [switch]$LiveUpdates,  # Show progress immediately when counts change (Ai modes only)
+    [switch]$FailFast,  # Stop on first test failure
 
     # Legacy parameters (deprecated, use -Mode instead)
     [bool]$ExcludeIntegration,
@@ -293,6 +306,9 @@ try {
         if ($TestFilter) {
             Write-Host "Test Filter: $TestFilter" -ForegroundColor Yellow
         }
+        if ($FailFast) {
+            Write-Host "Fail Fast: Enabled (stops on first failure)" -ForegroundColor Yellow
+        }
         Write-Host ""
     } else {
         Write-Host "[WHIZBANG TEST SUITE - AI MODE]" -ForegroundColor Cyan
@@ -313,6 +329,9 @@ try {
         if ($TestFilter) {
             Write-Host "Test Filter: $TestFilter" -ForegroundColor Gray
         }
+        if ($FailFast) {
+            Write-Host "Fail Fast: Enabled" -ForegroundColor Gray
+        }
     }
 
     # Build the dotnet test command
@@ -331,6 +350,11 @@ try {
         $testArgs += "minimal"
     }
 
+    # Add fail-fast if requested (stops on first failure)
+    if ($FailFast) {
+        $testArgs += "--fail-fast"
+    }
+
     # Pattern for identifying integration test DLLs: *Integration.Tests.dll or *IntegrationTests.dll
     $integrationTestPattern = "Integration\.Tests\.dll$|IntegrationTests\.dll$"
 
@@ -342,8 +366,9 @@ try {
 
     # Helper function to ensure build exists for dynamic DLL discovery
     function Ensure-BuildExists {
+        # Pattern: bin/Debug/net10.0/ - works for standard .NET output paths
         $anyDll = Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match "bin[/\\].*[/\\]Debug[/\\]net10\.0[/\\]" } |
+            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]" } |
             Select-Object -First 1
 
         if (-not $anyDll) {
@@ -368,13 +393,16 @@ try {
     } elseif ($onlyIntegrationTests) {
         # Run ONLY integration tests
         Ensure-BuildExists
-        $integrationDlls = Get-ChildItem -Path $repoRoot -Recurse -Filter "*.dll" -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match "bin[/\\].*[/\\]Debug[/\\]net10\.0[/\\]" } |
+        # Wrap in @() to ensure array even when empty (prevents null.Count error with StrictMode)
+        # Pattern: bin/Debug/net10.0/ - works for standard .NET output paths
+        $integrationDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.dll" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]" } |
             Where-Object { Test-IsIntegrationTest $_.Name } |
-            Select-Object -ExpandProperty FullName
+            ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
 
         if ($integrationDlls.Count -gt 0) {
             $testArgs += "--test-modules"
+            # Use relative paths - dotnet test has issues with absolute paths containing semicolons
             $testArgs += ($integrationDlls -join ";")
 
             if (-not $useAiOutput) {
@@ -388,13 +416,16 @@ try {
         # Exclude integration tests - find all *.Tests.dll and filter out integration tests
         # This ensures all test projects are discovered while excluding slow integration tests
         Ensure-BuildExists
-        $allTestDlls = Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match "bin[/\\].*[/\\]Debug[/\\]net10\.0[/\\]" } |
+        # Wrap in @() to ensure array even when empty (prevents null.Count error with StrictMode)
+        # Pattern: bin/Debug/net10.0/ - works for standard .NET output paths
+        $allTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]" } |
             Where-Object { -not (Test-IsIntegrationTest $_.Name) } |
-            Select-Object -ExpandProperty FullName
+            ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
 
         if ($allTestDlls.Count -gt 0) {
             $testArgs += "--test-modules"
+            # Use relative paths - dotnet test has issues with absolute paths containing semicolons
             $testArgs += ($allTestDlls -join ";")
 
             if (-not $useAiOutput) {
@@ -467,8 +498,39 @@ try {
         $inProgressFailed = 0
         $inProgressSkipped = 0
 
-        & dotnet @testArgs 2>&1 | ForEach-Object {
-            $lineStr = $_.ToString()
+        # FailFast tracking
+        $failFastTriggered = $false
+        $firstFailureDetails = $null
+
+        # Start process with redirected output so we can kill it on failure
+        $psi = [System.Diagnostics.ProcessStartInfo]::new()
+        $psi.FileName = "dotnet"
+        $psi.Arguments = $testArgs -join " "
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.WorkingDirectory = $repoRoot
+
+        $process = [System.Diagnostics.Process]::new()
+        $process.StartInfo = $psi
+
+        # Collect stderr asynchronously
+        $stderrBuilder = [System.Text.StringBuilder]::new()
+        $stderrEvent = Register-ObjectEvent -InputObject $process -EventName ErrorDataReceived -Action {
+            if ($EventArgs.Data) {
+                $stderrBuilder.AppendLine($EventArgs.Data) | Out-Null
+            }
+        }
+
+        $process.Start() | Out-Null
+        $process.BeginErrorReadLine()
+
+        # Read stdout line by line (allows us to kill process mid-stream)
+        $reader = $process.StandardOutput
+        while (-not $reader.EndOfStream) {
+            $lineStr = $reader.ReadLine()
+            if ($null -eq $lineStr) { continue }
+
             $lineCounter++
             $lastOutputTime = Get-Date
 
@@ -577,6 +639,57 @@ try {
                         "Exception" = ""
                     }
                     $capturingStackTrace = $false
+
+                    # FailFast: If this is the first failure and FailFast is enabled,
+                    # continue reading to capture error details, then stop
+                    if ($FailFast -and -not $failFastTriggered) {
+                        $failFastTriggered = $true
+                        $firstFailureDetails = $testName
+
+                        # Read up to 50 more lines to capture exception and stack trace
+                        $extraLines = 0
+                        $maxExtraLines = 50
+                        while (-not $reader.EndOfStream -and $extraLines -lt $maxExtraLines) {
+                            $extraLine = $reader.ReadLine()
+                            if ($null -eq $extraLine) { continue }
+                            $extraLines++
+
+                            # Capture exception type
+                            if ($extraLine -match "^\s*(System\.\w+Exception|TUnit\.\w+Exception|.*Exception):\s*(.+)") {
+                                $testDetails[$currentFailedTest]["Exception"] = $matches[1].Trim()
+                                $testDetails[$currentFailedTest]["ErrorMessage"] = $matches[2].Trim()
+                            }
+                            # Capture stack trace
+                            elseif ($extraLine -match "^\s+at\s+[\w\.]+") {
+                                $stackTraceLines += $extraLine.Trim()
+                            }
+                            elseif ($extraLine -match "^\s+in\s+.*:\s*line\s+\d+") {
+                                $stackTraceLines += $extraLine.Trim()
+                            }
+                            # Stop when we hit the next test or summary
+                            elseif ($extraLine -match "^(failed|passed|skipped|Test run summary|succeeded:)") {
+                                break
+                            }
+                        }
+
+                        # Save captured stack trace
+                        if ($stackTraceLines.Count -gt 0) {
+                            $testDetails[$currentFailedTest]["StackTrace"] = $stackTraceLines -join "`n"
+                        }
+
+                        # Kill the process immediately
+                        Write-Host ""
+                        Write-Host "=== FAIL-FAST TRIGGERED ===" -ForegroundColor Red
+                        Write-Host "Stopping test run due to first failure." -ForegroundColor Red
+                        Write-Host ""
+
+                        try {
+                            $process.Kill($true)  # Kill process tree
+                        } catch {
+                            # Process may have already exited
+                        }
+                        break  # Exit the while loop
+                    }
                 }
             }
             # Capture error messages and exception details for current failed test
@@ -658,6 +771,21 @@ try {
             }
         }
 
+        # Clean up process resources
+        $reader.Dispose()
+        Unregister-Event -SourceIdentifier $stderrEvent.Name -ErrorAction SilentlyContinue
+        Remove-Job -Id $stderrEvent.Id -Force -ErrorAction SilentlyContinue
+
+        # Wait for process to exit (if not already killed)
+        if (-not $process.HasExited) {
+            $process.WaitForExit(5000) | Out-Null
+            if (-not $process.HasExited) {
+                try { $process.Kill($true) } catch { }
+            }
+        }
+        $processExitCode = $process.ExitCode
+        $process.Dispose()
+
         # Save final test's stack trace if we were capturing
         if ($currentFailedTest -and $stackTraceLines.Count -gt 0) {
             $testDetails[$currentFailedTest]["StackTrace"] = $stackTraceLines -join "`n"
@@ -678,7 +806,21 @@ try {
         Write-Host ""
         Write-Host "Total Duration: $elapsedString" -ForegroundColor Cyan
 
-        if ($totalTests -gt 0) {
+        # Use actual captured failed tests count (more accurate than parsed summary when fail-fast kills process)
+        $actualFailedCount = $failedTests.Count
+        if ($actualFailedCount -gt $totalFailed) {
+            $totalFailed = $actualFailedCount
+        }
+
+        if ($failFastTriggered) {
+            Write-Host ""
+            Write-Host "Note: Test run was stopped early due to -FailFast" -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "Tests Run Before Stop: ~$totalTests" -ForegroundColor White
+            Write-Host "Passed: ~$totalPassed" -ForegroundColor Green
+            Write-Host "Failed: $actualFailedCount (stopped on first failure)" -ForegroundColor Red
+            Write-Host "Skipped: ~$totalSkipped" -ForegroundColor Yellow
+        } elseif ($totalTests -gt 0) {
             Write-Host ""
             Write-Host "Total Tests: $totalTests" -ForegroundColor White
             Write-Host "Passed: $totalPassed" -ForegroundColor Green
@@ -774,10 +916,13 @@ try {
     }
 
     # Check exit code (also consider projectErrors in AI mode since they may not affect LASTEXITCODE)
-    $hasErrors = $LASTEXITCODE -ne 0
     if ($useAiOutput) {
-        # In AI mode, also check if we captured project errors (intermittent race conditions)
-        $hasErrors = $hasErrors -or $projectErrors.Count -gt 0 -or $totalFailed -gt 0
+        # In AI mode, use the process exit code and check captured errors
+        # Note: dotnet test returns 0 on success, non-zero on failure
+        # Don't count processExitCode alone - it can be non-zero due to skipped tests or cancellation
+        $hasErrors = $totalFailed -gt 0 -or $failFastTriggered -or $projectErrors.Count -gt 0 -or $buildErrors.Count -gt 0
+    } else {
+        $hasErrors = $LASTEXITCODE -ne 0
     }
 
     if (-not $hasErrors) {

@@ -18,6 +18,7 @@ using Whizbang.Core.Perspectives;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
+using Whizbang.Testing.Lifecycle;
 
 namespace ECommerce.InMemory.Integration.Tests.Fixtures;
 

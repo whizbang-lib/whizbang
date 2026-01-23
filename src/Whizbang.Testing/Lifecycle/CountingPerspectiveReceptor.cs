@@ -2,7 +2,7 @@ using System.Collections.Concurrent;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
 
-namespace ECommerce.Integration.Tests.Fixtures;
+namespace Whizbang.Testing.Lifecycle;
 
 /// <summary>
 /// Test receptor that counts perspective completions per stream and signals when all expected perspective-stream pairs have completed.
@@ -15,14 +15,20 @@ public sealed class CountingPerspectiveReceptor<TEvent> : IReceptor<TEvent>, IAc
   where TEvent : IEvent {
 
   private readonly TaskCompletionSource<bool> _completionSource;
-  private readonly ConcurrentDictionary<string, byte> _completedPerspectives; // Changed from ConcurrentBag to fix race condition
+  private readonly ConcurrentDictionary<string, byte> _completedPerspectives;
   private readonly int _expectedCount;
-  private int _completionCount = 0;
+  private int _completionCount;
   private ILifecycleContext? _context;
 
+  /// <summary>
+  /// Creates a new counting receptor.
+  /// </summary>
+  /// <param name="completionSource">TaskCompletionSource to signal when all perspectives complete.</param>
+  /// <param name="completedPerspectives">Dictionary to track completed perspective-stream pairs.</param>
+  /// <param name="expectedCount">Number of unique perspective-stream pairs expected.</param>
   public CountingPerspectiveReceptor(
     TaskCompletionSource<bool> completionSource,
-    ConcurrentDictionary<string, byte> completedPerspectives, // Changed from ConcurrentBag to fix race condition
+    ConcurrentDictionary<string, byte> completedPerspectives,
     int expectedCount) {
 
     _completionSource = completionSource ?? throw new ArgumentNullException(nameof(completionSource));
@@ -37,6 +43,7 @@ public sealed class CountingPerspectiveReceptor<TEvent> : IReceptor<TEvent>, IAc
     _context = context;
   }
 
+  /// <inheritdoc/>
   public ValueTask HandleAsync(TEvent message, CancellationToken cancellationToken = default) {
     // Get perspective name and stream ID from lifecycle context
     var perspectiveName = _context?.PerspectiveType?.Name ?? "Unknown";
@@ -45,7 +52,7 @@ public sealed class CountingPerspectiveReceptor<TEvent> : IReceptor<TEvent>, IAc
     Console.WriteLine($"[CountingReceptor] Perspective '{perspectiveName}' completed for event {typeof(TEvent).Name} on stream {streamId}");
 
     // Track (perspectiveName, streamId) pairs to count per-stream invocations
-    // This allows counting multiple events for the same perspective (e.g., 2 ProductCreatedEvents → 2 InventoryLevelsPerspective invocations)
+    // This allows counting multiple events for the same perspective (e.g., 2 ProductCreatedEvents -> 2 InventoryLevelsPerspective invocations)
     var key = $"{perspectiveName}:{streamId}";
 
     // CRITICAL: Use TryAdd for atomic check-and-add to prevent race condition

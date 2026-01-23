@@ -26,6 +26,7 @@
     <ProjectReference Include="..\..\ECommerce.InventoryWorker\ECommerce.InventoryWorker.csproj" />
     <ProjectReference Include="..\..\ECommerce.BFF.API\ECommerce.BFF.API.csproj" />
     <ProjectReference Include="..\..\ECommerce.Contracts\ECommerce.Contracts.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Whizbang.Testing\Whizbang.Testing.csproj" />
     <ProjectReference Include="..\..\..\..\src\Whizbang.Core\Whizbang.Core.csproj" />
     <ProjectReference Include="..\..\..\..\src\Whizbang.Data.EFCore.Postgres\Whizbang.Data.EFCore.Postgres.csproj" />
     <ProjectReference Include="..\ECommerce.Integration.Tests.AppHost\ECommerce.Integration.Tests.AppHost.csproj" />

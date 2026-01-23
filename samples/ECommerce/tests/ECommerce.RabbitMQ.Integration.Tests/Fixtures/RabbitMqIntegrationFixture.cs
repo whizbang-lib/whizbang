@@ -3,7 +3,6 @@ using System.Text;
 using ECommerce.BFF.API.Generated;
 using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Generated;
-using ECommerce.Integration.Tests.Fixtures;
 using ECommerce.InventoryWorker.Generated;
 using ECommerce.InventoryWorker.Lenses;
 using Medo;
@@ -20,6 +19,7 @@ using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
 using Whizbang.Hosting.RabbitMQ;
+using Whizbang.Testing.Lifecycle;
 using Whizbang.Transports.RabbitMQ;
 
 namespace ECommerce.RabbitMQ.Integration.Tests.Fixtures;

@@ -1,6 +1,5 @@
 using System.Text.Json;
 using RabbitMQ.Client;
-using Testcontainers.RabbitMq;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -9,6 +8,7 @@ using Whizbang.Core.Routing;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Testing.Containers;
 using Whizbang.Transports.RabbitMQ;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
@@ -25,22 +25,18 @@ namespace Whizbang.Transports.RabbitMQ.Tests;
 [Category("Integration")]
 [NotInParallel]
 public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
-  private static RabbitMqContainer? _rabbitMqContainer;
-  private static readonly SemaphoreSlim _initLock = new(1, 1);
-  private static bool _initialized;
-
   private IConnection? _connection;
   private RabbitMQChannelPool? _channelPool;
   private RabbitMQTransport? _transport;
 
   [Before(Test)]
   public async Task SetupAsync() {
-    // Initialize container once for all tests
-    await _initializeContainerAsync();
+    // Initialize shared container once for all tests
+    await SharedRabbitMqContainer.InitializeAsync();
 
     // Create connection for this test
     var factory = new ConnectionFactory {
-      Uri = new Uri(_rabbitMqContainer!.GetConnectionString())
+      Uri = new Uri(SharedRabbitMqContainer.ConnectionString)
     };
     _connection = await factory.CreateConnectionAsync();
     _channelPool = new RabbitMQChannelPool(_connection, maxChannels: 5);
@@ -638,35 +634,6 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
   // ========================================
   // HELPER METHODS
   // ========================================
-
-  private static async Task _initializeContainerAsync() {
-    if (_initialized) {
-      return;
-    }
-
-    await _initLock.WaitAsync();
-    try {
-      if (_initialized) {
-        return;
-      }
-
-      Console.WriteLine("[InboxOutboxRouting] Starting RabbitMQ container...");
-
-      _rabbitMqContainer = new RabbitMqBuilder()
-        .WithImage("rabbitmq:3.13-management-alpine")
-        .WithUsername("guest")
-        .WithPassword("guest")
-        .Build();
-
-      await _rabbitMqContainer.StartAsync();
-
-      Console.WriteLine($"[InboxOutboxRouting] RabbitMQ started: {_rabbitMqContainer.GetConnectionString()}");
-
-      _initialized = true;
-    } finally {
-      _initLock.Release();
-    }
-  }
 
   private static MessageEnvelope<TestMessage> _createTestEnvelope() {
     return new MessageEnvelope<TestMessage> {
