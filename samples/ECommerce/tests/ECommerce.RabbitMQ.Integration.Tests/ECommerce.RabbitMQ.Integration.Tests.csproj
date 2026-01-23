@@ -22,9 +22,9 @@
     <PackageReference Include="Microsoft.Testing.Extensions.Retry" />
     <PackageReference Include="TUnit" />
     <PackageReference Include="TUnit.Assertions" />
-    <PackageReference Include="Testcontainers.PostgreSql" />
     <PackageReference Include="Testcontainers.RabbitMq" />
     <PackageReference Include="Bogus" />
+    <PackageReference Include="Dapper" />
   </ItemGroup>
 
   <ItemGroup>

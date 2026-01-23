@@ -10,7 +10,7 @@ namespace ECommerce.RabbitMQ.Integration.Tests.Infrastructure;
 /// Each test gets its own PostgreSQL databases + hosts. RabbitMQ container is shared via SharedRabbitMqFixtureSource.
 /// Tests run sequentially for reliable timing.
 /// </summary>
-[NotInParallel]
+[NotInParallel("RabbitMQ")]
 public sealed class RabbitMqFixtureSanityTests {
   private static RabbitMqIntegrationFixture? _fixture;
 

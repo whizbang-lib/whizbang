@@ -92,6 +92,9 @@ public static class SharedPostgresContainer {
           .WithDatabase("whizbang_test")
           .WithUsername("whizbang_user")
           .WithPassword("whizbang_pass")
+          // Increase max_connections for high-concurrency tests
+          // Default is 100, but with parallel tests creating many databases/connections we need more
+          .WithCommand("-c", "max_connections=500")
           .Build();
 
         Console.WriteLine("[SharedPostgresContainer] Starting container (may take 10-15 seconds)...");

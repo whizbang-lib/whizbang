@@ -14,7 +14,7 @@ namespace ECommerce.InMemory.Integration.Tests.Workflows;
 /// All tests share a single fixture (PostgreSQL container) for performance.
 /// Database cleanup between tests ensures isolation.
 /// </summary>
-[NotInParallel]  // Tests must run sequentially since they share a fixture
+[NotInParallel("InMemory")]  // Tests must run sequentially since they share a fixture
 [Timeout(60_000)]  // 60s timeout: first test needs container init (~15s), subsequent tests fast
 public class CreateProductWorkflowTests {
   private InMemoryIntegrationFixture? _fixture;

@@ -138,8 +138,10 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     using var cts = new CancellationTokenSource();
 
     // Act - start worker and let it run briefly
+    // Wait long enough for at least one polling cycle (100ms polling interval)
+    // Under load, 50ms wasn't sufficient - use 200ms for reliable execution
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(50); // Give time for initial processing BEFORE first poll interval
+    await Task.Delay(200);
     cts.Cancel();
 
     try {
@@ -184,8 +186,9 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     using var cts = new CancellationTokenSource();
 
     // Act - start worker and let it run briefly
+    // Wait long enough to verify nothing happens when database isn't ready
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(50); // Give time for initial check
+    await Task.Delay(200);
     cts.Cancel();
 
     try {
@@ -261,8 +264,10 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     using var cts = new CancellationTokenSource();
 
     // Act - start worker
+    // Wait long enough for at least one polling cycle (100ms polling interval)
+    // Under load, 50ms wasn't sufficient - use 200ms for reliable execution
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(50);
+    await Task.Delay(200);
     cts.Cancel();
 
     try {

@@ -23,7 +23,7 @@ namespace Whizbang.Transports.RabbitMQ.Tests;
 /// Uses Testcontainers for a real RabbitMQ instance.
 /// </summary>
 [Category("Integration")]
-[NotInParallel]
+[NotInParallel("RabbitMQ")]
 public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
   private IConnection? _connection;
   private RabbitMQChannelPool? _channelPool;

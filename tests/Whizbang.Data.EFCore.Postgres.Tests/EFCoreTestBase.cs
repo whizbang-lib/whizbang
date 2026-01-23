@@ -1,7 +1,7 @@
 using System.Text.Json;
+using Dapper;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
-using Testcontainers.PostgreSql;
 using TUnit.Core;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
@@ -9,12 +9,15 @@ using Whizbang.Core.Serialization;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Data.EFCore.Postgres.Functions;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
+using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>
 /// Base class for EF Core PostgreSQL integration tests using Testcontainers.
-/// Each test gets its own isolated PostgreSQL container for maximum isolation and parallel execution.
+/// Uses a shared PostgreSQL container with per-test database isolation.
+/// This approach avoids the previous issue where each test created its own container,
+/// causing 60+ simultaneous container startups and Docker resource exhaustion.
 /// </summary>
 public abstract class EFCoreTestBase : IAsyncDisposable {
   static EFCoreTestBase() {
@@ -22,7 +25,7 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
     AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", false);
   }
 
-  private PostgreSqlContainer? _postgresContainer;
+  private string? _testDatabaseName;
   private NpgsqlDataSource? _dataSource;
 
   protected string ConnectionString { get; private set; } = null!;
@@ -32,21 +35,26 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
   public async Task SetupAsync() {
     var setupSucceeded = false;
     try {
-      // Create fresh container for THIS test
-      _postgresContainer = new PostgreSqlBuilder()
-        .WithImage("postgres:17-alpine")
-        .WithDatabase("whizbang_test")
-        .WithUsername("postgres")
-        .WithPassword("postgres")
-        .Build();
+      // Initialize shared container (only starts once, subsequent calls return immediately)
+      await SharedPostgresContainer.InitializeAsync();
 
-      await _postgresContainer.StartAsync();
+      // Create unique database for THIS test
+      _testDatabaseName = $"test_{Guid.NewGuid():N}";
 
-      // Create connection string with DateTimeOffset support
-      var baseConnectionString = _postgresContainer.GetConnectionString();
-      // Add Timezone=UTC to ensure TIMESTAMPTZ columns map to DateTimeOffset
-      // Add Include Error Detail=true to see detailed error messages for debugging
-      ConnectionString = $"{baseConnectionString};Timezone=UTC;Include Error Detail=true";
+      // Connect to main database to create the test database
+      await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
+      await adminConnection.OpenAsync();
+      await adminConnection.ExecuteAsync($"CREATE DATABASE {_testDatabaseName}");
+
+      // Build connection string for the test database
+      var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
+        Database = _testDatabaseName,
+        // Add Timezone=UTC to ensure TIMESTAMPTZ columns map to DateTimeOffset
+        Timezone = "UTC",
+        // Add Include Error Detail=true to see detailed error messages for debugging
+        IncludeErrorDetail = true
+      };
+      ConnectionString = builder.ConnectionString;
 
       // Configure Npgsql data source with JSON serializer options
       var dataSourceBuilder = new NpgsqlDataSourceBuilder(ConnectionString);
@@ -97,10 +105,27 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
       _dataSource = null;
     }
 
-    if (_postgresContainer != null) {
-      await _postgresContainer.StopAsync();
-      await _postgresContainer.DisposeAsync();
-      _postgresContainer = null;
+    // Drop the test-specific database to clean up
+    if (_testDatabaseName != null) {
+      try {
+        // Close all connections to the test database first
+        await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
+        await adminConnection.OpenAsync();
+
+        // Terminate connections to the test database
+        await adminConnection.ExecuteAsync($@"
+          SELECT pg_terminate_backend(pg_stat_activity.pid)
+          FROM pg_stat_activity
+          WHERE pg_stat_activity.datname = '{_testDatabaseName}'
+          AND pid <> pg_backend_pid()");
+
+        // Drop the database
+        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName}");
+      } catch {
+        // Ignore cleanup errors - the database will be cleaned up when the container stops
+      }
+
+      _testDatabaseName = null;
     }
   }
 

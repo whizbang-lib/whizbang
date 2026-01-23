@@ -18,7 +18,7 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// This is the code path that was suspected of having a JsonElement bug.
 /// </summary>
 [Timeout(30_000)]  // 30s timeout per test
-[NotInParallel]
+[NotInParallel("ServiceBus")]
 public class LifecycleDeserializationTests {
   private static ServiceBusIntegrationFixture? _fixture;
 

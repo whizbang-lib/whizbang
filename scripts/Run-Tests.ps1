@@ -448,6 +448,9 @@ try {
         $testArgs += "/*/*/*/*$TestFilter*"
     }
 
+    # FailFast tracking (declared at outer scope for finally block access)
+    $failFastTriggered = $false
+
     # Run tests
     if (-not $useAiOutput) {
         $cmdDisplay = "dotnet " + ($testArgs -join " ")
@@ -498,8 +501,7 @@ try {
         $inProgressFailed = 0
         $inProgressSkipped = 0
 
-        # FailFast tracking
-        $failFastTriggered = $false
+        # FailFast tracking (set at outer scope, used here)
         $firstFailureDetails = $null
 
         # Start process with redirected output so we can kill it on failure
@@ -948,5 +950,50 @@ try {
     }
 
 } finally {
+    # Clean up test containers after test run completes (especially important after fail-fast)
+    # This ensures containers don't hang around after abrupt test termination
+    if ($includeIntegrationTests -or $onlyIntegrationTests -or $failFastTriggered) {
+        if (-not $useAiOutput) {
+            Write-Host ""
+            Write-Host "Cleaning up test containers..." -ForegroundColor Yellow
+        }
+
+        # Stop and remove all testcontainers (postgres, rabbitmq, servicebus, etc.)
+        # Use image-based filtering to catch containers that may have random names
+        $testImages = @(
+            "postgres:*",
+            "rabbitmq:*",
+            "mcr.microsoft.com/azure-messaging/servicebus-emulator:*",
+            "mcr.microsoft.com/mssql/server:*",
+            "testcontainers/ryuk:*"
+        )
+
+        foreach ($image in $testImages) {
+            $containers = docker ps -a --filter "ancestor=$image" --format "{{.ID}}" 2>$null
+            if ($containers) {
+                $containers | ForEach-Object {
+                    docker stop $_ 2>&1 | Out-Null
+                    docker rm $_ 2>&1 | Out-Null
+                }
+            }
+        }
+
+        # Also clean up by name pattern for any containers that might have escaped image filtering
+        $namePatterns = @("postgres", "rabbitmq", "servicebus-emulator", "mssql-servicebus")
+        foreach ($pattern in $namePatterns) {
+            $containers = docker ps -a --filter "name=$pattern" --format "{{.ID}}" 2>$null
+            if ($containers) {
+                $containers | ForEach-Object {
+                    docker stop $_ 2>&1 | Out-Null
+                    docker rm $_ 2>&1 | Out-Null
+                }
+            }
+        }
+
+        if (-not $useAiOutput) {
+            Write-Host "Container cleanup complete." -ForegroundColor Green
+        }
+    }
+
     Pop-Location
 }

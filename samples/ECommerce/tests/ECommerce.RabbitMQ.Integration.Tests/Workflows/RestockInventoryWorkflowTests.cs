@@ -16,7 +16,7 @@ namespace ECommerce.RabbitMQ.Integration.Tests.Workflows;
 /// </summary>
 [Category("Integration")]
 [Category("Workflow")]
-[NotInParallel]
+[NotInParallel("RabbitMQ")]
 public class RestockInventoryWorkflowTests {
   private static RabbitMqIntegrationFixture? _fixture;
 
