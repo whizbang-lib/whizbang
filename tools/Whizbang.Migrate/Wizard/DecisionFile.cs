@@ -15,6 +15,8 @@ namespace Whizbang.Migrate.Wizard;
 [JsonSerializable(typeof(TenantDecisions))]
 [JsonSerializable(typeof(StreamIdDecisions))]
 [JsonSerializable(typeof(RoutingDecisions))]
+[JsonSerializable(typeof(CustomBaseClassDecisions))]
+[JsonSerializable(typeof(UnknownInterfaceDecisions))]
 internal sealed partial class DecisionFileJsonContext : JsonSerializerContext { }
 
 /// <summary>
@@ -290,6 +292,16 @@ public sealed class MigrationDecisions {
   /// Routing configuration decisions.
   /// </summary>
   public RoutingDecisions Routing { get; set; } = new();
+
+  /// <summary>
+  /// Custom base class handling decisions.
+  /// </summary>
+  public CustomBaseClassDecisions CustomBaseClasses { get; set; } = new();
+
+  /// <summary>
+  /// Unknown interface parameter handling decisions.
+  /// </summary>
+  public UnknownInterfaceDecisions UnknownInterfaces { get; set; } = new();
 }
 
 /// <summary>
@@ -594,4 +606,109 @@ public enum OutboxStrategyChoice {
   /// All events publish to a single shared topic with metadata.
   /// </summary>
   SharedTopic
+}
+
+/// <summary>
+/// Decisions about handling custom base classes found in handlers.
+/// </summary>
+public sealed class CustomBaseClassDecisions {
+  /// <summary>
+  /// Default strategy for handling custom base classes.
+  /// </summary>
+  public CustomBaseClassStrategy DefaultStrategy { get; set; } = CustomBaseClassStrategy.Prompt;
+
+  /// <summary>
+  /// Custom base classes detected in the codebase.
+  /// Maps base class name to the strategy to use.
+  /// </summary>
+  public Dictionary<string, CustomBaseClassStrategy> BaseClassStrategies { get; set; } = [];
+
+  /// <summary>
+  /// Whether the user has confirmed the base class decisions.
+  /// </summary>
+  public bool Confirmed { get; set; }
+}
+
+/// <summary>
+/// Strategy for handling custom handler base classes during migration.
+/// </summary>
+public enum CustomBaseClassStrategy {
+  /// <summary>
+  /// Prompt the user for each handler with this base class.
+  /// </summary>
+  Prompt,
+
+  /// <summary>
+  /// Remove the base class inheritance and implement Whizbang interfaces directly.
+  /// The migrated handler will implement IReceptor directly without any base class.
+  /// </summary>
+  RemoveInheritance,
+
+  /// <summary>
+  /// Keep the base class inheritance and add Whizbang interface implementation.
+  /// The user is expected to manually adapt the base class to work with Whizbang.
+  /// Generates a TODO comment reminding the user to update the base class.
+  /// </summary>
+  KeepInheritance,
+
+  /// <summary>
+  /// Skip migration of handlers using this base class.
+  /// The handler will be left unchanged with a warning.
+  /// </summary>
+  Skip
+}
+
+/// <summary>
+/// Decisions about handling unknown interface parameters found in handlers.
+/// </summary>
+public sealed class UnknownInterfaceDecisions {
+  /// <summary>
+  /// Default strategy for handling unknown interface parameters.
+  /// </summary>
+  public UnknownInterfaceStrategy DefaultStrategy { get; set; } = UnknownInterfaceStrategy.Prompt;
+
+  /// <summary>
+  /// Unknown interfaces detected in the codebase.
+  /// Maps interface name to the strategy to use.
+  /// </summary>
+  public Dictionary<string, UnknownInterfaceStrategy> InterfaceStrategies { get; set; } = [];
+
+  /// <summary>
+  /// Whether the user has confirmed the interface decisions.
+  /// </summary>
+  public bool Confirmed { get; set; }
+}
+
+/// <summary>
+/// Strategy for handling unknown interface parameters during migration.
+/// </summary>
+public enum UnknownInterfaceStrategy {
+  /// <summary>
+  /// Prompt the user for each handler with this interface parameter.
+  /// </summary>
+  Prompt,
+
+  /// <summary>
+  /// Remove the parameter from the migrated handler.
+  /// The functionality using this interface must be reimplemented.
+  /// </summary>
+  RemoveParameter,
+
+  /// <summary>
+  /// Keep the parameter and inject it via DI.
+  /// The user is expected to ensure the interface is registered.
+  /// </summary>
+  KeepAndInject,
+
+  /// <summary>
+  /// Map this interface to a Whizbang equivalent.
+  /// Used when the interface wraps known Marten/Wolverine types.
+  /// </summary>
+  MapToWhizbang,
+
+  /// <summary>
+  /// Skip migration of handlers using this interface.
+  /// The handler will be left unchanged with a warning.
+  /// </summary>
+  Skip
 }

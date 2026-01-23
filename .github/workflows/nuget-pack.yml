@@ -30,16 +30,46 @@ jobs:
 
     - name: Verify packages created
       run: |
-        # Ensure at least the core packages were created
-        if [ ! -f ./packages/SoftwareExtravaganza.Whizbang.Core.*.nupkg ]; then
-          echo "ERROR: Whizbang.Core package not created"
+        # List of all expected packages (with SoftwareExtravaganza prefix)
+        EXPECTED_PACKAGES=(
+          "SoftwareExtravaganza.Whizbang.Core"
+          "SoftwareExtravaganza.Whizbang.Generators"
+          "SoftwareExtravaganza.Whizbang.Generators.Shared"
+          "SoftwareExtravaganza.Whizbang.Data.Postgres"
+          "SoftwareExtravaganza.Whizbang.Data.Schema"
+          "SoftwareExtravaganza.Whizbang.Data.Dapper.Custom"
+          "SoftwareExtravaganza.Whizbang.Data.Dapper.Postgres"
+          "SoftwareExtravaganza.Whizbang.Data.Dapper.Sqlite"
+          "SoftwareExtravaganza.Whizbang.Data.EFCore.Custom"
+          "SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres"
+          "SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres.Generators"
+          "SoftwareExtravaganza.Whizbang.Transports.AzureServiceBus"
+          "SoftwareExtravaganza.Whizbang.Transports.RabbitMQ"
+          "SoftwareExtravaganza.Whizbang.Hosting.Azure.ServiceBus"
+          "SoftwareExtravaganza.Whizbang.Hosting.RabbitMQ"
+          "SoftwareExtravaganza.Whizbang.Testing"
+          "SoftwareExtravaganza.Whizbang.Migrate"
+          "SoftwareExtravaganza.Whizbang.CLI"
+        )
+
+        MISSING=0
+        for pkg in "${EXPECTED_PACKAGES[@]}"; do
+          if [ ! -f ./packages/${pkg}.*.nupkg ]; then
+            echo "ERROR: ${pkg} package not created"
+            MISSING=$((MISSING + 1))
+          else
+            echo "✓ ${pkg}"
+          fi
+        done
+
+        if [ $MISSING -gt 0 ]; then
+          echo ""
+          echo "ERROR: ${MISSING} package(s) missing"
           exit 1
         fi
-        if [ ! -f ./packages/SoftwareExtravaganza.Whizbang.Generators.*.nupkg ]; then
-          echo "ERROR: Whizbang.Generators package not created"
-          exit 1
-        fi
-        echo "Core packages verified successfully"
+
+        echo ""
+        echo "All ${#EXPECTED_PACKAGES[@]} packages verified successfully"
 
     - name: List packages
       run: ls -la ./packages
