@@ -36,6 +36,7 @@
   </Folder>
   <Folder Name="/src/">
     <Project Path="src/Whizbang.Core/Whizbang.Core.csproj" />
+    <Project Path="src/Whizbang.Data.Dapper.Custom/Whizbang.Data.Dapper.Custom.csproj" />
     <Project Path="src/Whizbang.Data.Dapper.Postgres/Whizbang.Data.Dapper.Postgres.csproj" />
     <Project Path="src/Whizbang.Data.Dapper.Sqlite/Whizbang.Data.Dapper.Sqlite.csproj" />
     <Project Path="src/Whizbang.Data.EFCore.Custom/Whizbang.Data.EFCore.Custom.csproj" />
@@ -46,9 +47,12 @@
     <Project Path="src/Whizbang.Generators.Shared/Whizbang.Generators.Shared.csproj" />
     <Project Path="src/Whizbang.Generators/Whizbang.Generators.csproj" />
     <Project Path="src/Whizbang.Hosting.Azure.ServiceBus/Whizbang.Hosting.Azure.ServiceBus.csproj" />
+    <Project Path="src/Whizbang.Hosting.RabbitMQ/Whizbang.Hosting.RabbitMQ.csproj" />
     <Project Path="src/Whizbang.Observability/Whizbang.Observability.csproj" />
     <Project Path="src/Whizbang.SignalR/Whizbang.SignalR.csproj" />
+    <Project Path="src/Whizbang.Testing/Whizbang.Testing.csproj" />
     <Project Path="src/Whizbang.Transports.AzureServiceBus/Whizbang.Transports.AzureServiceBus.csproj" />
+    <Project Path="src/Whizbang.Transports.RabbitMQ/Whizbang.Transports.RabbitMQ.csproj" />
   </Folder>
   <Folder Name="/test-diagnostics/">
     <Project Path="test-diagnostics/DiagnosticsTest.csproj" />

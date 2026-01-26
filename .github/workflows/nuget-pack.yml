@@ -43,6 +43,8 @@ jobs:
           "SoftwareExtravaganza.Whizbang.Data.EFCore.Custom"
           "SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres"
           "SoftwareExtravaganza.Whizbang.Data.EFCore.Postgres.Generators"
+          "SoftwareExtravaganza.Whizbang.Observability"
+          "SoftwareExtravaganza.Whizbang.SignalR"
           "SoftwareExtravaganza.Whizbang.Transports.AzureServiceBus"
           "SoftwareExtravaganza.Whizbang.Transports.RabbitMQ"
           "SoftwareExtravaganza.Whizbang.Hosting.Azure.ServiceBus"
