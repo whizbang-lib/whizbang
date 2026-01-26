@@ -25,7 +25,7 @@ jobs:
       run: dotnet clean --configuration Release
 
     - name: Build
-      run: dotnet build --no-restore --configuration Release -maxcpucount:1
+      run: dotnet build --no-restore -maxcpucount:1
 
     - name: Verify code formatting
       run: dotnet format --verify-no-changes --no-restore
