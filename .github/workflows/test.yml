@@ -46,16 +46,7 @@ jobs:
             --coverage --coverage-output-format cobertura
         done
 
-    - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v4.5.0
-      with:
-        token: ${{ secrets.CODECOV_TOKEN }}
-        files: '**/TestResults/**/*.cobertura.xml'
-        fail_ci_if_error: true
-        flags: unittests
-        name: codecov-umbrella
-
-    - name: Upload coverage artifacts for SonarCloud
+    - name: Upload coverage artifacts for Quality workflow
       uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 # v4.6.2
       with:
         name: coverage-unit-tests

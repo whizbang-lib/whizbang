@@ -130,6 +130,16 @@ jobs:
         find coverage -name "*.cobertura.xml" -o -name "*.xml" 2>/dev/null || echo "No coverage files found"
         ls -laR coverage/ || echo "Coverage directory empty or missing"
 
+    - name: Upload merged coverage to Codecov
+      uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v4.5.0
+      with:
+        token: ${{ secrets.CODECOV_TOKEN }}
+        directory: coverage
+        files: '**/*.cobertura.xml'
+        fail_ci_if_error: false
+        flags: alltests
+        name: codecov-merged
+
     - name: Build project to generate all source-generated files
       run: |
         echo "Building project to ensure all source-generated files exist before merging coverage..."
