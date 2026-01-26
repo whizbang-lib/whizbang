@@ -339,14 +339,18 @@ public class ServiceBusIntegrationFixtureSanityTests {
     };
 
     // Act - Send command and wait for perspectives to process
-    // CRITICAL: Create waiter BEFORE sending command to avoid race condition
+    // CRITICAL: Create waiters BEFORE sending command to avoid race condition
+    // CRITICAL: Wait for BOTH ProductCreatedEvent AND InventoryRestockedEvent
+    // The inventory quantity is set by InventoryRestockedEvent, not ProductCreatedEvent!
     Console.WriteLine($"[SANITY-PROPAGATION] Sending command: Stock={expectedStock}, Price={expectedPrice}");
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(inventoryPerspectives: 2, bffPerspectives: 2);
+    using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(inventoryPerspectives: 2, bffPerspectives: 2);
+    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(inventoryPerspectives: 1, bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(command);
 
     // Wait for all event processing to complete (all perspectives across both hosts)
     Console.WriteLine($"[SANITY-PROPAGATION] Waiting for event processing...");
-    await waiter.WaitAsync(timeoutMilliseconds: 15000);
+    await productWaiter.WaitAsync(timeoutMilliseconds: 30000);
+    await restockWaiter.WaitAsync(timeoutMilliseconds: 30000);
     Console.WriteLine($"[SANITY-PROPAGATION] Event processing completed!");
 
     Console.WriteLine($"[SANITY-PROPAGATION] Starting assertions...");

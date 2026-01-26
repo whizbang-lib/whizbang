@@ -22,6 +22,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// Integration tests for WorkCoordinatorPublisherWorker with real-world delays and concurrency.
 /// Tests race conditions that might not be caught by fast unit tests.
 /// </summary>
+[NotInParallel("WorkCoordinatorRaceCondition")]
 public class WorkCoordinatorPublisherWorkerRaceConditionTests {
   private sealed record _testMessage { }
 

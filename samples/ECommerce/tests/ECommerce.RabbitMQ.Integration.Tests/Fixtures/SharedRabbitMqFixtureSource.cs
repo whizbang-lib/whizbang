@@ -32,30 +32,39 @@ public static class SharedRabbitMqFixtureSource {
 
   /// <summary>
   /// Initializes shared RabbitMQ and PostgreSQL containers from Whizbang.Testing.
-  /// Safe to call multiple times - delegates to singleton containers.
+  /// Safe to call multiple times - delegates to singleton containers which have built-in health checks.
   /// </summary>
   public static async Task InitializeAsync(CancellationToken cancellationToken = default) {
-    if (_initialized) {
-      return;
+    // ALWAYS call underlying containers - they handle health checks and re-initialization
+    // Don't short-circuit here as containers may need to reinitialize if they died
+
+    var wasInitialized = _initialized;
+
+    if (!wasInitialized) {
+      Console.WriteLine("================================================================================");
+      Console.WriteLine("[SharedRabbitMqFixture] Initializing shared containers from Whizbang.Testing...");
+      Console.WriteLine("================================================================================");
     }
 
-    Console.WriteLine("================================================================================");
-    Console.WriteLine("[SharedRabbitMqFixture] Initializing shared containers from Whizbang.Testing...");
-    Console.WriteLine("================================================================================");
-
-    // Initialize both shared containers (they handle their own singleton pattern)
+    // Initialize both shared containers (they handle their own singleton pattern and health checks)
     await SharedPostgresContainer.InitializeAsync(cancellationToken);
-    Console.WriteLine("[SharedRabbitMqFixture] SharedPostgresContainer ready");
+    if (!wasInitialized) {
+      Console.WriteLine("[SharedRabbitMqFixture] SharedPostgresContainer ready");
+    }
 
     await SharedRabbitMqContainer.InitializeAsync(cancellationToken);
-    Console.WriteLine("[SharedRabbitMqFixture] SharedRabbitMqContainer ready");
+    if (!wasInitialized) {
+      Console.WriteLine("[SharedRabbitMqFixture] SharedRabbitMqContainer ready");
+    }
 
-    Console.WriteLine("================================================================================");
-    Console.WriteLine("[SharedRabbitMqFixture] Shared resources ready!");
-    Console.WriteLine($"[SharedRabbitMqFixture] RabbitMQ: {RabbitMqConnectionString}");
-    Console.WriteLine($"[SharedRabbitMqFixture] PostgreSQL: {PostgresConnectionString}");
-    Console.WriteLine($"[SharedRabbitMqFixture] Management API: {ManagementApiUri}");
-    Console.WriteLine("================================================================================");
+    if (!wasInitialized) {
+      Console.WriteLine("================================================================================");
+      Console.WriteLine("[SharedRabbitMqFixture] Shared resources ready!");
+      Console.WriteLine($"[SharedRabbitMqFixture] RabbitMQ: {RabbitMqConnectionString}");
+      Console.WriteLine($"[SharedRabbitMqFixture] PostgreSQL: {PostgresConnectionString}");
+      Console.WriteLine($"[SharedRabbitMqFixture] Management API: {ManagementApiUri}");
+      Console.WriteLine("================================================================================");
+    }
 
     _initialized = true;
   }

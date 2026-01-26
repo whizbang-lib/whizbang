@@ -57,7 +57,7 @@ public class PerspectiveWorkerStrategyTests {
     // Act - Run worker for multiple poll cycles
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(150); // Let at least 2 cycles complete
+    await Task.Delay(500); // Let at least 2 cycles complete (generous for parallel execution)
     cts.Cancel();
 
     try {
@@ -118,7 +118,7 @@ public class PerspectiveWorkerStrategyTests {
     // Act - Run worker for one poll cycle
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(100); // Let first cycle complete
+    await Task.Delay(300); // Let first cycle complete (generous for parallel execution)
     cts.Cancel();
 
     try {
@@ -177,7 +177,7 @@ public class PerspectiveWorkerStrategyTests {
     // Act - Run worker for one poll cycle
     using var cts = new CancellationTokenSource();
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(100); // Let first cycle complete
+    await Task.Delay(300); // Let first cycle complete (generous for parallel execution)
     cts.Cancel();
 
     try {

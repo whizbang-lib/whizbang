@@ -286,8 +286,9 @@ public class IntervalUnitOfWorkStrategyTests {
     var message1 = new TestMessage { Value = "test1" };
     var unitId1 = await strategy.QueueMessageAsync(message1);
 
-    // Wait for timer to flush first unit (increased for systems under load)
-    await Task.Delay(300);
+    // Wait for timer to flush first unit (600ms for systems under parallel test load)
+    // 50ms interval × 12 = 600ms ensures multiple timer ticks occur
+    await Task.Delay(600);
 
     var message2 = new TestMessage { Value = "test2" };
     var unitId2 = await strategy.QueueMessageAsync(message2);

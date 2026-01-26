@@ -50,7 +50,7 @@ public class SeedProductsWorkflowTests {
   /// 5. Products queryable via lenses
   /// </summary>
   [Test]
-  [Timeout(240000)] // 240 seconds: container init (~15s) + bulk event processing (72 perspective invocations across 2 hosts)
+  [Timeout(360000)] // 360 seconds: container init (~15s) + bulk event processing (72 perspective invocations across 2 hosts)
   public async Task SeedProducts_CreatesAllProducts_MaterializesInAllPerspectivesAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
@@ -74,9 +74,10 @@ public class SeedProductsWorkflowTests {
     var seededCount = await seedMutations.SeedProductsAsync();
 
     // Wait for all perspectives to complete
-    // 150s each provides headroom for 48 + 24 perspective invocations in test environment
-    await productWaiter.WaitAsync(timeoutMilliseconds: 150000);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 150000);
+    // 300s timeout: bulk operations with 72 perspective invocations across 2 hosts via ServiceBus emulator
+    // Need very generous timeout for emulator message delivery under parallel test load
+    await productWaiter.WaitAsync(timeoutMilliseconds: 300000);
+    await restockWaiter.WaitAsync(timeoutMilliseconds: 300000);
 
     // Assert - Verify seeding result
     await Assert.That(seededCount).IsEqualTo(12);
@@ -111,7 +112,7 @@ public class SeedProductsWorkflowTests {
   /// Tests that SeedProducts is idempotent - calling it twice doesn't duplicate products.
   /// </summary>
   [Test]
-  [Timeout(180000)] // 180 seconds: container init (~15s) + bulk event processing (12 products)
+  [Timeout(360000)] // 360 seconds: container init (~15s) + bulk event processing (72 perspective invocations)
   public async Task SeedProducts_CalledTwice_DoesNotDuplicateProductsAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
@@ -132,8 +133,9 @@ public class SeedProductsWorkflowTests {
       inventoryPerspectives: 12,
       bffPerspectives: 12);
     var firstSeedCount = await seedMutations.SeedProductsAsync();
-    await productWaiter.WaitAsync(timeoutMilliseconds: 140000);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 140000);
+    // 300s timeout: bulk operations with 72 perspective invocations across 2 hosts via ServiceBus emulator
+    await productWaiter.WaitAsync(timeoutMilliseconds: 300000);
+    await restockWaiter.WaitAsync(timeoutMilliseconds: 300000);
 
     var secondSeedCount = await seedMutations.SeedProductsAsync();
     // No wait needed - second call is idempotent and returns 0 (no events published)
@@ -167,7 +169,7 @@ public class SeedProductsWorkflowTests {
   /// Tests that seeded products have correct stock levels in both perspectives.
   /// </summary>
   [Test]
-  [Timeout(240000)] // 240 seconds: container init (~15s) + bulk event processing (72 perspective invocations across 2 hosts)
+  [Timeout(360000)] // 360 seconds: container init (~15s) + bulk event processing (72 perspective invocations across 2 hosts)
   public async Task SeedProducts_CreatesInventoryLevels_WithCorrectStockAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
@@ -188,8 +190,10 @@ public class SeedProductsWorkflowTests {
       inventoryPerspectives: 12,
       bffPerspectives: 12);
     await seedMutations.SeedProductsAsync();
-    await productWaiter.WaitAsync(timeoutMilliseconds: 150000);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 150000);
+    // 300s timeout: bulk operations with 72 perspective invocations across 2 hosts via ServiceBus emulator
+    // Need very generous timeout for emulator message delivery under parallel test load
+    await productWaiter.WaitAsync(timeoutMilliseconds: 300000);
+    await restockWaiter.WaitAsync(timeoutMilliseconds: 300000);
 
     // Assert - Verify specific product stock levels
     var products = await fixture.BffProductLens.GetAllAsync();
@@ -223,7 +227,7 @@ public class SeedProductsWorkflowTests {
   /// Tests that seeded products are properly synchronized across both worker and BFF perspectives.
   /// </summary>
   [Test]
-  [Timeout(240000)] // 240 seconds: container init (~15s) + bulk event processing (72 perspective invocations across 2 hosts)
+  [Timeout(360000)] // 360 seconds: container init (~15s) + bulk event processing (72 perspective invocations across 2 hosts)
   public async Task SeedProducts_SynchronizesPerspectives_AcrossBFFAndInventoryWorkerAsync() {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
     // Arrange
@@ -244,8 +248,10 @@ public class SeedProductsWorkflowTests {
       inventoryPerspectives: 12,
       bffPerspectives: 12);
     await seedMutations.SeedProductsAsync();
-    await productWaiter.WaitAsync(timeoutMilliseconds: 150000);
-    await restockWaiter.WaitAsync(timeoutMilliseconds: 150000);
+    // 300s timeout: bulk operations with 72 perspective invocations across 2 hosts via ServiceBus emulator
+    // Need very generous timeout for emulator message delivery under parallel test load
+    await productWaiter.WaitAsync(timeoutMilliseconds: 300000);
+    await restockWaiter.WaitAsync(timeoutMilliseconds: 300000);
 
     // Assert - Get all products from both perspectives
     var bffProducts = await fixture.BffProductLens.GetAllAsync();

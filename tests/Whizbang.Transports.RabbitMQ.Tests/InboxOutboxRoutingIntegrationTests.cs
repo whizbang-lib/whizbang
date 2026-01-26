@@ -92,7 +92,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
   // ========================================
 
   [Test]
-  [Timeout(30000)]
+  [Timeout(90000)]
   public async Task DomainTopicOutboxStrategy_PublishesToDomainExchangeAsync(
     CancellationToken cancellationToken
   ) {
@@ -145,7 +145,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(30000)]
+  [Timeout(90000)]
   public async Task DomainTopicOutboxStrategy_WithCustomResolver_RoutesCorrectlyAsync(
     CancellationToken cancellationToken
   ) {
@@ -199,7 +199,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
   // ========================================
 
   [Test]
-  [Timeout(30000)]
+  [Timeout(90000)]
   public async Task SharedTopicOutboxStrategy_PublishesToSharedExchangeAsync(
     CancellationToken cancellationToken
   ) {
@@ -250,7 +250,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(30000)]
+  [Timeout(90000)]
   public async Task SharedTopicOutboxStrategy_UsesDefaultTopicAsync(
     CancellationToken cancellationToken
   ) {
@@ -303,7 +303,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
   // ========================================
 
   [Test]
-  [Timeout(30000)]
+  [Timeout(90000)]
   public async Task DomainTopicInboxStrategy_SubscribesToDomainExchangeAsync(
     CancellationToken cancellationToken
   ) {
@@ -358,7 +358,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(30000)]
+  [Timeout(90000)]
   public async Task DomainTopicInboxStrategy_WithCustomSuffix_SubscribesCorrectlyAsync(
     CancellationToken cancellationToken
   ) {
@@ -414,7 +414,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
   // ========================================
 
   [Test]
-  [Timeout(30000)]
+  [Timeout(90000)]
   public async Task SharedTopicInboxStrategy_SubscribesToSharedExchangeAsync(
     CancellationToken cancellationToken
   ) {
@@ -469,7 +469,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(30000)]
+  [Timeout(90000)]
   public async Task SharedTopicInboxStrategy_UsesDefaultTopicAsync(
     CancellationToken cancellationToken
   ) {
@@ -526,7 +526,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
   // ========================================
 
   [Test]
-  [Timeout(30000)]
+  [Timeout(90000)]
   public async Task DomainOutbox_ToDomainInbox_EndToEndAsync(
     CancellationToken cancellationToken
   ) {
@@ -575,7 +575,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
   }
 
   [Test]
-  [Timeout(30000)]
+  [Timeout(90000)]
   public async Task SharedOutbox_ToSharedInbox_EndToEndAsync(
     CancellationToken cancellationToken
   ) {

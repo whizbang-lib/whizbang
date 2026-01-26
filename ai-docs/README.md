@@ -17,6 +17,10 @@ This directory contains focused documentation topics to help Claude Code underst
   - **When to use:** Writing new features, fixing bugs
   - **Critical:** Test-first is mandatory, 100% coverage goal
 
+- **[flaky-tests.md](flaky-tests.md)** - Diagnosing and fixing intermittent test failures
+  - **When to use:** Tests pass sometimes but fail other times
+  - **Critical:** Static resources need `[NotInParallel]`, wait for ALL events affecting asserted data
+
 ### 💻 Code Quality
 - **[code-standards.md](code-standards.md)** - Formatting, naming, quality
   - **When to use:** Writing any C# code
@@ -99,6 +103,13 @@ This directory contains focused documentation topics to help Claude Code underst
 3. Use: `--treenode-filter` not `--filter`
 4. Use: `--coverage --coverage-output-format cobertura`
 
+### "Tests are flaky (pass sometimes, fail sometimes)"
+1. Read: [flaky-tests.md](flaky-tests.md) - Common patterns and fixes
+2. Check: Is it a static shared resource? → Add `[NotInParallel]`
+3. Check: Missing event waiter? → Wait for ALL events that affect asserted data
+4. Check: Timeout too short? → Increase for bulk operations (200s) or parallel load (600ms delays)
+5. Check: Timing-sensitive? → Use deterministic synchronization instead of delays
+
 ---
 
 ## 📖 Complete Documentation List
@@ -112,9 +123,10 @@ This directory contains focused documentation topics to help Claude Code underst
 
 ### Development Practices
 6. **[testing-tunit.md](testing-tunit.md)** - TUnit, Rocks, Bogus usage
-7. **[sample-projects.md](sample-projects.md)** - Dogfooding philosophy
-8. **[efcore-10-usage.md](efcore-10-usage.md)** - PostgreSQL JsonB, UUIDv7
-9. **[script-standards.md](script-standards.md)** - PowerShell, containers
+7. **[flaky-tests.md](flaky-tests.md)** - Diagnosing and fixing intermittent test failures
+8. **[sample-projects.md](sample-projects.md)** - Dogfooding philosophy
+9. **[efcore-10-usage.md](efcore-10-usage.md)** - PostgreSQL JsonB, UUIDv7
+10. **[script-standards.md](script-standards.md)** - PowerShell, containers
 
 ---
 

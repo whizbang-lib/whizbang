@@ -16,6 +16,11 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Tests the process_work_batch PostgreSQL function and lease-based work coordination.
 /// Uses UUIDv7 for all message IDs to ensure proper time-ordered database indexing.
 /// </summary>
+/// <remarks>
+/// Uses NotInParallel to avoid database connection pool exhaustion and transient
+/// TaskCanceledException errors when many parallel tests compete for PostgreSQL connections.
+/// </remarks>
+[NotInParallel("PostgresWorkCoordinator")]
 public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
   private EFCoreWorkCoordinator<WorkCoordinationDbContext> _sut = null!;
   private Guid _instanceId;
