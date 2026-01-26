@@ -171,7 +171,64 @@ public class CommandAuditPipelineBehaviorTests {
   }
 
   [Test]
-  public async Task HandleAsync_WithCommandNotEndingInCommand_AppendsReceptorAsync() {
+  public async Task HandleAsync_WithReceptorNameInContext_UsesContextValueAsync() {
+    // Arrange
+    var emitter = new MockSystemEventEmitter();
+    var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
+    var context = new MockMessageContext { MetadataDict = { ["ReceptorName"] = "CustomReceptor" } };
+    var behavior = new CommandAuditPipelineBehavior<TestCommand, string>(emitter, options, context);
+
+    var command = new TestCommand { OrderId = "ABC123" };
+
+    // Act
+    await behavior.HandleAsync(command, () => Task.FromResult("result"));
+
+    // Assert - Uses metadata value, not generated name
+    await Assert.That(emitter.EmitCommandAuditedCalls).Count().IsEqualTo(1);
+    var call = emitter.EmitCommandAuditedCalls[0];
+    await Assert.That(call.ReceptorName).IsEqualTo("CustomReceptor");
+  }
+
+  [Test]
+  public async Task HandleAsync_WithEmptyReceptorNameInContext_FallsBackToGeneratedAsync() {
+    // Arrange
+    var emitter = new MockSystemEventEmitter();
+    var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
+    var context = new MockMessageContext { MetadataDict = { ["ReceptorName"] = "" } };
+    var behavior = new CommandAuditPipelineBehavior<CreateOrderCommand, string>(emitter, options, context);
+
+    var command = new CreateOrderCommand { Amount = 100m };
+
+    // Act
+    await behavior.HandleAsync(command, () => Task.FromResult("result"));
+
+    // Assert - Falls back to generated name due to empty string
+    await Assert.That(emitter.EmitCommandAuditedCalls).Count().IsEqualTo(1);
+    var call = emitter.EmitCommandAuditedCalls[0];
+    await Assert.That(call.ReceptorName).IsEqualTo("CreateOrderReceptor");
+  }
+
+  [Test]
+  public async Task HandleAsync_WithNonStringReceptorNameInContext_FallsBackToGeneratedAsync() {
+    // Arrange
+    var emitter = new MockSystemEventEmitter();
+    var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
+    var context = new MockMessageContext { MetadataDict = { ["ReceptorName"] = 12345 } };
+    var behavior = new CommandAuditPipelineBehavior<CreateOrderCommand, string>(emitter, options, context);
+
+    var command = new CreateOrderCommand { Amount = 100m };
+
+    // Act
+    await behavior.HandleAsync(command, () => Task.FromResult("result"));
+
+    // Assert - Falls back to generated name due to non-string value
+    await Assert.That(emitter.EmitCommandAuditedCalls).Count().IsEqualTo(1);
+    var call = emitter.EmitCommandAuditedCalls[0];
+    await Assert.That(call.ReceptorName).IsEqualTo("CreateOrderReceptor");
+  }
+
+  [Test]
+  public async Task HandleAsync_WithCommandEndingInCommand_RemovesSuffixAndAppendsReceptorAsync() {
     // Arrange
     var emitter = new MockSystemEventEmitter();
     var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
@@ -182,11 +239,28 @@ public class CommandAuditPipelineBehaviorTests {
     // Act
     await behavior.HandleAsync(command, () => Task.FromResult("result"));
 
-    // Assert - "TestCommand" doesn't end in "Command", so append "Receptor"
+    // Assert - "TestCommand" ends in "Command", so becomes "TestReceptor"
     await Assert.That(emitter.EmitCommandAuditedCalls).Count().IsEqualTo(1);
     var call = emitter.EmitCommandAuditedCalls[0];
-    // TestCommand ends with "Command", so it should become "TestReceptor"
     await Assert.That(call.ReceptorName).IsEqualTo("TestReceptor");
+  }
+
+  [Test]
+  public async Task HandleAsync_WithCommandNotEndingInCommand_AppendsReceptorAsync() {
+    // Arrange
+    var emitter = new MockSystemEventEmitter();
+    var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
+    var behavior = new CommandAuditPipelineBehavior<PlaceOrder, string>(emitter, options);
+
+    var command = new PlaceOrder { Amount = 100m };
+
+    // Act
+    await behavior.HandleAsync(command, () => Task.FromResult("result"));
+
+    // Assert - "PlaceOrder" doesn't end in "Command", so becomes "PlaceOrderReceptor"
+    await Assert.That(emitter.EmitCommandAuditedCalls).Count().IsEqualTo(1);
+    var call = emitter.EmitCommandAuditedCalls[0];
+    await Assert.That(call.ReceptorName).IsEqualTo("PlaceOrderReceptor");
   }
 
   [Test]
@@ -224,9 +298,25 @@ public class CommandAuditPipelineBehaviorTests {
     public required string Name { get; init; }
   }
 
+  // Command that doesn't end with "Command" suffix
+  private sealed record PlaceOrder {
+    public required decimal Amount { get; init; }
+  }
+
   #endregion
 
   #region Mock Implementations
+
+  private sealed class MockMessageContext : IMessageContext {
+    public MessageId MessageId { get; init; } = MessageId.New();
+    public CorrelationId CorrelationId { get; init; } = CorrelationId.New();
+    public MessageId CausationId { get; init; } = MessageId.New();
+    public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
+    public string? UserId { get; init; }
+
+    public Dictionary<string, object> MetadataDict { get; } = [];
+    public IReadOnlyDictionary<string, object> Metadata => MetadataDict;
+  }
 
   private sealed class MockSystemEventEmitter : ISystemEventEmitter {
     public List<(object Command, object Response, string ReceptorName, IMessageContext? Context)> EmitCommandAuditedCalls { get; } = [];
