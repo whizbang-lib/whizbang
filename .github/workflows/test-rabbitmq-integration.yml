@@ -60,7 +60,8 @@ jobs:
           dotnet test --project samples/ECommerce/tests/ECommerce.RabbitMQ.Integration.Tests/ \
             --configuration Release \
             --max-parallel-test-modules 4 \
-            --retry-failed-tests 2 \
+            --retry-failed-tests \
+            --retry-failed-tests-max-tests 5 \
             --report-trx \
             --coverage --coverage-output-format cobertura
         env:

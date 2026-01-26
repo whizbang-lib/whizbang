@@ -55,7 +55,8 @@ jobs:
           dotnet test --project samples/ECommerce/tests/ECommerce.InMemory.Integration.Tests/ECommerce.InMemory.Integration.Tests.csproj \
             --no-build \
             --configuration Release \
-            --retry-failed-tests 2 \
+            --retry-failed-tests \
+            --retry-failed-tests-max-tests 5 \
             --report-trx \
             --report-trx-filename inmemory-integration-tests.trx \
             --coverage --coverage-output-format cobertura
