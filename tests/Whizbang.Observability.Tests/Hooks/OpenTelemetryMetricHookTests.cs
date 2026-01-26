@@ -216,6 +216,231 @@ public class OpenTelemetryMetricHookTests {
     await Assert.That(OpenTelemetryMetricHook.Meter.Version).IsEqualTo("1.0.0");
   }
 
+  [Test]
+  public async Task OnTaggedMessage_HandlesStringNumericValue_WhenValuePropertyIsStringAsync() {
+    // Arrange
+    var hook = new OpenTelemetryMetricHook();
+    var attribute = new MetricTagAttribute {
+      Tag = "test-string-value",
+      MetricName = "test.string.numeric",
+      Type = MetricType.Histogram,
+      ValueProperty = "AmountStr"
+    };
+
+    // Payload with string representation of number
+    var json = """{"OrderId":"00000000-0000-0000-0000-000000000001","AmountStr":"456.78"}""";
+    var payload = JsonDocument.Parse(json).RootElement;
+    var context = new TagContext<MetricTagAttribute> {
+      Attribute = attribute,
+      Message = new { OrderId = Guid.NewGuid(), AmountStr = "456.78" },
+      MessageType = typeof(object),
+      Payload = payload
+    };
+
+    // Act
+    var result = await hook.OnTaggedMessageAsync(context, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task OnTaggedMessage_HandlesNonObjectPayload_GracefullyAsync() {
+    // Arrange
+    var hook = new OpenTelemetryMetricHook();
+    var attribute = new MetricTagAttribute {
+      Tag = "test-non-object",
+      MetricName = "test.nonobject",
+      Type = MetricType.Histogram,
+      ValueProperty = "SomeValue"
+    };
+
+    // Non-object payload (string)
+    var payload = JsonSerializer.SerializeToElement("just a string");
+    var context = new TagContext<MetricTagAttribute> {
+      Attribute = attribute,
+      Message = "just a string",
+      MessageType = typeof(string),
+      Payload = payload
+    };
+
+    // Act - should not throw
+    var result = await hook.OnTaggedMessageAsync(context, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task OnTaggedMessage_HandlesMissingValueProperty_GracefullyAsync() {
+    // Arrange
+    var hook = new OpenTelemetryMetricHook();
+    var attribute = new MetricTagAttribute {
+      Tag = "test-missing-prop",
+      MetricName = "test.missing.property",
+      Type = MetricType.Histogram,
+      ValueProperty = "NonExistentProperty"
+    };
+
+    var json = """{"OrderId":"00000000-0000-0000-0000-000000000001","Amount":100}""";
+    var payload = JsonDocument.Parse(json).RootElement;
+    var context = new TagContext<MetricTagAttribute> {
+      Attribute = attribute,
+      Message = new { OrderId = Guid.NewGuid(), Amount = 100m },
+      MessageType = typeof(object),
+      Payload = payload
+    };
+
+    // Act - should not throw
+    var result = await hook.OnTaggedMessageAsync(context, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task OnTaggedMessage_HandlesBooleanProperties_InDimensionsAsync() {
+    // Arrange
+    var hook = new OpenTelemetryMetricHook();
+    var attribute = new MetricTagAttribute {
+      Tag = "test-boolean",
+      MetricName = "test.boolean.dimensions",
+      Type = MetricType.Counter,
+      Properties = ["IsActive", "IsPremium"]
+    };
+
+    var json = """{"Id":"00000000-0000-0000-0000-000000000001","IsActive":true,"IsPremium":false}""";
+    var payload = JsonDocument.Parse(json).RootElement;
+    var context = new TagContext<MetricTagAttribute> {
+      Attribute = attribute,
+      Message = new { Id = Guid.NewGuid(), IsActive = true, IsPremium = false },
+      MessageType = typeof(object),
+      Payload = payload
+    };
+
+    // Act
+    var result = await hook.OnTaggedMessageAsync(context, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task OnTaggedMessage_HandlesNullScopeValues_GracefullyAsync() {
+    // Arrange
+    var hook = new OpenTelemetryMetricHook();
+    var attribute = new MetricTagAttribute {
+      Tag = "test-null-scope",
+      MetricName = "test.null.scope",
+      Type = MetricType.Counter
+    };
+
+    var message = new TestOrderEvent { OrderId = Guid.NewGuid(), Amount = 100m };
+    var payload = JsonSerializer.SerializeToElement(message);
+    var scope = new Dictionary<string, object?> {
+      { "TenantId", "valid-tenant" },
+      { "NullValue", null } // This should be skipped
+    };
+    var context = new TagContext<MetricTagAttribute> {
+      Attribute = attribute,
+      Message = message,
+      MessageType = typeof(TestOrderEvent),
+      Payload = payload,
+      Scope = scope
+    };
+
+    // Act
+    var result = await hook.OnTaggedMessageAsync(context, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task OnTaggedMessage_HandlesInvalidNumericString_GracefullyAsync() {
+    // Arrange
+    var hook = new OpenTelemetryMetricHook();
+    var attribute = new MetricTagAttribute {
+      Tag = "test-invalid-string",
+      MetricName = "test.invalid.numeric",
+      Type = MetricType.Histogram,
+      ValueProperty = "BadValue"
+    };
+
+    var json = """{"Id":"00000000-0000-0000-0000-000000000001","BadValue":"not-a-number"}""";
+    var payload = JsonDocument.Parse(json).RootElement;
+    var context = new TagContext<MetricTagAttribute> {
+      Attribute = attribute,
+      Message = new { Id = Guid.NewGuid(), BadValue = "not-a-number" },
+      MessageType = typeof(object),
+      Payload = payload
+    };
+
+    // Act - should not throw
+    var result = await hook.OnTaggedMessageAsync(context, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task OnTaggedMessage_ScopeDoesNotOverrideExistingProperty_WhenSameKeyExistsAsync() {
+    // Arrange
+    var hook = new OpenTelemetryMetricHook();
+    var attribute = new MetricTagAttribute {
+      Tag = "test-overlap",
+      MetricName = "test.overlap.keys",
+      Type = MetricType.Counter,
+      Properties = ["TenantId"] // Property from payload
+    };
+
+    var json = """{"Id":"00000000-0000-0000-0000-000000000001","TenantId":"payload-tenant"}""";
+    var payload = JsonDocument.Parse(json).RootElement;
+    var scope = new Dictionary<string, object?> {
+      { "TenantId", "scope-tenant" } // Should NOT override payload value
+    };
+    var context = new TagContext<MetricTagAttribute> {
+      Attribute = attribute,
+      Message = new { Id = Guid.NewGuid(), TenantId = "payload-tenant" },
+      MessageType = typeof(object),
+      Payload = payload,
+      Scope = scope
+    };
+
+    // Act
+    var result = await hook.OnTaggedMessageAsync(context, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
+  [Test]
+  public async Task OnTaggedMessage_HandlesMixedPropertyTypes_InDimensionsAsync() {
+    // Arrange
+    var hook = new OpenTelemetryMetricHook();
+    var attribute = new MetricTagAttribute {
+      Tag = "test-mixed",
+      MetricName = "test.mixed.types",
+      Type = MetricType.Counter,
+      Properties = ["StringVal", "NumVal", "BoolVal", "ArrayVal"]
+    };
+
+    var json = """{"StringVal":"hello","NumVal":42,"BoolVal":true,"ArrayVal":[1,2,3]}""";
+    var payload = JsonDocument.Parse(json).RootElement;
+    var context = new TagContext<MetricTagAttribute> {
+      Attribute = attribute,
+      Message = new { StringVal = "hello", NumVal = 42, BoolVal = true, ArrayVal = new[] { 1, 2, 3 } },
+      MessageType = typeof(object),
+      Payload = payload
+    };
+
+    // Act
+    var result = await hook.OnTaggedMessageAsync(context, CancellationToken.None);
+
+    // Assert
+    await Assert.That(result).IsNull();
+  }
+
   // Test event types
   private sealed record TestOrderEvent {
     public required Guid OrderId { get; init; }
