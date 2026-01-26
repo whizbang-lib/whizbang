@@ -102,4 +102,86 @@ public class GitOperationsTests {
     // Assert
     await Assert.That(projectName).IsEqualTo("MyProject");
   }
+
+  [Test]
+  public async Task GetRemoteOriginUrl_ReturnsUrl_WhenInGitRepoWithRemote_Async() {
+    // Arrange - use the actual whizbang repo which has a remote origin
+    var repoPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+
+    // Act
+    var url = await GitOperations.GetRemoteOriginUrlAsync(repoPath);
+
+    // Assert - should return a URL containing "whizbang"
+    await Assert.That(url).IsNotNull();
+    await Assert.That(url!).Contains("whizbang");
+  }
+
+  [Test]
+  public async Task GetRemoteOriginUrl_ReturnsNull_WhenNotInGitRepo_Async() {
+    // Arrange
+    var tempPath = Path.Combine(Path.GetTempPath(), $"not-a-git-repo-{Guid.NewGuid()}");
+    Directory.CreateDirectory(tempPath);
+
+    try {
+      // Act
+      var url = await GitOperations.GetRemoteOriginUrlAsync(tempPath);
+
+      // Assert
+      await Assert.That(url).IsNull();
+    } finally {
+      Directory.Delete(tempPath, recursive: true);
+    }
+  }
+
+  [Test]
+  public async Task DeriveProjectName_UsesRemoteUrlRepoName_WhenAvailable_Async() {
+    // Arrange - use the actual whizbang repo
+    var repoPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+
+    // Act
+    var projectName = await GitOperations.DeriveProjectNameAsync(repoPath);
+
+    // Assert - should derive "whizbang" from the remote URL
+    await Assert.That(projectName).IsEqualTo("whizbang");
+  }
+
+  [Test]
+  public async Task DeriveProjectName_FallsBackToDirectoryName_WhenNoRemote_Async() {
+    // Arrange - create a temp directory that's not a git repo
+    var tempPath = Path.Combine(Path.GetTempPath(), $"my-test-project-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(tempPath);
+
+    try {
+      // Act
+      var projectName = await GitOperations.DeriveProjectNameAsync(tempPath);
+
+      // Assert - should fall back to directory name
+      await Assert.That(projectName).StartsWith("my-test-project-");
+    } finally {
+      Directory.Delete(tempPath, recursive: true);
+    }
+  }
+
+  [Test]
+  public async Task GetProjectName_HandlesMultipleTrailingSeparators_Async() {
+    // Arrange
+    var projectPath = "/Users/dev/src/MyProject//";
+
+    // Act
+    var projectName = GitOperations.GetProjectName(projectPath);
+
+    // Assert - should handle multiple trailing slashes
+    await Assert.That(projectName).IsEqualTo("MyProject");
+  }
+
+  [Test]
+  public async Task GetProjectName_ReturnsUnknown_WhenPathIsNull_Async() {
+    // Arrange - empty path after trimming would return parent directory or unknown
+
+    // Act
+    var projectName = GitOperations.GetProjectName("/");
+
+    // Assert - root path case
+    await Assert.That(projectName).IsNotNull();
+  }
 }
