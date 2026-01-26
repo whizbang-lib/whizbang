@@ -17,6 +17,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Npgsql" />
     <ProjectReference Include="..\ECommerce.OrderService.API\ECommerce.OrderService.API.csproj" />
     <ProjectReference Include="..\ECommerce.InventoryWorker\ECommerce.InventoryWorker.csproj" />
     <ProjectReference Include="..\ECommerce.NotificationWorker\ECommerce.NotificationWorker.csproj" />
