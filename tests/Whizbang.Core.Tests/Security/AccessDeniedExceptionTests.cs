@@ -1,3 +1,4 @@
+using TUnit.Core;
 using Whizbang.Core.Security;
 using Whizbang.Core.Security.Exceptions;
 using Whizbang.Core.SystemEvents.Security;
@@ -6,9 +7,69 @@ namespace Whizbang.Core.Tests.Security;
 
 /// <summary>
 /// Tests for AccessDeniedException.
+/// AccessDeniedException is thrown when access is denied due to insufficient permissions.
 /// </summary>
 /// <tests>AccessDeniedException</tests>
+[Category("Security")]
 public class AccessDeniedExceptionTests {
+  #region Default Constructor Tests
+
+  [Test]
+  public async Task DefaultConstructor_SetsDefaultMessageAsync() {
+    // Arrange & Act
+    var exception = new AccessDeniedException();
+
+    // Assert
+    await Assert.That(exception.Message).IsEqualTo("Access denied");
+    await Assert.That(exception.RequiredPermission).IsEqualTo(default(Permission));
+    await Assert.That(exception.ResourceType).IsEqualTo(string.Empty);
+    await Assert.That(exception.Reason).IsEqualTo(AccessDenialReason.InsufficientPermission);
+  }
+
+  #endregion
+
+  #region Message Constructor Tests
+
+  [Test]
+  public async Task MessageConstructor_SetsCustomMessageAsync() {
+    // Arrange
+    var message = "Custom access denied message";
+
+    // Act
+    var exception = new AccessDeniedException(message);
+
+    // Assert
+    await Assert.That(exception.Message).IsEqualTo(message);
+    await Assert.That(exception.RequiredPermission).IsEqualTo(default(Permission));
+    await Assert.That(exception.ResourceType).IsEqualTo(string.Empty);
+    await Assert.That(exception.Reason).IsEqualTo(AccessDenialReason.InsufficientPermission);
+  }
+
+  #endregion
+
+  #region Message and InnerException Constructor Tests
+
+  [Test]
+  public async Task MessageAndInnerExceptionConstructor_SetsMessageAndInnerAsync() {
+    // Arrange
+    var message = "Access denied with inner exception";
+    var innerException = new InvalidOperationException("Inner error");
+
+    // Act
+    var exception = new AccessDeniedException(message, innerException);
+
+    // Assert
+    await Assert.That(exception.Message).IsEqualTo(message);
+    await Assert.That(exception.InnerException).IsEqualTo(innerException);
+    await Assert.That(exception.RequiredPermission).IsEqualTo(default(Permission));
+    await Assert.That(exception.ResourceType).IsEqualTo(string.Empty);
+    await Assert.That(exception.Reason).IsEqualTo(AccessDenialReason.InsufficientPermission);
+  }
+
+  #endregion
+
+  #region Full Details Constructor Tests
+
   [Test]
   public async Task AccessDeniedException_Constructor_SetsAllPropertiesAsync() {
     // Arrange
@@ -98,4 +159,6 @@ public class AccessDeniedExceptionTests {
       await Assert.That(ex.Reason).IsEqualTo(AccessDenialReason.PolicyRejected);
     }
   }
+
+  #endregion
 }
