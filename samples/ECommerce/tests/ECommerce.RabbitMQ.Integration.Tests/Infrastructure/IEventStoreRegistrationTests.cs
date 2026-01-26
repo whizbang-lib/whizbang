@@ -52,7 +52,7 @@ public class IEventStoreRegistrationTests {
     });
 
     // DIAGNOSTIC: Check if callback is registered BEFORE .WithDriver.Postgres
-    var registrarCountBefore = GetRegistrarCount();
+    var registrarCountBefore = _getRegistrarCount();
 
     // THIS IS THE KEY LINE - triggers registration
     _ = builder.Services
@@ -61,7 +61,7 @@ public class IEventStoreRegistrationTests {
       .WithDriver.Postgres;
 
     // DIAGNOSTIC: Check if callback was invoked
-    var registrarCountAfter = GetRegistrarCount();
+    var registrarCountAfter = _getRegistrarCount();
 
     // Build the host
     var host = builder.Build();
@@ -75,7 +75,7 @@ public class IEventStoreRegistrationTests {
     await Assert.That(registrarCountBefore).IsGreaterThanOrEqualTo(1);
   }
 
-  private int GetRegistrarCount() {
+  private int _getRegistrarCount() {
     // Use reflection to access private static field for diagnostic purposes
     var registryType = typeof(ModelRegistrationRegistry);
     var registrarsField = registryType.GetField("_registrars",

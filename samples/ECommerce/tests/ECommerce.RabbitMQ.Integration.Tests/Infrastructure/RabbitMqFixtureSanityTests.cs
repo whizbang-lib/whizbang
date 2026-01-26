@@ -35,7 +35,7 @@ public sealed class RabbitMqFixtureSanityTests {
   }
 
   [Test]
-  public async Task Fixture_InitializesSuccessfully() {
+  public async Task Fixture_InitializesSuccessfullyAsync() {
     // Verify fixture is initialized
     await Assert.That(_fixture).IsNotNull();
 
@@ -47,7 +47,7 @@ public sealed class RabbitMqFixtureSanityTests {
   }
 
   [Test]
-  public async Task RabbitMQ_ConnectionIsOpen() {
+  public async Task RabbitMQ_ConnectionIsOpenAsync() {
     // Verify RabbitMQ connection string is valid
     await Assert.That(SharedRabbitMqFixtureSource.RabbitMqConnectionString).IsNotNull().And.IsNotEmpty();
 
@@ -55,7 +55,7 @@ public sealed class RabbitMqFixtureSanityTests {
   }
 
   [Test]
-  public async Task PostgreSQL_ConnectionIsOpen() {
+  public async Task PostgreSQL_ConnectionIsOpenAsync() {
     // Verify PostgreSQL connection string is valid
     await Assert.That(SharedRabbitMqFixtureSource.PostgresConnectionString).IsNotNull().And.IsNotEmpty();
 
@@ -63,7 +63,7 @@ public sealed class RabbitMqFixtureSanityTests {
   }
 
   [Test]
-  public async Task ManagementApi_UriIsValid() {
+  public async Task ManagementApi_UriIsValidAsync() {
     // Verify Management API URI is valid
     await Assert.That(SharedRabbitMqFixtureSource.ManagementApiUri).IsNotNull();
     await Assert.That(SharedRabbitMqFixtureSource.ManagementApiUri.Scheme).IsEqualTo("http");
