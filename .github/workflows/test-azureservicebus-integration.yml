@@ -61,13 +61,11 @@ jobs:
 
       - name: Run Azure Service Bus Integration Tests
         # Tests will start ServiceBus emulator via docker-compose automatically
-        # Uses Microsoft.Testing.Extensions.Retry to automatically retry failed tests
         run: |
           dotnet test --project samples/ECommerce/tests/ECommerce.Integration.Tests/ \
             --configuration Release \
             --max-parallel-test-modules 1 \
-            --retry-failed-tests \
-            --retry-failed-tests-max-tests 5 \
+            --retry-failed-tests 2 \
             --report-trx \
             --coverage --coverage-output-format cobertura
 

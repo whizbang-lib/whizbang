@@ -55,13 +55,11 @@ jobs:
         run: dotnet build --no-restore --configuration Release -maxcpucount:1
 
       - name: Run RabbitMQ Integration Tests
-        # Uses Microsoft.Testing.Extensions.Retry to automatically retry failed tests
         run: |
           dotnet test --project samples/ECommerce/tests/ECommerce.RabbitMQ.Integration.Tests/ \
             --configuration Release \
             --max-parallel-test-modules 4 \
-            --retry-failed-tests \
-            --retry-failed-tests-max-tests 5 \
+            --retry-failed-tests 2 \
             --report-trx \
             --coverage --coverage-output-format cobertura
         env:

@@ -57,13 +57,11 @@ jobs:
         run: dotnet build --no-restore --configuration Release -maxcpucount:1
 
       - name: Run PostgreSQL Integration Tests
-        # Uses Microsoft.Testing.Extensions.Retry to automatically retry failed tests
         run: |
           dotnet test --no-build \
             --test-modules "**/bin/**/Release/net10.0/Whizbang.Data*.Tests.dll" \
             --max-parallel-test-modules 2 \
-            --retry-failed-tests \
-            --retry-failed-tests-max-tests 5 \
+            --retry-failed-tests 2 \
             --report-trx \
             --report-trx-filename postgres-integration-tests.trx \
             --coverage --coverage-output-format cobertura
