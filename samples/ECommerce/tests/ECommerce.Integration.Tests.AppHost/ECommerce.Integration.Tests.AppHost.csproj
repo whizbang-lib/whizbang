@@ -10,6 +10,7 @@
   <ItemGroup>
     <PackageReference Include="Aspire.Hosting.AppHost" />
     <PackageReference Include="Aspire.Hosting.PostgreSQL" />
+  <PackageReference Include="Npgsql" />
   </ItemGroup>
 
   <!-- NOTE: Azure Service Bus Emulator references removed -->
