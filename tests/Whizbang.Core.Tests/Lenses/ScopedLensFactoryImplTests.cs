@@ -227,6 +227,289 @@ public class ScopedLensFactoryImplTests {
     await Assert.That(lens.AppliedFilter!.Value.UseOrLogicForUserAndPrincipal).IsTrue();
   }
 
+  // === GetOrganizationLens and GetCustomerLens Tests ===
+
+  [Test]
+  public async Task ScopedLensFactory_GetOrganizationLens_UsesTenantAndOrganizationFilterAsync() {
+    // Arrange
+    var context = _createScopeContext(tenantId: "tenant-123", organizationId: "org-456");
+    var (factory, accessor) = _createFactory();
+    accessor.Current = context;
+
+    // Act
+    var lens = factory.GetOrganizationLens<ITestLensQuery>();
+
+    // Assert
+    var expectedFilters = ScopeFilter.Tenant | ScopeFilter.Organization;
+    await Assert.That(lens.AppliedFilter!.Value.Filters).IsEqualTo(expectedFilters);
+    await Assert.That(lens.AppliedFilter!.Value.OrganizationId).IsEqualTo("org-456");
+  }
+
+  [Test]
+  public async Task ScopedLensFactory_GetCustomerLens_UsesTenantAndCustomerFilterAsync() {
+    // Arrange
+    var context = _createScopeContext(tenantId: "tenant-123", customerId: "cust-789");
+    var (factory, accessor) = _createFactory();
+    accessor.Current = context;
+
+    // Act
+    var lens = factory.GetCustomerLens<ITestLensQuery>();
+
+    // Assert
+    var expectedFilters = ScopeFilter.Tenant | ScopeFilter.Customer;
+    await Assert.That(lens.AppliedFilter!.Value.Filters).IsEqualTo(expectedFilters);
+    await Assert.That(lens.AppliedFilter!.Value.CustomerId).IsEqualTo("cust-789");
+  }
+
+  // === Constructor Validation Tests ===
+
+  [Test]
+  public async Task ScopedLensFactory_Constructor_NullServiceProvider_ThrowsAsync() {
+    // Arrange
+    var accessor = new ScopeContextAccessor();
+    var options = new LensOptions();
+    var emitter = new NullSystemEventEmitter();
+
+    // Act & Assert
+    await Assert.That(() => new ScopedLensFactory(null!, accessor, options, emitter))
+      .ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task ScopedLensFactory_Constructor_NullScopeContextAccessor_ThrowsAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    var provider = services.BuildServiceProvider();
+    var options = new LensOptions();
+    var emitter = new NullSystemEventEmitter();
+
+    // Act & Assert
+    await Assert.That(() => new ScopedLensFactory(provider, null!, options, emitter))
+      .ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task ScopedLensFactory_Constructor_NullLensOptions_ThrowsAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    var provider = services.BuildServiceProvider();
+    var accessor = new ScopeContextAccessor();
+    var emitter = new NullSystemEventEmitter();
+
+    // Act & Assert
+    await Assert.That(() => new ScopedLensFactory(provider, accessor, null!, emitter))
+      .ThrowsExactly<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task ScopedLensFactory_Constructor_NullEventEmitter_ThrowsAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    var provider = services.BuildServiceProvider();
+    var accessor = new ScopeContextAccessor();
+    var options = new LensOptions();
+
+    // Act & Assert
+    await Assert.That(() => new ScopedLensFactory(provider, accessor, options, null!))
+      .ThrowsExactly<ArgumentNullException>();
+  }
+
+  // === GetLens String Scope Null Argument Test ===
+
+  [Test]
+  public async Task ScopedLensFactory_GetLens_NullScopeName_ThrowsAsync() {
+    // Arrange
+    var (factory, _) = _createFactory();
+
+    // Act & Assert
+    await Assert.That(() => factory.GetLens<ITestLensQuery>((string)null!))
+      .ThrowsExactly<ArgumentNullException>();
+  }
+
+  // === GetLens with Empty anyOfPermissions Test ===
+
+  [Test]
+  public async Task ScopedLensFactory_GetLens_WithEmptyPermissionsArray_ThrowsAsync() {
+    // Arrange
+    var (factory, _) = _createFactory();
+
+    // Act & Assert
+    await Assert.That(() => factory.GetLens<ITestLensQuery>(
+      ScopeFilter.None, Array.Empty<Permission>()))
+      .ThrowsExactly<ArgumentException>();
+  }
+
+  // === Missing Scope Context Tests ===
+
+  [Test]
+  public async Task ScopedLensFactory_GetLens_NoScopeContext_ThrowsAsync() {
+    // Arrange
+    var (factory, accessor) = _createFactory();
+    accessor.Current = null; // No scope context
+
+    // Act & Assert
+    await Assert.That(() => factory.GetLens<ITestLensQuery>(ScopeFilter.Tenant))
+      .ThrowsExactly<InvalidOperationException>();
+  }
+
+  // === Lens Not Registered Test ===
+
+  [Test]
+  public async Task ScopedLensFactory_GetLens_UnregisteredLens_ThrowsAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    var accessor = new ScopeContextAccessor();
+    var lensOptions = new LensOptions();
+    var emitter = new NullSystemEventEmitter();
+    services.AddSingleton<IScopeContextAccessor>(accessor);
+    services.AddSingleton<ISystemEventEmitter>(emitter);
+    services.AddSingleton(lensOptions);
+    // Note: IUnregisteredLensQuery is NOT registered
+
+    var provider = services.BuildServiceProvider();
+    var factory = new ScopedLensFactory(provider, accessor, lensOptions, emitter);
+
+    // Act & Assert
+    await Assert.That(() => factory.GetLens<IUnregisteredLensQuery>(ScopeFilter.None))
+      .ThrowsExactly<InvalidOperationException>();
+  }
+
+  // === Scope Definition with Interface Type Tests ===
+
+  [Test]
+  public async Task ScopedLensFactory_GetLens_StringScope_ITenantScoped_MapsCorrectlyAsync() {
+    // Arrange
+    var context = _createScopeContext(tenantId: "tenant-123");
+    var (factory, accessor) = _createFactory(options => {
+      options.DefineScope("TenantScoped", scope => {
+        scope.FilterInterfaceType = typeof(ITenantScoped);
+      });
+    });
+    accessor.Current = context;
+
+    // Act
+    var lens = factory.GetLens<ITestLensQuery>("TenantScoped");
+
+    // Assert
+    await Assert.That(lens).IsNotNull();
+  }
+
+  [Test]
+  public async Task ScopedLensFactory_GetLens_StringScope_IUserScoped_MapsCorrectlyAsync() {
+    // Arrange
+    var context = _createScopeContext(tenantId: "tenant-123", userId: "user-456");
+    var (factory, accessor) = _createFactory(options => {
+      options.DefineScope("UserScoped", scope => {
+        scope.FilterInterfaceType = typeof(IUserScoped);
+      });
+    });
+    accessor.Current = context;
+
+    // Act
+    var lens = factory.GetLens<ITestLensQuery>("UserScoped");
+
+    // Assert
+    await Assert.That(lens).IsNotNull();
+  }
+
+  [Test]
+  public async Task ScopedLensFactory_GetLens_StringScope_IOrganizationScoped_MapsCorrectlyAsync() {
+    // Arrange
+    var context = _createScopeContext(tenantId: "tenant-123", organizationId: "org-456");
+    var (factory, accessor) = _createFactory(options => {
+      options.DefineScope("OrgScoped", scope => {
+        scope.FilterInterfaceType = typeof(IOrganizationScoped);
+      });
+    });
+    accessor.Current = context;
+
+    // Act
+    var lens = factory.GetLens<ITestLensQuery>("OrgScoped");
+
+    // Assert
+    await Assert.That(lens).IsNotNull();
+  }
+
+  [Test]
+  public async Task ScopedLensFactory_GetLens_StringScope_ICustomerScoped_MapsCorrectlyAsync() {
+    // Arrange
+    var context = _createScopeContext(tenantId: "tenant-123", customerId: "cust-789");
+    var (factory, accessor) = _createFactory(options => {
+      options.DefineScope("CustomerScoped", scope => {
+        scope.FilterInterfaceType = typeof(ICustomerScoped);
+      });
+    });
+    accessor.Current = context;
+
+    // Act
+    var lens = factory.GetLens<ITestLensQuery>("CustomerScoped");
+
+    // Assert
+    await Assert.That(lens).IsNotNull();
+  }
+
+  [Test]
+  public async Task ScopedLensFactory_GetLens_StringScope_NoFilter_MapsCorrectlyAsync() {
+    // Arrange
+    var (factory, _) = _createFactory(options => {
+      options.DefineScope("Global", scope => {
+        scope.NoFilter = true;
+      });
+    });
+
+    // Act
+    var lens = factory.GetLens<ITestLensQuery>("Global");
+
+    // Assert
+    await Assert.That(lens.AppliedFilter!.Value.Filters).IsEqualTo(ScopeFilter.None);
+  }
+
+  [Test]
+  public async Task ScopedLensFactory_GetLens_StringScope_UnknownPropertyName_MapsToNoneAsync() {
+    // Arrange
+    var context = _createScopeContext(tenantId: "tenant-123");
+    var (factory, accessor) = _createFactory(options => {
+      options.DefineScope("Unknown", scope => {
+        scope.FilterPropertyName = "SomeUnknownProperty";
+      });
+    });
+    accessor.Current = context;
+
+    // Act
+    var lens = factory.GetLens<ITestLensQuery>("Unknown");
+
+    // Assert - Unknown property maps to ScopeFilter.None
+    await Assert.That(lens).IsNotNull();
+  }
+
+  // === Permission Check with No Context Tests ===
+
+  [Test]
+  public async Task ScopedLensFactory_GetLens_WithPermission_NoContext_ThrowsAccessDeniedAsync() {
+    // Arrange
+    var (factory, accessor) = _createFactory();
+    accessor.Current = null; // No context
+
+    // Act & Assert
+    await Assert.That(() => factory.GetLens<ITestLensQuery>(
+      ScopeFilter.None, Permission.Read("orders")))
+      .ThrowsExactly<AccessDeniedException>();
+  }
+
+  [Test]
+  public async Task ScopedLensFactory_GetLens_WithAnyPermission_NoContext_ThrowsAccessDeniedAsync() {
+    // Arrange
+    var (factory, accessor) = _createFactory();
+    accessor.Current = null; // No context
+
+    // Act & Assert
+    await Assert.That(() => factory.GetLens<ITestLensQuery>(
+      ScopeFilter.None,
+      Permission.Read("orders"),
+      Permission.Write("orders")))
+      .ThrowsExactly<AccessDeniedException>();
+  }
+
   // === Legacy String-Based API Tests ===
 
   [Test]
@@ -287,13 +570,17 @@ public class ScopedLensFactoryImplTests {
   private static ScopeContext _createScopeContext(
       string? tenantId = null,
       string? userId = null,
+      string? organizationId = null,
+      string? customerId = null,
       Permission[]? permissions = null,
       SecurityPrincipalId[]? securityPrincipals = null) {
 
     return new ScopeContext {
       Scope = new PerspectiveScope {
         TenantId = tenantId,
-        UserId = userId
+        UserId = userId,
+        OrganizationId = organizationId,
+        CustomerId = customerId
       },
       Roles = new HashSet<string>(),
       Permissions = new HashSet<Permission>(permissions ?? []),
@@ -336,4 +623,13 @@ public class ScopedLensFactoryImplTests {
 
     public bool ShouldExcludeFromAudit(Type type) => false;
   }
+
+  // Interface for testing unregistered lens scenario
+  public interface IUnregisteredLensQuery : ILensQuery { }
+
+  // Scope interfaces for testing scope definition mapping
+  public interface ITenantScoped { }
+  public interface IUserScoped { }
+  public interface IOrganizationScoped { }
+  public interface ICustomerScoped { }
 }
