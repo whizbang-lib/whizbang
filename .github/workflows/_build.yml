@@ -3,9 +3,9 @@ name: Build (Reusable)
 on:
   workflow_call:
     outputs:
-      artifact-name:
+      artifact_name:
         description: "Name of uploaded build artifact"
-        value: ${{ jobs.build.outputs.artifact-name }}
+        value: ${{ jobs.build.outputs.artifact_name }}
 
 env:
   DOTNET_VERSION: '10.0.x'
@@ -19,7 +19,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     outputs:
-      artifact-name: build-${{ github.run_id }}
+      artifact_name: build-${{ github.run_id }}
 
     steps:
       - name: Checkout

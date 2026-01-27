@@ -28,35 +28,35 @@ jobs:
     needs: build
     uses: ./.github/workflows/_test-unit.yml
     with:
-      build-artifact: ${{ needs.build.outputs.artifact-name }}
+      build-artifact: ${{ needs.build.outputs.artifact_name }}
 
   postgres-integration:
     name: PostgreSQL Integration
     needs: build
     uses: ./.github/workflows/_test-postgres.yml
     with:
-      build-artifact: ${{ needs.build.outputs.artifact-name }}
+      build-artifact: ${{ needs.build.outputs.artifact_name }}
 
   inmemory-integration:
     name: InMemory Integration
     needs: build
     uses: ./.github/workflows/_test-inmemory.yml
     with:
-      build-artifact: ${{ needs.build.outputs.artifact-name }}
+      build-artifact: ${{ needs.build.outputs.artifact_name }}
 
   rabbitmq-integration:
     name: RabbitMQ Integration
     needs: build
     uses: ./.github/workflows/_test-rabbitmq.yml
     with:
-      build-artifact: ${{ needs.build.outputs.artifact-name }}
+      build-artifact: ${{ needs.build.outputs.artifact_name }}
 
   servicebus-integration:
     name: Service Bus Integration
     needs: build
     uses: ./.github/workflows/_test-servicebus.yml
     with:
-      build-artifact: ${{ needs.build.outputs.artifact-name }}
+      build-artifact: ${{ needs.build.outputs.artifact_name }}
 
   # ============================================================
   # Quality Stage - Runs after ALL tests complete
