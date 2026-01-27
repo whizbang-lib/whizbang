@@ -1,220 +1,264 @@
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
-using Whizbang.Core;
 using Whizbang.Core.Internal;
+
+#pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
 
 namespace Whizbang.Core.Tests.Internal;
 
 /// <summary>
-/// Tests for EventExtractor utility.
-/// Ensures all complex return types are properly handled for event extraction.
+/// Tests for EventExtractor which extracts IEvent instances from complex return types.
 /// </summary>
-[Category("Core")]
-[Category("Internal")]
 public class EventExtractorTests {
-  // Test event types
-  private sealed record _testEvent1([StreamKey] string Name) : IEvent;
-  private sealed record _testEvent2([StreamKey] int Value) : IEvent;
-  private sealed record _testEvent3([StreamKey] bool Flag) : IEvent;
-  private sealed record _nonEvent(string Data); // Does not implement IEvent
+  #region Null Handling
 
   [Test]
   public async Task ExtractEvents_WithNull_ReturnsEmptyAsync() {
-    // Arrange
-    object? result = null;
-
     // Act
-    var events = EventExtractor.ExtractEvents(result);
+    var events = EventExtractor.ExtractEvents(null).ToList();
 
     // Assert
-    await Assert.That(events).Count().IsEqualTo(0);
+    await Assert.That(events).IsEmpty();
   }
+
+  #endregion
+
+  #region Single Event
 
   [Test]
   public async Task ExtractEvents_WithSingleEvent_ReturnsSingleEventAsync() {
     // Arrange
-    var evt = new _testEvent1("test");
+    var singleEvent = new TestEvent("Test");
 
     // Act
-    var events = EventExtractor.ExtractEvents(evt);
+    var events = EventExtractor.ExtractEvents(singleEvent).ToList();
 
     // Assert
     await Assert.That(events).Count().IsEqualTo(1);
-    await Assert.That(events.First()).IsEqualTo(evt);
+    await Assert.That(events[0]).IsEqualTo(singleEvent);
   }
 
   [Test]
   public async Task ExtractEvents_WithNonEvent_ReturnsEmptyAsync() {
     // Arrange
-    var _nonEvent = new _nonEvent("data");
+    var nonEvent = "not an event";
 
     // Act
-    var events = EventExtractor.ExtractEvents(_nonEvent);
+    var events = EventExtractor.ExtractEvents(nonEvent).ToList();
 
     // Assert
-    await Assert.That(events).Count().IsEqualTo(0);
+    await Assert.That(events).IsEmpty();
   }
+
+  [Test]
+  public async Task ExtractEvents_WithPrimitiveValue_ReturnsEmptyAsync() {
+    // Act
+    var events = EventExtractor.ExtractEvents(42).ToList();
+
+    // Assert
+    await Assert.That(events).IsEmpty();
+  }
+
+  #endregion
+
+  #region Arrays
 
   [Test]
   public async Task ExtractEvents_WithEventArray_ReturnsAllEventsAsync() {
     // Arrange
-    var evt1 = new _testEvent1("first");
-    var evt2 = new _testEvent2(42);
-    var evt3 = new _testEvent3(true);
-    IEvent[] eventArray = [evt1, evt2, evt3];
+    var eventsArray = new IEvent[] {
+      new TestEvent("First"),
+      new TestEvent("Second"),
+      new TestEvent("Third")
+    };
 
     // Act
-    var events = EventExtractor.ExtractEvents(eventArray);
+    var events = EventExtractor.ExtractEvents(eventsArray).ToList();
 
     // Assert
     await Assert.That(events).Count().IsEqualTo(3);
-    await Assert.That(events.ElementAt(0)).IsEqualTo(evt1);
-    await Assert.That(events.ElementAt(1)).IsEqualTo(evt2);
-    await Assert.That(events.ElementAt(2)).IsEqualTo(evt3);
-  }
-
-  [Test]
-  public async Task ExtractEvents_WithEventEnumerable_ReturnsAllEventsAsync() {
-    // Arrange
-    var evt1 = new _testEvent1("first");
-    var evt2 = new _testEvent2(42);
-    IEnumerable<IEvent> eventEnumerable = new List<IEvent> { evt1, evt2 };
-
-    // Act
-    var events = EventExtractor.ExtractEvents(eventEnumerable);
-
-    // Assert
-    await Assert.That(events).Count().IsEqualTo(2);
-    await Assert.That(events.ElementAt(0)).IsEqualTo(evt1);
-    await Assert.That(events.ElementAt(1)).IsEqualTo(evt2);
-  }
-
-  [Test]
-  public async Task ExtractEvents_WithTuple_ExtractsOnlyEventsAsync() {
-    // Arrange
-    var evt1 = new _testEvent1("event");
-    var _nonEvent = new _nonEvent("data");
-    var evt2 = new _testEvent2(99);
-    var tuple = (evt1, _nonEvent, evt2, 42);
-
-    // Act
-    var events = EventExtractor.ExtractEvents(tuple);
-
-    // Assert
-    await Assert.That(events).Count().IsEqualTo(2);
-    await Assert.That(events.ElementAt(0)).IsEqualTo(evt1);
-    await Assert.That(events.ElementAt(1)).IsEqualTo(evt2);
-  }
-
-  [Test]
-  public async Task ExtractEvents_WithValueTuple_ExtractsOnlyEventsAsync() {
-    // Arrange
-    var evt1 = new _testEvent1("value-tuple-event");
-    var evt2 = new _testEvent2(123);
-    ValueTuple<_testEvent1, string, _testEvent2> valueTuple = (evt1, "string", evt2);
-
-    // Act
-    var events = EventExtractor.ExtractEvents(valueTuple);
-
-    // Assert
-    await Assert.That(events).Count().IsEqualTo(2);
-    await Assert.That(events.ElementAt(0)).IsEqualTo(evt1);
-    await Assert.That(events.ElementAt(1)).IsEqualTo(evt2);
-  }
-
-  [Test]
-  public async Task ExtractEvents_WithTupleContainingEventArray_FlattensProperlyAsync() {
-    // Arrange
-    var evt1 = new _testEvent1("tuple-event");
-    var evt2 = new _testEvent2(1);
-    var evt3 = new _testEvent3(false);
-    IEvent[] eventArray = [evt2, evt3];
-    var tuple = (evt1, eventArray, "string");
-
-    // Act
-    var events = EventExtractor.ExtractEvents(tuple);
-
-    // Assert
-    await Assert.That(events).Count().IsEqualTo(3);
-    await Assert.That(events.ElementAt(0)).IsEqualTo(evt1);
-    await Assert.That(events.ElementAt(1)).IsEqualTo(evt2);
-    await Assert.That(events.ElementAt(2)).IsEqualTo(evt3);
-  }
-
-  [Test]
-  public async Task ExtractEvents_WithNestedEnumerable_FlattensProperlyAsync() {
-    // Arrange
-    var evt1 = new _testEvent1("outer");
-    var evt2 = new _testEvent2(10);
-    var evt3 = new _testEvent3(true);
-    var innerList = new List<IEvent> { evt2, evt3 };
-    IEnumerable<object> outerEnumerable = new List<object> { evt1, innerList };
-
-    // Act
-    var events = EventExtractor.ExtractEvents(outerEnumerable);
-
-    // Assert
-    await Assert.That(events).Count().IsEqualTo(3);
-    await Assert.That(events.ElementAt(0)).IsEqualTo(evt1);
-    await Assert.That(events.ElementAt(1)).IsEqualTo(evt2);
-    await Assert.That(events.ElementAt(2)).IsEqualTo(evt3);
   }
 
   [Test]
   public async Task ExtractEvents_WithEmptyArray_ReturnsEmptyAsync() {
     // Arrange
-    IEvent[] emptyArray = [];
+    var emptyArray = Array.Empty<IEvent>();
 
     // Act
-    var events = EventExtractor.ExtractEvents(emptyArray);
+    var events = EventExtractor.ExtractEvents(emptyArray).ToList();
 
     // Assert
-    await Assert.That(events).Count().IsEqualTo(0);
+    await Assert.That(events).IsEmpty();
+  }
+
+  #endregion
+
+  #region Enumerables
+
+  [Test]
+  public async Task ExtractEvents_WithEventEnumerable_ReturnsAllEventsAsync() {
+    // Arrange
+    IEnumerable<IEvent> eventEnumerable = new List<IEvent> {
+      new TestEvent("First"),
+      new TestEvent("Second")
+    };
+
+    // Act
+    var events = EventExtractor.ExtractEvents(eventEnumerable).ToList();
+
+    // Assert
+    await Assert.That(events).Count().IsEqualTo(2);
   }
 
   [Test]
   public async Task ExtractEvents_WithEmptyEnumerable_ReturnsEmptyAsync() {
     // Arrange
-    IEnumerable<IEvent> emptyEnumerable = [];
+    IEnumerable<IEvent> emptyEnumerable = Enumerable.Empty<IEvent>();
 
     // Act
-    var events = EventExtractor.ExtractEvents(emptyEnumerable);
+    var events = EventExtractor.ExtractEvents(emptyEnumerable).ToList();
 
     // Assert
-    await Assert.That(events).Count().IsEqualTo(0);
+    await Assert.That(events).IsEmpty();
+  }
+
+  [Test]
+  public async Task ExtractEvents_WithNestedEnumerable_FlattensProperlyAsync() {
+    // Arrange - List of event arrays
+    var nestedStructure = new List<IEvent[]> {
+      new IEvent[] { new TestEvent("A1"), new TestEvent("A2") },
+      new IEvent[] { new TestEvent("B1") }
+    };
+
+    // Act
+    var events = EventExtractor.ExtractEvents(nestedStructure).ToList();
+
+    // Assert
+    await Assert.That(events).Count().IsEqualTo(3);
+  }
+
+  #endregion
+
+  #region Tuples
+
+  [Test]
+  public async Task ExtractEvents_WithTuple_ExtractsOnlyEventsAsync() {
+    // Arrange
+    var tuple = Tuple.Create(
+      new TestEvent("Event1"),
+      "non-event",
+      new TestEvent("Event2")
+    );
+
+    // Act
+    var events = EventExtractor.ExtractEvents(tuple).ToList();
+
+    // Assert
+    await Assert.That(events).Count().IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task ExtractEvents_WithValueTuple_ExtractsOnlyEventsAsync() {
+    // Arrange
+    var valueTuple = (
+      Event1: new TestEvent("Event1"),
+      Number: 42,
+      Event2: new TestEvent("Event2")
+    );
+
+    // Act
+    var events = EventExtractor.ExtractEvents(valueTuple).ToList();
+
+    // Assert
+    await Assert.That(events).Count().IsEqualTo(2);
   }
 
   [Test]
   public async Task ExtractEvents_WithTupleOfNonEvents_ReturnsEmptyAsync() {
     // Arrange
-    var tuple = ("string", 42, new _nonEvent("data"));
+    var tuple = Tuple.Create("string", 42, 3.14);
 
     // Act
-    var events = EventExtractor.ExtractEvents(tuple);
+    var events = EventExtractor.ExtractEvents(tuple).ToList();
 
     // Assert
-    await Assert.That(events).Count().IsEqualTo(0);
+    await Assert.That(events).IsEmpty();
   }
 
   [Test]
-  public async Task ExtractEvents_WithMixedComplexStructure_ExtractsAllEventsAsync() {
+  public async Task ExtractEvents_WithTupleContainingEventArray_FlattensProperlyAsync() {
     // Arrange
-    var evt1 = new _testEvent1("complex-1");
-    var evt2 = new _testEvent2(100);
-    var evt3 = new _testEvent3(true);
-    var evt4 = new _testEvent1("complex-2");
-    var innerArray = new IEvent[] { evt2, evt3 };
-    var tuple = (evt1, innerArray, new _nonEvent("ignore"), evt4);
+    var tupleWithArray = (
+      Event: new TestEvent("Single"),
+      Events: new IEvent[] { new TestEvent("Array1"), new TestEvent("Array2") }
+    );
 
     // Act
-    var events = EventExtractor.ExtractEvents(tuple);
+    var events = EventExtractor.ExtractEvents(tupleWithArray).ToList();
+
+    // Assert
+    await Assert.That(events).Count().IsEqualTo(3);
+  }
+
+  [Test]
+  public async Task ExtractEvents_WithTupleContainingNull_SkipsNullItemsAsync() {
+    // Arrange
+    var tupleWithNull = (
+      Event: new TestEvent("Event"),
+      NullItem: (IEvent?)null,
+      Number: 42
+    );
+
+    // Act
+    var events = EventExtractor.ExtractEvents(tupleWithNull).ToList();
+
+    // Assert
+    await Assert.That(events).Count().IsEqualTo(1);
+  }
+
+  #endregion
+
+  #region Complex Structures
+
+  [Test]
+  public async Task ExtractEvents_WithMixedComplexStructure_ExtractsAllEventsAsync() {
+    // Arrange - A tuple containing single events, arrays, and nested lists
+    var complexStructure = (
+      Single: new TestEvent("Single"),
+      Array: new IEvent[] { new TestEvent("Array1"), new TestEvent("Array2") },
+      Nested: new List<IEvent> { new TestEvent("List1") }
+    );
+
+    // Act
+    var events = EventExtractor.ExtractEvents(complexStructure).ToList();
 
     // Assert
     await Assert.That(events).Count().IsEqualTo(4);
-    await Assert.That(events.ElementAt(0)).IsEqualTo(evt1);
-    await Assert.That(events.ElementAt(1)).IsEqualTo(evt2);
-    await Assert.That(events.ElementAt(2)).IsEqualTo(evt3);
-    await Assert.That(events.ElementAt(3)).IsEqualTo(evt4);
   }
+
+  [Test]
+  public async Task ExtractEvents_WithNestedListContainingNulls_SkipsNullsAsync() {
+    // Arrange - Use a non-typed enumerable wrapper so nulls go through the recursive path
+    var listWithNulls = new List<object?> {
+      new TestEvent("Event1"),
+      null,
+      new TestEvent("Event2"),
+      null
+    };
+
+    // Act
+    var events = EventExtractor.ExtractEvents(listWithNulls).ToList();
+
+    // Assert - Only the events are extracted, nulls are skipped in the recursive call
+    await Assert.That(events).Count().IsEqualTo(2);
+  }
+
+  #endregion
+
+  #region Test Types
+
+  private sealed record TestEvent(string Name) : IEvent;
+
+  #endregion
 }
