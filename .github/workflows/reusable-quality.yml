@@ -10,12 +10,6 @@ on:
         description: "Codecov token"
         required: true
 
-env:
-  DOTNET_VERSION: '10.0.x'
-  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
-  DOTNET_NOLOGO: '1'
-
 jobs:
   quality:
     name: Quality Analysis
@@ -24,17 +18,17 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Shallow clones disabled for SonarCloud
+          fetch-depth: 0  # Full history for SonarCloud
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@baa11fbfe1d6520db94683bd5c7a3818018e4309 # v5.1.0
+        uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-version: '10.0.x'
 
       - name: Cache SonarCloud packages
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        uses: actions/cache@v4
         with:
           path: ~/.sonar/cache
           key: ${{ runner.os }}-sonar
@@ -46,7 +40,7 @@ jobs:
           dotnet tool install --global dotnet-reportgenerator-globaltool
 
       - name: Download All Coverage Artifacts
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        uses: actions/download-artifact@v4
         with:
           pattern: coverage-*
           path: coverage
@@ -59,7 +53,7 @@ jobs:
           ls -laR coverage/ || echo "Coverage directory empty or missing"
 
       - name: Upload Merged Coverage to Codecov
-        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v4.5.0
+        uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           directory: coverage

@@ -19,3 +19,25 @@ jobs:
   unit-tests:
     name: Unit Tests
     uses: ./.github/workflows/reusable-test-unit.yml
+
+  postgres-integration:
+    name: PostgreSQL Integration
+    uses: ./.github/workflows/reusable-test-postgres.yml
+
+  inmemory-integration:
+    name: InMemory Integration
+    uses: ./.github/workflows/reusable-test-inmemory.yml
+
+  rabbitmq-integration:
+    name: RabbitMQ Integration
+    uses: ./.github/workflows/reusable-test-rabbitmq.yml
+
+  servicebus-integration:
+    name: Service Bus Integration
+    uses: ./.github/workflows/reusable-test-servicebus.yml
+
+  quality:
+    name: Quality
+    needs: [unit-tests, postgres-integration, inmemory-integration, rabbitmq-integration, servicebus-integration]
+    uses: ./.github/workflows/reusable-quality.yml
+    secrets: inherit

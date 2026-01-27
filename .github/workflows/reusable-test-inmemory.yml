@@ -2,75 +2,49 @@ name: InMemory Integration Tests (Reusable)
 
 on:
   workflow_call:
-    inputs:
-      build-artifact:
-        description: "Name of build artifact to download"
-        required: true
-        type: string
-
-env:
-  DOTNET_VERSION: '10.0.x'
-  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
-  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
-  DOTNET_NOLOGO: '1'
 
 jobs:
   inmemory-tests:
     name: InMemory Integration Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-    permissions:
-      contents: read
-      checks: write
-      pull-requests: write
+    timeout-minutes: 20
 
     steps:
       - name: Checkout
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@v4
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@baa11fbfe1d6520db94683bd5c7a3818018e4309 # v5.1.0
+        uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: ${{ env.DOTNET_VERSION }}
+          dotnet-version: '10.0.x'
 
-      - name: Download Build Artifacts
-        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
         with:
-          name: ${{ inputs.build-artifact }}
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/Directory.*.props') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore Dependencies
+        run: dotnet restore
+
+      - name: Build Solution
+        run: dotnet build --no-restore --configuration Release
 
       - name: Run InMemory Integration Tests
         run: |
-          dotnet test --project samples/ECommerce/tests/ECommerce.InMemory.Integration.Tests/ECommerce.InMemory.Integration.Tests.csproj \
-            --no-build \
-            --configuration Release \
-            --retry-failed-tests 2 \
-            --report-trx \
-            --report-trx-filename inmemory-integration-tests.trx \
+          echo "Running InMemory integration tests"
+          dotnet test --project samples/ECommerce/tests/ECommerce.InMemory.Integration.Tests \
+            --no-restore --no-build --configuration Release \
             --coverage --coverage-output-format cobertura
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
-          TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX: ''
-
-      - name: Upload Test Results
-        if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
-        with:
-          name: inmemory-test-results
-          path: '**/TestResults/*.trx'
-          retention-days: 30
 
       - name: Upload Coverage
         if: success()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        uses: actions/upload-artifact@v4
         with:
           name: coverage-inmemory
           path: '**/TestResults/*.cobertura.xml'
           retention-days: 1
-
-      - name: Publish Test Results
-        if: always()
-        uses: EnricoMi/publish-unit-test-result-action@27d65e188ec43221b20d26de30f4892fad91df2f # v2.22.0
-        with:
-          files: '**/TestResults/*.trx'
-          check_name: 'InMemory Integration Test Results'
-          comment_mode: 'off'
