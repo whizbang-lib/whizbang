@@ -370,6 +370,163 @@ public class SystemEventEmitterTests {
     await Assert.That(result).IsFalse();
   }
 
+  [Test]
+  public async Task ShouldExcludeFromAudit_WithExplicitExcludeFalse_ReturnsFalseAsync() {
+    // Arrange
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    // Act
+    var result = emitter.ShouldExcludeFromAudit(typeof(ExplicitlyIncludedEvent));
+
+    // Assert
+    await Assert.That(result).IsFalse();
+  }
+
+  #endregion
+
+  #region SystemEventOptions IsEnabled Tests
+
+  [Test]
+  public async Task SystemEventOptions_IsEnabled_EventAudited_WhenEventAuditEnabled_ReturnsTrueAsync() {
+    // Arrange
+    var options = new SystemEventOptions().EnableEventAudit();
+
+    // Act
+    var result = options.IsEnabled<EventAudited>();
+
+    // Assert
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task SystemEventOptions_IsEnabled_CommandAudited_WhenCommandAuditEnabled_ReturnsTrueAsync() {
+    // Arrange
+    var options = new SystemEventOptions().EnableCommandAudit();
+
+    // Act
+    var result = options.IsEnabled<CommandAudited>();
+
+    // Assert
+    await Assert.That(result).IsTrue();
+  }
+
+  [Test]
+  public async Task SystemEventOptions_IsEnabled_EventAudited_WhenDisabled_ReturnsFalseAsync() {
+    // Arrange
+    var options = new SystemEventOptions(); // Nothing enabled
+
+    // Act
+    var result = options.IsEnabled<EventAudited>();
+
+    // Assert
+    await Assert.That(result).IsFalse();
+  }
+
+  [Test]
+  public async Task SystemEventOptions_IsEnabled_NonAuditEvent_ReturnsFalseAsync() {
+    // Arrange
+    var options = new SystemEventOptions().EnableAll();
+
+    // Act - TestSystemEvent is not EventAudited or CommandAudited
+    var result = options.IsEnabled<TestSystemEvent>();
+
+    // Assert - Only EventAudited and CommandAudited have explicit checks
+    await Assert.That(result).IsFalse();
+  }
+
+  [Test]
+  public async Task SystemEventOptions_IsEnabled_ByType_WhenNotISystemEvent_ReturnsFalseAsync() {
+    // Arrange
+    var options = new SystemEventOptions().EnableAll();
+
+    // Act - string is not ISystemEvent
+    var result = options.IsEnabled(typeof(string));
+
+    // Assert
+    await Assert.That(result).IsFalse();
+  }
+
+  [Test]
+  public async Task SystemEventOptions_EnableAll_EnablesAllOptionsAsync() {
+    // Arrange
+    var options = new SystemEventOptions();
+
+    // Act
+    options.EnableAll();
+
+    // Assert
+    await Assert.That(options.EventAuditEnabled).IsTrue();
+    await Assert.That(options.CommandAuditEnabled).IsTrue();
+    await Assert.That(options.PerspectiveEventsEnabled).IsTrue();
+    await Assert.That(options.ErrorEventsEnabled).IsTrue();
+  }
+
+  [Test]
+  public async Task SystemEventOptions_Broadcast_SetsLocalOnlyToFalseAsync() {
+    // Arrange
+    var options = new SystemEventOptions();
+    await Assert.That(options.LocalOnly).IsTrue(); // Default is true
+
+    // Act
+    options.Broadcast();
+
+    // Assert
+    await Assert.That(options.LocalOnly).IsFalse();
+  }
+
+  [Test]
+  public async Task SystemEventOptions_EnablePerspectiveEvents_EnablesPerspectiveEventsAsync() {
+    // Arrange
+    var options = new SystemEventOptions();
+
+    // Act
+    options.EnablePerspectiveEvents();
+
+    // Assert
+    await Assert.That(options.PerspectiveEventsEnabled).IsTrue();
+  }
+
+  [Test]
+  public async Task SystemEventOptions_EnableErrorEvents_EnablesErrorEventsAsync() {
+    // Arrange
+    var options = new SystemEventOptions();
+
+    // Act
+    options.EnableErrorEvents();
+
+    // Assert
+    await Assert.That(options.ErrorEventsEnabled).IsTrue();
+  }
+
+  [Test]
+  public async Task SystemEventOptions_AuditEnabled_WhenEventAuditEnabled_ReturnsTrueAsync() {
+    // Arrange
+    var options = new SystemEventOptions().EnableEventAudit();
+
+    // Assert
+    await Assert.That(options.AuditEnabled).IsTrue();
+  }
+
+  [Test]
+  public async Task SystemEventOptions_AuditEnabled_WhenCommandAuditEnabled_ReturnsTrueAsync() {
+    // Arrange
+    var options = new SystemEventOptions().EnableCommandAudit();
+
+    // Assert
+    await Assert.That(options.AuditEnabled).IsTrue();
+  }
+
+  [Test]
+  public async Task SystemEventOptions_AuditEnabled_WhenNothingEnabled_ReturnsFalseAsync() {
+    // Arrange
+    var options = new SystemEventOptions();
+
+    // Assert
+    await Assert.That(options.AuditEnabled).IsFalse();
+  }
+
   #endregion
 
   #region Test Types
@@ -385,6 +542,11 @@ public class SystemEventEmitterTests {
 
   [AuditEvent(Reason = "Compliance")]
   private sealed record AuditedEvent {
+    public required string Name { get; init; }
+  }
+
+  [AuditEvent(Exclude = false)]
+  private sealed record ExplicitlyIncludedEvent {
     public required string Name { get; init; }
   }
 
