@@ -399,7 +399,7 @@ public class UpdateProductWorkflowTests {
     await createWaiter.WaitAsync(timeoutMilliseconds: 45000);
 
     // Verify initial inventory
-    var initialInventory = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);
+    var initialInventory = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
     await Assert.That(initialInventory).IsNotNull();
     await Assert.That(initialInventory!.Quantity).IsEqualTo(75);
 
@@ -422,12 +422,12 @@ public class UpdateProductWorkflowTests {
     fixture.RefreshLensScopes();
 
     // Assert - Verify inventory unchanged
-    var updatedInventory = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId);
+    var updatedInventory = await fixture.InventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
     await Assert.That(updatedInventory).IsNotNull();
     await Assert.That(updatedInventory!.Quantity).IsEqualTo(75); // No change
     await Assert.That(updatedInventory.Available).IsEqualTo(75); // No change
 
-    var bffInventory = await fixture.BffInventoryLens.GetByProductIdAsync(createCommand.ProductId);
+    var bffInventory = await fixture.BffInventoryLens.GetByProductIdAsync(createCommand.ProductId.Value);
     await Assert.That(bffInventory).IsNotNull();
     await Assert.That(bffInventory!.Quantity).IsEqualTo(75); // No change
   }

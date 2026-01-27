@@ -21,4 +21,4 @@ jobs:
     needs: build
     uses: ./.github/workflows/reusable-test-unit.yml
     with:
-      build_artifact: test-artifact-name
+      build_artifact: ${{ needs.build.outputs.artifact_name }}

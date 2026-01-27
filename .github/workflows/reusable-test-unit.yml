@@ -8,15 +8,76 @@ on:
         required: true
         type: string
 
+env:
+  DOTNET_VERSION: '10.0.x'
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+  DOTNET_NOLOGO: '1'
+
 jobs:
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      checks: write
+      pull-requests: write
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Test message
-        run: echo "Build artifact is ${{ inputs.build_artifact }}"
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Download Build Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.build_artifact }}
+
+      - name: Run Unit Tests
+        run: |
+          # Run unit tests (excluding Data integration tests that need PostgreSQL)
+          for project in \
+            tests/Whizbang.Core.Tests \
+            tests/Whizbang.Execution.Tests \
+            tests/Whizbang.Generators.Tests \
+            tests/Whizbang.Hosting.Azure.ServiceBus.Tests \
+            tests/Whizbang.Hosting.RabbitMQ.Tests \
+            tests/Whizbang.Observability.Tests \
+            tests/Whizbang.Partitioning.Tests \
+            tests/Whizbang.Policies.Tests \
+            tests/Whizbang.Sequencing.Tests \
+            tests/Whizbang.Transports.RabbitMQ.Tests \
+            tests/Whizbang.Transports.Tests
+          do
+            dotnet test "$project" --no-build --configuration Release \
+              --coverage --coverage-output-format cobertura
+          done
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-test-results
+          path: '**/TestResults/*.trx'
+          retention-days: 30
+
+      - name: Upload Coverage
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-unit
+          path: '**/TestResults/*.cobertura.xml'
+          retention-days: 1
+
+      - name: Publish Test Results
+        if: always()
+        uses: EnricoMi/publish-unit-test-result-action@v2
+        with:
+          files: '**/TestResults/*.trx'
+          check_name: 'Unit Test Results'
+          comment_mode: 'off'
