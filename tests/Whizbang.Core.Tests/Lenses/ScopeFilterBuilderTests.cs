@@ -248,4 +248,122 @@ public class ScopeFilterBuilderTests {
     await Assert.That(() => ScopeFilterBuilder.Build(ScopeFilter.Principal, context))
       .Throws<InvalidOperationException>();
   }
+
+  [Test]
+  public async Task ScopeFilterBuilder_MissingOrganizationId_ThrowsAsync() {
+    // Arrange
+    var context = new ScopeContext {
+      Scope = new PerspectiveScope { TenantId = "tenant-123", OrganizationId = null },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>()
+    };
+
+    // Act & Assert
+    await Assert.That(() => ScopeFilterBuilder.Build(ScopeFilter.Organization, context))
+      .Throws<InvalidOperationException>();
+  }
+
+  [Test]
+  public async Task ScopeFilterBuilder_MissingCustomerId_ThrowsAsync() {
+    // Arrange
+    var context = new ScopeContext {
+      Scope = new PerspectiveScope { TenantId = "tenant-123", CustomerId = null },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>()
+    };
+
+    // Act & Assert
+    await Assert.That(() => ScopeFilterBuilder.Build(ScopeFilter.Customer, context))
+      .Throws<InvalidOperationException>();
+  }
+
+  // === Organization Only Tests ===
+
+  [Test]
+  public async Task ScopeFilterBuilder_OrganizationOnly_BuildsOrganizationFilterAsync() {
+    // Arrange
+    var context = new ScopeContext {
+      Scope = new PerspectiveScope { OrganizationId = "org-789" },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>()
+    };
+
+    // Act
+    var filterInfo = ScopeFilterBuilder.Build(ScopeFilter.Organization, context);
+
+    // Assert
+    await Assert.That(filterInfo.OrganizationId).IsEqualTo("org-789");
+    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilter.Organization)).IsTrue();
+    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilter.Tenant)).IsFalse();
+  }
+
+  // === Customer Only Tests ===
+
+  [Test]
+  public async Task ScopeFilterBuilder_CustomerOnly_BuildsCustomerFilterAsync() {
+    // Arrange
+    var context = new ScopeContext {
+      Scope = new PerspectiveScope { CustomerId = "cust-999" },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>()
+    };
+
+    // Act
+    var filterInfo = ScopeFilterBuilder.Build(ScopeFilter.Customer, context);
+
+    // Assert
+    await Assert.That(filterInfo.CustomerId).IsEqualTo("cust-999");
+    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilter.Customer)).IsTrue();
+    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilter.Tenant)).IsFalse();
+  }
+
+  // === User Only Tests ===
+
+  [Test]
+  public async Task ScopeFilterBuilder_UserOnly_BuildsUserFilterAsync() {
+    // Arrange
+    var context = new ScopeContext {
+      Scope = new PerspectiveScope { UserId = "user-456" },
+      Roles = new HashSet<string>(),
+      Permissions = new HashSet<Permission>(),
+      SecurityPrincipals = new HashSet<SecurityPrincipalId>(),
+      Claims = new Dictionary<string, string>()
+    };
+
+    // Act
+    var filterInfo = ScopeFilterBuilder.Build(ScopeFilter.User, context);
+
+    // Assert
+    await Assert.That(filterInfo.UserId).IsEqualTo("user-456");
+    await Assert.That(filterInfo.Filters.HasFlag(ScopeFilter.User)).IsTrue();
+    await Assert.That(filterInfo.UseOrLogicForUserAndPrincipal).IsFalse();
+  }
+
+  // === ScopeFilterInfo Tests ===
+
+  [Test]
+  public async Task ScopeFilterInfo_IsEmpty_TrueWhenNoFiltersAsync() {
+    // Arrange
+    var filterInfo = new ScopeFilterInfo { Filters = ScopeFilter.None };
+
+    // Act & Assert
+    await Assert.That(filterInfo.IsEmpty).IsTrue();
+  }
+
+  [Test]
+  public async Task ScopeFilterInfo_IsEmpty_FalseWhenFiltersSetAsync() {
+    // Arrange
+    var filterInfo = new ScopeFilterInfo { Filters = ScopeFilter.Tenant };
+
+    // Act & Assert
+    await Assert.That(filterInfo.IsEmpty).IsFalse();
+  }
 }

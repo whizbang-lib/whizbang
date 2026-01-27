@@ -283,6 +283,158 @@ public class RoutingOptionsTests {
     await Assert.That(options.OutboxStrategy).IsTypeOf<DomainTopicOutboxStrategy>();
   }
 
+  [Test]
+  public async Task ConfigureInbox_WithNullAction_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act & Assert
+    await Assert.That(() => options.ConfigureInbox(null!))
+      .Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task ConfigureOutbox_WithNullAction_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act & Assert
+    await Assert.That(() => options.ConfigureOutbox(null!))
+      .Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task ConfigureInbox_ReturnsOptionsForChainingAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    var result = options.ConfigureInbox(inbox => inbox.UseSharedTopic());
+
+    // Assert
+    await Assert.That(result).IsSameReferenceAs(options);
+  }
+
+  [Test]
+  public async Task ConfigureOutbox_ReturnsOptionsForChainingAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    var result = options.ConfigureOutbox(outbox => outbox.UseSharedTopic());
+
+    // Assert
+    await Assert.That(result).IsSameReferenceAs(options);
+  }
+
+  [Test]
+  public async Task Inbox_UseCustom_WithNullStrategy_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act & Assert
+    await Assert.That(() => options.Inbox.UseCustom(null!))
+      .Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task Outbox_UseCustom_WithNullStrategy_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act & Assert
+    await Assert.That(() => options.Outbox.UseCustom(null!))
+      .Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task OwnDomains_WithWhitespaceOnlyStrings_IgnoresWhitespaceAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    options.OwnDomains("orders", "  ", "", "\t", "inventory");
+
+    // Assert - Only non-whitespace domains should be added
+    await Assert.That(options.OwnedDomains.Count).IsEqualTo(2);
+    await Assert.That(options.OwnedDomains).Contains("orders");
+    await Assert.That(options.OwnedDomains).Contains("inventory");
+  }
+
+  [Test]
+  public async Task Inbox_UseSharedTopic_ReturnsParentOptionsForChainingAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    var result = options.Inbox.UseSharedTopic();
+
+    // Assert
+    await Assert.That(result).IsSameReferenceAs(options);
+  }
+
+  [Test]
+  public async Task Inbox_UseDomainTopics_ReturnsParentOptionsForChainingAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    var result = options.Inbox.UseDomainTopics();
+
+    // Assert
+    await Assert.That(result).IsSameReferenceAs(options);
+  }
+
+  [Test]
+  public async Task Inbox_UseCustom_ReturnsParentOptionsForChainingAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+    var customStrategy = new TestInboxStrategy();
+
+    // Act
+    var result = options.Inbox.UseCustom(customStrategy);
+
+    // Assert
+    await Assert.That(result).IsSameReferenceAs(options);
+  }
+
+  [Test]
+  public async Task Outbox_UseDomainTopics_ReturnsParentOptionsForChainingAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    var result = options.Outbox.UseDomainTopics();
+
+    // Assert
+    await Assert.That(result).IsSameReferenceAs(options);
+  }
+
+  [Test]
+  public async Task Outbox_UseSharedTopic_ReturnsParentOptionsForChainingAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    var result = options.Outbox.UseSharedTopic();
+
+    // Assert
+    await Assert.That(result).IsSameReferenceAs(options);
+  }
+
+  [Test]
+  public async Task Outbox_UseCustom_ReturnsParentOptionsForChainingAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+    var customStrategy = new TestOutboxStrategy();
+
+    // Act
+    var result = options.Outbox.UseCustom(customStrategy);
+
+    // Assert
+    await Assert.That(result).IsSameReferenceAs(options);
+  }
+
   #endregion
 
   #region Test Helpers
