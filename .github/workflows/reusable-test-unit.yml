@@ -34,11 +34,24 @@ jobs:
 
       - name: Run Unit Tests
         run: |
-          # Run unit tests with filter to exclude Integration tests
-          dotnet test --no-restore --no-build --configuration Release \
-            --filter "Category!=Integration" \
-            --coverage --coverage-output-format cobertura \
-            -- RunConfiguration.TestSessionTimeout=1200000
+          # Run unit tests (excluding integration tests that need external services)
+          for project in \
+            tests/Whizbang.Core.Tests \
+            tests/Whizbang.Execution.Tests \
+            tests/Whizbang.Generators.Tests \
+            tests/Whizbang.Hosting.Azure.ServiceBus.Tests \
+            tests/Whizbang.Hosting.RabbitMQ.Tests \
+            tests/Whizbang.Observability.Tests \
+            tests/Whizbang.Partitioning.Tests \
+            tests/Whizbang.Policies.Tests \
+            tests/Whizbang.Sequencing.Tests \
+            tests/Whizbang.Transports.RabbitMQ.Tests \
+            tests/Whizbang.Transports.Tests
+          do
+            echo "Running tests in $project"
+            dotnet test "$project" --no-restore --no-build --configuration Release \
+              --coverage --coverage-output-format cobertura
+          done
 
       - name: Upload Coverage
         if: success()
