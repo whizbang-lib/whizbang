@@ -36,6 +36,13 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     public List<OutboxWork> WorkToReturn { get; set; } = [];
     public int ProcessWorkBatchCallCount { get; private set; }
     public List<_processWorkBatchCall> Calls { get; } = [];
+    private readonly TaskCompletionSource _firstCallSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Task that completes when ProcessWorkBatchAsync is called at least once.
+    /// Use this instead of fixed delays to avoid flaky tests.
+    /// </summary>
+    public Task FirstCallReceived => _firstCallSignal.Task;
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
@@ -46,6 +53,9 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
         CallNumber = ProcessWorkBatchCallCount,
         Timestamp = DateTimeOffset.UtcNow
       });
+
+      // Signal that first call has been received
+      _firstCallSignal.TrySetResult();
 
       return Task.FromResult(new WorkBatch {
         OutboxWork = [.. WorkToReturn],
@@ -137,11 +147,17 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
 
     using var cts = new CancellationTokenSource();
 
-    // Act - start worker and let it run briefly
-    // Wait long enough for at least one polling cycle (100ms polling interval)
-    // Under load, 50ms wasn't sufficient - use 200ms for reliable execution
+    // Act - start worker and wait for first ProcessWorkBatchAsync call
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+
+    // Wait for the coordinator to be called (with timeout for safety)
+    var signalTask = workCoordinator.FirstCallReceived;
+    var timeoutTask = Task.Delay(TimeSpan.FromSeconds(5));
+    await Task.WhenAny(signalTask, timeoutTask);
+
+    // Allow time for publishing to complete after ProcessWorkBatchAsync returns
+    await Task.Delay(50);
+
     cts.Cancel();
 
     try {
@@ -229,7 +245,12 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
 
     // Act - start worker (should not crash despite initial exception)
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(150); // Give time for initial processing + one poll
+
+    // Wait for the coordinator to be called (with timeout for safety)
+    var signalTask = throwingCoordinator.FirstCallReceived;
+    var timeoutTask = Task.Delay(TimeSpan.FromSeconds(5));
+    await Task.WhenAny(signalTask, timeoutTask);
+
     cts.Cancel();
 
     try {
@@ -263,11 +284,14 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
 
     using var cts = new CancellationTokenSource();
 
-    // Act - start worker
-    // Wait long enough for at least one polling cycle (100ms polling interval)
-    // Under load, 50ms wasn't sufficient - use 200ms for reliable execution
+    // Act - start worker and wait for first ProcessWorkBatchAsync call
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(200);
+
+    // Wait for the coordinator to be called (with timeout for safety)
+    var signalTask = workCoordinator.FirstCallReceived;
+    var timeoutTask = Task.Delay(TimeSpan.FromSeconds(5));
+    await Task.WhenAny(signalTask, timeoutTask);
+
     cts.Cancel();
 
     try {
@@ -306,9 +330,17 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
 
     using var cts = new CancellationTokenSource();
 
-    // Act - start worker
+    // Act - start worker and wait for first ProcessWorkBatchAsync call
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(100); // Give time for initial processing
+
+    // Wait for the coordinator to be called (with timeout for safety)
+    var signalTask = workCoordinator.FirstCallReceived;
+    var timeoutTask = Task.Delay(TimeSpan.FromSeconds(5));
+    await Task.WhenAny(signalTask, timeoutTask);
+
+    // Allow time for publishing to complete after ProcessWorkBatchAsync returns
+    await Task.Delay(50);
+
     cts.Cancel();
 
     try {
@@ -368,12 +400,22 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     public List<OutboxWork> WorkToReturn { get; set; } = [];
     public int ProcessWorkBatchCallCount { get; private set; }
     private bool _hasThrown;
+    private readonly TaskCompletionSource _firstCallSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Task that completes when ProcessWorkBatchAsync is called at least once.
+    /// Use this instead of fixed delays to avoid flaky tests.
+    /// </summary>
+    public Task FirstCallReceived => _firstCallSignal.Task;
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
       CancellationToken cancellationToken = default) {
 
       ProcessWorkBatchCallCount++;
+
+      // Signal that first call has been received (even if it throws)
+      _firstCallSignal.TrySetResult();
 
       if (ThrowOnFirstCall && !_hasThrown) {
         _hasThrown = true;
