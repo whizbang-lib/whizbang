@@ -1,0 +1,58 @@
+name: Build (Reusable)
+
+on:
+  workflow_call:
+    outputs:
+      artifact-name:
+        description: "Name of uploaded build artifact"
+        value: ${{ jobs.build.outputs.artifact-name }}
+
+env:
+  DOTNET_VERSION: '10.0.x'
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+  DOTNET_NOLOGO: '1'
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      artifact-name: build-${{ github.run_id }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@baa11fbfe1d6520db94683bd5c7a3818018e4309 # v5.1.0
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Display .NET Info
+        run: dotnet --info
+
+      - name: Restore Dependencies
+        run: dotnet restore
+
+      - name: Clean Solution
+        run: dotnet clean --configuration Release
+
+      - name: Build Solution
+        run: dotnet build --no-restore --configuration Release -maxcpucount:1
+
+      - name: Verify Code Formatting
+        run: dotnet format --verify-no-changes --no-restore
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+        with:
+          name: build-${{ github.run_id }}
+          path: |
+            **/bin/Release
+            **/obj/Release
+            !**/obj/Release/**/ref/**
+            !**/obj/Release/**/refint/**
+          retention-days: 1
+          compression-level: 6

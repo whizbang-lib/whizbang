@@ -1,23 +1,12 @@
-name: PostgreSQL Integration Tests
+name: PostgreSQL Integration Tests (Reusable)
 
 on:
-  push:
-    branches: [ main, develop ]
-    paths:
-      - 'src/**'
-      - 'tests/Whizbang.Data.Postgres.Tests/**'
-      - 'tests/Whizbang.Data.EFCore.Postgres.Tests/**'
-      - 'tests/Whizbang.Data.Tests/**'
-      - '.github/workflows/test-postgres-integration.yml'
-  pull_request:
-    branches: [ main, develop ]
-    paths:
-      - 'src/**'
-      - 'tests/Whizbang.Data.Postgres.Tests/**'
-      - 'tests/Whizbang.Data.EFCore.Postgres.Tests/**'
-      - 'tests/Whizbang.Data.Tests/**'
-      - '.github/workflows/test-postgres-integration.yml'
-  workflow_dispatch:  # Allow manual trigger
+  workflow_call:
+    inputs:
+      build-artifact:
+        description: "Name of build artifact to download"
+        required: true
+        type: string
 
 env:
   DOTNET_VERSION: '10.0.x'
@@ -26,7 +15,7 @@ env:
   DOTNET_NOLOGO: '1'
 
 jobs:
-  postgres-integration-tests:
+  postgres-tests:
     name: PostgreSQL Integration Tests
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -40,21 +29,14 @@ jobs:
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@baa11fbfe1d6520db94683bd5c7a3818018e4309 # v5.1.0 # v4.3.1
+        uses: actions/setup-dotnet@baa11fbfe1d6520db94683bd5c7a3818018e4309 # v5.1.0
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
 
-      - name: Display .NET Info
-        run: dotnet --info
-
-      - name: Restore Dependencies
-        run: dotnet restore
-
-      - name: Clean Solution
-        run: dotnet clean --configuration Release
-
-      - name: Build Solution
-        run: dotnet build --no-restore --configuration Release -maxcpucount:1
+      - name: Download Build Artifacts
+        uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
+        with:
+          name: ${{ inputs.build-artifact }}
 
       - name: Run PostgreSQL Integration Tests
         run: |
@@ -66,23 +48,22 @@ jobs:
             --report-trx-filename postgres-integration-tests.trx \
             --coverage --coverage-output-format cobertura
         env:
-          # TestContainers configuration for CI
-          TESTCONTAINERS_RYUK_DISABLED: 'false'  # Enable Ryuk for cleanup
-          TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX: ''  # Use Docker Hub directly
+          TESTCONTAINERS_RYUK_DISABLED: 'false'
+          TESTCONTAINERS_HUB_IMAGE_NAME_PREFIX: ''
 
       - name: Upload Test Results
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 # v4.6.2
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: postgres-integration-test-results
+          name: postgres-test-results
           path: '**/TestResults/*.trx'
           retention-days: 30
 
-      - name: Upload Coverage for SonarCloud
+      - name: Upload Coverage
         if: success()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0 # v4.6.2
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
-          name: coverage-postgres-integration
+          name: coverage-postgres
           path: '**/TestResults/*.cobertura.xml'
           retention-days: 1
 
@@ -103,5 +84,3 @@ jobs:
           echo "- Whizbang.Data.Postgres.Tests (Dapper with TestContainers)" >> $GITHUB_STEP_SUMMARY
           echo "- Whizbang.Data.EFCore.Postgres.Tests (EF Core with TestContainers)" >> $GITHUB_STEP_SUMMARY
           echo "- Whizbang.Data.Tests (Database-dependent tests)" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Check uploaded artifacts for detailed test results." >> $GITHUB_STEP_SUMMARY

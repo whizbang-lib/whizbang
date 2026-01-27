@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+  workflow_dispatch:
+
+# Cancel in-progress runs for the same branch
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ============================================================
+  # Build Stage - Build once, share with all test jobs
+  # ============================================================
+  build:
+    name: Build
+    uses: ./.github/workflows/_build.yml
+
+  # ============================================================
+  # Test Stage - All tests run in parallel after build completes
+  # ============================================================
+  unit-tests:
+    name: Unit Tests
+    needs: build
+    uses: ./.github/workflows/_test-unit.yml
+    with:
+      build-artifact: build-${{ github.run_id }}
+
+  postgres-integration:
+    name: PostgreSQL Integration
+    needs: build
+    uses: ./.github/workflows/_test-postgres.yml
+    with:
+      build-artifact: build-${{ github.run_id }}
+
+  inmemory-integration:
+    name: InMemory Integration
+    needs: build
+    uses: ./.github/workflows/_test-inmemory.yml
+    with:
+      build-artifact: build-${{ github.run_id }}
+
+  rabbitmq-integration:
+    name: RabbitMQ Integration
+    needs: build
+    uses: ./.github/workflows/_test-rabbitmq.yml
+    with:
+      build-artifact: build-${{ github.run_id }}
+
+  servicebus-integration:
+    name: Service Bus Integration
+    needs: build
+    uses: ./.github/workflows/_test-servicebus.yml
+    with:
+      build-artifact: build-${{ github.run_id }}
+
+  # ============================================================
+  # Quality Stage - Runs after ALL tests complete
+  # ============================================================
+  quality:
+    name: Quality (SonarCloud + Codecov)
+    needs:
+      - unit-tests
+      - postgres-integration
+      - inmemory-integration
+      - rabbitmq-integration
+      - servicebus-integration
+    uses: ./.github/workflows/_quality.yml
+    secrets:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
