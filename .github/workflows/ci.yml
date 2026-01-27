@@ -21,4 +21,4 @@ jobs:
     needs: build
     uses: ./.github/workflows/reusable-test-unit.yml
     with:
-      build-artifact: build-${{ github.run_id }}
+      build_artifact: build-${{ github.run_id }}

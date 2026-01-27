@@ -3,7 +3,7 @@ name: Unit Tests (Reusable)
 on:
   workflow_call:
     inputs:
-      build-artifact:
+      build_artifact:
         description: "Name of build artifact to download"
         required: true
         type: string
@@ -36,7 +36,7 @@ jobs:
       - name: Download Build Artifacts
         uses: actions/download-artifact@fa0a91b85d4f404e444e00e005971372dc801d16 # v4.1.8
         with:
-          name: ${{ inputs.build-artifact }}
+          name: ${{ inputs.build_artifact }}
 
       - name: Run Unit Tests
         run: |
