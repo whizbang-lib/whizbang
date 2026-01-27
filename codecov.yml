@@ -23,4 +23,3 @@ ignore:
   - "**/benchmarks/**"
   - "**/test-diagnostics/**"
   - "**/Testing/Containers/**"
-  - "**/tools/Whizbang.Migrate/**"
