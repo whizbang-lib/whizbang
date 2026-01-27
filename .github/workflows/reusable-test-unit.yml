@@ -7,7 +7,7 @@ jobs:
   unit-tests:
     name: Unit Tests
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -18,29 +18,27 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
-      - name: Download Build Artifacts
-        uses: actions/download-artifact@v4
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
         with:
-          name: build-${{ github.run_id }}
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/Directory.*.props') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore Dependencies
+        run: dotnet restore
+
+      - name: Build Solution
+        run: dotnet build --no-restore --configuration Release
 
       - name: Run Unit Tests
         run: |
-          for project in \
-            tests/Whizbang.Core.Tests \
-            tests/Whizbang.Execution.Tests \
-            tests/Whizbang.Generators.Tests \
-            tests/Whizbang.Hosting.Azure.ServiceBus.Tests \
-            tests/Whizbang.Hosting.RabbitMQ.Tests \
-            tests/Whizbang.Observability.Tests \
-            tests/Whizbang.Partitioning.Tests \
-            tests/Whizbang.Policies.Tests \
-            tests/Whizbang.Sequencing.Tests \
-            tests/Whizbang.Transports.RabbitMQ.Tests \
-            tests/Whizbang.Transports.Tests
-          do
-            dotnet test --project "$project" --no-build --configuration Release \
-              --coverage --coverage-output-format cobertura
-          done
+          # Run unit tests with filter to exclude Integration tests
+          dotnet test --no-restore --no-build --configuration Release \
+            --filter "Category!=Integration" \
+            --coverage --coverage-output-format cobertura \
+            -- RunConfiguration.TestSessionTimeout=1200000
 
       - name: Upload Coverage
         if: success()

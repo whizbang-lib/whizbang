@@ -18,5 +18,4 @@ jobs:
 
   unit-tests:
     name: Unit Tests
-    needs: build
     uses: ./.github/workflows/reusable-test-unit.yml
