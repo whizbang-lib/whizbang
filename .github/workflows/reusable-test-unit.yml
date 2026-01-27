@@ -2,11 +2,6 @@ name: Unit Tests (Reusable)
 
 on:
   workflow_call:
-    inputs:
-      build_artifact:
-        description: "Name of build artifact to download"
-        required: true
-        type: string
 
 env:
   DOTNET_VERSION: '10.0.x'
@@ -36,7 +31,7 @@ jobs:
       - name: Download Build Artifacts
         uses: actions/download-artifact@v4
         with:
-          name: ${{ inputs.build_artifact }}
+          name: build-${{ github.run_id }}
 
       - name: Run Unit Tests
         run: |
