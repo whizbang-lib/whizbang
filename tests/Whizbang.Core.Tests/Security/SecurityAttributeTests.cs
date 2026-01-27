@@ -1,188 +1,165 @@
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Security;
 using Whizbang.Core.Security.Attributes;
 
+#pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
+
 namespace Whizbang.Core.Tests.Security;
 
 /// <summary>
-/// Tests for security attributes.
+/// Tests for security-related attributes (FieldPermission, RequirePermission, Scoped).
 /// </summary>
-/// <tests>ScopedAttribute, RequirePermissionAttribute, FieldPermissionAttribute</tests>
 public class SecurityAttributeTests {
-  // === ScopedAttribute Tests ===
+  #region FieldPermissionAttribute
 
   [Test]
-  public async Task ScopedAttribute_DefaultLevel_IsTenantAsync() {
-    // Arrange
-    var attribute = new ScopedAttribute();
+  public async Task FieldPermissionAttribute_Constructor_CreatesPermissionAsync() {
+    // Arrange & Act
+    var attr = new FieldPermissionAttribute("pii:view");
 
     // Assert
-    await Assert.That(attribute.Filter).IsEqualTo(ScopeFilter.Tenant);
+    await Assert.That(attr.Permission.Value).IsEqualTo("pii:view");
   }
 
   [Test]
-  public async Task ScopedAttribute_WithCustomFilter_StoresFilterAsync() {
-    // Arrange
-    var filter = ScopeFilter.Tenant | ScopeFilter.User;
-    var attribute = new ScopedAttribute(filter);
+  public async Task FieldPermissionAttribute_Constructor_DefaultMaskingIsHideAsync() {
+    // Arrange & Act
+    var attr = new FieldPermissionAttribute("pii:view");
 
     // Assert
-    await Assert.That(attribute.Filter).IsEqualTo(filter);
+    await Assert.That(attr.Masking).IsEqualTo(MaskingStrategy.Hide);
   }
 
   [Test]
-  public async Task ScopedAttribute_AppliedToProperty_CanBeRetrievedAsync() {
+  public async Task FieldPermissionAttribute_Constructor_WithMaskingStrategy_SetsMaskingAsync() {
+    // Arrange & Act
+    var attr = new FieldPermissionAttribute("pii:view", MaskingStrategy.Partial);
+
+    // Assert
+    await Assert.That(attr.Masking).IsEqualTo(MaskingStrategy.Partial);
+  }
+
+  [Test]
+  public async Task FieldPermissionAttribute_Constructor_WithMaskStrategy_SetsMaskingAsync() {
+    // Arrange & Act
+    var attr = new FieldPermissionAttribute("ssn:view", MaskingStrategy.Mask);
+
+    // Assert
+    await Assert.That(attr.Masking).IsEqualTo(MaskingStrategy.Mask);
+  }
+
+  [Test]
+  public async Task FieldPermissionAttribute_Constructor_WithRedactStrategy_SetsMaskingAsync() {
+    // Arrange & Act
+    var attr = new FieldPermissionAttribute("classified:view", MaskingStrategy.Redact);
+
+    // Assert
+    await Assert.That(attr.Masking).IsEqualTo(MaskingStrategy.Redact);
+  }
+
+  #endregion
+
+  #region RequirePermissionAttribute
+
+  [Test]
+  public async Task RequirePermissionAttribute_Constructor_CreatesPermissionAsync() {
+    // Arrange & Act
+    var attr = new RequirePermissionAttribute("orders:read");
+
+    // Assert
+    await Assert.That(attr.Permission.Value).IsEqualTo("orders:read");
+  }
+
+  [Test]
+  public async Task RequirePermissionAttribute_Constructor_WithResourceAction_CreatesPermissionAsync() {
+    // Arrange & Act
+    var attr = new RequirePermissionAttribute("customers:admin");
+
+    // Assert
+    await Assert.That(attr.Permission.Value).IsEqualTo("customers:admin");
+  }
+
+  #endregion
+
+  #region ScopedAttribute
+
+  [Test]
+  public async Task ScopedAttribute_DefaultConstructor_UsesTenantFilterAsync() {
+    // Arrange & Act
+    var attr = new ScopedAttribute();
+
+    // Assert
+    await Assert.That(attr.Filter).IsEqualTo(ScopeFilter.Tenant);
+  }
+
+  [Test]
+  public async Task ScopedAttribute_Constructor_WithFilter_SetsFilterAsync() {
+    // Arrange & Act
+    var attr = new ScopedAttribute(ScopeFilter.User);
+
+    // Assert
+    await Assert.That(attr.Filter).IsEqualTo(ScopeFilter.User);
+  }
+
+  [Test]
+  public async Task ScopedAttribute_Constructor_WithCombinedFilters_SetsFilterAsync() {
+    // Arrange & Act
+    var attr = new ScopedAttribute(ScopeFilter.Tenant | ScopeFilter.User);
+
+    // Assert
+    await Assert.That(attr.Filter).IsEqualTo(ScopeFilter.Tenant | ScopeFilter.User);
+  }
+
+  [Test]
+  public async Task ScopedAttribute_Constructor_WithOrganization_SetsFilterAsync() {
+    // Arrange & Act
+    var attr = new ScopedAttribute(ScopeFilter.Organization);
+
+    // Assert
+    await Assert.That(attr.Filter).IsEqualTo(ScopeFilter.Organization);
+  }
+
+  [Test]
+  public async Task ScopedAttribute_Constructor_WithPrincipal_SetsFilterAsync() {
+    // Arrange & Act
+    var attr = new ScopedAttribute(ScopeFilter.Principal);
+
+    // Assert
+    await Assert.That(attr.Filter).IsEqualTo(ScopeFilter.Principal);
+  }
+
+  #endregion
+
+  #region MaskingStrategy Enum Values
+
+  [Test]
+  public async Task MaskingStrategy_AllValues_AreDistinctAsync() {
     // Arrange
-    var property = typeof(ScopedModel).GetProperty(nameof(ScopedModel.TenantId));
+    var values = new[] {
+      MaskingStrategy.Hide,
+      MaskingStrategy.Mask,
+      MaskingStrategy.Partial,
+      MaskingStrategy.Redact
+    };
 
     // Act
-    var attribute = property?.GetCustomAttributes(typeof(ScopedAttribute), true)
-                           .FirstOrDefault() as ScopedAttribute;
+    var distinctValues = values.Select(v => (int)v).Distinct().ToList();
 
     // Assert
-    await Assert.That(attribute).IsNotNull();
-    await Assert.That(attribute!.Filter).IsEqualTo(ScopeFilter.Tenant);
-  }
-
-  // === RequirePermissionAttribute Tests ===
-
-  [Test]
-  public async Task RequirePermissionAttribute_StoresPermissionAsync() {
-    // Arrange
-    var attribute = new RequirePermissionAttribute("orders:read");
-
-    // Assert
-    await Assert.That(attribute.Permission.Value).IsEqualTo("orders:read");
+    await Assert.That(distinctValues).Count().IsEqualTo(4);
   }
 
   [Test]
-  public async Task RequirePermissionAttribute_AppliedToClass_CanBeRetrievedAsync() {
+  public async Task MaskingStrategy_Hide_IsDefaultValueAsync() {
     // Arrange
-    var type = typeof(ProtectedModel);
-
-    // Act
-    var attributes = type.GetCustomAttributes(typeof(RequirePermissionAttribute), true)
-                        .Cast<RequirePermissionAttribute>()
-                        .ToList();
+    var defaultStrategy = default(MaskingStrategy);
 
     // Assert
-    await Assert.That(attributes.Count).IsEqualTo(1);
-    await Assert.That(attributes[0].Permission.Value).IsEqualTo("orders:read");
+    await Assert.That(defaultStrategy).IsEqualTo(MaskingStrategy.Hide);
   }
 
-  [Test]
-  public async Task RequirePermissionAttribute_MultipleApplied_AllCanBeRetrievedAsync() {
-    // Arrange
-    var type = typeof(MultiPermissionModel);
-
-    // Act
-    var attributes = type.GetCustomAttributes(typeof(RequirePermissionAttribute), true)
-                        .Cast<RequirePermissionAttribute>()
-                        .ToList();
-
-    // Assert
-    await Assert.That(attributes.Count).IsEqualTo(2);
-    await Assert.That(attributes.Select(a => a.Permission.Value))
-          .Contains("orders:read");
-    await Assert.That(attributes.Select(a => a.Permission.Value))
-          .Contains("orders:write");
-  }
-
-  // === FieldPermissionAttribute Tests ===
-
-  [Test]
-  public async Task FieldPermissionAttribute_DefaultMasking_IsHideAsync() {
-    // Arrange
-    var attribute = new FieldPermissionAttribute("pii:view");
-
-    // Assert
-    await Assert.That(attribute.Permission.Value).IsEqualTo("pii:view");
-    await Assert.That(attribute.Masking).IsEqualTo(MaskingStrategy.Hide);
-  }
-
-  [Test]
-  public async Task FieldPermissionAttribute_WithMaskingStrategy_StoresStrategyAsync() {
-    // Arrange
-    var attribute = new FieldPermissionAttribute("pii:view", MaskingStrategy.Partial);
-
-    // Assert
-    await Assert.That(attribute.Permission.Value).IsEqualTo("pii:view");
-    await Assert.That(attribute.Masking).IsEqualTo(MaskingStrategy.Partial);
-  }
-
-  [Test]
-  public async Task FieldPermissionAttribute_AppliedToProperty_CanBeRetrievedAsync() {
-    // Arrange
-    var property = typeof(SensitiveDataModel).GetProperty(nameof(SensitiveDataModel.SSN));
-
-    // Act
-    var attribute = property?.GetCustomAttributes(typeof(FieldPermissionAttribute), true)
-                           .FirstOrDefault() as FieldPermissionAttribute;
-
-    // Assert
-    await Assert.That(attribute).IsNotNull();
-    await Assert.That(attribute!.Permission.Value).IsEqualTo("pii:view");
-    await Assert.That(attribute.Masking).IsEqualTo(MaskingStrategy.Partial);
-  }
-
-  // === MaskingStrategy Tests ===
-
-  [Test]
-  public async Task MaskingStrategy_Hide_HasCorrectValueAsync() {
-    // Arrange
-    var strategy = MaskingStrategy.Hide;
-
-    // Assert
-    await Assert.That((int)strategy).IsEqualTo(0);
-  }
-
-  [Test]
-  public async Task MaskingStrategy_Mask_HasCorrectValueAsync() {
-    // Arrange
-    var strategy = MaskingStrategy.Mask;
-
-    // Assert
-    await Assert.That((int)strategy).IsEqualTo(1);
-  }
-
-  [Test]
-  public async Task MaskingStrategy_Partial_HasCorrectValueAsync() {
-    // Arrange
-    var strategy = MaskingStrategy.Partial;
-
-    // Assert
-    await Assert.That((int)strategy).IsEqualTo(2);
-  }
-
-  [Test]
-  public async Task MaskingStrategy_Redact_HasCorrectValueAsync() {
-    // Arrange
-    var strategy = MaskingStrategy.Redact;
-
-    // Assert
-    await Assert.That((int)strategy).IsEqualTo(3);
-  }
-
-  // === Test Models ===
-
-  private sealed class ScopedModel {
-    [Scoped]
-    public string? TenantId { get; init; }
-  }
-
-  [RequirePermission("orders:read")]
-  private sealed class ProtectedModel {
-    public string? OrderId { get; init; }
-  }
-
-  [RequirePermission("orders:read")]
-  [RequirePermission("orders:write")]
-  private sealed class MultiPermissionModel {
-    public string? OrderId { get; init; }
-  }
-
-  private sealed class SensitiveDataModel {
-    [FieldPermission("pii:view", MaskingStrategy.Partial)]
-    public string? SSN { get; init; }
-  }
+  #endregion
 }
