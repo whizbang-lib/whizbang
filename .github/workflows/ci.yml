@@ -18,7 +18,7 @@ jobs:
   # ============================================================
   build:
     name: Build
-    uses: ./.github/workflows/_build.yml
+    uses: ./.github/workflows/reusable-build.yml
 
   # ============================================================
   # Test Stage - All tests run in parallel after build completes
@@ -26,35 +26,35 @@ jobs:
   unit-tests:
     name: Unit Tests
     needs: build
-    uses: ./.github/workflows/_test-unit.yml
+    uses: ./.github/workflows/reusable-test-unit.yml
     with:
       build-artifact: ${{ needs.build.outputs.artifact_name }}
 
   postgres-integration:
     name: PostgreSQL Integration
     needs: build
-    uses: ./.github/workflows/_test-postgres.yml
+    uses: ./.github/workflows/reusable-test-postgres.yml
     with:
       build-artifact: ${{ needs.build.outputs.artifact_name }}
 
   inmemory-integration:
     name: InMemory Integration
     needs: build
-    uses: ./.github/workflows/_test-inmemory.yml
+    uses: ./.github/workflows/reusable-test-inmemory.yml
     with:
       build-artifact: ${{ needs.build.outputs.artifact_name }}
 
   rabbitmq-integration:
     name: RabbitMQ Integration
     needs: build
-    uses: ./.github/workflows/_test-rabbitmq.yml
+    uses: ./.github/workflows/reusable-test-rabbitmq.yml
     with:
       build-artifact: ${{ needs.build.outputs.artifact_name }}
 
   servicebus-integration:
     name: Service Bus Integration
     needs: build
-    uses: ./.github/workflows/_test-servicebus.yml
+    uses: ./.github/workflows/reusable-test-servicebus.yml
     with:
       build-artifact: ${{ needs.build.outputs.artifact_name }}
 
@@ -69,7 +69,7 @@ jobs:
       - inmemory-integration
       - rabbitmq-integration
       - servicebus-integration
-    uses: ./.github/workflows/_quality.yml
+    uses: ./.github/workflows/reusable-quality.yml
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
