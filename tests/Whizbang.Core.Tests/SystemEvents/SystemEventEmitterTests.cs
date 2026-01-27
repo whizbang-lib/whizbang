@@ -214,6 +214,48 @@ public class SystemEventEmitterTests {
   #region EmitAsync Tests
 
   [Test]
+  public async Task EmitAsync_WithNonAuditSystemEvent_WhenAuditDisabled_DoesNotEmitAsync() {
+    // Arrange - Test non-EventAudited/CommandAudited path with audit disabled
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions()); // Audit disabled
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    // Use a custom ISystemEvent type that is NOT EventAudited or CommandAudited
+    var systemEvent = new TestSystemEvent {
+      Id = Guid.NewGuid(),
+      Name = "test",
+      Timestamp = DateTimeOffset.UtcNow
+    };
+
+    // Act
+    await emitter.EmitAsync(systemEvent);
+
+    // Assert - No events appended (not EventAudited/CommandAudited and audit disabled)
+    await Assert.That(eventStore.AppendedEnvelopes).IsEmpty();
+  }
+
+  [Test]
+  public async Task EmitAsync_WithNonAuditSystemEvent_WhenAuditEnabled_DoesNotEmitAsync() {
+    // Arrange - Test non-EventAudited/CommandAudited path with audit enabled
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableAudit()); // Audit enabled
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    // Use a custom ISystemEvent type that is NOT EventAudited or CommandAudited
+    var systemEvent = new TestSystemEvent {
+      Id = Guid.NewGuid(),
+      Name = "test",
+      Timestamp = DateTimeOffset.UtcNow
+    };
+
+    // Act - TestSystemEvent is not EventAudited or CommandAudited, so it should not emit
+    await emitter.EmitAsync(systemEvent);
+
+    // Assert - No events appended (not EventAudited/CommandAudited type)
+    await Assert.That(eventStore.AppendedEnvelopes).IsEmpty();
+  }
+
+  [Test]
   public async Task EmitAsync_WhenSystemEventTypeDisabled_DoesNotEmitAsync() {
     // Arrange
     var eventStore = new MockEventStore();
@@ -353,6 +395,16 @@ public class SystemEventEmitterTests {
   [AuditEvent(Exclude = true)]
   private sealed record ExcludedCommand {
     public required string Name { get; init; }
+  }
+
+  /// <summary>
+  /// Custom ISystemEvent for testing non-audit system event paths.
+  /// This type is NOT EventAudited or CommandAudited.
+  /// </summary>
+  private sealed record TestSystemEvent : ISystemEvent {
+    public required Guid Id { get; init; }
+    public required string Name { get; init; }
+    public required DateTimeOffset Timestamp { get; init; }
   }
 
   #endregion
