@@ -175,9 +175,11 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
 
   private async Task _runDockerComposeAsync(string arguments, CancellationToken cancellationToken = default, string? composeFile = null) {
     var file = composeFile ?? _dockerComposeFile;
+    // Use "docker compose" (v2) instead of "docker-compose" (v1)
+    // GitHub Actions ubuntu-24.04 only has docker compose v2
     var psi = new ProcessStartInfo {
-      FileName = "docker-compose",
-      Arguments = $"-f \"{file}\" {arguments}",
+      FileName = "docker",
+      Arguments = $"compose -f \"{file}\" {arguments}",
       RedirectStandardOutput = true,
       RedirectStandardError = true,
       UseShellExecute = false,
@@ -186,14 +188,14 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
 
     using var process = Process.Start(psi);
     if (process == null) {
-      throw new InvalidOperationException("Failed to start docker-compose process");
+      throw new InvalidOperationException("Failed to start docker compose process");
     }
 
     await process.WaitForExitAsync(cancellationToken);
 
     if (process.ExitCode != 0) {
       var error = await process.StandardError.ReadToEndAsync(cancellationToken);
-      throw new InvalidOperationException($"docker-compose failed: {error}");
+      throw new InvalidOperationException($"docker compose failed: {error}");
     }
   }
 
