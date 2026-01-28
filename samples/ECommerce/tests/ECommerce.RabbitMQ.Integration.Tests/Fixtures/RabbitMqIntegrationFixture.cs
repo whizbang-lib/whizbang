@@ -592,7 +592,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Creates the per-test database using the template database.
   /// </summary>
-  private async Task _createDatabaseAsync(string connectionString, CancellationToken ct) {
+  private static async Task _createDatabaseAsync(string connectionString, CancellationToken ct) {
     // Extract database name from connection string
     var builder = new Npgsql.NpgsqlConnectionStringBuilder(connectionString);
     var dbName = builder.Database;
@@ -713,7 +713,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   /// Clears the Npgsql connection pool for a database connection string.
   /// This ensures all connections are closed before dropping the database.
   /// </summary>
-  private void _clearConnectionPool(string connectionString) {
+  private static void _clearConnectionPool(string connectionString) {
     try {
       using var connection = new Npgsql.NpgsqlConnection(connectionString);
       Npgsql.NpgsqlConnection.ClearPool(connection);
@@ -728,7 +728,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   /// Drops a per-test database after closing all active connections.
   /// This prevents database accumulation and connection pool exhaustion.
   /// </summary>
-  private async Task _dropDatabaseAsync(string connectionString) {
+  private static async Task _dropDatabaseAsync(string connectionString) {
     try {
       // Extract database name from connection string
       var builder = new Npgsql.NpgsqlConnectionStringBuilder(connectionString);
