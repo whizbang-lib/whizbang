@@ -303,13 +303,27 @@ public class DispatcherTests {
 
   public class ProcessReceptor : IReceptor<ProcessCommand> {
     public static int ProcessedCount { get; private set; }
+    public static TaskCompletionSource? Gate { get; private set; }
 
     public static void Reset() {
       ProcessedCount = 0;
+      Gate = null;
+    }
+
+    public static void SetGate() {
+      Gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    public static void ReleaseGate() {
+      Gate?.TrySetResult();
     }
 
     public async ValueTask HandleAsync(ProcessCommand message, CancellationToken cancellationToken = default) {
-      await Task.Delay(1, cancellationToken);
+      if (Gate != null) {
+        await Gate.Task.WaitAsync(cancellationToken);
+      } else {
+        await Task.Delay(1, cancellationToken);
+      }
       ProcessedCount++;
     }
   }
@@ -348,15 +362,18 @@ public class DispatcherTests {
   }
 
   [Test]
+  [NotInParallel]
   public async Task LocalInvokeAsync_VoidReceptor_AsynchronousCompletion_ShouldCompleteAsync() {
     // Arrange
     ProcessReceptor.Reset();
+    ProcessReceptor.SetGate(); // Set up gate to control completion deterministically
     var dispatcher = _createDispatcher();
     var command = new ProcessCommand(Guid.NewGuid(), "Test data");
 
     // Act
     var task = dispatcher.LocalInvokeAsync(command);
-    await Assert.That(task.IsCompleted).IsFalse(); // Async operation
+    await Assert.That(task.IsCompleted).IsFalse(); // Now deterministically false - waiting on gate
+    ProcessReceptor.ReleaseGate(); // Allow handler to complete
     await task;
 
     // Assert
