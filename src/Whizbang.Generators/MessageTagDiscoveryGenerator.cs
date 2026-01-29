@@ -1,0 +1,274 @@
+using System;
+using System.Collections.Generic;
+using System.Collections.Immutable;
+using System.Linq;
+using System.Text;
+using System.Threading;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
+
+namespace Whizbang.Generators;
+
+/// <summary>
+/// Source generator that discovers message types with MessageTagAttribute (or subclasses)
+/// and generates a MessageTagRegistry for AOT-compatible tag discovery.
+/// </summary>
+[Generator]
+public class MessageTagDiscoveryGenerator : IIncrementalGenerator {
+  private const string MESSAGE_TAG_ATTRIBUTE = "Whizbang.Core.Attributes.MessageTagAttribute";
+
+  public void Initialize(IncrementalGeneratorInitializationContext context) {
+    // Discover types with [MessageTag] or derived attributes
+    var taggedTypes = context.SyntaxProvider.CreateSyntaxProvider(
+        predicate: static (node, _) => node is TypeDeclarationSyntax { AttributeLists.Count: > 0 },
+        transform: static (ctx, ct) => _extractTagInfo(ctx, ct)
+    ).Where(static info => info is not null);
+
+    // Generate registry
+    context.RegisterSourceOutput(
+        taggedTypes.Collect(),
+        static (ctx, tags) => _generateRegistry(ctx, tags!)
+    );
+  }
+
+  private static MessageTagInfo? _extractTagInfo(
+      GeneratorSyntaxContext context,
+      CancellationToken ct) {
+
+    var typeDecl = (TypeDeclarationSyntax)context.Node;
+    var typeSymbol = context.SemanticModel.GetDeclaredSymbol(typeDecl, ct);
+
+    if (typeSymbol is null) {
+      return null;
+    }
+
+    // Only process public types to avoid discovering test types
+    if (typeSymbol.DeclaredAccessibility != Accessibility.Public) {
+      return null;
+    }
+
+    // Find MessageTagAttribute or any derived attribute
+    var tagAttribute = typeSymbol.GetAttributes()
+        .FirstOrDefault(a => _inheritsFromMessageTagAttribute(a.AttributeClass));
+
+    if (tagAttribute is null) {
+      return null;
+    }
+
+    // Extract attribute properties
+    var tag = _getAttributeValue<string>(tagAttribute, "Tag") ?? "";
+    var properties = _getAttributeArrayValue(tagAttribute, "Properties");
+    var includeEvent = _getAttributeValue<bool>(tagAttribute, "IncludeEvent");
+    var extraJson = _getAttributeValue<string>(tagAttribute, "ExtraJson");
+
+    // Skip types with Exclude = true (e.g., system events that shouldn't trigger tag hooks)
+    var exclude = _getAttributeValue<bool>(tagAttribute, "Exclude");
+    if (exclude) {
+      return null;
+    }
+
+    // Get type information
+    var typeFullName = typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+    var attributeFullName = tagAttribute.AttributeClass!.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+    // Get property names from the type for payload extraction
+    var typeProperties = typeSymbol.GetMembers()
+        .OfType<IPropertySymbol>()
+        .Where(p => p.DeclaredAccessibility == Accessibility.Public && !p.IsStatic)
+        .Select(p => p.Name)
+        .ToArray();
+
+    return new MessageTagInfo(
+        TypeFullName: typeFullName,
+        TypeName: typeSymbol.Name,
+        Namespace: typeSymbol.ContainingNamespace?.ToDisplayString() ?? "",
+        AttributeFullName: attributeFullName,
+        AttributeName: tagAttribute.AttributeClass!.Name,
+        Tag: tag,
+        Properties: properties,
+        IncludeEvent: includeEvent,
+        ExtraJson: extraJson,
+        TypeProperties: typeProperties
+    );
+  }
+
+  private static bool _inheritsFromMessageTagAttribute(INamedTypeSymbol? attributeClass) {
+    if (attributeClass is null) {
+      return false;
+    }
+
+    // Check if the attribute is MessageTagAttribute or inherits from it
+    var current = attributeClass;
+    while (current is not null) {
+      if (current.ToDisplayString() == MESSAGE_TAG_ATTRIBUTE) {
+        return true;
+      }
+      current = current.BaseType;
+    }
+
+    return false;
+  }
+
+  private static T? _getAttributeValue<T>(AttributeData attribute, string propertyName) {
+    // Check named arguments
+    var namedArg = attribute.NamedArguments
+        .FirstOrDefault(a => a.Key == propertyName);
+
+    if (!namedArg.Equals(default(KeyValuePair<string, TypedConstant>))) {
+      if (namedArg.Value.Value is T value) {
+        return value;
+      }
+    }
+
+    return default;
+  }
+
+  private static string[]? _getAttributeArrayValue(AttributeData attribute, string propertyName) {
+    var namedArg = attribute.NamedArguments
+        .FirstOrDefault(a => a.Key == propertyName);
+
+    if (!namedArg.Equals(default(KeyValuePair<string, TypedConstant>))) {
+      if (namedArg.Value.Kind == TypedConstantKind.Array) {
+        return namedArg.Value.Values
+            .Select(v => v.Value?.ToString() ?? "")
+            .Where(s => !string.IsNullOrEmpty(s))
+            .ToArray();
+      }
+    }
+
+    return null;
+  }
+
+  private static void _generateRegistry(
+      SourceProductionContext context,
+      ImmutableArray<MessageTagInfo?> tags) {
+
+    var validTags = tags.Where(t => t is not null).Select(t => t!).ToList();
+
+    var sb = new StringBuilder();
+    sb.AppendLine("// <auto-generated/>");
+    sb.AppendLine("#nullable enable");
+    sb.AppendLine();
+    sb.AppendLine("using System;");
+    sb.AppendLine("using System.Collections.Generic;");
+    sb.AppendLine("using System.Text.Json;");
+    sb.AppendLine("using Whizbang.Core.Tags;");
+    sb.AppendLine("using Whizbang.Core.Attributes;");
+    sb.AppendLine();
+    sb.AppendLine("namespace Whizbang.Core.Generated;");
+    sb.AppendLine();
+    sb.AppendLine("/// <summary>");
+    sb.AppendLine("/// Auto-generated registry of message types with tag attributes.");
+    sb.AppendLine("/// Provides AOT-compatible tag discovery with pre-compiled payload builders.");
+    sb.AppendLine("/// </summary>");
+    sb.AppendLine("internal static class MessageTagRegistry {");
+    sb.AppendLine("  /// <summary>");
+    sb.AppendLine("  /// All registered message tag entries.");
+    sb.AppendLine("  /// </summary>");
+    sb.AppendLine("  public static IReadOnlyList<MessageTagRegistration> Tags { get; } = new MessageTagRegistration[] {");
+
+    foreach (var tag in validTags) {
+      _generateRegistration(sb, tag);
+    }
+
+    sb.AppendLine("  };");
+    sb.AppendLine();
+    sb.AppendLine("  /// <summary>");
+    sb.AppendLine("  /// Gets tags for a specific message type.");
+    sb.AppendLine("  /// </summary>");
+    sb.AppendLine("  public static IEnumerable<MessageTagRegistration> GetTagsFor(Type messageType) {");
+    sb.AppendLine("    foreach (var tag in Tags) {");
+    sb.AppendLine("      if (tag.MessageType == messageType) {");
+    sb.AppendLine("        yield return tag;");
+    sb.AppendLine("      }");
+    sb.AppendLine("    }");
+    sb.AppendLine("  }");
+    sb.AppendLine();
+    sb.AppendLine("  /// <summary>");
+    sb.AppendLine("  /// Gets tags for a specific message type.");
+    sb.AppendLine("  /// </summary>");
+    sb.AppendLine("  public static IEnumerable<MessageTagRegistration> GetTagsFor<T>() => GetTagsFor(typeof(T));");
+    sb.AppendLine("}");
+
+    context.AddSource("MessageTagRegistry.g.cs", sb.ToString());
+  }
+
+  private static void _generateRegistration(StringBuilder sb, MessageTagInfo tag) {
+    sb.AppendLine($"    new MessageTagRegistration {{");
+    sb.AppendLine($"      MessageType = typeof({tag.TypeFullName}),");
+    sb.AppendLine($"      AttributeType = typeof({tag.AttributeFullName}),");
+    sb.AppendLine($"      Tag = \"{_escapeString(tag.Tag)}\",");
+
+    if (tag.Properties is not null && tag.Properties.Length > 0) {
+      sb.AppendLine($"      Properties = new[] {{ {string.Join(", ", tag.Properties.Select(p => $"\"{p}\""))} }},");
+    }
+
+    sb.AppendLine($"      IncludeEvent = {(tag.IncludeEvent ? "true" : "false")},");
+
+    if (!string.IsNullOrEmpty(tag.ExtraJson)) {
+      sb.AppendLine($"      ExtraJson = \"\"\"{_escapeString(tag.ExtraJson)}\"\"\",");
+    }
+
+    // Generate PayloadBuilder
+    sb.AppendLine($"      PayloadBuilder = msg => {{");
+    sb.AppendLine($"        var e = ({tag.TypeFullName})msg;");
+    sb.AppendLine($"        var dict = new Dictionary<string, object?>();");
+
+    // Extract specified properties, or all properties if none specified
+    var propsToExtract = tag.Properties is not null && tag.Properties.Length > 0
+        ? tag.Properties
+        : tag.TypeProperties;
+
+    foreach (var prop in propsToExtract) {
+      if (tag.TypeProperties.Contains(prop)) {
+        sb.AppendLine($"        dict[\"{prop}\"] = e.{prop};");
+      }
+    }
+
+    // Include full event if requested
+    if (tag.IncludeEvent) {
+      sb.AppendLine($"        dict[\"__event\"] = e;");
+    }
+
+    // Merge extra JSON if present
+    if (!string.IsNullOrEmpty(tag.ExtraJson)) {
+      sb.AppendLine($"        // Merge extra JSON: {_escapeString(tag.ExtraJson)}");
+      sb.AppendLine($"        var extra = JsonDocument.Parse(\"\"\"{_escapeString(tag.ExtraJson)}\"\"\");");
+      sb.AppendLine($"        foreach (var prop in extra.RootElement.EnumerateObject()) {{");
+      sb.AppendLine($"          dict[prop.Name] = prop.Value.Clone();");
+      sb.AppendLine($"        }}");
+    }
+
+    sb.AppendLine($"        return JsonSerializer.SerializeToElement(dict);");
+    sb.AppendLine($"      }},");
+
+    // Generate AttributeFactory
+    sb.AppendLine($"      AttributeFactory = () => new {tag.AttributeFullName}() {{ Tag = \"{_escapeString(tag.Tag)}\" }}");
+    sb.AppendLine($"    }},");
+  }
+
+  private static string _escapeString(string? s) {
+    if (s is null) {
+      return "";
+    }
+
+    return s.Replace("\\", "\\\\").Replace("\"", "\\\"");
+  }
+}
+
+/// <summary>
+/// Value type record for caching discovered message tag information.
+/// </summary>
+internal sealed record MessageTagInfo(
+    string TypeFullName,
+    string TypeName,
+    string Namespace,
+    string AttributeFullName,
+    string AttributeName,
+    string Tag,
+    string[]? Properties,
+    bool IncludeEvent,
+    string? ExtraJson,
+    string[] TypeProperties
+);

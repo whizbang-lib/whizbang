@@ -29,7 +29,7 @@ namespace ECommerce.RabbitMQ.Integration.Tests.Lifecycle;
 /// <docs>testing/lifecycle-synchronization</docs>
 [Category("Integration")]
 [Category("Lifecycle")]
-[NotInParallel]
+[NotInParallel("RabbitMQ")]
 public class PerspectiveLifecycleTests {
   private static RabbitMqIntegrationFixture? _fixture;
 
@@ -389,7 +389,7 @@ public class PerspectiveLifecycleTests {
       timeoutMilliseconds: 35000); // Increased timeout for resource exhaustion scenarios
 
     // Assert - Verify perspective data is saved (this is the key guarantee!)
-    var product = await fixture.BffProductLens.GetByIdAsync(command.ProductId);
+    var product = await fixture.BffProductLens.GetByIdAsync(command.ProductId.Value);
     await Assert.That(product).IsNotNull();
     await Assert.That(product!.Name).IsEqualTo(command.Name);
     await Assert.That(product.Price).IsEqualTo(command.Price);
@@ -432,7 +432,7 @@ public class PerspectiveLifecycleTests {
       await Assert.That(receptor.InvocationCount).IsEqualTo(1);
 
       // Verify perspective data is immediately queryable
-      var product = await fixture.BffProductLens.GetByIdAsync(command.ProductId);
+      var product = await fixture.BffProductLens.GetByIdAsync(command.ProductId.Value);
       await Assert.That(product).IsNotNull();
       await Assert.That(product!.Name).IsEqualTo(command.Name);
 
@@ -490,8 +490,8 @@ public class PerspectiveLifecycleTests {
     await restockWaiter.WaitAsync(timeoutMilliseconds: 30000);
 
     // Assert - Verify both products are saved
-    var product1 = await fixture.BffProductLens.GetByIdAsync(commands[0].ProductId);
-    var product2 = await fixture.BffProductLens.GetByIdAsync(commands[1].ProductId);
+    var product1 = await fixture.BffProductLens.GetByIdAsync(commands[0].ProductId.Value);
+    var product2 = await fixture.BffProductLens.GetByIdAsync(commands[1].ProductId.Value);
     await Assert.That(product1).IsNotNull();
     await Assert.That(product2).IsNotNull();
   }

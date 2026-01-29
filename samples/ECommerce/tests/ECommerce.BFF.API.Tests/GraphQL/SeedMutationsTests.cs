@@ -81,7 +81,7 @@ public class SeedMutationsTests {
   public async Task SeedProducts_WhenNoProductsExist_Dispatches12CommandsAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
-    var productLens = new TestProductCatalogLens(new List<ProductDto>());
+    var productLens = new TestProductCatalogLens([]);
     var logger = NullLogger<SeedMutations>.Instance;
 
     var sut = new SeedMutations(dispatcher, productLens, logger);
@@ -114,7 +114,7 @@ public class SeedMutationsTests {
     };
 
     var dispatcher = new TestDispatcher();
-    var productLens = new TestProductCatalogLens(new List<ProductDto> { existingProduct });
+    var productLens = new TestProductCatalogLens([existingProduct]);
     var logger = NullLogger<SeedMutations>.Instance;
 
     var sut = new SeedMutations(dispatcher, productLens, logger);
@@ -134,7 +134,7 @@ public class SeedMutationsTests {
   public async Task SeedProducts_DispatchesCommandsWithCorrectDataAsync() {
     // Arrange
     var dispatcher = new TestDispatcher();
-    var productLens = new TestProductCatalogLens(new List<ProductDto>());
+    var productLens = new TestProductCatalogLens([]);
     var logger = NullLogger<SeedMutations>.Instance;
 
     var sut = new SeedMutations(dispatcher, productLens, logger);
@@ -173,7 +173,7 @@ public class SeedMutationsTests {
   public async Task SeedProducts_WhenDispatcherFails_ThrowsExceptionAsync() {
     // Arrange - Create failing dispatcher
     var dispatcher = new FailingTestDispatcher();
-    var productLens = new TestProductCatalogLens(new List<ProductDto>());
+    var productLens = new TestProductCatalogLens([]);
     var logger = NullLogger<SeedMutations>.Instance;
 
     var sut = new SeedMutations(dispatcher, productLens, logger);

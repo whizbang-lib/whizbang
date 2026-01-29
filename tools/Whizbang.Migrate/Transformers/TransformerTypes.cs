@@ -57,5 +57,8 @@ public enum ChangeType {
   NamespaceChange,
 
   /// <summary>Method call was replaced.</summary>
-  MethodCallReplacement
+  MethodCallReplacement,
+
+  /// <summary>Method was transformed (e.g., ShouldDelete to Apply returning ModelAction).</summary>
+  MethodTransformed
 }

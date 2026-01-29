@@ -12,6 +12,8 @@ public sealed class ApplyCommand {
   private readonly MartenAnalyzer _martenAnalyzer = new();
   private readonly HandlerToReceptorTransformer _handlerTransformer = new();
   private readonly ProjectionToPerspectiveTransformer _projectionTransformer = new();
+  private readonly EventStoreTransformer _eventStoreTransformer = new();
+  private readonly GuidToIdProviderTransformer _guidTransformer = new();
   private readonly DIRegistrationTransformer _diTransformer = new();
 
   /// <summary>
@@ -56,6 +58,20 @@ public sealed class ApplyCommand {
         var projectionResult = await _projectionTransformer.TransformAsync(transformedCode, file, ct);
         transformedCode = projectionResult.TransformedCode;
         allChanges.AddRange(projectionResult.Changes);
+      }
+
+      // Apply EventStore transformations (IDocumentStore → IEventStore, session patterns)
+      var eventStoreResult = await _eventStoreTransformer.TransformAsync(transformedCode, file, ct);
+      if (eventStoreResult.Changes.Count > 0) {
+        transformedCode = eventStoreResult.TransformedCode;
+        allChanges.AddRange(eventStoreResult.Changes);
+      }
+
+      // Apply Guid → IWhizbangIdProvider transformations
+      var guidResult = await _guidTransformer.TransformAsync(transformedCode, file, ct);
+      if (guidResult.Changes.Count > 0) {
+        transformedCode = guidResult.TransformedCode;
+        allChanges.AddRange(guidResult.Changes);
       }
 
       // Apply DI registration transformations (for Program.cs and startup files)

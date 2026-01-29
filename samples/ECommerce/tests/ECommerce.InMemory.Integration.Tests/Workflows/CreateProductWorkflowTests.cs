@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using ECommerce.Contracts.Commands;
 using ECommerce.Contracts.Events;
 using ECommerce.InMemory.Integration.Tests.Fixtures;
+using Medo;
 
 namespace ECommerce.InMemory.Integration.Tests.Workflows;
 
@@ -10,34 +11,44 @@ namespace ECommerce.InMemory.Integration.Tests.Workflows;
 /// Tests the complete flow: Command → Receptor → Event Store → Perspectives.
 /// Uses in-memory transport for fast, deterministic testing without Service Bus infrastructure.
 /// This isolates business logic testing from Azure Service Bus concerns.
-/// Each test gets its own isolated fixture and database for parallel execution.
+/// All tests share a single fixture (PostgreSQL container) for performance.
+/// Database cleanup between tests ensures isolation.
 /// </summary>
-[Timeout(20_000)]  // 20s timeout per test
+[NotInParallel("InMemory")]  // Tests must run sequentially since they share a fixture
+[Timeout(60_000)]  // 60s timeout: first test needs container init (~15s), subsequent tests fast
 public class CreateProductWorkflowTests {
   private InMemoryIntegrationFixture? _fixture;
 
-  // Test product IDs (deterministic GUIDs for reproducibility)
-  private static readonly ProductId _testProd1 = ProductId.From(Guid.Parse("10000000-0000-0000-0000-000000000001"));
-  private static readonly ProductId _testProdMulti1 = ProductId.From(Guid.Parse("10000000-0000-0000-0000-000000000011"));
-  private static readonly ProductId _testProdMulti2 = ProductId.From(Guid.Parse("10000000-0000-0000-0000-000000000012"));
-  private static readonly ProductId _testProdMulti3 = ProductId.From(Guid.Parse("10000000-0000-0000-0000-000000000013"));
-  private static readonly ProductId _testProdZeroStock = ProductId.From(Guid.Parse("10000000-0000-0000-0000-000000000020"));
-  private static readonly ProductId _testProdNoImage = ProductId.From(Guid.Parse("10000000-0000-0000-0000-000000000030"));
+  // Test product IDs (UUIDv7 for proper time-ordering and uniqueness across test runs)
+  private static readonly ProductId _testProd1 = ProductId.From(Uuid7.NewUuid7().ToGuid());
+  private static readonly ProductId _testProdMulti1 = ProductId.From(Uuid7.NewUuid7().ToGuid());
+  private static readonly ProductId _testProdMulti2 = ProductId.From(Uuid7.NewUuid7().ToGuid());
+  private static readonly ProductId _testProdMulti3 = ProductId.From(Uuid7.NewUuid7().ToGuid());
+  private static readonly ProductId _testProdZeroStock = ProductId.From(Uuid7.NewUuid7().ToGuid());
+  private static readonly ProductId _testProdNoImage = ProductId.From(Uuid7.NewUuid7().ToGuid());
 
   [Before(Test)]
   [RequiresUnreferencedCode("Test code - reflection allowed")]
   [RequiresDynamicCode("Test code - reflection allowed")]
   public async Task SetupAsync() {
-    // Create isolated fixture for this test (not shared)
-    _fixture = new InMemoryIntegrationFixture();
-    await _fixture.InitializeAsync();
+    // Get shared fixture (creates container on first call, reuses on subsequent calls)
+    _fixture = await SharedInMemoryFixtureSource.GetFixtureAsync();
+
+    // Wait for any in-flight work from previous test to complete
+    // Workers poll at 100ms with IdleThresholdPolls=2, so 500ms is sufficient
+    await Task.Delay(500);
+
+    // Clean database between tests to ensure isolation
+    await _fixture.CleanupDatabaseAsync();
+
+    // Re-seed message associations after cleanup (required for perspective auto-checkpoint creation)
+    // This is handled by CleanupDatabaseAsync which only truncates data, not the associations table
   }
 
   [After(Test)]
   public async Task TeardownAsync() {
-    if (_fixture != null) {
-      await _fixture.DisposeAsync();
-    }
+    // Don't dispose - shared fixture is reused across tests
+    // Cleanup happens in Before(Test) of next test
   }
 
   /// <summary>

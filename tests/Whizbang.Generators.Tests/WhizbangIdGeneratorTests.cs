@@ -37,9 +37,9 @@ public partial class WhizbangIdGeneratorTests {
     await Assert.That(generatedSource!).Contains("namespace MyApp.Domain");
     await Assert.That(generatedSource).Contains("public readonly partial struct ProductId");
 
-    // Assert - Should contain Guid-backed storage
-    await Assert.That(generatedSource).Contains("private readonly Guid _value");
-    await Assert.That(generatedSource).Contains("public Guid Value => _value");
+    // Assert - Should contain TrackedGuid-backed storage
+    await Assert.That(generatedSource).Contains("private readonly TrackedGuid _tracked");
+    await Assert.That(generatedSource).Contains("public Guid Value => _tracked.Value");
 
     // Assert - Should contain factory methods
     await Assert.That(generatedSource).Contains("public static ProductId From(Guid value)");

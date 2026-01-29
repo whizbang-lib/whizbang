@@ -27,6 +27,7 @@
   <ItemGroup>
     <!-- Test framework packages -->
     <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
+    <PackageReference Include="Microsoft.Testing.Extensions.Retry" />
     <PackageReference Include="TUnit" />
   </ItemGroup>
 

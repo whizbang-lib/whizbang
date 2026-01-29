@@ -12,8 +12,10 @@ namespace Whizbang.Generators;
 /// <param name="StreamKeyPropertyName">Property name marked with [StreamKey] attribute on the model (null if not found)</param>
 /// <param name="EventStreamKeys">Map of event type name to its StreamKey property name</param>
 /// <param name="EventValidationErrors">Array of validation errors for event types (event name, error type)</param>
+/// <param name="MustExistEventTypes">Array of event type names (fully qualified) whose Apply methods have [MustExist] attribute</param>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveDiscoveryGeneratorTests.cs</tests>
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveSchemaGeneratorTests.cs</tests>
+/// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerGeneratorTests.cs</tests>
 internal sealed record PerspectiveInfo(
     string ClassName,
     string[] InterfaceTypeArguments,
@@ -21,7 +23,9 @@ internal sealed record PerspectiveInfo(
     string[] MessageTypeNames,
     string? StreamKeyPropertyName = null,
     EventStreamKeyInfo[]? EventStreamKeys = null,
-    EventValidationError[]? EventValidationErrors = null
+    EventValidationError[]? EventValidationErrors = null,
+    string[]? MustExistEventTypes = null,
+    EventReturnTypeInfo[]? EventReturnTypes = null
 );
 
 /// <summary>
@@ -50,4 +54,35 @@ internal sealed record EventValidationError(
 internal enum StreamKeyErrorType {
   MissingStreamKey,
   MultipleStreamKeys
+}
+
+/// <summary>
+/// Maps an event type to the return type of its Apply method.
+/// Used for generating correct handling code for different return patterns.
+/// </summary>
+/// <param name="EventTypeName">Fully qualified event type name</param>
+/// <param name="ReturnType">Type of return value from Apply method</param>
+internal sealed record EventReturnTypeInfo(
+    string EventTypeName,
+    ApplyReturnType ReturnType
+);
+
+/// <summary>
+/// Specifies the return type pattern of an Apply method for code generation.
+/// </summary>
+internal enum ApplyReturnType {
+  /// <summary>Returns TModel - standard update pattern</summary>
+  Model,
+
+  /// <summary>Returns TModel? - nullable means null = no change</summary>
+  NullableModel,
+
+  /// <summary>Returns ModelAction - action only (Delete, Purge)</summary>
+  Action,
+
+  /// <summary>Returns (TModel?, ModelAction) - tuple with optional model and action</summary>
+  Tuple,
+
+  /// <summary>Returns ApplyResult&lt;TModel&gt; - full flexibility wrapper</summary>
+  ApplyResult
 }

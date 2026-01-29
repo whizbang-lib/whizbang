@@ -8,6 +8,7 @@ namespace Whizbang.Core.Internal;
 /// Handles single events, arrays, enumerables, tuples, and nested structures.
 /// Used by Dispatcher to automatically capture events from receptor return values.
 /// </summary>
+/// <docs>core-concepts/dispatcher#automatic-event-cascade</docs>
 public static class EventExtractor {
   /// <summary>
   /// Extracts all IEvent instances from a potentially complex return value.
@@ -16,6 +17,7 @@ public static class EventExtractor {
   /// </summary>
   /// <param name="result">The result to extract events from</param>
   /// <returns>Flattened collection of all events found</returns>
+  /// <docs>core-concepts/dispatcher#automatic-event-cascade</docs>
   /// <tests>tests/Whizbang.Core.Tests/Internal/EventExtractorTests.cs:ExtractEvents_WithNull_ReturnsEmptyAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Internal/EventExtractorTests.cs:ExtractEvents_WithSingleEvent_ReturnsSingleEventAsync</tests>
   /// <tests>tests/Whizbang.Core.Tests/Internal/EventExtractorTests.cs:ExtractEvents_WithNonEvent_ReturnsEmptyAsync</tests>

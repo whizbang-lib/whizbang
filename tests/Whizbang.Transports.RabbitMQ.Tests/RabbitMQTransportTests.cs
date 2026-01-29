@@ -14,9 +14,6 @@ using Whizbang.Transports.RabbitMQ;
 
 namespace Whizbang.Transports.RabbitMQ.Tests;
 
-// Test message type for serialization tests
-internal sealed record TestMessage(string Content);
-
 /// <summary>
 /// Tests for RabbitMQTransport PublishAsync implementation.
 /// RabbitMQ transport provides reliable pub/sub messaging.
@@ -307,6 +304,9 @@ public class RabbitMQTransportTests {
 
     // Act
     subscription.Dispose();
+
+    // Give the fire-and-forget disposal task time to complete
+    await Task.Delay(100);
 
     // Assert - Verify consumer was cancelled
     await Assert.That(fakeChannel.BasicCancelAsyncCalled).IsTrue();

@@ -22,6 +22,7 @@ namespace Whizbang.Core.Tests.Workers;
 /// Integration tests for WorkCoordinatorPublisherWorker with real-world delays and concurrency.
 /// Tests race conditions that might not be caught by fast unit tests.
 /// </summary>
+[NotInParallel("WorkCoordinatorRaceCondition")]
 public class WorkCoordinatorPublisherWorkerRaceConditionTests {
   private sealed record _testMessage { }
 
@@ -225,7 +226,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
 
     // 20 messages available for claiming (more messages = better load distribution)
     for (int i = 0; i < 20; i++) {
-      workCoordinator.AvailableWork.Add(_createOutboxWork(Guid.NewGuid(), "products"));
+      workCoordinator.AvailableWork.Add(_createOutboxWork(Guid.CreateVersion7(), "products"));
     }
 
     var instanceProvider1 = _createTestInstanceProvider();
@@ -312,7 +313,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
 
     // 12 messages (like user's seeding scenario)
     for (int i = 0; i < 12; i++) {
-      workCoordinator.AvailableWork.Add(_createOutboxWork(Guid.NewGuid(), "products"));
+      workCoordinator.AvailableWork.Add(_createOutboxWork(Guid.CreateVersion7(), "products"));
     }
 
     var services = _createServiceCollection(workCoordinator, publishStrategy, databaseReadiness, instanceProvider);
@@ -372,7 +373,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
 
     // 5 messages
     for (int i = 0; i < 5; i++) {
-      workCoordinator.AvailableWork.Add(_createOutboxWork(Guid.NewGuid(), "products"));
+      workCoordinator.AvailableWork.Add(_createOutboxWork(Guid.CreateVersion7(), "products"));
     }
 
     var services = _createServiceCollection(workCoordinator, publishStrategy, databaseReadiness, instanceProvider);
@@ -428,7 +429,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
 
     // 10 messages
     for (int i = 0; i < 10; i++) {
-      workCoordinator.AvailableWork.Add(_createOutboxWork(Guid.NewGuid(), "products"));
+      workCoordinator.AvailableWork.Add(_createOutboxWork(Guid.CreateVersion7(), "products"));
     }
 
     var services = _createServiceCollection(workCoordinator, publishStrategy, databaseReadiness, instanceProvider);
@@ -481,7 +482,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
 
     // 5 messages
     for (int i = 0; i < 5; i++) {
-      workCoordinator.AvailableWork.Add(_createOutboxWork(Guid.NewGuid(), "products"));
+      workCoordinator.AvailableWork.Add(_createOutboxWork(Guid.CreateVersion7(), "products"));
     }
 
     var services = _createServiceCollection(workCoordinator, publishStrategy, databaseReadiness, instanceProvider);
@@ -532,7 +533,7 @@ public class WorkCoordinatorPublisherWorkerRaceConditionTests {
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",
       Envelope = _createTestEnvelope(messageId),
-      StreamId = Guid.NewGuid(),
+      StreamId = Guid.CreateVersion7(),
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,

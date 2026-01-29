@@ -61,10 +61,10 @@ public class WhizbangIdAttributeTests {
   [Test]
   public async Task WhizbangIdAttribute_SuppressDuplicateWarningProperty_CanBeSetAsync() {
     // Arrange
-    var attribute = new WhizbangIdAttribute();
-
-    // Act
-    attribute.SuppressDuplicateWarning = true;
+    var attribute = new WhizbangIdAttribute {
+      // Act
+      SuppressDuplicateWarning = true
+    };
 
     // Assert
     await Assert.That(attribute.SuppressDuplicateWarning).IsTrue();

@@ -77,4 +77,36 @@ public interface IPerspectiveStore<TModel> where TModel : class {
   /// For other implementations (Dapper, raw SQL), this may be a no-op if changes are already committed.
   /// </remarks>
   Task FlushAsync(CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Hard deletes (purges) a model by removing it from the store entirely.
+  /// This is a permanent deletion - the row is physically removed from the database.
+  /// For soft delete, use UpsertAsync with a model that has DeletedAt set.
+  /// </summary>
+  /// <param name="streamId">Stream ID (aggregate ID) of the model to purge</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <remarks>
+  /// This method is idempotent - purging a non-existent model does not throw.
+  /// Use this for ModelAction.Purge scenarios where data must be permanently removed.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:PurgeAsync_WhenRecordExists_RemovesRecordAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:PurgeAsync_WhenRecordDoesNotExist_DoesNotThrowAsync</tests>
+  Task PurgeAsync(Guid streamId, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Hard deletes (purges) a model by partition key, removing it from the store entirely.
+  /// This is a permanent deletion - the row is physically removed from the database.
+  /// For soft delete, use UpsertByPartitionKeyAsync with a model that has DeletedAt set.
+  /// </summary>
+  /// <param name="partitionKey">Partition key of the model to purge</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <remarks>
+  /// This method is idempotent - purging a non-existent model does not throw.
+  /// Use this for ModelAction.Purge scenarios in global perspectives.
+  /// </remarks>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:PurgeByPartitionKeyAsync_WhenRecordExists_RemovesRecordAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:PurgeByPartitionKeyAsync_WhenRecordDoesNotExist_DoesNotThrowAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:PurgeByPartitionKeyAsync_WithStringPartitionKey_RemovesRecordAsync</tests>
+  Task PurgeByPartitionKeyAsync<TPartitionKey>(TPartitionKey partitionKey, CancellationToken cancellationToken = default)
+    where TPartitionKey : notnull;
 }

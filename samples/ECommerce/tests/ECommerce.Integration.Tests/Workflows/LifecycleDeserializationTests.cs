@@ -18,7 +18,7 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// This is the code path that was suspected of having a JsonElement bug.
 /// </summary>
 [Timeout(30_000)]  // 30s timeout per test
-[NotInParallel]
+[NotInParallel("ServiceBus")]
 public class LifecycleDeserializationTests {
   private static ServiceBusIntegrationFixture? _fixture;
 
@@ -50,7 +50,7 @@ public class LifecycleDeserializationTests {
     var fixture = _fixture ?? throw new InvalidOperationException("Fixture not initialized");
 
     var command = new CreateProductCommand {
-      ProductId = ProductId.From(Guid.Parse("88888888-0000-0000-0000-000000000001")),
+      ProductId = ProductId.New(),
       Name = "Lifecycle Test Product",
       Description = "Testing deserialization at Distribute stage",
       Price = 123.45m,
@@ -97,7 +97,7 @@ public class LifecycleDeserializationTests {
 
     var commands = new[] {
       new CreateProductCommand {
-        ProductId = ProductId.From(Guid.Parse("88888888-0000-0000-0000-000000000011")),
+        ProductId = ProductId.New(),
         Name = "Product 1",
         Description = "First test product",
         Price = 10.00m,
@@ -105,7 +105,7 @@ public class LifecycleDeserializationTests {
         InitialStock = 100
       },
       new CreateProductCommand {
-        ProductId = ProductId.From(Guid.Parse("88888888-0000-0000-0000-000000000012")),
+        ProductId = ProductId.New(),
         Name = "Product 2",
         Description = "Second test product",
         Price = 20.00m,

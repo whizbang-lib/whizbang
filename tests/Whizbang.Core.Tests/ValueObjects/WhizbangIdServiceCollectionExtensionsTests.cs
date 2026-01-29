@@ -107,7 +107,7 @@ public class WhizbangIdServiceCollectionExtensionsTests {
   public async Task ConfigureWhizbangIdProvider_ShouldReturnServiceCollectionAsync() {
     // Arrange
     var services = new ServiceCollection();
-    var testProvider = new TestIdProvider(Guid.NewGuid());
+    var testProvider = new TestIdProvider(Guid.CreateVersion7());
 
     try {
       // Act
@@ -206,7 +206,7 @@ public class WhizbangIdServiceCollectionExtensionsTests {
   public async Task AddWhizbangIdProviders_WithCustomProvider_UsesCustomProviderAsync() {
     // Arrange
     var services = new ServiceCollection();
-    var expectedGuid = Guid.NewGuid();
+    var expectedGuid = Guid.CreateVersion7();
     var customProvider = new TestIdProvider(expectedGuid);
 
     try {

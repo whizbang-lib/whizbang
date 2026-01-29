@@ -3,7 +3,6 @@ using System.Text;
 using ECommerce.BFF.API.Generated;
 using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Generated;
-using ECommerce.Integration.Tests.Fixtures;
 using ECommerce.InventoryWorker.Generated;
 using ECommerce.InventoryWorker.Lenses;
 using Medo;
@@ -20,6 +19,7 @@ using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
 using Whizbang.Hosting.RabbitMQ;
+using Whizbang.Testing.Lifecycle;
 using Whizbang.Transports.RabbitMQ;
 
 namespace ECommerce.RabbitMQ.Integration.Tests.Fixtures;
@@ -162,16 +162,16 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
 
     // Create hosts
     Console.WriteLine("[RabbitMqFixture] Creating InventoryWorker host...");
-    _inventoryHost = CreateInventoryHost();
+    _inventoryHost = _createInventoryHost();
     Console.WriteLine("[RabbitMqFixture] InventoryWorker host created");
 
     Console.WriteLine("[RabbitMqFixture] Creating BFF host...");
-    _bffHost = CreateBffHost();
+    _bffHost = _createBffHost();
     Console.WriteLine("[RabbitMqFixture] BFF host created");
 
     // Initialize database schemas
     Console.WriteLine("[RabbitMqFixture] Initializing database schemas...");
-    await InitializeDatabaseSchemasAsync(ct);
+    await _initializeDatabaseSchemasAsync(ct);
     Console.WriteLine("[RabbitMqFixture] Database schemas initialized");
 
     // Start hosts AFTER schema is ready
@@ -204,12 +204,12 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
 
     // Delete test-specific queues and exchanges via Management API
     // Note: These are placeholders - actual cleanup would need to know exact queue/exchange names
-    await DeleteQueueAsync($"bff-{testId}", ct);
-    await DeleteQueueAsync($"inventory-{testId}", ct);
-    await DeleteExchangeAsync($"products-{testId}", ct);
+    await _deleteQueueAsync($"bff-{testId}", ct);
+    await _deleteQueueAsync($"inventory-{testId}", ct);
+    await _deleteExchangeAsync($"products-{testId}", ct);
   }
 
-  private IHost CreateInventoryHost() {
+  private IHost _createInventoryHost() {
     var builder = Host.CreateApplicationBuilder();
 
     // Register service instance provider (unique instance ID per test)
@@ -348,7 +348,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     return builder.Build();
   }
 
-  private IHost CreateBffHost() {
+  private IHost _createBffHost() {
     var builder = Host.CreateApplicationBuilder();
 
     // Register service instance provider (unique instance ID per test)
@@ -496,14 +496,14 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     return builder.Build();
   }
 
-  private async Task InitializeDatabaseSchemasAsync(CancellationToken ct) {
+  private async Task _initializeDatabaseSchemasAsync(CancellationToken ct) {
     // Create both per-test databases (each host gets its own database to eliminate lock contention)
     Console.WriteLine($"[RabbitMqFixture] Creating Inventory database...");
-    await CreateDatabaseAsync(_inventoryPostgresConnection, ct);
+    await _createDatabaseAsync(_inventoryPostgresConnection, ct);
     Console.WriteLine($"[RabbitMqFixture] Inventory database created!");
 
     Console.WriteLine($"[RabbitMqFixture] Creating BFF database...");
-    await CreateDatabaseAsync(_bffPostgresConnection, ct);
+    await _createDatabaseAsync(_bffPostgresConnection, ct);
     Console.WriteLine($"[RabbitMqFixture] BFF database created!");
 
     // Initialize Inventory database
@@ -571,7 +571,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     Console.WriteLine("[RabbitMqFixture] Database initialization complete.");
   }
 
-  private async Task DeleteQueueAsync(string queueName, CancellationToken ct = default) {
+  private async Task _deleteQueueAsync(string queueName, CancellationToken ct = default) {
     try {
       var response = await _managementClient.DeleteAsync($"/api/queues/%2F/{queueName}", ct);
       response.EnsureSuccessStatusCode();
@@ -580,7 +580,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
     }
   }
 
-  private async Task DeleteExchangeAsync(string exchangeName, CancellationToken ct = default) {
+  private async Task _deleteExchangeAsync(string exchangeName, CancellationToken ct = default) {
     try {
       var response = await _managementClient.DeleteAsync($"/api/exchanges/%2F/{exchangeName}", ct);
       response.EnsureSuccessStatusCode();
@@ -592,7 +592,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Creates the per-test database using the template database.
   /// </summary>
-  private async Task CreateDatabaseAsync(string connectionString, CancellationToken ct) {
+  private static async Task _createDatabaseAsync(string connectionString, CancellationToken ct) {
     // Extract database name from connection string
     var builder = new Npgsql.NpgsqlConnectionStringBuilder(connectionString);
     var dbName = builder.Database;
@@ -698,13 +698,13 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
 
     // Clear connection pools to ensure all DB connections are closed
     // CRITICAL: Must happen BEFORE dropping databases
-    ClearConnectionPool(_inventoryPostgresConnection);
-    ClearConnectionPool(_bffPostgresConnection);
+    _clearConnectionPool(_inventoryPostgresConnection);
+    _clearConnectionPool(_bffPostgresConnection);
 
     // Clean up per-test databases
     // CRITICAL: Must happen AFTER hosts are disposed and connection pools cleared
-    await DropDatabaseAsync(_inventoryPostgresConnection);
-    await DropDatabaseAsync(_bffPostgresConnection);
+    await _dropDatabaseAsync(_inventoryPostgresConnection);
+    await _dropDatabaseAsync(_bffPostgresConnection);
 
     _managementClient.Dispose();
   }
@@ -713,7 +713,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   /// Clears the Npgsql connection pool for a database connection string.
   /// This ensures all connections are closed before dropping the database.
   /// </summary>
-  private void ClearConnectionPool(string connectionString) {
+  private static void _clearConnectionPool(string connectionString) {
     try {
       using var connection = new Npgsql.NpgsqlConnection(connectionString);
       Npgsql.NpgsqlConnection.ClearPool(connection);
@@ -728,7 +728,7 @@ public sealed class RabbitMqIntegrationFixture : IAsyncDisposable {
   /// Drops a per-test database after closing all active connections.
   /// This prevents database accumulation and connection pool exhaustion.
   /// </summary>
-  private async Task DropDatabaseAsync(string connectionString) {
+  private static async Task _dropDatabaseAsync(string connectionString) {
     try {
       // Extract database name from connection string
       var builder = new Npgsql.NpgsqlConnectionStringBuilder(connectionString);

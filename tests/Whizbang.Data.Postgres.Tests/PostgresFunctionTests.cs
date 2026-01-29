@@ -12,7 +12,7 @@ namespace Whizbang.Data.Postgres.Tests;
 /// Uses UUIDv7 for all IDs to ensure proper time-ordered database indexing.
 /// </summary>
 public class PostgresFunctionTests : PostgresTestBase {
-  private readonly Uuid7IdProvider _idProvider = new Uuid7IdProvider();
+  private readonly Uuid7IdProvider _idProvider = new();
 
   [Test]
   public async Task RegisterInstanceHeartbeat_NewInstance_InsertsSuccessfullyAsync() {

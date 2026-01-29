@@ -293,7 +293,7 @@ public class TransportConsumerWorkerTests {
 // ===== Test Doubles =====
 
 internal class FakeTransport : ITransport {
-  private readonly List<FakeSubscription> _subscriptions = new();
+  private readonly List<FakeSubscription> _subscriptions = [];
   private Func<IMessageEnvelope, string?, CancellationToken, Task>? _handler;
 
   public int SubscribeCallCount { get; private set; }
@@ -456,7 +456,7 @@ internal class FakeDeliveryReceipt : IDeliveryReceipt {
 }
 
 internal class FakeMessageEnvelope : IMessageEnvelope {
-  private readonly List<MessageHop> _hops = new();
+  private readonly List<MessageHop> _hops = [];
 
   public FakeMessageEnvelope(MessageId messageId, CorrelationId? correlationId) {
     MessageId = messageId;
@@ -526,9 +526,9 @@ internal class FakeWorkCoordinatorStrategy : Whizbang.Core.Messaging.IWorkCoordi
   public Task<Whizbang.Core.Messaging.WorkBatch> FlushAsync(Whizbang.Core.Messaging.WorkBatchFlags flags, CancellationToken ct = default) {
     // Return an empty WorkBatch - unit tests don't need actual work processing
     var workBatch = new Whizbang.Core.Messaging.WorkBatch {
-      InboxWork = new List<Whizbang.Core.Messaging.InboxWork>(),
-      OutboxWork = new List<Whizbang.Core.Messaging.OutboxWork>(),
-      PerspectiveWork = new List<Whizbang.Core.Messaging.PerspectiveWork>()
+      InboxWork = [],
+      OutboxWork = [],
+      PerspectiveWork = []
     };
 
     return Task.FromResult(workBatch);

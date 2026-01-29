@@ -26,7 +26,7 @@ public class IWhizbangIdProviderGenericTests {
   [Test]
   public async Task NewId_WithCustomProvider_UsesCustomProviderAsync() {
     // Arrange
-    var expectedGuid = Guid.NewGuid();
+    var expectedGuid = Guid.CreateVersion7();
     var customProvider = new TestWhizbangIdProvider(expectedGuid);
     var provider = GenericTestId1.CreateProvider(customProvider);
 

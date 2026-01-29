@@ -1,0 +1,52 @@
+name: Build (Reusable)
+
+on:
+  workflow_call:
+
+env:
+  DOTNET_VERSION: '10.0.x'
+  DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: '1'
+  DOTNET_NOLOGO: '1'
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Display .NET Info
+        run: dotnet --info
+
+      - name: Restore Dependencies
+        run: dotnet restore
+
+      - name: Clean Solution
+        run: dotnet clean --configuration Release
+
+      - name: Build Solution
+        run: dotnet build --no-restore --configuration Release -maxcpucount:1
+
+      - name: Verify Code Formatting
+        run: dotnet format --verify-no-changes --no-restore
+
+      - name: Upload Build Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-${{ github.run_id }}
+          path: |
+            **/bin/Release
+            **/obj/Release
+            !**/obj/Release/**/ref/**
+            !**/obj/Release/**/refint/**
+          retention-days: 1
+          compression-level: 6

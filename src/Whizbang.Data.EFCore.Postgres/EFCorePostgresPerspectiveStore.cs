@@ -170,4 +170,44 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
     // data is persisted and queryable before receptors fire
     await _context.SaveChangesAsync(cancellationToken);
   }
+
+  /// <inheritdoc/>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:PurgeAsync_WhenRecordExists_RemovesRecordAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:PurgeAsync_WhenRecordDoesNotExist_DoesNotThrowAsync</tests>
+  public async Task PurgeAsync(Guid streamId, CancellationToken cancellationToken = default) {
+    // Find the row to delete
+    var row = await _context.Set<PerspectiveRow<TModel>>()
+        .FirstOrDefaultAsync(r => r.Id == streamId, cancellationToken);
+
+    // If row exists, remove it
+    if (row != null) {
+      _context.Set<PerspectiveRow<TModel>>().Remove(row);
+      await _context.SaveChangesAsync(cancellationToken);
+    }
+    // If row doesn't exist, idempotent no-op (don't throw)
+  }
+
+  /// <inheritdoc/>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:PurgeByPartitionKeyAsync_WhenRecordExists_RemovesRecordAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:PurgeByPartitionKeyAsync_WhenRecordDoesNotExist_DoesNotThrowAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:PurgeByPartitionKeyAsync_WithStringPartitionKey_RemovesRecordAsync</tests>
+  public async Task PurgeByPartitionKeyAsync<TPartitionKey>(
+      TPartitionKey partitionKey,
+      CancellationToken cancellationToken = default)
+      where TPartitionKey : notnull {
+
+    // Convert partition key to Guid for storage
+    var partitionGuid = _convertPartitionKeyToGuid(partitionKey);
+
+    // Find the row to delete
+    var row = await _context.Set<PerspectiveRow<TModel>>()
+        .FirstOrDefaultAsync(r => r.Id == partitionGuid, cancellationToken);
+
+    // If row exists, remove it
+    if (row != null) {
+      _context.Set<PerspectiveRow<TModel>>().Remove(row);
+      await _context.SaveChangesAsync(cancellationToken);
+    }
+    // If row doesn't exist, idempotent no-op (don't throw)
+  }
 }

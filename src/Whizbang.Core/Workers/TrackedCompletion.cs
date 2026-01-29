@@ -28,6 +28,9 @@ public sealed class TrackedCompletion<T> where T : notnull {
 
   /// <summary>
   /// Unique identifier for tracking this specific completion instance.
+  /// Internal tracking ID, not a domain ID - UUIDv4 is acceptable here.
   /// </summary>
+#pragma warning disable WHIZ055 // Internal tracking ID, not a domain ID
   public Guid TrackingId { get; init; } = Guid.NewGuid();
+#pragma warning restore WHIZ055
 }

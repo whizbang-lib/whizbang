@@ -37,11 +37,13 @@ namespace Whizbang.Generators;
 [Generator]
 public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
   private const string RECEPTOR_INTERFACE_NAME = "Whizbang.Core.IReceptor";
+  private const string SYNC_RECEPTOR_INTERFACE_NAME = "Whizbang.Core.ISyncReceptor";
   private const string PERSPECTIVE_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
 
   // Template and placeholder constants
   private const string TEMPLATE_SNIPPET_FILE = "DispatcherSnippets.cs";
   private const string PLACEHOLDER_RECEPTOR_INTERFACE = "__RECEPTOR_INTERFACE__";
+  private const string PLACEHOLDER_SYNC_RECEPTOR_INTERFACE = "__SYNC_RECEPTOR_INTERFACE__";
   private const string PLACEHOLDER_MESSAGE_TYPE = "__MESSAGE_TYPE__";
   private const string PLACEHOLDER_RESPONSE_TYPE = "__RESPONSE_TYPE__";
   private const string PLACEHOLDER_RECEPTOR_CLASS = "__RECEPTOR_CLASS__";
@@ -88,8 +90,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// Extracts receptor information from a class declaration.
-  /// Returns null if the class doesn't implement IReceptor.
-  /// Supports both IReceptor&lt;TMessage, TResponse&gt; and IReceptor&lt;TMessage&gt; (void) patterns.
+  /// Returns null if the class doesn't implement IReceptor or ISyncReceptor.
+  /// Supports async receptors: IReceptor&lt;TMessage, TResponse&gt; and IReceptor&lt;TMessage&gt; (void).
+  /// Supports sync receptors: ISyncReceptor&lt;TMessage, TResponse&gt; and ISyncReceptor&lt;TMessage&gt; (void).
   /// Enhanced in Phase 2 to extract [FireAt] attributes for lifecycle stage discovery.
   /// </summary>
   private static ReceptorInfo? _extractReceptorInfo(
@@ -117,12 +120,13 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         i.OriginalDefinition.ToDisplayString() == RECEPTOR_INTERFACE_NAME + "<TMessage, TResponse>");
 
     if (receptorInterface is not null && receptorInterface.TypeArguments.Length == 2) {
-      // Found IReceptor<TMessage, TResponse> - regular receptor with response
+      // Found IReceptor<TMessage, TResponse> - regular async receptor with response
       return new ReceptorInfo(
           ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
           MessageType: receptorInterface.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
           ResponseType: receptorInterface.TypeArguments[1].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-          LifecycleStages: lifecycleStages
+          LifecycleStages: lifecycleStages,
+          IsSync: false
       );
     }
 
@@ -131,16 +135,47 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         i.OriginalDefinition.ToDisplayString() == RECEPTOR_INTERFACE_NAME + "<TMessage>");
 
     if (voidReceptorInterface is not null && voidReceptorInterface.TypeArguments.Length == 1) {
-      // Found IReceptor<TMessage> - void receptor with no response
+      // Found IReceptor<TMessage> - void async receptor with no response
       return new ReceptorInfo(
           ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
           MessageType: voidReceptorInterface.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
           ResponseType: null,  // Void receptor - no response type
-          LifecycleStages: lifecycleStages
+          LifecycleStages: lifecycleStages,
+          IsSync: false
       );
     }
 
-    // No IReceptor interface found
+    // Look for ISyncReceptor<TMessage, TResponse> interface (2 type arguments) - sync receptor
+    var syncReceptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
+        i.OriginalDefinition.ToDisplayString() == SYNC_RECEPTOR_INTERFACE_NAME + "<TMessage, TResponse>");
+
+    if (syncReceptorInterface is not null && syncReceptorInterface.TypeArguments.Length == 2) {
+      // Found ISyncReceptor<TMessage, TResponse> - sync receptor with response
+      return new ReceptorInfo(
+          ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          MessageType: syncReceptorInterface.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          ResponseType: syncReceptorInterface.TypeArguments[1].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          LifecycleStages: lifecycleStages,
+          IsSync: true
+      );
+    }
+
+    // Look for ISyncReceptor<TMessage> interface (1 type argument) - void sync receptor
+    var voidSyncReceptorInterface = classSymbol.AllInterfaces.FirstOrDefault(i =>
+        i.OriginalDefinition.ToDisplayString() == SYNC_RECEPTOR_INTERFACE_NAME + "<TMessage>");
+
+    if (voidSyncReceptorInterface is not null && voidSyncReceptorInterface.TypeArguments.Length == 1) {
+      // Found ISyncReceptor<TMessage> - void sync receptor with no response
+      return new ReceptorInfo(
+          ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          MessageType: voidSyncReceptorInterface.TypeArguments[0].ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+          ResponseType: null,  // Void receptor - no response type
+          LifecycleStages: lifecycleStages,
+          IsSync: true
+      );
+    }
+
+    // No receptor interface found
     return null;
   }
 
@@ -294,7 +329,7 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         "DispatcherRegistrationsTemplate.cs"
     );
 
-    // Load registration snippets
+    // Load registration snippets for async receptors
     var registrationSnippet = TemplateUtilities.ExtractSnippet(
         typeof(ReceptorDiscoveryGenerator).Assembly,
         TEMPLATE_SNIPPET_FILE,
@@ -307,24 +342,56 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
         "VOID_RECEPTOR_REGISTRATION_SNIPPET"
     );
 
+    // Load registration snippets for sync receptors
+    var syncRegistrationSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(ReceptorDiscoveryGenerator).Assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "SYNC_RECEPTOR_REGISTRATION_SNIPPET"
+    );
+
+    var voidSyncRegistrationSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(ReceptorDiscoveryGenerator).Assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "VOID_SYNC_RECEPTOR_REGISTRATION_SNIPPET"
+    );
+
     // Generate registration calls using appropriate snippet
     var registrations = new StringBuilder();
     foreach (var receptor in receptors) {
       string generatedCode;
 
-      if (receptor.IsVoid) {
-        // Void receptor: IReceptor<TMessage>
-        generatedCode = voidRegistrationSnippet
-            .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
-            .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
-            .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName);
+      if (receptor.IsSync) {
+        // Sync receptor
+        if (receptor.IsVoid) {
+          // Void sync receptor: ISyncReceptor<TMessage>
+          generatedCode = voidSyncRegistrationSnippet
+              .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, SYNC_RECEPTOR_INTERFACE_NAME)
+              .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
+              .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName);
+        } else {
+          // Regular sync receptor: ISyncReceptor<TMessage, TResponse>
+          generatedCode = syncRegistrationSnippet
+              .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, SYNC_RECEPTOR_INTERFACE_NAME)
+              .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
+              .Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType!)
+              .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName);
+        }
       } else {
-        // Regular receptor: IReceptor<TMessage, TResponse>
-        generatedCode = registrationSnippet
-            .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
-            .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
-            .Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType!)
-            .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName);
+        // Async receptor
+        if (receptor.IsVoid) {
+          // Void receptor: IReceptor<TMessage>
+          generatedCode = voidRegistrationSnippet
+              .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+              .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
+              .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName);
+        } else {
+          // Regular receptor: IReceptor<TMessage, TResponse>
+          generatedCode = registrationSnippet
+              .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME)
+              .Replace(PLACEHOLDER_MESSAGE_TYPE, receptor.MessageType)
+              .Replace(PLACEHOLDER_RESPONSE_TYPE, receptor.ResponseType!)
+              .Replace(PLACEHOLDER_RECEPTOR_CLASS, receptor.ClassName);
+        }
       }
 
       registrations.AppendLine(TemplateUtilities.IndentCode(generatedCode, "            "));
@@ -350,17 +417,36 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     // Determine namespace from assembly name
     var assemblyName = compilation.AssemblyName ?? DEFAULT_NAMESPACE;
     var namespaceName = $"{assemblyName}.Generated";
-    // Separate void receptors from regular receptors
-    var regularReceptors = receptors.Where(r => !r.IsVoid).ToImmutableArray();
-    var voidReceptors = receptors.Where(r => r.IsVoid).ToImmutableArray();
 
-    // Group regular receptors by message type to handle multi-destination routing
+    // Separate async and sync receptors, then further by void/non-void
+    var asyncReceptors = receptors.Where(r => !r.IsSync).ToImmutableArray();
+    var syncReceptors = receptors.Where(r => r.IsSync).ToImmutableArray();
+
+    // Async receptors: separate void from regular
+    var regularReceptors = asyncReceptors.Where(r => !r.IsVoid).ToImmutableArray();
+    var voidReceptors = asyncReceptors.Where(r => r.IsVoid).ToImmutableArray();
+
+    // Sync receptors: separate void from regular
+    var regularSyncReceptors = syncReceptors.Where(r => !r.IsVoid).ToImmutableArray();
+    var voidSyncReceptors = syncReceptors.Where(r => r.IsVoid).ToImmutableArray();
+
+    // Group regular async receptors by message type to handle multi-destination routing
     var regularReceptorsByMessage = regularReceptors
         .GroupBy(r => r.MessageType)
         .ToDictionary(g => g.Key, g => g.ToList());
 
-    // Group void receptors by message type
+    // Group void async receptors by message type
     var voidReceptorsByMessage = voidReceptors
+        .GroupBy(r => r.MessageType)
+        .ToDictionary(g => g.Key, g => g.ToList());
+
+    // Group regular sync receptors by message type
+    var regularSyncReceptorsByMessage = regularSyncReceptors
+        .GroupBy(r => r.MessageType)
+        .ToDictionary(g => g.Key, g => g.ToList());
+
+    // Group void sync receptors by message type
+    var voidSyncReceptorsByMessage = voidSyncReceptors
         .GroupBy(r => r.MessageType)
         .ToDictionary(g => g.Key, g => g.ToList());
 
@@ -434,6 +520,65 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
       publishRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
     }
 
+    // Load Untyped Publish routing snippet from template (for auto-cascade)
+    var untypedPublishSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(ReceptorDiscoveryGenerator).Assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "UNTYPED_PUBLISH_ROUTING_SNIPPET"
+    );
+
+    // Generate Untyped Publish routing code using snippet template
+    // This enables auto-cascade: events extracted from receptor return values are published
+    var untypedPublishRouting = new StringBuilder();
+    foreach (var messageType in allMessageTypes) {
+      // Replace placeholders with actual types
+      var generatedCode = untypedPublishSnippet
+          .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
+          .Replace(PLACEHOLDER_RECEPTOR_INTERFACE, RECEPTOR_INTERFACE_NAME);
+
+      untypedPublishRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
+    }
+
+    // Load Sync Send routing snippet from template (for sync receptors)
+    var syncSendSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(ReceptorDiscoveryGenerator).Assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "SYNC_SEND_ROUTING_SNIPPET"
+    );
+
+    // Generate Sync Send routing code for sync receptors using snippet template
+    var syncSendRouting = new StringBuilder();
+    foreach (var messageType in regularSyncReceptorsByMessage.Keys) {
+      var receptorList = regularSyncReceptorsByMessage[messageType];
+      var firstReceptor = receptorList[0];
+
+      // Replace placeholders with actual types
+      var generatedCode = syncSendSnippet
+          .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
+          .Replace(PLACEHOLDER_RESPONSE_TYPE, firstReceptor.ResponseType!)
+          .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, SYNC_RECEPTOR_INTERFACE_NAME);
+
+      syncSendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
+    }
+
+    // Load Void Sync Send routing snippet from template (for void sync receptors)
+    var voidSyncSendSnippet = TemplateUtilities.ExtractSnippet(
+        typeof(ReceptorDiscoveryGenerator).Assembly,
+        TEMPLATE_SNIPPET_FILE,
+        "VOID_SYNC_SEND_ROUTING_SNIPPET"
+    );
+
+    // Generate Void Sync Send routing code for void sync receptors using snippet template
+    var voidSyncSendRouting = new StringBuilder();
+    foreach (var messageType in voidSyncReceptorsByMessage.Keys) {
+      // Replace placeholders with actual types
+      var generatedCode = voidSyncSendSnippet
+          .Replace(PLACEHOLDER_MESSAGE_TYPE, messageType)
+          .Replace(PLACEHOLDER_SYNC_RECEPTOR_INTERFACE, SYNC_RECEPTOR_INTERFACE_NAME);
+
+      voidSyncSendRouting.AppendLine(TemplateUtilities.IndentCode(generatedCode, "      "));
+    }
+
     // Replace template markers using regex for robustness
     // This handles variations in whitespace and formatting
     var result = template;
@@ -451,6 +596,9 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "SEND_ROUTING", sendRouting.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "VOID_SEND_ROUTING", voidSendRouting.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "PUBLISH_ROUTING", publishRouting.ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "UNTYPED_PUBLISH_ROUTING", untypedPublishRouting.ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "SYNC_SEND_ROUTING", syncSendRouting.ToString());
+    result = TemplateUtilities.ReplaceRegion(result, "VOID_SYNC_SEND_ROUTING", voidSyncSendRouting.ToString());
 
     return result;
   }

@@ -83,20 +83,37 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
       description: "Perspective Apply methods should be deterministic. Use timestamps from the event instead of DateTime.UtcNow."
   );
 
+  /// <summary>
+  /// WHIZ105: Warning - Perspective injects a service not marked with [PureService].
+  /// </summary>
+  public static readonly DiagnosticDescriptor NonPureServiceInjected = new(
+      id: "WHIZ105",
+      title: "Perspective injects non-pure service",
+      messageFormat: "Perspective '{0}' injects '{1}' which is not marked with [PureService]. Services injected into perspectives must be pure for replay determinism.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "Perspectives may be replayed during system recovery. Injected services must be pure (deterministic, no side effects). Mark the service with [PureService] or suppress this warning if you're certain the service is pure."
+  );
+
   public override ImmutableArray<DiagnosticDescriptor> SupportedDiagnostics => ImmutableArray.Create(
       ApplyMethodIsAsync,
       ApplyMethodUsesAwait,
       ApplyMethodCallsDatabase,
       ApplyMethodCallsHttp,
-      ApplyMethodUsesDateTime
+      ApplyMethodUsesDateTime,
+      NonPureServiceInjected
   );
 
   public override void Initialize(AnalysisContext context) {
     context.ConfigureGeneratedCodeAnalysis(GeneratedCodeAnalysisFlags.None);
     context.EnableConcurrentExecution();
 
-    // Register for method declarations
+    // Register for method declarations (Apply method purity)
     context.RegisterSyntaxNodeAction(_analyzeMethod, SyntaxKind.MethodDeclaration);
+
+    // Register for constructor declarations (pure service injection)
+    context.RegisterSyntaxNodeAction(_analyzeConstructor, SyntaxKind.ConstructorDeclaration);
   }
 
   private static void _analyzeMethod(SyntaxNodeAnalysisContext context) {
@@ -175,6 +192,73 @@ public class PerspectivePurityAnalyzer : DiagnosticAnalyzer {
       );
       context.ReportDiagnostic(diagnostic);
     }
+  }
+
+  private static void _analyzeConstructor(SyntaxNodeAnalysisContext context) {
+    var constructorDeclaration = (ConstructorDeclarationSyntax)context.Node;
+    var constructorSymbol = context.SemanticModel.GetDeclaredSymbol(constructorDeclaration);
+
+    if (constructorSymbol is null) {
+      return;
+    }
+
+    // Check if constructor is in a type implementing IPerspectiveFor or IGlobalPerspectiveFor
+    var containingType = constructorSymbol.ContainingType;
+    if (!_implementsPerspectiveInterface(containingType)) {
+      return;
+    }
+
+    // Check each constructor parameter for [PureService] attribute
+    foreach (var parameter in constructorSymbol.Parameters) {
+      var parameterType = parameter.Type;
+
+      // Skip value types and built-in types
+      if (parameterType.IsValueType ||
+          parameterType.SpecialType != SpecialType.None ||
+          parameterType.TypeKind == TypeKind.Enum) {
+        continue;
+      }
+
+      // Check if parameter type (or its interface) has [PureService] attribute
+      if (!_hasPureServiceAttribute(parameterType)) {
+        // Find the parameter location in the constructor
+        var parameterSyntax = constructorDeclaration.ParameterList.Parameters
+            .FirstOrDefault(p => p.Identifier.Text == parameter.Name);
+
+        var location = parameterSyntax?.GetLocation() ?? constructorDeclaration.Identifier.GetLocation();
+
+        var diagnostic = Diagnostic.Create(
+            NonPureServiceInjected,
+            location,
+            containingType.Name,
+            parameterType.ToDisplayString()
+        );
+        context.ReportDiagnostic(diagnostic);
+      }
+    }
+  }
+
+  private static bool _hasPureServiceAttribute(ITypeSymbol typeSymbol) {
+    // Check the type itself
+    if (_hasAttribute(typeSymbol, "Whizbang.Core.Attributes.PureServiceAttribute")) {
+      return true;
+    }
+
+    // For class types, also check implemented interfaces
+    if (typeSymbol is INamedTypeSymbol namedType) {
+      foreach (var iface in namedType.AllInterfaces) {
+        if (_hasAttribute(iface, "Whizbang.Core.Attributes.PureServiceAttribute")) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  }
+
+  private static bool _hasAttribute(ITypeSymbol typeSymbol, string attributeFullName) {
+    return typeSymbol.GetAttributes()
+        .Any(a => a.AttributeClass?.ToDisplayString() == attributeFullName);
   }
 
   private static bool _implementsPerspectiveInterface(INamedTypeSymbol typeSymbol) {

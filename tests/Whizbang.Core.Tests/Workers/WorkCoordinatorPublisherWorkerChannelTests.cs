@@ -108,7 +108,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
     var publishStrategy = new TestPublishStrategy();
     var instanceProvider = _createTestInstanceProvider();
 
-    var messageId = Guid.NewGuid();
+    var messageId = Guid.CreateVersion7();
     workCoordinator.WorkToReturn = [
       new OutboxWork {
         MessageId = messageId,
@@ -116,7 +116,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
         Envelope = _createTestEnvelope(messageId),
         EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",
-        StreamId = Guid.NewGuid(),
+        StreamId = Guid.CreateVersion7(),
         PartitionNumber = 1,
         Attempts = 0,
         Status = MessageProcessingStatus.Stored,
@@ -150,7 +150,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
     };
     var instanceProvider = _createTestInstanceProvider();
 
-    var messageId = Guid.NewGuid();
+    var messageId = Guid.CreateVersion7();
     workCoordinator.WorkToReturn = [
       new OutboxWork {
         MessageId = messageId,
@@ -158,7 +158,7 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
         Envelope = _createTestEnvelope(messageId),
         EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",
-        StreamId = Guid.NewGuid(),
+        StreamId = Guid.CreateVersion7(),
         PartitionNumber = 1,
         Attempts = 0,
         Status = MessageProcessingStatus.Stored,
@@ -186,14 +186,14 @@ public class WorkCoordinatorPublisherWorkerChannelTests {
 
     var messages = new List<OutboxWork>();
     for (int i = 0; i < 5; i++) {
-      var msgId = Guid.NewGuid();
+      var msgId = Guid.CreateVersion7();
       messages.Add(new OutboxWork {
         MessageId = msgId,
         Destination = "test-topic",
         Envelope = _createTestEnvelope(msgId),
         EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
         MessageType = "System.Text.Json.JsonElement, System.Text.Json",
-        StreamId = Guid.NewGuid(),
+        StreamId = Guid.CreateVersion7(),
         PartitionNumber = 1,
         Attempts = 0,
         Status = MessageProcessingStatus.Stored,

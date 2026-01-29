@@ -4,6 +4,9 @@ using System.Threading.Tasks;
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 
+// Suppress WHIZ105 in test files - we intentionally inject impure services for testing
+#pragma warning disable WHIZ105
+
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
 /// <summary>

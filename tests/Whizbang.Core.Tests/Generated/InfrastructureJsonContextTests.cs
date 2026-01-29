@@ -45,7 +45,7 @@ public class InfrastructureJsonContextTests {
     // Arrange
     var metadata = new EnvelopeMetadata {
       MessageId = MessageId.New(),
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           ServiceInstance = new ServiceInstanceInfo {
@@ -59,7 +59,7 @@ public class InfrastructureJsonContextTests {
           StreamKey = "test-stream",
           ExecutionStrategy = "SerialExecutor"
         }
-      }
+      ]
     };
 
     // Act

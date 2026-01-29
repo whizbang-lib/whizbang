@@ -108,9 +108,9 @@ public class IMessageQueueTests {
   /// Uses dictionaries to track messages, leases, and processed state.
   /// </summary>
   private sealed class FakeMessageQueue : IMessageQueue {
-    private readonly Dictionary<Guid, QueuedMessage> _messages = new();
-    private readonly HashSet<Guid> _processed = new();
-    private readonly Dictionary<Guid, (string instanceId, DateTime leaseExpiry)> _leases = new();
+    private readonly Dictionary<Guid, QueuedMessage> _messages = [];
+    private readonly HashSet<Guid> _processed = [];
+    private readonly Dictionary<Guid, (string instanceId, DateTime leaseExpiry)> _leases = [];
     private DateTime _testTime = DateTime.UtcNow;
 
     public void SetTestTime(DateTime time) {

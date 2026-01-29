@@ -55,9 +55,9 @@ public static class SharedFixtureSource {
       );
     }
 
-    // Use default timeout of 120 seconds if no cancellation token provided
-    // (Emulator startup + warmup can take 60-90 seconds on first run)
-    using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(120));
+    // Use default timeout of 240 seconds if no cancellation token provided
+    // (SQL Server can take 60-120 seconds to start, plus emulator init + warmup)
+    using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(240));
     using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeoutCts.Token);
     var ct = linkedCts.Token;
 

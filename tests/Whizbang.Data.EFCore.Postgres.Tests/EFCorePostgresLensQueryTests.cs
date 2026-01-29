@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TUnit.Assertions;
 using TUnit.Core;
@@ -12,7 +13,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// These tests use EF Core InMemory provider for fast, isolated testing.
 /// </summary>
 public class EFCorePostgresLensQueryTests {
-  private readonly Uuid7IdProvider _idProvider = new Uuid7IdProvider();
+  private readonly Uuid7IdProvider _idProvider = new();
 
   private TestDbContext CreateInMemoryDbContext() {
     var options = new DbContextOptionsBuilder<TestDbContext>()
@@ -402,9 +403,12 @@ public class TestDbContext : DbContext {
         metadata.Property(m => m.Timestamp).IsRequired();
       });
 
-      entity.OwnsOne(e => e.Scope, scope => {
-        scope.WithOwner();
-      });
+      // Use JSON conversion for Scope to support complex types like AllowedPrincipals
+      // This matches production PostgreSQL JSONB behavior
+      entity.Property(e => e.Scope)
+          .HasConversion(
+              v => JsonSerializer.Serialize(v, JsonSerializerOptions.Default),
+              v => JsonSerializer.Deserialize<PerspectiveScope>(v, JsonSerializerOptions.Default)!);
     });
   }
 }

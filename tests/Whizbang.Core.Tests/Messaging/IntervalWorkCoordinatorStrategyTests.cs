@@ -12,7 +12,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// Tests for IntervalWorkCoordinatorStrategy - verifies timer-based batching behavior.
 /// </summary>
 public class IntervalWorkCoordinatorStrategyTests {
-  private readonly Uuid7IdProvider _idProvider = new Uuid7IdProvider();
+  private readonly Uuid7IdProvider _idProvider = new();
 
   // Helper method to create test envelope
   private static TestMessageEnvelope _createTestEnvelope(Guid messageId) {
@@ -57,7 +57,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       MessageType = "TestMessage, TestAssembly",
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(messageId),
-        Hops = new List<MessageHop>()
+        Hops = []
       }
     });
 
@@ -106,7 +106,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       MessageType = "TestMessage, TestAssembly",
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(messageId1),
-        Hops = new List<MessageHop>()
+        Hops = []
       }
     });
 
@@ -123,7 +123,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       MessageType = "TestMessage, TestAssembly",
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(messageId2),
-        Hops = new List<MessageHop>()
+        Hops = []
       }
     });
 
@@ -171,7 +171,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       MessageType = "TestMessage, TestAssembly",
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(messageId),
-        Hops = new List<MessageHop>()
+        Hops = []
       }
     });
 
@@ -225,7 +225,7 @@ public class IntervalWorkCoordinatorStrategyTests {
       MessageType = "TestMessage, TestAssembly",
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(messageId),
-        Hops = new List<MessageHop>()
+        Hops = []
       }
     });
 

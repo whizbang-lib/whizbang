@@ -72,7 +72,7 @@ public class WorkBatchCoordinatorTests {
   public async Task ProcessAndDistributeAsync_WithOutboxWork_WritesToOutboxChannelAsync() {
     // Arrange
     var instanceId = Guid.NewGuid();
-    var messageId = Guid.NewGuid();
+    var messageId = Guid.CreateVersion7();
     var outboxWork = new OutboxWork {
       MessageId = messageId,
       Destination = "test-topic",
@@ -120,7 +120,7 @@ public class WorkBatchCoordinatorTests {
     // Arrange
     var instanceId = Guid.NewGuid();
     var perspectiveWork = new PerspectiveWork {
-      StreamId = Guid.NewGuid(),
+      StreamId = Guid.CreateVersion7(),
       PerspectiveName = "TestPerspective",
       LastProcessedEventId = null,
       Status = PerspectiveProcessingStatus.None,
@@ -163,7 +163,7 @@ public class WorkBatchCoordinatorTests {
   public async Task ProcessAndDistributeAsync_WithBothWorkTypes_DistributesToBothChannelsAsync() {
     // Arrange
     var instanceId = Guid.NewGuid();
-    var messageId = Guid.NewGuid();
+    var messageId = Guid.CreateVersion7();
     var outboxWork = new OutboxWork {
       MessageId = messageId,
       Destination = "test-topic",
@@ -175,7 +175,7 @@ public class WorkBatchCoordinatorTests {
       Flags = WorkBatchFlags.None
     };
     var perspectiveWork = new PerspectiveWork {
-      StreamId = Guid.NewGuid(),
+      StreamId = Guid.CreateVersion7(),
       PerspectiveName = "TestPerspective",
       LastProcessedEventId = null,
       Status = PerspectiveProcessingStatus.None,

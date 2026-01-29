@@ -7,10 +7,11 @@
     <Nullable>enable</Nullable>
     <IsTestProject>true</IsTestProject>
     <IsPackable>false</IsPackable>
-    <NoWarn>$(NoWarn);TUnit0015;TUnit0023</NoWarn>
+    <NoWarn>$(NoWarn);TUnit0015;TUnit0023;WHIZ055;WHIZ056</NoWarn>
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="Dapper" />
     <PackageReference Include="Microsoft.Testing.Extensions.Retry" />
     <PackageReference Include="TUnit" />
     <PackageReference Include="TUnit.Assertions" />
@@ -23,6 +24,7 @@
     <ProjectReference Include="..\..\ECommerce.InventoryWorker\ECommerce.InventoryWorker.csproj" />
     <ProjectReference Include="..\..\ECommerce.BFF.API\ECommerce.BFF.API.csproj" />
     <ProjectReference Include="..\..\ECommerce.Contracts\ECommerce.Contracts.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Whizbang.Testing\Whizbang.Testing.csproj" />
     <ProjectReference Include="..\..\..\..\src\Whizbang.Core\Whizbang.Core.csproj" />
     <ProjectReference Include="..\..\..\..\src\Whizbang.Data.EFCore.Postgres\Whizbang.Data.EFCore.Postgres.csproj" />
     <ProjectReference Include="..\ECommerce.Integration.TestUtilities\ECommerce.Integration.TestUtilities.csproj" />

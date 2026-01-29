@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using Dapper;
 using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Generated;
 using ECommerce.Integration.Tests.Fixtures;
@@ -9,7 +10,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Testcontainers.PostgreSql;
+using Npgsql;
 using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
@@ -18,6 +19,8 @@ using Whizbang.Core.Perspectives;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
+using Whizbang.Testing.Containers;
+using Whizbang.Testing.Lifecycle;
 
 namespace ECommerce.InMemory.Integration.Tests.Fixtures;
 
@@ -38,8 +41,9 @@ namespace ECommerce.InMemory.Integration.Tests.Fixtures;
 /// claiming and processing work while the other remains idle.</para>
 /// </remarks>
 public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
-  private readonly PostgreSqlContainer _postgresContainer;
   private readonly InProcessTransport _transport;  // Shared singleton across both hosts
+  private string? _fixtureDatabaseName;
+  private string? _connectionString;
   private bool _isInitialized;
   private IHost? _inventoryHost;
   private IHost? _bffHost;
@@ -55,16 +59,9 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   /// CRITICAL: Must be different from InventoryWorker instance ID to ensure work coordinator treats them as separate instances.
   /// </summary>
   private readonly Guid _bffInstanceId = Guid.CreateVersion7();
-  private readonly List<IServiceScope> _lensScopes = new(); // Track scopes for lens queries to dispose them properly
+  private readonly List<IServiceScope> _lensScopes = []; // Track scopes for lens queries to dispose them properly
 
   public InMemoryIntegrationFixture() {
-    _postgresContainer = new PostgreSqlBuilder()
-      .WithImage("postgres:17-alpine")
-      .WithDatabase("whizbang_integration_test")
-      .WithUsername("whizbang_user")
-      .WithPassword("whizbang_pass")
-      .Build();
-
     // Create shared InProcessTransport (both hosts will use this same instance)
     _transport = new InProcessTransport();
   }
@@ -139,7 +136,8 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Gets the PostgreSQL connection string for direct database operations.
   /// </summary>
-  public string ConnectionString => _postgresContainer.GetConnectionString();
+  public string ConnectionString => _connectionString
+    ?? throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
 
   /// <summary>
   /// Gets a logger instance for use in test scenarios.
@@ -160,15 +158,28 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
       return;
     }
 
-    Console.WriteLine("[InMemoryFixture] Starting PostgreSQL container...");
+    Console.WriteLine("[InMemoryFixture] Initializing shared PostgreSQL container...");
 
-    // Start PostgreSQL container
-    await _postgresContainer.StartAsync(cancellationToken);
+    // Initialize shared container (only starts once, subsequent calls return immediately)
+    await SharedPostgresContainer.InitializeAsync(cancellationToken);
 
-    Console.WriteLine("[InMemoryFixture] PostgreSQL started. Waiting for readiness...");
+    // Create unique database for THIS fixture
+    _fixtureDatabaseName = $"fixture_{Guid.NewGuid():N}";
+
+    await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
+    await adminConnection.OpenAsync(cancellationToken);
+    await adminConnection.ExecuteAsync($"CREATE DATABASE {_fixtureDatabaseName}");
+
+    // Build connection string for the fixture database
+    var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
+      Database = _fixtureDatabaseName
+    };
+    _connectionString = builder.ConnectionString;
+
+    Console.WriteLine("[InMemoryFixture] PostgreSQL database created. Waiting for readiness...");
 
     // Get connection string
-    var postgresConnection = _postgresContainer.GetConnectionString();
+    var postgresConnection = _connectionString;
 
     // Wait for PostgreSQL to be ready to accept connections
     await _waitForPostgresReadyAsync(postgresConnection, cancellationToken);
@@ -1096,8 +1107,27 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
         _bffHost.Dispose();
       }
 
-      // Stop and dispose PostgreSQL container
-      await _postgresContainer.DisposeAsync();
+      // Drop the fixture-specific database to clean up
+      if (_fixtureDatabaseName != null) {
+        try {
+          await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
+          await adminConnection.OpenAsync();
+
+          // Terminate connections to the fixture database
+          await adminConnection.ExecuteAsync($@"
+            SELECT pg_terminate_backend(pg_stat_activity.pid)
+            FROM pg_stat_activity
+            WHERE pg_stat_activity.datname = '{_fixtureDatabaseName}'
+            AND pid <> pg_backend_pid()");
+
+          await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_fixtureDatabaseName}");
+        } catch {
+          // Ignore cleanup errors
+        }
+
+        _fixtureDatabaseName = null;
+        _connectionString = null;
+      }
     }
   }
 }

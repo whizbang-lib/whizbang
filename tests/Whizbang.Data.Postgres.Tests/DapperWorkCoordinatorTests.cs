@@ -29,7 +29,7 @@ internal sealed partial class TestEnvelopeJsonContext : JsonSerializerContext { 
 public class DapperWorkCoordinatorTests : PostgresTestBase {
   private DapperWorkCoordinator _sut = null!;
   private Guid _instanceId;
-  private readonly Uuid7IdProvider _idProvider = new Uuid7IdProvider();
+  private readonly Uuid7IdProvider _idProvider = new();
   private static readonly JsonSerializerOptions _jsonOptions;
 
   static DapperWorkCoordinatorTests() {
@@ -529,7 +529,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       MessageType = "TestMessage, TestAssembly",
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(messageId),
-        Hops = new List<MessageHop>()
+        Hops = []
       }
     };
 
@@ -705,7 +705,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       MessageType = "TestMessage, TestAssembly",
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(messageId),
-        Hops = new List<MessageHop>()
+        Hops = []
       }
     };
 
@@ -762,7 +762,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       MessageType = "TestMessage, TestAssembly",
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(messageId),
-        Hops = new List<MessageHop>()
+        Hops = []
       }
     };
 
@@ -919,7 +919,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         MessageType = "TestMessage, TestAssembly",
         Metadata = new EnvelopeMetadata {
           MessageId = MessageId.From(messageId1),
-          Hops = new List<MessageHop>()
+          Hops = []
         }
       },
       new OutboxMessage {
@@ -932,7 +932,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         MessageType = "TestMessage, TestAssembly",
         Metadata = new EnvelopeMetadata {
           MessageId = MessageId.From(messageId2),
-          Hops = new List<MessageHop>()
+          Hops = []
         }
       },
       new OutboxMessage {
@@ -945,7 +945,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         MessageType = "TestMessage, TestAssembly",
         Metadata = new EnvelopeMetadata {
           MessageId = MessageId.From(messageId3),
-          Hops = new List<MessageHop>()
+          Hops = []
         }
       }
     };
@@ -999,7 +999,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       MessageType = "TestMessage, TestAssembly",
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(messageId),
-        Hops = new List<MessageHop>()
+        Hops = []
       }
     };
 
@@ -1062,7 +1062,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         MessageType = "TestMessage, TestAssembly",
         Metadata = new EnvelopeMetadata {
           MessageId = MessageId.From(messageId),
-          Hops = new List<MessageHop>()
+          Hops = []
         }
       };
 
@@ -1123,7 +1123,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
         MessageType = "TestMessage, TestAssembly",
         Metadata = new EnvelopeMetadata {
           MessageId = MessageId.From(messageId),
-          Hops = new List<MessageHop>()
+          Hops = []
         }
       };
 
@@ -1535,7 +1535,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       MessageType = "TestMessage, TestAssembly",
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(newMessageId),
-        Hops = new List<MessageHop>()
+        Hops = []
       }
     };
 
@@ -1689,7 +1689,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       MessageType = "TestMessage, TestAssembly",
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(messageId),
-        Hops = new List<MessageHop>()
+        Hops = []
       }
     };
 
@@ -1737,7 +1737,7 @@ public class DapperWorkCoordinatorTests : PostgresTestBase {
       MessageType = "TestMessage, TestAssembly",
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(messageId),
-        Hops = new List<MessageHop>()
+        Hops = []
       }
     };
 
