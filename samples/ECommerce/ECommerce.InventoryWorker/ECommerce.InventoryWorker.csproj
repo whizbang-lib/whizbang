@@ -5,6 +5,8 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <UserSecretsId>dotnet-ECommerce.InventoryWorker-2b249451-1ecc-435b-8476-3f5bb3936ce1</UserSecretsId>
+    <!-- Sample code: suppress Guid analyzer warnings (production code should use TrackedGuid) -->
+    <NoWarn>$(NoWarn);WHIZ055;WHIZ056</NoWarn>
 
     <!-- Enable AOT-compatible configuration binding source generator -->
     <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>

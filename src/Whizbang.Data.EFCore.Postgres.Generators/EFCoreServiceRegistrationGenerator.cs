@@ -575,7 +575,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     // Group perspectives by DbContext (may be empty if no perspectives)
     var dbContextGroups = dbContexts.Select(dbContext => {
       var matchingPerspectives = perspectives.IsEmpty
-          ? new List<PerspectiveModelInfo>()
+          ? []
           : perspectives
               .Where(p => _matchesDbContext(p, dbContext))
               .GroupBy(p => p.ModelTypeName)
@@ -737,7 +737,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     foreach (var dbContext in dbContexts) {
       // Filter perspectives that match this DbContext's keys (may be empty)
       var matchingPerspectives = perspectives.IsEmpty
-          ? new List<PerspectiveModelInfo>()
+          ? []
           : perspectives
               .Where(p => _matchesDbContext(p, dbContext))
               .ToList();

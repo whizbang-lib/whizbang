@@ -12,5 +12,5 @@ public class TransportConsumerOptions {
   /// Gets the list of destinations to subscribe to.
   /// Each destination will create a separate subscription.
   /// </summary>
-  public List<TransportDestination> Destinations { get; } = new();
+  public List<TransportDestination> Destinations { get; } = [];
 }
