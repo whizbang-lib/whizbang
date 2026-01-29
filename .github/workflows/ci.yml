@@ -12,8 +12,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  version:
+    name: Version
+    uses: ./.github/workflows/reusable-version.yml
+
   build:
     name: Build
+    needs: version
     uses: ./.github/workflows/reusable-build.yml
 
   unit-tests:
@@ -43,3 +48,39 @@ jobs:
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  version-comment:
+    name: Comment Version on PR
+    needs: version
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Create or Update Version Comment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          SEMVER: ${{ needs.version.outputs.semver }}
+          FULLSEMVER: ${{ needs.version.outputs.fullsemver }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease || 'none' }}
+        run: |
+          BODY="📦 **Version Information**: \`$SEMVER\`
+
+          | Property | Value |
+          |----------|-------|
+          | SemVer | \`$SEMVER\` |
+          | Full SemVer | \`$FULLSEMVER\` |
+          | Pre-release | \`$PRERELEASE\` |"
+
+          # Find existing version comment
+          COMMENT_ID=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --jq '.[] | select(.body | startswith("📦")) | .id' | head -1)
+
+          if [ -n "$COMMENT_ID" ]; then
+            echo "Updating existing comment: $COMMENT_ID"
+            gh api --method PATCH "repos/$REPO/issues/comments/$COMMENT_ID" -f body="$BODY"
+          else
+            echo "Creating new version comment"
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$BODY"
+          fi
