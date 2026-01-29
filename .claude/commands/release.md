@@ -4,6 +4,35 @@
 
 ## Usage
 
+### Quick Version Bump (Automated)
+```bash
+/release [major|minor|patch|auto]
+```
+
+**Examples:**
+- `/release minor` - Bump minor version (0.x.0)
+- `/release major` - Bump major version (x.0.0)
+- `/release patch` - Bump patch version (0.0.x)
+- `/release auto` - Let GitVersion calculate from commits
+
+**What happens:**
+1. Triggers the GitHub Actions release workflow
+2. GitVersion calculates the new version
+3. Updates `Directory.Build.props` automatically
+4. Creates git tag (e.g., `v0.2.0`)
+5. Creates GitHub Release
+6. Triggers NuGet publish
+
+**Implementation:**
+When user runs `/release minor`, execute:
+```bash
+gh workflow run release.yml -f release_type=minor
+```
+
+Then monitor the workflow and report progress.
+
+---
+
 ### Prepare a New Release Plan
 ```bash
 /release plan [version]
