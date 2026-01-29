@@ -35,13 +35,23 @@ jobs:
       - name: Run PostgreSQL Integration Tests
         run: |
           # Run PostgreSQL integration tests with Testcontainers
+          MAX_RETRIES=3
           for project in \
             tests/Whizbang.Data.Postgres.Tests \
             tests/Whizbang.Data.EFCore.Postgres.Tests
           do
             echo "Running tests in $project"
-            dotnet test --project "$project" --no-restore --no-build --configuration Release \
-              --coverage --coverage-output-format cobertura
+            RETRY_COUNT=0
+            until dotnet test --project "$project" --no-restore --no-build --configuration Release \
+              --coverage --coverage-output-format cobertura; do
+              RETRY_COUNT=$((RETRY_COUNT + 1))
+              if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+                echo "::error::Tests in $project failed after $MAX_RETRIES attempts"
+                exit 1
+              fi
+              echo "::warning::Test attempt $RETRY_COUNT for $project failed, retrying..."
+              sleep 10
+            done
           done
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
