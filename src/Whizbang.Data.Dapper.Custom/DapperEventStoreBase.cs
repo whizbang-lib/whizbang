@@ -18,9 +18,9 @@ namespace Whizbang.Data.Dapper.Custom;
 /// </summary>
 /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs</tests>
 public abstract class DapperEventStoreBase : IEventStore {
-  private readonly IDbConnectionFactory _connectionFactory;
-  private readonly IDbExecutor _executor;
-  private readonly JsonSerializerOptions _jsonOptions;
+  protected IDbConnectionFactory ConnectionFactory { get; }
+  protected IDbExecutor Executor { get; }
+  protected JsonSerializerOptions JsonOptions { get; }
 
   protected DapperEventStoreBase(
     IDbConnectionFactory connectionFactory,
@@ -31,14 +31,10 @@ public abstract class DapperEventStoreBase : IEventStore {
     ArgumentNullException.ThrowIfNull(executor);
     ArgumentNullException.ThrowIfNull(jsonOptions);
 
-    _connectionFactory = connectionFactory;
-    _executor = executor;
-    _jsonOptions = jsonOptions;
+    ConnectionFactory = connectionFactory;
+    Executor = executor;
+    JsonOptions = jsonOptions;
   }
-
-  protected IDbConnectionFactory ConnectionFactory => _connectionFactory;
-  protected IDbExecutor Executor => _executor;
-  protected JsonSerializerOptions JsonOptions => _jsonOptions;
 
   /// <summary>
   /// Ensures the connection is open. Handles both pre-opened and closed connections.

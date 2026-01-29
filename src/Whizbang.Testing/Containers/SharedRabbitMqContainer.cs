@@ -198,7 +198,7 @@ public static class SharedRabbitMqContainer {
                   $"--publish 0:{AMQP_PORT} " +
                   $"--publish 0:{MANAGEMENT_PORT} " +
                   "--restart no " +
-                  $"{IMAGE_NAME}",
+                  IMAGE_NAME,
       RedirectStandardOutput = true,
       RedirectStandardError = true,
       UseShellExecute = false,

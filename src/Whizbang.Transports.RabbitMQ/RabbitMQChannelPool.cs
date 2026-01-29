@@ -7,24 +7,16 @@ namespace Whizbang.Transports.RabbitMQ;
 /// Thread-safe channel pool for RabbitMQ channels.
 /// RabbitMQ channels are NOT thread-safe, so pooling is required for concurrent operations.
 /// </summary>
+/// <param name="connection">The RabbitMQ connection (should be a singleton).</param>
+/// <param name="maxChannels">Maximum number of channels in the pool.</param>
 /// <docs>components/transports/rabbitmq</docs>
-public sealed class RabbitMQChannelPool : IDisposable {
-  private readonly IConnection _connection;
+public sealed class RabbitMQChannelPool(IConnection connection, int maxChannels) : IDisposable {
+  private readonly IConnection _connection = connection ?? throw new ArgumentNullException(nameof(connection));
   private readonly ConcurrentBag<IChannel> _availableChannels = [];
-  private readonly SemaphoreSlim _semaphore;
+  private readonly SemaphoreSlim _semaphore = new(maxChannels, maxChannels);
   private readonly List<IChannel> _allChannels = [];
   private readonly Lock _lock = new();
   private bool _disposed;
-
-  /// <summary>
-  /// Initializes a new instance of the <see cref="RabbitMQChannelPool"/> class.
-  /// </summary>
-  /// <param name="connection">The RabbitMQ connection (should be a singleton).</param>
-  /// <param name="maxChannels">Maximum number of channels in the pool.</param>
-  public RabbitMQChannelPool(IConnection connection, int maxChannels) {
-    _connection = connection ?? throw new ArgumentNullException(nameof(connection));
-    _semaphore = new SemaphoreSlim(maxChannels, maxChannels);
-  }
 
   /// <summary>
   /// Rents a channel from the pool.
