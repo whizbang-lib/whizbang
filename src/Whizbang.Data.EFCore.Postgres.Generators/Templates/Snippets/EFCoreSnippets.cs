@@ -55,6 +55,13 @@ public class EFCoreSnippets {
 
       // Indexes
       entity.HasIndex(e => e.CreatedAt);
+
+      // GIN index on scope JSONB for efficient principal filtering
+      // Uses jsonb_path_ops for optimized @>, ?|, and containment queries
+      // This enables efficient "AllowedPrincipals ?| ARRAY[...]" queries
+      entity.HasIndex(e => e.Scope)
+        .HasMethod("GIN")
+        .HasOperators("jsonb_path_ops");
     });
     #endregion
   }

@@ -26,10 +26,10 @@ public class ServiceBusInfrastructureOptionsTests {
   [Test]
   public async Task ServiceBusInfrastructureOptions_ServiceName_CanBeSetAsync() {
     // Arrange
-    var options = new ServiceBusInfrastructureOptions();
-
-    // Act
-    options.ServiceName = "bff";
+    var options = new ServiceBusInfrastructureOptions {
+      // Act
+      ServiceName = "bff"
+    };
 
     // Assert
     await Assert.That(options.ServiceName).IsEqualTo("bff");
@@ -52,10 +52,10 @@ public class ServiceBusInfrastructureOptionsTests {
   [Test]
   public async Task ServiceBusInfrastructureOptions_AutoCreateInProduction_CanBeDisabledAsync() {
     // Arrange
-    var options = new ServiceBusInfrastructureOptions();
-
-    // Act
-    options.AutoCreateInProduction = false;
+    var options = new ServiceBusInfrastructureOptions {
+      // Act
+      AutoCreateInProduction = false
+    };
 
     // Assert
     await Assert.That(options.AutoCreateInProduction).IsFalse();
@@ -64,10 +64,10 @@ public class ServiceBusInfrastructureOptionsTests {
   [Test]
   public async Task ServiceBusInfrastructureOptions_GenerateAspireConfigInDev_CanBeDisabledAsync() {
     // Arrange
-    var options = new ServiceBusInfrastructureOptions();
-
-    // Act
-    options.GenerateAspireConfigInDev = false;
+    var options = new ServiceBusInfrastructureOptions {
+      // Act
+      GenerateAspireConfigInDev = false
+    };
 
     // Assert
     await Assert.That(options.GenerateAspireConfigInDev).IsFalse();
@@ -76,10 +76,10 @@ public class ServiceBusInfrastructureOptionsTests {
   [Test]
   public async Task ServiceBusInfrastructureOptions_FailOnProvisioningError_CanBeEnabledAsync() {
     // Arrange
-    var options = new ServiceBusInfrastructureOptions();
-
-    // Act
-    options.FailOnProvisioningError = true;
+    var options = new ServiceBusInfrastructureOptions {
+      // Act
+      FailOnProvisioningError = true
+    };
 
     // Assert
     await Assert.That(options.FailOnProvisioningError).IsTrue();

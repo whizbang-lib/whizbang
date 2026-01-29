@@ -1,41 +1,77 @@
+using Whizbang.Core.Security;
+
 namespace Whizbang.Core.Lenses;
 
 /// <summary>
 /// Multi-tenancy and security scope for perspective rows.
-/// Contains identifiers for tenant isolation and access control.
-/// Stored as JSONB/JSON in scope column.
+/// Stored as JSONB/JSON in scope column, SEPARATE from the data model.
 /// </summary>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:Query_CanFilterByScopeFields_ReturnsMatchingRowsAsync</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:Query_CanProjectAcrossColumns_ReturnsAnonymousTypeAsync</tests>
-/// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:Query_SupportsCombinedFilters_FromAllColumnsAsync</tests>
+/// <docs>core-concepts/scoping#perspective-scope</docs>
+/// <tests>Whizbang.Core.Tests/Scoping/PerspectiveScopeTests.cs</tests>
+/// <example>
+/// var scope = new PerspectiveScope {
+///   TenantId = "tenant-123",
+///   UserId = "user-456",
+///   AllowedPrincipals = [
+///     SecurityPrincipalId.Group("sales-team"),
+///     SecurityPrincipalId.User("manager-789")
+///   ]
+/// };
+///
+/// // Access via indexer
+/// var tenant = scope["TenantId"];      // "tenant-123"
+/// var custom = scope["CustomField"];   // from Extensions
+/// </example>
 public record PerspectiveScope {
   /// <summary>
-  /// Tenant identifier for multi-tenant applications.
-  /// Enables efficient tenant-isolated queries (e.g., WHERE scope->>'TenantId' = 'tenant-123').
+  /// The tenant identifier for multi-tenancy isolation.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:Query_CanFilterByScopeFields_ReturnsMatchingRowsAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:Query_CanProjectAcrossColumns_ReturnsAnonymousTypeAsync</tests>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:Query_SupportsCombinedFilters_FromAllColumnsAsync</tests>
   public string? TenantId { get; init; }
 
   /// <summary>
-  /// Customer identifier.
-  /// Useful for customer-scoped queries (e.g., get all orders for a customer).
+  /// The customer identifier for customer-level isolation.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:SeedPerspectiveAsync</tests>
   public string? CustomerId { get; init; }
 
   /// <summary>
-  /// User identifier.
-  /// For user-scoped queries (e.g., my orders, my profile).
+  /// The user identifier for user-level isolation.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:Query_CanFilterByScopeFields_ReturnsMatchingRowsAsync</tests>
   public string? UserId { get; init; }
 
   /// <summary>
-  /// Organization identifier (for B2B scenarios).
-  /// Enables org-level data isolation.
+  /// The organization identifier for organization-level isolation.
   /// </summary>
-  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:SeedPerspectiveAsync</tests>
   public string? OrganizationId { get; init; }
+
+  /// <summary>
+  /// Security principals (users, groups, services) that have access to this record.
+  /// Enables fine-grained access control: "who can see this record?"
+  /// Query: WHERE AllowedPrincipals OVERLAPS caller.SecurityPrincipals
+  /// </summary>
+  /// <example>
+  /// AllowedPrincipals = [
+  ///   SecurityPrincipalId.Group("sales-team"),
+  ///   SecurityPrincipalId.User("manager-456")
+  /// ]
+  /// </example>
+  public IReadOnlyList<SecurityPrincipalId>? AllowedPrincipals { get; init; }
+
+  /// <summary>
+  /// Additional scope values as key-value pairs.
+  /// Enables extensibility without schema changes.
+  /// </summary>
+  public IReadOnlyDictionary<string, string?>? Extensions { get; init; }
+
+  /// <summary>
+  /// Indexer for unified access to standard and extension properties.
+  /// </summary>
+  /// <param name="key">The property name to access.</param>
+  /// <returns>The value of the property, or null if not found.</returns>
+  public string? this[string key] => key switch {
+    nameof(TenantId) => TenantId,
+    nameof(CustomerId) => CustomerId,
+    nameof(UserId) => UserId,
+    nameof(OrganizationId) => OrganizationId,
+    _ => Extensions?.GetValueOrDefault(key)
+  };
 }
