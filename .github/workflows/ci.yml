@@ -12,8 +12,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  version:
+    name: Version
+    uses: ./.github/workflows/reusable-version.yml
+
   build:
     name: Build
+    needs: version
     uses: ./.github/workflows/reusable-build.yml
 
   unit-tests:
