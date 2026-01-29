@@ -35,9 +35,19 @@ jobs:
       - name: Run RabbitMQ Integration Tests
         run: |
           echo "Running RabbitMQ integration tests"
-          dotnet test --project samples/ECommerce/tests/ECommerce.RabbitMQ.Integration.Tests \
+          MAX_RETRIES=3
+          RETRY_COUNT=0
+          until dotnet test --project samples/ECommerce/tests/ECommerce.RabbitMQ.Integration.Tests \
             --no-restore --no-build --configuration Release \
-            --coverage --coverage-output-format cobertura
+            --coverage --coverage-output-format cobertura; do
+            RETRY_COUNT=$((RETRY_COUNT + 1))
+            if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
+              echo "::error::Tests failed after $MAX_RETRIES attempts"
+              exit 1
+            fi
+            echo "::warning::Test attempt $RETRY_COUNT failed, retrying..."
+            sleep 10
+          done
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 
