@@ -215,11 +215,9 @@ gh workflow run release.yml -f release_type=auto -f dry_run=true
 
 GitVersion uses conventional commits to determine version increments:
 
-| Commit Type | Version Bump | Example |
-|-------------|-------------|---------|
-| `feat:` | Minor | `feat: add new dispatcher` |
-| `fix:` | Patch | `fix: resolve null reference` |
-| `BREAKING CHANGE:` or `!` | Major | `feat!: redesign API` |
+- **feat:** commits trigger a Minor version bump (e.g., `feat: add new dispatcher`)
+- **fix:** commits trigger a Patch version bump (e.g., `fix: resolve null reference`)
+- **BREAKING CHANGE:** or commits with **!** trigger a Major version bump (e.g., `feat!: redesign API`)
 
 ### Release Workflow
 
