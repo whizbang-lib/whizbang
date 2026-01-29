@@ -13,7 +13,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// Tests for ImmediateWorkCoordinatorStrategy - verifies immediate flush behavior.
 /// </summary>
 public class ImmediateWorkCoordinatorStrategyTests {
-  private readonly Uuid7IdProvider _idProvider = new Uuid7IdProvider();
+  private readonly Uuid7IdProvider _idProvider = new();
 
   // Simple test message for envelope creation
   public record _testEvent([StreamKey] string Data) : IEvent;
@@ -45,7 +45,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
     var envelope = new MessageEnvelope<_testEvent> {
       MessageId = MessageId.From(messageId),
       Payload = new _testEvent("test-data"),
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     // Serialize typed envelope to JsonElement envelope for OutboxMessage
@@ -64,7 +64,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
       MessageType = "TestMessage, TestAssembly",
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(messageId),
-        Hops = new List<MessageHop>()
+        Hops = []
       }
     });
 
@@ -101,7 +101,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
     var envelope = new MessageEnvelope<_testEvent> {
       MessageId = MessageId.From(messageId),
       Payload = new _testEvent("test-data"),
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     // Serialize typed envelope to JsonElement envelope for OutboxMessage
@@ -120,7 +120,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
       MessageType = "TestMessage, TestAssembly",
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(messageId),
-        Hops = new List<MessageHop>()
+        Hops = []
       }
     };
 
@@ -157,7 +157,7 @@ public class ImmediateWorkCoordinatorStrategyTests {
     var envelope = new MessageEnvelope<_testEvent> {
       MessageId = MessageId.From(messageId),
       Payload = new _testEvent("test-data"),
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     // Serialize typed envelope to JsonElement envelope for InboxMessage

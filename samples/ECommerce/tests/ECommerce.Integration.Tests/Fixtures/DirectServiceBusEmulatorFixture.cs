@@ -73,16 +73,35 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
       // Start containers
       await _runDockerComposeAsync("up -d", cancellationToken, tempDockerComposeFile);
 
-      // Wait for emulator to be ready (check health)
-      Console.WriteLine("[DirectEmulator] Waiting for emulator to be ready (60 seconds)...");
-      await Task.Delay(TimeSpan.FromSeconds(60), cancellationToken);
-
-      // Verify emulator is up by checking docker logs
+      // Wait for emulator to be ready by polling logs until "Successfully Up!" appears
+      // SQL Server can take 60-120 seconds to start (especially on ARM64), and the emulator
+      // has built-in retries (15s each). Polling is more reliable than a fixed delay.
+      Console.WriteLine("[DirectEmulator] Waiting for emulator to be ready (polling up to 180 seconds)...");
       var containerName = $"servicebus-emulator-{_port}";
-      var logs = await _getDockerLogsAsync(containerName, cancellationToken);
-      if (!logs.Contains("Emulator Service is Successfully Up!")) {
+      var maxWaitSeconds = 180;
+      var pollIntervalSeconds = 5;
+      var elapsed = 0;
+
+      while (elapsed < maxWaitSeconds) {
+        var logs = await _getDockerLogsAsync(containerName, cancellationToken);
+        if (logs.Contains("Emulator Service is Successfully Up!")) {
+          Console.WriteLine($"[DirectEmulator] Emulator ready after {elapsed} seconds");
+          break;
+        }
+
+        if (elapsed % 30 == 0 && elapsed > 0) {
+          Console.WriteLine($"[DirectEmulator] Still waiting... ({elapsed}s elapsed)");
+        }
+
+        await Task.Delay(TimeSpan.FromSeconds(pollIntervalSeconds), cancellationToken);
+        elapsed += pollIntervalSeconds;
+      }
+
+      // Final verification
+      var finalLogs = await _getDockerLogsAsync(containerName, cancellationToken);
+      if (!finalLogs.Contains("Emulator Service is Successfully Up!")) {
         throw new InvalidOperationException(
-          $"Service Bus Emulator failed to start. Check logs:\n{logs}"
+          $"Service Bus Emulator failed to start within {maxWaitSeconds} seconds. Check logs:\n{finalLogs}"
         );
       }
 
@@ -156,9 +175,11 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
 
   private async Task _runDockerComposeAsync(string arguments, CancellationToken cancellationToken = default, string? composeFile = null) {
     var file = composeFile ?? _dockerComposeFile;
+    // Use "docker compose" (v2) instead of "docker-compose" (v1)
+    // GitHub Actions ubuntu-24.04 only has docker compose v2
     var psi = new ProcessStartInfo {
-      FileName = "docker-compose",
-      Arguments = $"-f \"{file}\" {arguments}",
+      FileName = "docker",
+      Arguments = $"compose -f \"{file}\" {arguments}",
       RedirectStandardOutput = true,
       RedirectStandardError = true,
       UseShellExecute = false,
@@ -167,14 +188,14 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
 
     using var process = Process.Start(psi);
     if (process == null) {
-      throw new InvalidOperationException("Failed to start docker-compose process");
+      throw new InvalidOperationException("Failed to start docker compose process");
     }
 
     await process.WaitForExitAsync(cancellationToken);
 
     if (process.ExitCode != 0) {
       var error = await process.StandardError.ReadToEndAsync(cancellationToken);
-      throw new InvalidOperationException($"docker-compose failed: {error}");
+      throw new InvalidOperationException($"docker compose failed: {error}");
     }
   }
 

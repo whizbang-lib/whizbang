@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using Dapper;
 using DotNet.Testcontainers.Builders;
 using DotNet.Testcontainers.Networks;
 using ECommerce.BFF.API.Lenses;
@@ -10,8 +11,8 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
+using Npgsql;
 using Testcontainers.MsSql;
-using Testcontainers.PostgreSql;
 using Testcontainers.ServiceBus;
 using Whizbang.Core;
 using Whizbang.Core.Lenses;
@@ -21,17 +22,19 @@ using Whizbang.Core.Perspectives;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
+using Whizbang.Testing.Containers;
 using Whizbang.Transports.AzureServiceBus;
 
 namespace ECommerce.Integration.Tests.Fixtures;
 
 /// <summary>
-/// Shared integration test fixture that manages PostgreSQL and Azure Service Bus Testcontainers.
+/// Shared integration test fixture that manages PostgreSQL (via SharedPostgresContainer) and Azure Service Bus Testcontainers.
 /// This fixture is shared across ALL integration tests to avoid container startup overhead.
 /// Tests are isolated using unique product IDs and database cleanup between test classes.
 /// </summary>
 public sealed class SharedIntegrationFixture : IAsyncDisposable {
-  private readonly PostgreSqlContainer _postgresContainer;
+  private string? _fixtureDatabaseName;  // Unique database name for this fixture instance
+  private string? _connectionString;  // Connection string pointing to the fixture's unique database
   private readonly INetwork _network;  // Network for Service Bus + SQL Server
   private readonly MsSqlContainer _mssqlContainer;  // SQL Server for Service Bus emulator
   private readonly ServiceBusContainer _serviceBusContainer;
@@ -42,18 +45,6 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   private Azure.Messaging.ServiceBus.ServiceBusClient? _sharedServiceBusClient; // CRITICAL: Single shared client across both hosts
 
   public SharedIntegrationFixture() {
-    _postgresContainer = new PostgreSqlBuilder()
-      .WithImage("postgres:17-alpine")
-      .WithDatabase("whizbang_integration_test")
-      .WithUsername("whizbang_user")
-      .WithPassword("whizbang_pass")
-      .WithWaitStrategy(Wait.ForUnixContainer().UntilCommandIsCompleted("pg_isready"))
-      .WithStartupCallback((container, ct) => {
-        Console.WriteLine("[SharedFixture] PostgreSQL container started, waiting for readiness...");
-        return Task.CompletedTask;
-      })
-      .Build();
-
     // Create network for Service Bus emulator and SQL Server
     _network = new NetworkBuilder().Build();
 
@@ -75,6 +66,8 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       .WithConfig(configPath)  // Use Testcontainers API instead of generic WithBindMount
       .WithMsSqlContainer(_network, _mssqlContainer, "database-container")  // Use our SQL Server container with increased memory
       .Build();
+
+    Console.WriteLine("[SharedFixture] Using SharedPostgresContainer for PostgreSQL");
   }
 
   /// <summary>
@@ -111,7 +104,8 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Gets the PostgreSQL connection string for direct database operations.
   /// </summary>
-  public string ConnectionString => _postgresContainer.GetConnectionString();
+  public string ConnectionString => _connectionString
+    ?? throw new InvalidOperationException("Fixture not initialized. Call InitializeAsync() first.");
 
   /// <summary>
   /// Gets a logger instance for use in test scenarios.
@@ -134,22 +128,33 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
 
     Console.WriteLine("[SharedFixture] Starting containers...");
 
-    // Start network first
+    // Initialize SharedPostgresContainer and create network
+    await SharedPostgresContainer.InitializeAsync(cancellationToken);
     await _network.CreateAsync(cancellationToken);
 
-    // Start containers in parallel
-    // SQL Server must start before Service Bus emulator (dependency)
-    await Task.WhenAll(
-      _postgresContainer.StartAsync(cancellationToken),
-      _mssqlContainer.StartAsync(cancellationToken)
-    );
+    // Start SQL Server container (required by Service Bus emulator)
+    await _mssqlContainer.StartAsync(cancellationToken);
 
     await _serviceBusContainer.StartAsync(cancellationToken);
 
-    Console.WriteLine("[SharedFixture] Containers started. Waiting for PostgreSQL to be ready...");
+    Console.WriteLine("[SharedFixture] Containers started. Creating unique database...");
 
-    // Get connection strings
-    var postgresConnection = _postgresContainer.GetConnectionString();
+    // Create a unique database for this fixture instance
+    _fixtureDatabaseName = $"fixture_{Guid.NewGuid():N}";
+    Console.WriteLine($"[SharedFixture] Creating unique database: {_fixtureDatabaseName}");
+
+    await using (var conn = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
+      await conn.OpenAsync(cancellationToken);
+      await conn.ExecuteAsync($"CREATE DATABASE \"{_fixtureDatabaseName}\"");
+    }
+
+    // Build connection string with the new database name
+    var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
+      Database = _fixtureDatabaseName
+    };
+    _connectionString = builder.ConnectionString;
+
+    // Get Service Bus connection string
     var serviceBusConnectionRaw = _serviceBusContainer.GetConnectionString();
 
     // CRITICAL: Convert Testcontainers AMQP connection string to Service Bus format
@@ -158,12 +163,12 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     // See: https://github.com/Azure/azure-service-bus-emulator-installer/issues/51
     var serviceBusConnection = _convertToServiceBusConnectionString(serviceBusConnectionRaw);
 
-    Console.WriteLine($"[SharedFixture] PostgreSQL Connection: {postgresConnection}");
+    Console.WriteLine($"[SharedFixture] PostgreSQL Connection: {_connectionString}");
     Console.WriteLine($"[SharedFixture] Service Bus Connection (raw): {serviceBusConnectionRaw}");
     Console.WriteLine($"[SharedFixture] Service Bus Connection (converted): {serviceBusConnection}");
 
     // Wait for PostgreSQL to be ready to accept connections
-    await _waitForPostgresReadyAsync(postgresConnection, cancellationToken);
+    await _waitForPostgresReadyAsync(_connectionString, cancellationToken);
 
     Console.WriteLine("[SharedFixture] PostgreSQL ready. Creating SHARED ServiceBusClient...");
 
@@ -174,8 +179,8 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
 
     // Create service hosts (but don't start them yet)
     // Both hosts will use the shared ServiceBusClient instance
-    _inventoryHost = _createInventoryHost(postgresConnection, serviceBusConnection);
-    _bffHost = _createBffHost(postgresConnection, serviceBusConnection);
+    _inventoryHost = _createInventoryHost(_connectionString, serviceBusConnection);
+    _bffHost = _createBffHost(_connectionString, serviceBusConnection);
 
     Console.WriteLine("[SharedFixture] Service hosts created. Initializing schema...");
 
@@ -897,9 +902,26 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
         Console.WriteLine("[SharedFixture] Shared ServiceBusClient disposed");
       }
 
-      // Stop and dispose containers
+      // Drop the fixture's unique database from SharedPostgresContainer
+      // The container itself is NOT disposed - it's shared across all tests
+      if (_fixtureDatabaseName != null) {
+        try {
+          await using var conn = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
+          await conn.OpenAsync();
+          // Terminate any remaining connections to the database before dropping
+          await conn.ExecuteAsync($@"
+            SELECT pg_terminate_backend(pid)
+            FROM pg_stat_activity
+            WHERE datname = '{_fixtureDatabaseName}' AND pid <> pg_backend_pid()");
+          await conn.ExecuteAsync($"DROP DATABASE IF EXISTS \"{_fixtureDatabaseName}\"");
+          Console.WriteLine($"[SharedFixture] Dropped database: {_fixtureDatabaseName}");
+        } catch (Exception ex) {
+          Console.WriteLine($"[SharedFixture] Warning: Failed to drop database {_fixtureDatabaseName}: {ex.Message}");
+        }
+      }
+
+      // Stop and dispose Service Bus containers (not PostgreSQL - that's shared)
       await Task.WhenAll(
-        _postgresContainer.DisposeAsync().AsTask(),
         _mssqlContainer.DisposeAsync().AsTask(),
         _serviceBusContainer.DisposeAsync().AsTask(),
         _network.DisposeAsync().AsTask()

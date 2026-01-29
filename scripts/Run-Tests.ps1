@@ -43,6 +43,15 @@
     Show progress immediately when test counts change (AI modes only)
     Without this flag, progress respects ProgressInterval for sparse updates
 
+.PARAMETER FailFast
+    Stop test execution on first failure. Useful for quickly identifying and fixing issues.
+    When enabled, adds --fail-fast flag to dotnet test command.
+
+.PARAMETER HangTimeout
+    Timeout in seconds to detect hung tests (default: 180). If no output is received for this
+    duration, a warning is displayed. After 2x this timeout, the test run is terminated.
+    Set to 0 to disable hang detection.
+
 .PARAMETER ExcludeIntegration
     DEPRECATED: Use -Mode instead. Exclude integration tests from the run.
 
@@ -100,6 +109,14 @@
 .EXAMPLE
     ./Run-Tests.ps1 -Mode Ai -ProjectFilter "EFCore.Postgres"
     Runs EFCore.Postgres tests with AI-optimized output
+
+.EXAMPLE
+    ./Run-Tests.ps1 -FailFast
+    Runs tests and stops immediately on first failure
+
+.EXAMPLE
+    ./Run-Tests.ps1 -Mode AiFull -FailFast
+    Runs all tests including integration tests, stops on first failure
 
 .EXAMPLE
     ./Run-Tests.ps1 -TestFilter "Lifecycle"
@@ -199,6 +216,8 @@ param(
 
     [int]$ProgressInterval = 60,  # Progress update interval in seconds (Ai modes only)
     [switch]$LiveUpdates,  # Show progress immediately when counts change (Ai modes only)
+    [switch]$FailFast,  # Stop on first test failure
+    [int]$HangTimeout = 180,  # Seconds of no output before hang warning (0 to disable)
 
     # Legacy parameters (deprecated, use -Mode instead)
     [bool]$ExcludeIntegration,
@@ -256,11 +275,72 @@ if ($includeIntegrationTests -or $onlyIntegrationTests) {
         $postgresContainers | ForEach-Object { docker stop $_ 2>&1 | Out-Null; docker rm $_ 2>&1 | Out-Null }
     }
 
-    # Stop and remove RabbitMQ test containers
-    $rabbitContainers = docker ps -a --filter "name=rabbitmq" --format "{{.ID}}"
+    # Stop and remove RabbitMQ test containers (EXCEPT shared container which is designed to persist)
+    # The whizbang-test-rabbitmq container is intentionally kept running for reuse
+    $rabbitContainers = docker ps -a --filter "name=rabbitmq" --format "{{.ID}} {{.Names}}" | Where-Object { $_ -notmatch "whizbang-test-rabbitmq" } | ForEach-Object { ($_ -split " ")[0] }
     if ($rabbitContainers) {
         $rabbitContainers | ForEach-Object { docker stop $_ 2>&1 | Out-Null; docker rm $_ 2>&1 | Out-Null }
     }
+
+    # Ensure shared RabbitMQ container is running (required for RabbitMQ integration tests)
+    $sharedRabbitState = docker inspect --format="{{.State.Status}}" whizbang-test-rabbitmq 2>$null
+    if (-not $sharedRabbitState) {
+        # Container doesn't exist - create it
+        if (-not $useAiOutput) {
+            Write-Host "Starting shared RabbitMQ container..." -ForegroundColor Yellow
+        }
+        docker run --detach --name whizbang-test-rabbitmq `
+            -e RABBITMQ_DEFAULT_USER=guest `
+            -e RABBITMQ_DEFAULT_PASS=guest `
+            --publish 0:5672 `
+            --publish 0:15672 `
+            --restart no `
+            rabbitmq:3.13-management-alpine 2>&1 | Out-Null
+        # Wait for RabbitMQ to be ready
+        Start-Sleep -Seconds 10
+    } elseif ($sharedRabbitState -ne "running") {
+        # Container exists but not running - start it
+        if (-not $useAiOutput) {
+            Write-Host "Starting stopped RabbitMQ container..." -ForegroundColor Yellow
+        }
+        docker start whizbang-test-rabbitmq 2>&1 | Out-Null
+        Start-Sleep -Seconds 5
+    }
+
+    # Verify RabbitMQ is responding
+    $mgmtPort = ((docker port whizbang-test-rabbitmq 15672 2>$null) -split "`n")[0] -replace '.*:', ''
+    if ($mgmtPort) {
+        $maxAttempts = 15
+        for ($i = 1; $i -le $maxAttempts; $i++) {
+            try {
+                # Use .NET HttpClient for reliable cross-platform HTTP with basic auth
+                $authBytes = [System.Text.Encoding]::ASCII.GetBytes("guest:guest")
+                $authHeader = [Convert]::ToBase64String($authBytes)
+                $headers = @{ "Authorization" = "Basic $authHeader" }
+                $response = Invoke-RestMethod -Uri "http://localhost:$mgmtPort/api/overview" -Headers $headers -TimeoutSec 5 -ErrorAction Stop
+                if ($response.management_version) {
+                    if (-not $useAiOutput) {
+                        Write-Host "RabbitMQ container ready on port $mgmtPort" -ForegroundColor Green
+                    }
+                    break
+                }
+            } catch {
+                if ($i -eq $maxAttempts) {
+                    Write-Warning "RabbitMQ container may not be fully ready after $maxAttempts attempts - tests will retry"
+                }
+                Start-Sleep -Seconds 2
+            }
+        }
+    }
+
+    # Stop and remove Testcontainers ryuk (reaper) containers
+    $ryukContainers = docker ps -a --filter "ancestor=testcontainers/ryuk" --format "{{.ID}}"
+    if ($ryukContainers) {
+        $ryukContainers | ForEach-Object { docker stop $_ 2>&1 | Out-Null; docker rm $_ 2>&1 | Out-Null }
+    }
+
+    # Prune stale Docker networks (non-interactive)
+    docker network prune -f 2>&1 | Out-Null
 
     if (-not $useAiOutput) {
         Write-Host "Container cleanup complete." -ForegroundColor Green
@@ -293,12 +373,22 @@ try {
         if ($TestFilter) {
             Write-Host "Test Filter: $TestFilter" -ForegroundColor Yellow
         }
+        if ($FailFast) {
+            Write-Host "Fail Fast: Enabled (stops on first failure)" -ForegroundColor Yellow
+        }
         Write-Host ""
     } else {
         Write-Host "[WHIZBANG TEST SUITE - AI MODE]" -ForegroundColor Cyan
 
         # Display actual command line that was used
-        Write-Host "Command: $($MyInvocation.Line)" -ForegroundColor DarkGray
+        $cmdLine = $MyInvocation.Line
+        if ([string]::IsNullOrWhiteSpace($cmdLine)) {
+            $cmdLine = "$($MyInvocation.MyCommand.Path) -Mode $Mode"
+            if ($FailFast) { $cmdLine += " -FailFast" }
+            if ($ProjectFilter) { $cmdLine += " -ProjectFilter '$ProjectFilter'" }
+            if ($TestFilter) { $cmdLine += " -TestFilter '$TestFilter'" }
+        }
+        Write-Host "Command: $cmdLine" -ForegroundColor DarkGray
 
         Write-Host "Max Parallel: $MaxParallel" -ForegroundColor Gray
         Write-Host "Mode: $Mode" -ForegroundColor Gray
@@ -312,6 +402,9 @@ try {
         }
         if ($TestFilter) {
             Write-Host "Test Filter: $TestFilter" -ForegroundColor Gray
+        }
+        if ($FailFast) {
+            Write-Host "Fail Fast: Enabled" -ForegroundColor Gray
         }
     }
 
@@ -331,6 +424,43 @@ try {
         $testArgs += "minimal"
     }
 
+    # Add fail-fast if requested (stops on first failure)
+    if ($FailFast) {
+        $testArgs += "--fail-fast"
+    }
+
+    # Pattern for identifying integration test DLLs: *Integration.Tests.dll or *IntegrationTests.dll
+    # Excludes AppHost projects which are Aspire hosts, not test projects
+    $integrationTestPattern = "Integration\.Tests\.dll$|IntegrationTests\.dll$"
+    $excludePattern = "AppHost"
+
+    # Helper function to test if a DLL name is an integration test
+    function Test-IsIntegrationTest {
+        param([string]$DllName)
+        return ($DllName -match $integrationTestPattern) -and ($DllName -notmatch $excludePattern)
+    }
+
+    # Helper function to ensure build exists for dynamic DLL discovery
+    function Ensure-BuildExists {
+        # Pattern: bin/Debug/net10.0/ - works for standard .NET output paths
+        $anyDll = Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]" } |
+            Select-Object -First 1
+
+        if (-not $anyDll) {
+            if (-not $useAiOutput) {
+                Write-Host "No test DLLs found. Building solution first..." -ForegroundColor Yellow
+            } else {
+                Write-Host "Building solution..." -ForegroundColor Gray
+            }
+            & dotnet build --verbosity quiet
+            if ($LASTEXITCODE -ne 0) {
+                Write-Error "Build failed. Cannot discover test projects."
+                exit 1
+            }
+        }
+    }
+
     # Use --test-modules with globbing pattern for project filtering
     if ($ProjectFilter) {
         # Native .NET 10 globbing: **/bin/**/Debug/net10.0/*{Filter}*.dll
@@ -338,13 +468,49 @@ try {
         $testArgs += "**/bin/**/Debug/net10.0/*$ProjectFilter*.dll"
     } elseif ($onlyIntegrationTests) {
         # Run ONLY integration tests
-        $testArgs += "--test-modules"
-        $testArgs += "**/bin/**/Debug/net10.0/*Integration.Tests.dll"
+        Ensure-BuildExists
+        # Wrap in @() to ensure array even when empty (prevents null.Count error with StrictMode)
+        # Pattern: bin/Debug/net10.0/ - works for standard .NET output paths
+        $integrationDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.dll" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]" } |
+            Where-Object { Test-IsIntegrationTest $_.Name } |
+            ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
+
+        if ($integrationDlls.Count -gt 0) {
+            $testArgs += "--test-modules"
+            # Use relative paths - dotnet test has issues with absolute paths containing semicolons
+            $testArgs += ($integrationDlls -join ";")
+
+            if (-not $useAiOutput) {
+                Write-Host "Discovered $($integrationDlls.Count) integration test projects" -ForegroundColor Gray
+            }
+        } else {
+            Write-Warning "No integration test DLLs found after build. Check that integration test projects exist."
+            exit 1
+        }
     } elseif (-not $includeIntegrationTests) {
-        # Exclude integration tests (they take 5-10+ minutes)
-        # Pattern matches: Whizbang.*.Tests.dll but NOT *Integration.Tests.dll
-        $testArgs += "--test-modules"
-        $testArgs += "**/bin/**/Debug/net10.0/Whizbang.*.Tests.dll"
+        # Exclude integration tests - find all *.Tests.dll and filter out integration tests
+        # This ensures all test projects are discovered while excluding slow integration tests
+        Ensure-BuildExists
+        # Wrap in @() to ensure array even when empty (prevents null.Count error with StrictMode)
+        # Pattern: bin/Debug/net10.0/ - works for standard .NET output paths
+        $allTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]" } |
+            Where-Object { -not (Test-IsIntegrationTest $_.Name) } |
+            ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
+
+        if ($allTestDlls.Count -gt 0) {
+            $testArgs += "--test-modules"
+            # Use relative paths - dotnet test has issues with absolute paths containing semicolons
+            $testArgs += ($allTestDlls -join ";")
+
+            if (-not $useAiOutput) {
+                Write-Host "Discovered $($allTestDlls.Count) test projects (excluding integration tests)" -ForegroundColor Gray
+            }
+        } else {
+            Write-Warning "No test DLLs found after build. Check that test projects exist."
+            exit 1
+        }
     } else {
         # Use the main solution file (already filtered to test projects via <IsTestProject>)
         $testArgs += "--solution"
@@ -357,6 +523,9 @@ try {
         $testArgs += "--treenode-filter"
         $testArgs += "/*/*/*/*$TestFilter*"
     }
+
+    # FailFast tracking (declared at outer scope for finally block access)
+    $failFastTriggered = $false
 
     # Run tests
     if (-not $useAiOutput) {
@@ -394,9 +563,11 @@ try {
         $startTime = Get-Date
         $lastProgressTime = $startTime
         $lastOutputTime = $startTime
+        $lastHangCheckTime = $startTime
         $lastTotalTests = 0
         $lastTotalFailed = 0
         $lineCounter = 0
+        $hangWarningShown = $false
 
         # Track completed project results separately (from summary lines)
         $completedPassed = 0
@@ -408,10 +579,114 @@ try {
         $inProgressFailed = 0
         $inProgressSkipped = 0
 
-        & dotnet @testArgs 2>&1 | ForEach-Object {
-            $lineStr = $_.ToString()
-            $lineCounter++
-            $lastOutputTime = Get-Date
+        # FailFast tracking (set at outer scope, used here)
+        $firstFailureDetails = $null
+
+        # Start process with redirected output so we can kill it on failure
+        $psi = [System.Diagnostics.ProcessStartInfo]::new()
+        $psi.FileName = "dotnet"
+        $psi.Arguments = $testArgs -join " "
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
+        $psi.WorkingDirectory = $repoRoot
+
+        $process = [System.Diagnostics.Process]::new()
+        $process.StartInfo = $psi
+
+        # Collect stderr asynchronously
+        $stderrBuilder = [System.Text.StringBuilder]::new()
+        $stderrEvent = Register-ObjectEvent -InputObject $process -EventName ErrorDataReceived -Action {
+            if ($EventArgs.Data) {
+                $stderrBuilder.AppendLine($EventArgs.Data) | Out-Null
+            }
+        }
+
+        $process.Start() | Out-Null
+        $process.BeginErrorReadLine()
+
+        # Read stdout line by line with hang detection
+        # Use async read with periodic timeout checks
+        $reader = $process.StandardOutput
+        $readTask = $null
+
+        while (-not $process.HasExited -or -not $reader.EndOfStream) {
+            # Start async read if not already pending
+            if ($null -eq $readTask -or $readTask.IsCompleted) {
+                if ($reader.EndOfStream) { break }
+                $readTask = $reader.ReadLineAsync()
+            }
+
+            # Wait for read with timeout (500ms) to allow hang detection
+            $completed = $readTask.Wait(500)
+
+            if ($completed) {
+                $lineStr = $readTask.Result
+                $readTask = $null  # Reset for next read
+
+                if ($null -eq $lineStr) { continue }
+
+                $lineCounter++
+                $lastOutputTime = Get-Date
+                $hangWarningShown = $false  # Reset warning on new output
+            } else {
+                # No output received - check for hang condition AND time-based progress
+                $now = Get-Date
+                $silentSeconds = ($now - $lastOutputTime).TotalSeconds
+                $elapsedSinceLastProgress = ($now - $lastProgressTime).TotalSeconds
+
+                # Time-based progress update (even when no output)
+                if ($elapsedSinceLastProgress -ge $ProgressInterval) {
+                    $elapsedMinutes = [Math]::Floor(($now - $startTime).TotalMinutes)
+                    $displayPassed = if ($completedPassed -gt 0) { $completedPassed } else { $inProgressPassed }
+                    $displayFailed = if ($completedFailed -gt 0) { $completedFailed } else { $inProgressFailed }
+                    $displaySkipped = if ($completedSkipped -gt 0) { $completedSkipped } else { $inProgressSkipped }
+                    $displayTotal = $displayPassed + $displayFailed + $displaySkipped
+
+                    if ($displayTotal -gt 0) {
+                        $failureIndicator = if ($displayFailed -gt 0) { " ⚠️" } else { "" }
+                        Write-Host "[$($elapsedMinutes)m] Progress: ~$displayPassed passed, ~$displayFailed failed, ~$displaySkipped skipped$failureIndicator (in progress)" -ForegroundColor Gray
+                    } else {
+                        Write-Host "[$($elapsedMinutes)m] Running... (building or preparing tests)" -ForegroundColor DarkGray
+                    }
+                    $lastProgressTime = $now
+                }
+
+                # Hang detection
+                if ($HangTimeout -gt 0 -and ($now - $lastHangCheckTime).TotalSeconds -ge 10) {
+                    $lastHangCheckTime = $now
+
+                    if ($silentSeconds -ge ($HangTimeout * 2)) {
+                        # Hard hang - terminate
+                        Write-Host ""
+                        Write-Host "=== HANG DETECTED ===" -ForegroundColor Red
+                        Write-Host "No output for $([Math]::Floor($silentSeconds)) seconds. Terminating test run." -ForegroundColor Red
+
+                        # Show any stderr that was captured (may contain error info)
+                        $stderrContent = $stderrBuilder.ToString().Trim()
+                        if ($stderrContent) {
+                            Write-Host ""
+                            Write-Host "Error output:" -ForegroundColor Yellow
+                            $stderrContent -split "`n" | Select-Object -First 20 | ForEach-Object {
+                                Write-Host "  $_" -ForegroundColor Gray
+                            }
+                        }
+
+                        Write-Host ""
+                        try {
+                            $process.Kill($true)
+                        } catch { }
+                        $failFastTriggered = $true
+                        break
+                    } elseif ($silentSeconds -ge $HangTimeout -and -not $hangWarningShown) {
+                        # Soft hang - warning
+                        $elapsedMinutes = [Math]::Floor(($now - $startTime).TotalMinutes)
+                        Write-Host "[$($elapsedMinutes)m] ⚠️ No output for $([Math]::Floor($silentSeconds))s - possible hang (will terminate at $($HangTimeout * 2)s)" -ForegroundColor Yellow
+                        $hangWarningShown = $true
+                    }
+                }
+                continue  # Continue loop without processing (no line received)
+            }
 
             # Capture test counts from TUnit progress format: [+passed/xfailed/?skipped]
             # Note: Multiple test projects run in parallel, we track the highest seen for approximate progress
@@ -460,46 +735,43 @@ try {
             $totalTests = $totalPassed + $totalFailed + $totalSkipped
 
             # Smart progress updates
-            # Check time every 100 lines OR when counts change (if LiveUpdates enabled)
-            $shouldCheckTime = $lineCounter % 100 -eq 0
+            # Check time on every line (cheap operation) to ensure consistent interval reporting
+            $now = Get-Date
+            $elapsedSinceLastProgress = ($now - $lastProgressTime).TotalSeconds
             $countsChanged = $LiveUpdates -and ($totalTests -ne $lastTotalTests -or $totalFailed -ne $lastTotalFailed)
 
-            if ($shouldCheckTime -or $countsChanged) {
-                $now = Get-Date
-                $elapsedSinceLastProgress = ($now - $lastProgressTime).TotalSeconds
+            # Show progress if:
+            # - ProgressInterval elapsed (always), OR
+            # - LiveUpdates mode and counts changed
+            $shouldShow = $elapsedSinceLastProgress -ge $ProgressInterval -or $countsChanged
 
-                # Show progress if:
-                # - ProgressInterval elapsed (always), OR
-                # - LiveUpdates mode and counts changed
-                $shouldShow = $elapsedSinceLastProgress -ge $ProgressInterval -or $countsChanged
+            if ($shouldShow) {
+                $elapsedMinutes = [Math]::Floor(($now - $startTime).TotalMinutes)
 
-                if ($shouldShow) {
-                    $elapsedMinutes = [Math]::Floor(($now - $startTime).TotalMinutes)
-
-                    if ($totalTests -gt 0 -or $inProgressTotal -gt 0) {
-                        # Show test progress
-                        $failureIndicator = if ($totalFailed -gt 0) { " ⚠️" } else { "" }
-                        # Show running indicator if there's in-progress activity beyond completed
-                        if ($completedTotal -gt 0 -and $inProgressTotal -gt 0) {
-                            Write-Host "[$($elapsedMinutes)m] Progress: $totalPassed passed, $totalFailed failed, $totalSkipped skipped$failureIndicator (+$inProgressTotal running)" -ForegroundColor Gray
-                        } elseif ($completedTotal -eq 0 -and $inProgressTotal -gt 0) {
-                            Write-Host "[$($elapsedMinutes)m] Progress: ~$totalPassed passed, ~$totalFailed failed, ~$totalSkipped skipped$failureIndicator (in progress)" -ForegroundColor Gray
-                        } else {
-                            Write-Host "[$($elapsedMinutes)m] Progress: $totalPassed passed, $totalFailed failed, $totalSkipped skipped$failureIndicator" -ForegroundColor Gray
-                        }
+                if ($totalTests -gt 0 -or $inProgressTotal -gt 0) {
+                    # Show test progress
+                    $failureIndicator = if ($totalFailed -gt 0) { " ⚠️" } else { "" }
+                    # Show running indicator if there's in-progress activity beyond completed
+                    if ($completedTotal -gt 0 -and $inProgressTotal -gt 0) {
+                        Write-Host "[$($elapsedMinutes)m] Progress: $totalPassed passed, $totalFailed failed, $totalSkipped skipped$failureIndicator (+$inProgressTotal running)" -ForegroundColor Gray
+                    } elseif ($completedTotal -eq 0 -and $inProgressTotal -gt 0) {
+                        Write-Host "[$($elapsedMinutes)m] Progress: ~$totalPassed passed, ~$totalFailed failed, ~$totalSkipped skipped$failureIndicator (in progress)" -ForegroundColor Gray
                     } else {
-                        # Show heartbeat (building/not yet testing)
-                        Write-Host "[$($elapsedMinutes)m] Running... (building or preparing tests)" -ForegroundColor DarkGray
+                        Write-Host "[$($elapsedMinutes)m] Progress: $totalPassed passed, $totalFailed failed, $totalSkipped skipped$failureIndicator" -ForegroundColor Gray
                     }
-
-                    $lastProgressTime = $now
-                    $lastTotalTests = $totalTests
-                    $lastTotalFailed = $totalFailed
+                } else {
+                    # Show heartbeat (building/not yet testing)
+                    Write-Host "[$($elapsedMinutes)m] Running... (building or preparing tests)" -ForegroundColor DarkGray
                 }
+
+                $lastProgressTime = $now
+                $lastTotalTests = $totalTests
+                $lastTotalFailed = $totalFailed
             }
 
             # Capture failed test names (lines starting with "failed " followed by test name)
-            elseif ($lineStr -match "^failed\s+([^\(]+)\s+\(") {
+            # Note: This is an independent if block, not chained to progress display
+            if ($lineStr -match "^failed\s+([^\(]+)\s+\(") {
                 # Save previous test's stack trace if we were capturing
                 if ($currentFailedTest -and $stackTraceLines.Count -gt 0) {
                     $testDetails[$currentFailedTest]["StackTrace"] = $stackTraceLines -join "`n"
@@ -517,6 +789,57 @@ try {
                         "Exception" = ""
                     }
                     $capturingStackTrace = $false
+
+                    # FailFast: If this is the first failure and FailFast is enabled,
+                    # continue reading to capture error details, then stop
+                    if ($FailFast -and -not $failFastTriggered) {
+                        $failFastTriggered = $true
+                        $firstFailureDetails = $testName
+
+                        # Read up to 50 more lines to capture exception and stack trace
+                        $extraLines = 0
+                        $maxExtraLines = 50
+                        while (-not $reader.EndOfStream -and $extraLines -lt $maxExtraLines) {
+                            $extraLine = $reader.ReadLine()
+                            if ($null -eq $extraLine) { continue }
+                            $extraLines++
+
+                            # Capture exception type
+                            if ($extraLine -match "^\s*(System\.\w+Exception|TUnit\.\w+Exception|.*Exception):\s*(.+)") {
+                                $testDetails[$currentFailedTest]["Exception"] = $matches[1].Trim()
+                                $testDetails[$currentFailedTest]["ErrorMessage"] = $matches[2].Trim()
+                            }
+                            # Capture stack trace
+                            elseif ($extraLine -match "^\s+at\s+[\w\.]+") {
+                                $stackTraceLines += $extraLine.Trim()
+                            }
+                            elseif ($extraLine -match "^\s+in\s+.*:\s*line\s+\d+") {
+                                $stackTraceLines += $extraLine.Trim()
+                            }
+                            # Stop when we hit the next test or summary
+                            elseif ($extraLine -match "^(failed|passed|skipped|Test run summary|succeeded:)") {
+                                break
+                            }
+                        }
+
+                        # Save captured stack trace
+                        if ($stackTraceLines.Count -gt 0) {
+                            $testDetails[$currentFailedTest]["StackTrace"] = $stackTraceLines -join "`n"
+                        }
+
+                        # Kill the process immediately
+                        Write-Host ""
+                        Write-Host "=== FAIL-FAST TRIGGERED ===" -ForegroundColor Red
+                        Write-Host "Stopping test run due to first failure." -ForegroundColor Red
+                        Write-Host ""
+
+                        try {
+                            $process.Kill($true)  # Kill process tree
+                        } catch {
+                            # Process may have already exited
+                        }
+                        break  # Exit the while loop
+                    }
                 }
             }
             # Capture error messages and exception details for current failed test
@@ -598,6 +921,21 @@ try {
             }
         }
 
+        # Clean up process resources
+        $reader.Dispose()
+        Unregister-Event -SourceIdentifier $stderrEvent.Name -ErrorAction SilentlyContinue
+        Remove-Job -Id $stderrEvent.Id -Force -ErrorAction SilentlyContinue
+
+        # Wait for process to exit (if not already killed)
+        if (-not $process.HasExited) {
+            $process.WaitForExit(5000) | Out-Null
+            if (-not $process.HasExited) {
+                try { $process.Kill($true) } catch { }
+            }
+        }
+        $processExitCode = $process.ExitCode
+        $process.Dispose()
+
         # Save final test's stack trace if we were capturing
         if ($currentFailedTest -and $stackTraceLines.Count -gt 0) {
             $testDetails[$currentFailedTest]["StackTrace"] = $stackTraceLines -join "`n"
@@ -618,7 +956,21 @@ try {
         Write-Host ""
         Write-Host "Total Duration: $elapsedString" -ForegroundColor Cyan
 
-        if ($totalTests -gt 0) {
+        # Use actual captured failed tests count (more accurate than parsed summary when fail-fast kills process)
+        $actualFailedCount = $failedTests.Count
+        if ($actualFailedCount -gt $totalFailed) {
+            $totalFailed = $actualFailedCount
+        }
+
+        if ($failFastTriggered) {
+            Write-Host ""
+            Write-Host "Note: Test run was stopped early due to -FailFast" -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "Tests Run Before Stop: ~$totalTests" -ForegroundColor White
+            Write-Host "Passed: ~$totalPassed" -ForegroundColor Green
+            Write-Host "Failed: $actualFailedCount (stopped on first failure)" -ForegroundColor Red
+            Write-Host "Skipped: ~$totalSkipped" -ForegroundColor Yellow
+        } elseif ($totalTests -gt 0) {
             Write-Host ""
             Write-Host "Total Tests: $totalTests" -ForegroundColor White
             Write-Host "Passed: $totalPassed" -ForegroundColor Green
@@ -714,10 +1066,13 @@ try {
     }
 
     # Check exit code (also consider projectErrors in AI mode since they may not affect LASTEXITCODE)
-    $hasErrors = $LASTEXITCODE -ne 0
     if ($useAiOutput) {
-        # In AI mode, also check if we captured project errors (intermittent race conditions)
-        $hasErrors = $hasErrors -or $projectErrors.Count -gt 0 -or $totalFailed -gt 0
+        # In AI mode, use the process exit code and check captured errors
+        # Note: dotnet test returns 0 on success, non-zero on failure
+        # Don't count processExitCode alone - it can be non-zero due to skipped tests or cancellation
+        $hasErrors = $totalFailed -gt 0 -or $failFastTriggered -or $projectErrors.Count -gt 0 -or $buildErrors.Count -gt 0
+    } else {
+        $hasErrors = $LASTEXITCODE -ne 0
     }
 
     if (-not $hasErrors) {
@@ -743,5 +1098,69 @@ try {
     }
 
 } finally {
+    # Clean up test containers after test run completes (especially important after fail-fast)
+    # This ensures containers don't hang around after abrupt test termination
+    if ($includeIntegrationTests -or $onlyIntegrationTests -or $failFastTriggered) {
+        if (-not $useAiOutput) {
+            Write-Host ""
+            Write-Host "Cleaning up test containers..." -ForegroundColor Yellow
+        }
+
+        # Stop and remove all testcontainers (postgres, servicebus, etc.)
+        # NOTE: We preserve whizbang-test-rabbitmq as it's designed to persist across runs
+        # Use image-based filtering to catch containers that may have random names
+        $testImages = @(
+            "postgres:*",
+            "mcr.microsoft.com/azure-messaging/servicebus-emulator:*",
+            "mcr.microsoft.com/mssql/server:*",
+            "testcontainers/ryuk:*"
+        )
+
+        foreach ($image in $testImages) {
+            $containers = docker ps -a --filter "ancestor=$image" --format "{{.ID}}" 2>$null
+            if ($containers) {
+                $containers | ForEach-Object {
+                    docker stop $_ 2>&1 | Out-Null
+                    docker rm $_ 2>&1 | Out-Null
+                }
+            }
+        }
+
+        # Clean up RabbitMQ containers by image, but preserve the shared one
+        $rabbitContainers = docker ps -a --filter "ancestor=rabbitmq:3.13-management-alpine" --format "{{.ID}} {{.Names}}" 2>$null | Where-Object { $_ -notmatch "whizbang-test-rabbitmq" } | ForEach-Object { ($_ -split " ")[0] }
+        if ($rabbitContainers) {
+            $rabbitContainers | ForEach-Object {
+                docker stop $_ 2>&1 | Out-Null
+                docker rm $_ 2>&1 | Out-Null
+            }
+        }
+
+        # Also clean up by name pattern for any containers that might have escaped image filtering
+        # NOTE: Exclude whizbang-test-rabbitmq from rabbitmq cleanup
+        $namePatterns = @("postgres", "servicebus-emulator", "mssql-servicebus")
+        foreach ($pattern in $namePatterns) {
+            $containers = docker ps -a --filter "name=$pattern" --format "{{.ID}}" 2>$null
+            if ($containers) {
+                $containers | ForEach-Object {
+                    docker stop $_ 2>&1 | Out-Null
+                    docker rm $_ 2>&1 | Out-Null
+                }
+            }
+        }
+
+        # Clean up other rabbitmq containers but preserve the shared one
+        $otherRabbitContainers = docker ps -a --filter "name=rabbitmq" --format "{{.ID}} {{.Names}}" 2>$null | Where-Object { $_ -notmatch "whizbang-test-rabbitmq" } | ForEach-Object { ($_ -split " ")[0] }
+        if ($otherRabbitContainers) {
+            $otherRabbitContainers | ForEach-Object {
+                docker stop $_ 2>&1 | Out-Null
+                docker rm $_ 2>&1 | Out-Null
+            }
+        }
+
+        if (-not $useAiOutput) {
+            Write-Host "Container cleanup complete." -ForegroundColor Green
+        }
+    }
+
     Pop-Location
 }

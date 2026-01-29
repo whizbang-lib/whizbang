@@ -55,7 +55,8 @@ public sealed class MartenAnalyzer : ICodeAnalyzer {
       Handlers = [],
       Projections = projections,
       EventStoreUsages = eventStoreUsages,
-      DIRegistrations = diRegistrations
+      DIRegistrations = diRegistrations,
+      Warnings = []
     });
   }
 
@@ -67,6 +68,7 @@ public sealed class MartenAnalyzer : ICodeAnalyzer {
     var allProjections = new List<ProjectionInfo>();
     var allEventStoreUsages = new List<EventStoreUsageInfo>();
     var allDIRegistrations = new List<DIRegistrationInfo>();
+    var allWarnings = new List<MigrationWarning>();
 
     var projectDir = Path.GetDirectoryName(projectPath) ?? ".";
     var csFiles = Directory.GetFiles(projectDir, "*.cs", SearchOption.AllDirectories);
@@ -81,13 +83,15 @@ public sealed class MartenAnalyzer : ICodeAnalyzer {
       allProjections.AddRange(result.Projections);
       allEventStoreUsages.AddRange(result.EventStoreUsages);
       allDIRegistrations.AddRange(result.DIRegistrations);
+      allWarnings.AddRange(result.Warnings);
     }
 
     return new AnalysisResult {
       Handlers = allHandlers,
       Projections = allProjections,
       EventStoreUsages = allEventStoreUsages,
-      DIRegistrations = allDIRegistrations
+      DIRegistrations = allDIRegistrations,
+      Warnings = allWarnings
     };
   }
 
@@ -96,7 +100,8 @@ public sealed class MartenAnalyzer : ICodeAnalyzer {
       Handlers = [],
       Projections = [],
       EventStoreUsages = [],
-      DIRegistrations = []
+      DIRegistrations = [],
+      Warnings = []
     };
   }
 

@@ -42,6 +42,34 @@ public interface IEventStore {
   Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default);
 
   /// <summary>
+  /// Appends an event to the specified stream using a raw message (AOT-compatible).
+  /// If the message was dispatched through IDispatcher, its envelope is automatically
+  /// retrieved from IEnvelopeRegistry, preserving tracing context (hops, correlation, causation).
+  /// If no envelope is found, a minimal envelope is created for the message.
+  /// </summary>
+  /// <typeparam name="TMessage">The message payload type (must be registered in JsonSerializerContext)</typeparam>
+  /// <param name="streamId">The stream identifier (aggregate ID)</param>
+  /// <param name="message">The message payload to append</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>Task that completes when the event is appended</returns>
+  /// <remarks>
+  /// <para>
+  /// This overload provides a simpler API for callers who don't need direct envelope access.
+  /// The envelope (with tracing context) is looked up automatically via IEnvelopeRegistry.
+  /// </para>
+  /// <para>
+  /// Typical flow:
+  /// 1. Dispatcher creates envelope and registers it with IEnvelopeRegistry
+  /// 2. Receptor handles message, calls eventStore.AppendAsync(streamId, message)
+  /// 3. EventStore retrieves envelope from registry, appending with full tracing context
+  /// </para>
+  /// </remarks>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:AppendAsync_WithMessage_ShouldStoreEventAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:AppendAsync_WithMessage_WhenEnvelopeRegistered_ShouldUseEnvelopeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Messaging/EventStoreContractTests.cs:AppendAsync_WithMessage_WhenNoEnvelope_ShouldCreateMinimalEnvelopeAsync</tests>
+  Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull;
+
+  /// <summary>
   /// Reads events from a stream by stream ID (UUID) with strong typing.
   /// Stream ID corresponds to the aggregate ID from events' [AggregateId] properties.
   /// Supports streaming and replay scenarios.

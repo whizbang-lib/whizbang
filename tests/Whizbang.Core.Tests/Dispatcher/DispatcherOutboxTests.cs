@@ -59,7 +59,7 @@ public class DispatcherOutboxTests {
 
   // Stub topic registry for testing
   private sealed class StubTopicRegistry : ITopicRegistry {
-    private readonly Dictionary<Type, string> _topics = new();
+    private readonly Dictionary<Type, string> _topics = [];
 
     public void RegisterTopic<T>(string topic) => _topics[typeof(T)] = topic;
     public string? GetBaseTopic(Type messageType) => _topics.TryGetValue(messageType, out var topic) ? topic : null;

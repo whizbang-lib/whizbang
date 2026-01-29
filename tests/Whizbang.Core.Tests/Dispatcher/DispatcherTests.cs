@@ -4,6 +4,7 @@ using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Tests.Generated;
 using Whizbang.Core.ValueObjects;
 
@@ -302,13 +303,27 @@ public class DispatcherTests {
 
   public class ProcessReceptor : IReceptor<ProcessCommand> {
     public static int ProcessedCount { get; private set; }
+    public static TaskCompletionSource? Gate { get; private set; }
 
     public static void Reset() {
       ProcessedCount = 0;
+      Gate = null;
+    }
+
+    public static void SetGate() {
+      Gate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    }
+
+    public static void ReleaseGate() {
+      Gate?.TrySetResult();
     }
 
     public async ValueTask HandleAsync(ProcessCommand message, CancellationToken cancellationToken = default) {
-      await Task.Delay(1, cancellationToken);
+      if (Gate != null) {
+        await Gate.Task.WaitAsync(cancellationToken);
+      } else {
+        await Task.Delay(1, cancellationToken);
+      }
       ProcessedCount++;
     }
   }
@@ -347,15 +362,18 @@ public class DispatcherTests {
   }
 
   [Test]
+  [NotInParallel]
   public async Task LocalInvokeAsync_VoidReceptor_AsynchronousCompletion_ShouldCompleteAsync() {
     // Arrange
     ProcessReceptor.Reset();
+    ProcessReceptor.SetGate(); // Set up gate to control completion deterministically
     var dispatcher = _createDispatcher();
     var command = new ProcessCommand(Guid.NewGuid(), "Test data");
 
     // Act
     var task = dispatcher.LocalInvokeAsync(command);
-    await Assert.That(task.IsCompleted).IsFalse(); // Async operation
+    await Assert.That(task.IsCompleted).IsFalse(); // Now deterministically false - waiting on gate
+    ProcessReceptor.ReleaseGate(); // Allow handler to complete
     await task;
 
     // Assert
@@ -641,5 +659,178 @@ public class DispatcherTests {
     // Note: The key difference is internal - generic version creates MessageEnvelope<CreateOrder>
     // while non-generic creates MessageEnvelope<object>. Both work at runtime but only
     // generic version works with AOT serialization.
+  }
+
+  // ========================================
+  // GENERIC LOCAL INVOKE WITH TRACING TESTS
+  // ========================================
+
+  [Test]
+  [NotInParallel]
+  public async Task LocalInvokeAsync_GenericWithTracing_CreatesTypedEnvelopeAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+    services.AddReceptors();
+    var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
+    services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
+    services.AddWhizbangDispatcher();
+    var serviceProvider = services.BuildServiceProvider();
+    var dispatcher = serviceProvider.GetRequiredService<IDispatcher>();
+
+    var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
+    var context = MessageContext.New();
+
+    // Act - Use fully generic LocalInvokeAsync<TMessage, TResult>
+    var result = await dispatcher.LocalInvokeAsync<CreateOrder, OrderCreated>(command, context);
+
+    // Assert - Verify result
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result.CustomerId).IsEqualTo(command.CustomerId);
+
+    // Assert - Verify envelope was stored with correct type
+    var traces = await traceStore.GetByTimeRangeAsync(
+      DateTimeOffset.UtcNow.AddMinutes(-1),
+      DateTimeOffset.UtcNow.AddMinutes(1)
+    );
+    await Assert.That(traces).Count().IsGreaterThanOrEqualTo(1);
+
+    // Verify it's MessageEnvelope<CreateOrder>
+    var envelope = traces[0];
+    var typeArguments = envelope.GetType().GetGenericArguments();
+    await Assert.That(typeArguments[0]).IsEqualTo(typeof(CreateOrder));
+  }
+
+  [Test]
+  [NotInParallel]
+  public async Task LocalInvokeAsync_VoidGenericWithTracing_StoresEnvelopeAsync() {
+    // Arrange
+    LogReceptor.Reset();
+    var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+    services.AddReceptors();
+    var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
+    services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
+    services.AddWhizbangDispatcher();
+    var serviceProvider = services.BuildServiceProvider();
+    var dispatcher = serviceProvider.GetRequiredService<IDispatcher>();
+
+    var command = new LogCommand("Test with generic void tracing");
+    var context = MessageContext.New();
+
+    // Act - Use generic void LocalInvokeAsync<TMessage>
+    await dispatcher.LocalInvokeAsync<LogCommand>(command, context);
+
+    // Assert - Handler was called
+    await Assert.That(LogReceptor.ProcessedCount).IsEqualTo(1);
+
+    // Assert - Envelope was stored
+    var traces = await traceStore.GetByTimeRangeAsync(
+      DateTimeOffset.UtcNow.AddMinutes(-1),
+      DateTimeOffset.UtcNow.AddMinutes(1)
+    );
+    await Assert.That(traces).Count().IsGreaterThanOrEqualTo(1);
+  }
+
+  [Test]
+  [NotInParallel]
+  public async Task SendAsync_GenericWithTracing_CreatesTypedEnvelopeAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+    services.AddReceptors();
+    var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
+    services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
+    services.AddWhizbangDispatcher();
+    var serviceProvider = services.BuildServiceProvider();
+    var dispatcher = serviceProvider.GetRequiredService<IDispatcher>();
+
+    var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
+
+    // Act - Use generic SendAsync<TMessage>
+    var receipt = await dispatcher.SendAsync<CreateOrder>(command);
+
+    // Assert - Receipt returned
+    await Assert.That(receipt).IsNotNull();
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
+
+    // Assert - Envelope was stored with correct type
+    var traces = await traceStore.GetByTimeRangeAsync(
+      DateTimeOffset.UtcNow.AddMinutes(-1),
+      DateTimeOffset.UtcNow.AddMinutes(1)
+    );
+    await Assert.That(traces).Count().IsGreaterThanOrEqualTo(1);
+  }
+
+  // ========================================
+  // LIFECYCLE INVOKER TESTS
+  // ========================================
+
+  [Test]
+  [NotInParallel]
+  public async Task LocalInvokeAsync_WithLifecycleInvoker_InvokesLifecycleAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+    services.AddReceptors();
+    var lifecycleInvoker = new MockLifecycleInvoker();
+    services.AddSingleton<ILifecycleInvoker>(lifecycleInvoker);
+    var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
+    services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
+    services.AddWhizbangDispatcher();
+    var serviceProvider = services.BuildServiceProvider();
+    var dispatcher = serviceProvider.GetRequiredService<IDispatcher>();
+
+    var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
+
+    // Act
+    var result = await dispatcher.LocalInvokeAsync<OrderCreated>(command);
+
+    // Assert - Lifecycle was invoked
+    await Assert.That(result).IsNotNull();
+    await Assert.That(lifecycleInvoker.InvokeCount).IsGreaterThanOrEqualTo(1);
+    await Assert.That(lifecycleInvoker.LastStage).IsEqualTo(LifecycleStage.ImmediateAsync);
+  }
+
+  [Test]
+  [NotInParallel]
+  public async Task SendAsync_WithLifecycleInvoker_InvokesLifecycleAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+    services.AddReceptors();
+    var lifecycleInvoker = new MockLifecycleInvoker();
+    services.AddSingleton<ILifecycleInvoker>(lifecycleInvoker);
+    var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
+    services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
+    services.AddWhizbangDispatcher();
+    var serviceProvider = services.BuildServiceProvider();
+    var dispatcher = serviceProvider.GetRequiredService<IDispatcher>();
+
+    var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
+
+    // Act
+    var receipt = await dispatcher.SendAsync(command);
+
+    // Assert - Lifecycle was invoked
+    await Assert.That(receipt).IsNotNull();
+    await Assert.That(lifecycleInvoker.InvokeCount).IsGreaterThanOrEqualTo(1);
+  }
+
+  // Mock lifecycle invoker for testing
+  private sealed class MockLifecycleInvoker : ILifecycleInvoker {
+    public int InvokeCount { get; private set; }
+    public LifecycleStage? LastStage { get; private set; }
+
+    public ValueTask InvokeAsync(object message, LifecycleStage stage, ILifecycleContext? context = null, CancellationToken cancellationToken = default) {
+      InvokeCount++;
+      LastStage = stage;
+      return ValueTask.CompletedTask;
+    }
   }
 }

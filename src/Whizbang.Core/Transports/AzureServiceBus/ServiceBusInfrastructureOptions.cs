@@ -21,7 +21,7 @@ public class ServiceBusInfrastructureOptions {
   /// Explicitly configured topic requirements.
   /// If empty, will auto-discover from ServiceBusConsumerOptions.
   /// </summary>
-  public List<TopicRequirement> RequiredTopics { get; set; } = new();
+  public List<TopicRequirement> RequiredTopics { get; set; } = [];
 
   /// <summary>
   /// In production, automatically create topics/subscriptions via Azure Management API.

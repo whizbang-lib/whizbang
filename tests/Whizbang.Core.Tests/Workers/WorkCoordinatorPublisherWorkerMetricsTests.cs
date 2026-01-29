@@ -36,7 +36,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     var testLogger = new TestLogger<WorkCoordinatorPublisherWorker>();
     var workCoordinator = new TestWorkCoordinator {
       WorkToReturn = [
-        _createTestOutboxWork(Guid.NewGuid())
+        _createTestOutboxWork(Guid.CreateVersion7())
       ]
     };
     var publishStrategy = new TestPublishStrategy {
@@ -66,9 +66,9 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     // Arrange
     var workCoordinator = new TestWorkCoordinator {
       WorkToReturn = [
-        _createTestOutboxWork(Guid.NewGuid()),
-        _createTestOutboxWork(Guid.NewGuid()),
-        _createTestOutboxWork(Guid.NewGuid())
+        _createTestOutboxWork(Guid.CreateVersion7()),
+        _createTestOutboxWork(Guid.CreateVersion7()),
+        _createTestOutboxWork(Guid.CreateVersion7())
       ]
     };
     var publishStrategy = new TestPublishStrategy {
@@ -96,7 +96,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     var testLogger = new TestLogger<WorkCoordinatorPublisherWorker>();
     var messageIds = new List<Guid>();
     for (int i = 0; i < 12; i++) {  // Create 12 messages to exceed threshold of 10
-      messageIds.Add(Guid.NewGuid());
+      messageIds.Add(Guid.CreateVersion7());
     }
     var workCoordinator = new TestWorkCoordinator {
       WorkToReturn = messageIds.ConvertAll(_createTestOutboxWork)
@@ -137,11 +137,11 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     // Simulate 5 not-ready messages
     publishStrategy.IsReadyResult = false;
     workCoordinator.WorkToReturn = [
-      _createTestOutboxWork(Guid.NewGuid()),
-      _createTestOutboxWork(Guid.NewGuid()),
-      _createTestOutboxWork(Guid.NewGuid()),
-      _createTestOutboxWork(Guid.NewGuid()),
-      _createTestOutboxWork(Guid.NewGuid())
+      _createTestOutboxWork(Guid.CreateVersion7()),
+      _createTestOutboxWork(Guid.CreateVersion7()),
+      _createTestOutboxWork(Guid.CreateVersion7()),
+      _createTestOutboxWork(Guid.CreateVersion7()),
+      _createTestOutboxWork(Guid.CreateVersion7())
     ];
 
     using var cts = new CancellationTokenSource();
@@ -150,7 +150,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
 
     // Act - Transport becomes ready
     publishStrategy.IsReadyResult = true;
-    workCoordinator.WorkToReturn = [_createTestOutboxWork(Guid.NewGuid())];
+    workCoordinator.WorkToReturn = [_createTestOutboxWork(Guid.CreateVersion7())];
     await Task.Delay(300);
 
     cts.Cancel();
@@ -165,9 +165,9 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
   public async Task BufferedMessages_TracksCountAsync() {
     // Arrange
     var messageIds = new List<Guid> {
-      Guid.NewGuid(),
-      Guid.NewGuid(),
-      Guid.NewGuid()
+      Guid.CreateVersion7(),
+      Guid.CreateVersion7(),
+      Guid.CreateVersion7()
     };
     var workCoordinator = new TestWorkCoordinator {
       WorkToReturn = messageIds.ConvertAll(_createTestOutboxWork)
@@ -196,8 +196,8 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
     // Arrange
     var workCoordinator = new TestWorkCoordinator {
       WorkToReturn = [
-        _createTestOutboxWork(Guid.NewGuid()),
-        _createTestOutboxWork(Guid.NewGuid())
+        _createTestOutboxWork(Guid.CreateVersion7()),
+        _createTestOutboxWork(Guid.CreateVersion7())
       ]
     };
     var publishStrategy = new TestPublishStrategy {
@@ -280,7 +280,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
   private sealed class TestLogger<T> : ILogger<T> {
     private readonly List<LogEntry> _logs = [];
 
-    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
       _logs.Add(new LogEntry {
         LogLevel = logLevel,
         Message = formatter(state, exception),
@@ -312,7 +312,7 @@ public class WorkCoordinatorPublisherWorkerMetricsTests {
       Envelope = _createTestEnvelope(messageId),
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",
-      StreamId = Guid.NewGuid(),
+      StreamId = Guid.CreateVersion7(),
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,

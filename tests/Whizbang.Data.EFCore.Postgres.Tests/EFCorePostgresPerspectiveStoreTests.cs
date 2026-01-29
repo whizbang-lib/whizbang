@@ -12,7 +12,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// These tests use EF Core InMemory provider for fast, isolated testing.
 /// </summary>
 public class EFCorePostgresPerspectiveStoreTests {
-  private readonly Uuid7IdProvider _idProvider = new Uuid7IdProvider();
+  private readonly Uuid7IdProvider _idProvider = new();
 
   private TestDbContext CreateInMemoryDbContext() {
     var options = new DbContextOptionsBuilder<TestDbContext>()
@@ -319,6 +319,102 @@ public class EFCorePostgresPerspectiveStoreTests {
     await Assert.That(result.Value).IsEqualTo(555);
   }
 
+  // ==================== PurgeAsync Tests ====================
+
+  [Test]
+  public async Task PurgeAsync_WhenRecordExists_RemovesRecordAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    var testId = _idProvider.NewGuid();
+
+    // Create a record first
+    await store.UpsertAsync(testId, new StoreTestModel { Name = "ToDelete", Value = 999 });
+
+    // Verify record exists
+    var beforePurge = await store.GetByStreamIdAsync(testId);
+    await Assert.That(beforePurge).IsNotNull();
+
+    // Act - purge the record
+    await store.PurgeAsync(testId);
+
+    // Assert - record should be gone
+    var afterPurge = await store.GetByStreamIdAsync(testId);
+    await Assert.That(afterPurge).IsNull();
+  }
+
+  [Test]
+  public async Task PurgeAsync_WhenRecordDoesNotExist_DoesNotThrowAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    var nonExistentId = _idProvider.NewGuid();
+
+    // Act & Assert - should not throw
+    await Assert.That(async () => await store.PurgeAsync(nonExistentId))
+        .ThrowsNothing();
+  }
+
+  [Test]
+  public async Task PurgeByPartitionKeyAsync_WhenRecordExists_RemovesRecordAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    var partitionKey = _idProvider.NewGuid();
+
+    // Create a record using partition key
+    await store.UpsertByPartitionKeyAsync(partitionKey, new StoreTestModel { Name = "ToDelete", Value = 888 });
+
+    // Verify record exists
+    var beforePurge = await store.GetByPartitionKeyAsync(partitionKey);
+    await Assert.That(beforePurge).IsNotNull();
+
+    // Act - purge the record
+    await store.PurgeByPartitionKeyAsync(partitionKey);
+
+    // Assert - record should be gone
+    var afterPurge = await store.GetByPartitionKeyAsync(partitionKey);
+    await Assert.That(afterPurge).IsNull();
+  }
+
+  [Test]
+  public async Task PurgeByPartitionKeyAsync_WhenRecordDoesNotExist_DoesNotThrowAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    var nonExistentKey = _idProvider.NewGuid();
+
+    // Act & Assert - should not throw
+    await Assert.That(async () => await store.PurgeByPartitionKeyAsync(nonExistentKey))
+        .ThrowsNothing();
+  }
+
+  [Test]
+  public async Task PurgeByPartitionKeyAsync_WithStringPartitionKey_RemovesRecordAsync() {
+    // Arrange
+    var context = CreateInMemoryDbContext();
+    var strategy = new InMemoryUpsertStrategy();
+    var store = new EFCorePostgresPerspectiveStore<StoreTestModel>(context, "test_perspective", strategy);
+    var partitionKey = "tenant-to-delete";
+
+    // Create a record using string partition key
+    await store.UpsertByPartitionKeyAsync(partitionKey, new StoreTestModel { Name = "TenantData", Value = 777 });
+
+    // Verify record exists
+    var beforePurge = await store.GetByPartitionKeyAsync(partitionKey);
+    await Assert.That(beforePurge).IsNotNull();
+
+    // Act - purge the record
+    await store.PurgeByPartitionKeyAsync(partitionKey);
+
+    // Assert - record should be gone
+    var afterPurge = await store.GetByPartitionKeyAsync(partitionKey);
+    await Assert.That(afterPurge).IsNull();
+  }
 }
 
 /// <summary>

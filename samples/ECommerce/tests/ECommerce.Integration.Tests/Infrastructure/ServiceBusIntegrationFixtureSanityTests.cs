@@ -18,7 +18,7 @@ namespace ECommerce.Integration.Tests.Infrastructure;
 /// 4. Perspective materialization
 /// Tests run sequentially to avoid ServiceBus topic conflicts.
 /// </summary>
-[NotInParallel]
+[NotInParallel("ServiceBus")]
 public class ServiceBusIntegrationFixtureSanityTests {
   private static ServiceBusIntegrationFixture? _fixture;
 
@@ -339,14 +339,18 @@ public class ServiceBusIntegrationFixtureSanityTests {
     };
 
     // Act - Send command and wait for perspectives to process
-    // CRITICAL: Create waiter BEFORE sending command to avoid race condition
+    // CRITICAL: Create waiters BEFORE sending command to avoid race condition
+    // CRITICAL: Wait for BOTH ProductCreatedEvent AND InventoryRestockedEvent
+    // The inventory quantity is set by InventoryRestockedEvent, not ProductCreatedEvent!
     Console.WriteLine($"[SANITY-PROPAGATION] Sending command: Stock={expectedStock}, Price={expectedPrice}");
-    using var waiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(inventoryPerspectives: 2, bffPerspectives: 2);
+    using var productWaiter = fixture.CreatePerspectiveWaiter<ProductCreatedEvent>(inventoryPerspectives: 2, bffPerspectives: 2);
+    using var restockWaiter = fixture.CreatePerspectiveWaiter<InventoryRestockedEvent>(inventoryPerspectives: 1, bffPerspectives: 1);
     await fixture.Dispatcher.SendAsync(command);
 
     // Wait for all event processing to complete (all perspectives across both hosts)
     Console.WriteLine($"[SANITY-PROPAGATION] Waiting for event processing...");
-    await waiter.WaitAsync(timeoutMilliseconds: 15000);
+    await productWaiter.WaitAsync(timeoutMilliseconds: 30000);
+    await restockWaiter.WaitAsync(timeoutMilliseconds: 30000);
     Console.WriteLine($"[SANITY-PROPAGATION] Event processing completed!");
 
     Console.WriteLine($"[SANITY-PROPAGATION] Starting assertions...");
@@ -418,17 +422,17 @@ public class ServiceBusIntegrationFixtureSanityTests {
       await using var reader2 = await cmd2.ExecuteReaderAsync();
       Console.WriteLine($"[SANITY-PROPAGATION] Perspective work items for stream {testProductId}:");
       while (await reader2.ReadAsync()) {
+        // Column indices match SQL: event_work_id(0), perspective_name(1), event_id(2), status(3), processed_at(4), event_type(5)
         var workId = reader2.GetGuid(0);
         var perspectiveName = reader2.GetString(1);
         var eventId = reader2.GetGuid(2);
-        var sequenceNumber = reader2.GetInt64(3);
-        var status = reader2.GetInt32(4);
-        var processedAt = reader2.IsDBNull(5) ? "NULL" : reader2.GetDateTime(5).ToString("O");
-        var eventType = reader2.GetString(6);
+        var status = reader2.GetInt32(3);
+        var processedAt = reader2.IsDBNull(4) ? "NULL" : reader2.GetDateTime(4).ToString("O");
+        var eventType = reader2.GetString(5);
         Console.WriteLine($"  Work Item {workId}:");
         Console.WriteLine($"    Perspective: {perspectiveName}");
         Console.WriteLine($"    Event Type: {eventType}");
-        Console.WriteLine($"    Sequence: {sequenceNumber}, Status: {status}, Processed: {processedAt}");
+        Console.WriteLine($"    Status: {status}, Processed: {processedAt}");
       }
       await reader2.CloseAsync();
 

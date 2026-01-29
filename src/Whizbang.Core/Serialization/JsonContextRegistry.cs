@@ -25,7 +25,7 @@ public static class JsonContextRegistry {
   /// Thread-safe collection of registered resolvers.
   /// Populated via [ModuleInitializer] methods in each assembly.
   /// </summary>
-  private static readonly ConcurrentBag<IJsonTypeInfoResolver> _resolvers = new();
+  private static readonly ConcurrentBag<IJsonTypeInfoResolver> _resolvers = [];
 
   /// <summary>
   /// Thread-safe collection of converter instances to add to JsonSerializerOptions.
@@ -33,7 +33,7 @@ public static class JsonContextRegistry {
   /// Needed for WhizbangId converters due to STJ source generation limitations.
   /// Converters are instantiated at compile-time by source generators for AOT compatibility.
   /// </summary>
-  private static readonly ConcurrentBag<JsonConverter> _converters = new();
+  private static readonly ConcurrentBag<JsonConverter> _converters = [];
 
   /// <summary>
   /// Thread-safe dictionary mapping normalized type names to (Type, Resolver) tuples.

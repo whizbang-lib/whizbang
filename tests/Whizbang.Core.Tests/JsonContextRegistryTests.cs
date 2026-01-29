@@ -354,7 +354,7 @@ public partial class JsonContextRegistryTests {
     var envelope = new MessageEnvelope<TestEvent>(
       MessageId.New(),
       testEvent,
-      new List<MessageHop>()
+      []
     );
 
     // Serialize to JSON

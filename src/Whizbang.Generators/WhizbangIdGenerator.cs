@@ -442,6 +442,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// Generates the complete value object implementation for a WhizbangId.
+  /// Uses TrackedGuid as the backing field and implements IWhizbangId interface.
   /// </summary>
   private static string _generateValueObject(WhizbangIdInfo id) {
     var sb = new StringBuilder();
@@ -454,41 +455,84 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine();
 
     sb.AppendLine("using System;");
+    sb.AppendLine("using global::Whizbang.Core.ValueObjects;");
     sb.AppendLine();
 
     sb.AppendLine($"namespace {id.Namespace};");
     sb.AppendLine();
 
-    // Struct declaration
-    sb.AppendLine($"public readonly partial struct {id.TypeName} : IEquatable<{id.TypeName}>, IComparable<{id.TypeName}> {{");
+    // Struct declaration - implements IWhizbangId, IEquatable, IComparable
+    sb.AppendLine($"public readonly partial struct {id.TypeName} : global::Whizbang.Core.IWhizbangId, IEquatable<{id.TypeName}>, IComparable<{id.TypeName}> {{");
 
-    // Private backing field
-    sb.AppendLine("  private readonly Guid _value;");
+    // Private backing field - TrackedGuid instead of Guid
+    sb.AppendLine("  private readonly TrackedGuid _tracked;");
     sb.AppendLine();
 
-    // Value property
+    // Value property (for backwards compatibility)
     sb.AppendLine("  /// <summary>Gets the underlying Guid value.</summary>");
-    sb.AppendLine("  public Guid Value => _value;");
+    sb.AppendLine("  public Guid Value => _tracked.Value;");
     sb.AppendLine();
 
-    // Public constructor for EF Core compatibility
+    // IWhizbangId.ToGuid() implementation
+    sb.AppendLine("  /// <summary>Converts this ID to its underlying Guid representation.</summary>");
+    sb.AppendLine("  public Guid ToGuid() => _tracked.Value;");
+    sb.AppendLine();
+
+    // IWhizbangId.IsTimeOrdered
+    sb.AppendLine("  /// <summary>Gets whether this ID is time-ordered (UUIDv7).</summary>");
+    sb.AppendLine("  public bool IsTimeOrdered => _tracked.IsTimeOrdered;");
+    sb.AppendLine();
+
+    // IWhizbangId.SubMillisecondPrecision
+    sb.AppendLine("  /// <summary>Gets whether this ID has sub-millisecond precision (Medo-generated).</summary>");
+    sb.AppendLine("  public bool SubMillisecondPrecision => _tracked.SubMillisecondPrecision;");
+    sb.AppendLine();
+
+    // IWhizbangId.Timestamp
+    sb.AppendLine("  /// <summary>Gets the timestamp embedded in this ID (for UUIDv7).</summary>");
+    sb.AppendLine("  public DateTimeOffset Timestamp => _tracked.Timestamp;");
+    sb.AppendLine();
+
+    // Private constructor from TrackedGuid
+    sb.AppendLine("  /// <summary>Creates an instance from a TrackedGuid.</summary>");
+    sb.AppendLine($"  private {id.TypeName}(TrackedGuid tracked) => _tracked = tracked;");
+    sb.AppendLine();
+
+    // Public constructor for EF Core compatibility (wraps in FromExternal)
     sb.AppendLine("  /// <summary>Creates an instance from a Guid value. Public for EF Core compatibility.</summary>");
-    sb.AppendLine($"  public {id.TypeName}(Guid value) => _value = value;");
+    sb.AppendLine($"  public {id.TypeName}(Guid value) => _tracked = TrackedGuid.FromExternal(value);");
     sb.AppendLine();
 
-    // From factory method
-    sb.AppendLine("  /// <summary>Creates an instance from a Guid value.</summary>");
-    sb.AppendLine($"  public static {id.TypeName} From(Guid value) => new(value);");
+    // From(TrackedGuid) factory method - preserves metadata
+    sb.AppendLine("  /// <summary>Creates an instance from a TrackedGuid, preserving metadata.</summary>");
+    sb.AppendLine($"  public static {id.TypeName} From(TrackedGuid tracked) {{");
+    sb.AppendLine("    if (!tracked.IsTimeOrdered)");
+    sb.AppendLine($"      throw new ArgumentException(\"{id.TypeName} requires UUIDv7 (time-ordered) but received a non-v7 Guid\", nameof(tracked));");
+    sb.AppendLine("    return new(tracked);");
+    sb.AppendLine("  }");
     sb.AppendLine();
 
-    // New factory method using configurable provider
-    sb.AppendLine("  /// <summary>Creates a new instance using the configured WhizbangIdProvider.</summary>");
-    sb.AppendLine($"  public static {id.TypeName} New() => new(global::Whizbang.Core.WhizbangIdProvider.NewGuid());");
+    // From(Guid) factory method - validates v7
+    sb.AppendLine("  /// <summary>Creates an instance from a Guid value. Throws if not UUIDv7.</summary>");
+    sb.AppendLine($"  public static {id.TypeName} From(Guid value) {{");
+    sb.AppendLine("    if (value.Version != 7)");
+    sb.AppendLine($"      throw new ArgumentException($\"{id.TypeName} requires UUIDv7 but received version {{value.Version}}\", nameof(value));");
+    sb.AppendLine("    return new(TrackedGuid.FromExternal(value));");
+    sb.AppendLine("  }");
+    sb.AppendLine();
+
+    // New factory method using TrackedGuid.NewMedo()
+    sb.AppendLine("  /// <summary>Creates a new instance with sub-millisecond precision using Medo.Uuid7.</summary>");
+    sb.AppendLine($"  public static {id.TypeName} New() => new(TrackedGuid.NewMedo());");
     sb.AppendLine();
 
     // Equality members
     sb.AppendLine("  /// <summary>Determines whether two instances are equal.</summary>");
-    sb.AppendLine($"  public bool Equals({id.TypeName} other) => _value.Equals(other._value);");
+    sb.AppendLine($"  public bool Equals({id.TypeName} other) => _tracked.Equals(other._tracked);");
+    sb.AppendLine();
+
+    sb.AppendLine("  /// <summary>Determines whether this instance equals another IWhizbangId.</summary>");
+    sb.AppendLine("  public bool Equals(global::Whizbang.Core.IWhizbangId? other) => other is not null && ToGuid().Equals(other.ToGuid());");
     sb.AppendLine();
 
     sb.AppendLine("  /// <summary>Determines whether this instance equals the specified object.</summary>");
@@ -496,12 +540,16 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine();
 
     sb.AppendLine("  /// <summary>Returns the hash code for this instance.</summary>");
-    sb.AppendLine("  public override int GetHashCode() => _value.GetHashCode();");
+    sb.AppendLine("  public override int GetHashCode() => _tracked.GetHashCode();");
     sb.AppendLine();
 
     // Comparison
     sb.AppendLine("  /// <summary>Compares this instance to another.</summary>");
-    sb.AppendLine($"  public int CompareTo({id.TypeName} other) => _value.CompareTo(other._value);");
+    sb.AppendLine($"  public int CompareTo({id.TypeName} other) => _tracked.CompareTo(other._tracked);");
+    sb.AppendLine();
+
+    sb.AppendLine("  /// <summary>Compares this instance to another IWhizbangId.</summary>");
+    sb.AppendLine("  public int CompareTo(global::Whizbang.Core.IWhizbangId? other) => other is null ? 1 : ToGuid().CompareTo(other.ToGuid());");
     sb.AppendLine();
 
     // Operators
@@ -531,21 +579,21 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
 
     // ToString
     sb.AppendLine("  /// <summary>Returns the string representation of the underlying Guid.</summary>");
-    sb.AppendLine("  public override string ToString() => _value.ToString();");
+    sb.AppendLine("  public override string ToString() => _tracked.ToString();");
     sb.AppendLine();
 
     // Implicit conversion to Guid
     sb.AppendLine("  /// <summary>Implicitly converts to Guid.</summary>");
-    sb.AppendLine($"  public static implicit operator Guid({id.TypeName} id) => id._value;");
+    sb.AppendLine($"  public static implicit operator Guid({id.TypeName} id) => id._tracked.Value;");
     sb.AppendLine();
 
-    // Explicit conversion from Guid
-    sb.AppendLine("  /// <summary>Explicitly converts from Guid.</summary>");
-    sb.AppendLine($"  public static explicit operator {id.TypeName}(Guid value) => new(value);");
+    // Explicit conversion from Guid (validates v7)
+    sb.AppendLine("  /// <summary>Explicitly converts from Guid. Throws if not UUIDv7.</summary>");
+    sb.AppendLine($"  public static explicit operator {id.TypeName}(Guid value) => From(value);");
     sb.AppendLine();
 
-    // Parse method for string deserialization
-    sb.AppendLine("  /// <summary>Parses a string representation of a Guid into this ID type.</summary>");
+    // Parse method for string deserialization (validates v7)
+    sb.AppendLine("  /// <summary>Parses a string representation of a Guid into this ID type. Throws if not UUIDv7.</summary>");
     sb.AppendLine($"  public static {id.TypeName} Parse(string value) => From(Guid.Parse(value));");
     sb.AppendLine();
 

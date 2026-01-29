@@ -191,7 +191,7 @@ public class LensQueryFactoryTests {
   /// Mock ILensQuery implementation for testing
   /// </summary>
   private sealed class MockLensQuery<TModel> : ILensQuery<TModel> where TModel : class {
-    private readonly List<TModel> _models = new();
+    private readonly List<TModel> _models = [];
 
     public IQueryable<PerspectiveRow<TModel>> Query =>
         _models.Select(m => new PerspectiveRow<TModel> {

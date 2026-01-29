@@ -36,6 +36,13 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     public List<OutboxWork> WorkToReturn { get; set; } = [];
     public int ProcessWorkBatchCallCount { get; private set; }
     public List<_processWorkBatchCall> Calls { get; } = [];
+    private readonly TaskCompletionSource _firstCallSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Task that completes when ProcessWorkBatchAsync is called at least once.
+    /// Use this instead of fixed delays to avoid flaky tests.
+    /// </summary>
+    public Task FirstCallReceived => _firstCallSignal.Task;
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
@@ -46,6 +53,9 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
         CallNumber = ProcessWorkBatchCallCount,
         Timestamp = DateTimeOffset.UtcNow
       });
+
+      // Signal that first call has been received
+      _firstCallSignal.TrySetResult();
 
       return Task.FromResult(new WorkBatch {
         OutboxWork = [.. WorkToReturn],
@@ -115,9 +125,9 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     var instanceProvider = _createTestInstanceProvider();
 
     // 3 pending outbox messages to be claimed on startup
-    var message1Id = Guid.NewGuid();
-    var message2Id = Guid.NewGuid();
-    var message3Id = Guid.NewGuid();
+    var message1Id = Guid.CreateVersion7();
+    var message2Id = Guid.CreateVersion7();
+    var message3Id = Guid.CreateVersion7();
 
     workCoordinator.WorkToReturn = [
       _createOutboxWork(message1Id, "products"),
@@ -137,9 +147,17 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
 
     using var cts = new CancellationTokenSource();
 
-    // Act - start worker and let it run briefly
+    // Act - start worker and wait for first ProcessWorkBatchAsync call
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(50); // Give time for initial processing BEFORE first poll interval
+
+    // Wait for the coordinator to be called (with timeout for safety)
+    var signalTask = workCoordinator.FirstCallReceived;
+    var timeoutTask = Task.Delay(TimeSpan.FromSeconds(5));
+    await Task.WhenAny(signalTask, timeoutTask);
+
+    // Allow time for publishing to complete after ProcessWorkBatchAsync returns
+    await Task.Delay(50);
+
     cts.Cancel();
 
     try {
@@ -169,7 +187,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     var databaseReadiness = new TestDatabaseReadinessCheck { IsReady = false }; // Database NOT ready
     var instanceProvider = _createTestInstanceProvider();
 
-    workCoordinator.WorkToReturn = [_createOutboxWork(Guid.NewGuid(), "products")];
+    workCoordinator.WorkToReturn = [_createOutboxWork(Guid.CreateVersion7(), "products")];
 
     var services = _createServiceCollection(workCoordinator, publishStrategy, databaseReadiness, instanceProvider);
     var worker = new WorkCoordinatorPublisherWorker(
@@ -184,8 +202,9 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     using var cts = new CancellationTokenSource();
 
     // Act - start worker and let it run briefly
+    // Wait long enough to verify nothing happens when database isn't ready
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(50); // Give time for initial check
+    await Task.Delay(200);
     cts.Cancel();
 
     try {
@@ -209,7 +228,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     // Create a coordinator that throws on first call, then succeeds
     var throwingCoordinator = new ThrowingWorkCoordinator {
       ThrowOnFirstCall = true,
-      WorkToReturn = [_createOutboxWork(Guid.NewGuid(), "products")]
+      WorkToReturn = [_createOutboxWork(Guid.CreateVersion7(), "products")]
     };
 
     var services = _createServiceCollection(throwingCoordinator, publishStrategy, databaseReadiness, instanceProvider);
@@ -226,7 +245,12 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
 
     // Act - start worker (should not crash despite initial exception)
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(150); // Give time for initial processing + one poll
+
+    // Wait for the coordinator to be called (with timeout for safety)
+    var signalTask = throwingCoordinator.FirstCallReceived;
+    var timeoutTask = Task.Delay(TimeSpan.FromSeconds(5));
+    await Task.WhenAny(signalTask, timeoutTask);
+
     cts.Cancel();
 
     try {
@@ -260,9 +284,14 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
 
     using var cts = new CancellationTokenSource();
 
-    // Act - start worker
+    // Act - start worker and wait for first ProcessWorkBatchAsync call
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(50);
+
+    // Wait for the coordinator to be called (with timeout for safety)
+    var signalTask = workCoordinator.FirstCallReceived;
+    var timeoutTask = Task.Delay(TimeSpan.FromSeconds(5));
+    await Task.WhenAny(signalTask, timeoutTask);
+
     cts.Cancel();
 
     try {
@@ -286,7 +315,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
 
     // 12 pending messages (like the user's seeding scenario)
     for (int i = 0; i < 12; i++) {
-      workCoordinator.WorkToReturn.Add(_createOutboxWork(Guid.NewGuid(), "products"));
+      workCoordinator.WorkToReturn.Add(_createOutboxWork(Guid.CreateVersion7(), "products"));
     }
 
     var services = _createServiceCollection(workCoordinator, publishStrategy, databaseReadiness, instanceProvider);
@@ -301,9 +330,17 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
 
     using var cts = new CancellationTokenSource();
 
-    // Act - start worker
+    // Act - start worker and wait for first ProcessWorkBatchAsync call
     var workerTask = worker.StartAsync(cts.Token);
-    await Task.Delay(100); // Give time for initial processing
+
+    // Wait for the coordinator to be called (with timeout for safety)
+    var signalTask = workCoordinator.FirstCallReceived;
+    var timeoutTask = Task.Delay(TimeSpan.FromSeconds(5));
+    await Task.WhenAny(signalTask, timeoutTask);
+
+    // Allow time for publishing to complete after ProcessWorkBatchAsync returns
+    await Task.Delay(50);
+
     cts.Cancel();
 
     try {
@@ -326,7 +363,7 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",
       Envelope = _createTestEnvelope(messageId),
-      StreamId = Guid.NewGuid(),
+      StreamId = Guid.CreateVersion7(),
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
@@ -363,12 +400,22 @@ public class WorkCoordinatorPublisherWorkerStartupTests {
     public List<OutboxWork> WorkToReturn { get; set; } = [];
     public int ProcessWorkBatchCallCount { get; private set; }
     private bool _hasThrown;
+    private readonly TaskCompletionSource _firstCallSignal = new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+    /// <summary>
+    /// Task that completes when ProcessWorkBatchAsync is called at least once.
+    /// Use this instead of fixed delays to avoid flaky tests.
+    /// </summary>
+    public Task FirstCallReceived => _firstCallSignal.Task;
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
       CancellationToken cancellationToken = default) {
 
       ProcessWorkBatchCallCount++;
+
+      // Signal that first call has been received (even if it throws)
+      _firstCallSignal.TrySetResult();
 
       if (ThrowOnFirstCall && !_hasThrown) {
         _hasThrown = true;

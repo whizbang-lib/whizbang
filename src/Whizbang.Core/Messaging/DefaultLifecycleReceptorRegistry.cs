@@ -32,7 +32,7 @@ public sealed class DefaultLifecycleReceptorRegistry : ILifecycleReceptorRegistr
 
     _receptors.AddOrUpdate(
       key,
-      _ => new List<(object, Func<object, ILifecycleContext?, CancellationToken, ValueTask>)> { (receptor, handler) },
+      _ => [(receptor, handler)],
       (_, existingList) => {
         lock (existingList) {
           existingList.Add((receptor, handler));

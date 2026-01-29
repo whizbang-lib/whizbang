@@ -9,12 +9,41 @@ namespace Whizbang.Migrate.Analysis;
 /// </summary>
 /// <docs>migration-guide/automated-migration</docs>
 public sealed class WolverineAnalyzer : ICodeAnalyzer {
+  /// <summary>
+  /// Known Wolverine interfaces that should not generate warnings.
+  /// </summary>
+  private static readonly HashSet<string> _knownWolverineInterfaces = new(StringComparer.Ordinal) {
+    "IHandle",
+    "IMessageBus",
+    "IMessageContext",
+    "MessageContext"
+  };
+
+  /// <summary>
+  /// Known Marten interfaces that should not generate warnings.
+  /// </summary>
+  private static readonly HashSet<string> _knownMartenInterfaces = new(StringComparer.Ordinal) {
+    "IDocumentSession",
+    "IQuerySession",
+    "IDocumentStore"
+  };
+
+  /// <summary>
+  /// Known standard types that should not generate warnings as parameters.
+  /// </summary>
+  private static readonly HashSet<string> _knownStandardTypes = new(StringComparer.Ordinal) {
+    "CancellationToken",
+    "ILogger",
+    "IServiceProvider"
+  };
+
   /// <inheritdoc />
   public Task<AnalysisResult> AnalyzeAsync(
       string sourceCode,
       string filePath,
       CancellationToken ct = default) {
     var handlers = new List<HandlerInfo>();
+    var warnings = new List<MigrationWarning>();
 
     if (string.IsNullOrWhiteSpace(sourceCode)) {
       return Task.FromResult(_createEmptyResult());
@@ -47,6 +76,25 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
             iHandleInfo.Value.ReturnType,
             HandlerKind.IHandleInterface,
             lineNumber));
+
+        // Check for custom base class
+        var baseClassWarning = _checkForCustomBaseClass(classDecl, filePath, className, lineNumber);
+        if (baseClassWarning != null) {
+          warnings.Add(baseClassWarning);
+        }
+
+        // Check for nested class
+        var nestedWarning = _checkForNestedClass(classDecl, filePath, className, lineNumber);
+        if (nestedWarning != null) {
+          warnings.Add(nestedWarning);
+        }
+
+        // Check handle method parameters
+        var handleMethod = _findHandleMethodSyntax(classDecl);
+        if (handleMethod != null) {
+          warnings.AddRange(_checkForUnknownParameters(handleMethod, filePath, className));
+        }
+
         continue;
       }
 
@@ -62,6 +110,24 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
               handleMethod.Value.ReturnType,
               HandlerKind.WolverineAttribute,
               lineNumber));
+
+          // Check for custom base class
+          var baseClassWarning = _checkForCustomBaseClass(classDecl, filePath, className, lineNumber);
+          if (baseClassWarning != null) {
+            warnings.Add(baseClassWarning);
+          }
+
+          // Check for nested class
+          var nestedWarning = _checkForNestedClass(classDecl, filePath, className, lineNumber);
+          if (nestedWarning != null) {
+            warnings.Add(nestedWarning);
+          }
+
+          // Check handle method parameters
+          var handleMethodSyntax = _findHandleMethodSyntax(classDecl);
+          if (handleMethodSyntax != null) {
+            warnings.AddRange(_checkForUnknownParameters(handleMethodSyntax, filePath, className));
+          }
         }
 
         continue;
@@ -69,14 +135,39 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
 
       // Check for convention-based handlers (public Handle/HandleAsync methods)
       var conventionHandlers = _findConventionBasedHandlers(classDecl, filePath, fullyQualifiedName);
-      handlers.AddRange(conventionHandlers);
+      if (conventionHandlers.Count > 0) {
+        handlers.AddRange(conventionHandlers);
+
+        // Check for custom base class
+        var baseClassWarning = _checkForCustomBaseClass(classDecl, filePath, className, lineNumber);
+        if (baseClassWarning != null) {
+          warnings.Add(baseClassWarning);
+        }
+
+        // Check for nested class
+        var nestedWarning = _checkForNestedClass(classDecl, filePath, className, lineNumber);
+        if (nestedWarning != null) {
+          warnings.Add(nestedWarning);
+        }
+
+        // Check handle method parameters for all convention-based handlers
+        var handleMethods = classDecl.Members
+            .OfType<MethodDeclarationSyntax>()
+            .Where(m => m.Identifier.Text is "Handle" or "HandleAsync")
+            .Where(m => m.Modifiers.Any(SyntaxKind.PublicKeyword));
+
+        foreach (var method in handleMethods) {
+          warnings.AddRange(_checkForUnknownParameters(method, filePath, className));
+        }
+      }
     }
 
     return Task.FromResult(new AnalysisResult {
       Handlers = handlers,
       Projections = [],
       EventStoreUsages = [],
-      DIRegistrations = []
+      DIRegistrations = [],
+      Warnings = warnings
     });
   }
 
@@ -88,6 +179,7 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
     var allProjections = new List<ProjectionInfo>();
     var allEventStoreUsages = new List<EventStoreUsageInfo>();
     var allDIRegistrations = new List<DIRegistrationInfo>();
+    var allWarnings = new List<MigrationWarning>();
 
     var projectDir = Path.GetDirectoryName(projectPath) ?? ".";
     var csFiles = Directory.GetFiles(projectDir, "*.cs", SearchOption.AllDirectories);
@@ -102,13 +194,15 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
       allProjections.AddRange(result.Projections);
       allEventStoreUsages.AddRange(result.EventStoreUsages);
       allDIRegistrations.AddRange(result.DIRegistrations);
+      allWarnings.AddRange(result.Warnings);
     }
 
     return new AnalysisResult {
       Handlers = allHandlers,
       Projections = allProjections,
       EventStoreUsages = allEventStoreUsages,
-      DIRegistrations = allDIRegistrations
+      DIRegistrations = allDIRegistrations,
+      Warnings = allWarnings
     };
   }
 
@@ -117,7 +211,8 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
       Handlers = [],
       Projections = [],
       EventStoreUsages = [],
-      DIRegistrations = []
+      DIRegistrations = [],
+      Warnings = []
     };
   }
 
@@ -252,6 +347,170 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
     }
 
     return returnTypeStr;
+  }
+
+  private static MethodDeclarationSyntax? _findHandleMethodSyntax(ClassDeclarationSyntax classDecl) {
+    return classDecl.Members
+        .OfType<MethodDeclarationSyntax>()
+        .Where(m => m.Identifier.Text is "Handle" or "HandleAsync")
+        .Where(m => m.Modifiers.Any(SyntaxKind.PublicKeyword))
+        .FirstOrDefault();
+  }
+
+  private static MigrationWarning? _checkForCustomBaseClass(
+      ClassDeclarationSyntax classDecl,
+      string filePath,
+      string className,
+      int lineNumber) {
+    if (classDecl.BaseList == null) {
+      return null;
+    }
+
+    foreach (var baseType in classDecl.BaseList.Types) {
+      var typeName = baseType.Type.ToString();
+      var baseTypeName = _getBaseTypeName(typeName);
+
+      // Skip known Wolverine interfaces (e.g., IHandle<T>)
+      if (_isKnownWolverineType(baseTypeName)) {
+        continue;
+      }
+
+      // Skip known Marten interfaces
+      if (_isKnownMartenType(baseTypeName)) {
+        continue;
+      }
+
+      // Skip interfaces (they start with I and have uppercase second letter)
+      if (_isInterface(baseTypeName)) {
+        continue;
+      }
+
+      // Skip "object" base class
+      if (baseTypeName is "object" or "Object") {
+        continue;
+      }
+
+      // This is a custom base class - generate warning
+      return new MigrationWarning(
+          filePath,
+          className,
+          MigrationWarningKind.CustomHandlerBaseClass,
+          $"Handler '{className}' inherits from custom base class '{typeName}'. " +
+          "This base class may contain Marten/Wolverine infrastructure that needs manual migration.",
+          lineNumber,
+          typeName);
+    }
+
+    return null;
+  }
+
+  private static MigrationWarning? _checkForNestedClass(
+      ClassDeclarationSyntax classDecl,
+      string filePath,
+      string className,
+      int lineNumber) {
+    // Check if this class is nested inside another class
+    var parentClass = classDecl.Parent as ClassDeclarationSyntax;
+    if (parentClass != null) {
+      return new MigrationWarning(
+          filePath,
+          className,
+          MigrationWarningKind.NestedHandlerClass,
+          $"Handler '{className}' is a nested class inside '{parentClass.Identifier.Text}'. " +
+          "Consider extracting to a top-level class for better discoverability.",
+          lineNumber,
+          parentClass.Identifier.Text);
+    }
+
+    return null;
+  }
+
+  private static List<MigrationWarning> _checkForUnknownParameters(
+      MethodDeclarationSyntax method,
+      string filePath,
+      string className) {
+    var warnings = new List<MigrationWarning>();
+    var parameters = method.ParameterList.Parameters;
+
+    // Skip first parameter (the message type)
+    foreach (var param in parameters.Skip(1)) {
+      var typeName = param.Type?.ToString() ?? "";
+      var baseTypeName = _getBaseTypeName(typeName);
+      var lineNumber = param.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+
+      // Skip known Wolverine types
+      if (_isKnownWolverineType(baseTypeName)) {
+        continue;
+      }
+
+      // Skip known Marten types
+      if (_isKnownMartenType(baseTypeName)) {
+        continue;
+      }
+
+      // Skip known standard types
+      if (_isKnownStandardType(baseTypeName)) {
+        continue;
+      }
+
+      // Check if it's an interface (starts with I and has uppercase second letter)
+      if (_isInterface(baseTypeName)) {
+        warnings.Add(new MigrationWarning(
+            filePath,
+            className,
+            MigrationWarningKind.UnknownInterfaceParameter,
+            $"Handler '{className}' has unknown interface parameter '{typeName}'. " +
+            "This interface may wrap Marten/Wolverine infrastructure that needs migration.",
+            lineNumber,
+            baseTypeName));
+        continue;
+      }
+
+      // Check if it's a custom context class (contains "Context" in name)
+      if (baseTypeName.Contains("Context", StringComparison.OrdinalIgnoreCase)) {
+        warnings.Add(new MigrationWarning(
+            filePath,
+            className,
+            MigrationWarningKind.CustomContextParameter,
+            $"Handler '{className}' has custom context parameter '{typeName}'. " +
+            "This context class may wrap Marten/Wolverine infrastructure that needs migration.",
+            lineNumber,
+            baseTypeName));
+      }
+    }
+
+    return warnings;
+  }
+
+  private static string _getBaseTypeName(string typeName) {
+    // Remove generic arguments: IHandle<T> -> IHandle
+    var genericIndex = typeName.IndexOf('<');
+    if (genericIndex > 0) {
+      return typeName.Substring(0, genericIndex);
+    }
+
+    return typeName;
+  }
+
+  private static bool _isKnownWolverineType(string typeName) {
+    return _knownWolverineInterfaces.Contains(typeName) ||
+           typeName.StartsWith("IHandle", StringComparison.Ordinal);
+  }
+
+  private static bool _isKnownMartenType(string typeName) {
+    return _knownMartenInterfaces.Contains(typeName);
+  }
+
+  private static bool _isKnownStandardType(string typeName) {
+    return _knownStandardTypes.Contains(typeName) ||
+           typeName.StartsWith("ILogger<", StringComparison.Ordinal);
+  }
+
+  private static bool _isInterface(string typeName) {
+    // Interface names start with 'I' followed by uppercase letter
+    return typeName.Length >= 2 &&
+           typeName[0] == 'I' &&
+           char.IsUpper(typeName[1]);
   }
 
   private static List<HandlerInfo> _findConventionBasedHandlers(

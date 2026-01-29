@@ -11,5 +11,9 @@
   <ItemGroup>
     <PackageReference Include="TUnit" />
     <PackageReference Include="Bogus" />
+    <!-- Container fixtures for integration testing -->
+    <PackageReference Include="Testcontainers.RabbitMq" />
+    <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="Npgsql" />
   </ItemGroup>
 </Project>

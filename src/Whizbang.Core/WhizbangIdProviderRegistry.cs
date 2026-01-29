@@ -31,8 +31,8 @@ namespace Whizbang.Core;
 /// </remarks>
 /// <docs>core-concepts/whizbang-ids</docs>
 public static class WhizbangIdProviderRegistry {
-  private static readonly Dictionary<Type, Func<IWhizbangIdProvider, object>> _factories = new();
-  private static readonly List<Action<IServiceCollection, IWhizbangIdProvider>> _diRegistrations = new();
+  private static readonly Dictionary<Type, Func<IWhizbangIdProvider, object>> _factories = [];
+  private static readonly List<Action<IServiceCollection, IWhizbangIdProvider>> _diRegistrations = [];
   private static readonly object _lock = new();
 
   /// <summary>

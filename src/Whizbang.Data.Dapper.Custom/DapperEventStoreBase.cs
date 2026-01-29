@@ -18,9 +18,9 @@ namespace Whizbang.Data.Dapper.Custom;
 /// </summary>
 /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs</tests>
 public abstract class DapperEventStoreBase : IEventStore {
-  private readonly IDbConnectionFactory _connectionFactory;
-  private readonly IDbExecutor _executor;
-  private readonly JsonSerializerOptions _jsonOptions;
+  protected IDbConnectionFactory ConnectionFactory { get; }
+  protected IDbExecutor Executor { get; }
+  protected JsonSerializerOptions JsonOptions { get; }
 
   protected DapperEventStoreBase(
     IDbConnectionFactory connectionFactory,
@@ -31,14 +31,10 @@ public abstract class DapperEventStoreBase : IEventStore {
     ArgumentNullException.ThrowIfNull(executor);
     ArgumentNullException.ThrowIfNull(jsonOptions);
 
-    _connectionFactory = connectionFactory;
-    _executor = executor;
-    _jsonOptions = jsonOptions;
+    ConnectionFactory = connectionFactory;
+    Executor = executor;
+    JsonOptions = jsonOptions;
   }
-
-  protected IDbConnectionFactory ConnectionFactory => _connectionFactory;
-  protected IDbExecutor Executor => _executor;
-  protected JsonSerializerOptions JsonOptions => _jsonOptions;
 
   /// <summary>
   /// Ensures the connection is open. Handles both pre-opened and closed connections.
@@ -88,6 +84,13 @@ public abstract class DapperEventStoreBase : IEventStore {
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_DifferentStreams_ShouldBeIndependentAsync</tests>
   /// <tests>tests/Whizbang.Data.Tests/DapperEventStoreTests.cs:AppendAsync_ConcurrentAppends_ShouldBeThreadSafeAsync</tests>
   public abstract Task AppendAsync<TMessage>(Guid streamId, MessageEnvelope<TMessage> envelope, CancellationToken cancellationToken = default);
+
+  /// <summary>
+  /// Appends an event to the specified stream using a raw message.
+  /// Derived classes must implement this to handle envelope lookup from IEnvelopeRegistry
+  /// or create a minimal envelope if not found.
+  /// </summary>
+  public abstract Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) where TMessage : notnull;
 
   /// <summary>
   /// Reads events from a stream starting from a specific sequence number.
@@ -148,10 +151,8 @@ public abstract class DapperEventStoreBase : IEventStore {
     var hopsTypeInfo = JsonOptions.GetTypeInfo(typeof(List<MessageHop>));
 
     foreach (var row in rows) {
-      var eventData = JsonSerializer.Deserialize(row.EventData, eventTypeInfo);
-      if (eventData == null) {
-        throw new InvalidOperationException($"Failed to deserialize event of type {row.EventType}");
-      }
+      var eventData = JsonSerializer.Deserialize(row.EventData, eventTypeInfo)
+        ?? throw new InvalidOperationException($"Failed to deserialize event of type {row.EventType}");
 
       // Deserialize metadata using dictionary approach (stored with snake_case keys)
       var metadataDict = JsonSerializer.Deserialize(row.Metadata, metadataDictTypeInfo) as Dictionary<string, JsonElement>
@@ -220,7 +221,7 @@ public abstract class DapperEventStoreBase : IEventStore {
       // We need to match against FullName (TypeName only) in our dictionary
       var storedTypeName = row.EventType;
       var commaIndex = storedTypeName.IndexOf(',');
-      var normalizedTypeName = commaIndex > 0 ? storedTypeName.Substring(0, commaIndex).Trim() : storedTypeName;
+      var normalizedTypeName = commaIndex > 0 ? storedTypeName[..commaIndex].Trim() : storedTypeName;
 
       // Look up the concrete type based on normalized EventType
       if (!typeLookup.TryGetValue(normalizedTypeName, out var eventTypeInfo)) {
@@ -230,10 +231,8 @@ public abstract class DapperEventStoreBase : IEventStore {
         );
       }
 
-      var eventData = JsonSerializer.Deserialize(row.EventData, eventTypeInfo);
-      if (eventData == null) {
-        throw new InvalidOperationException($"Failed to deserialize event of type {row.EventType}");
-      }
+      var eventData = JsonSerializer.Deserialize(row.EventData, eventTypeInfo)
+        ?? throw new InvalidOperationException($"Failed to deserialize event of type {row.EventType}");
 
       // Deserialize metadata using dictionary approach (stored with snake_case keys)
       var metadataDict = JsonSerializer.Deserialize(row.Metadata, metadataDictTypeInfo) as Dictionary<string, JsonElement>

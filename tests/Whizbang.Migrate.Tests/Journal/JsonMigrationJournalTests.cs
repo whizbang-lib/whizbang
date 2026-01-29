@@ -123,7 +123,7 @@ public class JsonMigrationJournalTests {
     var transformation = new TransformationRecord(
         TransformerName: "HandlerToReceptor",
         Status: TransformationStatus.Pending,
-        Files: new List<string> { "Handler.cs" },
+        Files: ["Handler.cs"],
         StartedAt: DateTimeOffset.UtcNow);
 
     // Act
@@ -142,7 +142,7 @@ public class JsonMigrationJournalTests {
     var transformation = new TransformationRecord(
         TransformerName: "HandlerToReceptor",
         Status: TransformationStatus.Pending,
-        Files: new List<string> { "Handler.cs" },
+        Files: ["Handler.cs"],
         StartedAt: DateTimeOffset.UtcNow);
     journal.RecordTransformation(transformation);
 
@@ -206,7 +206,7 @@ public class JsonMigrationJournalTests {
     originalJournal.RecordTransformation(new TransformationRecord(
         "HandlerToReceptor",
         TransformationStatus.Completed,
-        new List<string> { "Handler.cs" },
+        ["Handler.cs"],
         DateTimeOffset.UtcNow));
     await originalJournal.SaveAsync();
 
@@ -282,7 +282,7 @@ public class JsonMigrationJournalTests {
     journal.RecordTransformation(new TransformationRecord(
         "Transformer1",
         TransformationStatus.Completed,
-        new List<string> { "file1.cs", "file2.cs" },
+        ["file1.cs", "file2.cs"],
         DateTimeOffset.Parse("2025-01-01T00:00:00Z", CultureInfo.InvariantCulture),
         DateTimeOffset.Parse("2025-01-01T01:00:00Z", CultureInfo.InvariantCulture)));
 

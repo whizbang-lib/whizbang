@@ -85,7 +85,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   /// Symbol display format that includes nullable reference type annotations.
   /// This is critical for generating correct nullable-aware code in CS8619/CS8603 scenarios.
   /// </summary>
-  private static readonly SymbolDisplayFormat _fullyQualifiedWithNullabilityFormat = new SymbolDisplayFormat(
+  private static readonly SymbolDisplayFormat _fullyQualifiedWithNullabilityFormat = new(
       globalNamespaceStyle: SymbolDisplayGlobalNamespaceStyle.Included,
       typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
       genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters,

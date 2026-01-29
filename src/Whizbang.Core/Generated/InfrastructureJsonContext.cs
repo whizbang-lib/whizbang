@@ -5,6 +5,7 @@ using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Policies;
+using Whizbang.Core.Security;
 
 namespace Whizbang.Core.Generated;
 
@@ -69,6 +70,10 @@ namespace Whizbang.Core.Generated;
 // Perspective types
 [JsonSerializable(typeof(PerspectiveMetadata))]
 [JsonSerializable(typeof(PerspectiveScope))]
+// Security principal types (for AllowedPrincipals in PerspectiveScope)
+[JsonSerializable(typeof(SecurityPrincipalId))]
+[JsonSerializable(typeof(List<SecurityPrincipalId>))]
+[JsonSerializable(typeof(IReadOnlyList<SecurityPrincipalId>))]
 [JsonSourceGenerationOptions(
     DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull)]
 public partial class InfrastructureJsonContext : JsonSerializerContext {

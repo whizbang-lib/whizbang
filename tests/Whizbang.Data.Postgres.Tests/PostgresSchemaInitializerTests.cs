@@ -1,8 +1,9 @@
+using Dapper;
 using Npgsql;
-using Testcontainers.PostgreSql;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Data.Dapper.Postgres;
+using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.Postgres.Tests;
 
@@ -10,30 +11,52 @@ namespace Whizbang.Data.Postgres.Tests;
 /// Tests for PostgresSchemaInitializer to verify perspective schema integration.
 /// Phase 1: PerspectiveSchemaGenerator Runtime Integration
 /// Goal: 100% line and branch coverage
+/// Uses SharedPostgresContainer with per-test database isolation.
 /// </summary>
 public class PostgresSchemaInitializerTests : IAsyncDisposable {
-  private PostgreSqlContainer? _postgresContainer;
+  private string? _testDatabaseName;
   private string? _connectionString;
 
   [Before(Test)]
   public async Task SetupAsync() {
-    _postgresContainer = new PostgreSqlBuilder()
-      .WithImage("postgres:17-alpine")
-      .WithDatabase("whizbang_test")
-      .WithUsername("postgres")
-      .WithPassword("postgres")
-      .Build();
+    // Initialize shared container (only starts once)
+    await SharedPostgresContainer.InitializeAsync();
 
-    await _postgresContainer.StartAsync();
-    _connectionString = _postgresContainer.GetConnectionString();
+    // Create unique database for THIS test
+    _testDatabaseName = $"test_{Guid.NewGuid():N}";
+
+    await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
+    await adminConnection.OpenAsync();
+    await adminConnection.ExecuteAsync($"CREATE DATABASE {_testDatabaseName}");
+
+    // Build connection string for the test database
+    var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
+      Database = _testDatabaseName
+    };
+    _connectionString = builder.ConnectionString;
   }
 
   [After(Test)]
   public async Task TeardownAsync() {
-    if (_postgresContainer != null) {
-      await _postgresContainer.StopAsync();
-      await _postgresContainer.DisposeAsync();
-      _postgresContainer = null;
+    // Drop the test-specific database to clean up
+    if (_testDatabaseName != null) {
+      try {
+        await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
+        await adminConnection.OpenAsync();
+
+        // Terminate connections to the test database
+        await adminConnection.ExecuteAsync($@"
+          SELECT pg_terminate_backend(pg_stat_activity.pid)
+          FROM pg_stat_activity
+          WHERE pg_stat_activity.datname = '{_testDatabaseName}'
+          AND pid <> pg_backend_pid()");
+
+        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName}");
+      } catch {
+        // Ignore cleanup errors
+      }
+
+      _testDatabaseName = null;
       _connectionString = null;
     }
   }

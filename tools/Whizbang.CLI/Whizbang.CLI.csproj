@@ -17,7 +17,7 @@
     <!-- Package as global .NET tool -->
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>whizbang</ToolCommandName>
-    <PackageId>Whizbang.CLI</PackageId>
+    <PackageId>SoftwareExtravaganza.Whizbang.CLI</PackageId>
     <Version>0.1.0</Version>
     <Authors>Whizbang Contributors</Authors>
     <Description>Command-line tool for Whizbang schema management and utilities</Description>

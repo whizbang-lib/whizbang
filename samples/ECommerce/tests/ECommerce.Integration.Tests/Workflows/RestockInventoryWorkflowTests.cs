@@ -14,7 +14,7 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// Tests the complete flow: Command → Receptor → Event Store → Perspectives.
 /// Each test gets its own PostgreSQL + hosts. ServiceBus emulator is shared via SharedFixtureSource.
 /// </summary>
-[NotInParallel]
+[NotInParallel("ServiceBus")]
 public class RestockInventoryWorkflowTests {
   private static ServiceBusIntegrationFixture? _fixture;
   // Test product IDs (UUIDv7 for proper time-ordering and uniqueness across test runs)

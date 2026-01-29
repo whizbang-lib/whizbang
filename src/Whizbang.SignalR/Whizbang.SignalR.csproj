@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <Description>SignalR integration hooks for Whizbang message tag system</Description>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Whizbang.Core\Whizbang.Core.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Use framework reference for SignalR (part of ASP.NET Core shared framework) -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+</Project>

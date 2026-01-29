@@ -9,6 +9,12 @@ namespace Whizbang.Execution.Tests;
 /// Tests for PooledSourcePool{T} - the generic pooling mechanism.
 /// Verifies rent/return mechanics, thread safety, and type separation.
 /// </summary>
+/// <remarks>
+/// [NotInParallel] is required because PooledSourcePool{T} uses a static ConcurrentBag
+/// that is shared across all tests. Without this, parallel tests can interfere with
+/// each other by stealing pooled instances.
+/// </remarks>
+[NotInParallel]
 public class PooledSourcePoolTests {
   // ============================================================================
   // BASIC MECHANICS TESTS

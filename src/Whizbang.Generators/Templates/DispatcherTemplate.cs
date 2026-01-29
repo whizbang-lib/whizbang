@@ -82,4 +82,47 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
 
     return _ => Task.CompletedTask;
   }
+
+  /// <summary>
+  /// Generated lookup - returns a type-erased delegate that publishes to all receptors.
+  /// Used by auto-cascade to publish events extracted from receptor return values.
+  /// Zero reflection - uses compile-time type matching and lambda expressions.
+  /// </summary>
+  [DebuggerStepThrough]
+  protected override Func<object, Task>? GetUntypedReceptorPublisher(Type eventType) {
+    // Generated routing - zero reflection!
+    #region UNTYPED_PUBLISH_ROUTING
+    // This region will be replaced with generated untyped publish routing code
+    #endregion
+
+    return null;
+  }
+
+  /// <summary>
+  /// Generated lookup - returns a sync delegate that invokes the appropriate sync receptor.
+  /// Zero reflection - uses compile-time type matching and lambda expressions.
+  /// </summary>
+  [DebuggerStepThrough]
+  protected override SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType) {
+    // Generated routing for sync receptors - zero reflection!
+    #region SYNC_SEND_ROUTING
+    // This region will be replaced with generated sync receptor routing code
+    #endregion
+
+    return null;
+  }
+
+  /// <summary>
+  /// Generated lookup - returns a void sync delegate that invokes the appropriate void sync receptor.
+  /// Zero reflection - uses compile-time type matching and lambda expressions.
+  /// </summary>
+  [DebuggerStepThrough]
+  protected override VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType) {
+    // Generated routing for void sync receptors - zero reflection!
+    #region VOID_SYNC_SEND_ROUTING
+    // This region will be replaced with generated void sync receptor routing code
+    #endregion
+
+    return null;
+  }
 }

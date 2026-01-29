@@ -226,9 +226,9 @@ public class InMemoryTraceStoreTests : TraceStoreContractTests {
     // Arrange
     var store = new InMemoryTraceStore();
 
-    // Create message with empty Guid causation (root message)
+    // Create message with null causation (root message)
     var envelope = _createEnvelope(
-      causationId: MessageId.From(Guid.Empty) // Empty causation ID
+      causationId: null // Null causation ID indicates root message
     );
 
     await store.StoreAsync(envelope);

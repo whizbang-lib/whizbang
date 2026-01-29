@@ -116,6 +116,26 @@ public class DapperPostgresEventStore(
       lastException);
   }
 
+  /// <inheritdoc />
+  public override Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(message);
+
+    // Create a minimal envelope - registry-based lookup would require constructor injection
+    // which is a larger refactor. For now, create minimal envelope for compatibility.
+    var envelope = new MessageEnvelope<TMessage> {
+      MessageId = MessageId.New(),
+      Payload = message,
+      Hops = [
+        new MessageHop {
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Timestamp = DateTimeOffset.UtcNow
+        }
+      ]
+    };
+
+    return AppendAsync(streamId, envelope, cancellationToken);
+  }
+
   /// <summary>
   /// Reads events from a stream by stream ID (UUID) with strong typing.
   /// Reconstructs envelope from 3 JSONB columns.

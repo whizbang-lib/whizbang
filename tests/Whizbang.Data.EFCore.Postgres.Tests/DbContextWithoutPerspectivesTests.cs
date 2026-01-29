@@ -1,12 +1,13 @@
+using Dapper;
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
-using Testcontainers.PostgreSql;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Data.EFCore.Custom;
 using Whizbang.Data.EFCore.Postgres;
 using Whizbang.Data.EFCore.Postgres.Tests.Generated;
+using Whizbang.Testing.Containers;
 
 namespace Whizbang.Data.EFCore.Postgres.Tests;
 
@@ -14,9 +15,10 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// Tests for DbContexts with [WhizbangDbContext] attribute but NO user-defined perspectives.
 /// Verifies that core Whizbang tables (Inbox/Outbox/EventStore/ServiceInstances) are created
 /// even when there are no custom perspectives.
+/// Uses SharedPostgresContainer with per-test database isolation.
 /// </summary>
 public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
-  private PostgreSqlContainer? _postgresContainer;
+  private string? _testDatabaseName;
   private string _connectionString = null!;
   private DbContextOptions<MinimalDbContext> _dbContextOptions = null!;
 
@@ -25,16 +27,22 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
     // Ensure legacy timestamp behavior is disabled (UTC everywhere)
     AppContext.SetSwitch("Npgsql.EnableLegacyTimestampBehavior", false);
 
-    _postgresContainer = new PostgreSqlBuilder()
-      .WithImage("postgres:17-alpine")
-      .WithDatabase("whizbang_test_minimal")
-      .WithUsername("postgres")
-      .WithPassword("postgres")
-      .Build();
+    // Initialize shared container (only starts once)
+    await SharedPostgresContainer.InitializeAsync();
 
-    await _postgresContainer.StartAsync();
+    // Create unique database for THIS test
+    _testDatabaseName = $"test_{Guid.NewGuid():N}";
 
-    _connectionString = $"{_postgresContainer.GetConnectionString()};Timezone=UTC";
+    await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
+    await adminConnection.OpenAsync();
+    await adminConnection.ExecuteAsync($"CREATE DATABASE {_testDatabaseName}");
+
+    // Build connection string for the test database
+    var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
+      Database = _testDatabaseName,
+      Timezone = "UTC"
+    };
+    _connectionString = builder.ConnectionString;
 
     var optionsBuilder = new DbContextOptionsBuilder<MinimalDbContext>();
     optionsBuilder.UseNpgsql(_connectionString);
@@ -43,8 +51,25 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
 
   [After(Test)]
   public async Task CleanupAsync() {
-    if (_postgresContainer != null) {
-      await _postgresContainer.DisposeAsync();
+    // Drop the test-specific database to clean up
+    if (_testDatabaseName != null) {
+      try {
+        await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
+        await adminConnection.OpenAsync();
+
+        // Terminate connections to the test database
+        await adminConnection.ExecuteAsync($@"
+          SELECT pg_terminate_backend(pg_stat_activity.pid)
+          FROM pg_stat_activity
+          WHERE pg_stat_activity.datname = '{_testDatabaseName}'
+          AND pid <> pg_backend_pid()");
+
+        await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_testDatabaseName}");
+      } catch {
+        // Ignore cleanup errors
+      }
+
+      _testDatabaseName = null;
     }
   }
 
@@ -163,9 +188,8 @@ public class DbContextWithoutPerspectivesTests : IAsyncDisposable {
   }
 
   public async ValueTask DisposeAsync() {
-    if (_postgresContainer != null) {
-      await _postgresContainer.DisposeAsync();
-    }
+    await CleanupAsync();
+    GC.SuppressFinalize(this);
   }
 }
 

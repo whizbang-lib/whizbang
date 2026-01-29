@@ -492,12 +492,12 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   private static Dictionary<string, string> _loadCodeDocsMap(SourceProductionContext context) {
     var docsPath = PathResolver.FindDocsRepositoryPath();
     if (docsPath == null) {
-      return new Dictionary<string, string>();
+      return [];
     }
 
     var mapPath = Path.Combine(docsPath, "src", "assets", "code-docs-map.json");
     if (!File.Exists(mapPath)) {
-      return new Dictionary<string, string>();
+      return [];
     }
 
     try {
@@ -506,7 +506,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
       return map?.ToDictionary(
         kvp => kvp.Key,
         kvp => kvp.Value.Docs
-      ) ?? new Dictionary<string, string>();
+      ) ?? [];
     } catch (Exception ex) {
       // Log diagnostic but don't fail generation
       context.ReportDiagnostic(Diagnostic.Create(
@@ -514,7 +514,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
         Location.None,
         ex.Message
       ));
-      return new Dictionary<string, string>();
+      return [];
     }
   }
 
@@ -525,12 +525,12 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
   private static Dictionary<string, TestInfo[]> _loadCodeTestsMap(SourceProductionContext context) {
     var docsPath = PathResolver.FindDocsRepositoryPath();
     if (docsPath == null) {
-      return new Dictionary<string, TestInfo[]>();
+      return [];
     }
 
     var mapPath = Path.Combine(docsPath, "src", "assets", "code-tests-map.json");
     if (!File.Exists(mapPath)) {
-      return new Dictionary<string, TestInfo[]>();
+      return [];
     }
 
     try {
@@ -544,7 +544,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
           TestLine: t.TestLine,
           TestClass: t.TestClass ?? ""
         )).ToArray() ?? []
-      ) ?? new Dictionary<string, TestInfo[]>();
+      ) ?? [];
     } catch (Exception ex) {
       // Log diagnostic but don't fail generation
       context.ReportDiagnostic(Diagnostic.Create(
@@ -552,7 +552,7 @@ public class MessageRegistryGenerator : IIncrementalGenerator {
         Location.None,
         ex.Message
       ));
-      return new Dictionary<string, TestInfo[]>();
+      return [];
     }
   }
 

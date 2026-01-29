@@ -22,7 +22,7 @@ public static class LifecycleStageTestExtensions {
     int timeoutMilliseconds = 5000)
     where TMessage : IMessage {
 
-    return await WaitForLifecycleStageAsync<TMessage>(
+    return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.ImmediateAsync,
       timeoutMilliseconds);
@@ -37,7 +37,7 @@ public static class LifecycleStageTestExtensions {
     int timeoutMilliseconds = 10000)
     where TMessage : IMessage {
 
-    return await WaitForLifecycleStageAsync<TMessage>(
+    return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PreDistributeInline,
       timeoutMilliseconds);
@@ -52,7 +52,7 @@ public static class LifecycleStageTestExtensions {
     int timeoutMilliseconds = 10000)
     where TMessage : IMessage {
 
-    return await WaitForLifecycleStageAsync<TMessage>(
+    return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PreDistributeAsync,
       timeoutMilliseconds);
@@ -67,7 +67,7 @@ public static class LifecycleStageTestExtensions {
     int timeoutMilliseconds = 10000)
     where TMessage : IMessage {
 
-    return await WaitForLifecycleStageAsync<TMessage>(
+    return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.DistributeAsync,
       timeoutMilliseconds);
@@ -82,7 +82,7 @@ public static class LifecycleStageTestExtensions {
     int timeoutMilliseconds = 10000)
     where TMessage : IMessage {
 
-    return await WaitForLifecycleStageAsync<TMessage>(
+    return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PostDistributeInline,
       timeoutMilliseconds);
@@ -97,7 +97,7 @@ public static class LifecycleStageTestExtensions {
     int timeoutMilliseconds = 10000)
     where TMessage : IMessage {
 
-    return await WaitForLifecycleStageAsync<TMessage>(
+    return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PostDistributeAsync,
       timeoutMilliseconds);
@@ -112,7 +112,7 @@ public static class LifecycleStageTestExtensions {
     int timeoutMilliseconds = 15000)
     where TMessage : IMessage {
 
-    return await WaitForLifecycleStageAsync<TMessage>(
+    return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PreOutboxInline,
       timeoutMilliseconds);
@@ -127,7 +127,7 @@ public static class LifecycleStageTestExtensions {
     int timeoutMilliseconds = 15000)
     where TMessage : IMessage {
 
-    return await WaitForLifecycleStageAsync<TMessage>(
+    return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PreOutboxAsync,
       timeoutMilliseconds);
@@ -142,7 +142,7 @@ public static class LifecycleStageTestExtensions {
     int timeoutMilliseconds = 15000)
     where TMessage : IMessage {
 
-    return await WaitForLifecycleStageAsync<TMessage>(
+    return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PostOutboxInline,
       timeoutMilliseconds);
@@ -157,7 +157,7 @@ public static class LifecycleStageTestExtensions {
     int timeoutMilliseconds = 15000)
     where TMessage : IMessage {
 
-    return await WaitForLifecycleStageAsync<TMessage>(
+    return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PostOutboxAsync,
       timeoutMilliseconds);
@@ -172,7 +172,7 @@ public static class LifecycleStageTestExtensions {
     int timeoutMilliseconds = 15000)
     where TMessage : IMessage {
 
-    return await WaitForLifecycleStageAsync<TMessage>(
+    return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PreInboxInline,
       timeoutMilliseconds);
@@ -187,7 +187,7 @@ public static class LifecycleStageTestExtensions {
     int timeoutMilliseconds = 15000)
     where TMessage : IMessage {
 
-    return await WaitForLifecycleStageAsync<TMessage>(
+    return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PreInboxAsync,
       timeoutMilliseconds);
@@ -202,7 +202,7 @@ public static class LifecycleStageTestExtensions {
     int timeoutMilliseconds = 15000)
     where TMessage : IMessage {
 
-    return await WaitForLifecycleStageAsync<TMessage>(
+    return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PostInboxInline,
       timeoutMilliseconds);
@@ -217,7 +217,7 @@ public static class LifecycleStageTestExtensions {
     int timeoutMilliseconds = 15000)
     where TMessage : IMessage {
 
-    return await WaitForLifecycleStageAsync<TMessage>(
+    return await _waitForLifecycleStageAsync<TMessage>(
       host,
       LifecycleStage.PostInboxAsync,
       timeoutMilliseconds);
@@ -233,7 +233,7 @@ public static class LifecycleStageTestExtensions {
     int timeoutMilliseconds = 15000)
     where TEvent : IEvent {
 
-    return await WaitForLifecycleStageAsync<TEvent>(
+    return await _waitForLifecycleStageAsync<TEvent>(
       host,
       LifecycleStage.PrePerspectiveInline,
       timeoutMilliseconds,
@@ -250,7 +250,7 @@ public static class LifecycleStageTestExtensions {
     int timeoutMilliseconds = 15000)
     where TEvent : IEvent {
 
-    return await WaitForLifecycleStageAsync<TEvent>(
+    return await _waitForLifecycleStageAsync<TEvent>(
       host,
       LifecycleStage.PrePerspectiveAsync,
       timeoutMilliseconds,
@@ -267,7 +267,7 @@ public static class LifecycleStageTestExtensions {
     int timeoutMilliseconds = 15000)
     where TEvent : IEvent {
 
-    return await WaitForLifecycleStageAsync<TEvent>(
+    return await _waitForLifecycleStageAsync<TEvent>(
       host,
       LifecycleStage.PostPerspectiveAsync,
       timeoutMilliseconds,
@@ -278,7 +278,7 @@ public static class LifecycleStageTestExtensions {
   /// Core helper method that registers a receptor, waits for completion, and returns the receptor.
   /// Returns the receptor so tests can inspect invocation count, last message, etc.
   /// </summary>
-  private static async Task<GenericLifecycleCompletionReceptor<TMessage>> WaitForLifecycleStageAsync<TMessage>(
+  private static async Task<GenericLifecycleCompletionReceptor<TMessage>> _waitForLifecycleStageAsync<TMessage>(
     IHost host,
     LifecycleStage stage,
     int timeoutMilliseconds,

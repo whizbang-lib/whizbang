@@ -52,9 +52,9 @@ public class IntervalUnitOfWorkStrategy : IUnitOfWorkStrategy, IAsyncDisposable 
       if (_currentUnit == null) {
         _currentUnit = new DispatchUnitOfWork {
           UnitId = Uuid7.NewUuid7().ToGuid(),
-          Messages = new List<object>(),
+          Messages = [],
           CreatedAt = DateTimeOffset.UtcNow,
-          LifecycleStages = new Dictionary<object, LifecycleStage>()
+          LifecycleStages = []
         };
         // Track in dictionary so GetMessagesForUnit always works
         _allUnits[_currentUnit.UnitId] = _currentUnit;

@@ -1,0 +1,142 @@
+name: Quality (Reusable)
+
+on:
+  workflow_call:
+    secrets:
+      SONAR_TOKEN:
+        description: "SonarCloud token"
+        required: true
+      CODECOV_TOKEN:
+        description: "Codecov token"
+        required: true
+
+jobs:
+  quality:
+    name: Quality Analysis
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for SonarCloud
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Cache SonarCloud packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.sonar/cache
+          key: ${{ runner.os }}-sonar
+          restore-keys: ${{ runner.os }}-sonar
+
+      - name: Install tools
+        run: |
+          dotnet tool install --global dotnet-sonarscanner
+          dotnet tool install --global dotnet-reportgenerator-globaltool
+
+      - name: Download All Coverage Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: coverage-*
+          path: coverage
+          merge-multiple: true
+
+      - name: List Downloaded Coverage Files
+        run: |
+          echo "=== Downloaded coverage files ==="
+          find coverage -name "*.cobertura.xml" -o -name "*.xml" 2>/dev/null || echo "No coverage files found"
+          ls -laR coverage/ || echo "Coverage directory empty or missing"
+
+      - name: Upload Merged Coverage to Codecov
+        uses: codecov/codecov-action@0f8570b1a125f4937846a11fcfa3bcd548bd8c97 # v4.6.0
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          directory: coverage
+          files: '**/*.cobertura.xml'
+          fail_ci_if_error: false
+          flags: alltests
+          name: codecov-merged
+
+      - name: Build Project for Source-Generated Files
+        run: |
+          echo "Building project to ensure all source-generated files exist before merging coverage..."
+          dotnet clean --configuration Release
+          dotnet build --configuration Release -maxcpucount:1
+          echo "Build complete - all source-generated files now exist"
+
+      - name: Merge Coverage Reports
+        run: |
+          # Find all cobertura XML files
+          COVERAGE_FILES=$(find coverage -name "*.cobertura.xml" 2>/dev/null | tr '\n' ';')
+
+          if [ -z "$COVERAGE_FILES" ]; then
+            echo "No coverage files found - running unit tests locally as fallback"
+            for project in \
+              tests/Whizbang.Core.Tests \
+              tests/Whizbang.Execution.Tests \
+              tests/Whizbang.Generators.Tests \
+              tests/Whizbang.Hosting.Azure.ServiceBus.Tests \
+              tests/Whizbang.Hosting.RabbitMQ.Tests \
+              tests/Whizbang.Observability.Tests \
+              tests/Whizbang.Partitioning.Tests \
+              tests/Whizbang.Policies.Tests \
+              tests/Whizbang.Sequencing.Tests \
+              tests/Whizbang.Transports.RabbitMQ.Tests \
+              tests/Whizbang.Transports.Tests
+            do
+              dotnet test --project "$project" --configuration Release \
+                --coverage --coverage-output-format cobertura || true
+            done
+            COVERAGE_FILES=$(find . -name "*.cobertura.xml" 2>/dev/null | tr '\n' ';')
+          fi
+
+          echo "Coverage files to merge: $COVERAGE_FILES"
+
+          # Generate merged report in SonarQube format
+          reportgenerator \
+            "-reports:${COVERAGE_FILES}" \
+            "-targetdir:coverage/sonarqube" \
+            "-reporttypes:SonarQube"
+
+          # Convert absolute paths to relative paths for SonarCloud
+          sed -i 's|/home/runner/work/whizbang/whizbang/||g' coverage/sonarqube/SonarQube.xml
+
+          # Debug: show first few lines to verify paths
+          echo "=== Merged coverage report (first 30 lines) ==="
+          head -30 coverage/sonarqube/SonarQube.xml
+
+      - name: SonarCloud Analysis
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          dotnet-sonarscanner begin /k:"whizbang-lib_whizbang" /o:"whizbang-lib" \
+            /d:sonar.token="${SONAR_TOKEN}" \
+            /d:sonar.host.url="https://sonarcloud.io" \
+            /d:sonar.exclusions="**/samples/**,**/benchmarks/**,**/*Generated.cs,**/.whizbang-generated/**" \
+            /d:sonar.coverage.exclusions="**/samples/**,**/benchmarks/**,**/tests/**,src/Whizbang.Generators/**,src/Whizbang.Generators.Shared/**,src/Whizbang.Data.Schema/**,src/Whizbang.Data.EFCore.Postgres.Generators/**,src/Whizbang.Hosting.Azure.ServiceBus/**,src/Whizbang.Hosting.RabbitMQ/**,src/Whizbang.Data.Dapper.Postgres/**,src/Whizbang.Transports.RabbitMQ/**,src/Whizbang.Data.EFCore.Postgres/**,src/Whizbang.Transports.AzureServiceBus/**,src/Whizbang.Data.Dapper.Sqlite/**,src/Whizbang.Data.Dapper.Custom/**,src/Whizbang.Data.EFCore.Custom/**,src/Whizbang.Data.Postgres/**,src/Whizbang.Testing/**,src/Whizbang.Observability/**,src/Whizbang.SignalR/**" \
+            /d:sonar.coverageReportPaths="coverage/sonarqube/SonarQube.xml" \
+            /d:sonar.issue.ignore.multicriteria="e1,e2,e3,e4,e5,e6" \
+            /d:sonar.issue.ignore.multicriteria.e1.ruleKey="csharpsquid:S1192" \
+            /d:sonar.issue.ignore.multicriteria.e1.resourceKey="src/Whizbang.Generators/**" \
+            /d:sonar.issue.ignore.multicriteria.e2.ruleKey="csharpsquid:S1192" \
+            /d:sonar.issue.ignore.multicriteria.e2.resourceKey="src/Whizbang.Generators.Shared/**" \
+            /d:sonar.issue.ignore.multicriteria.e3.ruleKey="csharpsquid:S1192" \
+            /d:sonar.issue.ignore.multicriteria.e3.resourceKey="src/Whizbang.Data.EFCore.Postgres.Generators/**" \
+            /d:sonar.issue.ignore.multicriteria.e4.ruleKey="csharpsquid:S1192" \
+            /d:sonar.issue.ignore.multicriteria.e4.resourceKey="src/Whizbang.Data.Schema/Schemas/**" \
+            /d:sonar.issue.ignore.multicriteria.e5.ruleKey="csharpsquid:S6444" \
+            /d:sonar.issue.ignore.multicriteria.e5.resourceKey="src/Whizbang.Generators.Shared/**" \
+            /d:sonar.issue.ignore.multicriteria.e6.ruleKey="csharpsquid:S3776" \
+            /d:sonar.issue.ignore.multicriteria.e6.resourceKey="src/Whizbang.Generators/**"
+
+          # Build for SonarScanner to analyze code
+          dotnet clean --configuration Release
+          dotnet build --configuration Release -maxcpucount:1
+
+          dotnet-sonarscanner end /d:sonar.token="${SONAR_TOKEN}"

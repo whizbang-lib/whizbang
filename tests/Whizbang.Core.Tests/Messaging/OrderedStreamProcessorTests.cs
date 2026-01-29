@@ -14,7 +14,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// Tests for OrderedStreamProcessor - verifies stream-based ordering guarantees.
 /// </summary>
 public class OrderedStreamProcessorTests {
-  private readonly Uuid7IdProvider _idProvider = new Uuid7IdProvider();
+  private readonly Uuid7IdProvider _idProvider = new();
 
   // ========================================
   // Priority 2 Tests: Stream Ordering (Inbox)

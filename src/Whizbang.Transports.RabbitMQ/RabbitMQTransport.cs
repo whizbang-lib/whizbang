@@ -160,10 +160,10 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
         properties.Headers["CausationId"] = causationId.Value.Value.ToString();
       }
 
-      // Add custom metadata
+      // Add custom metadata (convert JsonElement to RabbitMQ-compatible types)
       if (destination.Metadata != null) {
         foreach (var (key, value) in destination.Metadata) {
-          properties.Headers[key] = value;
+          properties.Headers[key] = _convertJsonElementToRabbitMqValue(value);
         }
       }
 
@@ -215,14 +215,7 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
     var queueName = destination.RoutingKey ?? _options.DefaultQueueName
       ?? throw new InvalidOperationException("Queue name must be specified in TransportDestination.RoutingKey or RabbitMQOptions.DefaultQueueName");
 
-    // Get routing pattern from metadata if present, otherwise default to "#" (all messages)
-    var routingPattern = "#";
-    if (destination.Metadata?.TryGetValue("RoutingPattern", out var patternValue) == true) {
-      var patternStr = patternValue.ToString();
-      if (!string.IsNullOrEmpty(patternStr)) {
-        routingPattern = patternStr;
-      }
-    }
+    var routingPattern = _getRoutingPattern(destination);
 
     _logger?.LogDebug(
       "Creating subscription for exchange {ExchangeName}, queue {QueueName}, routing pattern {RoutingPattern}",
@@ -257,39 +250,7 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
 
       // Declare dead-letter exchange and queue if enabled
       if (_options.AutoDeclareDeadLetterExchange) {
-        var dlxName = $"{exchangeName}.dlx";
-        var dlqName = $"{queueName}.dlq";
-
-        await channel.ExchangeDeclareAsync(
-          exchange: dlxName,
-          type: "fanout",
-          durable: true,
-          autoDelete: false,
-          arguments: null,
-          passive: false,
-          noWait: false,
-          cancellationToken: cancellationToken
-        );
-
-        await channel.QueueDeclareAsync(
-          queue: dlqName,
-          durable: true,
-          exclusive: false,
-          autoDelete: false,
-          arguments: null,
-          passive: false,
-          noWait: false,
-          cancellationToken: cancellationToken
-        );
-
-        await channel.QueueBindAsync(
-          queue: dlqName,
-          exchange: dlxName,
-          routingKey: "",
-          arguments: null,
-          noWait: false,
-          cancellationToken: cancellationToken
-        );
+        await _declareDeadLetterExchangeAsync(channel, exchangeName, queueName, cancellationToken);
       }
 
       // Declare consumer queue with dead-letter exchange
@@ -326,71 +287,21 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
       RabbitMQSubscription? subscription = null;
 
       // Set up message received handler
-      consumer.ReceivedAsync += async (sender, args) => {
-        if (subscription != null && !subscription.IsActive) {
-          // If paused, nack the message with requeue
-          await channel.BasicNackAsync(
-            deliveryTag: args.DeliveryTag,
-            multiple: false,
-            requeue: true
-          );
+      consumer.ReceivedAsync += async (_, args) => {
+        if (subscription is { IsActive: false }) {
+          await channel.BasicNackAsync(args.DeliveryTag, multiple: false, requeue: true);
           return;
         }
 
         try {
-          // Get envelope type from headers
-          byte[]? envelopeTypeBytes = null;
-          if (args.BasicProperties.Headers?.TryGetValue("EnvelopeType", out var envelopeTypeObj) == true &&
-              envelopeTypeObj is byte[] bytes) {
-            envelopeTypeBytes = bytes;
-          }
-
-          if (envelopeTypeBytes == null) {
-            _logger?.LogError("Message {MessageId} missing EnvelopeType header", args.BasicProperties.MessageId);
+          var envelope = _deserializeMessage(args, out var envelopeTypeName);
+          if (envelope == null) {
             await channel.BasicNackAsync(args.DeliveryTag, false, false);
             return;
           }
 
-          var envelopeTypeName = Encoding.UTF8.GetString(envelopeTypeBytes);
-
-          // Deserialize envelope using AOT-compatible JsonContextRegistry
-          var json = Encoding.UTF8.GetString(args.Body.Span);
-
-          var typeInfo = Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName(envelopeTypeName, _jsonOptions);
-          if (typeInfo == null) {
-            _logger?.LogError("No JsonTypeInfo found for envelope type {EnvelopeType}", envelopeTypeName);
-            await channel.BasicNackAsync(args.DeliveryTag, false, false);
-            return;
-          }
-
-          _logger?.LogDebug(
-            "DIAGNOSTIC [RabbitMQ]: Deserializing envelope. EnvelopeTypeName={EnvelopeTypeName}, TypeInfo={TypeInfoType}",
-            envelopeTypeName,
-            typeInfo.Type.FullName
-          );
-
-          if (JsonSerializer.Deserialize(json, typeInfo) is not IMessageEnvelope envelope) {
-            _logger?.LogError("Failed to deserialize message {MessageId} as {EnvelopeType}",
-              args.BasicProperties.MessageId, envelopeTypeName);
-            await channel.BasicNackAsync(args.DeliveryTag, false, false);
-            return;
-          }
-
-          _logger?.LogDebug(
-            "DIAGNOSTIC [RabbitMQ]: Deserialized envelope. EnvelopeType={EnvelopeType}, PayloadType={PayloadType}, MessageId={MessageId}",
-            envelope.GetType().FullName,
-            envelope.Payload?.GetType().FullName ?? "null",
-            envelope.MessageId.Value
-          );
-
-          // Invoke handler with envelope type metadata
           await handler(envelope, envelopeTypeName, cancellationToken);
-
-          // Acknowledge the message
-          await channel.BasicAckAsync(
-            deliveryTag: args.DeliveryTag,
-            multiple: false
-          );
+          await channel.BasicAckAsync(args.DeliveryTag, multiple: false);
 
           _logger?.LogDebug(
             "Processed message {MessageId} from queue {QueueName}",
@@ -398,30 +309,7 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
             queueName
           );
         } catch (Exception ex) {
-          _logger?.LogError(
-            ex,
-            "Error processing message {MessageId} from queue {QueueName}",
-            args.BasicProperties.MessageId ?? "unknown",
-            queueName
-          );
-
-          // Check delivery count via redelivered flag and custom header
-          var deliveryCount = args.Redelivered ? 2 : 1;
-          if (args.BasicProperties.Headers?.TryGetValue("x-delivery-count", out var countObj) == true) {
-            deliveryCount = Convert.ToInt32(countObj, CultureInfo.InvariantCulture);
-          }
-
-          if (deliveryCount >= _options.MaxDeliveryAttempts) {
-            _logger?.LogWarning(
-              "Message {MessageId} exceeded max delivery attempts ({MaxAttempts}), nacking without requeue",
-              args.BasicProperties.MessageId,
-              _options.MaxDeliveryAttempts
-            );
-            await channel.BasicNackAsync(args.DeliveryTag, false, false);
-          } else {
-            // Nack with requeue for retry
-            await channel.BasicNackAsync(args.DeliveryTag, false, true);
-          }
+          await _handleMessageFailureAsync(channel, args, queueName, ex);
         }
       };
 
@@ -475,6 +363,163 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
       "Request/response pattern is not supported by RabbitMQ transport in v0.1.0. " +
       "Use publish/subscribe pattern instead."
     );
+  }
+
+  /// <summary>
+  /// Declares dead letter exchange and queue for a given exchange/queue pair.
+  /// </summary>
+  private static async Task _declareDeadLetterExchangeAsync(
+    IChannel channel,
+    string exchangeName,
+    string queueName,
+    CancellationToken cancellationToken
+  ) {
+    var dlxName = $"{exchangeName}.dlx";
+    var dlqName = $"{queueName}.dlq";
+
+    await channel.ExchangeDeclareAsync(
+      exchange: dlxName,
+      type: "fanout",
+      durable: true,
+      autoDelete: false,
+      arguments: null,
+      passive: false,
+      noWait: false,
+      cancellationToken: cancellationToken
+    );
+
+    await channel.QueueDeclareAsync(
+      queue: dlqName,
+      durable: true,
+      exclusive: false,
+      autoDelete: false,
+      arguments: null,
+      passive: false,
+      noWait: false,
+      cancellationToken: cancellationToken
+    );
+
+    await channel.QueueBindAsync(
+      queue: dlqName,
+      exchange: dlxName,
+      routingKey: "",
+      arguments: null,
+      noWait: false,
+      cancellationToken: cancellationToken
+    );
+  }
+
+  /// <summary>
+  /// Extracts the routing pattern from destination metadata.
+  /// </summary>
+  private static string _getRoutingPattern(TransportDestination destination) {
+    if (destination.Metadata?.TryGetValue("RoutingPattern", out var patternValue) != true) {
+      return "#";
+    }
+
+    var patternStr = patternValue.ToString();
+    return string.IsNullOrEmpty(patternStr) ? "#" : patternStr;
+  }
+
+  /// <summary>
+  /// Deserializes a message from RabbitMQ delivery args.
+  /// </summary>
+  private IMessageEnvelope? _deserializeMessage(BasicDeliverEventArgs args, out string? envelopeTypeName) {
+    envelopeTypeName = null;
+
+    // Get envelope type from headers
+    if (args.BasicProperties.Headers?.TryGetValue("EnvelopeType", out var envelopeTypeObj) != true ||
+        envelopeTypeObj is not byte[] envelopeTypeBytes) {
+      _logger?.LogError("Message {MessageId} missing EnvelopeType header", args.BasicProperties.MessageId);
+      return null;
+    }
+
+    envelopeTypeName = Encoding.UTF8.GetString(envelopeTypeBytes);
+    var json = Encoding.UTF8.GetString(args.Body.Span);
+
+    var typeInfo = Whizbang.Core.Serialization.JsonContextRegistry.GetTypeInfoByName(envelopeTypeName, _jsonOptions);
+    if (typeInfo == null) {
+      _logger?.LogError("No JsonTypeInfo found for envelope type {EnvelopeType}", envelopeTypeName);
+      return null;
+    }
+
+    _logger?.LogDebug(
+      "DIAGNOSTIC [RabbitMQ]: Deserializing envelope. EnvelopeTypeName={EnvelopeTypeName}, TypeInfo={TypeInfoType}",
+      envelopeTypeName,
+      typeInfo.Type.FullName
+    );
+
+    if (JsonSerializer.Deserialize(json, typeInfo) is not IMessageEnvelope envelope) {
+      _logger?.LogError("Failed to deserialize message {MessageId} as {EnvelopeType}",
+        args.BasicProperties.MessageId, envelopeTypeName);
+      return null;
+    }
+
+    _logger?.LogDebug(
+      "DIAGNOSTIC [RabbitMQ]: Deserialized envelope. EnvelopeType={EnvelopeType}, PayloadType={PayloadType}, MessageId={MessageId}",
+      envelope.GetType().FullName,
+      envelope.Payload?.GetType().FullName ?? "null",
+      envelope.MessageId.Value
+    );
+
+    return envelope;
+  }
+
+  /// <summary>
+  /// Handles message delivery failure with appropriate nack behavior.
+  /// </summary>
+  private async Task _handleMessageFailureAsync(
+    IChannel channel,
+    BasicDeliverEventArgs args,
+    string queueName,
+    Exception ex
+  ) {
+    _logger?.LogError(
+      ex,
+      "Error processing message {MessageId} from queue {QueueName}",
+      args.BasicProperties.MessageId ?? "unknown",
+      queueName
+    );
+
+    // Check delivery count via redelivered flag and custom header
+    var deliveryCount = args.Redelivered ? 2 : 1;
+    if (args.BasicProperties.Headers?.TryGetValue("x-delivery-count", out var countObj) == true) {
+      deliveryCount = Convert.ToInt32(countObj, CultureInfo.InvariantCulture);
+    }
+
+    if (deliveryCount >= _options.MaxDeliveryAttempts) {
+      _logger?.LogWarning(
+        "Message {MessageId} exceeded max delivery attempts ({MaxAttempts}), nacking without requeue",
+        args.BasicProperties.MessageId,
+        _options.MaxDeliveryAttempts
+      );
+      await channel.BasicNackAsync(args.DeliveryTag, false, false);
+    } else {
+      // Nack with requeue for retry
+      await channel.BasicNackAsync(args.DeliveryTag, false, true);
+    }
+  }
+
+  /// <summary>
+  /// Converts a JsonElement to a RabbitMQ-compatible header value.
+  /// RabbitMQ headers support: string, int, long, bool, byte[], and nested tables.
+  /// </summary>
+  private static object? _convertJsonElementToRabbitMqValue(JsonElement element) {
+    return element.ValueKind switch {
+      JsonValueKind.String => element.GetString(),
+      JsonValueKind.Number when element.TryGetInt32(out var i) => i,
+      JsonValueKind.Number when element.TryGetInt64(out var l) => l,
+      JsonValueKind.Number => element.GetDouble(),
+      JsonValueKind.True => true,
+      JsonValueKind.False => false,
+      JsonValueKind.Null => null,
+      JsonValueKind.Array => element.EnumerateArray()
+        .Select(_convertJsonElementToRabbitMqValue)
+        .ToList(),
+      JsonValueKind.Object => element.EnumerateObject()
+        .ToDictionary(p => p.Name, p => _convertJsonElementToRabbitMqValue(p.Value)),
+      _ => element.GetRawText() // Fallback to string representation
+    };
   }
 
   public async ValueTask DisposeAsync() {

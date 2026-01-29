@@ -13,7 +13,7 @@ namespace Whizbang.Data.Postgres.Tests;
 /// auto-creates checkpoint rows when message associations exist for perspectives.
 /// </summary>
 public class AutoCheckpointCreationTests : PostgresTestBase {
-  private readonly Uuid7IdProvider _idProvider = new Uuid7IdProvider();
+  private readonly Uuid7IdProvider _idProvider = new();
 
   [Test]
   public async Task ProcessWorkBatch_WithEventAndPerspectiveAssociation_CreatesCheckpointAsync() {

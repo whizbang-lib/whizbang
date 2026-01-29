@@ -1,0 +1,10 @@
+<Project>
+  <!-- Import parent Directory.Build.props -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)../'))" />
+
+  <PropertyGroup>
+    <!-- Temporarily suppress Guid usage analyzer warnings in test projects -->
+    <!-- Remove after Phase 5 migration completes all usages -->
+    <NoWarn>$(NoWarn);WHIZ055;WHIZ056</NoWarn>
+  </PropertyGroup>
+</Project>

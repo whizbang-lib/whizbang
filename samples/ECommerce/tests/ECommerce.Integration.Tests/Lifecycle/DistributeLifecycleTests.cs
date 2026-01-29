@@ -26,7 +26,7 @@ namespace ECommerce.Integration.Tests.Lifecycle;
 /// <docs>testing/lifecycle-synchronization</docs>
 [Category("Integration")]
 [Category("Lifecycle")]
-[NotInParallel]
+[NotInParallel("ServiceBus")]
 public class DistributeLifecycleTests {
   private static ServiceBusIntegrationFixture? _fixture;
 

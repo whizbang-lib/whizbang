@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using Dapper;
 using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Generated;
 using ECommerce.InventoryWorker.Lenses;
@@ -6,7 +7,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Npgsql;
-using Testcontainers.PostgreSql;
 using Testcontainers.ServiceBus;
 using Whizbang.Core;
 using Whizbang.Core.Messaging;
@@ -15,33 +15,30 @@ using Whizbang.Core.Perspectives;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
+using Whizbang.Testing.Containers;
 using Whizbang.Transports.AzureServiceBus;
 
 namespace ECommerce.Integration.Tests.Fixtures;
 
 /// <summary>
-/// Integration test fixture that manages PostgreSQL and Azure Service Bus Testcontainers
+/// Integration test fixture that manages PostgreSQL (via SharedPostgresContainer) and Azure Service Bus Testcontainers
 /// and sets up full service hosts for both InventoryWorker and BFF services.
 /// </summary>
 public sealed class IntegrationTestFixture : IAsyncDisposable {
-  private readonly PostgreSqlContainer _postgresContainer;
+  private string? _fixtureDatabaseName;  // Unique database name for this fixture instance
+  private string? _connectionString;  // Connection string pointing to the fixture's unique database
   private readonly ServiceBusContainer _serviceBusContainer;
   private bool _isInitialized;
   private IHost? _inventoryHost;
   private IHost? _bffHost;
 
   public IntegrationTestFixture() {
-    _postgresContainer = new PostgreSqlBuilder()
-      .WithImage("postgres:17-alpine")
-      .WithDatabase("whizbang_integration_test")
-      .WithUsername("whizbang_user")
-      .WithPassword("whizbang_pass")
-      .Build();
-
     _serviceBusContainer = new ServiceBusBuilder()
       .WithImage("mcr.microsoft.com/azure-messaging/servicebus-emulator:latest")
       .WithAcceptLicenseAgreement(true)
       .Build();
+
+    Console.WriteLine("[IntegrationTestFixture] Using SharedPostgresContainer for PostgreSQL");
   }
 
   /// <summary>
@@ -84,19 +81,31 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
       return;
     }
 
-    // Start containers in parallel
-    await Task.WhenAll(
-      _postgresContainer.StartAsync(cancellationToken),
-      _serviceBusContainer.StartAsync(cancellationToken)
-    );
+    // Initialize SharedPostgresContainer and start Service Bus container
+    await SharedPostgresContainer.InitializeAsync(cancellationToken);
+    await _serviceBusContainer.StartAsync(cancellationToken);
 
-    // Get connection strings
-    var postgresConnection = _postgresContainer.GetConnectionString();
+    // Create a unique database for this fixture instance
+    _fixtureDatabaseName = $"fixture_{Guid.NewGuid():N}";
+    Console.WriteLine($"[IntegrationTestFixture] Creating unique database: {_fixtureDatabaseName}");
+
+    await using (var conn = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
+      await conn.OpenAsync(cancellationToken);
+      await conn.ExecuteAsync($"CREATE DATABASE \"{_fixtureDatabaseName}\"");
+    }
+
+    // Build connection string with the new database name
+    var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
+      Database = _fixtureDatabaseName
+    };
+    _connectionString = builder.ConnectionString;
+
+    // Get Service Bus connection string
     var serviceBusConnection = _serviceBusContainer.GetConnectionString();
 
     // Create service hosts (but don't start them yet)
-    _inventoryHost = _createInventoryHost(postgresConnection, serviceBusConnection);
-    _bffHost = _createBffHost(postgresConnection, serviceBusConnection);
+    _inventoryHost = _createInventoryHost(_connectionString, serviceBusConnection);
+    _bffHost = _createBffHost(_connectionString, serviceBusConnection);
 
     // Initialize PostgreSQL schema using EFCore DbContexts
     await _initializeSchemaAsync(cancellationToken);
@@ -319,11 +328,26 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
         _bffHost.Dispose();
       }
 
-      // Stop and dispose containers
-      await Task.WhenAll(
-        _postgresContainer.DisposeAsync().AsTask(),
-        _serviceBusContainer.DisposeAsync().AsTask()
-      );
+      // Drop the fixture's unique database from SharedPostgresContainer
+      // The container itself is NOT disposed - it's shared across all tests
+      if (_fixtureDatabaseName != null) {
+        try {
+          await using var conn = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
+          await conn.OpenAsync();
+          // Terminate any remaining connections to the database before dropping
+          await conn.ExecuteAsync($@"
+            SELECT pg_terminate_backend(pid)
+            FROM pg_stat_activity
+            WHERE datname = '{_fixtureDatabaseName}' AND pid <> pg_backend_pid()");
+          await conn.ExecuteAsync($"DROP DATABASE IF EXISTS \"{_fixtureDatabaseName}\"");
+          Console.WriteLine($"[IntegrationTestFixture] Dropped database: {_fixtureDatabaseName}");
+        } catch (Exception ex) {
+          Console.WriteLine($"[IntegrationTestFixture] Warning: Failed to drop database {_fixtureDatabaseName}: {ex.Message}");
+        }
+      }
+
+      // Stop and dispose Service Bus container (not PostgreSQL - that's shared)
+      await _serviceBusContainer.DisposeAsync();
     }
   }
 }

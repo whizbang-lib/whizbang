@@ -7,6 +7,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
     <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
+    <!-- Sample code: suppress Guid analyzer warnings (production code should use TrackedGuid) -->
+    <!-- IL2075: Reflection in sample audit hook - acceptable for demo code -->
+    <NoWarn>$(NoWarn);WHIZ055;WHIZ056;IL2075</NoWarn>
 
     <!-- Enable AOT-compatible configuration binding source generator -->
     <EnableConfigurationBindingGenerator>true</EnableConfigurationBindingGenerator>

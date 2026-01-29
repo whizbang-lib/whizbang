@@ -7,6 +7,8 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!-- Test fixtures use Guid.NewGuid() for test IDs - acceptable in test code -->
+    <NoWarn>$(NoWarn);WHIZ055;WHIZ056</NoWarn>
 
     <!-- Enable source generator output for debugging -->
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
@@ -20,12 +22,13 @@
     <PackageReference Include="Microsoft.Testing.Extensions.Retry" />
     <PackageReference Include="TUnit" />
     <PackageReference Include="TUnit.Assertions" />
-    <PackageReference Include="Testcontainers.PostgreSql" />
     <PackageReference Include="Testcontainers.RabbitMq" />
     <PackageReference Include="Bogus" />
+    <PackageReference Include="Dapper" />
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="../../../../src/Whizbang.Testing/Whizbang.Testing.csproj" />
     <ProjectReference Include="../../../../src/Whizbang.Core/Whizbang.Core.csproj" />
     <ProjectReference Include="../../../../src/Whizbang.Generators/Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
     <ProjectReference Include="../../../../src/Whizbang.Data.EFCore.Postgres/Whizbang.Data.EFCore.Postgres.csproj" />

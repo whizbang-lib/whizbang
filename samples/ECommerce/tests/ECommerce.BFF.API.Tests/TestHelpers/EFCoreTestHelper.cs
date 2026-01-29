@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using Dapper;
 using ECommerce.BFF.API.Generated;
 using ECommerce.BFF.API.Hubs;
 using ECommerce.BFF.API.Lenses;
@@ -9,11 +10,11 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Npgsql;
-using Testcontainers.PostgreSql;
 using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Perspectives;
 using Whizbang.Data.EFCore.Postgres;
+using Whizbang.Testing.Containers;
 
 namespace ECommerce.BFF.API.Tests.TestHelpers;
 
@@ -24,18 +25,28 @@ namespace ECommerce.BFF.API.Tests.TestHelpers;
 public sealed class EFCoreTestHelper : IAsyncDisposable {
   private readonly ServiceProvider _serviceProvider;
   private readonly BffDbContext _dbContext;
-  private readonly PostgreSqlContainer _postgresContainer;
+  private readonly string _databaseName;
+  private readonly string _connectionString;
 
   [RequiresDynamicCode("EF Core in tests may use dynamic code")]
   [RequiresUnreferencedCode("EF Core in tests may use unreferenced code")]
   public EFCoreTestHelper() {
-    // Create and start PostgreSQL container
-    _postgresContainer = new PostgreSqlBuilder()
-      .WithImage("postgres:17-alpine")
-      .WithDatabase($"bff_test_{Guid.CreateVersion7():N}")
-      .Build();
+    // Initialize shared container and create per-helper database
+    SharedPostgresContainer.InitializeAsync().GetAwaiter().GetResult();
 
-    _postgresContainer.StartAsync().GetAwaiter().GetResult();
+    _databaseName = $"bff_test_{Guid.NewGuid():N}";
+
+    // Create the database using admin connection
+    using (var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
+      adminConnection.Open();
+      adminConnection.Execute($"CREATE DATABASE {_databaseName}");
+    }
+
+    // Build connection string for the new database
+    var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
+      Database = _databaseName
+    };
+    _connectionString = builder.ConnectionString;
 
     var services = new ServiceCollection();
 
@@ -50,7 +61,7 @@ public sealed class EFCoreTestHelper : IAsyncDisposable {
     // Add DbContext with PostgreSQL using NpgsqlDataSource
     // IMPORTANT: ConfigureJsonOptions() MUST be called BEFORE EnableDynamicJson() (Npgsql bug #5562)
     // This registers WhizbangId JSON converters for JSONB serialization
-    var connectionString = _postgresContainer.GetConnectionString();
+    var connectionString = _connectionString;
     var dataSourceBuilder = new NpgsqlDataSourceBuilder(connectionString);
     dataSourceBuilder.ConfigureJsonOptions(jsonOptions);
     dataSourceBuilder.EnableDynamicJson();
@@ -135,7 +146,23 @@ public sealed class EFCoreTestHelper : IAsyncDisposable {
   public async ValueTask DisposeAsync() {
     await _dbContext.DisposeAsync();
     await _serviceProvider.DisposeAsync();
-    await _postgresContainer.DisposeAsync();
+
+    // Drop the per-helper database
+    try {
+      await using var adminConnection = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
+      await adminConnection.OpenAsync();
+
+      // Terminate existing connections to the database
+      await adminConnection.ExecuteAsync($@"
+        SELECT pg_terminate_backend(pg_stat_activity.pid)
+        FROM pg_stat_activity
+        WHERE pg_stat_activity.datname = '{_databaseName}'
+        AND pid <> pg_backend_pid()");
+
+      await adminConnection.ExecuteAsync($"DROP DATABASE IF EXISTS {_databaseName}");
+    } catch {
+      // Ignore cleanup errors - database may already be dropped
+    }
   }
 }
 

@@ -15,7 +15,7 @@ namespace ECommerce.Integration.Tests.Workflows;
 /// Uses batch-aware ServiceBus emulator. Tests within this class run sequentially
 /// to avoid topic conflicts, but different test classes run in parallel.
 /// </summary>
-[NotInParallel]
+[NotInParallel("ServiceBus")]
 public class UpdateProductWorkflowTests {
   private static ServiceBusIntegrationFixture? _fixture;
 

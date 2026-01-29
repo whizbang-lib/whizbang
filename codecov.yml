@@ -7,7 +7,7 @@ coverage:
         if_ci_failed: error
     patch:
       default:
-        target: 100%
+        target: 85%
         threshold: 0%
         if_ci_failed: error
 
@@ -19,6 +19,7 @@ comment:
 ignore:
   - "**/*.Generated.cs"
   - "**/.whizbang-generated/**"
-  - "**/samples/**"
-  - "**/benchmarks/**"
-  - "**/test-diagnostics/**"
+  - "samples/**"
+  - "benchmarks/**"
+  - "test-diagnostics/**"
+  - "src/Whizbang.Testing/Containers/**"

@@ -35,6 +35,21 @@ public delegate ValueTask VoidReceptorInvoker(object message);
 public delegate Task ReceptorPublisher<in TEvent>(TEvent eventData);
 
 /// <summary>
+/// Delegate for invoking a synchronous receptor's Handle method.
+/// Generated code creates these delegates with proper type safety - zero reflection.
+/// The result is wrapped in a pre-completed ValueTask for uniform handling.
+/// </summary>
+/// <docs>core-concepts/receptors#synchronous-receptors</docs>
+public delegate TResult SyncReceptorInvoker<out TResult>(object message);
+
+/// <summary>
+/// Delegate for invoking a void synchronous receptor's Handle method.
+/// Generated code creates these delegates with proper type safety - zero reflection.
+/// </summary>
+/// <docs>core-concepts/receptors#synchronous-receptors</docs>
+public delegate void VoidSyncReceptorInvoker(object message);
+
+/// <summary>
 /// Base dispatcher class with core logic. The source generator creates a derived class
 /// that implements the abstract lookup methods, returning strongly-typed delegates.
 /// This achieves zero-reflection while keeping functional logic in the base class.
@@ -52,7 +67,8 @@ public abstract class Dispatcher(
   Routing.ITopicRoutingStrategy? topicRoutingStrategy = null,
   IAggregateIdExtractor? aggregateIdExtractor = null,
   ILifecycleInvoker? lifecycleInvoker = null,
-  IEnvelopeSerializer? envelopeSerializer = null
+  IEnvelopeSerializer? envelopeSerializer = null,
+  IEnvelopeRegistry? envelopeRegistry = null
   ) : IDispatcher {
   private readonly IServiceProvider _internalServiceProvider = serviceProvider ?? throw new ArgumentNullException(nameof(serviceProvider));
   private readonly IServiceScopeFactory _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
@@ -64,6 +80,8 @@ public abstract class Dispatcher(
   private readonly ILifecycleInvoker? _lifecycleInvoker = lifecycleInvoker;
   // Resolve from service provider if not injected (for backwards compatibility with generated code)
   private readonly IEnvelopeSerializer? _envelopeSerializer = envelopeSerializer ?? serviceProvider.GetService<IEnvelopeSerializer>();
+  // Resolve from service provider if not injected (for backwards compatibility with generated code)
+  private readonly IEnvelopeRegistry? _envelopeRegistry = envelopeRegistry ?? serviceProvider.GetService<IEnvelopeRegistry>();
 
   // Unused parameter retained for backward compatibility with generated code
   private readonly JsonSerializerOptions? _ = jsonOptions;
@@ -146,25 +164,35 @@ public abstract class Dispatcher(
     // Create envelope with hop for observability
     var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
 
-    // Store envelope if trace store is configured
-    if (_traceStore != null) {
-      await _traceStore.StoreAsync(envelope);
-    }
+    // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
+    _envelopeRegistry?.Register(envelope);
+    try {
+      // Store envelope if trace store is configured
+      if (_traceStore != null) {
+        await _traceStore.StoreAsync(envelope);
+      }
 
-    // Invoke using delegate - zero reflection, strongly typed
-    await invoker(message);
+      // Invoke using delegate - zero reflection, strongly typed
+      var result = await invoker(message);
 
-    // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
-    if (_lifecycleInvoker is not null) {
-      var lifecycleContext = new LifecycleExecutionContext {
-        CurrentStage = LifecycleStage.ImmediateAsync,
-        EventId = null,
-        StreamId = null,
-        LastProcessedEventId = null,
-        MessageSource = MessageSource.Local,
-        AttemptNumber = 1 // Local dispatch is always first attempt
-      };
-      await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      // Auto-cascade: Extract and publish any IEvent instances from result (tuples, arrays, etc.)
+      await _cascadeEventsFromResultAsync(result);
+
+      // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
+      if (_lifecycleInvoker is not null) {
+        var lifecycleContext = new LifecycleExecutionContext {
+          CurrentStage = LifecycleStage.ImmediateAsync,
+          EventId = null,
+          StreamId = null,
+          LastProcessedEventId = null,
+          MessageSource = MessageSource.Local,
+          AttemptNumber = 1 // Local dispatch is always first attempt
+        };
+        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      }
+    } finally {
+      // Unregister envelope after receptor completes (or throws)
+      _envelopeRegistry?.Unregister(envelope);
     }
 
     // Return delivery receipt
@@ -211,25 +239,35 @@ public abstract class Dispatcher(
     // Create envelope with hop for observability - generic version preserves type!
     var envelope = _createEnvelope<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
 
-    // Store envelope if trace store is configured
-    if (_traceStore != null) {
-      await _traceStore.StoreAsync(envelope);
-    }
+    // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
+    _envelopeRegistry?.Register(envelope);
+    try {
+      // Store envelope if trace store is configured
+      if (_traceStore != null) {
+        await _traceStore.StoreAsync(envelope);
+      }
 
-    // Invoke using delegate - zero reflection, strongly typed
-    await invoker(message);
+      // Invoke using delegate - zero reflection, strongly typed
+      var result = await invoker(message);
 
-    // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
-    if (_lifecycleInvoker is not null) {
-      var lifecycleContext = new LifecycleExecutionContext {
-        CurrentStage = LifecycleStage.ImmediateAsync,
-        EventId = null,
-        StreamId = null,
-        LastProcessedEventId = null,
-        MessageSource = MessageSource.Local,
-        AttemptNumber = 1 // Local dispatch is always first attempt
-      };
-      await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      // Auto-cascade: Extract and publish any IEvent instances from result (tuples, arrays, etc.)
+      await _cascadeEventsFromResultAsync(result);
+
+      // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
+      if (_lifecycleInvoker is not null) {
+        var lifecycleContext = new LifecycleExecutionContext {
+          CurrentStage = LifecycleStage.ImmediateAsync,
+          EventId = null,
+          StreamId = null,
+          LastProcessedEventId = null,
+          MessageSource = MessageSource.Local,
+          AttemptNumber = 1 // Local dispatch is always first attempt
+        };
+        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      }
+    } finally {
+      // Unregister envelope after receptor completes (or throws)
+      _envelopeRegistry?.Unregister(envelope);
     }
 
     // Return delivery receipt
@@ -321,19 +359,73 @@ public abstract class Dispatcher(
 
     var messageType = message.GetType();
 
-    // Get strongly-typed delegate from generated code
-    var invoker = GetReceptorInvoker<TResult>(message, messageType) ?? throw new HandlerNotFoundException(messageType);
+    // Try async receptor first (async takes precedence)
+    var asyncInvoker = GetReceptorInvoker<TResult>(message, messageType);
+    if (asyncInvoker != null) {
+      // OPTIMIZATION: Skip envelope creation when trace store is null
+      // This achieves zero allocation for high-throughput scenarios
+      if (_traceStore != null || _lifecycleInvoker != null) {
+        return _localInvokeWithTracingAsync(message, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
+      }
 
-    // OPTIMIZATION: Skip envelope creation when trace store is null
-    // This achieves zero allocation for high-throughput scenarios
-    if (_traceStore != null || _lifecycleInvoker != null) {
-      return _localInvokeWithTracingAsync(message, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
+      // Fast path with cascade support for receptor tuple/array returns
+      // Invoke using delegate, then extract and publish any IEvent instances
+      return _localInvokeWithCascadeAsync(asyncInvoker, message);
     }
 
-    // FAST PATH: Zero allocation when no tracing and no lifecycle invoker
-    // Invoke using delegate - zero reflection, strongly typed
-    // Avoid async/await state machine allocation by returning task directly
-    return invoker(message);
+    // Fallback to sync receptor
+    var syncInvoker = GetSyncReceptorInvoker<TResult>(message, messageType);
+    if (syncInvoker != null) {
+      return _localInvokeSyncWithCascadeAsync(syncInvoker, message);
+    }
+
+    throw new HandlerNotFoundException(messageType);
+  }
+
+  /// <summary>
+  /// Fast path for LocalInvoke with sync receptor and cascade support.
+  /// Invokes receptor synchronously, automatically publishes any IEvent instances from the return value,
+  /// and returns a pre-completed ValueTask (zero async overhead when cascade has no events).
+  /// </summary>
+  /// <docs>core-concepts/dispatcher#synchronous-invocation</docs>
+  private ValueTask<TResult> _localInvokeSyncWithCascadeAsync<TResult>(
+    SyncReceptorInvoker<TResult> syncInvoker,
+    object message
+  ) {
+    // Invoke synchronously
+    var result = syncInvoker(message);
+
+    // Auto-cascade any events (still async for publishing)
+    var cascadeTask = _cascadeEventsFromResultAsync(result);
+    if (!cascadeTask.IsCompletedSuccessfully) {
+      return _awaitCascadeAndReturnResultAsync(cascadeTask, result);
+    }
+
+    // Return pre-completed ValueTask (zero allocation)
+    return new ValueTask<TResult>(result);
+  }
+
+  /// <summary>
+  /// Helper method to await cascade task and return result.
+  /// This is a separate method to avoid state machine overhead in the fast path.
+  /// </summary>
+  private static async ValueTask<TResult> _awaitCascadeAndReturnResultAsync<TResult>(Task cascadeTask, TResult result) {
+    await cascadeTask;
+    return result;
+  }
+
+  /// <summary>
+  /// Fast path for LocalInvoke with cascade support.
+  /// Invokes receptor and automatically publishes any IEvent instances from the return value.
+  /// Supports tuples like (Result, Event), arrays like IEvent[], and nested structures.
+  /// </summary>
+  private async ValueTask<TResult> _localInvokeWithCascadeAsync<TResult>(
+    ReceptorInvoker<TResult> invoker,
+    object message
+  ) {
+    var result = await invoker(message);
+    await _cascadeEventsFromResultAsync(result);
+    return result;
   }
 
   /// <summary>
@@ -349,25 +441,37 @@ public abstract class Dispatcher(
     int callerLineNumber
   ) {
     var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
-    await _traceStore!.StoreAsync(envelope);
 
-    // Invoke using delegate - zero reflection, strongly typed
-    var result = await invoker(message);
+    // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
+    _envelopeRegistry?.Register(envelope);
+    try {
+      await _traceStore!.StoreAsync(envelope);
 
-    // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
-    if (_lifecycleInvoker is not null) {
-      var lifecycleContext = new LifecycleExecutionContext {
-        CurrentStage = LifecycleStage.ImmediateAsync,
-        EventId = null,
-        StreamId = null,
-        LastProcessedEventId = null,
-        MessageSource = MessageSource.Local,
-        AttemptNumber = 1 // Local dispatch is always first attempt
-      };
-      await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      // Invoke using delegate - zero reflection, strongly typed
+      var result = await invoker(message);
+
+      // Auto-cascade: Extract and publish any IEvent instances from receptor return value
+      // Supports tuples like (Result, Event), arrays like IEvent[], and nested structures
+      await _cascadeEventsFromResultAsync(result);
+
+      // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
+      if (_lifecycleInvoker is not null) {
+        var lifecycleContext = new LifecycleExecutionContext {
+          CurrentStage = LifecycleStage.ImmediateAsync,
+          EventId = null,
+          StreamId = null,
+          LastProcessedEventId = null,
+          MessageSource = MessageSource.Local,
+          AttemptNumber = 1 // Local dispatch is always first attempt
+        };
+        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      }
+
+      return result;
+    } finally {
+      // Unregister envelope after receptor completes (or throws)
+      _envelopeRegistry?.Unregister(envelope);
     }
-
-    return result;
   }
 
   /// <summary>
@@ -399,10 +503,9 @@ public abstract class Dispatcher(
       return _localInvokeWithTracingAsyncInternalAsync<TMessage, TResult>(message, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
     }
 
-    // FAST PATH: Zero allocation when no tracing and no lifecycle invoker
-    // Invoke using delegate - zero reflection, strongly typed
-    // Avoid async/await state machine allocation by returning task directly
-    return invoker(message);
+    // Fast path with cascade support for receptor tuple/array returns
+    // Invoke using delegate, then extract and publish any IEvent instances
+    return _localInvokeWithCascadeAsync(invoker, message);
   }
 
   /// <summary>
@@ -419,23 +522,35 @@ public abstract class Dispatcher(
     int callerLineNumber
   ) {
     var envelope = _createEnvelope<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
-    await _traceStore!.StoreAsync(envelope);
 
-    // Invoke using delegate - zero reflection, strongly typed
-    var result = await invoker(message!);
+    // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
+    _envelopeRegistry?.Register(envelope);
+    try {
+      await _traceStore!.StoreAsync(envelope);
 
-    // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
-    if (_lifecycleInvoker is not null) {
-      var lifecycleContext = new LifecycleExecutionContext {
-        CurrentStage = LifecycleStage.ImmediateAsync,
-        EventId = null,
-        StreamId = null,
-        LastProcessedEventId = null
-      };
-      await _lifecycleInvoker.InvokeAsync(message!, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      // Invoke using delegate - zero reflection, strongly typed
+      var result = await invoker(message!);
+
+      // Auto-cascade: Extract and publish any IEvent instances from receptor return value
+      // Supports tuples like (Result, Event), arrays like IEvent[], and nested structures
+      await _cascadeEventsFromResultAsync(result);
+
+      // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
+      if (_lifecycleInvoker is not null) {
+        var lifecycleContext = new LifecycleExecutionContext {
+          CurrentStage = LifecycleStage.ImmediateAsync,
+          EventId = null,
+          StreamId = null,
+          LastProcessedEventId = null
+        };
+        await _lifecycleInvoker.InvokeAsync(message!, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      }
+
+      return result;
+    } finally {
+      // Unregister envelope after receptor completes (or throws)
+      _envelopeRegistry?.Unregister(envelope);
     }
-
-    return result;
   }
 
   // ========================================
@@ -514,19 +629,30 @@ public abstract class Dispatcher(
 
     var messageType = message.GetType();
 
-    // Get strongly-typed void delegate from generated code
-    var invoker = GetVoidReceptorInvoker(message, messageType) ?? throw new HandlerNotFoundException(messageType);
+    // Try async receptor first (async takes precedence)
+    var asyncInvoker = GetVoidReceptorInvoker(message, messageType);
+    if (asyncInvoker != null) {
+      // OPTIMIZATION: Skip envelope creation when trace store is null
+      // This achieves zero allocation for high-throughput scenarios
+      if (_traceStore != null) {
+        return _localInvokeVoidWithTracingAsync(message, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
+      }
 
-    // OPTIMIZATION: Skip envelope creation when trace store is null
-    // This achieves zero allocation for high-throughput scenarios
-    if (_traceStore != null) {
-      return _localInvokeVoidWithTracingAsync(message, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
+      // FAST PATH: Zero allocation when no tracing
+      // Invoke using delegate - zero reflection, strongly typed
+      // Avoid async/await state machine allocation by returning task directly
+      return asyncInvoker(message);
     }
 
-    // FAST PATH: Zero allocation when no tracing
-    // Invoke using delegate - zero reflection, strongly typed
-    // Avoid async/await state machine allocation by returning task directly
-    return invoker(message);
+    // Fallback to void sync receptor
+    var syncInvoker = GetVoidSyncReceptorInvoker(message, messageType);
+    if (syncInvoker != null) {
+      // Invoke synchronously - returns pre-completed ValueTask
+      syncInvoker(message);
+      return ValueTask.CompletedTask;
+    }
+
+    throw new HandlerNotFoundException(messageType);
   }
 
   /// <summary>
@@ -542,10 +668,18 @@ public abstract class Dispatcher(
     int callerLineNumber
   ) {
     var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
-    await _traceStore!.StoreAsync(envelope);
 
-    // Invoke using delegate - zero reflection, strongly typed
-    await invoker(message);
+    // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
+    _envelopeRegistry?.Register(envelope);
+    try {
+      await _traceStore!.StoreAsync(envelope);
+
+      // Invoke using delegate - zero reflection, strongly typed
+      await invoker(message);
+    } finally {
+      // Unregister envelope after receptor completes (or throws)
+      _envelopeRegistry?.Unregister(envelope);
+    }
   }
 
   /// <summary>
@@ -568,19 +702,30 @@ public abstract class Dispatcher(
 
     var messageType = typeof(TMessage);
 
-    // Get strongly-typed void delegate from generated code
-    var invoker = GetVoidReceptorInvoker(message, messageType) ?? throw new HandlerNotFoundException(messageType);
+    // Try async receptor first (async takes precedence)
+    var asyncInvoker = GetVoidReceptorInvoker(message, messageType);
+    if (asyncInvoker != null) {
+      // OPTIMIZATION: Skip envelope creation when trace store AND lifecycle invoker are null
+      // This achieves zero allocation for high-throughput scenarios
+      if (_traceStore != null || _lifecycleInvoker != null) {
+        return _localInvokeVoidWithTracingAsyncInternalAsync<TMessage>(message, context, asyncInvoker, callerMemberName, callerFilePath, callerLineNumber);
+      }
 
-    // OPTIMIZATION: Skip envelope creation when trace store AND lifecycle invoker are null
-    // This achieves zero allocation for high-throughput scenarios
-    if (_traceStore != null || _lifecycleInvoker != null) {
-      return _localInvokeVoidWithTracingAsyncInternalAsync<TMessage>(message, context, invoker, callerMemberName, callerFilePath, callerLineNumber);
+      // FAST PATH: Zero allocation when no tracing and no lifecycle invoker
+      // Invoke using delegate - zero reflection, strongly typed
+      // Avoid async/await state machine allocation by returning task directly
+      return asyncInvoker(message);
     }
 
-    // FAST PATH: Zero allocation when no tracing and no lifecycle invoker
-    // Invoke using delegate - zero reflection, strongly typed
-    // Avoid async/await state machine allocation by returning task directly
-    return invoker(message);
+    // Fallback to void sync receptor
+    var syncInvoker = GetVoidSyncReceptorInvoker(message, messageType);
+    if (syncInvoker != null) {
+      // Invoke synchronously - returns pre-completed ValueTask
+      syncInvoker(message);
+      return ValueTask.CompletedTask;
+    }
+
+    throw new HandlerNotFoundException(messageType);
   }
 
   /// <summary>
@@ -597,22 +742,30 @@ public abstract class Dispatcher(
     int callerLineNumber
   ) {
     var envelope = _createEnvelope<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
-    if (_traceStore != null) {
-      await _traceStore.StoreAsync(envelope);
-    }
 
-    // Invoke using delegate - zero reflection, strongly typed
-    await invoker(message!);
+    // Register envelope so receptor can look it up via IEventStore.AppendAsync(message)
+    _envelopeRegistry?.Register(envelope);
+    try {
+      if (_traceStore != null) {
+        await _traceStore.StoreAsync(envelope);
+      }
 
-    // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
-    if (_lifecycleInvoker is not null) {
-      var lifecycleContext = new LifecycleExecutionContext {
-        CurrentStage = LifecycleStage.ImmediateAsync,
-        EventId = null,
-        StreamId = null,
-        LastProcessedEventId = null
-      };
-      await _lifecycleInvoker.InvokeAsync(message!, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      // Invoke using delegate - zero reflection, strongly typed
+      await invoker(message!);
+
+      // Invoke lifecycle receptors at ImmediateAsync stage (after receptor completes, before any database operations)
+      if (_lifecycleInvoker is not null) {
+        var lifecycleContext = new LifecycleExecutionContext {
+          CurrentStage = LifecycleStage.ImmediateAsync,
+          EventId = null,
+          StreamId = null,
+          LastProcessedEventId = null
+        };
+        await _lifecycleInvoker.InvokeAsync(message!, LifecycleStage.ImmediateAsync, lifecycleContext, default);
+      }
+    } finally {
+      // Unregister envelope after receptor completes (or throws)
+      _envelopeRegistry?.Unregister(envelope);
     }
   }
 
@@ -691,6 +844,40 @@ public abstract class Dispatcher(
     return envelope;
   }
 
+  // ========================================
+  // AUTO-CASCADE - Automatic Event Publishing from Receptor Returns
+  // ========================================
+
+  /// <summary>
+  /// Extracts IEvent instances from receptor return values and publishes them.
+  /// Supports tuples, arrays, and nested structures via EventExtractor.
+  /// This enables the clean pattern: return (result, @event) - where @event is auto-published.
+  /// </summary>
+  /// <remarks>
+  /// Uses the AOT-compatible GetUntypedReceptorPublisher method which is implemented by
+  /// source-generated code. The generated code knows all event types at compile time and
+  /// returns type-erased delegates that cast internally.
+  /// </remarks>
+  /// <docs>core-concepts/dispatcher#automatic-event-cascade</docs>
+  /// <tests>Whizbang.Core.Tests/Dispatcher/DispatcherCascadeTests.cs:LocalInvokeAsync_TupleWithEvent_AutoPublishesEventAsync</tests>
+  private async Task _cascadeEventsFromResultAsync<TResult>(TResult result) {
+    // Fast path: Skip if result is null
+    if (result == null) {
+      return;
+    }
+
+    // Use EventExtractor to find all IEvent instances in the result
+    // This handles tuples, arrays, nested structures, etc. using ITuple interface (AOT-safe)
+    foreach (var evt in Internal.EventExtractor.ExtractEvents(result)) {
+      // Get an untyped publisher for the concrete event type (AOT-compatible)
+      // The generated code returns a delegate that casts the object to the correct type internally
+      var eventType = evt.GetType();
+      var publisher = GetUntypedReceptorPublisher(eventType);
+      if (publisher != null) {
+        await publisher(evt);
+      }
+    }
+  }
 
   /// <summary>
   /// Publishes an event to all registered handlers.
@@ -1297,4 +1484,33 @@ public abstract class Dispatcher(
   /// The delegate encapsulates finding all receptors and invoking them with zero reflection.
   /// </summary>
   protected abstract ReceptorPublisher<TEvent> GetReceptorPublisher<TEvent>(TEvent eventData, Type eventType);
+
+  /// <summary>
+  /// Implemented by generated code - returns a type-erased delegate for publishing events.
+  /// Used by auto-cascade to publish events extracted from receptor return values.
+  /// The delegate accepts an object and internally casts to the correct event type.
+  /// AOT-compatible because the generated code knows all event types at compile time.
+  /// </summary>
+  /// <param name="eventType">The runtime type of the event (e.g., typeof(OrderCreatedEvent))</param>
+  /// <returns>A delegate that publishes the event to all registered receptors, or null if no receptors registered</returns>
+  protected abstract Func<object, Task>? GetUntypedReceptorPublisher(Type eventType);
+
+  /// <summary>
+  /// Implemented by generated code - returns a sync delegate for invoking a sync receptor.
+  /// The delegate encapsulates the receptor lookup and invocation with zero reflection.
+  /// Returns null if no sync receptor found (falls back to async).
+  /// </summary>
+  /// <docs>core-concepts/dispatcher#synchronous-invocation</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncTests.cs:LocalInvokeAsync_SyncReceptor_InvokesSynchronouslyAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncTests.cs:LocalInvokeAsync_SyncReceptor_ReturnsCompletedValueTaskAsync</tests>
+  protected abstract SyncReceptorInvoker<TResult>? GetSyncReceptorInvoker<TResult>(object message, Type messageType);
+
+  /// <summary>
+  /// Implemented by generated code - returns a void sync delegate for invoking a sync receptor.
+  /// The delegate encapsulates the receptor lookup and invocation with zero reflection.
+  /// Returns null if no void sync receptor found.
+  /// </summary>
+  /// <docs>core-concepts/dispatcher#synchronous-invocation</docs>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherSyncTests.cs:LocalInvokeAsync_VoidSyncReceptor_ExecutesSynchronouslyAsync</tests>
+  protected abstract VoidSyncReceptorInvoker? GetVoidSyncReceptorInvoker(object message, Type messageType);
 }

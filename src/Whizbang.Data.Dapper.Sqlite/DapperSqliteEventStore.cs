@@ -84,6 +84,25 @@ public class DapperSqliteEventStore(
       lastException);
   }
 
+  /// <inheritdoc />
+  public override Task AppendAsync<TMessage>(Guid streamId, TMessage message, CancellationToken cancellationToken = default) {
+    ArgumentNullException.ThrowIfNull(message);
+
+    // Create a minimal envelope - registry-based lookup would require constructor injection
+    var envelope = new MessageEnvelope<TMessage> {
+      MessageId = MessageId.New(),
+      Payload = message,
+      Hops = [
+        new MessageHop {
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Timestamp = DateTimeOffset.UtcNow
+        }
+      ]
+    };
+
+    return AppendAsync(streamId, envelope, cancellationToken);
+  }
+
   /// <summary>
   /// Reads events from a stream by stream ID (UUID).
   /// </summary>

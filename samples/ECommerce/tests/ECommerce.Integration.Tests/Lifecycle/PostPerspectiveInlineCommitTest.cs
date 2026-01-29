@@ -12,7 +12,7 @@ namespace ECommerce.Integration.Tests.Lifecycle;
 /// <summary>
 /// Minimal reproduction test: PostPerspectiveInline MUST fire AFTER database transaction commits.
 /// </summary>
-[NotInParallel]
+[NotInParallel("ServiceBus")]
 public class PostPerspectiveInlineCommitTest {
   private static ServiceBusIntegrationFixture? _fixture;
 

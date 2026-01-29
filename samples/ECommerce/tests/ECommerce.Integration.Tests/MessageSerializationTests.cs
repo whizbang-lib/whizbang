@@ -127,7 +127,7 @@ public class MessageSerializationTests {
     var envelope = new MessageEnvelope<CreateProductCommand> {
       MessageId = originalMessageId,
       Payload = command,
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
@@ -169,14 +169,14 @@ public class MessageSerializationTests {
     var command = new CreateOrderCommand {
       OrderId = orderId,
       CustomerId = customerId,
-      LineItems = new List<OrderLineItem> {
+      LineItems = [
         new OrderLineItem {
           ProductId = productId,
           ProductName = "Test Product",
           Quantity = 2,
           UnitPrice = 50.00m
         }
-      },
+      ],
       TotalAmount = 100.00m
     };
 
@@ -184,7 +184,7 @@ public class MessageSerializationTests {
     var envelope = new MessageEnvelope<CreateOrderCommand> {
       MessageId = originalMessageId,
       Payload = command,
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();

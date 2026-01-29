@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -177,9 +178,12 @@ public class OrderPerspectiveTests {
           metadata.Property(m => m.Timestamp).IsRequired();
         });
 
-        entity.OwnsOne(e => e.Scope, scope => {
-          scope.WithOwner();
-        });
+        // Use JSON conversion for Scope to support complex types like AllowedPrincipals
+        // This matches production PostgreSQL JSONB behavior
+        entity.Property(e => e.Scope)
+            .HasConversion(
+                v => JsonSerializer.Serialize(v, JsonSerializerOptions.Default),
+                v => JsonSerializer.Deserialize<PerspectiveScope>(v, JsonSerializerOptions.Default)!);
       });
     }
   }

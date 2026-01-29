@@ -24,7 +24,7 @@ public class TransportConsumerWorker : BackgroundService {
   private readonly ILifecycleInvoker? _lifecycleInvoker;
   private readonly ILifecycleMessageDeserializer? _lifecycleMessageDeserializer;
   private readonly ILogger<TransportConsumerWorker> _logger;
-  private readonly List<ISubscription> _subscriptions = new();
+  private readonly List<ISubscription> _subscriptions = [];
 
   /// <summary>
   /// Initializes a new instance of TransportConsumerWorker.

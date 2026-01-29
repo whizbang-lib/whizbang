@@ -13,7 +13,7 @@ namespace Whizbang.Core.Tests.Messaging;
 /// Tests for ScopedWorkCoordinatorStrategy - verifies scope-based batching and disposal flush.
 /// </summary>
 public class ScopedWorkCoordinatorStrategyTests {
-  private readonly Uuid7IdProvider _idProvider = new Uuid7IdProvider();
+  private readonly Uuid7IdProvider _idProvider = new();
 
   // Test message types
   public record _testEvent1([StreamKey] string Id = "test-1") : IEvent { }
@@ -79,7 +79,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       MessageType = "TestMessage, TestAssembly",
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(messageId1),
-        Hops = new List<MessageHop>()
+        Hops = []
       }
     });
 
@@ -179,7 +179,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       MessageType = "TestMessage, TestAssembly",
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(messageId),
-        Hops = new List<MessageHop>()
+        Hops = []
       }
     });
 
@@ -258,7 +258,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       MessageType = "TestMessage, TestAssembly",
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(outboxId1),
-        Hops = new List<MessageHop>()
+        Hops = []
       }
     });
 
@@ -291,7 +291,7 @@ public class ScopedWorkCoordinatorStrategyTests {
       MessageType = "TestMessage, TestAssembly",
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(outboxId2),
-        Hops = new List<MessageHop>()
+        Hops = []
       }
     });
 
