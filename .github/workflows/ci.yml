@@ -57,19 +57,7 @@ jobs:
     permissions:
       pull-requests: write
     steps:
-      - name: Delete Previous Version Comments
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          REPO: ${{ github.repository }}
-        run: |
-          # Find and delete previous version comments (identified by the 📦 emoji)
-          gh api "repos/$REPO/issues/$PR_NUMBER/comments" --jq '.[] | select(.body | startswith("📦")) | .id' | while read -r comment_id; do
-            echo "Deleting previous version comment: $comment_id"
-            gh api --method DELETE "repos/$REPO/issues/comments/$comment_id"
-          done
-
-      - name: Comment Version
+      - name: Create or Update Version Comment
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -78,12 +66,21 @@ jobs:
           FULLSEMVER: ${{ needs.version.outputs.fullsemver }}
           PRERELEASE: ${{ needs.version.outputs.prerelease || 'none' }}
         run: |
-          gh pr comment "$PR_NUMBER" \
-            --repo "$REPO" \
-            --body "📦 **Calculated Version**: \`$SEMVER\`
+          BODY="📦 **Calculated Version**: \`$SEMVER\`
 
           | Property | Value |
           |----------|-------|
           | SemVer | \`$SEMVER\` |
           | Full SemVer | \`$FULLSEMVER\` |
           | Pre-release | \`$PRERELEASE\` |"
+
+          # Find existing version comment
+          COMMENT_ID=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --jq '.[] | select(.body | startswith("📦")) | .id' | head -1)
+
+          if [ -n "$COMMENT_ID" ]; then
+            echo "Updating existing comment: $COMMENT_ID"
+            gh api --method PATCH "repos/$REPO/issues/comments/$COMMENT_ID" -f body="$BODY"
+          else
+            echo "Creating new version comment"
+            gh pr comment "$PR_NUMBER" --repo "$REPO" --body "$BODY"
+          fi
