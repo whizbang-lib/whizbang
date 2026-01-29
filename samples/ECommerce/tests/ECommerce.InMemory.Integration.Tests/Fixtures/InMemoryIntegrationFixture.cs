@@ -873,8 +873,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
         }
 
         return; // Success, exit retry loop
-      }
-      catch (Npgsql.PostgresException ex) when (ex.SqlState == "40P01" && attempt < maxRetries) {
+      } catch (Npgsql.PostgresException ex) when (ex.SqlState == "40P01" && attempt < maxRetries) {
         // Deadlock detected - retry after a short delay
         await Task.Delay(retryDelayMs * attempt, cancellationToken);
       }
