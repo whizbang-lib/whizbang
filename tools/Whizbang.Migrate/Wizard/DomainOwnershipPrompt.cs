@@ -72,7 +72,7 @@ public sealed class DomainOwnershipPrompt {
       var source = domain.FromNamespace ? "namespace" : "type names";
       var line = $"  {checkbox} {domain.DomainName} ({domain.OccurrenceCount} types, from {source}){recommended}";
 
-      writer.WriteLine($"{BOX_VERTICAL}{line.PadRight(BOX_WIDTH)}{BOX_VERTICAL}");
+      writer.WriteLine($"{BOX_VERTICAL}{line,-BOX_WIDTH}{BOX_VERTICAL}");
     }
 
     writer.WriteLine($"{BOX_VERTICAL}                                                                 {BOX_VERTICAL}");
@@ -186,7 +186,7 @@ public sealed class DomainOwnershipPrompt {
 
   private static void _renderHeader(string title, TextWriter writer) {
     writer.WriteLine($"{BOX_TOP_LEFT}{new string(BOX_HORIZONTAL[0], BOX_WIDTH)}{BOX_TOP_RIGHT}");
-    writer.WriteLine($"{BOX_VERTICAL}  {title.PadRight(BOX_WIDTH - 2)}{BOX_VERTICAL}");
+    writer.WriteLine($"{BOX_VERTICAL}  {title,-(BOX_WIDTH - 2)}{BOX_VERTICAL}");
     writer.WriteLine($"{BOX_T_LEFT}{new string(BOX_HORIZONTAL[0], BOX_WIDTH)}{BOX_T_RIGHT}");
   }
 

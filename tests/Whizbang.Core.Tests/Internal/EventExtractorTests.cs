@@ -42,7 +42,7 @@ public class EventExtractorTests {
   [Test]
   public async Task ExtractEvents_WithNonEvent_ReturnsEmptyAsync() {
     // Arrange
-    var nonEvent = "not an event";
+    const string nonEvent = "not an event";
 
     // Act
     var events = EventExtractor.ExtractEvents(nonEvent).ToList();
@@ -99,10 +99,10 @@ public class EventExtractorTests {
   [Test]
   public async Task ExtractEvents_WithEventEnumerable_ReturnsAllEventsAsync() {
     // Arrange
-    IEnumerable<IEvent> eventEnumerable = new List<IEvent> {
+    IEvent[] eventEnumerable = [
       new TestEvent("First"),
       new TestEvent("Second")
-    };
+    ];
 
     // Act
     var events = EventExtractor.ExtractEvents(eventEnumerable).ToList();
@@ -114,7 +114,7 @@ public class EventExtractorTests {
   [Test]
   public async Task ExtractEvents_WithEmptyEnumerable_ReturnsEmptyAsync() {
     // Arrange
-    IEnumerable<IEvent> emptyEnumerable = Enumerable.Empty<IEvent>();
+    IEvent[] emptyEnumerable = [];
 
     // Act
     var events = EventExtractor.ExtractEvents(emptyEnumerable).ToList();

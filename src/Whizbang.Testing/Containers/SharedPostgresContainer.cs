@@ -140,7 +140,7 @@ public static class SharedPostgresContainer {
             break;
           } catch (Exception ex) when (attempt < MAX_RETRIES && ex.Message.Contains("Conflict")) {
             // Another process created the container - wait and retry detection
-            Console.WriteLine($"[SharedPostgresContainer] Container was created by another process, retrying detection...");
+            Console.WriteLine("[SharedPostgresContainer] Container was created by another process, retrying detection...");
             await Task.Delay(2000, ct);
           }
         }
@@ -156,9 +156,9 @@ public static class SharedPostgresContainer {
         Console.WriteLine("================================================================================");
 
         throw new InvalidOperationException(
-          $"Failed to initialize shared PostgreSQL container. " +
+          "Failed to initialize shared PostgreSQL container. " +
           $"Error: {ex.Message}. " +
-          $"This is a fatal error - remaining tests will be skipped.",
+          "This is a fatal error - remaining tests will be skipped.",
           ex
         );
       }
@@ -180,19 +180,17 @@ public static class SharedPostgresContainer {
                   $"-e POSTGRES_PASSWORD={PASSWORD} " +
                   $"-e POSTGRES_DB={DATABASE} " +
                   $"--publish 0:{CONTAINER_PORT} " +
-                  $"--restart no " +
+                  "--restart no " +
                   $"{IMAGE_NAME} " +
-                  $"-c max_connections=500",
+                  "-c max_connections=500",
       RedirectStandardOutput = true,
       RedirectStandardError = true,
       UseShellExecute = false,
       CreateNoWindow = true
     };
 
-    using var process = Process.Start(psi);
-    if (process == null) {
-      throw new InvalidOperationException("Failed to start docker process");
-    }
+    using var process = Process.Start(psi)
+      ?? throw new InvalidOperationException("Failed to start docker process");
 
     var stdOut = await process.StandardOutput.ReadToEndAsync(ct);
     var stdErr = await process.StandardError.ReadToEndAsync(ct);

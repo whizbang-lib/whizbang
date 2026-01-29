@@ -113,7 +113,7 @@ public class GitOperationsTests {
 
     // Assert - should return a URL containing "whizbang"
     await Assert.That(url).IsNotNull();
-    await Assert.That(url!).Contains("whizbang");
+    await Assert.That(url).Contains("whizbang");
   }
 
   [Test]
@@ -165,7 +165,7 @@ public class GitOperationsTests {
   [Test]
   public async Task GetProjectName_HandlesMultipleTrailingSeparators_Async() {
     // Arrange
-    var projectPath = "/Users/dev/src/MyProject//";
+    const string projectPath = "/Users/dev/src/MyProject//";
 
     // Act
     var projectName = GitOperations.GetProjectName(projectPath);

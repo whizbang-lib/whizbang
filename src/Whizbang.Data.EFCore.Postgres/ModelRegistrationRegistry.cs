@@ -13,8 +13,8 @@ namespace Whizbang.Data.EFCore.Postgres;
 /// </summary>
 /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/ModelRegistrationRegistryTests.cs</tests>
 public static class ModelRegistrationRegistry {
-  private static readonly List<Action<IServiceCollection, Type, IDbUpsertStrategy>> _registrars = new();
-  private static readonly ConditionalWeakTable<IServiceCollection, HashSet<(Type dbContextType, int callbackIndex)>> _invoked = new();
+  private static readonly List<Action<IServiceCollection, Type, IDbUpsertStrategy>> _registrars = [];
+  private static readonly ConditionalWeakTable<IServiceCollection, HashSet<(Type dbContextType, int callbackIndex)>> _invoked = [];
   private static readonly object _lock = new();
 
   /// <summary>
@@ -62,7 +62,7 @@ public static class ModelRegistrationRegistry {
       // Get or create the invocation tracking set for this ServiceCollection
       // ConditionalWeakTable ensures we don't prevent ServiceCollection from being garbage collected
       if (!_invoked.TryGetValue(services, out var invokedSet)) {
-        invokedSet = new HashSet<(Type dbContextType, int callbackIndex)>();
+        invokedSet = [];
         _invoked.Add(services, invokedSet);
       }
 

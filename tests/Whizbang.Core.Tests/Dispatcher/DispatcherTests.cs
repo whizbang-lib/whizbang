@@ -697,7 +697,7 @@ public class DispatcherTests {
     await Assert.That(traces).Count().IsGreaterThanOrEqualTo(1);
 
     // Verify it's MessageEnvelope<CreateOrder>
-    var envelope = traces.First();
+    var envelope = traces[0];
     var typeArguments = envelope.GetType().GetGenericArguments();
     await Assert.That(typeArguments[0]).IsEqualTo(typeof(CreateOrder));
   }

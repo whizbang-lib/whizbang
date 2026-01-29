@@ -11,9 +11,9 @@ namespace Whizbang.Transports.RabbitMQ;
 public sealed class RabbitMQChannelPool : IDisposable {
   private readonly IConnection _connection;
   private readonly int _maxChannels;
-  private readonly ConcurrentBag<IChannel> _availableChannels = new();
+  private readonly ConcurrentBag<IChannel> _availableChannels = [];
   private readonly SemaphoreSlim _semaphore;
-  private readonly List<IChannel> _allChannels = new();
+  private readonly List<IChannel> _allChannels = [];
   private readonly object _lock = new();
   private bool _disposed;
 

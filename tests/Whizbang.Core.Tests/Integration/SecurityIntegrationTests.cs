@@ -330,11 +330,11 @@ public class SecurityIntegrationTests {
     var scope = new PerspectiveScope {
       TenantId = "tenant-1",
       UserId = "user-1",
-      AllowedPrincipals = new List<SecurityPrincipalId> {
+      AllowedPrincipals = [
         SecurityPrincipalId.User("user-1"),
         SecurityPrincipalId.Group("managers"),
         SecurityPrincipalId.Group("finance-team")
-      },
+      ],
       Extensions = new Dictionary<string, string?> {
         ["department"] = "Engineering",
         ["costCenter"] = "CC-123"

@@ -65,7 +65,7 @@ public sealed class InboxStrategyPrompt {
 
     if (_ownedDomains.Count > 0) {
       var exampleDomain = _ownedDomains[0];
-      writer.WriteLine($"{BOX_VERTICAL}      Example: CreateOrder -> \"whizbang.inbox\" (filter: {exampleDomain.PadRight(10)}){BOX_VERTICAL}");
+      writer.WriteLine($"{BOX_VERTICAL}      Example: CreateOrder -> \"whizbang.inbox\" (filter: {exampleDomain,-10}){BOX_VERTICAL}");
     } else {
       writer.WriteLine($"{BOX_VERTICAL}      Example: CreateOrder -> \"whizbang.inbox\" (with filter)    {BOX_VERTICAL}");
     }
@@ -153,7 +153,7 @@ public sealed class InboxStrategyPrompt {
 
   private static void _renderHeader(string title, TextWriter writer) {
     writer.WriteLine($"{BOX_TOP_LEFT}{new string(BOX_HORIZONTAL[0], BOX_WIDTH)}{BOX_TOP_RIGHT}");
-    writer.WriteLine($"{BOX_VERTICAL}  {title.PadRight(BOX_WIDTH - 2)}{BOX_VERTICAL}");
+    writer.WriteLine($"{BOX_VERTICAL}  {title,-(BOX_WIDTH - 2)}{BOX_VERTICAL}");
     writer.WriteLine($"{BOX_T_LEFT}{new string(BOX_HORIZONTAL[0], BOX_WIDTH)}{BOX_T_RIGHT}");
   }
 

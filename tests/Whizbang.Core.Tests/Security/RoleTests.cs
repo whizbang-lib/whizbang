@@ -92,7 +92,7 @@ public class RoleTests {
     // Arrange - role has global admin
     var role = new Role {
       Name = "SuperAdmin",
-      Permissions = new HashSet<Permission> { new Permission("*:*") }
+      Permissions = new HashSet<Permission> { new("*:*") }
     };
 
     // Act & Assert

@@ -326,8 +326,8 @@ public class RabbitMQTransport : ITransport, IAsyncDisposable {
       RabbitMQSubscription? subscription = null;
 
       // Set up message received handler
-      consumer.ReceivedAsync += async (sender, args) => {
-        if (subscription != null && !subscription.IsActive) {
+      consumer.ReceivedAsync += async (_, args) => {
+        if (subscription is { IsActive: false }) {
           // If paused, nack the message with requeue
           await channel.BasicNackAsync(
             deliveryTag: args.DeliveryTag,

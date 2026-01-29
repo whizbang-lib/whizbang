@@ -33,7 +33,7 @@ public class AccessDeniedExceptionTests {
   [Test]
   public async Task MessageConstructor_SetsCustomMessageAsync() {
     // Arrange
-    var message = "Custom access denied message";
+    const string message = "Custom access denied message";
 
     // Act
     var exception = new AccessDeniedException(message);
@@ -52,7 +52,7 @@ public class AccessDeniedExceptionTests {
   [Test]
   public async Task MessageAndInnerExceptionConstructor_SetsMessageAndInnerAsync() {
     // Arrange
-    var message = "Access denied with inner exception";
+    const string message = "Access denied with inner exception";
     var innerException = new InvalidOperationException("Inner error");
 
     // Act

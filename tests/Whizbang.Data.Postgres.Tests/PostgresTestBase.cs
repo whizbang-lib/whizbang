@@ -187,7 +187,7 @@ public abstract class PostgresTestBase : IAsyncDisposable {
         await functionCommand.ExecuteNonQueryAsync();
       } catch (Exception ex) {
         Console.WriteLine($"MIGRATION ERROR in {functionFile}: {ex.Message}");
-        Console.WriteLine($"ERROR DETAIL: {ex.ToString()}");
+        Console.WriteLine($"ERROR DETAIL: {ex}");
         throw;
       }
     }

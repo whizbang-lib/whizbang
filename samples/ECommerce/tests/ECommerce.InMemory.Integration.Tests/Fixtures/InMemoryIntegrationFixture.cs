@@ -59,7 +59,7 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   /// CRITICAL: Must be different from InventoryWorker instance ID to ensure work coordinator treats them as separate instances.
   /// </summary>
   private readonly Guid _bffInstanceId = Guid.CreateVersion7();
-  private readonly List<IServiceScope> _lensScopes = new(); // Track scopes for lens queries to dispose them properly
+  private readonly List<IServiceScope> _lensScopes = []; // Track scopes for lens queries to dispose them properly
 
   public InMemoryIntegrationFixture() {
     // Create shared InProcessTransport (both hosts will use this same instance)

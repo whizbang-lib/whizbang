@@ -240,7 +240,7 @@ public class ScopedLensFactoryImplTests {
     var lens = factory.GetOrganizationLens<ITestLensQuery>();
 
     // Assert
-    var expectedFilters = ScopeFilter.Tenant | ScopeFilter.Organization;
+    const ScopeFilter expectedFilters = ScopeFilter.Tenant | ScopeFilter.Organization;
     await Assert.That(lens.AppliedFilter!.Value.Filters).IsEqualTo(expectedFilters);
     await Assert.That(lens.AppliedFilter!.Value.OrganizationId).IsEqualTo("org-456");
   }
@@ -256,7 +256,7 @@ public class ScopedLensFactoryImplTests {
     var lens = factory.GetCustomerLens<ITestLensQuery>();
 
     // Assert
-    var expectedFilters = ScopeFilter.Tenant | ScopeFilter.Customer;
+    const ScopeFilter expectedFilters = ScopeFilter.Tenant | ScopeFilter.Customer;
     await Assert.That(lens.AppliedFilter!.Value.Filters).IsEqualTo(expectedFilters);
     await Assert.That(lens.AppliedFilter!.Value.CustomerId).IsEqualTo("cust-789");
   }
@@ -335,7 +335,7 @@ public class ScopedLensFactoryImplTests {
 
     // Act & Assert
     await Assert.That(() => factory.GetLens<ITestLensQuery>(
-      ScopeFilter.None, Array.Empty<Permission>()))
+      ScopeFilter.None, []))
       .ThrowsExactly<ArgumentException>();
   }
 
@@ -380,11 +380,8 @@ public class ScopedLensFactoryImplTests {
   public async Task ScopedLensFactory_GetLens_StringScope_ITenantScoped_MapsCorrectlyAsync() {
     // Arrange
     var context = _createScopeContext(tenantId: "tenant-123");
-    var (factory, accessor) = _createFactory(options => {
-      options.DefineScope("TenantScoped", scope => {
-        scope.FilterInterfaceType = typeof(ITenantScoped);
-      });
-    });
+    var (factory, accessor) = _createFactory(options =>
+      options.DefineScope("TenantScoped", scope => scope.FilterInterfaceType = typeof(ITenantScoped)));
     accessor.Current = context;
 
     // Act
@@ -398,11 +395,8 @@ public class ScopedLensFactoryImplTests {
   public async Task ScopedLensFactory_GetLens_StringScope_IUserScoped_MapsCorrectlyAsync() {
     // Arrange
     var context = _createScopeContext(tenantId: "tenant-123", userId: "user-456");
-    var (factory, accessor) = _createFactory(options => {
-      options.DefineScope("UserScoped", scope => {
-        scope.FilterInterfaceType = typeof(IUserScoped);
-      });
-    });
+    var (factory, accessor) = _createFactory(options =>
+      options.DefineScope("UserScoped", scope => scope.FilterInterfaceType = typeof(IUserScoped)));
     accessor.Current = context;
 
     // Act
@@ -416,11 +410,8 @@ public class ScopedLensFactoryImplTests {
   public async Task ScopedLensFactory_GetLens_StringScope_IOrganizationScoped_MapsCorrectlyAsync() {
     // Arrange
     var context = _createScopeContext(tenantId: "tenant-123", organizationId: "org-456");
-    var (factory, accessor) = _createFactory(options => {
-      options.DefineScope("OrgScoped", scope => {
-        scope.FilterInterfaceType = typeof(IOrganizationScoped);
-      });
-    });
+    var (factory, accessor) = _createFactory(options =>
+      options.DefineScope("OrgScoped", scope => scope.FilterInterfaceType = typeof(IOrganizationScoped)));
     accessor.Current = context;
 
     // Act
@@ -434,11 +425,8 @@ public class ScopedLensFactoryImplTests {
   public async Task ScopedLensFactory_GetLens_StringScope_ICustomerScoped_MapsCorrectlyAsync() {
     // Arrange
     var context = _createScopeContext(tenantId: "tenant-123", customerId: "cust-789");
-    var (factory, accessor) = _createFactory(options => {
-      options.DefineScope("CustomerScoped", scope => {
-        scope.FilterInterfaceType = typeof(ICustomerScoped);
-      });
-    });
+    var (factory, accessor) = _createFactory(options =>
+      options.DefineScope("CustomerScoped", scope => scope.FilterInterfaceType = typeof(ICustomerScoped)));
     accessor.Current = context;
 
     // Act
@@ -451,11 +439,8 @@ public class ScopedLensFactoryImplTests {
   [Test]
   public async Task ScopedLensFactory_GetLens_StringScope_NoFilter_MapsCorrectlyAsync() {
     // Arrange
-    var (factory, _) = _createFactory(options => {
-      options.DefineScope("Global", scope => {
-        scope.NoFilter = true;
-      });
-    });
+    var (factory, _) = _createFactory(options =>
+      options.DefineScope("Global", scope => scope.NoFilter = true));
 
     // Act
     var lens = factory.GetLens<ITestLensQuery>("Global");
@@ -468,11 +453,8 @@ public class ScopedLensFactoryImplTests {
   public async Task ScopedLensFactory_GetLens_StringScope_UnknownPropertyName_MapsToNoneAsync() {
     // Arrange
     var context = _createScopeContext(tenantId: "tenant-123");
-    var (factory, accessor) = _createFactory(options => {
-      options.DefineScope("Unknown", scope => {
-        scope.FilterPropertyName = "SomeUnknownProperty";
-      });
-    });
+    var (factory, accessor) = _createFactory(options =>
+      options.DefineScope("Unknown", scope => scope.FilterPropertyName = "SomeUnknownProperty"));
     accessor.Current = context;
 
     // Act

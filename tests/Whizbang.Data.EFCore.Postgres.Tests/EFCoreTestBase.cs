@@ -169,7 +169,7 @@ public abstract class EFCoreTestBase : IAsyncDisposable {
       Envelope = CreateTestEnvelope(messageId),
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(messageId),
-        Hops = new List<MessageHop>()
+        Hops = []
       },
       EnvelopeType = typeof(MessageEnvelope<JsonElement>).AssemblyQualifiedName!,
       MessageType = "TestMessage, TestAssembly",

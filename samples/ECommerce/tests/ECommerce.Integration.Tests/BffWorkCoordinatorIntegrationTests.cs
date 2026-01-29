@@ -59,7 +59,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
     var envelopeJson = JsonSerializer.Serialize(envelope, jsonOptions);
     var metadata = new EnvelopeMetadata {
       MessageId = MessageId.From(messageId),
-      Hops = new List<MessageHop>()
+      Hops = []
     };
     var metadataJson = JsonSerializer.Serialize(metadata, jsonOptions);
 
@@ -394,7 +394,7 @@ public class OutboxMessageRecord {
 public class TestTransport : Whizbang.Core.Transports.ITransport {
   private readonly object _lock = new();
   private bool _isInitialized;
-  public List<PublishedMessageRecord> PublishedMessages { get; } = new();
+  public List<PublishedMessageRecord> PublishedMessages { get; } = [];
 
   public bool IsInitialized => _isInitialized;
 

@@ -86,11 +86,11 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
 
     // CRITICAL: If expectedCount is 0, signal completion immediately
     if (inventoryPerspectives == 0) {
-      Console.WriteLine($"[PerspectiveWaiter] Inventory expects 0 perspectives, signaling immediate completion");
+      Console.WriteLine("[PerspectiveWaiter] Inventory expects 0 perspectives, signaling immediate completion");
       _inventoryCompletionSource.TrySetResult(true);
     }
     if (bffPerspectives == 0) {
-      Console.WriteLine($"[PerspectiveWaiter] BFF expects 0 perspectives, signaling immediate completion");
+      Console.WriteLine("[PerspectiveWaiter] BFF expects 0 perspectives, signaling immediate completion");
       _bffCompletionSource.TrySetResult(true);
     }
 
@@ -98,7 +98,7 @@ public sealed class PerspectiveCompletionWaiter<TEvent> : IDisposable
     Console.WriteLine($"[PerspectiveWaiter] Registering receptors for {typeof(TEvent).Name}");
     _inventoryRegistry.Register<TEvent>(_inventoryReceptor, LifecycleStage.PostPerspectiveInline);
     _bffRegistry.Register<TEvent>(_bffReceptor, LifecycleStage.PostPerspectiveInline);
-    Console.WriteLine($"[PerspectiveWaiter] Receptors registered! Ready to send command.");
+    Console.WriteLine("[PerspectiveWaiter] Receptors registered! Ready to send command.");
   }
 
   /// <summary>

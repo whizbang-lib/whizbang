@@ -19,7 +19,8 @@ public class MessageKindDetectorTests {
   [Test]
   public async Task Detect_NullType_ThrowsArgumentNullExceptionAsync() {
     // Act
-    var act = () => MessageKindDetector.Detect(null!);
+    void Act() => MessageKindDetector.Detect(null!);
+    Action act = Act;
 
     // Assert
     await Assert.That(act).Throws<ArgumentNullException>();

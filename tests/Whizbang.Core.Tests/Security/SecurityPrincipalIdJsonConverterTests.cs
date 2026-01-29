@@ -85,10 +85,10 @@ public class SecurityPrincipalIdJsonConverterTests {
     var scope = new PerspectiveScope {
       TenantId = "tenant-123",
       UserId = "user-456",
-      AllowedPrincipals = new List<SecurityPrincipalId> {
+      AllowedPrincipals = [
         SecurityPrincipalId.User("user-456"),
         SecurityPrincipalId.Group("team-A")
-      }
+      ]
     };
 
     // Use the registered combined options from JsonContextRegistry

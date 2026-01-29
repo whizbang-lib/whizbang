@@ -22,7 +22,7 @@ public class EventTypeMatchingHelperTests {
   [Test]
   public async Task NormalizeTypeName_WithSimpleTypeName_ReturnsUnchangedAsync() {
     // Arrange
-    var typeName = "MyApp.Events.OrderCreated, MyApp.Contracts";
+    const string typeName = "MyApp.Events.OrderCreated, MyApp.Contracts";
 
     // Act
     var result = EventTypeMatchingHelper.NormalizeTypeName(typeName);
@@ -34,7 +34,7 @@ public class EventTypeMatchingHelperTests {
   [Test]
   public async Task NormalizeTypeName_WithVersionInfo_StripsVersionAsync() {
     // Arrange
-    var typeName = "MyApp.Events.OrderCreated, MyApp.Contracts, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
+    const string typeName = "MyApp.Events.OrderCreated, MyApp.Contracts, Version=1.0.0.0, Culture=neutral, PublicKeyToken=null";
 
     // Act
     var result = EventTypeMatchingHelper.NormalizeTypeName(typeName);
@@ -46,7 +46,7 @@ public class EventTypeMatchingHelperTests {
   [Test]
   public async Task NormalizeTypeName_WithPartialVersionInfo_StripsAllMetadataAsync() {
     // Arrange - Version only
-    var typeName1 = "MyApp.OrderCreated, MyApp, Version=1.0.0.0";
+    const string typeName1 = "MyApp.OrderCreated, MyApp, Version=1.0.0.0";
 
     // Act
     var result1 = EventTypeMatchingHelper.NormalizeTypeName(typeName1);
@@ -58,7 +58,7 @@ public class EventTypeMatchingHelperTests {
   [Test]
   public async Task NormalizeTypeName_WithGenericType_StripsVersionFromBothAsync() {
     // Arrange - Generic type with nested version info
-    var typeName = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.OrderCreated, MyApp, Version=1.0.0.0]], Whizbang.Core, Version=2.0.0.0";
+    const string typeName = "Whizbang.Core.Observability.MessageEnvelope`1[[MyApp.OrderCreated, MyApp, Version=1.0.0.0]], Whizbang.Core, Version=2.0.0.0";
 
     // Act
     var result = EventTypeMatchingHelper.NormalizeTypeName(typeName);
@@ -113,7 +113,7 @@ public class EventTypeMatchingHelperTests {
   public async Task IsEventType_WithNonMatchingType_ReturnsFalseAsync() {
     // Arrange
     var eventTypes = new List<Type> { typeof(TestEvent) };
-    var messageTypeName = "Some.Other.Event, OtherAssembly";
+    const string messageTypeName = "Some.Other.Event, OtherAssembly";
 
     // Act
     var result = EventTypeMatchingHelper.IsEventType(messageTypeName, eventTypes);

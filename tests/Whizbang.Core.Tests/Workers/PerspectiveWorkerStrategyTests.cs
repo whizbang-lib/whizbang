@@ -217,7 +217,7 @@ public class PerspectiveWorkerStrategyTests {
       if (ReturnWorkOnEveryCycle && PerspectiveWorkTemplate != null) {
         work = [PerspectiveWorkTemplate];
       } else {
-        work = new List<PerspectiveWork>(PerspectiveWorkToReturn);
+        work = [.. PerspectiveWorkToReturn];
         PerspectiveWorkToReturn.Clear();
       }
 

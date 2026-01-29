@@ -131,7 +131,7 @@ public class SharedRabbitMqContainerIntegrationTests {
   public async Task DisposeAsync_ResetsState_AllowsReinitializationAsync(CancellationToken cancellationToken) {
     // Arrange
     await SharedRabbitMqContainer.InitializeAsync(cancellationToken);
-    var beforeDisposeConnString = SharedRabbitMqContainer.ConnectionString;
+    _ = SharedRabbitMqContainer.ConnectionString; // Access to verify it's available
 
     // Act
     await SharedRabbitMqContainer.DisposeAsync();
@@ -185,7 +185,7 @@ public class SharedRabbitMqContainerIntegrationTests {
     var factory = new global::RabbitMQ.Client.ConnectionFactory {
       Uri = new Uri(SharedRabbitMqContainer.ConnectionString)
     };
-    using var connection = await factory.CreateConnectionAsync(cancellationToken);
+    await using var connection = await factory.CreateConnectionAsync(cancellationToken);
     await Assert.That(connection.IsOpen).IsTrue();
   }
 }

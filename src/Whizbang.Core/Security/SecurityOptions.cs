@@ -20,7 +20,7 @@ namespace Whizbang.Core.Security;
 /// });
 /// </example>
 public sealed class SecurityOptions {
-  private readonly Dictionary<string, Role> _roles = new();
+  private readonly Dictionary<string, Role> _roles = [];
   private readonly List<IPermissionExtractor> _extractors = [];
 
   /// <summary>

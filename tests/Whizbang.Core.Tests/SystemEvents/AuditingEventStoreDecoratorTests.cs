@@ -80,8 +80,9 @@ public class AuditingEventStoreDecoratorTests {
   [Test]
   public async Task AppendAsync_WithEnvelope_PassesCorrectStreamPositionAsync() {
     // Arrange
-    var inner = new MockEventStore();
-    inner.LastSequenceToReturn = 5L; // Simulate position after append
+    var inner = new MockEventStore {
+      LastSequenceToReturn = 5L // Simulate position after append
+    };
     var emitter = new MockSystemEventEmitter();
     var decorator = new AuditingEventStoreDecorator(inner, emitter);
 
@@ -150,7 +151,7 @@ public class AuditingEventStoreDecoratorTests {
     var streamId = Guid.NewGuid();
 
     // Act
-    var results = await decorator.ReadAsync<TestEvent>(streamId, 0).ToListAsync();
+    _ = await decorator.ReadAsync<TestEvent>(streamId, 0).ToListAsync();
 
     // Assert - Delegated to inner
     await Assert.That(inner.ReadBySequenceCalls).Count().IsEqualTo(1);
@@ -169,7 +170,7 @@ public class AuditingEventStoreDecoratorTests {
     var fromEventId = Guid.NewGuid();
 
     // Act
-    var results = await decorator.ReadAsync<TestEvent>(streamId, fromEventId).ToListAsync();
+    _ = await decorator.ReadAsync<TestEvent>(streamId, fromEventId).ToListAsync();
 
     // Assert - Delegated to inner
     await Assert.That(inner.ReadByEventIdCalls).Count().IsEqualTo(1);
@@ -184,8 +185,9 @@ public class AuditingEventStoreDecoratorTests {
   [Test]
   public async Task GetLastSequenceAsync_DelegatesToInnerStoreAsync() {
     // Arrange
-    var inner = new MockEventStore();
-    inner.LastSequenceToReturn = 42L;
+    var inner = new MockEventStore {
+      LastSequenceToReturn = 42L
+    };
     var emitter = new MockSystemEventEmitter();
     var decorator = new AuditingEventStoreDecorator(inner, emitter);
 
@@ -215,7 +217,7 @@ public class AuditingEventStoreDecoratorTests {
     var upToEventId = Guid.NewGuid();
 
     // Act
-    var results = await decorator.GetEventsBetweenAsync<TestEvent>(streamId, afterEventId, upToEventId);
+    _ = await decorator.GetEventsBetweenAsync<TestEvent>(streamId, afterEventId, upToEventId);
 
     // Assert
     await Assert.That(inner.GetEventsBetweenCalls).Count().IsEqualTo(1);
@@ -234,7 +236,7 @@ public class AuditingEventStoreDecoratorTests {
     var eventTypes = new List<Type> { typeof(TestEvent) };
 
     // Act
-    var results = await decorator.GetEventsBetweenPolymorphicAsync(streamId, afterEventId, upToEventId, eventTypes);
+    _ = await decorator.GetEventsBetweenPolymorphicAsync(streamId, afterEventId, upToEventId, eventTypes);
 
     // Assert
     await Assert.That(inner.GetEventsBetweenPolymorphicCalls).Count().IsEqualTo(1);
@@ -256,7 +258,7 @@ public class AuditingEventStoreDecoratorTests {
     var eventTypes = new List<Type> { typeof(TestEvent) };
 
     // Act
-    var results = await decorator.ReadPolymorphicAsync(streamId, fromEventId, eventTypes).ToListAsync();
+    _ = await decorator.ReadPolymorphicAsync(streamId, fromEventId, eventTypes).ToListAsync();
 
     // Assert
     await Assert.That(inner.ReadPolymorphicCalls).Count().IsEqualTo(1);

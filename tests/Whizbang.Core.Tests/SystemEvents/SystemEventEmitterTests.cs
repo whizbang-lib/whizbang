@@ -124,7 +124,7 @@ public class SystemEventEmitterTests {
     var emitter = new SystemEventEmitter(options, eventStore);
 
     var streamId = Guid.NewGuid();
-    var streamPosition = 42L;
+    const long streamPosition = 42L;
 
     // Create envelope with null payload to hit the early return path
     var envelope = new MessageEnvelope<TestEvent> {

@@ -157,7 +157,7 @@ public static class SharedRabbitMqContainer {
             break;
           } catch (Exception ex) when (attempt < MAX_RETRIES && ex.Message.Contains("Conflict")) {
             // Another process created the container - wait and retry detection
-            Console.WriteLine($"[SharedRabbitMqContainer] Container was created by another process, retrying detection...");
+            Console.WriteLine("[SharedRabbitMqContainer] Container was created by another process, retrying detection...");
             await Task.Delay(3000, ct);
           }
         }
@@ -173,9 +173,9 @@ public static class SharedRabbitMqContainer {
         Console.WriteLine("================================================================================");
 
         throw new InvalidOperationException(
-          $"Failed to initialize shared RabbitMQ container. " +
+          "Failed to initialize shared RabbitMQ container. " +
           $"Error: {ex.Message}. " +
-          $"This is a fatal error - remaining tests will be skipped.",
+          "This is a fatal error - remaining tests will be skipped.",
           ex
         );
       }
@@ -197,7 +197,7 @@ public static class SharedRabbitMqContainer {
                   $"-e RABBITMQ_DEFAULT_PASS={PASSWORD} " +
                   $"--publish 0:{AMQP_PORT} " +
                   $"--publish 0:{MANAGEMENT_PORT} " +
-                  $"--restart no " +
+                  "--restart no " +
                   $"{IMAGE_NAME}",
       RedirectStandardOutput = true,
       RedirectStandardError = true,
@@ -205,10 +205,8 @@ public static class SharedRabbitMqContainer {
       CreateNoWindow = true
     };
 
-    using var process = Process.Start(psi);
-    if (process == null) {
-      throw new InvalidOperationException("Failed to start docker process");
-    }
+    using var process = Process.Start(psi)
+      ?? throw new InvalidOperationException("Failed to start docker process");
 
     var stdOut = await process.StandardOutput.ReadToEndAsync(ct);
     var stdErr = await process.StandardError.ReadToEndAsync(ct);

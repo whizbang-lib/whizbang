@@ -24,7 +24,7 @@ public class TransportPublishStrategyTests {
     return new MessageEnvelope<JsonElement>(
       messageId: MessageId.From(messageId),
       payload: JsonDocument.Parse("{}").RootElement,
-      hops: new List<MessageHop>()
+      hops: []
     );
   }
 

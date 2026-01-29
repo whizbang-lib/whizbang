@@ -66,7 +66,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
       MessageType = "TestMessage, TestAssembly",
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(queuedMessageId),
-        Hops = new List<MessageHop>()
+        Hops = []
       }
     });
 
@@ -101,7 +101,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
       MessageType = "TestMessage, TestAssembly",
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(queuedMessageId),
-        Hops = new List<MessageHop>()
+        Hops = []
       }
     });
 
@@ -140,7 +140,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
       MessageType = "TestMessage, TestAssembly",
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(queued1),
-        Hops = new List<MessageHop>()
+        Hops = []
       }
     });
     await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
@@ -167,7 +167,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
       MessageType = "TestMessage, TestAssembly",
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(queued2),
-        Hops = new List<MessageHop>()
+        Hops = []
       }
     });
     await strategy.FlushAsync(WorkBatchFlags.None, cancellationToken);
@@ -209,7 +209,7 @@ public class ScopedWorkCoordinatorStrategyImmediateProcessingTests {
       MessageType = "TestMessage, TestAssembly",
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(queuedMessageId),
-        Hops = new List<MessageHop>()
+        Hops = []
       }
     });
 

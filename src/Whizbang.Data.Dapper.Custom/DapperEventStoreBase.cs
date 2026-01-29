@@ -155,10 +155,8 @@ public abstract class DapperEventStoreBase : IEventStore {
     var hopsTypeInfo = JsonOptions.GetTypeInfo(typeof(List<MessageHop>));
 
     foreach (var row in rows) {
-      var eventData = JsonSerializer.Deserialize(row.EventData, eventTypeInfo);
-      if (eventData == null) {
-        throw new InvalidOperationException($"Failed to deserialize event of type {row.EventType}");
-      }
+      var eventData = JsonSerializer.Deserialize(row.EventData, eventTypeInfo)
+        ?? throw new InvalidOperationException($"Failed to deserialize event of type {row.EventType}");
 
       // Deserialize metadata using dictionary approach (stored with snake_case keys)
       var metadataDict = JsonSerializer.Deserialize(row.Metadata, metadataDictTypeInfo) as Dictionary<string, JsonElement>
@@ -227,7 +225,7 @@ public abstract class DapperEventStoreBase : IEventStore {
       // We need to match against FullName (TypeName only) in our dictionary
       var storedTypeName = row.EventType;
       var commaIndex = storedTypeName.IndexOf(',');
-      var normalizedTypeName = commaIndex > 0 ? storedTypeName.Substring(0, commaIndex).Trim() : storedTypeName;
+      var normalizedTypeName = commaIndex > 0 ? storedTypeName[..commaIndex].Trim() : storedTypeName;
 
       // Look up the concrete type based on normalized EventType
       if (!typeLookup.TryGetValue(normalizedTypeName, out var eventTypeInfo)) {
@@ -237,10 +235,8 @@ public abstract class DapperEventStoreBase : IEventStore {
         );
       }
 
-      var eventData = JsonSerializer.Deserialize(row.EventData, eventTypeInfo);
-      if (eventData == null) {
-        throw new InvalidOperationException($"Failed to deserialize event of type {row.EventType}");
-      }
+      var eventData = JsonSerializer.Deserialize(row.EventData, eventTypeInfo)
+        ?? throw new InvalidOperationException($"Failed to deserialize event of type {row.EventType}");
 
       // Deserialize metadata using dictionary approach (stored with snake_case keys)
       var metadataDict = JsonSerializer.Deserialize(row.Metadata, metadataDictTypeInfo) as Dictionary<string, JsonElement>

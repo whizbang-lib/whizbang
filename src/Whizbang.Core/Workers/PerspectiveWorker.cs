@@ -383,7 +383,7 @@ public partial class PerspectiveWorker(
 
         var processedEvents = shouldLoadEvents
           ? await _loadProcessedEventsAsync(eventStore!, streamId, perspectiveName, lastProcessedEventId, result.LastEventId, cancellationToken)
-          : new List<MessageEnvelope<IEvent>>();
+          : [];
 
 #pragma warning disable CA1848 // Temporary diagnostic logging
         _logger.LogInformation("[PerspectiveWorker DIAGNOSTIC] Loaded {Count} events for {PerspectiveName}/{StreamId}",
@@ -499,7 +499,7 @@ public partial class PerspectiveWorker(
 
     if (_eventTypeProvider is null) {
       LogWarningNoEventTypes(_logger, perspectiveName, streamId);
-      return new List<MessageEnvelope<IEvent>>();
+      return [];
     }
 
     try {
@@ -507,7 +507,7 @@ public partial class PerspectiveWorker(
       var eventTypes = _eventTypeProvider.GetEventTypes();
       if (eventTypes.Count == 0) {
         LogWarningNoEventTypes(_logger, perspectiveName, streamId);
-        return new List<MessageEnvelope<IEvent>>();
+        return [];
       }
 
       // Load all events that were just processed by this perspective run

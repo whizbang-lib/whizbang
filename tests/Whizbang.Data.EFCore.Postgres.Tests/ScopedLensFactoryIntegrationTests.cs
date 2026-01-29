@@ -30,7 +30,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 /// <tests>Whizbang.Core.Tests/Lenses/ScopedLensFactoryImplTests.cs</tests>
 [Category("Integration")]
 public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
-  private readonly Uuid7IdProvider _idProvider = new Uuid7IdProvider();
+  private readonly Uuid7IdProvider _idProvider = new();
 
   // === Factory Resolution Tests ===
 
@@ -227,11 +227,11 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
 
     await _seedOrderAsync(context, order1Id, 100m,
       tenantId: "tenant-1",
-      allowedPrincipals: new List<SecurityPrincipalId> { SecurityPrincipalId.Group("sales") });
+      allowedPrincipals: [SecurityPrincipalId.Group("sales")]);
 
     await _seedOrderAsync(context, order2Id, 200m,
       tenantId: "tenant-1",
-      allowedPrincipals: new List<SecurityPrincipalId> { SecurityPrincipalId.Group("engineering") });
+      allowedPrincipals: [SecurityPrincipalId.Group("engineering")]);
 
     contextAccessor.Current = new ScopeContext {
       Scope = new PerspectiveScope { TenantId = "tenant-1" },
@@ -272,13 +272,13 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
     await _seedOrderAsync(context, order2Id, 200m,
       tenantId: "tenant-1",
       userId: "user-bob",
-      allowedPrincipals: new List<SecurityPrincipalId> { SecurityPrincipalId.Group("sales-team") });
+      allowedPrincipals: [SecurityPrincipalId.Group("sales-team")]);
 
     // Neither owned nor shared
     await _seedOrderAsync(context, order3Id, 300m,
       tenantId: "tenant-1",
       userId: "user-charlie",
-      allowedPrincipals: new List<SecurityPrincipalId> { SecurityPrincipalId.Group("other-team") });
+      allowedPrincipals: [SecurityPrincipalId.Group("other-team")]);
 
     contextAccessor.Current = new ScopeContext {
       Scope = new PerspectiveScope { TenantId = "tenant-1", UserId = "user-alice" },

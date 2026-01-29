@@ -24,7 +24,7 @@ namespace Whizbang.Data.EFCore.Postgres.Tests;
 public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
   private EFCoreWorkCoordinator<WorkCoordinationDbContext> _sut = null!;
   private Guid _instanceId;
-  private readonly Uuid7IdProvider _idProvider = new Uuid7IdProvider();
+  private readonly Uuid7IdProvider _idProvider = new();
 
   [Before(Test)]
   public async Task TestSetupAsync() {
@@ -728,12 +728,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     var outboxMessageData = new OutboxMessageData {
       MessageId = MessageId.From(messageId),
       Payload = JsonSerializer.Deserialize<JsonElement>("""{"Data":"test"}"""),
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     var envelopeMetadata = new EnvelopeMetadata {
       MessageId = MessageId.From(messageId),
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     dbContext.Set<OutboxRecord>().Add(new OutboxRecord {
@@ -818,12 +818,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     var inboxMessageData = new InboxMessageData {
       MessageId = MessageId.From(messageId),
       Payload = JsonSerializer.Deserialize<JsonElement>("""{"Data":"test"}"""),
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     var envelopeMetadata = new EnvelopeMetadata {
       MessageId = MessageId.From(messageId),
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     dbContext.Set<InboxRecord>().Add(new InboxRecord {
@@ -2317,12 +2317,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       var poisonOutboxMessageData = new OutboxMessageData {
         MessageId = MessageId.From(poisonMessageId),
         Payload = JsonSerializer.Deserialize<JsonElement>("{}"),
-        Hops = new List<MessageHop>()
+        Hops = []
       };
 
       var poisonEnvelopeMetadata = new EnvelopeMetadata {
         MessageId = MessageId.From(poisonMessageId),
-        Hops = new List<MessageHop>()
+        Hops = []
       };
 
       dbContext.Set<OutboxRecord>().Add(new OutboxRecord {
@@ -2403,12 +2403,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     var timestampOutboxMessageData = new OutboxMessageData {
       MessageId = MessageId.From(messageId),
       Payload = JsonSerializer.Deserialize<JsonElement>("""{"Data":"test"}"""),
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     var timestampEnvelopeMetadata = new EnvelopeMetadata {
       MessageId = MessageId.From(messageId),
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     dbContext.Set<OutboxRecord>().Add(new OutboxRecord {
@@ -2462,12 +2462,12 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
     var scheduledOutboxMessageData = new OutboxMessageData {
       MessageId = MessageId.From(messageId),
       Payload = JsonSerializer.Deserialize<JsonElement>("""{"Data":"test"}"""),
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     var scheduledEnvelopeMetadata = new EnvelopeMetadata {
       MessageId = MessageId.From(messageId),
-      Hops = new List<MessageHop>()
+      Hops = []
     };
 
     dbContext.Set<OutboxRecord>().Add(new OutboxRecord {
@@ -2539,7 +2539,7 @@ public class EFCoreWorkCoordinatorTests : EFCoreTestBase {
       MessageType = testEventType,
       Metadata = new EnvelopeMetadata {
         MessageId = MessageId.From(messageId),
-        Hops = new List<MessageHop>()
+        Hops = []
       }
     };
 

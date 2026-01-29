@@ -228,7 +228,7 @@ public class InMemoryEventStore : IEventStore {
           var hopsProperty = envelope.GetType().GetProperty("Hops");
 
           var messageId = (MessageId?)messageIdProperty?.GetValue(envelope) ?? MessageId.New();
-          var hops = (List<MessageHop>?)hopsProperty?.GetValue(envelope) ?? new List<MessageHop>();
+          var hops = (List<MessageHop>?)hopsProperty?.GetValue(envelope) ?? [];
 
           eventEnvelopes.Add(new MessageEnvelope<IEvent> {
             MessageId = messageId,

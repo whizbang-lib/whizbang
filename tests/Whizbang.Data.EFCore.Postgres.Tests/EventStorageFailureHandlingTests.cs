@@ -17,7 +17,7 @@ public class EventStorageFailureHandlingTests {
     var logger = new TestLogger<EFCoreWorkCoordinator<WorkCoordinationDbContext>>();
     var results = new List<WorkBatchRow> {
       // Valid outbox work
-      new WorkBatchRow {
+      new() {
         InstanceRank = 1,
         ActiveInstanceCount = 1,
         Source = "outbox",
@@ -38,7 +38,7 @@ public class EventStorageFailureHandlingTests {
         PerspectiveName = null
       },
       // Error row (storage failure)
-      new WorkBatchRow {
+      new() {
         InstanceRank = 1,
         ActiveInstanceCount = 1,
         Source = "outbox",
@@ -156,7 +156,7 @@ public class EventStorageFailureHandlingTests {
 /// Simple test logger for capturing log messages
 /// </summary>
 internal sealed class TestLogger<T> : ILogger<T> {
-  public List<string> LoggedMessages { get; } = new();
+  public List<string> LoggedMessages { get; } = [];
 
   public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
 

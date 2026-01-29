@@ -229,7 +229,7 @@ public class SystemEventServiceCollectionExtensionsTests {
   public async Task DecorateEventStoreWithAuditing_WithEventStoreFactory_WrapsWithDecoratorAsync() {
     // Arrange
     var services = new ServiceCollection();
-    services.AddSingleton<IEventStore>(sp => new MockEventStore());
+    services.AddSingleton<IEventStore>(_ => new MockEventStore());
     services.AddSingleton<ISystemEventEmitter, MockSystemEventEmitter>();
     services.AddSystemEvents();
 

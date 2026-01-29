@@ -131,7 +131,7 @@ public class SharedPostgresContainerIntegrationTests {
   public async Task DisposeAsync_ResetsState_AllowsReinitializationAsync(CancellationToken cancellationToken) {
     // Arrange
     await SharedPostgresContainer.InitializeAsync(cancellationToken);
-    var beforeDisposeConnString = SharedPostgresContainer.ConnectionString;
+    _ = SharedPostgresContainer.ConnectionString; // Access to verify it's available
 
     // Act
     await SharedPostgresContainer.DisposeAsync();
@@ -269,8 +269,7 @@ public class SharedPostgresContainerIntegrationTests {
     // Cleanup - drop the test database
     await connection.CloseAsync();
     NpgsqlConnection.ClearAllPools();
-    await using (var dropCmd = new NpgsqlCommand($"DROP DATABASE IF EXISTS \"{dbName}\"", adminConn)) {
-      await dropCmd.ExecuteNonQueryAsync(cancellationToken);
-    }
+    await using var dropCmd = new NpgsqlCommand($"DROP DATABASE IF EXISTS \"{dbName}\"", adminConn);
+    await dropCmd.ExecuteNonQueryAsync(cancellationToken);
   }
 }

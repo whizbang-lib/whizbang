@@ -194,7 +194,7 @@ public class PerspectiveScopeTests {
     // Arrange
     var scope = new PerspectiveScope {
       TenantId = "tenant-123",
-      AllowedPrincipals = new List<SecurityPrincipalId>()
+      AllowedPrincipals = []
     };
 
     // Assert

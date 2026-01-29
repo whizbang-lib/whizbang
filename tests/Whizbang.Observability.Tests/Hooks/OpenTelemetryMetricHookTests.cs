@@ -228,7 +228,7 @@ public class OpenTelemetryMetricHookTests {
     };
 
     // Payload with string representation of number
-    var json = """{"OrderId":"00000000-0000-0000-0000-000000000001","AmountStr":"456.78"}""";
+    const string json = """{"OrderId":"00000000-0000-0000-0000-000000000001","AmountStr":"456.78"}""";
     var payload = JsonDocument.Parse(json).RootElement;
     var context = new TagContext<MetricTagAttribute> {
       Attribute = attribute,
@@ -282,7 +282,7 @@ public class OpenTelemetryMetricHookTests {
       ValueProperty = "NonExistentProperty"
     };
 
-    var json = """{"OrderId":"00000000-0000-0000-0000-000000000001","Amount":100}""";
+    const string json = """{"OrderId":"00000000-0000-0000-0000-000000000001","Amount":100}""";
     var payload = JsonDocument.Parse(json).RootElement;
     var context = new TagContext<MetricTagAttribute> {
       Attribute = attribute,
@@ -309,7 +309,7 @@ public class OpenTelemetryMetricHookTests {
       Properties = ["IsActive", "IsPremium"]
     };
 
-    var json = """{"Id":"00000000-0000-0000-0000-000000000001","IsActive":true,"IsPremium":false}""";
+    const string json = """{"Id":"00000000-0000-0000-0000-000000000001","IsActive":true,"IsPremium":false}""";
     var payload = JsonDocument.Parse(json).RootElement;
     var context = new TagContext<MetricTagAttribute> {
       Attribute = attribute,
@@ -367,7 +367,7 @@ public class OpenTelemetryMetricHookTests {
       ValueProperty = "BadValue"
     };
 
-    var json = """{"Id":"00000000-0000-0000-0000-000000000001","BadValue":"not-a-number"}""";
+    const string json = """{"Id":"00000000-0000-0000-0000-000000000001","BadValue":"not-a-number"}""";
     var payload = JsonDocument.Parse(json).RootElement;
     var context = new TagContext<MetricTagAttribute> {
       Attribute = attribute,
@@ -394,7 +394,7 @@ public class OpenTelemetryMetricHookTests {
       Properties = ["TenantId"] // Property from payload
     };
 
-    var json = """{"Id":"00000000-0000-0000-0000-000000000001","TenantId":"payload-tenant"}""";
+    const string json = """{"Id":"00000000-0000-0000-0000-000000000001","TenantId":"payload-tenant"}""";
     var payload = JsonDocument.Parse(json).RootElement;
     var scope = new Dictionary<string, object?> {
       { "TenantId", "scope-tenant" } // Should NOT override payload value
@@ -425,7 +425,7 @@ public class OpenTelemetryMetricHookTests {
       Properties = ["StringVal", "NumVal", "BoolVal", "ArrayVal"]
     };
 
-    var json = """{"StringVal":"hello","NumVal":42,"BoolVal":true,"ArrayVal":[1,2,3]}""";
+    const string json = """{"StringVal":"hello","NumVal":42,"BoolVal":true,"ArrayVal":[1,2,3]}""";
     var payload = JsonDocument.Parse(json).RootElement;
     var context = new TagContext<MetricTagAttribute> {
       Attribute = attribute,

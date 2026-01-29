@@ -51,7 +51,7 @@ public class CommandAuditPipelineBehaviorTests {
     var behavior = new CommandAuditPipelineBehavior<TestCommand, string>(emitter, options);
 
     var command = new TestCommand { OrderId = "ABC123" };
-    var expectedResult = "Success";
+    const string expectedResult = "Success";
 
     // Act
     var result = await behavior.HandleAsync(command, () => Task.FromResult(expectedResult));
@@ -117,7 +117,7 @@ public class CommandAuditPipelineBehaviorTests {
     var behavior = new CommandAuditPipelineBehavior<TestCommand, string>(emitter, options);
 
     var command = new TestCommand { OrderId = "ABC123" };
-    var response = "Success-123";
+    const string response = "Success-123";
 
     // Act
     await behavior.HandleAsync(command, () => Task.FromResult(response));
