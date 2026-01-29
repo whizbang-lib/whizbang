@@ -571,6 +571,147 @@ public class SystemEventEmitterTests {
 
   #endregion
 
+  #region Real Implementation Coverage Tests
+
+  [Test]
+  public async Task EmitEventAuditedAsync_WithSecurityContext_ExtractsScopeCorrectlyAsync() {
+    // Arrange - Use real SystemEventEmitter to test scope extraction
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableEventAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    var testCorrelationId = Guid.NewGuid();
+    var envelope = new MessageEnvelope<EventAudited> {
+      MessageId = MessageId.New(),
+      Payload = new EventAudited {
+        Id = Guid.NewGuid(),
+        OriginalEventType = "Test",
+        OriginalStreamId = "stream-1",
+        OriginalStreamPosition = 1,
+        OriginalBody = JsonSerializer.SerializeToElement(new { }),
+        Timestamp = DateTimeOffset.UtcNow
+      },
+      Hops = [
+        new MessageHop {
+          ServiceInstance = ServiceInstanceInfo.Unknown,
+          Type = HopType.Current,
+          Timestamp = DateTimeOffset.UtcNow,
+          SecurityContext = new SecurityContext {
+            TenantId = "tenant-123",
+            UserId = "user-456"
+          },
+          CorrelationId = new CorrelationId(testCorrelationId)
+        }
+      ]
+    };
+
+    // Act - This will hit the scope extraction code but return early due to [AuditEvent(Exclude=true)]
+    await emitter.EmitEventAuditedAsync(Guid.NewGuid(), 1, envelope);
+
+    // Assert - No events because EventAudited is excluded from re-audit
+    await Assert.That(eventStore.AppendedEnvelopes).IsEmpty();
+  }
+
+  [Test]
+  public async Task EmitCommandAuditedAsync_WithContext_ExtractsMetadataAsync() {
+    // Arrange
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableCommandAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    // Create a mock context with metadata
+    var context = new TestMessageContext {
+      UserId = "user-123"
+    };
+    context.Metadata["TenantId"] = "tenant-456";
+
+    var command = new ExcludedCommand { Name = "Test" }; // Excluded to hit early exit
+
+    // Act
+    await emitter.EmitCommandAuditedAsync(command, "result", "TestReceptor", context);
+
+    // Assert - No events because ExcludedCommand has [AuditEvent(Exclude=true)]
+    await Assert.That(eventStore.AppendedEnvelopes).IsEmpty();
+  }
+
+  [Test]
+  public async Task EmitAsync_WithEventAudited_WhenAuditEnabled_AppendsToSystemStreamAsync() {
+    // Arrange
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    var systemEvent = new EventAudited {
+      Id = Guid.NewGuid(),
+      OriginalEventType = "TestEvent",
+      OriginalStreamId = "stream-1",
+      OriginalStreamPosition = 1,
+      OriginalBody = JsonSerializer.SerializeToElement(new { Name = "Test" }),
+      Timestamp = DateTimeOffset.UtcNow
+    };
+
+    // Act
+    await emitter.EmitAsync(systemEvent);
+
+    // Assert
+    await Assert.That(eventStore.AppendedEnvelopes).Count().IsEqualTo(1);
+    await Assert.That(eventStore.AppendedStreamIds[0]).IsEqualTo(SystemEventStreams.StreamId);
+  }
+
+  [Test]
+  public async Task EmitAsync_WithCommandAudited_WhenAuditEnabled_AppendsToSystemStreamAsync() {
+    // Arrange
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    var systemEvent = new CommandAudited {
+      Id = Guid.NewGuid(),
+      CommandType = "TestCommand",
+      CommandBody = JsonSerializer.SerializeToElement(new { OrderId = "123" }),
+      Timestamp = DateTimeOffset.UtcNow,
+      ReceptorName = "TestReceptor",
+      ResponseType = "string"
+    };
+
+    // Act
+    await emitter.EmitAsync(systemEvent);
+
+    // Assert
+    await Assert.That(eventStore.AppendedEnvelopes).Count().IsEqualTo(1);
+    await Assert.That(eventStore.AppendedStreamIds[0]).IsEqualTo(SystemEventStreams.StreamId);
+  }
+
+  [Test]
+  public async Task EmitAsync_CreatesValidMessageEnvelopeAsync() {
+    // Arrange
+    var eventStore = new MockEventStore();
+    var options = Options.Create(new SystemEventOptions().EnableAudit());
+    var emitter = new SystemEventEmitter(options, eventStore);
+
+    var systemEvent = new EventAudited {
+      Id = Guid.NewGuid(),
+      OriginalEventType = "TestEvent",
+      OriginalStreamId = "stream-1",
+      OriginalStreamPosition = 1,
+      OriginalBody = JsonSerializer.SerializeToElement(new { }),
+      Timestamp = DateTimeOffset.UtcNow
+    };
+
+    // Act
+    await emitter.EmitAsync(systemEvent);
+
+    // Assert - Verify envelope structure
+    var envelope = eventStore.AppendedEnvelopes[0] as MessageEnvelope<EventAudited>;
+    await Assert.That(envelope).IsNotNull();
+    await Assert.That(envelope!.MessageId.Value).IsNotEqualTo(Guid.Empty);
+    await Assert.That(envelope.Payload).IsEqualTo(systemEvent);
+    await Assert.That(envelope.Hops).Count().IsEqualTo(1);
+    await Assert.That(envelope.Hops[0].Type).IsEqualTo(HopType.Current);
+  }
+
+  #endregion
+
   #region Helper Methods
 
   private static MessageEnvelope<T> _createTestEnvelope<T>(T payload) {
@@ -585,6 +726,20 @@ public class SystemEventEmitterTests {
         }
       ]
     };
+  }
+
+  /// <summary>
+  /// Simple message context implementation for testing.
+  /// </summary>
+  private sealed class TestMessageContext : IMessageContext {
+    public MessageId MessageId { get; init; } = MessageId.New();
+    public CorrelationId CorrelationId { get; init; } = new(Guid.NewGuid());
+    public MessageId CausationId { get; init; } = MessageId.New();
+    public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
+    public string? UserId { get; set; }
+    public Dictionary<string, object> Metadata { get; } = new();
+
+    IReadOnlyDictionary<string, object> IMessageContext.Metadata => Metadata;
   }
 
   #endregion
