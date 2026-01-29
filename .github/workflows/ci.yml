@@ -60,13 +60,18 @@ jobs:
       - name: Comment Version
         env:
           GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          REPO: ${{ github.repository }}
+          SEMVER: ${{ needs.version.outputs.semver }}
+          FULLSEMVER: ${{ needs.version.outputs.fullsemver }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease || 'none' }}
         run: |
-          gh pr comment ${{ github.event.pull_request.number }} \
-            --repo ${{ github.repository }} \
-            --body "📦 **Calculated Version**: \`${{ needs.version.outputs.semver }}\`
+          gh pr comment "$PR_NUMBER" \
+            --repo "$REPO" \
+            --body "📦 **Calculated Version**: \`$SEMVER\`
 
           | Property | Value |
           |----------|-------|
-          | SemVer | \`${{ needs.version.outputs.semver }}\` |
-          | Full SemVer | \`${{ needs.version.outputs.fullsemver }}\` |
-          | Pre-release | \`${{ needs.version.outputs.prerelease || 'none' }}\` |"
+          | SemVer | \`$SEMVER\` |
+          | Full SemVer | \`$FULLSEMVER\` |
+          | Pre-release | \`$PRERELEASE\` |"

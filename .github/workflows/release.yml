@@ -44,18 +44,18 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0  # Full history required for GitVersion
 
       - name: Install GitVersion
-        uses: gittools/actions/gitversion/setup@v3.1.1
+        uses: gittools/actions/gitversion/setup@26a89e5dd4fa9ba66a853e04706ba52755ca4057 # v3.1.1
         with:
           versionSpec: '6.0.x'
 
       - name: Determine Version
         id: gitversion
-        uses: gittools/actions/gitversion/execute@v3.1.1
+        uses: gittools/actions/gitversion/execute@26a89e5dd4fa9ba66a853e04706ba52755ca4057 # v3.1.1
         with:
           useConfigFile: true
           configFilePath: GitVersion.yml
@@ -90,7 +90,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -129,7 +129,7 @@ jobs:
 
       - name: Create GitHub Release (stable only)
         if: ${{ needs.version.outputs.prerelease == '' }}
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
         with:
           tag_name: v${{ needs.version.outputs.semver }}
           name: Release v${{ needs.version.outputs.semver }}
@@ -138,7 +138,7 @@ jobs:
 
       - name: Create GitHub Pre-Release
         if: ${{ needs.version.outputs.prerelease != '' }}
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
         with:
           tag_name: v${{ needs.version.outputs.semver }}
           name: Pre-release v${{ needs.version.outputs.semver }}
