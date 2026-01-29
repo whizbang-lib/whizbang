@@ -1,3 +1,9 @@
+codecov:
+  # Wait for the quality job to upload coverage before reporting status
+  notify:
+    after_n_builds: 1
+    wait_for_ci: true
+
 coverage:
   status:
     project:
