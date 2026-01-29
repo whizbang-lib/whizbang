@@ -50,8 +50,19 @@ jobs:
     - name: Publish to NuGet
       run: dotnet nuget push "./packages/*.nupkg" --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" --source https://api.nuget.org/v3/index.json --skip-duplicate
 
+    - name: Generate SHA256 Hashes
+      run: |
+        cd ./packages
+        for file in *.nupkg; do
+          sha256sum "$file" > "$file.sha256"
+          echo "Generated hash for $file:"
+          cat "$file.sha256"
+        done
+
     - name: Create GitHub Release
       uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
       with:
-        files: ./packages/*.nupkg
+        files: |
+          ./packages/*.nupkg
+          ./packages/*.sha256
         generate_release_notes: true

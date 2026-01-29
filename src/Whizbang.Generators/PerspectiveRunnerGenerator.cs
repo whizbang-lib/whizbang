@@ -16,6 +16,7 @@ namespace Whizbang.Generators;
 public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   private const string PERSPECTIVE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IPerspectiveFor";
   private const string GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME = "Whizbang.Core.Perspectives.IGlobalPerspectiveFor";
+  private const string MUST_EXIST_ATTRIBUTE_NAME = "Whizbang.Core.Perspectives.MustExistAttribute";
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Reuse the same discovery logic as PerspectiveDiscoveryGenerator
@@ -92,13 +93,21 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var typeArguments = new[] { modelTypeName }.Concat(eventTypes).ToArray();
     var messageTypeNames = _buildMessageTypeNames(eventTypeSymbols);
 
+    // Extract event types with [MustExist] attribute
+    var mustExistEventTypes = _extractMustExistEventTypes(classSymbol, eventTypes);
+
+    // Extract return types for each Apply method
+    var eventReturnTypes = _extractEventReturnTypes(classSymbol, eventTypes, modelType);
+
     return new PerspectiveInfo(
         ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
         InterfaceTypeArguments: typeArguments,
         EventTypes: eventTypes.ToArray(),
         MessageTypeNames: messageTypeNames,
         StreamKeyPropertyName: streamKeyPropertyName,
-        EventStreamKeys: eventStreamKeys.Count > 0 ? eventStreamKeys.ToArray() : null
+        EventStreamKeys: eventStreamKeys.Count > 0 ? eventStreamKeys.ToArray() : null,
+        MustExistEventTypes: mustExistEventTypes.Length > 0 ? mustExistEventTypes : null,
+        EventReturnTypes: eventReturnTypes.Length > 0 ? eventReturnTypes : null
     );
   }
 
@@ -166,11 +175,65 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var runnerName = _getRunnerName(perspective.ClassName);
     var perspectiveSimpleName = _getSimpleName(perspective.ClassName);
 
+    // Model type is always the first type argument
+    var modelTypeName = perspective.InterfaceTypeArguments[0];
+    var modelSimpleName = _getSimpleName(modelTypeName);
+
     // Generate AOT-compatible switch cases for event application
+    var mustExistEvents = perspective.MustExistEventTypes ?? Array.Empty<string>();
+    var eventReturnTypes = perspective.EventReturnTypes ?? Array.Empty<EventReturnTypeInfo>();
+    var returnTypeLookup = eventReturnTypes.ToDictionary(x => x.EventTypeName, x => x.ReturnType);
     var applyCases = new StringBuilder();
     foreach (var eventType in perspective.EventTypes) {
+      var isMustExist = mustExistEvents.Contains(eventType);
+      var eventSimpleName = _getSimpleName(eventType);
+
+      // Get return type for this event, default to Model
+      var returnType = returnTypeLookup.TryGetValue(eventType, out var rt) ? rt : ApplyReturnType.Model;
+
       applyCases.AppendLine($"        case {eventType} typedEvent:");
-      applyCases.AppendLine($"          return perspective.Apply(currentModel, typedEvent);");
+      if (isMustExist) {
+        applyCases.AppendLine($"          if (currentModel == null)");
+        applyCases.AppendLine($"            throw new global::System.InvalidOperationException(");
+        applyCases.AppendLine($"              \"{modelSimpleName} must exist when applying {eventSimpleName} in {perspectiveSimpleName}\");");
+      }
+
+      // Generate case code based on return type
+      // Note: currentModel is nullable in template, but user's Apply methods may expect non-nullable
+      // For Model/NullableModel returns, we use null-forgiving operator since these signatures
+      // typically have a non-nullable first parameter
+      switch (returnType) {
+        case ApplyReturnType.Model:
+          // Standard return: TModel - wrap with None action
+          // Use ! because user's Apply(TModel current, TEvent) expects non-nullable
+          applyCases.AppendLine($"          return (perspective.Apply(currentModel!, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
+          break;
+
+        case ApplyReturnType.NullableModel:
+          // Nullable return: TModel? - null means no change, wrap with None action
+          // Pass nullable since Apply(TModel? current, TEvent) accepts nullable
+          applyCases.AppendLine($"          return (perspective.Apply(currentModel, typedEvent), global::Whizbang.Core.Perspectives.ModelAction.None);");
+          break;
+
+        case ApplyReturnType.Action:
+          // Action return: ModelAction - keep current model, return the action
+          // Use ! because Apply(TModel current, TEvent) for deletion expects existing model
+          applyCases.AppendLine($"          return (currentModel, perspective.Apply(currentModel!, typedEvent));");
+          break;
+
+        case ApplyReturnType.Tuple:
+          // Tuple return: (TModel?, ModelAction) - return as-is
+          // Use ! because Apply(TModel current, TEvent) expects existing model
+          applyCases.AppendLine($"          return perspective.Apply(currentModel!, typedEvent);");
+          break;
+
+        case ApplyReturnType.ApplyResult:
+          // ApplyResult return: Extract model and action from result
+          // Use ! because Apply(TModel current, TEvent) expects existing model
+          applyCases.AppendLine($"          var result_{eventSimpleName} = perspective.Apply(currentModel!, typedEvent);");
+          applyCases.AppendLine($"          return (result_{eventSimpleName}.Model, result_{eventSimpleName}.Action);");
+          break;
+      }
       applyCases.AppendLine();
     }
 
@@ -206,9 +269,6 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "EVENT_TYPES", eventTypesArray.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "EVENT_APPLY_CASES", applyCases.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "EXTRACT_STREAM_ID_METHODS", extractStreamIdMethods.ToString());
-
-    // Model type is always the first type argument
-    var modelTypeName = perspective.InterfaceTypeArguments[0];
 
     result = result.Replace("__RUNNER_CLASS_NAME__", runnerName);
     result = result.Replace("__PERSPECTIVE_CLASS_NAME__", perspective.ClassName);
@@ -352,6 +412,96 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
           return $"{typeName}, {assemblyName}";
         })
         .ToArray();
+  }
+
+  /// <summary>
+  /// Extracts event types whose Apply methods have [MustExist] attribute.
+  /// These events require the model to already exist before the Apply method is called.
+  /// </summary>
+  private static string[] _extractMustExistEventTypes(
+      INamedTypeSymbol classSymbol,
+      List<string> eventTypes) {
+    var mustExistEvents = new List<string>();
+
+    foreach (var member in classSymbol.GetMembers()) {
+      if (member is IMethodSymbol method && method.Name == "Apply") {
+        var hasMustExist = method.GetAttributes()
+            .Any(a => a.AttributeClass?.ToDisplayString() == MUST_EXIST_ATTRIBUTE_NAME);
+
+        if (hasMustExist && method.Parameters.Length >= 2) {
+          // Second parameter is the event type
+          var eventType = method.Parameters[1].Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+          if (eventTypes.Contains(eventType)) {
+            mustExistEvents.Add(eventType);
+          }
+        }
+      }
+    }
+
+    return mustExistEvents.ToArray();
+  }
+
+  /// <summary>
+  /// Extracts return type information for each Apply method.
+  /// Determines how to handle the result (model update, action, tuple, etc.).
+  /// </summary>
+  private static EventReturnTypeInfo[] _extractEventReturnTypes(
+      INamedTypeSymbol classSymbol,
+      List<string> eventTypes,
+      ITypeSymbol modelType) {
+
+    var returnTypes = new List<EventReturnTypeInfo>();
+    var modelTypeName = modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+    foreach (var member in classSymbol.GetMembers()) {
+      if (member is IMethodSymbol method && method.Name == "Apply" && method.Parameters.Length >= 2) {
+        // Second parameter is the event type
+        var eventType = method.Parameters[1].Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+        if (!eventTypes.Contains(eventType)) {
+          continue;
+        }
+
+        var returnType = _classifyReturnType(method.ReturnType, modelTypeName);
+        returnTypes.Add(new EventReturnTypeInfo(eventType, returnType));
+      }
+    }
+
+    return returnTypes.ToArray();
+  }
+
+  /// <summary>
+  /// Classifies the return type of an Apply method.
+  /// </summary>
+  private static ApplyReturnType _classifyReturnType(ITypeSymbol returnType, string modelTypeName) {
+    var returnTypeName = returnType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+    // Check for ModelAction
+    if (returnTypeName == "global::Whizbang.Core.Perspectives.ModelAction") {
+      return ApplyReturnType.Action;
+    }
+
+    // Check for ApplyResult<TModel>
+    if (returnTypeName.StartsWith("global::Whizbang.Core.Perspectives.ApplyResult<", StringComparison.Ordinal)) {
+      return ApplyReturnType.ApplyResult;
+    }
+
+    // Check for tuple (TModel?, ModelAction)
+    if (returnType is INamedTypeSymbol namedType &&
+        namedType.IsTupleType &&
+        namedType.TupleElements.Length == 2) {
+      var secondElement = namedType.TupleElements[1].Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+      if (secondElement == "global::Whizbang.Core.Perspectives.ModelAction") {
+        return ApplyReturnType.Tuple;
+      }
+    }
+
+    // Check for nullable model (TModel?)
+    if (returnType.NullableAnnotation == Microsoft.CodeAnalysis.NullableAnnotation.Annotated) {
+      return ApplyReturnType.NullableModel;
+    }
+
+    // Default: standard model return
+    return ApplyReturnType.Model;
   }
 
   /// <summary>
