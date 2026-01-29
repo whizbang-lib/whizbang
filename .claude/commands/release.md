@@ -154,6 +154,63 @@ When merging PRs during release workflows, follow these conventions:
 - Provide recovery steps
 - Don't lose work on interruption
 
+## Automated Version Management
+
+The project uses **GitVersion** with **SemVer 2.0** and **GitFlow** branching for automated version calculation.
+
+### Version Bump Commands
+```bash
+# Auto-calculate version based on branch and commits
+gh workflow run release.yml -f release_type=auto
+
+# Force specific version bump
+gh workflow run release.yml -f release_type=major  # x.0.0
+gh workflow run release.yml -f release_type=minor  # 0.x.0
+gh workflow run release.yml -f release_type=patch  # 0.0.x
+
+# Dry run (preview version without creating tag)
+gh workflow run release.yml -f release_type=auto -f dry_run=true
+```
+
+### GitFlow Branch Versioning
+
+| Branch | Version Format | Example |
+|--------|---------------|---------|
+| `main` | Stable release | `0.2.0` |
+| `develop` | Alpha pre-release | `0.3.0-alpha.1` |
+| `release/*` | Beta pre-release | `0.2.0-beta.1` |
+| `feature/*` | Feature pre-release | `0.3.0-feat-xyz.1` |
+| `hotfix/*` | Hotfix pre-release | `0.2.1-hotfix.1` |
+
+### Conventional Commits for Version Bumps
+
+GitVersion uses conventional commits to determine version increments:
+
+| Commit Type | Version Bump | Example |
+|-------------|-------------|---------|
+| `feat:` | Minor | `feat: add new dispatcher` |
+| `fix:` | Patch | `fix: resolve null reference` |
+| `BREAKING CHANGE:` or `!` | Major | `feat!: redesign API` |
+
+### Release Workflow
+
+The release workflow (`release.yml`) performs these steps:
+1. Calculate version using GitVersion
+2. Update `Directory.Build.props` with new version
+3. Commit the version change
+4. Create and push git tag (e.g., `v0.2.0`)
+5. Create GitHub Release (stable) or Pre-Release (alpha/beta)
+6. Trigger NuGet publish workflow via tag
+
+### Quick Release Checklist
+
+For a new release:
+1. Ensure all PRs are merged to `main`
+2. Run `/release-check` to verify readiness
+3. Run: `gh workflow run release.yml -f release_type=minor`
+4. Monitor the workflow in GitHub Actions
+5. Verify NuGet packages are published
+
 ## Example Session
 
 ```
