@@ -66,7 +66,7 @@ jobs:
           FULLSEMVER: ${{ needs.version.outputs.fullsemver }}
           PRERELEASE: ${{ needs.version.outputs.prerelease || 'none' }}
         run: |
-          BODY="📦 **Calculated Version**: \`$SEMVER\`
+          BODY="📦 **Version Information**: \`$SEMVER\`
 
           | Property | Value |
           |----------|-------|
