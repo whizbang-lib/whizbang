@@ -3,89 +3,44 @@
 ## https://gitversion.net/docs/reference/configuration
 ##
 
-assembly-versioning-scheme: MajorMinorPatch
-assembly-file-versioning-scheme: MajorMinorPatch
-assembly-informational-format: '{SemVer}+{ShortSha}'
-
 mode: ContinuousDeployment
-tag-prefix: 'v'
+tag-prefix: v
+next-version: 0.2.0
 
-# Main branch - stable releases (e.g., 0.2.0)
 branches:
   main:
     regex: ^main$
     mode: ContinuousDelivery
     tag: ''
     increment: Patch
-    prevent-increment-of-merged-branch-version: true
-    track-merge-target: false
-    is-release-branch: true
     is-mainline: true
 
-  # Develop branch - alpha pre-releases (e.g., 0.3.0-alpha.1)
   develop:
     regex: ^develop$
     mode: ContinuousDeployment
     tag: alpha
     increment: Minor
-    prevent-increment-of-merged-branch-version: false
-    track-merge-target: true
-    is-release-branch: false
 
-  # Release branches - beta/rc pre-releases (e.g., 0.2.0-beta.1)
+  feature:
+    regex: ^feature[/-]
+    mode: ContinuousDeployment
+    tag: useBranchName
+    increment: Minor
+
   release:
     regex: ^release[/-]
     mode: ContinuousDeployment
     tag: beta
     increment: None
-    prevent-increment-of-merged-branch-version: true
-    track-merge-target: false
-    is-release-branch: true
 
-  # Feature branches - feature pre-releases (e.g., 0.3.0-feat-xyz.1)
-  feature:
-    regex: ^feature[/-]
-    mode: ContinuousDeployment
-    tag: 'feat-{BranchName}'
-    increment: Minor
-    source-branches: [develop, main]
-
-  # Fix/bugfix branches - follows parent branch versioning
-  fix:
-    regex: ^(fix|bugfix)[/-]
-    mode: ContinuousDeployment
-    tag: 'fix-{BranchName}'
-    increment: Patch
-    source-branches: [develop, main]
-
-  # Hotfix branches - patch pre-releases (e.g., 0.2.1-hotfix.1)
   hotfix:
     regex: ^hotfix[/-]
     mode: ContinuousDeployment
     tag: hotfix
     increment: Patch
-    source-branches: [main]
-    is-release-branch: true
 
-  # Pull request branches
   pull-request:
-    regex: ^(pull|pr|merge)[/-]
+    regex: ^(pull|pr)[/-]
     mode: ContinuousDeployment
-    tag: 'pr-{BranchName}'
+    tag: pr
     increment: Inherit
-    tag-number-pattern: '[/-](?<number>\d+)'
-
-# Ignore merge commits for version calculation
-ignore:
-  sha: []
-
-# Set the next version manually if needed (uncomment and set)
-# next-version: 0.2.0
-
-# Use commit count for pre-release number
-commit-message-incrementing: Enabled
-
-# Conventional commits support
-major-version-bump-message: '^(build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test)(\(.+\))?\!:|BREAKING CHANGE:'
-minor-version-bump-message: '^feat(\(.+\))?:'
-patch-version-bump-message: '^fix(\(.+\))?:'
