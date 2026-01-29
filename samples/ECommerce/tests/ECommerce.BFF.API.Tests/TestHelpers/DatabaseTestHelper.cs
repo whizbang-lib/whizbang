@@ -1,32 +1,30 @@
+using Dapper;
 using ECommerce.BFF.API;
 using ECommerce.BFF.API.Generated;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
-using Testcontainers.PostgreSql;
+using Npgsql;
 using Whizbang.Core;
 using Whizbang.Core.Generated;
 using Whizbang.Data.EFCore.Postgres;
+using Whizbang.Testing.Containers;
 
 namespace ECommerce.BFF.API.Tests.TestHelpers;
 
 /// <summary>
-/// Helper class for managing PostgreSQL test containers and EF Core infrastructure for BFF.API tests.
+/// Helper class for managing PostgreSQL test databases via SharedPostgresContainer for BFF.API tests.
 /// Provides DbContext and all EF Core infrastructure for testing.
 /// </summary>
 public sealed class DatabaseTestHelper : IAsyncDisposable {
-  private readonly PostgreSqlContainer _container;
+  private string? _fixtureDatabaseName;  // Unique database name for this fixture instance
+  private string? _connectionString;  // Connection string pointing to the fixture's unique database
   private bool _isInitialized;
   private IServiceProvider? _serviceProvider;
 
   public DatabaseTestHelper() {
-    _container = new PostgreSqlBuilder()
-      .WithImage("postgres:17-alpine")
-      .WithDatabase("whizbang_test")
-      .WithUsername("whizbang_user")
-      .WithPassword("whizbang_pass")
-      .Build();
+    Console.WriteLine("[DatabaseTestHelper] Using SharedPostgresContainer for PostgreSQL");
   }
 
   /// <summary>
@@ -34,14 +32,29 @@ public sealed class DatabaseTestHelper : IAsyncDisposable {
   /// </summary>
   public async Task<IServiceProvider> CreateServiceProviderAsync(CancellationToken cancellationToken = default) {
     if (!_isInitialized) {
-      await _container.StartAsync(cancellationToken);
-      var connectionString = _container.GetConnectionString();
+      // Initialize SharedPostgresContainer
+      await SharedPostgresContainer.InitializeAsync(cancellationToken);
+
+      // Create a unique database for this fixture instance
+      _fixtureDatabaseName = $"fixture_{Guid.NewGuid():N}";
+      Console.WriteLine($"[DatabaseTestHelper] Creating unique database: {_fixtureDatabaseName}");
+
+      await using (var conn = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
+        await conn.OpenAsync(cancellationToken);
+        await conn.ExecuteAsync($"CREATE DATABASE \"{_fixtureDatabaseName}\"");
+      }
+
+      // Build connection string with the new database name
+      var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
+        Database = _fixtureDatabaseName
+      };
+      _connectionString = builder.ConnectionString;
 
       var services = new ServiceCollection();
 
       // Register DbContext
       services.AddDbContext<BffDbContext>(options =>
-        options.UseNpgsql(connectionString));
+        options.UseNpgsql(_connectionString));
 
       // Register Whizbang infrastructure with EF Core + Postgres driver
       _ = services.AddWhizbang()
@@ -74,7 +87,7 @@ public sealed class DatabaseTestHelper : IAsyncDisposable {
     if (!_isInitialized) {
       await CreateServiceProviderAsync(cancellationToken);
     }
-    return _container.GetConnectionString();
+    return _connectionString ?? throw new InvalidOperationException("DatabaseTestHelper not initialized");
   }
 
   /// <summary>
@@ -104,8 +117,22 @@ public sealed class DatabaseTestHelper : IAsyncDisposable {
       await asyncDisposable.DisposeAsync();
     }
 
-    if (_isInitialized) {
-      await _container.DisposeAsync();
+    // Drop the fixture's unique database from SharedPostgresContainer
+    // The container itself is NOT disposed - it's shared across all tests
+    if (_fixtureDatabaseName != null) {
+      try {
+        await using var conn = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
+        await conn.OpenAsync();
+        // Terminate any remaining connections to the database before dropping
+        await conn.ExecuteAsync($@"
+          SELECT pg_terminate_backend(pid)
+          FROM pg_stat_activity
+          WHERE datname = '{_fixtureDatabaseName}' AND pid <> pg_backend_pid()");
+        await conn.ExecuteAsync($"DROP DATABASE IF EXISTS \"{_fixtureDatabaseName}\"");
+        Console.WriteLine($"[DatabaseTestHelper] Dropped database: {_fixtureDatabaseName}");
+      } catch (Exception ex) {
+        Console.WriteLine($"[DatabaseTestHelper] Warning: Failed to drop database {_fixtureDatabaseName}: {ex.Message}");
+      }
     }
   }
 }

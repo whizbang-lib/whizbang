@@ -380,4 +380,52 @@ public static class DiagnosticDescriptors {
       isEnabledByDefault: true,
       description: "The MessageRegistryGenerator could not load the test mapping file for VSCode tooling enhancement."
   );
+
+  // ========================================
+  // Guid Usage Diagnostics (WHIZ055-069)
+  // ========================================
+
+  /// <summary>
+  /// WHIZ055: Warning - Guid.NewGuid() detected.
+  /// Will be upgraded to Error after Phase 5 migration is complete.
+  /// </summary>
+  /// <docs>diagnostics/whiz055</docs>
+  public static readonly DiagnosticDescriptor GuidNewGuidUsage = new(
+      id: "WHIZ055",
+      title: "Guid.NewGuid() Usage",
+      messageFormat: "Use TrackedGuid.NewMedo() or a [WhizbangId] type instead of Guid.NewGuid(). UUIDv4 is not time-ordered.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "Guid.NewGuid() creates UUIDv4 which is not time-ordered. Use TrackedGuid.NewMedo() or a [WhizbangId] type for UUIDv7 with sub-millisecond precision."
+  );
+
+  /// <summary>
+  /// WHIZ056: Warning - Guid.CreateVersion7() detected.
+  /// Will be upgraded to Error after Phase 5 migration is complete.
+  /// </summary>
+  /// <docs>diagnostics/whiz056</docs>
+  public static readonly DiagnosticDescriptor GuidCreateVersion7Usage = new(
+      id: "WHIZ056",
+      title: "Guid.CreateVersion7() Usage",
+      messageFormat: "Use TrackedGuid.NewMedo() for sub-millisecond precision instead of Guid.CreateVersion7()",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "Guid.CreateVersion7() only has millisecond precision. Use TrackedGuid.NewMedo() or a [WhizbangId] type for sub-millisecond precision."
+  );
+
+  /// <summary>
+  /// WHIZ057: Warning - Raw Guid parameter where IWhizbangId expected.
+  /// </summary>
+  /// <docs>diagnostics/whiz057</docs>
+  public static readonly DiagnosticDescriptor RawGuidWhereIdExpected = new(
+      id: "WHIZ057",
+      title: "Raw Guid Parameter",
+      messageFormat: "Consider using a strongly-typed ID instead of raw Guid for parameter '{0}'. Raw Guid loses metadata about precision and ordering.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "Raw Guid parameters lose metadata about precision and ordering. Consider using IWhizbangId or a strongly-typed ID generated with [WhizbangId]."
+  );
 }

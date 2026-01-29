@@ -11,13 +11,14 @@
   <ItemGroup>
     <PackageReference Include="TUnit" />
     <PackageReference Include="TUnit.Assertions" />
-    <PackageReference Include="Testcontainers.PostgreSql" />
+    <PackageReference Include="Dapper" />
   </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\..\ECommerce.InventoryWorker\ECommerce.InventoryWorker.csproj" />
     <ProjectReference Include="..\..\ECommerce.Contracts\ECommerce.Contracts.csproj" />
     <ProjectReference Include="..\..\..\..\src\Whizbang.Core\Whizbang.Core.csproj" />
+    <ProjectReference Include="..\..\..\..\src\Whizbang.Testing\Whizbang.Testing.csproj" />
   </ItemGroup>
 
 </Project>

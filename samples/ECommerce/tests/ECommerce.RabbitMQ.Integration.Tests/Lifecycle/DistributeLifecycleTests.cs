@@ -30,7 +30,7 @@ namespace ECommerce.RabbitMQ.Integration.Tests.Lifecycle;
 /// <docs>testing/lifecycle-synchronization</docs>
 [Category("Integration")]
 [Category("Lifecycle")]
-[NotInParallel]
+[NotInParallel("RabbitMQ")]
 public class DistributeLifecycleTests {
   private static RabbitMqIntegrationFixture? _fixture;
 

@@ -47,7 +47,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
         OrderId = Guid.NewGuid(),
         CustomerName = "John Doe"
       },
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           Timestamp = DateTime.UtcNow,
@@ -58,7 +58,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
             ProcessId = 123
           }
         }
-      }
+      ]
     };
 
     // Act
@@ -86,7 +86,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
           OrderId = Guid.NewGuid(),
           CustomerName = $"Customer {i}"
         },
-        Hops = new List<MessageHop> {
+        Hops = [
           new MessageHop {
             Type = HopType.Current,
             Timestamp = DateTime.UtcNow,
@@ -97,7 +97,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
               ProcessId = 123
             }
           }
-        }
+        ]
       };
       await eventStore.AppendAsync(streamId, envelope);
     }
@@ -130,7 +130,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
           OrderId = Guid.NewGuid(),
           CustomerName = $"Customer {i}"
         },
-        Hops = new List<MessageHop> {
+        Hops = [
           new MessageHop {
             Type = HopType.Current,
             Timestamp = DateTime.UtcNow,
@@ -141,7 +141,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
               ProcessId = 123
             }
           }
-        }
+        ]
       };
       await eventStore.AppendAsync(streamId, envelope);
     }
@@ -190,7 +190,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
           OrderId = Guid.NewGuid(),
           CustomerName = $"Customer {i}"
         },
-        Hops = new List<MessageHop> {
+        Hops = [
           new MessageHop {
             Type = HopType.Current,
             Timestamp = DateTime.UtcNow,
@@ -201,7 +201,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
               ProcessId = 123
             }
           }
-        }
+        ]
       };
       await eventStore.AppendAsync(streamId, envelope);
     }
@@ -234,7 +234,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
           OrderId = Guid.NewGuid(),
           CustomerName = $"Customer {i}"
         },
-        Hops = new List<MessageHop> {
+        Hops = [
           new MessageHop {
             Type = HopType.Current,
             Timestamp = DateTime.UtcNow,
@@ -245,7 +245,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
               ProcessId = 123
             }
           }
-        }
+        ]
       };
       await eventStore.AppendAsync(streamId, envelope);
       eventIds.Add(envelope.MessageId.Value);
@@ -286,7 +286,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
           OrderId = Guid.NewGuid(),
           CustomerName = $"Customer {i}"
         },
-        Hops = new List<MessageHop> {
+        Hops = [
           new MessageHop {
             Type = HopType.Current,
             Timestamp = DateTime.UtcNow,
@@ -297,7 +297,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
               ProcessId = 123
             }
           }
-        }
+        ]
       };
       await eventStore.AppendAsync(streamId, envelope);
       eventIds.Add(envelope.MessageId.Value);
@@ -335,7 +335,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
         OrderId = Guid.NewGuid(),
         CustomerName = "Customer 0"
       },
-      Hops = new List<MessageHop> {
+      Hops = [
         new MessageHop {
           Type = HopType.Current,
           Timestamp = DateTime.UtcNow,
@@ -346,7 +346,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
             ProcessId = 123
           }
         }
-      }
+      ]
     };
     await eventStore.AppendAsync(streamId, firstEvent);
 
@@ -382,7 +382,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
           OrderId = Guid.NewGuid(),
           CustomerName = $"Customer {i}"
         },
-        Hops = new List<MessageHop> {
+        Hops = [
           new MessageHop {
             Type = HopType.Current,
             Timestamp = DateTime.UtcNow,
@@ -393,7 +393,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
               ProcessId = 123
             }
           }
-        }
+        ]
       };
       await eventStore.AppendAsync(streamId, envelope);
       eventIds.Add(envelope.MessageId.Value);
@@ -449,12 +449,12 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
         OrderCreatedEvent created => new MessageEnvelope<OrderCreatedEvent> {
           MessageId = MessageId.New(),
           Payload = created,
-          Hops = new List<MessageHop> { CreateTestHop() }
+          Hops = [CreateTestHop()]
         } as object,
         OrderShippedEvent shipped => new MessageEnvelope<OrderShippedEvent> {
           MessageId = MessageId.New(),
           Payload = shipped,
-          Hops = new List<MessageHop> { CreateTestHop() }
+          Hops = [CreateTestHop()]
         } as object,
         _ => throw new InvalidOperationException("Unknown event type")
       };
@@ -509,7 +509,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     var created1 = new MessageEnvelope<OrderCreatedEvent> {
       MessageId = MessageId.New(),
       Payload = new OrderCreatedEvent { OrderId = orderId, CustomerName = "Customer 1" },
-      Hops = new List<MessageHop> { CreateTestHop() }
+      Hops = [CreateTestHop()]
     };
     await eventStore.AppendAsync(streamId, created1);
     eventIds.Add(created1.MessageId.Value);
@@ -517,7 +517,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     var shipped1 = new MessageEnvelope<OrderShippedEvent> {
       MessageId = MessageId.New(),
       Payload = new OrderShippedEvent { OrderId = orderId, TrackingNumber = "TRACK001" },
-      Hops = new List<MessageHop> { CreateTestHop() }
+      Hops = [CreateTestHop()]
     };
     await eventStore.AppendAsync(streamId, shipped1);
     eventIds.Add(shipped1.MessageId.Value);
@@ -554,7 +554,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
         OrderId = Guid.NewGuid(),
         CustomerName = "Customer 0"
       },
-      Hops = new List<MessageHop> { CreateTestHop() }
+      Hops = [CreateTestHop()]
     };
     await eventStore.AppendAsync(streamId, firstEvent);
 
@@ -587,7 +587,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     var created = new MessageEnvelope<OrderCreatedEvent> {
       MessageId = MessageId.New(),
       Payload = new OrderCreatedEvent { OrderId = Guid.NewGuid(), CustomerName = "Test" },
-      Hops = new List<MessageHop> { CreateTestHop() }
+      Hops = [CreateTestHop()]
     };
     await eventStore.AppendAsync(streamId, created);
 
@@ -595,7 +595,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     var shipped = new MessageEnvelope<OrderShippedEvent> {
       MessageId = MessageId.New(),
       Payload = new OrderShippedEvent { OrderId = Guid.NewGuid(), TrackingNumber = "TRACK001" },
-      Hops = new List<MessageHop> { CreateTestHop() }
+      Hops = [CreateTestHop()]
     };
     await eventStore.AppendAsync(streamId, shipped);
 
@@ -617,7 +617,7 @@ public class EFCoreEventStoreTests : EFCoreTestBase {
     await Assert.That(exception!.Message).Contains("Unknown event type");
   }
 
-  private static MessageHop CreateTestHop() => new MessageHop {
+  private static MessageHop CreateTestHop() => new() {
     Type = HopType.Current,
     Timestamp = DateTime.UtcNow,
     ServiceInstance = new ServiceInstanceInfo {

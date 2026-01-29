@@ -24,7 +24,7 @@ public class TransportPublishStrategyTests {
     return new MessageEnvelope<JsonElement>(
       messageId: MessageId.From(messageId),
       payload: JsonDocument.Parse("{}").RootElement,
-      hops: new List<MessageHop>()
+      hops: []
     );
   }
 
@@ -114,14 +114,14 @@ public class TransportPublishStrategyTests {
     var readinessCheck = new DefaultTransportReadinessCheck();
     var strategy = new TransportPublishStrategy(transport, readinessCheck);
 
-    var messageId = Guid.NewGuid();
+    var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = _createTestEnvelope(messageId),
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",
-      StreamId = Guid.NewGuid(),
+      StreamId = Guid.CreateVersion7(),
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
@@ -150,14 +150,14 @@ public class TransportPublishStrategyTests {
     var readinessCheck = new DefaultTransportReadinessCheck();
     var strategy = new TransportPublishStrategy(transport, readinessCheck);
 
-    var messageId = Guid.NewGuid();
+    var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = _createTestEnvelope(messageId),
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",
-      StreamId = Guid.NewGuid(),
+      StreamId = Guid.CreateVersion7(),
       PartitionNumber = 1,
       Attempts = 1,
       Status = MessageProcessingStatus.Stored,
@@ -183,14 +183,14 @@ public class TransportPublishStrategyTests {
     var readinessCheck = new DefaultTransportReadinessCheck();
     var strategy = new TransportPublishStrategy(transport, readinessCheck);
 
-    var messageId = Guid.NewGuid();
+    var messageId = Guid.CreateVersion7();
     var work = new OutboxWork {
       MessageId = messageId,
       Destination = "test-topic",
       Envelope = _createTestEnvelope(messageId),
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",
-      StreamId = Guid.NewGuid(),
+      StreamId = Guid.CreateVersion7(),
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,
@@ -213,8 +213,8 @@ public class TransportPublishStrategyTests {
     var readinessCheck = new DefaultTransportReadinessCheck();
     var strategy = new TransportPublishStrategy(transport, readinessCheck);
 
-    var messageId = Guid.NewGuid();
-    var streamId = Guid.NewGuid();
+    var messageId = Guid.CreateVersion7();
+    var streamId = Guid.CreateVersion7();
     var work = new OutboxWork {
       MessageId = messageId,
       Destination = "test-topic",
