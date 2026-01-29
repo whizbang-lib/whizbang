@@ -19,7 +19,7 @@ comment:
 ignore:
   - "**/*.Generated.cs"
   - "**/.whizbang-generated/**"
-  - "**/samples/**"
-  - "**/benchmarks/**"
-  - "**/test-diagnostics/**"
-  - "**/Testing/Containers/**"
+  - "samples/**"
+  - "benchmarks/**"
+  - "test-diagnostics/**"
+  - "src/Whizbang.Testing/Containers/**"
