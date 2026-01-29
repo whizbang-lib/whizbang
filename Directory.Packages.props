@@ -48,6 +48,7 @@
     <PackageVersion Include="Microsoft.Testing.Extensions.Retry" Version="2.0.2" />
     <PackageVersion Include="Npgsql" Version="10.0.0" />
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
+    <PackageVersion Include="OpenTelemetry.Api" Version="1.14.0" />
     <PackageVersion Include="OpenTelemetry.Exporter.OpenTelemetryProtocol" Version="1.14.0" />
     <PackageVersion Include="OpenTelemetry.Extensions.Hosting" Version="1.14.0" />
     <PackageVersion Include="OpenTelemetry.Instrumentation.AspNetCore" Version="1.14.0" />

@@ -696,4 +696,179 @@ public class ProductCatalogPerspective : IPerspectiveFor<ProductModel, ProductCr
     await Assert.That(registrations).IsNotNull();
     await Assert.That(diagnostics).IsNotNull();
   }
+
+  // ==================== Sync Receptor Tests ====================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithSyncReceptor_GeneratesDispatcherAsync() {
+    // Arrange - Tests ISyncReceptor<TMessage, TResponse> discovery
+    var source = @"
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CreateOrder : ICommand {
+  public string OrderId { get; init; } = string.Empty;
+}
+
+public record OrderCreated : IEvent {
+  public string OrderId { get; init; } = string.Empty;
+}
+
+public class SyncOrderReceptor : ISyncReceptor<CreateOrder, OrderCreated> {
+  public OrderCreated Handle(CreateOrder message) {
+    return new OrderCreated { OrderId = message.OrderId };
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate Dispatcher.g.cs with sync routing
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+    await Assert.That(dispatcher!).Contains("namespace TestAssembly.Generated");
+    await Assert.That(dispatcher).Contains("class GeneratedDispatcher");
+    await Assert.That(dispatcher).Contains("CreateOrder");
+    await Assert.That(dispatcher).Contains("GetSyncReceptorInvoker");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithVoidSyncReceptor_GeneratesDispatcherAsync() {
+    // Arrange - Tests ISyncReceptor<TMessage> (void sync receptor pattern)
+    var source = @"
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record LogMessage : ICommand {
+  public string Message { get; init; } = string.Empty;
+}
+
+public class SyncLogReceptor : ISyncReceptor<LogMessage> {
+  public void Handle(LogMessage message) {
+    // Log synchronously
+  }
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate dispatcher for void sync receptor
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+    await Assert.That(dispatcher!).Contains("LogMessage");
+    await Assert.That(dispatcher).Contains("GetVoidSyncReceptorInvoker");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithSyncReceptor_GeneratesRegistrationAsync() {
+    // Arrange - Tests ISyncReceptor registration generation
+    var source = @"
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CreateOrder : ICommand;
+public record OrderCreated : IEvent;
+
+public class SyncOrderReceptor : ISyncReceptor<CreateOrder, OrderCreated> {
+  public OrderCreated Handle(CreateOrder message) => new OrderCreated();
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate registration for sync receptor
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var registrations = GeneratorTestHelper.GetGeneratedSource(result, "DispatcherRegistrations.g.cs");
+    await Assert.That(registrations).IsNotNull();
+    await Assert.That(registrations!).Contains("ISyncReceptor<");
+    await Assert.That(registrations).Contains("SyncOrderReceptor");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithBothSyncAndAsyncReceptors_GeneratesBothRoutesAsync() {
+    // Arrange - Tests mixed sync and async receptor discovery
+    var source = @"
+using System.Threading;
+using System.Threading.Tasks;
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CreateOrder : ICommand;
+public record OrderCreated : IEvent;
+public record UpdateOrder : ICommand;
+public record OrderUpdated : IEvent;
+
+// Async receptor
+public class AsyncOrderReceptor : IReceptor<CreateOrder, OrderCreated> {
+  public ValueTask<OrderCreated> HandleAsync(CreateOrder message, CancellationToken ct = default)
+    => ValueTask.FromResult(new OrderCreated());
+}
+
+// Sync receptor
+public class SyncUpdateReceptor : ISyncReceptor<UpdateOrder, OrderUpdated> {
+  public OrderUpdated Handle(UpdateOrder message) => new OrderUpdated();
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should generate routes for both sync and async receptors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var dispatcher = GeneratorTestHelper.GetGeneratedSource(result, "Dispatcher.g.cs");
+    await Assert.That(dispatcher).IsNotNull();
+    await Assert.That(dispatcher!).Contains("CreateOrder"); // Async
+    await Assert.That(dispatcher).Contains("UpdateOrder"); // Sync
+    await Assert.That(dispatcher).Contains("GetReceptorInvoker"); // Async routing
+    await Assert.That(dispatcher).Contains("GetSyncReceptorInvoker"); // Sync routing
+
+    var registrations = GeneratorTestHelper.GetGeneratedSource(result, "DispatcherRegistrations.g.cs");
+    await Assert.That(registrations).IsNotNull();
+    await Assert.That(registrations!).Contains("IReceptor<"); // Async registration
+    await Assert.That(registrations).Contains("ISyncReceptor<"); // Sync registration
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithSyncReceptor_ReportsDiagnosticAsync() {
+    // Arrange - Tests that sync receptors are reported in diagnostics
+    var source = @"
+using Whizbang.Core;
+
+namespace MyApp.Receptors;
+
+public record CreateOrder : ICommand;
+public record OrderCreated : IEvent;
+
+public class SyncOrderReceptor : ISyncReceptor<CreateOrder, OrderCreated> {
+  public OrderCreated Handle(CreateOrder message) => new OrderCreated();
+}
+";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<ReceptorDiscoveryGenerator>(source);
+
+    // Assert - Should report WHIZ001 for discovered sync receptor
+    var infos = result.Diagnostics.Where(d => d.Severity == DiagnosticSeverity.Info).ToArray();
+    var whiz001 = infos.FirstOrDefault(d => d.Id == "WHIZ001");
+    await Assert.That(whiz001).IsNotNull();
+    await Assert.That(whiz001!.GetMessage(CultureInfo.InvariantCulture)).Contains("SyncOrderReceptor");
+  }
 }

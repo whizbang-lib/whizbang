@@ -200,7 +200,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
   [Test]
   public async Task DatabaseNotReady_MessagesBuffered_UntilReadyAsync() {
     // Arrange
-    var messageId = Guid.NewGuid();
+    var messageId = Guid.CreateVersion7();
     var testWorkCoordinator = new TestWorkCoordinator {
       WorkToReturn = [_createTestOutboxWork(messageId)]
     };
@@ -306,7 +306,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
   private sealed class TestLogger<T> : ILogger<T> {
     private readonly List<LogEntry> _logs = [];
 
-    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
+    public void Log<TState>(LogLevel logLevel, Microsoft.Extensions.Logging.EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) {
       _logs.Add(new LogEntry {
         LogLevel = logLevel,
         Message = formatter(state, exception),
@@ -338,7 +338,7 @@ public class WorkCoordinatorPublisherWorkerDatabaseReadinessTests {
       Envelope = _createTestEnvelope(messageId),
       EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
       MessageType = "System.Text.Json.JsonElement, System.Text.Json",
-      StreamId = Guid.NewGuid(),
+      StreamId = Guid.CreateVersion7(),
       PartitionNumber = 1,
       Attempts = 0,
       Status = MessageProcessingStatus.Stored,

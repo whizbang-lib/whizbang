@@ -98,7 +98,9 @@ public class InMemoryUpsertStrategy : IDbUpsertStrategy {
       TenantId = scope.TenantId,
       CustomerId = scope.CustomerId,
       UserId = scope.UserId,
-      OrganizationId = scope.OrganizationId
+      OrganizationId = scope.OrganizationId,
+      AllowedPrincipals = scope.AllowedPrincipals?.ToList(),
+      Extensions = scope.Extensions?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value)
     };
   }
 }

@@ -57,8 +57,8 @@ public abstract class EventStoreContractTests {
     var eventStore = await CreateEventStoreAsync();
     var streamId = Guid.NewGuid();
 
-    // Act & Assert
-    await Assert.That(() => eventStore.AppendAsync<TestEvent>(streamId, null!))
+    // Act & Assert - explicitly cast to MessageEnvelope<TestEvent> to disambiguate overload
+    await Assert.That(() => eventStore.AppendAsync(streamId, (MessageEnvelope<TestEvent>)null!))
       .ThrowsExactly<ArgumentNullException>();
   }
 
