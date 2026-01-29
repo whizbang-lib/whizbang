@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using Azure.Messaging.ServiceBus;
+using Dapper;
 using ECommerce.BFF.API.Generated;
 using ECommerce.BFF.API.Lenses;
 using ECommerce.Contracts.Generated;
@@ -10,7 +11,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Testcontainers.PostgreSql;
+using Npgsql;
 using Whizbang.Core;
 using Whizbang.Core.Lenses;
 using Whizbang.Core.Messaging;
@@ -19,6 +20,8 @@ using Whizbang.Core.Perspectives;
 using Whizbang.Core.Transports;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
+using Whizbang.Testing.Containers;
+using Whizbang.Testing.Lifecycle;
 using Whizbang.Transports.AzureServiceBus;
 
 namespace ECommerce.Integration.Tests.Fixtures;
@@ -37,17 +40,17 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   private bool _isInitialized;
   private readonly Guid _testPollerInstanceId = Uuid7.NewUuid7().ToGuid();
   private readonly ServiceBusClient _sharedServiceBusClient;  // Shared client for test operations
-  private readonly PostgreSqlContainer _postgresContainer;  // TestContainers PostgreSQL
+  private string? _fixtureDatabaseName;  // Unique database name for this fixture instance
+  private string? _connectionString;  // Connection string pointing to the fixture's unique database
 
   // Per-test resources (created during InitializeAsync)
   private IHost? _inventoryHost;
   private IHost? _bffHost;
   private IServiceScope? _inventoryScope;
   private IServiceScope? _bffScope;
-  private string? _postgresConnection;
 
   /// <summary>
-  /// Creates a new fixture instance that will create PostgreSQL (TestContainers) and service hosts per-test.
+  /// Creates a new fixture instance that will create a unique database in SharedPostgresContainer and service hosts per-test.
   /// Uses a SHARED ServiceBusClient that all tests and hosts reuse (to stay under connection quota).
   /// </summary>
   /// <param name="serviceBusConnectionString">The ServiceBus connection string (from pre-created emulator)</param>
@@ -62,18 +65,9 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     _sharedServiceBusClient = sharedServiceBusClient ?? throw new ArgumentNullException(nameof(sharedServiceBusClient));
     _batchIndex = batchIndex;
 
-    // Create TestContainers PostgreSQL (proven reliable)
-    // Enable logging to capture RAISE NOTICE statements from process_work_batch Phase 4.5B
-    _postgresContainer = new PostgreSqlBuilder()
-      .WithImage("postgres:17-alpine")
-      .WithDatabase("whizbang_integration_test")
-      .WithUsername("whizbang_user")
-      .WithPassword("whizbang_pass")
-      .WithCommand("-c", "log_min_messages=NOTICE", "-c", "client_min_messages=NOTICE", "-c", "log_statement=all")
-      .Build();
-
     Console.WriteLine($"[ServiceBusFixture] Using topics: {_topicA}, {_topicB}");
     Console.WriteLine("[ServiceBusFixture] Using SHARED ServiceBusClient (reused by all hosts)");
+    Console.WriteLine("[ServiceBusFixture] Using SharedPostgresContainer for database");
   }
 
   /// <summary>
@@ -126,7 +120,7 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
   /// <summary>
   /// Gets the PostgreSQL connection string for direct database operations.
   /// </summary>
-  public string ConnectionString => _postgresConnection
+  public string ConnectionString => _connectionString
     ?? throw new InvalidOperationException("Fixture not initialized");
 
   /// <summary>
@@ -150,11 +144,26 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
 
     Console.WriteLine($"[ServiceBusFixture] Initializing for topics: {_topicA}, {_topicB}");
 
-    // Start TestContainers PostgreSQL (reliable, fast)
-    Console.WriteLine("[ServiceBusFixture] Starting PostgreSQL container...");
-    await _postgresContainer.StartAsync(cancellationToken);
-    _postgresConnection = _postgresContainer.GetConnectionString();
-    await _waitForPostgresReadyAsync(_postgresConnection, cancellationToken);
+    // Initialize SharedPostgresContainer and create a unique database for this fixture
+    Console.WriteLine("[ServiceBusFixture] Initializing SharedPostgresContainer...");
+    await SharedPostgresContainer.InitializeAsync(cancellationToken);
+
+    // Create a unique database for this fixture instance
+    _fixtureDatabaseName = $"fixture_{Guid.NewGuid():N}";
+    Console.WriteLine($"[ServiceBusFixture] Creating unique database: {_fixtureDatabaseName}");
+
+    await using (var conn = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
+      await conn.OpenAsync(cancellationToken);
+      await conn.ExecuteAsync($"CREATE DATABASE \"{_fixtureDatabaseName}\"");
+    }
+
+    // Build connection string with the new database name
+    var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
+      Database = _fixtureDatabaseName
+    };
+    _connectionString = builder.ConnectionString;
+
+    await _waitForPostgresReadyAsync(_connectionString, cancellationToken);
     Console.WriteLine("[ServiceBusFixture] PostgreSQL ready.");
 
     // NOTE: Skip warmup - SharedFixtureSource already warmed up the emulator
@@ -168,8 +177,8 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     // Create service hosts (InventoryWorker + BFF)
     // IMPORTANT: Do NOT start hosts yet - schema must be initialized first!
     Console.WriteLine("[ServiceBusFixture] Creating service hosts...");
-    _inventoryHost = _createInventoryHost(_postgresConnection, _serviceBusConnection, _topicA, _topicB);
-    _bffHost = _createBffHost(_postgresConnection, _serviceBusConnection, _topicA, _topicB);
+    _inventoryHost = _createInventoryHost(_connectionString, _serviceBusConnection, _topicA, _topicB);
+    _bffHost = _createBffHost(_connectionString, _serviceBusConnection, _topicA, _topicB);
 
     // Initialize Whizbang database schema (create tables, functions, etc.)
     // CRITICAL: Must run BEFORE starting hosts, otherwise workers fail trying to call process_work_batch
@@ -1355,11 +1364,22 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     await Task.Delay(2000);  // 2 second delay for connection cleanup
     Console.WriteLine("[ServiceBusFixture] ServiceBus connections closed.");
 
-    // Dispose TestContainers PostgreSQL (instead of Aspire app)
-    // The 3 consecutive empty checks in WaitForPendingWorkAsync ensure all database work is complete
-    // before we reach this point, so no additional delay is needed
-    if (_postgresContainer != null) {
-      await _postgresContainer.DisposeAsync();
+    // Drop the fixture's unique database from SharedPostgresContainer
+    // The container itself is NOT disposed - it's shared across all tests
+    if (_fixtureDatabaseName != null) {
+      try {
+        await using var conn = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
+        await conn.OpenAsync();
+        // Terminate any remaining connections to the database before dropping
+        await conn.ExecuteAsync($@"
+          SELECT pg_terminate_backend(pid)
+          FROM pg_stat_activity
+          WHERE datname = '{_fixtureDatabaseName}' AND pid <> pg_backend_pid()");
+        await conn.ExecuteAsync($"DROP DATABASE IF EXISTS \"{_fixtureDatabaseName}\"");
+        Console.WriteLine($"[ServiceBusFixture] Dropped database: {_fixtureDatabaseName}");
+      } catch (Exception ex) {
+        Console.WriteLine($"[ServiceBusFixture] Warning: Failed to drop database {_fixtureDatabaseName}: {ex.Message}");
+      }
     }
 
     // DO NOT dispose shared ServiceBusClient here - it's owned by SharedFixtureSource
