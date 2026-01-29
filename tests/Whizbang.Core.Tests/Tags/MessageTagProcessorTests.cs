@@ -346,4 +346,104 @@ public class MessageTagProcessorTests {
       return ValueTask.FromResult<JsonElement?>(null);
     }
   }
+
+  // Additional hook types for coverage
+  private sealed class MetricTrackingHook : IMessageTagHook<MetricTagAttribute> {
+    public int InvokedCount { get; private set; }
+    public TagContext<MetricTagAttribute>? LastContext { get; private set; }
+
+    public ValueTask<JsonElement?> OnTaggedMessageAsync(
+        TagContext<MetricTagAttribute> context,
+        CancellationToken _) {
+      InvokedCount++;
+      LastContext = context;
+      return ValueTask.FromResult<JsonElement?>(null);
+    }
+  }
+
+  #region Additional Coverage Tests
+
+  [Test]
+  public async Task ProcessAsync_InvokesMetricTagHookAsync() {
+    // Arrange - covers MetricTagAttribute branch in _invokeHookAsync
+    var hook = new MetricTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<MetricTagAttribute, MetricTrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(MetricTrackingHook) ? hook : null);
+    var context = _createProcessContext(
+      new MetricTagAttribute { Tag = "order-metric", MetricName = "order.total" },
+      new { Amount = 99.99 }
+    );
+
+    // Act
+    await processor.ProcessAsync(context, CancellationToken.None);
+
+    // Assert
+    await Assert.That(hook.InvokedCount).IsEqualTo(1);
+    await Assert.That(hook.LastContext?.Attribute.MetricName).IsEqualTo("order.total");
+  }
+
+  [Test]
+  public async Task ProcessAsync_InvokesTelemetryTagHookAsync() {
+    // Arrange - covers TelemetryTagAttribute branch in _invokeHookAsync
+    var hook = new TelemetryTrackingHook();
+    var options = new TagOptions();
+    options.UseHook<TelemetryTagAttribute, TelemetryTrackingHook>();
+    var processor = new MessageTagProcessor(options, type => type == typeof(TelemetryTrackingHook) ? hook : null);
+    var context = _createProcessContext(
+      new TelemetryTagAttribute { Tag = "process-order" },
+      new { OrderId = "123" }
+    );
+
+    // Act
+    await processor.ProcessAsync(context, CancellationToken.None);
+
+    // Assert
+    await Assert.That(hook.InvokedCount).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task ProcessAsync_WithNullHookResolver_CompletesWithoutErrorAsync() {
+    // Arrange - covers null resolver early return path
+    var options = new TagOptions();
+    options.UseHook<NotificationTagAttribute, TrackingHook>();
+    var processor = new MessageTagProcessor(options, hookResolver: null);
+    var context = _createProcessContext<NotificationTagAttribute>(
+      new NotificationTagAttribute { Tag = "test" },
+      new { }
+    );
+
+    // Act - should complete without invoking any hooks
+    await processor.ProcessAsync(context, CancellationToken.None);
+
+    // Assert - verify context wasn't modified (shows processing completed)
+    await Assert.That(context.Attribute.Tag).IsEqualTo("test");
+  }
+
+  [Test]
+  public async Task ProcessAsync_WhenHookResolverReturnsNull_SkipsHookAsync() {
+    // Arrange - covers null hookInstance continue path
+    var options = new TagOptions();
+    options.UseHook<NotificationTagAttribute, TrackingHook>();
+    var processor = new MessageTagProcessor(options, _ => null);
+    var context = _createProcessContext<NotificationTagAttribute>(
+      new NotificationTagAttribute { Tag = "test" },
+      new { }
+    );
+
+    // Act
+    await processor.ProcessAsync(context, CancellationToken.None);
+
+    // Assert - verify context wasn't modified (shows processing completed)
+    await Assert.That(context.Attribute.Tag).IsEqualTo("test");
+  }
+
+  [Test]
+  public async Task Constructor_WithNullOptions_ThrowsArgumentNullExceptionAsync() {
+    // Arrange & Act & Assert
+    await Assert.That(() => new MessageTagProcessor(null!))
+      .ThrowsExactly<ArgumentNullException>();
+  }
+
+  #endregion
 }
