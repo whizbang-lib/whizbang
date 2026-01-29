@@ -110,6 +110,27 @@ jobs:
           echo "=== Merged coverage report (first 30 lines) ==="
           head -30 coverage/sonarqube/SonarQube.xml
 
+          # Also generate text summary for coverage check
+          reportgenerator \
+            "-reports:${COVERAGE_FILES}" \
+            "-targetdir:coverage/summary" \
+            "-reporttypes:TextSummary"
+
+      - name: Check Coverage Threshold
+        run: |
+          # Parse coverage from TextSummary report
+          COVERAGE=$(grep "Line coverage:" coverage/summary/Summary.txt | grep -oP '\d+(\.\d+)?(?=%)' | head -1)
+          echo "Line coverage: ${COVERAGE}%"
+
+          # Check against threshold (80%)
+          THRESHOLD=80
+          if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
+            echo "::error::Coverage ${COVERAGE}% is below threshold ${THRESHOLD}%"
+            exit 1
+          else
+            echo "✅ Coverage ${COVERAGE}% meets threshold ${THRESHOLD}%"
+          fi
+
       - name: SonarCloud Analysis
         env:
           GITHUB_TOKEN: ${{ github.token }}

@@ -823,44 +823,60 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
   /// Cleans up all test data from the database (truncates all tables).
   /// Call this between test classes to ensure isolation.
   /// </summary>
+  /// <remarks>
+  /// Uses retry logic to handle transient PostgreSQL deadlocks (40P01) that can occur
+  /// when TRUNCATE competes for ACCESS EXCLUSIVE locks with concurrent operations.
+  /// </remarks>
   public async Task CleanupDatabaseAsync(CancellationToken cancellationToken = default) {
     if (!_isInitialized) {
       return;
     }
 
-    // Truncate all Whizbang tables in the shared database
-    // Both InventoryWorker and BFF share the same database, so we only need to truncate once
-    using (var scope = _inventoryHost!.Services.CreateScope()) {
-      var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
+    const int maxRetries = 3;
+    const int retryDelayMs = 100;
 
-      // Truncate Whizbang core tables, perspective tables, and checkpoints
-      // CASCADE ensures all dependent data is cleared
-      // Use DO block to gracefully handle case where tables don't exist
-      // CRITICAL: Truncate BOTH inventory AND bff schemas since each has independent tables
-      await dbContext.Database.ExecuteSqlRawAsync(@"
-        DO $$
-        BEGIN
-          -- Truncate core infrastructure tables (INVENTORY schema)
-          TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_checkpoints, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
+    for (int attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        // Truncate all Whizbang tables in the shared database
+        // Both InventoryWorker and BFF share the same database, so we only need to truncate once
+        using (var scope = _inventoryHost!.Services.CreateScope()) {
+          var dbContext = scope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
 
-          -- Truncate all perspective tables (INVENTORY schema)
-          TRUNCATE TABLE inventory.wh_per_inventory_level_dto CASCADE;
-          TRUNCATE TABLE inventory.wh_per_order_read_model CASCADE;
-          TRUNCATE TABLE inventory.wh_per_product_dto CASCADE;
+          // Truncate Whizbang core tables, perspective tables, and checkpoints
+          // CASCADE ensures all dependent data is cleared
+          // Use DO block to gracefully handle case where tables don't exist
+          // CRITICAL: Truncate BOTH inventory AND bff schemas since each has independent tables
+          await dbContext.Database.ExecuteSqlRawAsync(@"
+            DO $$
+            BEGIN
+              -- Truncate core infrastructure tables (INVENTORY schema)
+              TRUNCATE TABLE inventory.wh_event_store, inventory.wh_outbox, inventory.wh_inbox, inventory.wh_perspective_checkpoints, inventory.wh_perspective_events, inventory.wh_receptor_processing, inventory.wh_active_streams, inventory.wh_message_deduplication CASCADE;
 
-          -- Truncate core infrastructure tables (BFF schema)
-          TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_checkpoints, bff.wh_perspective_events, bff.wh_receptor_processing, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
+              -- Truncate all perspective tables (INVENTORY schema)
+              TRUNCATE TABLE inventory.wh_per_inventory_level_dto CASCADE;
+              TRUNCATE TABLE inventory.wh_per_order_read_model CASCADE;
+              TRUNCATE TABLE inventory.wh_per_product_dto CASCADE;
 
-          -- Truncate all perspective tables (BFF schema)
-          TRUNCATE TABLE bff.wh_per_inventory_level_dto CASCADE;
-          TRUNCATE TABLE bff.wh_per_order_read_model CASCADE;
-          TRUNCATE TABLE bff.wh_per_product_dto CASCADE;
-        EXCEPTION
-          WHEN undefined_table THEN
-            -- Tables don't exist, nothing to clean up
-            NULL;
-        END $$;
-      ", cancellationToken);
+              -- Truncate core infrastructure tables (BFF schema)
+              TRUNCATE TABLE bff.wh_event_store, bff.wh_outbox, bff.wh_inbox, bff.wh_perspective_checkpoints, bff.wh_perspective_events, bff.wh_receptor_processing, bff.wh_active_streams, bff.wh_message_deduplication CASCADE;
+
+              -- Truncate all perspective tables (BFF schema)
+              TRUNCATE TABLE bff.wh_per_inventory_level_dto CASCADE;
+              TRUNCATE TABLE bff.wh_per_order_read_model CASCADE;
+              TRUNCATE TABLE bff.wh_per_product_dto CASCADE;
+            EXCEPTION
+              WHEN undefined_table THEN
+                -- Tables don't exist, nothing to clean up
+                NULL;
+            END $$;
+          ", cancellationToken);
+        }
+
+        return; // Success, exit retry loop
+      } catch (Npgsql.PostgresException ex) when (ex.SqlState == "40P01" && attempt < maxRetries) {
+        // Deadlock detected - retry after a short delay
+        await Task.Delay(retryDelayMs * attempt, cancellationToken);
+      }
     }
   }
 
