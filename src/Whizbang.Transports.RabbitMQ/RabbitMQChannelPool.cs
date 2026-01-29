@@ -10,11 +10,10 @@ namespace Whizbang.Transports.RabbitMQ;
 /// <docs>components/transports/rabbitmq</docs>
 public sealed class RabbitMQChannelPool : IDisposable {
   private readonly IConnection _connection;
-  private readonly int _maxChannels;
   private readonly ConcurrentBag<IChannel> _availableChannels = [];
   private readonly SemaphoreSlim _semaphore;
   private readonly List<IChannel> _allChannels = [];
-  private readonly object _lock = new();
+  private readonly Lock _lock = new();
   private bool _disposed;
 
   /// <summary>
@@ -24,7 +23,6 @@ public sealed class RabbitMQChannelPool : IDisposable {
   /// <param name="maxChannels">Maximum number of channels in the pool.</param>
   public RabbitMQChannelPool(IConnection connection, int maxChannels) {
     _connection = connection ?? throw new ArgumentNullException(nameof(connection));
-    _maxChannels = maxChannels;
     _semaphore = new SemaphoreSlim(maxChannels, maxChannels);
   }
 
@@ -71,7 +69,7 @@ public sealed class RabbitMQChannelPool : IDisposable {
       return;
     }
 
-    if (channel != null && channel.IsOpen) {
+    if (channel is { IsOpen: true }) {
       _availableChannels.Add(channel);
     } else {
       // Channel is closed, don't return it to pool

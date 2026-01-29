@@ -607,11 +607,11 @@ public class ScopedLensFactoryImplTests {
   }
 
   // Interface for testing unregistered lens scenario
-  public interface IUnregisteredLensQuery : ILensQuery { }
+  public interface IUnregisteredLensQuery : ILensQuery;
 
   // Scope interfaces for testing scope definition mapping
-  public interface ITenantScoped { }
-  public interface IUserScoped { }
-  public interface IOrganizationScoped { }
-  public interface ICustomerScoped { }
+  public interface ITenantScoped;
+  public interface IUserScoped;
+  public interface IOrganizationScoped;
+  public interface ICustomerScoped;
 }
