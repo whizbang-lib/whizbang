@@ -48,3 +48,25 @@ jobs:
     secrets:
       SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+
+  version-comment:
+    name: Comment Version on PR
+    needs: version
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - name: Comment Version
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr comment ${{ github.event.pull_request.number }} \
+            --repo ${{ github.repository }} \
+            --body "📦 **Calculated Version**: \`${{ needs.version.outputs.semver }}\`
+
+          | Property | Value |
+          |----------|-------|
+          | SemVer | \`${{ needs.version.outputs.semver }}\` |
+          | Full SemVer | \`${{ needs.version.outputs.fullsemver }}\` |
+          | Pre-release | \`${{ needs.version.outputs.prerelease || 'none' }}\` |"
