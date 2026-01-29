@@ -1,0 +1,63 @@
+name: Version (Reusable)
+
+on:
+  workflow_call:
+    outputs:
+      semver:
+        description: 'Semantic version (e.g., 0.2.0 or 0.3.0-alpha.1)'
+        value: ${{ jobs.version.outputs.semver }}
+      fullsemver:
+        description: 'Full semantic version with metadata'
+        value: ${{ jobs.version.outputs.fullsemver }}
+      major:
+        description: 'Major version number'
+        value: ${{ jobs.version.outputs.major }}
+      minor:
+        description: 'Minor version number'
+        value: ${{ jobs.version.outputs.minor }}
+      patch:
+        description: 'Patch version number'
+        value: ${{ jobs.version.outputs.patch }}
+      prerelease:
+        description: 'Pre-release tag (empty for stable releases)'
+        value: ${{ jobs.version.outputs.prerelease }}
+      is_prerelease:
+        description: 'Whether this is a pre-release version'
+        value: ${{ jobs.version.outputs.is_prerelease }}
+
+jobs:
+  version:
+    name: Calculate Version
+    runs-on: ubuntu-latest
+    outputs:
+      semver: ${{ steps.gitversion.outputs.semVer }}
+      fullsemver: ${{ steps.gitversion.outputs.fullSemVer }}
+      major: ${{ steps.gitversion.outputs.major }}
+      minor: ${{ steps.gitversion.outputs.minor }}
+      patch: ${{ steps.gitversion.outputs.patch }}
+      prerelease: ${{ steps.gitversion.outputs.preReleaseTag }}
+      is_prerelease: ${{ steps.gitversion.outputs.preReleaseTag != '' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@26a89e5dd4fa9ba66a853e04706ba52755ca4057 # v3.1.1
+        with:
+          versionSpec: '6.0.x'
+
+      - name: Determine Version
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@26a89e5dd4fa9ba66a853e04706ba52755ca4057 # v3.1.1
+        with:
+          useConfigFile: true
+          configFilePath: GitVersion.yml
+
+      - name: Display Version
+        run: |
+          echo "Version: ${{ steps.gitversion.outputs.semVer }}"
+          echo "Full SemVer: ${{ steps.gitversion.outputs.fullSemVer }}"
+          echo "Pre-release: ${{ steps.gitversion.outputs.preReleaseTag }}"
