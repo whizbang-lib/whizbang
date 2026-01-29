@@ -1,0 +1,50 @@
+name: InMemory Integration Tests (Reusable)
+
+on:
+  workflow_call:
+
+jobs:
+  inmemory-tests:
+    name: InMemory Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj', '**/Directory.*.props') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore Dependencies
+        run: dotnet restore
+
+      - name: Build Solution
+        run: dotnet build --no-restore --configuration Release -maxcpucount:1
+
+      - name: Run InMemory Integration Tests
+        run: |
+          echo "Running InMemory integration tests"
+          dotnet test --project samples/ECommerce/tests/ECommerce.InMemory.Integration.Tests \
+            --no-restore --no-build --configuration Release \
+            --coverage --coverage-output-format cobertura
+        env:
+          TESTCONTAINERS_RYUK_DISABLED: 'false'
+
+      - name: Upload Coverage
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-inmemory
+          path: '**/TestResults/*.cobertura.xml'
+          retention-days: 1

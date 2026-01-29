@@ -4,12 +4,13 @@ using Whizbang.Core.ValueObjects;
 namespace Whizbang.Core.Tests.ValueObjects;
 
 /// <summary>
-/// Tests for identity value objects (MessageId, CorrelationId, MessageId).
-/// These tests verify that IDs use UUIDv7 (time-ordered, database-friendly GUIDs).
+/// Tests for identity value objects (MessageId, CorrelationId, StreamId, EventId).
+/// These tests verify that IDs use UUIDv7 (time-ordered, database-friendly GUIDs)
+/// and implement IWhizbangId with TrackedGuid backing.
 /// </summary>
 public class IdentityValueObjectTests {
   // ==================== IDENTITY VALUE OBJECT TESTS ====================
-  // Tests for MessageId and CorrelationId using parameterized approach
+  // Tests for identity value objects using parameterized approach
   // to eliminate duplication between identical test logic
 
   /// <summary>
@@ -20,6 +21,8 @@ public class IdentityValueObjectTests {
   public static IEnumerable<Func<(Func<Guid> createId, string typeName)>> GetIdTypes() {
     yield return () => (() => MessageId.New().Value, "MessageId");
     yield return () => (() => CorrelationId.New().Value, "CorrelationId");
+    yield return () => (() => StreamId.New().Value, "StreamId");
+    yield return () => (() => EventId.New().Value, "EventId");
   }
 
   [Test]
@@ -80,19 +83,66 @@ public class IdentityValueObjectTests {
     // Arrange & Act - Generate one of each ID type
     var messageId = MessageId.New();
     var correlationId = CorrelationId.New();
-    var causationId = MessageId.New();
+    var streamId = StreamId.New();
+    var eventId = EventId.New();
 
     // Assert - All should be UUIDv7, which means they should all be time-ordered
     // We verify this by checking they can be sorted (UUIDv7 property)
     var guids = new[] {
       messageId.Value,
       correlationId.Value,
-      causationId.Value
+      streamId.Value,
+      eventId.Value
     };
 
     // Should not throw - UUIDv7 are comparable
     var sorted = guids.OrderBy(g => g).ToArray();
-    await Assert.That(sorted).Count().IsEqualTo(3);
+    await Assert.That(sorted).Count().IsEqualTo(4);
+  }
+
+  [Test]
+  public async Task AllIdTypes_ImplementIWhizbangIdAsync() {
+    // Arrange & Act - Generate one of each ID type
+    var messageId = MessageId.New();
+    var correlationId = CorrelationId.New();
+    var streamId = StreamId.New();
+    var eventId = EventId.New();
+
+    // Assert - All should implement IWhizbangId
+    await Assert.That(messageId).IsAssignableTo<IWhizbangId>();
+    await Assert.That(correlationId).IsAssignableTo<IWhizbangId>();
+    await Assert.That(streamId).IsAssignableTo<IWhizbangId>();
+    await Assert.That(eventId).IsAssignableTo<IWhizbangId>();
+  }
+
+  [Test]
+  public async Task AllIdTypes_HaveSubMillisecondPrecisionAsync() {
+    // Arrange & Act - Generate one of each ID type
+    var messageId = MessageId.New();
+    var correlationId = CorrelationId.New();
+    var streamId = StreamId.New();
+    var eventId = EventId.New();
+
+    // Assert - All should have sub-millisecond precision (Medo-generated)
+    await Assert.That(messageId.SubMillisecondPrecision).IsTrue();
+    await Assert.That(correlationId.SubMillisecondPrecision).IsTrue();
+    await Assert.That(streamId.SubMillisecondPrecision).IsTrue();
+    await Assert.That(eventId.SubMillisecondPrecision).IsTrue();
+  }
+
+  [Test]
+  public async Task AllIdTypes_AreTimeOrderedAsync() {
+    // Arrange & Act - Generate one of each ID type
+    var messageId = MessageId.New();
+    var correlationId = CorrelationId.New();
+    var streamId = StreamId.New();
+    var eventId = EventId.New();
+
+    // Assert - All should be time-ordered (UUIDv7)
+    await Assert.That(messageId.IsTimeOrdered).IsTrue();
+    await Assert.That(correlationId.IsTimeOrdered).IsTrue();
+    await Assert.That(streamId.IsTimeOrdered).IsTrue();
+    await Assert.That(eventId.IsTimeOrdered).IsTrue();
   }
 
   #endregion

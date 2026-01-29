@@ -81,20 +81,24 @@ public sealed class RabbitMQSubscription : ISubscription {
 
     _disposed = true;
 
-    try {
-      // Cancel consumer explicitly if consumer tag is available
-      if (_consumerTag != null) {
-        _channel.BasicCancelAsync(_consumerTag, noWait: false).GetAwaiter().GetResult();
-        _logger?.LogDebug("Cancelled consumer {ConsumerTag} for queue {QueueName}", _consumerTag, _queueName);
-      }
+    // Fire-and-forget disposal to avoid blocking on RabbitMQ channel cleanup
+    // Channel cleanup can block if the broker is slow to respond
+    _ = Task.Run(async () => {
+      try {
+        // Cancel consumer explicitly if consumer tag is available
+        // Use noWait: true to avoid waiting for server confirmation
+        if (_consumerTag != null) {
+          await _channel.BasicCancelAsync(_consumerTag, noWait: true);
+          _logger?.LogDebug("Cancelled consumer {ConsumerTag} for queue {QueueName}", _consumerTag, _queueName);
+        }
 
-      // Dispose channel directly (it was created specifically for this subscription)
-      // Disposing automatically closes the channel, so no need to call CloseAsync
-      _channel.Dispose();
-      _logger?.LogDebug("Disposed channel for queue {QueueName}", _queueName);
-    } catch (Exception ex) {
-      _logger?.LogError(ex, "Error disposing subscription for queue {QueueName}", _queueName);
-      // Don't rethrow in Dispose
-    }
+        // Dispose channel - disposing automatically closes the channel
+        _channel.Dispose();
+        _logger?.LogDebug("Disposed channel for queue {QueueName}", _queueName);
+      } catch (Exception ex) {
+        _logger?.LogError(ex, "Error disposing subscription for queue {QueueName}", _queueName);
+        // Ignore errors during async disposal
+      }
+    }, CancellationToken.None);
   }
 }

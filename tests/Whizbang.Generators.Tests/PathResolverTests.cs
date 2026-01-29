@@ -41,7 +41,8 @@ public class PathResolverTests {
       var result = PathResolver.FindDocsRepositoryPath();
 
       // Assert
-      await Assert.That(result).IsEqualTo(tempPath);
+      // Normalize paths to handle macOS symlink resolution (/var/folders vs /private/var/folders)
+      await Assert.That(Path.GetFullPath(result!)).IsEqualTo(Path.GetFullPath(tempPath));
     } finally {
       // Cleanup
       Environment.SetEnvironmentVariable("WHIZBANG_DOCS_PATH", null);

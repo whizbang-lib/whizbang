@@ -23,6 +23,12 @@ public sealed record AnalysisResult {
   /// DI registrations that need to be updated.
   /// </summary>
   public required IReadOnlyList<DIRegistrationInfo> DIRegistrations { get; init; }
+
+  /// <summary>
+  /// Warnings about code that may need manual migration attention.
+  /// These indicate patterns that the tool cannot automatically transform.
+  /// </summary>
+  public required IReadOnlyList<MigrationWarning> Warnings { get; init; }
 }
 
 /// <summary>
@@ -146,4 +152,50 @@ public enum DIRegistrationKind {
 
   /// <summary>Handler registration.</summary>
   HandlerRegistration
+}
+
+/// <summary>
+/// A warning about code that may need manual migration attention.
+/// </summary>
+/// <param name="FilePath">Path to the file containing the warning.</param>
+/// <param name="ClassName">Name of the class with the warning.</param>
+/// <param name="WarningKind">Category of warning.</param>
+/// <param name="Message">Human-readable warning message.</param>
+/// <param name="LineNumber">Line number where the warning applies.</param>
+/// <param name="Details">Additional details (e.g., the custom base class name).</param>
+public sealed record MigrationWarning(
+    string FilePath,
+    string ClassName,
+    MigrationWarningKind WarningKind,
+    string Message,
+    int LineNumber,
+    string? Details = null);
+
+/// <summary>
+/// Categories of migration warnings.
+/// </summary>
+public enum MigrationWarningKind {
+  /// <summary>
+  /// Handler inherits from a custom base class that is not a standard Wolverine/Marten type.
+  /// Manual migration required to map custom infrastructure to Whizbang equivalents.
+  /// </summary>
+  CustomHandlerBaseClass,
+
+  /// <summary>
+  /// Handler method has a parameter with an unknown interface type that may wrap Marten/Wolverine.
+  /// Review the interface to determine if it contains Marten/Wolverine usage that needs migration.
+  /// </summary>
+  UnknownInterfaceParameter,
+
+  /// <summary>
+  /// Handler method has a parameter type that appears to be a custom context or session wrapper.
+  /// These often wrap IDocumentSession or IMessageBus and need manual review.
+  /// </summary>
+  CustomContextParameter,
+
+  /// <summary>
+  /// Found a nested handler class inside a static outer class.
+  /// Consider extracting to top-level class for better discoverability.
+  /// </summary>
+  NestedHandlerClass
 }
