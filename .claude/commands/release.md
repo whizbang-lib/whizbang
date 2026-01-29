@@ -229,6 +229,51 @@ The release workflow (`release.yml`) performs these steps:
 5. Create GitHub Release (stable) or Pre-Release (alpha/beta)
 6. Trigger NuGet publish workflow via tag
 
+### Practical Release Workflow
+
+**Important:** The `/release` command is run AFTER merging to the appropriate branch. The branch determines the version type (alpha/beta/stable).
+
+#### Want an Alpha Release?
+```bash
+# 1. Merge your PR to develop
+gh pr merge 43 --squash
+
+# 2. Checkout develop and trigger release
+git checkout develop && git pull
+/release auto
+# → Creates: 0.3.0-alpha.1
+```
+
+#### Want a Beta Release?
+```bash
+# 1. Create release branch from develop
+git checkout develop
+git checkout -b release/0.2.0
+git push -u origin release/0.2.0
+
+# 2. Trigger release from release branch
+/release auto
+# → Creates: 0.2.0-beta.1
+```
+
+#### Want a Stable Release?
+```bash
+# 1. Merge release branch to main
+git checkout main
+git merge release/0.2.0
+git push
+
+# 2. Trigger release from main
+/release auto  # or /release minor
+# → Creates: 0.2.0
+```
+
+**TL;DR:**
+- PR builds get `prXX.Y` versions (CI only, not published)
+- Merge to `develop` → alpha
+- Create `release/*` branch → beta
+- Merge to `main` → stable release
+
 ### Quick Release Checklist
 
 For a new release:

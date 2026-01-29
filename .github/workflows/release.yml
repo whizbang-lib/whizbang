@@ -19,10 +19,6 @@ on:
         default: false
         type: boolean
 
-permissions:
-  contents: write
-  pull-requests: write
-
 env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
@@ -31,6 +27,8 @@ jobs:
   version:
     name: Calculate Version
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     outputs:
       semver: ${{ steps.gitversion.outputs.semVer }}
       major: ${{ steps.gitversion.outputs.major }}
@@ -87,6 +85,8 @@ jobs:
     needs: version
     runs-on: ubuntu-latest
     if: ${{ !inputs.dry_run }}
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
