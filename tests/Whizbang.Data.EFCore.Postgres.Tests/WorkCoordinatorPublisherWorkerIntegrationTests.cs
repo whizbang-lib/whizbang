@@ -438,7 +438,7 @@ internal sealed class TestServiceInstanceProvider : IServiceInstanceProvider {
 
 internal sealed class TestTransport : ITransport {
   private readonly object _lock = new();
-  public List<PublishedMessage> PublishedMessages { get; } = new();
+  public List<PublishedMessage> PublishedMessages { get; } = [];
 
   public bool IsInitialized => true;
 

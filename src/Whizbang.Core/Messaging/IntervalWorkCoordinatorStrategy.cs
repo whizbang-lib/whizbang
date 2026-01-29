@@ -34,7 +34,7 @@ public partial class IntervalWorkCoordinatorStrategy : IWorkCoordinatorStrategy,
   private readonly List<MessageFailure> _queuedOutboxFailures = [];
   private readonly List<MessageFailure> _queuedInboxFailures = [];
 
-  private readonly object _lock = new object();
+  private readonly object _lock = new();
   private bool _disposed;
   private bool _flushing;
 

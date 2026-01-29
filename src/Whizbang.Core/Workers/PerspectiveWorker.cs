@@ -245,6 +245,22 @@ public partial class PerspectiveWorker(
       .GroupBy(w => new { w.StreamId, w.PerspectiveName })
       .ToList();
 
+#pragma warning disable CA1848 // Temporary diagnostic logging
+    // Diagnostic logging for perspective work batch
+    var _diagnosticLogging = Environment.GetEnvironmentVariable("WHIZBANG_DEBUG") == "true";
+    if (_diagnosticLogging) {
+      Console.WriteLine($"[PerspectiveWorker DIAG] ProcessWorkBatchAsync returned:");
+      Console.WriteLine($"[PerspectiveWorker DIAG]   PerspectiveWork count: {workBatch.PerspectiveWork.Count}");
+      Console.WriteLine($"[PerspectiveWorker DIAG]   Grouped into {groupedWork.Count} unique (StreamId, PerspectiveName) pairs");
+      foreach (var g in groupedWork) {
+        Console.WriteLine($"[PerspectiveWorker DIAG]     - {g.Key.PerspectiveName}/{g.Key.StreamId}: {g.Count()} work items");
+      }
+      if (workBatch.PerspectiveWork.Count == 0) {
+        Console.WriteLine($"[PerspectiveWorker DIAG]   ⚠️ NO PERSPECTIVE WORK CLAIMED - check wh_message_associations and wh_perspective_checkpoints");
+      }
+    }
+#pragma warning restore CA1848
+
     // Process perspective work using IPerspectiveRunner (once per stream/perspective group)
     foreach (var group in groupedWork) {
       var streamId = group.Key.StreamId;
@@ -367,7 +383,7 @@ public partial class PerspectiveWorker(
 
         var processedEvents = shouldLoadEvents
           ? await _loadProcessedEventsAsync(eventStore!, streamId, perspectiveName, lastProcessedEventId, result.LastEventId, cancellationToken)
-          : new List<MessageEnvelope<IEvent>>();
+          : [];
 
 #pragma warning disable CA1848 // Temporary diagnostic logging
         _logger.LogInformation("[PerspectiveWorker DIAGNOSTIC] Loaded {Count} events for {PerspectiveName}/{StreamId}",
@@ -483,7 +499,7 @@ public partial class PerspectiveWorker(
 
     if (_eventTypeProvider is null) {
       LogWarningNoEventTypes(_logger, perspectiveName, streamId);
-      return new List<MessageEnvelope<IEvent>>();
+      return [];
     }
 
     try {
@@ -491,7 +507,7 @@ public partial class PerspectiveWorker(
       var eventTypes = _eventTypeProvider.GetEventTypes();
       if (eventTypes.Count == 0) {
         LogWarningNoEventTypes(_logger, perspectiveName, streamId);
-        return new List<MessageEnvelope<IEvent>>();
+        return [];
       }
 
       // Load all events that were just processed by this perspective run
