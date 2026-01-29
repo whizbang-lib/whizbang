@@ -1,11 +1,12 @@
 using System.Text.Json;
+using Dapper;
 using ECommerce.BFF.API;
 using ECommerce.BFF.API.Generated;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
-using Testcontainers.PostgreSql;
+using Npgsql;
 using TUnit.Assertions;
 using TUnit.Core;
 using Whizbang.Core;
@@ -16,6 +17,7 @@ using Whizbang.Core.ValueObjects;
 using Whizbang.Core.Workers;
 using Whizbang.Data.EFCore.Postgres;
 using Whizbang.Data.EFCore.Postgres.Generated;
+using Whizbang.Testing.Containers;
 
 namespace ECommerce.Integration.Tests;
 
@@ -24,9 +26,9 @@ namespace ECommerce.Integration.Tests;
 /// These tests verify the ACTUAL application configuration matches what the infrastructure tests prove works.
 /// </summary>
 public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
-  private PostgreSqlContainer? _postgresContainer;
+  private string? _fixtureDatabaseName;  // Unique database name for this fixture instance
+  private string? _connectionString;  // Connection string pointing to the fixture's unique database
   private IHost? _testHost;
-  private string _connectionString = null!;
   private Guid _instanceId;
 
   private record TestEvent { }
@@ -57,7 +59,7 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
     var envelopeJson = JsonSerializer.Serialize(envelope, jsonOptions);
     var metadata = new EnvelopeMetadata {
       MessageId = MessageId.From(messageId),
-      Hops = new List<MessageHop>()
+      Hops = []
     };
     var metadataJson = JsonSerializer.Serialize(metadata, jsonOptions);
 
@@ -75,16 +77,23 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
 
   [Before(Test)]
   public async Task SetupAsync() {
-    // Start PostgreSQL container
-    _postgresContainer = new PostgreSqlBuilder()
-      .WithImage("postgres:17-alpine")
-      .WithDatabase("bff_integration_test")
-      .WithUsername("postgres")
-      .WithPassword("postgres")
-      .Build();
+    // Initialize SharedPostgresContainer
+    await SharedPostgresContainer.InitializeAsync();
 
-    await _postgresContainer.StartAsync();
-    _connectionString = $"{_postgresContainer.GetConnectionString()};Timezone=UTC;Include Error Detail=true";
+    // Create a unique database for this test
+    _fixtureDatabaseName = $"fixture_{Guid.NewGuid():N}";
+    Console.WriteLine($"[BffWorkCoordinatorIntegrationTests] Creating unique database: {_fixtureDatabaseName}");
+
+    await using (var conn = new NpgsqlConnection(SharedPostgresContainer.ConnectionString)) {
+      await conn.OpenAsync();
+      await conn.ExecuteAsync($"CREATE DATABASE \"{_fixtureDatabaseName}\"");
+    }
+
+    // Build connection string with the new database name
+    var builder = new NpgsqlConnectionStringBuilder(SharedPostgresContainer.ConnectionString) {
+      Database = _fixtureDatabaseName
+    };
+    _connectionString = $"{builder.ConnectionString};Timezone=UTC;Include Error Detail=true";
 
     _instanceId = Guid.CreateVersion7();
 
@@ -170,9 +179,22 @@ public class BffWorkCoordinatorIntegrationTests : IAsyncDisposable {
       _testHost.Dispose();
     }
 
-    if (_postgresContainer != null) {
-      await _postgresContainer.StopAsync();
-      await _postgresContainer.DisposeAsync();
+    // Drop the fixture's unique database from SharedPostgresContainer
+    // The container itself is NOT disposed - it's shared across all tests
+    if (_fixtureDatabaseName != null) {
+      try {
+        await using var conn = new NpgsqlConnection(SharedPostgresContainer.ConnectionString);
+        await conn.OpenAsync();
+        // Terminate any remaining connections to the database before dropping
+        await conn.ExecuteAsync($@"
+          SELECT pg_terminate_backend(pid)
+          FROM pg_stat_activity
+          WHERE datname = '{_fixtureDatabaseName}' AND pid <> pg_backend_pid()");
+        await conn.ExecuteAsync($"DROP DATABASE IF EXISTS \"{_fixtureDatabaseName}\"");
+        Console.WriteLine($"[BffWorkCoordinatorIntegrationTests] Dropped database: {_fixtureDatabaseName}");
+      } catch (Exception ex) {
+        Console.WriteLine($"[BffWorkCoordinatorIntegrationTests] Warning: Failed to drop database {_fixtureDatabaseName}: {ex.Message}");
+      }
     }
   }
 
@@ -372,7 +394,7 @@ public class OutboxMessageRecord {
 public class TestTransport : Whizbang.Core.Transports.ITransport {
   private readonly object _lock = new();
   private bool _isInitialized;
-  public List<PublishedMessageRecord> PublishedMessages { get; } = new();
+  public List<PublishedMessageRecord> PublishedMessages { get; } = [];
 
   public bool IsInitialized => _isInitialized;
 

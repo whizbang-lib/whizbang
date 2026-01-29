@@ -146,6 +146,20 @@ public partial class ServiceBusConsumerWorker(
       // DIAGNOSTIC: Log after flush
       LogAfterFlush(_logger, workBatch.InboxWork.Count, workBatch.OutboxWork.Count, workBatch.PerspectiveWork.Count);
 
+      // Extended diagnostic logging for perspective work
+      var _diagnosticLogging = Environment.GetEnvironmentVariable("WHIZBANG_DEBUG") == "true";
+      if (_diagnosticLogging) {
+        Console.WriteLine($"[ServiceBusConsumerWorker DIAG] Message {envelope.MessageId} flush result:");
+        Console.WriteLine($"[ServiceBusConsumerWorker DIAG]   InboxWork: {workBatch.InboxWork.Count}, PerspectiveWork: {workBatch.PerspectiveWork.Count}");
+        if (workBatch.PerspectiveWork.Count > 0) {
+          foreach (var pw in workBatch.PerspectiveWork) {
+            Console.WriteLine($"[ServiceBusConsumerWorker DIAG]   - Perspective: {pw.PerspectiveName}, StreamId: {pw.StreamId}, LastProcessedEventId: {pw.LastProcessedEventId}");
+          }
+        } else {
+          Console.WriteLine($"[ServiceBusConsumerWorker DIAG]   ⚠️ NO PERSPECTIVE WORK created - check wh_message_associations table matching");
+        }
+      }
+
       // 4. Check if work was returned - empty means duplicate (already processed)
       var myWork = workBatch.InboxWork.Where(w => w.MessageId == envelope.MessageId.Value).ToList();
 
