@@ -30,19 +30,19 @@ jobs:
     permissions:
       contents: read
     outputs:
-      semver: ${{ steps.gitversion.outputs.semVer }}
-      major: ${{ steps.gitversion.outputs.major }}
-      minor: ${{ steps.gitversion.outputs.minor }}
-      patch: ${{ steps.gitversion.outputs.patch }}
-      prerelease: ${{ steps.gitversion.outputs.preReleaseTag }}
-      fullsemver: ${{ steps.gitversion.outputs.fullSemVer }}
+      semver: ${{ steps.final_version.outputs.semver }}
+      major: ${{ steps.final_version.outputs.major }}
+      minor: ${{ steps.final_version.outputs.minor }}
+      patch: ${{ steps.final_version.outputs.patch }}
+      prerelease: ${{ steps.final_version.outputs.prerelease }}
+      fullsemver: ${{ steps.final_version.outputs.fullsemver }}
       informationalversion: ${{ steps.gitversion.outputs.informationalVersion }}
       branchname: ${{ steps.gitversion.outputs.branchName }}
       sha: ${{ steps.gitversion.outputs.sha }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0  # Full history required for GitVersion
 
@@ -51,34 +51,74 @@ jobs:
         with:
           versionSpec: '6.0.x'
 
-      - name: Determine Version
+      - name: Determine Base Version
         id: gitversion
         uses: gittools/actions/gitversion/execute@26a89e5dd4fa9ba66a853e04706ba52755ca4057 # v3.1.1
         with:
           useConfigFile: true
           configFilePath: GitVersion.yml
-          overrideConfig: |
-            ${{ inputs.release_type == 'major' && 'next-version: ' || '' }}${{ inputs.release_type == 'major' && format('{0}.0.0', steps.gitversion.outputs.major + 1) || '' }}
-            ${{ inputs.release_type == 'minor' && 'next-version: ' || '' }}${{ inputs.release_type == 'minor' && format('{0}.{1}.0', steps.gitversion.outputs.major, steps.gitversion.outputs.minor + 1) || '' }}
-            ${{ inputs.release_type == 'patch' && 'next-version: ' || '' }}${{ inputs.release_type == 'patch' && format('{0}.{1}.{2}', steps.gitversion.outputs.major, steps.gitversion.outputs.minor, steps.gitversion.outputs.patch + 1) || '' }}
+
+      - name: Calculate Final Version
+        id: final_version
+        run: |
+          MAJOR=${{ steps.gitversion.outputs.major }}
+          MINOR=${{ steps.gitversion.outputs.minor }}
+          PATCH=${{ steps.gitversion.outputs.patch }}
+          PRERELEASE="${{ steps.gitversion.outputs.preReleaseTag }}"
+
+          case "${{ inputs.release_type }}" in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+            auto)
+              # Use GitVersion's calculated version as-is
+              ;;
+          esac
+
+          if [ -n "$PRERELEASE" ]; then
+            SEMVER="${MAJOR}.${MINOR}.${PATCH}-${PRERELEASE}"
+            FULLSEMVER="${MAJOR}.${MINOR}.${PATCH}-${PRERELEASE}"
+          else
+            SEMVER="${MAJOR}.${MINOR}.${PATCH}"
+            FULLSEMVER="${MAJOR}.${MINOR}.${PATCH}"
+          fi
+
+          echo "semver=$SEMVER" >> $GITHUB_OUTPUT
+          echo "fullsemver=$FULLSEMVER" >> $GITHUB_OUTPUT
+          echo "major=$MAJOR" >> $GITHUB_OUTPUT
+          echo "minor=$MINOR" >> $GITHUB_OUTPUT
+          echo "patch=$PATCH" >> $GITHUB_OUTPUT
+          echo "prerelease=$PRERELEASE" >> $GITHUB_OUTPUT
+
+          echo "Final version: $SEMVER"
 
       - name: Display Version Info
         run: |
           echo "## Version Information" >> $GITHUB_STEP_SUMMARY
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| SemVer | ${{ steps.gitversion.outputs.semVer }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| FullSemVer | ${{ steps.gitversion.outputs.fullSemVer }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Major | ${{ steps.gitversion.outputs.major }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Minor | ${{ steps.gitversion.outputs.minor }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Patch | ${{ steps.gitversion.outputs.patch }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| PreRelease | ${{ steps.gitversion.outputs.preReleaseTag }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SemVer | ${{ steps.final_version.outputs.semver }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| FullSemVer | ${{ steps.final_version.outputs.fullsemver }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Major | ${{ steps.final_version.outputs.major }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Minor | ${{ steps.final_version.outputs.minor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Patch | ${{ steps.final_version.outputs.patch }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| PreRelease | ${{ steps.final_version.outputs.prerelease }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Branch | ${{ steps.gitversion.outputs.branchName }} |" >> $GITHUB_STEP_SUMMARY
           echo "| SHA | ${{ steps.gitversion.outputs.sha }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Release Type | ${{ inputs.release_type }} |" >> $GITHUB_STEP_SUMMARY
 
           echo ""
-          echo "Calculated version: ${{ steps.gitversion.outputs.semVer }}"
-          echo "Full SemVer: ${{ steps.gitversion.outputs.fullSemVer }}"
+          echo "Calculated version: ${{ steps.final_version.outputs.semver }}"
+          echo "Full SemVer: ${{ steps.final_version.outputs.fullsemver }}"
 
   release:
     name: Create Release
@@ -90,7 +130,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -129,7 +169,7 @@ jobs:
 
       - name: Create GitHub Release (stable only)
         if: ${{ needs.version.outputs.prerelease == '' }}
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
+        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2.2.1
         with:
           tag_name: v${{ needs.version.outputs.semver }}
           name: Release v${{ needs.version.outputs.semver }}
@@ -138,7 +178,7 @@ jobs:
 
       - name: Create GitHub Pre-Release
         if: ${{ needs.version.outputs.prerelease != '' }}
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
+        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda # v2.2.1
         with:
           tag_name: v${{ needs.version.outputs.semver }}
           name: Pre-release v${{ needs.version.outputs.semver }}
