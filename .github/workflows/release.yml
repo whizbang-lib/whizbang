@@ -193,4 +193,13 @@ jobs:
           echo "- **Tag**: [v${{ needs.version.outputs.semver }}](https://github.com/${{ github.repository }}/releases/tag/v${{ needs.version.outputs.semver }})" >> $GITHUB_STEP_SUMMARY
           echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "The NuGet publish workflow will be triggered automatically by the new tag." >> $GITHUB_STEP_SUMMARY
+          echo "The NuGet publish workflow will be triggered next." >> $GITHUB_STEP_SUMMARY
+
+  publish:
+    name: Publish to NuGet
+    needs: [version, release]
+    if: ${{ !inputs.dry_run }}
+    uses: ./.github/workflows/nuget-publish.yml
+    with:
+      tag: v${{ needs.version.outputs.semver }}
+    secrets: inherit
