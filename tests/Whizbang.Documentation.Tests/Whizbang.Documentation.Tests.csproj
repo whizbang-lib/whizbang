@@ -10,6 +10,7 @@
     <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
     <PackageReference Include="TUnit" />
     <PackageReference Include="Rocks" />
     <PackageReference Include="Bogus" />
