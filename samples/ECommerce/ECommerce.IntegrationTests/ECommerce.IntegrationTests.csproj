@@ -25,6 +25,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
     <ProjectReference Include="..\ECommerce.OrderService.API\ECommerce.OrderService.API.csproj" />
     <ProjectReference Include="..\ECommerce.Contracts\ECommerce.Contracts.csproj" />
     <ProjectReference Include="..\ECommerce.AppHost\ECommerce.AppHost.csproj" />
