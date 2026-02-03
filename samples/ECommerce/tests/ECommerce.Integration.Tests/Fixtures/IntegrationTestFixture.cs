@@ -33,8 +33,7 @@ public sealed class IntegrationTestFixture : IAsyncDisposable {
   private IHost? _bffHost;
 
   public IntegrationTestFixture() {
-    _serviceBusContainer = new ServiceBusBuilder()
-      .WithImage("mcr.microsoft.com/azure-messaging/servicebus-emulator:latest")
+    _serviceBusContainer = new ServiceBusBuilder("mcr.microsoft.com/azure-messaging/servicebus-emulator:latest")
       .WithAcceptLicenseAgreement(true)
       .Build();
 
