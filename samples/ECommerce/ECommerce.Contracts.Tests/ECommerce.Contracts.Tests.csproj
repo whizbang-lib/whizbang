@@ -12,6 +12,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
     <ProjectReference Include="../ECommerce.Contracts/ECommerce.Contracts.csproj" />
   </ItemGroup>
 
