@@ -60,7 +60,7 @@
     <PackageVersion Include="System.Collections.Immutable" Version="9.0.0" />
     <PackageVersion Include="Testcontainers.PostgreSql" Version="4.9.0" />
     <PackageVersion Include="Testcontainers.RabbitMQ" Version="4.9.0" />
-    <PackageVersion Include="Testcontainers.ServiceBus" Version="4.9.0" />
+    <PackageVersion Include="Testcontainers.ServiceBus" Version="4.10.0" />
     <PackageVersion Include="Testcontainers.Azurite" Version="4.10.0" />
     <PackageVersion Include="TUnit" Version="1.12.125" />
     <PackageVersion Include="TUnit.Assertions" Version="1.12.125" />
