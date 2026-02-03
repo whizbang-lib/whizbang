@@ -340,6 +340,240 @@ public class ScopedWorkCoordinatorStrategyTests {
   }
 
   // ========================================
+  // CONSTRUCTOR VALIDATION TESTS
+  // ========================================
+
+  [Test]
+  public async Task Constructor_WithNullCoordinator_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    // Act & Assert
+    await Assert.That(() => new ScopedWorkCoordinatorStrategy(
+      null!,
+      instanceProvider,
+      null,
+      options
+    )).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task Constructor_WithNullInstanceProvider_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var options = new WorkCoordinatorOptions();
+
+    // Act & Assert
+    await Assert.That(() => new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator,
+      null!,
+      null,
+      options
+    )).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task Constructor_WithNullOptions_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+
+    // Act & Assert
+    await Assert.That(() => new ScopedWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      null,
+      null!
+    )).Throws<ArgumentNullException>();
+  }
+
+  // ========================================
+  // DISPOSED STATE TESTS
+  // ========================================
+
+  [Test]
+  public async Task QueueOutboxMessage_AfterDispose_ThrowsObjectDisposedExceptionAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ScopedWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, null, options);
+    await sut.DisposeAsync();
+
+    var messageId = _idProvider.NewGuid();
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var envelope = new MessageEnvelope<_testEvent1> {
+      MessageId = MessageId.From(messageId),
+      Payload = new _testEvent1(),
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
+    };
+    var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
+    var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)!;
+
+    // Act & Assert
+    await Assert.That(() => sut.QueueOutboxMessage(new OutboxMessage {
+      MessageId = messageId,
+      Destination = "test",
+      Envelope = jsonEnvelope,
+      EnvelopeType = "Test",
+      StreamId = _idProvider.NewGuid(),
+      IsEvent = false,
+      MessageType = "Test",
+      Metadata = new EnvelopeMetadata { MessageId = MessageId.From(messageId), Hops = [] }
+    })).ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task QueueInboxMessage_AfterDispose_ThrowsObjectDisposedExceptionAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ScopedWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, null, options);
+    await sut.DisposeAsync();
+
+    var messageId = _idProvider.NewGuid();
+    var jsonOptions = Whizbang.Core.Serialization.JsonContextRegistry.CreateCombinedOptions();
+    var envelope = new MessageEnvelope<_testEvent1> {
+      MessageId = MessageId.From(messageId),
+      Payload = new _testEvent1(),
+      Hops = [new MessageHop { ServiceInstance = ServiceInstanceInfo.Unknown }]
+    };
+    var envelopeJson = JsonSerializer.Serialize((object)envelope, jsonOptions);
+    var jsonEnvelope = JsonSerializer.Deserialize<MessageEnvelope<JsonElement>>(envelopeJson, jsonOptions)!;
+
+    // Act & Assert
+    await Assert.That(() => sut.QueueInboxMessage(new InboxMessage {
+      MessageId = messageId,
+      HandlerName = "TestHandler",
+      Envelope = jsonEnvelope,
+      EnvelopeType = "Test",
+      MessageType = "Test"
+    })).ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task QueueOutboxCompletion_AfterDispose_ThrowsObjectDisposedExceptionAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ScopedWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, null, options);
+    await sut.DisposeAsync();
+
+    // Act & Assert
+    await Assert.That(() => sut.QueueOutboxCompletion(_idProvider.NewGuid(), MessageProcessingStatus.Published))
+      .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task QueueInboxCompletion_AfterDispose_ThrowsObjectDisposedExceptionAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ScopedWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, null, options);
+    await sut.DisposeAsync();
+
+    // Act & Assert
+    await Assert.That(() => sut.QueueInboxCompletion(_idProvider.NewGuid(), MessageProcessingStatus.Published))
+      .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task QueueOutboxFailure_AfterDispose_ThrowsObjectDisposedExceptionAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ScopedWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, null, options);
+    await sut.DisposeAsync();
+
+    // Act & Assert
+    await Assert.That(() => sut.QueueOutboxFailure(_idProvider.NewGuid(), MessageProcessingStatus.Failed, "error"))
+      .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task QueueInboxFailure_AfterDispose_ThrowsObjectDisposedExceptionAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ScopedWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, null, options);
+    await sut.DisposeAsync();
+
+    // Act & Assert
+    await Assert.That(() => sut.QueueInboxFailure(_idProvider.NewGuid(), MessageProcessingStatus.Failed, "error"))
+      .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task FlushAsync_AfterDispose_ThrowsObjectDisposedExceptionAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ScopedWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, null, options);
+    await sut.DisposeAsync();
+
+    // Act & Assert
+    await Assert.That(async () => await sut.FlushAsync(WorkBatchFlags.None))
+      .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task DisposeAsync_CalledMultipleTimes_DoesNotThrowAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ScopedWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, null, options);
+
+    // Act - Dispose multiple times
+    await sut.DisposeAsync();
+    await sut.DisposeAsync();
+    await sut.DisposeAsync();
+
+    // Assert - Should not throw
+  }
+
+  // ========================================
+  // DEBUG MODE TEST
+  // ========================================
+
+  [Test]
+  public async Task FlushAsync_WithDebugMode_SetsDebugFlagAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinatorWithFlags();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions { DebugMode = true };
+
+    var sut = new ScopedWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, null, options);
+
+    var messageId = _idProvider.NewGuid();
+    sut.QueueOutboxCompletion(messageId, MessageProcessingStatus.Published);
+
+    // Act
+    await sut.FlushAsync(WorkBatchFlags.None);
+
+    // Assert - DebugMode flag should be set
+    await Assert.That(fakeCoordinator.LastFlags & WorkBatchFlags.DebugMode).IsEqualTo(WorkBatchFlags.DebugMode);
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  // ========================================
   // Test Fakes
   // ========================================
 
@@ -399,6 +633,40 @@ public class ScopedWorkCoordinatorStrategyTests {
         HostName = HostName,
         ProcessId = ProcessId
       };
+    }
+  }
+
+  private sealed class FakeWorkCoordinatorWithFlags : IWorkCoordinator {
+    public WorkBatchFlags LastFlags { get; private set; }
+
+    public Task<WorkBatch> ProcessWorkBatchAsync(
+      ProcessWorkBatchRequest request,
+      CancellationToken cancellationToken = default) {
+      LastFlags = request.Flags;
+      return Task.FromResult(new WorkBatch {
+        OutboxWork = [],
+        InboxWork = [],
+        PerspectiveWork = []
+      });
+    }
+
+    public Task ReportPerspectiveCompletionAsync(
+      PerspectiveCheckpointCompletion completion,
+      CancellationToken cancellationToken = default) {
+      return Task.CompletedTask;
+    }
+
+    public Task ReportPerspectiveFailureAsync(
+      PerspectiveCheckpointFailure failure,
+      CancellationToken cancellationToken = default) {
+      return Task.CompletedTask;
+    }
+
+    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+      Guid streamId,
+      string perspectiveName,
+      CancellationToken cancellationToken = default) {
+      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
     }
   }
 }

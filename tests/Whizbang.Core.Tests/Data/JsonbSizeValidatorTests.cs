@@ -227,4 +227,221 @@ public class JsonbSizeValidatorTests {
     await Assert.That(result.MetadataJson).Contains("__size_warning");
     await Assert.That(result.MetadataJson).Contains("externalized");
   }
+
+  // ========================================
+  // Boundary Tests
+  // ========================================
+
+  [Test]
+  public async Task Validate_AtExactCompressionThreshold_ReturnsUnchangedAsync() {
+    // Arrange
+    var validator = new JsonbSizeValidator(_nullLogger);
+    // 1999 bytes - just below 2KB compression threshold
+    var dataBelowCompression = new string('x', 1_999);
+    var model = new JsonbPersistenceModel { DataJson = dataBelowCompression };
+
+    // Act
+    var result = validator.Validate(model, "TestType", null);
+
+    // Assert - Model unchanged (below threshold)
+    await Assert.That(result.MetadataJson).DoesNotContain("__size_warning");
+  }
+
+  [Test]
+  public async Task Validate_JustAboveCompressionThreshold_AddsWarningAsync() {
+    // Arrange
+    var validator = new JsonbSizeValidator(_nullLogger);
+    // 2001 bytes - just above 2KB compression threshold
+    var dataAboveCompression = new string('x', 2_001);
+    var model = new JsonbPersistenceModel { DataJson = dataAboveCompression };
+
+    // Act
+    var result = validator.Validate(model, "TestType", null);
+
+    // Assert - Warning added
+    await Assert.That(result.MetadataJson).Contains("__size_warning");
+    await Assert.That(result.MetadataJson).Contains("compressed");
+  }
+
+  [Test]
+  public async Task Validate_AtExactExternalizationThreshold_AddsCompressedWarningAsync() {
+    // Arrange
+    var validator = new JsonbSizeValidator(_nullLogger);
+    // 6999 bytes - just below 7KB externalization threshold (but above compression)
+    var dataBetweenThresholds = new string('x', 6_999);
+    var model = new JsonbPersistenceModel { DataJson = dataBetweenThresholds };
+
+    // Act
+    var result = validator.Validate(model, "TestType", null);
+
+    // Assert - Compressed warning (not externalized)
+    await Assert.That(result.MetadataJson).Contains("__size_warning");
+    await Assert.That(result.MetadataJson).Contains("compressed");
+    await Assert.That(result.MetadataJson).DoesNotContain("externalized");
+  }
+
+  [Test]
+  public async Task Validate_JustAboveExternalizationThreshold_AddsExternalizedWarningAsync() {
+    // Arrange
+    var validator = new JsonbSizeValidator(_nullLogger);
+    // 7001 bytes - just above 7KB externalization threshold
+    var dataAboveExternalization = new string('x', 7_001);
+    var model = new JsonbPersistenceModel { DataJson = dataAboveExternalization };
+
+    // Act
+    var result = validator.Validate(model, "TestType", null);
+
+    // Assert - Externalized warning
+    await Assert.That(result.MetadataJson).Contains("__size_warning");
+    await Assert.That(result.MetadataJson).Contains("externalized");
+  }
+
+  // ========================================
+  // Default MetadataJson Tests
+  // ========================================
+
+  [Test]
+  public async Task Validate_WithDefaultMetadata_AddsWarningMetadataAsync() {
+    // Arrange
+    var validator = new JsonbSizeValidator(_nullLogger);
+    var largeData = new string('x', 3_000); // > compression threshold
+    // Use default (empty string) MetadataJson
+    var model = new JsonbPersistenceModel {
+      DataJson = largeData
+    };
+
+    // Act
+    var result = validator.Validate(model, "TestType", null);
+
+    // Assert - Warning metadata added with default empty metadata
+    await Assert.That(result.MetadataJson).Contains("__size_warning");
+    await Assert.That(result.MetadataJson).Contains("compressed");
+  }
+
+  // ========================================
+  // Size Value Verification Tests
+  // ========================================
+
+  [Test]
+  public async Task Validate_IncludesCorrectSizeInMetadataAsync() {
+    // Arrange
+    var validator = new JsonbSizeValidator(_nullLogger);
+    var dataSize = 3_500; // Known size above compression threshold
+    var data = new string('x', dataSize);
+    var model = new JsonbPersistenceModel { DataJson = data };
+
+    // Act
+    var result = validator.Validate(model, "TestType", null);
+
+    // Assert - Size is stored in metadata (UTF8 encoding means 3500 chars = 3500 bytes for ASCII)
+    await Assert.That(result.MetadataJson).Contains($"\"__size_bytes\":{dataSize}");
+    await Assert.That(result.MetadataJson).Contains("\"__size_threshold\":2000");
+  }
+
+  [Test]
+  public async Task Validate_WithExternalization_IncludesCorrectThresholdAsync() {
+    // Arrange
+    var validator = new JsonbSizeValidator(_nullLogger);
+    var data = new string('x', 8_000);
+    var model = new JsonbPersistenceModel { DataJson = data };
+
+    // Act
+    var result = validator.Validate(model, "TestType", null);
+
+    // Assert - Default externalization threshold (7000)
+    await Assert.That(result.MetadataJson).Contains("\"__size_threshold\":7000");
+  }
+
+  // ========================================
+  // Exception Message Content Tests
+  // ========================================
+
+  [Test]
+  public async Task Validate_WithThrowOnSizeExceeded_IncludesPerformanceWarningAsync() {
+    // Arrange
+    var validator = new JsonbSizeValidator(_nullLogger);
+    var largeData = new string('x', 8_000);
+    var model = new JsonbPersistenceModel { DataJson = largeData };
+    var policy = new PolicyConfiguration().WithPersistenceSize(throwOnExceeded: true);
+
+    // Act & Assert
+    await Assert.That(() => validator.Validate(model, "TestType", policy))
+      .Throws<InvalidOperationException>()
+      .WithMessageMatching("*5-10× performance degradation*");
+  }
+
+  [Test]
+  public async Task Validate_WithThrowOnSizeExceeded_IncludesRecommendationAsync() {
+    // Arrange
+    var validator = new JsonbSizeValidator(_nullLogger);
+    var largeData = new string('x', 8_000);
+    var model = new JsonbPersistenceModel { DataJson = largeData };
+    var policy = new PolicyConfiguration().WithPersistenceSize(throwOnExceeded: true);
+
+    // Act & Assert
+    await Assert.That(() => validator.Validate(model, "TestType", policy))
+      .Throws<InvalidOperationException>()
+      .WithMessageMatching("*Consider splitting data*");
+  }
+
+  // ========================================
+  // Policy Configuration Combinations
+  // ========================================
+
+  [Test]
+  public async Task Validate_WithCustomThresholdAndThrow_UsesCustomThresholdAsync() {
+    // Arrange
+    var validator = new JsonbSizeValidator(_nullLogger);
+    var data = new string('x', 500);
+    var model = new JsonbPersistenceModel { DataJson = data };
+    var policy = new PolicyConfiguration()
+      .WithPersistenceSize(maxDataSizeBytes: 400, throwOnExceeded: true);
+
+    // Act & Assert - Should throw at custom threshold
+    await Assert.That(() => validator.Validate(model, "TestType", policy))
+      .Throws<InvalidOperationException>()
+      .WithMessageMatching("*400 bytes*");
+  }
+
+  [Test]
+  public async Task Validate_WithSuppressWarnings_DoesNotThrowAsync() {
+    // Arrange
+    var validator = new JsonbSizeValidator(_nullLogger);
+    var largeData = new string('x', 10_000);
+    var model = new JsonbPersistenceModel { DataJson = largeData };
+    // SuppressWarnings should take precedence over ThrowOnExceeded
+    var policy = new PolicyConfiguration()
+      .WithPersistenceSize(suppressWarnings: true, throwOnExceeded: true);
+
+    // Act - Should not throw due to suppress warnings
+    var result = validator.Validate(model, "TestType", policy);
+
+    // Assert - Returns unchanged model
+    await Assert.That(result.DataJson).IsEqualTo(model.DataJson);
+    await Assert.That(result.MetadataJson).IsEqualTo(model.MetadataJson);
+  }
+
+  // ========================================
+  // Complex Metadata Tests
+  // ========================================
+
+  [Test]
+  public async Task Validate_WithNestedMetadata_PreservesStructureAsync() {
+    // Arrange
+    var validator = new JsonbSizeValidator(_nullLogger);
+    var largeData = new string('x', 3_000);
+    var nestedMetadata = "{\"outer\":{\"inner\":\"value\"},\"array\":[1,2,3]}";
+    var model = new JsonbPersistenceModel {
+      DataJson = largeData,
+      MetadataJson = nestedMetadata
+    };
+
+    // Act
+    var result = validator.Validate(model, "TestType", null);
+
+    // Assert - Nested structure preserved
+    await Assert.That(result.MetadataJson).Contains("\"outer\":{\"inner\":\"value\"}");
+    await Assert.That(result.MetadataJson).Contains("\"array\":[1,2,3]");
+    await Assert.That(result.MetadataJson).Contains("__size_warning");
+  }
 }
