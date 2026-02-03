@@ -98,10 +98,12 @@ jobs:
           echo "Coverage files to merge: $COVERAGE_FILES"
 
           # Generate merged report in SonarQube format
+          # Exclude source-generated files from coverage (*.g.cs, .whizbang-generated)
           reportgenerator \
             "-reports:${COVERAGE_FILES}" \
             "-targetdir:coverage/sonarqube" \
-            "-reporttypes:SonarQube"
+            "-reporttypes:SonarQube" \
+            "-filefilters:-*.g.cs;-*/.whizbang-generated/*"
 
           # Convert absolute paths to relative paths for SonarCloud
           sed -i 's|/home/runner/work/whizbang/whizbang/||g' coverage/sonarqube/SonarQube.xml
@@ -111,10 +113,12 @@ jobs:
           head -30 coverage/sonarqube/SonarQube.xml
 
           # Also generate text summary for coverage check
+          # Use same exclusions as SonarQube report
           reportgenerator \
             "-reports:${COVERAGE_FILES}" \
             "-targetdir:coverage/summary" \
-            "-reporttypes:TextSummary"
+            "-reporttypes:TextSummary" \
+            "-filefilters:-*.g.cs;-*/.whizbang-generated/*"
 
       - name: Check Coverage Threshold
         run: |
