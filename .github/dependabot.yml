@@ -3,9 +3,12 @@ updates:
   # .NET NuGet dependencies
   - package-ecosystem: "nuget"
     directory: "/"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
-      day: "monday"
+      day: "friday"
+      time: "17:00"
+      timezone: "America/New_York"
     open-pull-requests-limit: 10
     assignees:
       - "philcarbone"
@@ -20,9 +23,12 @@ updates:
   # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
+    target-branch: "develop"
     schedule:
       interval: "weekly"
-      day: "monday"
+      day: "friday"
+      time: "17:00"
+      timezone: "America/New_York"
     open-pull-requests-limit: 5
     assignees:
       - "philcarbone"
