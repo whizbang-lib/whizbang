@@ -9,6 +9,7 @@
     <ProjectReference Include="../Whizbang.Core/Whizbang.Core.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
     <PackageReference Include="TUnit" />
     <PackageReference Include="Bogus" />
     <!-- Container fixtures for integration testing -->
