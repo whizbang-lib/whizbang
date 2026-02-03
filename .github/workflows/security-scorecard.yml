@@ -41,7 +41,7 @@ jobs:
         category: ossf-scorecard
 
     - name: Upload results as artifact
-      uses: actions/upload-artifact@00ffe26b55af5ce91ffdd0c695aa704ab9a6c5e1 # v4.6.2
+      uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v4.6.2
       with:
         name: OSSF Scorecard Results
         path: scorecard-results.sarif
