@@ -98,10 +98,12 @@ jobs:
           echo "Coverage files to merge: $COVERAGE_FILES"
 
           # Generate merged report in SonarQube format
+          # Exclude source-generated files from coverage (*.g.cs, .whizbang-generated)
           reportgenerator \
             "-reports:${COVERAGE_FILES}" \
             "-targetdir:coverage/sonarqube" \
-            "-reporttypes:SonarQube"
+            "-reporttypes:SonarQube" \
+            "-filefilters:-*.g.cs;-*/.whizbang-generated/*"
 
           # Convert absolute paths to relative paths for SonarCloud
           sed -i 's|/home/runner/work/whizbang/whizbang/||g' coverage/sonarqube/SonarQube.xml
@@ -111,10 +113,12 @@ jobs:
           head -30 coverage/sonarqube/SonarQube.xml
 
           # Also generate text summary for coverage check
+          # Use same exclusions as SonarQube report
           reportgenerator \
             "-reports:${COVERAGE_FILES}" \
             "-targetdir:coverage/summary" \
-            "-reporttypes:TextSummary"
+            "-reporttypes:TextSummary" \
+            "-filefilters:-*.g.cs;-*/.whizbang-generated/*"
 
       - name: Check Coverage Threshold
         run: |
@@ -122,12 +126,8 @@ jobs:
           COVERAGE=$(grep "Line coverage:" coverage/summary/Summary.txt | grep -oP '\d+(\.\d+)?(?=%)' | head -1)
           echo "Line coverage: ${COVERAGE}%"
 
-          # Check against threshold
-          # NOTE: Threshold temporarily lowered from 80% to 71% during TUnit 1.12.125 upgrade.
-          # The upgrade appears to affect how coverage is calculated. Same tests run, same
-          # coverage files merged, but reported coverage dropped ~8%. Investigation ongoing.
-          # TODO: Restore to 80% after investigating coverage discrepancy (Issue #TBD)
-          THRESHOLD=71
+          # Check against threshold (80%)
+          THRESHOLD=80
           if (( $(echo "$COVERAGE < $THRESHOLD" | bc -l) )); then
             echo "::error::Coverage ${COVERAGE}% is below threshold ${THRESHOLD}%"
             exit 1
