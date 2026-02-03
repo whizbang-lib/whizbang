@@ -17,6 +17,7 @@
   </ItemGroup>
 
   <ItemGroup>
+    <PackageReference Include="Microsoft.Testing.Extensions.CodeCoverage" />
     <ProjectReference Include="../../src/Whizbang.Hosting.Azure.ServiceBus/Whizbang.Hosting.Azure.ServiceBus.csproj" />
   </ItemGroup>
 </Project>

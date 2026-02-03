@@ -23,7 +23,7 @@ jobs:
           fetch-depth: 0  # Full history for SonarCloud
 
       - name: Setup .NET
-        uses: actions/setup-dotnet@v4
+        uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
@@ -40,7 +40,7 @@ jobs:
           dotnet tool install --global dotnet-reportgenerator-globaltool
 
       - name: Download All Coverage Artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v7
         with:
           pattern: coverage-*
           path: coverage
@@ -53,7 +53,7 @@ jobs:
           ls -laR coverage/ || echo "Coverage directory empty or missing"
 
       - name: Upload Merged Coverage to Codecov
-        uses: codecov/codecov-action@0f8570b1a125f4937846a11fcfa3bcd548bd8c97 # v4.6.0
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           directory: coverage
