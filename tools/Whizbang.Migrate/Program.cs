@@ -126,8 +126,8 @@ public static class Program {
       if (!string.IsNullOrEmpty(generatePath)) {
         Console.WriteLine($"Generating default decision file: {generatePath}");
         var decisionFile = DecisionFile.Create(sourceDir);
-        await decisionFile.SaveAsync(generatePath);
-        Console.WriteLine("Decision file created with default values.");
+        await decisionFile.SaveAsync(generatePath, includeComments: true);
+        Console.WriteLine("Decision file created with comments explaining each setting.");
         Console.WriteLine("Edit the file to customize migration behavior, then run:");
         Console.WriteLine($"  whizbang-migrate apply -p {sourceDir} -d {generatePath}");
         return;
