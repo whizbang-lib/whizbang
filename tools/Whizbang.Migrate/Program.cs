@@ -1,5 +1,6 @@
 using System.CommandLine;
 using Whizbang.Migrate.Analysis;
+using Whizbang.Migrate.Commands;
 
 namespace Whizbang.Migrate;
 
@@ -79,15 +80,57 @@ public static class Program {
 
     // apply command
     var applyCommand = new Command("apply", "Apply migration transformations");
-    var modeOption = new Option<string>(
-        aliases: ["--mode", "-m"],
-        getDefaultValue: () => "guided",
-        description: "Migration mode (auto or guided)");
-    applyCommand.AddOption(modeOption);
-    applyCommand.SetHandler(async mode => {
-      Console.WriteLine($"Applying migration in {mode} mode");
-      // TODO: Implement apply
-    }, modeOption);
+    applyCommand.AddOption(projectOption);
+    var dryRunOption = new Option<bool>(
+        aliases: ["--dry-run", "-n"],
+        getDefaultValue: () => false,
+        description: "Show what would be changed without modifying files");
+    applyCommand.AddOption(dryRunOption);
+    applyCommand.SetHandler(async (project, dryRun) => {
+      var path = project ?? Directory.GetCurrentDirectory();
+
+      // Get source directory from solution or project path
+      var sourceDir = path;
+      if (path.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) ||
+          path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)) {
+        sourceDir = Path.GetDirectoryName(path) ?? path;
+      }
+
+      Console.WriteLine($"Applying migration to: {sourceDir}");
+      if (dryRun) {
+        Console.WriteLine("(DRY RUN - no files will be modified)");
+      }
+      Console.WriteLine();
+
+      var applyCmd = new ApplyCommand();
+      var result = await applyCmd.ExecuteAsync(sourceDir, dryRun);
+
+      if (!result.Success) {
+        Console.Error.WriteLine($"Error: {result.ErrorMessage}");
+        return;
+      }
+
+      Console.WriteLine($"=== Migration {(dryRun ? "Preview" : "Complete")} ===");
+      Console.WriteLine();
+      Console.WriteLine($"  Files transformed: {result.TransformedFileCount}");
+      Console.WriteLine();
+
+      if (result.Changes.Count > 0) {
+        Console.WriteLine("=== Changes ===");
+        Console.WriteLine();
+        foreach (var fileChange in result.Changes) {
+          var shortPath = Path.GetFileName(fileChange.FilePath);
+          Console.WriteLine($"  {shortPath} ({fileChange.ChangeCount} changes)");
+          foreach (var change in fileChange.Changes.Take(5)) {
+            Console.WriteLine($"    Line {change.LineNumber}: {change.Description}");
+          }
+          if (fileChange.Changes.Count > 5) {
+            Console.WriteLine($"    ... and {fileChange.Changes.Count - 5} more changes");
+          }
+        }
+        Console.WriteLine();
+      }
+    }, projectOption, dryRunOption);
 
     // rollback command
     var rollbackCommand = new Command("rollback", "Rollback to a checkpoint");
@@ -111,10 +154,35 @@ public static class Program {
 
     // status command
     var statusCommand = new Command("status", "Show migration status");
-    statusCommand.SetHandler(async () => {
-      Console.WriteLine("Migration status:");
-      // TODO: Show status
-    });
+    statusCommand.AddOption(projectOption);
+    statusCommand.SetHandler(async project => {
+      var path = project ?? Directory.GetCurrentDirectory();
+
+      // Get source directory from solution or project path
+      var sourceDir = path;
+      if (path.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) ||
+          path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)) {
+        sourceDir = Path.GetDirectoryName(path) ?? path;
+      }
+
+      var statusCmd = new StatusCommand();
+      var result = await statusCmd.ExecuteAsync(sourceDir);
+
+      if (!result.Success) {
+        Console.Error.WriteLine($"Error: {result.ErrorMessage}");
+        return;
+      }
+
+      Console.WriteLine("=== Migration Status ===");
+      Console.WriteLine();
+      Console.WriteLine($"  Status:              {result.Status}");
+      Console.WriteLine($"  Active migration:    {(result.HasActiveMigration ? "Yes" : "No")}");
+      Console.WriteLine($"  Checkpoints:         {result.CheckpointCount}");
+      Console.WriteLine($"  Completed steps:     {result.CompletedTransformerCount}");
+      Console.WriteLine($"  Pending steps:       {result.PendingTransformerCount}");
+      Console.WriteLine($"  Files transformed:   {result.TotalFilesTransformed}");
+      Console.WriteLine();
+    }, projectOption);
 
     rootCommand.AddCommand(analyzeCommand);
     rootCommand.AddCommand(planCommand);
