@@ -18,6 +18,7 @@ public sealed class ApplyCommand {
   private readonly GuidToIdProviderTransformer _guidTransformer = new();
   private readonly DIRegistrationTransformer _diTransformer = new();
   private readonly MarkerInterfaceTransformer _markerInterfaceTransformer = new();
+  private readonly GlobalUsingAliasTransformer _globalUsingAliasTransformer = new();
 
   /// <summary>
   /// Executes the apply command on the specified directory.
@@ -67,6 +68,14 @@ public sealed class ApplyCommand {
       var sourceCode = await File.ReadAllTextAsync(file, ct);
       var allChanges = new List<CodeChange>();
       var transformedCode = sourceCode;
+
+      // Apply global using alias transformations FIRST (e.g., MartenIEvent = Marten.Events.IEvent)
+      // This must run before other transformers to handle aliases correctly
+      var globalUsingResult = await _globalUsingAliasTransformer.TransformAsync(transformedCode, file, ct);
+      if (globalUsingResult.Changes.Count > 0) {
+        transformedCode = globalUsingResult.TransformedCode;
+        allChanges.AddRange(globalUsingResult.Changes);
+      }
 
       // Check if file has Wolverine handlers
       var wolverineResult = await _wolverineAnalyzer.AnalyzeAsync(sourceCode, file, ct);

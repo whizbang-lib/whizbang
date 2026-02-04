@@ -211,6 +211,13 @@ public sealed class EventStoreTransformer : ICodeTransformer {
     foreach (var usingDirective in compilationUnit.Usings) {
       var name = usingDirective.Name?.ToString();
 
+      // Skip global using aliases - they're handled by GlobalUsingAliasTransformer
+      if (usingDirective.GlobalKeyword.IsKind(SyntaxKind.GlobalKeyword) &&
+          usingDirective.Alias != null) {
+        newUsings.Add(usingDirective);
+        continue;
+      }
+
       if (name != null && name.StartsWith("Marten", StringComparison.Ordinal)) {
         // Replace first Marten using with Whizbang.Core.Messaging
         if (!addedWhizbangMessaging) {
