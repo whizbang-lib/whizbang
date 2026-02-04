@@ -1,4 +1,5 @@
 using System.CommandLine;
+using Whizbang.Migrate.Analysis;
 
 namespace Whizbang.Migrate;
 
@@ -25,9 +26,43 @@ public static class Program {
     analyzeCommand.AddOption(projectOption);
     analyzeCommand.AddOption(formatOption);
     analyzeCommand.SetHandler(async (project, format) => {
-      Console.WriteLine($"Analyzing project: {project ?? "current directory"}");
-      Console.WriteLine($"Format: {format}");
-      // TODO: Implement analysis
+      var path = project ?? Directory.GetCurrentDirectory();
+      Console.WriteLine($"Analyzing: {path}");
+      Console.WriteLine();
+
+      var wolverineAnalyzer = new WolverineAnalyzer();
+      var martenAnalyzer = new MartenAnalyzer();
+
+      // Get source directory from solution or project path
+      var sourceDir = path;
+      if (path.EndsWith(".sln", StringComparison.OrdinalIgnoreCase) ||
+          path.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)) {
+        sourceDir = Path.GetDirectoryName(path) ?? path;
+      }
+
+      if (!Directory.Exists(sourceDir)) {
+        Console.Error.WriteLine($"Directory not found: {sourceDir}");
+        return;
+      }
+
+      // Run analyzers
+      var wolverineResult = await wolverineAnalyzer.AnalyzeProjectAsync(sourceDir);
+      var martenResult = await martenAnalyzer.AnalyzeProjectAsync(sourceDir);
+
+      // Combine results
+      var combinedResult = new AnalysisResult {
+        Handlers = wolverineResult.Handlers,
+        Projections = martenResult.Projections,
+        EventStoreUsages = martenResult.EventStoreUsages,
+        DIRegistrations = martenResult.DIRegistrations,
+        Warnings = wolverineResult.Warnings.Concat(martenResult.Warnings).ToList()
+      };
+
+      if (format == "json") {
+        Console.WriteLine("JSON output not yet implemented (requires AOT-compatible serialization)");
+      } else {
+        _printTableFormat(combinedResult);
+      }
     }, projectOption, formatOption);
 
     // plan command
@@ -88,5 +123,77 @@ public static class Program {
     rootCommand.AddCommand(statusCommand);
 
     return await rootCommand.InvokeAsync(args);
+  }
+
+  private static void _printTableFormat(AnalysisResult result) {
+    // Summary
+    Console.WriteLine("=== Migration Analysis Summary ===");
+    Console.WriteLine();
+    Console.WriteLine($"  Wolverine Handlers:     {result.Handlers.Count}");
+    Console.WriteLine($"  Marten Projections:     {result.Projections.Count}");
+    Console.WriteLine($"  Event Store Usages:     {result.EventStoreUsages.Count}");
+    Console.WriteLine($"  DI Registrations:       {result.DIRegistrations.Count}");
+    Console.WriteLine($"  Warnings:               {result.Warnings.Count}");
+    Console.WriteLine();
+
+    // Handlers
+    if (result.Handlers.Count > 0) {
+      Console.WriteLine("=== Handlers ===");
+      Console.WriteLine();
+      Console.WriteLine($"  {"Type",-50} {"Message",-40} {"Kind",-20}");
+      Console.WriteLine($"  {new string('-', 50)} {new string('-', 40)} {new string('-', 20)}");
+      foreach (var h in result.Handlers) {
+        Console.WriteLine($"  {h.ClassName,-50} {h.MessageType,-40} {h.HandlerKind,-20}");
+      }
+      Console.WriteLine();
+    }
+
+    // Projections
+    if (result.Projections.Count > 0) {
+      Console.WriteLine("=== Projections ===");
+      Console.WriteLine();
+      Console.WriteLine($"  {"Type",-50} {"Aggregate",-40} {"Kind",-20}");
+      Console.WriteLine($"  {new string('-', 50)} {new string('-', 40)} {new string('-', 20)}");
+      foreach (var p in result.Projections) {
+        Console.WriteLine($"  {p.ClassName,-50} {p.AggregateType,-40} {p.ProjectionKind,-20}");
+      }
+      Console.WriteLine();
+    }
+
+    // Event Store Usages
+    if (result.EventStoreUsages.Count > 0) {
+      Console.WriteLine("=== Event Store Usages ===");
+      Console.WriteLine();
+      Console.WriteLine($"  {"Class",-50} {"Kind",-40} {"Line",-10}");
+      Console.WriteLine($"  {new string('-', 50)} {new string('-', 40)} {new string('-', 10)}");
+      foreach (var e in result.EventStoreUsages) {
+        Console.WriteLine($"  {e.ClassName,-50} {e.UsageKind,-40} {e.LineNumber,-10}");
+      }
+      Console.WriteLine();
+    }
+
+    // DI Registrations
+    if (result.DIRegistrations.Count > 0) {
+      Console.WriteLine("=== DI Registrations ===");
+      Console.WriteLine();
+      Console.WriteLine($"  {"Kind",-30} {"File",-60} {"Line",-10}");
+      Console.WriteLine($"  {new string('-', 30)} {new string('-', 60)} {new string('-', 10)}");
+      foreach (var d in result.DIRegistrations) {
+        var shortFile = Path.GetFileName(d.FilePath);
+        Console.WriteLine($"  {d.RegistrationKind,-30} {shortFile,-60} {d.LineNumber,-10}");
+      }
+      Console.WriteLine();
+    }
+
+    // Warnings
+    if (result.Warnings.Count > 0) {
+      Console.WriteLine("=== Warnings ===");
+      Console.WriteLine();
+      foreach (var w in result.Warnings) {
+        Console.WriteLine($"  [{w.WarningKind}] {w.ClassName} (line {w.LineNumber})");
+        Console.WriteLine($"    {w.Message}");
+        Console.WriteLine();
+      }
+    }
   }
 }
