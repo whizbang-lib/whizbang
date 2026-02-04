@@ -158,12 +158,19 @@ public static class Program {
         loadedDecisionFile = await DecisionFile.LoadAsync(decisionFilePath);
       }
 
+      // Merge exclude patterns from decision file with CLI options
+      var allExcludes = excludes.ToList();
+      if (loadedDecisionFile?.ExcludePatterns.Count > 0) {
+        allExcludes.AddRange(loadedDecisionFile.ExcludePatterns);
+        Console.WriteLine($"Exclude patterns from decision file: {string.Join(", ", loadedDecisionFile.ExcludePatterns)}");
+      }
+
       var applyCmd = new ApplyCommand();
       var result = await applyCmd.ExecuteAsync(
           sourceDir,
           dryRun,
           includes,
-          excludes,
+          allExcludes.ToArray(),
           loadedDecisionFile);
 
       if (!result.Success) {
