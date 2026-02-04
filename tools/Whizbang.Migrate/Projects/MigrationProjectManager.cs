@@ -60,7 +60,7 @@ public sealed class MigrationProjectManager {
 
     // Create an empty decision file
     var decisionFile = DecisionFile.Create(repoPath);
-    await decisionFile.SaveAsync(decisionsPath, ct);
+    await decisionFile.SaveAsync(decisionsPath, ct: ct);
 
     // Update the index
     await _addToIndexAsync(name, ct);
