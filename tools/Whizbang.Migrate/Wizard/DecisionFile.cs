@@ -304,6 +304,24 @@ public sealed class DecisionFile {
       // Example: "ICustomService": "KeepAndInject"
       "interface_strategies": {},
       "confirmed": false
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PACKAGE MANAGEMENT
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Controls which Whizbang packages are added and what versions are used.
+    "packages": {
+      // Whether to automatically manage packages. Default: true
+      "auto_manage": {{Decisions.Packages.AutoManage.ToString().ToLowerInvariant()}},
+
+      // Version of Whizbang packages to use
+      "whizbang_version": "{{Decisions.Packages.WhizbangVersion}}",
+
+      // Whether to remove old Marten/Wolverine packages. Default: true
+      "remove_old_packages": {{Decisions.Packages.RemoveOldPackages.ToString().ToLowerInvariant()}},
+
+      // Packages to preserve (don't remove even if Marten/Wolverine)
+      "preserve_packages": []
     }
   }
 }
