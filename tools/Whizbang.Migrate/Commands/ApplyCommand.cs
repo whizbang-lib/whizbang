@@ -17,6 +17,7 @@ public sealed class ApplyCommand {
   private readonly EventStoreTransformer _eventStoreTransformer = new();
   private readonly GuidToIdProviderTransformer _guidTransformer = new();
   private readonly DIRegistrationTransformer _diTransformer = new();
+  private readonly MarkerInterfaceTransformer _markerInterfaceTransformer = new();
 
   /// <summary>
   /// Executes the apply command on the specified directory.
@@ -115,6 +116,14 @@ public sealed class ApplyCommand {
       if (diResult.Changes.Count > 0) {
         transformedCode = diResult.TransformedCode;
         allChanges.AddRange(diResult.Changes);
+      }
+
+      // Apply marker interface transformations (IEvent, ICommand from Wolverine → Whizbang.Core)
+      // This catches files that only have marker interface usage without other Wolverine patterns
+      var markerResult = await _markerInterfaceTransformer.TransformAsync(transformedCode, file, ct);
+      if (markerResult.Changes.Count > 0) {
+        transformedCode = markerResult.TransformedCode;
+        allChanges.AddRange(markerResult.Changes);
       }
 
       // Track changes
