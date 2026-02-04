@@ -54,6 +54,12 @@ public sealed class DecisionFile {
   public MigrationDecisions Decisions { get; set; } = new();
 
   /// <summary>
+  /// Glob patterns for files to exclude from transformation.
+  /// Examples: "**/Generators/**", "**/*Emitter*.cs"
+  /// </summary>
+  public List<string> ExcludePatterns { get; set; } = [];
+
+  /// <summary>
   /// Creates a new decision file for a project.
   /// </summary>
   public static DecisionFile Create(string projectPath) {
