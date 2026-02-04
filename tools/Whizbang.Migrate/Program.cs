@@ -100,11 +100,16 @@ public static class Program {
     var generateDecisionFileOption = new Option<string?>(
         aliases: ["--generate-decision-file", "-g"],
         description: "Generate a default decision file at the specified path (does not apply migration)");
+    var noManagePackagesOption = new Option<bool>(
+        aliases: ["--no-manage-packages"],
+        getDefaultValue: () => false,
+        description: "Skip automatic package reference management");
     applyCommand.AddOption(dryRunOption);
     applyCommand.AddOption(includeOption);
     applyCommand.AddOption(excludeOption);
     applyCommand.AddOption(decisionFileOption);
     applyCommand.AddOption(generateDecisionFileOption);
+    applyCommand.AddOption(noManagePackagesOption);
     applyCommand.SetHandler(async context => {
       var project = context.ParseResult.GetValueForOption(projectOption);
       var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
@@ -112,6 +117,7 @@ public static class Program {
       var excludes = context.ParseResult.GetValueForOption(excludeOption) ?? [];
       var decisionFilePath = context.ParseResult.GetValueForOption(decisionFileOption);
       var generatePath = context.ParseResult.GetValueForOption(generateDecisionFileOption);
+      var noManagePackages = context.ParseResult.GetValueForOption(noManagePackagesOption);
 
       var path = project ?? Directory.GetCurrentDirectory();
 
@@ -165,13 +171,19 @@ public static class Program {
         Console.WriteLine($"Exclude patterns from decision file: {string.Join(", ", loadedDecisionFile.ExcludePatterns)}");
       }
 
+      var managePackages = !noManagePackages;
+      if (!managePackages) {
+        Console.WriteLine("Package management: DISABLED");
+      }
+
       var applyCmd = new ApplyCommand();
       var result = await applyCmd.ExecuteAsync(
           sourceDir,
           dryRun,
           includes,
           allExcludes.ToArray(),
-          loadedDecisionFile);
+          loadedDecisionFile,
+          managePackages);
 
       if (!result.Success) {
         Console.Error.WriteLine($"Error: {result.ErrorMessage}");
@@ -180,12 +192,13 @@ public static class Program {
 
       Console.WriteLine($"=== Migration {(dryRun ? "Preview" : "Complete")} ===");
       Console.WriteLine();
-      Console.WriteLine($"  Files transformed: {result.TransformedFileCount}");
-      Console.WriteLine($"  Files skipped:     {result.SkippedFileCount}");
+      Console.WriteLine($"  Files transformed:  {result.TransformedFileCount}");
+      Console.WriteLine($"  Files skipped:      {result.SkippedFileCount}");
+      Console.WriteLine($"  Package changes:    {result.PackageChanges.Count}");
       Console.WriteLine();
 
       if (result.Changes.Count > 0) {
-        Console.WriteLine("=== Changes ===");
+        Console.WriteLine("=== Code Changes ===");
         Console.WriteLine();
         foreach (var fileChange in result.Changes) {
           var shortPath = Path.GetFileName(fileChange.FilePath);
@@ -196,6 +209,19 @@ public static class Program {
           if (fileChange.Changes.Count > 5) {
             Console.WriteLine($"    ... and {fileChange.Changes.Count - 5} more changes");
           }
+        }
+        Console.WriteLine();
+      }
+
+      if (result.PackageChanges.Count > 0) {
+        Console.WriteLine("=== Package Changes ===");
+        Console.WriteLine();
+        foreach (var pkgChange in result.PackageChanges) {
+          var shortPath = Path.GetFileName(pkgChange.FilePath);
+          var action = pkgChange.ChangeType.ToString().ToUpperInvariant();
+          var version = string.IsNullOrEmpty(pkgChange.Version) ? "" : $" v{pkgChange.Version}";
+          Console.WriteLine($"  [{action}] {pkgChange.PackageName}{version}");
+          Console.WriteLine($"    {pkgChange.Description} ({shortPath})");
         }
         Console.WriteLine();
       }

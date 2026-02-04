@@ -19,6 +19,7 @@ namespace Whizbang.Migrate.Wizard;
 [JsonSerializable(typeof(RoutingDecisions))]
 [JsonSerializable(typeof(CustomBaseClassDecisions))]
 [JsonSerializable(typeof(UnknownInterfaceDecisions))]
+[JsonSerializable(typeof(PackageDecisions))]
 internal sealed partial class DecisionFileJsonContext : JsonSerializerContext { }
 
 /// <summary>
@@ -518,6 +519,11 @@ public sealed class MigrationDecisions {
   /// Unknown interface parameter handling decisions.
   /// </summary>
   public UnknownInterfaceDecisions UnknownInterfaces { get; set; } = new();
+
+  /// <summary>
+  /// Package management decisions.
+  /// </summary>
+  public PackageDecisions Packages { get; set; } = new();
 }
 
 /// <summary>
@@ -927,4 +933,29 @@ public enum UnknownInterfaceStrategy {
   /// The handler will be left unchanged with a warning.
   /// </summary>
   Skip
+}
+
+/// <summary>
+/// Package management decisions during migration.
+/// </summary>
+public sealed class PackageDecisions {
+  /// <summary>
+  /// Whether to automatically manage packages. Default: true.
+  /// </summary>
+  public bool AutoManage { get; set; } = true;
+
+  /// <summary>
+  /// Version of Whizbang packages to use.
+  /// </summary>
+  public string WhizbangVersion { get; set; } = "1.0.0";
+
+  /// <summary>
+  /// Whether to remove old Marten/Wolverine packages. Default: true.
+  /// </summary>
+  public bool RemoveOldPackages { get; set; } = true;
+
+  /// <summary>
+  /// Packages to preserve (don't remove even if Marten/Wolverine).
+  /// </summary>
+  public List<string> PreservePackages { get; set; } = [];
 }
