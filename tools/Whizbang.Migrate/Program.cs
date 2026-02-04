@@ -1,6 +1,7 @@
 using System.CommandLine;
 using Whizbang.Migrate.Analysis;
 using Whizbang.Migrate.Commands;
+using Whizbang.Migrate.Wizard;
 
 namespace Whizbang.Migrate;
 
@@ -85,8 +86,33 @@ public static class Program {
         aliases: ["--dry-run", "-n"],
         getDefaultValue: () => false,
         description: "Show what would be changed without modifying files");
+    var includeOption = new Option<string[]>(
+        aliases: ["--include", "-i"],
+        getDefaultValue: () => [],
+        description: "Glob patterns for files to include (e.g., '**/*Handler.cs')");
+    var excludeOption = new Option<string[]>(
+        aliases: ["--exclude", "-e"],
+        getDefaultValue: () => [],
+        description: "Glob patterns for files to exclude (e.g., '**/obj/**')");
+    var decisionFileOption = new Option<string?>(
+        aliases: ["--decision-file", "-d"],
+        description: "Path to decision file for controlling migration behavior");
+    var generateDecisionFileOption = new Option<string?>(
+        aliases: ["--generate-decision-file", "-g"],
+        description: "Generate a default decision file at the specified path (does not apply migration)");
     applyCommand.AddOption(dryRunOption);
-    applyCommand.SetHandler(async (project, dryRun) => {
+    applyCommand.AddOption(includeOption);
+    applyCommand.AddOption(excludeOption);
+    applyCommand.AddOption(decisionFileOption);
+    applyCommand.AddOption(generateDecisionFileOption);
+    applyCommand.SetHandler(async context => {
+      var project = context.ParseResult.GetValueForOption(projectOption);
+      var dryRun = context.ParseResult.GetValueForOption(dryRunOption);
+      var includes = context.ParseResult.GetValueForOption(includeOption) ?? [];
+      var excludes = context.ParseResult.GetValueForOption(excludeOption) ?? [];
+      var decisionFilePath = context.ParseResult.GetValueForOption(decisionFileOption);
+      var generatePath = context.ParseResult.GetValueForOption(generateDecisionFileOption);
+
       var path = project ?? Directory.GetCurrentDirectory();
 
       // Get source directory from solution or project path
@@ -96,14 +122,49 @@ public static class Program {
         sourceDir = Path.GetDirectoryName(path) ?? path;
       }
 
+      // Handle --generate-decision-file
+      if (!string.IsNullOrEmpty(generatePath)) {
+        Console.WriteLine($"Generating default decision file: {generatePath}");
+        var decisionFile = DecisionFile.Create(sourceDir);
+        await decisionFile.SaveAsync(generatePath);
+        Console.WriteLine("Decision file created with default values.");
+        Console.WriteLine("Edit the file to customize migration behavior, then run:");
+        Console.WriteLine($"  whizbang-migrate apply -p {sourceDir} -d {generatePath}");
+        return;
+      }
+
       Console.WriteLine($"Applying migration to: {sourceDir}");
       if (dryRun) {
         Console.WriteLine("(DRY RUN - no files will be modified)");
       }
+      if (includes.Length > 0) {
+        Console.WriteLine($"Include patterns: {string.Join(", ", includes)}");
+      }
+      if (excludes.Length > 0) {
+        Console.WriteLine($"Exclude patterns: {string.Join(", ", excludes)}");
+      }
+      if (!string.IsNullOrEmpty(decisionFilePath)) {
+        Console.WriteLine($"Using decision file: {decisionFilePath}");
+      }
       Console.WriteLine();
 
+      // Load decision file if specified
+      DecisionFile? loadedDecisionFile = null;
+      if (!string.IsNullOrEmpty(decisionFilePath)) {
+        if (!File.Exists(decisionFilePath)) {
+          Console.Error.WriteLine($"Decision file not found: {decisionFilePath}");
+          return;
+        }
+        loadedDecisionFile = await DecisionFile.LoadAsync(decisionFilePath);
+      }
+
       var applyCmd = new ApplyCommand();
-      var result = await applyCmd.ExecuteAsync(sourceDir, dryRun);
+      var result = await applyCmd.ExecuteAsync(
+          sourceDir,
+          dryRun,
+          includes,
+          excludes,
+          loadedDecisionFile);
 
       if (!result.Success) {
         Console.Error.WriteLine($"Error: {result.ErrorMessage}");
@@ -113,6 +174,7 @@ public static class Program {
       Console.WriteLine($"=== Migration {(dryRun ? "Preview" : "Complete")} ===");
       Console.WriteLine();
       Console.WriteLine($"  Files transformed: {result.TransformedFileCount}");
+      Console.WriteLine($"  Files skipped:     {result.SkippedFileCount}");
       Console.WriteLine();
 
       if (result.Changes.Count > 0) {
@@ -130,7 +192,7 @@ public static class Program {
         }
         Console.WriteLine();
       }
-    }, projectOption, dryRunOption);
+    });
 
     // rollback command
     var rollbackCommand = new Command("rollback", "Rollback to a checkpoint");
