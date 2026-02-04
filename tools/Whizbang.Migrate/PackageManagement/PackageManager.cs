@@ -18,11 +18,16 @@ public sealed class PackageManager {
     ["Marten.AspNetCore"] = null, // Remove, no equivalent needed
 
     // Wolverine packages -> Whizbang.Core
+    // Note: NuGet packages use "WolverineFx" prefix, but some projects use "Wolverine" prefix
     ["WolverineFx"] = "Whizbang.Core",
     ["Wolverine"] = "Whizbang.Core",
+    ["WolverineFx.Marten"] = "Whizbang.Postgres",
     ["Wolverine.Marten"] = "Whizbang.Postgres",
+    ["WolverineFx.RabbitMQ"] = "Whizbang.Transports.RabbitMQ",
     ["Wolverine.RabbitMQ"] = "Whizbang.Transports.RabbitMQ",
+    ["WolverineFx.AzureServiceBus"] = "Whizbang.Transports.AzureServiceBus",
     ["Wolverine.AzureServiceBus"] = "Whizbang.Transports.AzureServiceBus",
+    ["WolverineFx.Kafka"] = "Whizbang.Transports.Kafka",
     ["Wolverine.Kafka"] = "Whizbang.Transports.Kafka"
   };
 
@@ -34,7 +39,9 @@ public sealed class PackageManager {
     "Marten.PLv8",
     "Marten.NodaTime",
     "Wolverine.Http",
-    "Wolverine.FluentValidation"
+    "WolverineFx.Http",
+    "Wolverine.FluentValidation",
+    "WolverineFx.FluentValidation"
   };
 
   /// <summary>
@@ -274,50 +281,54 @@ public sealed class PackageManager {
       return changes;
     }
 
-    // Find ItemGroup with PackageReference entries
-    var itemGroup = root.Elements("ItemGroup")
-        .FirstOrDefault(ig => ig.Elements("PackageReference").Any())
-        ?? _getOrCreateItemGroup(root);
+    // Find ALL ItemGroups with PackageReference entries (there can be multiple)
+    var itemGroups = root.Elements("ItemGroup")
+        .Where(ig => ig.Elements("PackageReference").Any())
+        .ToList();
 
     var packagesToAdd = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
     var existingPackages = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-    // Process existing PackageReference entries
-    foreach (var pr in itemGroup.Elements("PackageReference").ToList()) {
-      var include = pr.Attribute("Include")?.Value;
-      if (string.IsNullOrEmpty(include)) {
-        continue;
-      }
+    // Process existing PackageReference entries in ALL ItemGroups
+    foreach (var itemGroup in itemGroups) {
+      foreach (var pr in itemGroup.Elements("PackageReference").ToList()) {
+        var include = pr.Attribute("Include")?.Value;
+        if (string.IsNullOrEmpty(include)) {
+          continue;
+        }
 
-      existingPackages.Add(include);
+        existingPackages.Add(include);
 
-      // Check if this is a package to remove/replace
-      if (_packageMappings.TryGetValue(include, out var replacement)) {
-        if (settings.RemoveOldPackages) {
+        // Check if this is a package to remove/replace
+        if (_packageMappings.TryGetValue(include, out var replacement)) {
+          if (settings.RemoveOldPackages) {
+            pr.Remove();
+            changes.Add(new PackageChange(
+                projectPath,
+                PackageChangeType.Removed,
+                include,
+                null,
+                "Removed PackageReference"));
+          }
+
+          if (!string.IsNullOrEmpty(replacement)) {
+            packagesToAdd.Add(replacement);
+          }
+        } else if (_packagesToRemove.Contains(include) && settings.RemoveOldPackages) {
           pr.Remove();
           changes.Add(new PackageChange(
               projectPath,
               PackageChangeType.Removed,
               include,
               null,
-              "Removed PackageReference"));
+              "Removed PackageReference (no replacement)"));
         }
-
-        if (!string.IsNullOrEmpty(replacement)) {
-          packagesToAdd.Add(replacement);
-        }
-      } else if (_packagesToRemove.Contains(include) && settings.RemoveOldPackages) {
-        pr.Remove();
-        changes.Add(new PackageChange(
-            projectPath,
-            PackageChangeType.Removed,
-            include,
-            null,
-            "Removed PackageReference (no replacement)"));
       }
     }
 
-    // Add new Whizbang packages
+    // Add new Whizbang packages to the first ItemGroup (or create one)
+    var targetItemGroup = itemGroups.FirstOrDefault() ?? _getOrCreateItemGroup(root);
+
     foreach (var package in packagesToAdd) {
       if (existingPackages.Contains(package)) {
         continue;
@@ -335,7 +346,7 @@ public sealed class PackageManager {
             new XAttribute("Version", settings.WhizbangVersion));
       }
 
-      itemGroup.Add(newElement);
+      targetItemGroup.Add(newElement);
 
       changes.Add(new PackageChange(
           projectPath,
