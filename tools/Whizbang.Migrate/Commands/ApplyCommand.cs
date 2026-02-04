@@ -1,5 +1,6 @@
 using Microsoft.Extensions.FileSystemGlobbing;
 using Whizbang.Migrate.Analysis;
+using Whizbang.Migrate.PackageManagement;
 using Whizbang.Migrate.Transformers;
 using Whizbang.Migrate.Wizard;
 
@@ -28,6 +29,7 @@ public sealed class ApplyCommand {
   /// <param name="includePatterns">Glob patterns for files to include.</param>
   /// <param name="excludePatterns">Glob patterns for files to exclude.</param>
   /// <param name="decisionFile">Optional decision file for controlling migration behavior.</param>
+  /// <param name="managePackages">If true (default), manages package references.</param>
   /// <param name="ct">Cancellation token.</param>
   /// <returns>The apply result.</returns>
   public async Task<ApplyResult> ExecuteAsync(
@@ -36,6 +38,7 @@ public sealed class ApplyCommand {
       string[]? includePatterns = null,
       string[]? excludePatterns = null,
       DecisionFile? decisionFile = null,
+      bool managePackages = true,
       CancellationToken ct = default) {
     if (!Directory.Exists(projectPath)) {
       return new ApplyResult(false, ErrorMessage: $"Directory not found: {projectPath}");
@@ -150,11 +153,37 @@ public sealed class ApplyCommand {
     // Calculate skipped from filtering
     skippedCount += csFiles.Length - filesToProcess.Count;
 
+    // Manage packages if enabled and not dry run
+    var packageChanges = new List<PackageChange>();
+    var shouldManagePackages = managePackages &&
+        (decisionFile?.Decisions.Packages.AutoManage ?? true);
+
+    if (shouldManagePackages && !dryRun && fileChanges.Count > 0) {
+      var transformedFilePaths = fileChanges.Select(fc => fc.FilePath).ToList();
+
+      // Build package settings from decision file or defaults
+      var packageSettings = new PackageSettings {
+        AutoManage = true,
+        WhizbangVersion = decisionFile?.Decisions.Packages.WhizbangVersion ?? "1.0.0",
+        RemoveOldPackages = decisionFile?.Decisions.Packages.RemoveOldPackages ?? true,
+        PreservePackages = decisionFile?.Decisions.Packages.PreservePackages ?? []
+      };
+
+      var packageResult = await PackageManager.UpdatePackagesAsync(
+          projectPath,
+          transformedFilePaths,
+          packageSettings,
+          ct);
+
+      packageChanges.AddRange(packageResult.Changes);
+    }
+
     return new ApplyResult(
         true,
         transformedCount,
         fileChanges,
-        SkippedFileCount: skippedCount);
+        SkippedFileCount: skippedCount,
+        PackageChanges: packageChanges);
   }
 
   private static List<string> _filterFiles(
@@ -207,17 +236,24 @@ public sealed class ApplyCommand {
 /// <param name="TransformedFileCount">Number of files transformed.</param>
 /// <param name="Changes">List of changes made.</param>
 /// <param name="SkippedFileCount">Number of files skipped due to filters or decisions.</param>
+/// <param name="PackageChanges">List of package changes made.</param>
 /// <param name="ErrorMessage">Error message if the apply failed.</param>
 public sealed record ApplyResult(
     bool Success,
     int TransformedFileCount = 0,
     IReadOnlyList<FileChange>? Changes = null,
     int SkippedFileCount = 0,
+    IReadOnlyList<PackageChange>? PackageChanges = null,
     string? ErrorMessage = null) {
   /// <summary>
   /// Gets the list of changes, never null.
   /// </summary>
   public IReadOnlyList<FileChange> Changes { get; } = Changes ?? [];
+
+  /// <summary>
+  /// Gets the list of package changes, never null.
+  /// </summary>
+  public IReadOnlyList<PackageChange> PackageChanges { get; } = PackageChanges ?? [];
 }
 
 /// <summary>
