@@ -43,7 +43,14 @@ public sealed class PackageManager {
     "Wolverine.Http",
     "WolverineFx.Http",
     "Wolverine.FluentValidation",
-    "WolverineFx.FluentValidation"
+    "WolverineFx.FluentValidation",
+    // HotChocolate Marten integration - no Whizbang equivalent yet
+    "HotChocolate.Data.Marten",
+    // Kafka/Confluent packages - replaced by AzureServiceBus/RabbitMQ
+    "Aspire.Confluent.Kafka",
+    "Aspire.Hosting.Kafka",
+    // Cleanup: misnamed package from incomplete migrations
+    "Whizbang.Core"
   };
 
   /// <summary>
