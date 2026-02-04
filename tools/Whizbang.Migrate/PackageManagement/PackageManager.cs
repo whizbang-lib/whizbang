@@ -12,23 +12,23 @@ public sealed class PackageManager {
   /// Package mappings from old Marten/Wolverine packages to Whizbang equivalents.
   /// </summary>
   private static readonly Dictionary<string, string?> _packageMappings = new(StringComparer.OrdinalIgnoreCase) {
-    // Marten packages -> Whizbang.Postgres
-    ["Marten"] = "Whizbang.Postgres",
-    ["Marten.Events"] = "Whizbang.Core",
+    // Marten packages -> SoftwareExtravaganza.Whizbang.Postgres
+    ["Marten"] = "SoftwareExtravaganza.Whizbang.Postgres",
+    ["Marten.Events"] = "SoftwareExtravaganza.Whizbang.Core",
     ["Marten.AspNetCore"] = null, // Remove, no equivalent needed
 
-    // Wolverine packages -> Whizbang.Core
+    // Wolverine packages -> SoftwareExtravaganza.Whizbang.Core
     // Note: NuGet packages use "WolverineFx" prefix, but some projects use "Wolverine" prefix
-    ["WolverineFx"] = "Whizbang.Core",
-    ["Wolverine"] = "Whizbang.Core",
-    ["WolverineFx.Marten"] = "Whizbang.Postgres",
-    ["Wolverine.Marten"] = "Whizbang.Postgres",
-    ["WolverineFx.RabbitMQ"] = "Whizbang.Transports.RabbitMQ",
-    ["Wolverine.RabbitMQ"] = "Whizbang.Transports.RabbitMQ",
-    ["WolverineFx.AzureServiceBus"] = "Whizbang.Transports.AzureServiceBus",
-    ["Wolverine.AzureServiceBus"] = "Whizbang.Transports.AzureServiceBus",
-    ["WolverineFx.Kafka"] = "Whizbang.Transports.Kafka",
-    ["Wolverine.Kafka"] = "Whizbang.Transports.Kafka"
+    ["WolverineFx"] = "SoftwareExtravaganza.Whizbang.Core",
+    ["Wolverine"] = "SoftwareExtravaganza.Whizbang.Core",
+    ["WolverineFx.Marten"] = "SoftwareExtravaganza.Whizbang.Postgres",
+    ["Wolverine.Marten"] = "SoftwareExtravaganza.Whizbang.Postgres",
+    ["WolverineFx.RabbitMQ"] = "SoftwareExtravaganza.Whizbang.Transports.RabbitMQ",
+    ["Wolverine.RabbitMQ"] = "SoftwareExtravaganza.Whizbang.Transports.RabbitMQ",
+    ["WolverineFx.AzureServiceBus"] = "SoftwareExtravaganza.Whizbang.Transports.AzureServiceBus",
+    ["Wolverine.AzureServiceBus"] = "SoftwareExtravaganza.Whizbang.Transports.AzureServiceBus",
+    ["WolverineFx.Kafka"] = "SoftwareExtravaganza.Whizbang.Transports.Kafka",
+    ["Wolverine.Kafka"] = "SoftwareExtravaganza.Whizbang.Transports.Kafka"
   };
 
   /// <summary>
