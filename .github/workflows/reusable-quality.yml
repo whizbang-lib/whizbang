@@ -86,6 +86,9 @@ jobs:
               tests/Whizbang.Partitioning.Tests \
               tests/Whizbang.Policies.Tests \
               tests/Whizbang.Sequencing.Tests \
+              tests/Whizbang.Transports.Mutations.Tests \
+              tests/Whizbang.Transports.FastEndpoints.Tests \
+              tests/Whizbang.Transports.HotChocolate.Tests \
               tests/Whizbang.Transports.RabbitMQ.Tests \
               tests/Whizbang.Transports.Tests
             do
@@ -144,7 +147,7 @@ jobs:
             /d:sonar.token="${SONAR_TOKEN}" \
             /d:sonar.host.url="https://sonarcloud.io" \
             /d:sonar.exclusions="**/samples/**,**/benchmarks/**,**/*Generated.cs,**/.whizbang-generated/**" \
-            /d:sonar.coverage.exclusions="**/samples/**,**/benchmarks/**,**/tests/**,src/Whizbang.Generators/**,src/Whizbang.Generators.Shared/**,src/Whizbang.Data.Schema/**,src/Whizbang.Data.EFCore.Postgres.Generators/**,src/Whizbang.Hosting.Azure.ServiceBus/**,src/Whizbang.Hosting.RabbitMQ/**,src/Whizbang.Data.Dapper.Postgres/**,src/Whizbang.Transports.RabbitMQ/**,src/Whizbang.Data.EFCore.Postgres/**,src/Whizbang.Transports.AzureServiceBus/**,src/Whizbang.Data.Dapper.Sqlite/**,src/Whizbang.Data.Dapper.Custom/**,src/Whizbang.Data.EFCore.Custom/**,src/Whizbang.Data.Postgres/**,src/Whizbang.Testing/**,src/Whizbang.Observability/**,src/Whizbang.SignalR/**" \
+            /d:sonar.coverage.exclusions="**/samples/**,**/benchmarks/**,**/tests/**,src/Whizbang.Generators/**,src/Whizbang.Generators.Shared/**,src/Whizbang.Data.Schema/**,src/Whizbang.Data.EFCore.Postgres.Generators/**,src/Whizbang.Transports.HotChocolate.Generators/**,src/Whizbang.Transports.FastEndpoints.Generators/**,src/Whizbang.Hosting.Azure.ServiceBus/**,src/Whizbang.Hosting.RabbitMQ/**,src/Whizbang.Data.Dapper.Postgres/**,src/Whizbang.Transports.RabbitMQ/**,src/Whizbang.Data.EFCore.Postgres/**,src/Whizbang.Transports.AzureServiceBus/**,src/Whizbang.Data.Dapper.Sqlite/**,src/Whizbang.Data.Dapper.Custom/**,src/Whizbang.Data.EFCore.Custom/**,src/Whizbang.Data.Postgres/**,src/Whizbang.Testing/**,src/Whizbang.Observability/**,src/Whizbang.SignalR/**" \
             /d:sonar.coverageReportPaths="coverage/sonarqube/SonarQube.xml" \
             /d:sonar.issue.ignore.multicriteria="e1,e2,e3,e4,e5,e6" \
             /d:sonar.issue.ignore.multicriteria.e1.ruleKey="csharpsquid:S1192" \
