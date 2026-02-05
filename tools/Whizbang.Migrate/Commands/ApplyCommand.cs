@@ -21,6 +21,7 @@ public sealed class ApplyCommand {
   private readonly MarkerInterfaceTransformer _markerInterfaceTransformer = new();
   private readonly GlobalUsingAliasTransformer _globalUsingAliasTransformer = new();
   private readonly HotChocolateTransformer _hotChocolateTransformer = new();
+  private readonly WolverineHttpTransformer _wolverineHttpTransformer = new();
 
   /// <summary>
   /// Executes the apply command on the specified directory.
@@ -144,6 +145,13 @@ public sealed class ApplyCommand {
       if (hotChocolateResult.Changes.Count > 0) {
         transformedCode = hotChocolateResult.TransformedCode;
         allChanges.AddRange(hotChocolateResult.Changes);
+      }
+
+      // Apply Wolverine.Http transformations (flags methods for manual FastEndpoints conversion)
+      var wolverineHttpResult = await _wolverineHttpTransformer.TransformAsync(transformedCode, file, ct);
+      if (wolverineHttpResult.Changes.Count > 0) {
+        transformedCode = wolverineHttpResult.TransformedCode;
+        allChanges.AddRange(wolverineHttpResult.Changes);
       }
 
       // Track changes
