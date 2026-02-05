@@ -137,11 +137,10 @@ public abstract class MutationEndpointBase<TCommand, TResult>
     try {
       result = await DispatchCommandAsync(command, ct);
     } catch (Exception ex) {
-      var errorResult = await OnErrorAsync(command, ex, context, ct);
-      if (errorResult is null) {
-        throw;
+      if (await OnErrorAsync(command, ex, context, ct) is { } errorResult) {
+        return errorResult;
       }
-      return errorResult;
+      throw;
     }
 
     await OnAfterExecuteAsync(command, result, context, ct);

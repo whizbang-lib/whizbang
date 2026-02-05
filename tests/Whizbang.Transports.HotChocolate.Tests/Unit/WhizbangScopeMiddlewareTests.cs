@@ -235,6 +235,45 @@ public class WhizbangScopeMiddlewareTests {
     await Assert.That(scope.Extensions).IsNull();
   }
 
+  [Test]
+  public async Task InvokeAsync_WithNullUser_ScopeFieldsShouldBeNullAsync() {
+    // Arrange - explicitly set User to null to exercise the ?. branches
+    var (middleware, accessor) = _createMiddleware();
+    var context = new DefaultHttpContext();
+    context.User = null!;
+
+    // Act
+    await middleware.InvokeAsync(context, accessor);
+
+    // Assert
+    var scope = accessor.Current!.Scope;
+    await Assert.That(scope.TenantId).IsNull();
+    await Assert.That(scope.UserId).IsNull();
+    await Assert.That(scope.OrganizationId).IsNull();
+    await Assert.That(scope.CustomerId).IsNull();
+    await Assert.That(scope.Extensions).IsNull();
+    await Assert.That(accessor.Current!.Roles.Count).IsEqualTo(0);
+    await Assert.That(accessor.Current!.Permissions.Count).IsEqualTo(0);
+    await Assert.That(accessor.Current!.SecurityPrincipals.Count).IsEqualTo(0);
+    await Assert.That(accessor.Current!.Claims.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task InvokeAsync_WithNullUser_AndExtensionMappings_ShouldHandleGracefullyAsync() {
+    // Arrange - null User with extension mappings configured
+    var options = new WhizbangScopeOptions();
+    options.ExtensionClaimMappings["region_claim"] = "Region";
+    var (middleware, accessor) = _createMiddleware(options);
+    var context = new DefaultHttpContext();
+    context.User = null!;
+
+    // Act
+    await middleware.InvokeAsync(context, accessor);
+
+    // Assert
+    await Assert.That(accessor.Current!.Scope.Extensions).IsNull();
+  }
+
   #endregion
 
   #region Extension Mappings
@@ -279,6 +318,22 @@ public class WhizbangScopeMiddlewareTests {
     options.ExtensionClaimMappings["empty_claim"] = "Empty";
     var (middleware, accessor) = _createMiddleware(options);
     var context = _createContextWithClaims(("empty_claim", ""));
+
+    // Act
+    await middleware.InvokeAsync(context, accessor);
+
+    // Assert
+    await Assert.That(accessor.Current!.Scope.Extensions).IsNull();
+  }
+
+  [Test]
+  public async Task InvokeAsync_WithExtensionClaimMapping_WhenClaimNotPresent_ShouldSkipAsync() {
+    // Arrange - mapping configured but claim doesn't exist in user's claims
+    // Exercises the FindFirst returning null branch of context.User?.FindFirst(claimType)?.Value
+    var options = new WhizbangScopeOptions();
+    options.ExtensionClaimMappings["nonexistent_claim"] = "Region";
+    var (middleware, accessor) = _createMiddleware(options);
+    var context = _createContextWithClaims(("other_claim", "some_value"));
 
     // Act
     await middleware.InvokeAsync(context, accessor);
