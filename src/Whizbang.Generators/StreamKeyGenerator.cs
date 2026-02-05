@@ -89,23 +89,27 @@ public class StreamKeyGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Look for [StreamKey] on properties
-    foreach (var member in typeSymbol.GetMembers()) {
-      if (member is IPropertySymbol property) {
-        var hasStreamKeyAttr = property.GetAttributes().Any(a =>
-            a.AttributeClass?.Name == STREAMKEY_ATTRIBUTE_NAME ||
-            a.AttributeClass?.Name == STREAMKEY_SHORT_NAME ||
-            a.AttributeClass?.ToDisplayString() == STREAMKEY_ATTRIBUTE ||
-            a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{STREAMKEY_ATTRIBUTE}");
+    // Look for [StreamKey] on properties (including inherited properties)
+    var currentType = typeSymbol;
+    while (currentType is not null) {
+      foreach (var member in currentType.GetMembers()) {
+        if (member is IPropertySymbol property) {
+          var hasStreamKeyAttr = property.GetAttributes().Any(a =>
+              a.AttributeClass?.Name == STREAMKEY_ATTRIBUTE_NAME ||
+              a.AttributeClass?.Name == STREAMKEY_SHORT_NAME ||
+              a.AttributeClass?.ToDisplayString() == STREAMKEY_ATTRIBUTE ||
+              a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{STREAMKEY_ATTRIBUTE}");
 
-        if (hasStreamKeyAttr) {
-          return new StreamKeyInfo(
-              EventType: typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-              PropertyName: property.Name,
-              PropertyType: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
-          );
+          if (hasStreamKeyAttr) {
+            return new StreamKeyInfo(
+                EventType: typeSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+                PropertyName: property.Name,
+                PropertyType: property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
+            );
+          }
         }
       }
+      currentType = currentType.BaseType;
     }
 
     // Look for [StreamKey] on constructor parameters (for records)
@@ -160,13 +164,18 @@ public class StreamKeyGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Check if has [StreamKey] anywhere
-    var hasStreamKeyOnProperty = typeSymbol.GetMembers().OfType<IPropertySymbol>().Any(p =>
-        p.GetAttributes().Any(a =>
-            a.AttributeClass?.Name == STREAMKEY_ATTRIBUTE_NAME ||
-            a.AttributeClass?.Name == STREAMKEY_SHORT_NAME ||
-            a.AttributeClass?.ToDisplayString() == STREAMKEY_ATTRIBUTE ||
-            a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{STREAMKEY_ATTRIBUTE}"));
+    // Check if has [StreamKey] anywhere (including inherited properties)
+    var hasStreamKeyOnProperty = false;
+    var checkType = typeSymbol;
+    while (checkType is not null && !hasStreamKeyOnProperty) {
+      hasStreamKeyOnProperty = checkType.GetMembers().OfType<IPropertySymbol>().Any(p =>
+          p.GetAttributes().Any(a =>
+              a.AttributeClass?.Name == STREAMKEY_ATTRIBUTE_NAME ||
+              a.AttributeClass?.Name == STREAMKEY_SHORT_NAME ||
+              a.AttributeClass?.ToDisplayString() == STREAMKEY_ATTRIBUTE ||
+              a.AttributeClass?.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat) == $"global::{STREAMKEY_ATTRIBUTE}"));
+      checkType = checkType.BaseType;
+    }
 
     if (hasStreamKeyOnProperty) {
       return null;
