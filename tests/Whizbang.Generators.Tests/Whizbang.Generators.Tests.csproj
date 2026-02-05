@@ -23,8 +23,16 @@
       <Aliases>shared</Aliases>
     </ProjectReference>
     <ProjectReference Include="../../src/Whizbang.Data.EFCore.Postgres.Generators/Whizbang.Data.EFCore.Postgres.Generators.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Transports.HotChocolate.Generators/Whizbang.Transports.HotChocolate.Generators.csproj" />
+    <ProjectReference Include="../../src/Whizbang.Transports.FastEndpoints.Generators/Whizbang.Transports.FastEndpoints.Generators.csproj" />
     <!-- Core for interfaces like ICommand, IEvent, etc. -->
     <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
+    <!-- HotChocolate runtime for GraphQLLensAttribute -->
+    <ProjectReference Include="../../src/Whizbang.Transports.HotChocolate/Whizbang.Transports.HotChocolate.csproj" />
+    <!-- FastEndpoints runtime for RestLensAttribute -->
+    <ProjectReference Include="../../src/Whizbang.Transports.FastEndpoints/Whizbang.Transports.FastEndpoints.csproj" />
+    <!-- Mutations for CommandEndpointAttribute -->
+    <ProjectReference Include="../../src/Whizbang.Transports.Mutations/Whizbang.Transports.Mutations.csproj" />
     <!-- EFCore.Custom for WhizbangDbContextAttribute -->
     <ProjectReference Include="../../src/Whizbang.Data.EFCore.Custom/Whizbang.Data.EFCore.Custom.csproj" />
   </ItemGroup>

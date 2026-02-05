@@ -9,7 +9,9 @@ namespace Whizbang.Migrate.Wizard;
 [JsonSourceGenerationOptions(
     WriteIndented = true,
     PropertyNamingPolicy = JsonKnownNamingPolicy.SnakeCaseLower,
-    UseStringEnumConverter = true)]
+    UseStringEnumConverter = true,
+    ReadCommentHandling = JsonCommentHandling.Skip,
+    AllowTrailingCommas = true)]
 [JsonSerializable(typeof(DecisionFile))]
 [JsonSerializable(typeof(SchemaDecisions))]
 [JsonSerializable(typeof(TenantDecisions))]
@@ -17,6 +19,7 @@ namespace Whizbang.Migrate.Wizard;
 [JsonSerializable(typeof(RoutingDecisions))]
 [JsonSerializable(typeof(CustomBaseClassDecisions))]
 [JsonSerializable(typeof(UnknownInterfaceDecisions))]
+[JsonSerializable(typeof(PackageDecisions))]
 internal sealed partial class DecisionFileJsonContext : JsonSerializerContext { }
 
 /// <summary>
@@ -52,6 +55,12 @@ public sealed class DecisionFile {
   public MigrationDecisions Decisions { get; set; } = new();
 
   /// <summary>
+  /// Glob patterns for files to exclude from transformation.
+  /// Examples: "**/Generators/**", "**/*Emitter*.cs"
+  /// </summary>
+  public List<string> ExcludePatterns { get; set; } = [];
+
+  /// <summary>
   /// Creates a new decision file for a project.
   /// </summary>
   public static DecisionFile Create(string projectPath) {
@@ -83,14 +92,240 @@ public sealed class DecisionFile {
   /// <summary>
   /// Saves the decision file to a path.
   /// </summary>
-  public async Task SaveAsync(string path, CancellationToken ct = default) {
+  /// <param name="path">Path to save the file.</param>
+  /// <param name="includeComments">If true, generates JSONC with helpful comments.</param>
+  /// <param name="ct">Cancellation token.</param>
+  public async Task SaveAsync(string path, bool includeComments = false, CancellationToken ct = default) {
     var directory = Path.GetDirectoryName(path);
     if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory)) {
       Directory.CreateDirectory(directory);
     }
 
-    var json = ToJson();
-    await File.WriteAllTextAsync(path, json, ct);
+    var content = includeComments ? ToJsonWithComments() : ToJson();
+    await File.WriteAllTextAsync(path, content, ct);
+  }
+
+  /// <summary>
+  /// Generates JSONC content with helpful comments explaining each setting.
+  /// </summary>
+  public string ToJsonWithComments() {
+    var timestamp = GeneratedAt.ToString("O");
+
+    return $$"""
+{
+  // Whizbang Migration Decision File
+  // Edit this file to control migration behavior, then run:
+  //   whizbang-migrate apply -p {{ProjectPath}} -d <this-file>
+
+  "version": "{{Version}}",
+  "project_path": "{{ProjectPath}}",
+  "generated_at": "{{timestamp}}",
+
+  // Current migration state (managed by the tool)
+  "state": {
+    "status": "{{State.Status}}",
+    "started_at": null,
+    "last_updated_at": null,
+    "completed_at": null,
+    "git_commit_before": null,
+    "completed_categories": [],
+    "current_category": null,
+    "current_item": 0
+  },
+
+  "decisions": {
+    // ═══════════════════════════════════════════════════════════════════════════
+    // HANDLER MIGRATION: IHandle<T> → IReceptor<T, TResult>
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Transforms Wolverine message handlers to Whizbang receptors.
+    // - Handle/HandleAsync methods become ReceiveAsync
+    // - [WolverineHandler] attributes are removed
+    // - MessageContext → MessageEnvelope
+    // - IMessageBus → IDispatcher
+    "handlers": {
+      // Options: "Convert", "Skip", "ConvertWithWarning", "Prompt"
+      "default": "{{Decisions.Handlers.Default}}",
+
+      // Per-file overrides (use full or relative paths)
+      // Example: "src/Handlers/MyHandler.cs": "Skip"
+      "overrides": {}
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PROJECTION MIGRATION: SingleStreamProjection → IPerspectiveFor
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Transforms Marten projections to Whizbang perspectives.
+    "projections": {
+      // Interface to use for single-stream projections (aggregates)
+      "single_stream": "{{Decisions.Projections.SingleStream}}",
+
+      // Interface to use for multi-stream projections (cross-aggregate views)
+      "multi_stream": "{{Decisions.Projections.MultiStream}}",
+
+      "default": "{{Decisions.Projections.Default}}",
+      "overrides": {}
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // EVENT STORE OPERATIONS
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Controls transformation of Marten IDocumentSession/IDocumentStore patterns.
+    "event_store": {
+      // AppendExclusive: Marten's exclusive append (optimistic concurrency)
+      // ConvertWithWarning adds a TODO comment for manual review
+      "append_exclusive": "{{Decisions.EventStore.AppendExclusive}}",
+
+      // StartStream: Creates new event stream
+      // Convert transforms to AppendAsync with new stream ID
+      "start_stream": "{{Decisions.EventStore.StartStream}}",
+
+      // SaveChangesAsync: Marten's unit-of-work commit
+      // Skip removes these calls (Whizbang auto-commits)
+      "save_changes": "{{Decisions.EventStore.SaveChanges}}"
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ID GENERATION: Guid.NewGuid() → IWhizbangIdProvider
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Whizbang uses IWhizbangIdProvider for testable, deterministic IDs.
+    "id_generation": {
+      // Guid.NewGuid() calls - Convert injects IWhizbangIdProvider
+      // Use "Skip" if you want to keep Guid.NewGuid() as-is
+      "guid_new_guid": "{{Decisions.IdGeneration.GuidNewGuid}}",
+
+      // CombGuidIdGeneration.NewGuid() (Marten's sequential GUIDs)
+      "comb_guid": "{{Decisions.IdGeneration.CombGuid}}"
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // DI REGISTRATION
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Transforms service registration patterns.
+    "di_registration": {
+      "default": "{{Decisions.DiRegistration.Default}}",
+      "overrides": {}
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SCHEMA CONFIGURATION
+    // ═══════════════════════════════════════════════════════════════════════════
+    // How Whizbang tables are organized in the database.
+    // This enables side-by-side migration with existing Marten tables.
+    "schema": {
+      // Strategy options:
+      // - "SameDbDifferentSchema": mydb.whizbang.wb_* (recommended)
+      // - "DifferentDbDefaultSchema": whizbang_db.public.wb_*
+      // - "SameDbSameSchemaWithPrefix": mydb.public.wb_*
+      // - "DifferentDbDifferentSchema": whizbang_db.events.wb_*
+      "strategy": "{{Decisions.Schema.Strategy}}",
+
+      // Schema name (when using SameDbDifferentSchema)
+      "schema_name": "{{Decisions.Schema.SchemaName}}",
+
+      // Table prefixes
+      "infrastructure_prefix": "{{Decisions.Schema.InfrastructurePrefix}}",
+      "perspective_prefix": "{{Decisions.Schema.PerspectivePrefix}}",
+
+      // Connection string name (when using different database)
+      "connection_string_name": null
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // TENANT CONTEXT
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Multi-tenancy configuration (detected automatically if present).
+    "tenant": {
+      "was_detected": false,
+      "detected_property": null,
+      "uses_marten_tenant_features": false,
+
+      // Strategy options:
+      // - "ScopeField": Store tenant in event scope (recommended)
+      // - "ScopedDi": Per-tenant IEventStore registration
+      // - "Manual": You handle it
+      "strategy": "{{Decisions.Tenant.Strategy}}",
+      "confirmed": false
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // STREAM ID CONFIGURATION
+    // ═══════════════════════════════════════════════════════════════════════════
+    // How aggregate/stream IDs are detected and used.
+    "stream_id": {
+      "was_detected": false,
+      "detected_property": null,
+      "is_strongly_typed": false,
+      "confirmed": false
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ROUTING CONFIGURATION
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Message routing for inbox/outbox patterns.
+    "routing": {
+      // Domains owned by this service (commands routed to inbox)
+      "owned_domains": [],
+      "detected_domains": [],
+
+      // Inbox strategy: "SharedTopic" or "DomainTopics"
+      "inbox_strategy": "{{Decisions.Routing.InboxStrategy}}",
+      "inbox_topic": null,
+      "inbox_suffix": null,
+
+      // Outbox strategy: "DomainTopics" or "SharedTopic"
+      "outbox_strategy": "{{Decisions.Routing.OutboxStrategy}}",
+      "outbox_topic": null,
+      "confirmed": false
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // CUSTOM BASE CLASSES
+    // ═══════════════════════════════════════════════════════════════════════════
+    // How to handle handlers that inherit from custom base classes.
+    "custom_base_classes": {
+      // Options: "Prompt", "RemoveInheritance", "KeepInheritance", "Skip"
+      "default_strategy": "{{Decisions.CustomBaseClasses.DefaultStrategy}}",
+
+      // Per-class strategies
+      // Example: "BaseMessageHandler": "RemoveInheritance"
+      "base_class_strategies": {},
+      "confirmed": false
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // UNKNOWN INTERFACES
+    // ═══════════════════════════════════════════════════════════════════════════
+    // How to handle handler parameters with unknown interface types.
+    "unknown_interfaces": {
+      // Options: "Prompt", "RemoveParameter", "KeepAndInject", "MapToWhizbang", "Skip"
+      "default_strategy": "{{Decisions.UnknownInterfaces.DefaultStrategy}}",
+
+      // Per-interface strategies
+      // Example: "ICustomService": "KeepAndInject"
+      "interface_strategies": {},
+      "confirmed": false
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // PACKAGE MANAGEMENT
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Controls which Whizbang packages are added and what versions are used.
+    "packages": {
+      // Whether to automatically manage packages. Default: true
+      "auto_manage": {{Decisions.Packages.AutoManage.ToString().ToLowerInvariant()}},
+
+      // Version of Whizbang packages to use
+      "whizbang_version": "{{Decisions.Packages.WhizbangVersion}}",
+
+      // Whether to remove old Marten/Wolverine packages. Default: true
+      "remove_old_packages": {{Decisions.Packages.RemoveOldPackages.ToString().ToLowerInvariant()}},
+
+      // Packages to preserve (don't remove even if Marten/Wolverine)
+      "preserve_packages": []
+    }
+  }
+}
+""";
   }
 
   /// <summary>
@@ -302,6 +537,11 @@ public sealed class MigrationDecisions {
   /// Unknown interface parameter handling decisions.
   /// </summary>
   public UnknownInterfaceDecisions UnknownInterfaces { get; set; } = new();
+
+  /// <summary>
+  /// Package management decisions.
+  /// </summary>
+  public PackageDecisions Packages { get; set; } = new();
 }
 
 /// <summary>
@@ -711,4 +951,29 @@ public enum UnknownInterfaceStrategy {
   /// The handler will be left unchanged with a warning.
   /// </summary>
   Skip
+}
+
+/// <summary>
+/// Package management decisions during migration.
+/// </summary>
+public sealed class PackageDecisions {
+  /// <summary>
+  /// Whether to automatically manage packages. Default: true.
+  /// </summary>
+  public bool AutoManage { get; set; } = true;
+
+  /// <summary>
+  /// Version of Whizbang packages to use.
+  /// </summary>
+  public string WhizbangVersion { get; set; } = "1.0.0";
+
+  /// <summary>
+  /// Whether to remove old Marten/Wolverine packages. Default: true.
+  /// </summary>
+  public bool RemoveOldPackages { get; set; } = true;
+
+  /// <summary>
+  /// Packages to preserve (don't remove even if Marten/Wolverine).
+  /// </summary>
+  public List<string> PreservePackages { get; set; } = [];
 }

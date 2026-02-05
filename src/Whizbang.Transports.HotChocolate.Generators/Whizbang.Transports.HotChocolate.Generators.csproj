@@ -1,0 +1,71 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <IsPackable>true</IsPackable>
+    <Description>Roslyn source generators for Whizbang HotChocolate GraphQL integration. Discovers [GraphQLLens] attributes and generates AOT-compatible query types and registrations.</Description>
+    <TargetFramework>netstandard2.0</TargetFramework>
+    <RootNamespace>Whizbang.Transports.HotChocolate.Generators</RootNamespace>
+    <LangVersion>latest</LangVersion>
+
+    <!-- Mark as Roslyn component -->
+    <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
+    <IsRoslynComponent>true</IsRoslynComponent>
+
+    <!-- Enable viewing generated files (for debugging) -->
+    <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>
+    <CompilerGeneratedFilesOutputPath>$(MSBuildProjectDirectory)/.whizbang-generated</CompilerGeneratedFilesOutputPath>
+
+    <!-- Enable performance reporting -->
+    <ReportAnalyzer>true</ReportAnalyzer>
+
+    <!-- Enable ILRepack to merge Shared DLL into generator DLL -->
+    <ILRepackEnabled>true</ILRepackEnabled>
+
+    <!-- Disable TypeForwardedTo generation for polyfills to avoid conflicts with .NET 10 test project -->
+    <PolySharpExcludeTypeForwardedToDeclarations>true</PolySharpExcludeTypeForwardedToDeclarations>
+
+    <!-- NuGet packaging: Place in analyzers folder, not lib -->
+    <IncludeBuildOutput>false</IncludeBuildOutput>
+    <SuppressDependenciesWhenPacking>true</SuppressDependenciesWhenPacking>
+    <DevelopmentDependency>true</DevelopmentDependency>
+    <!-- Use target to add analyzer DLL to correct path -->
+    <TargetsForTfmSpecificContentInPackage>$(TargetsForTfmSpecificContentInPackage);PackAnalyzerDll</TargetsForTfmSpecificContentInPackage>
+  </PropertyGroup>
+
+  <!-- Target to add the merged analyzer DLL to the package -->
+  <Target Name="PackAnalyzerDll">
+    <ItemGroup>
+      <TfmSpecificPackageFile Include="$(TargetPath)" PackagePath="analyzers/dotnet/cs/" />
+    </ItemGroup>
+  </Target>
+
+  <ItemGroup>
+    <!-- Required packages for source generators -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" PrivateAssets="all" />
+    <PackageReference Include="Microsoft.CodeAnalysis.Analyzers" PrivateAssets="all" />
+    <PackageReference Include="PolySharp" PrivateAssets="all" />
+    <!-- ILRepack to merge Shared DLL into generator DLL -->
+    <PackageReference Include="ILRepack.Lib.MSBuild.Task" PrivateAssets="all" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Reference the shared library for TemplateUtilities -->
+    <ProjectReference Include="../Whizbang.Generators.Shared/Whizbang.Generators.Shared.csproj">
+      <PrivateAssets>all</PrivateAssets>
+      <ReferenceOutputAssembly>true</ReferenceOutputAssembly>
+      <SetTargetFramework>TargetFramework=netstandard2.0</SetTargetFramework>
+    </ProjectReference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Template files - real C# code with full IDE support -->
+    <!-- Excluded from compilation, embedded as resources -->
+    <Compile Remove="Templates\**\*.cs" />
+    <None Include="Templates\**\*.cs" />
+    <EmbeddedResource Include="Templates\**\*.cs" />
+  </ItemGroup>
+
+  <!-- Note: Cannot reference Whizbang.Transports.HotChocolate directly due to TFM incompatibility -->
+  <!-- (netstandard2.0 vs net10.0). Generator uses fully qualified type names instead. -->
+
+</Project>

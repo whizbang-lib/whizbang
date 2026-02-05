@@ -27,6 +27,8 @@
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp.Workspaces" />
     <!-- Git operations via LibGit2Sharp -->
     <PackageReference Include="LibGit2Sharp" />
+    <!-- File globbing for include/exclude patterns -->
+    <PackageReference Include="Microsoft.Extensions.FileSystemGlobbing" />
   </ItemGroup>
 
 </Project>

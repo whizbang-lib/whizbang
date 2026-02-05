@@ -51,6 +51,48 @@ public static class GeneratorTestHelper {
       }
     }
 
+    // Add reference to Whizbang.Transports.HotChocolate (for GraphQLLensAttribute)
+    try {
+      var hotChocolateAssembly = System.Reflection.Assembly.Load("Whizbang.Transports.HotChocolate");
+      references.Add(MetadataReference.CreateFromFile(hotChocolateAssembly.Location));
+    } catch {
+      var hotChocolateAssemblyPath = Path.Combine(
+          Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!,
+          "Whizbang.Transports.HotChocolate.dll"
+      );
+      if (File.Exists(hotChocolateAssemblyPath)) {
+        references.Add(MetadataReference.CreateFromFile(hotChocolateAssemblyPath));
+      }
+    }
+
+    // Add reference to Whizbang.Transports.FastEndpoints (for RestLensAttribute)
+    try {
+      var fastEndpointsAssembly = System.Reflection.Assembly.Load("Whizbang.Transports.FastEndpoints");
+      references.Add(MetadataReference.CreateFromFile(fastEndpointsAssembly.Location));
+    } catch {
+      var fastEndpointsAssemblyPath = Path.Combine(
+          Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!,
+          "Whizbang.Transports.FastEndpoints.dll"
+      );
+      if (File.Exists(fastEndpointsAssemblyPath)) {
+        references.Add(MetadataReference.CreateFromFile(fastEndpointsAssemblyPath));
+      }
+    }
+
+    // Add reference to Whizbang.Transports.Mutations (for CommandEndpointAttribute)
+    try {
+      var mutationsAssembly = System.Reflection.Assembly.Load("Whizbang.Transports.Mutations");
+      references.Add(MetadataReference.CreateFromFile(mutationsAssembly.Location));
+    } catch {
+      var mutationsAssemblyPath = Path.Combine(
+          Path.GetDirectoryName(System.Reflection.Assembly.GetExecutingAssembly().Location)!,
+          "Whizbang.Transports.Mutations.dll"
+      );
+      if (File.Exists(mutationsAssemblyPath)) {
+        references.Add(MetadataReference.CreateFromFile(mutationsAssemblyPath));
+      }
+    }
+
     // Create compilation
     var compilation = CSharpCompilation.Create(
         assemblyName: "TestAssembly",
