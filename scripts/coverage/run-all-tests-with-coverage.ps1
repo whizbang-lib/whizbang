@@ -25,7 +25,10 @@ $testProjects = @(
     "Whizbang.Transports.Tests",
     "Whizbang.Sequencing.Tests",
     "Whizbang.Data.Tests",
-    "Whizbang.Data.Postgres.Tests"
+    "Whizbang.Data.Postgres.Tests",
+    "Whizbang.Transports.Mutations.Tests",
+    "Whizbang.Transports.HotChocolate.Tests",
+    "Whizbang.Transports.FastEndpoints.Tests"
 )
 
 $passed = 0
