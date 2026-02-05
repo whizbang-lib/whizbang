@@ -20,6 +20,7 @@ public sealed class ApplyCommand {
   private readonly DIRegistrationTransformer _diTransformer = new();
   private readonly MarkerInterfaceTransformer _markerInterfaceTransformer = new();
   private readonly GlobalUsingAliasTransformer _globalUsingAliasTransformer = new();
+  private readonly HotChocolateTransformer _hotChocolateTransformer = new();
 
   /// <summary>
   /// Executes the apply command on the specified directory.
@@ -136,6 +137,13 @@ public sealed class ApplyCommand {
       if (markerResult.Changes.Count > 0) {
         transformedCode = markerResult.TransformedCode;
         allChanges.AddRange(markerResult.Changes);
+      }
+
+      // Apply HotChocolate Marten transformations (AddMartenFiltering → AddWhizbangLenses, etc.)
+      var hotChocolateResult = await _hotChocolateTransformer.TransformAsync(transformedCode, file, ct);
+      if (hotChocolateResult.Changes.Count > 0) {
+        transformedCode = hotChocolateResult.TransformedCode;
+        allChanges.AddRange(hotChocolateResult.Changes);
       }
 
       // Track changes
