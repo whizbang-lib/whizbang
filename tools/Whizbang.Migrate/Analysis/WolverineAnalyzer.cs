@@ -37,6 +37,17 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
     "IServiceProvider"
   };
 
+  /// <summary>
+  /// Base class patterns to ignore from CustomHandlerBaseClass warnings.
+  /// These are non-Wolverine/Marten base classes that shouldn't generate warnings.
+  /// </summary>
+  private static readonly HashSet<string> _ignoredBaseClassPatterns = new(StringComparer.Ordinal) {
+    "Endpoint",           // FastEndpoints - not Wolverine
+    "EndpointBase",       // FastEndpoints base
+    "EndpointWithoutRequest", // FastEndpoints
+    "BaseEndpoint"        // Common endpoint base class pattern
+  };
+
   /// <inheritdoc />
   public Task<AnalysisResult> AnalyzeAsync(
       string sourceCode,
@@ -83,12 +94,6 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
           warnings.Add(baseClassWarning);
         }
 
-        // Check for nested class
-        var nestedWarning = _checkForNestedClass(classDecl, filePath, className, lineNumber);
-        if (nestedWarning != null) {
-          warnings.Add(nestedWarning);
-        }
-
         // Check handle method parameters
         var handleMethod = _findHandleMethodSyntax(classDecl);
         if (handleMethod != null) {
@@ -101,33 +106,31 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
       // Check for [WolverineHandler] attribute
       if (_hasWolverineHandlerAttribute(classDecl)) {
         var handleMethod = _findHandleMethod(classDecl);
-        if (handleMethod != null) {
-          handlers.Add(new HandlerInfo(
-              filePath,
-              className,
-              fullyQualifiedName,
-              handleMethod.Value.MessageType,
-              handleMethod.Value.ReturnType,
-              HandlerKind.WolverineAttribute,
-              lineNumber));
 
-          // Check for custom base class
-          var baseClassWarning = _checkForCustomBaseClass(classDecl, filePath, className, lineNumber);
-          if (baseClassWarning != null) {
-            warnings.Add(baseClassWarning);
-          }
+        // Always count as handler if [WolverineHandler] attribute is present,
+        // even if we can't find a standard Handle method (may use custom base class)
+        var messageType = handleMethod?.MessageType ?? _inferMessageTypeFromBaseClass(classDecl) ?? "unknown";
+        var returnType = handleMethod?.ReturnType;
 
-          // Check for nested class
-          var nestedWarning = _checkForNestedClass(classDecl, filePath, className, lineNumber);
-          if (nestedWarning != null) {
-            warnings.Add(nestedWarning);
-          }
+        handlers.Add(new HandlerInfo(
+            filePath,
+            className,
+            fullyQualifiedName,
+            messageType,
+            returnType,
+            HandlerKind.WolverineAttribute,
+            lineNumber));
 
-          // Check handle method parameters
-          var handleMethodSyntax = _findHandleMethodSyntax(classDecl);
-          if (handleMethodSyntax != null) {
-            warnings.AddRange(_checkForUnknownParameters(handleMethodSyntax, filePath, className));
-          }
+        // Check for custom base class
+        var baseClassWarning = _checkForCustomBaseClass(classDecl, filePath, className, lineNumber);
+        if (baseClassWarning != null) {
+          warnings.Add(baseClassWarning);
+        }
+
+        // Check handle method parameters
+        var handleMethodSyntax = _findHandleMethodSyntax(classDecl);
+        if (handleMethodSyntax != null) {
+          warnings.AddRange(_checkForUnknownParameters(handleMethodSyntax, filePath, className));
         }
 
         continue;
@@ -142,12 +145,6 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
         var baseClassWarning = _checkForCustomBaseClass(classDecl, filePath, className, lineNumber);
         if (baseClassWarning != null) {
           warnings.Add(baseClassWarning);
-        }
-
-        // Check for nested class
-        var nestedWarning = _checkForNestedClass(classDecl, filePath, className, lineNumber);
-        if (nestedWarning != null) {
-          warnings.Add(nestedWarning);
         }
 
         // Check handle method parameters for all convention-based handlers
@@ -390,6 +387,11 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
         continue;
       }
 
+      // Skip ignored base class patterns (e.g., FastEndpoints)
+      if (_ignoredBaseClassPatterns.Contains(baseTypeName)) {
+        continue;
+      }
+
       // This is a custom base class - generate warning
       return new MigrationWarning(
           filePath,
@@ -399,27 +401,6 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
           "This base class may contain Marten/Wolverine infrastructure that needs manual migration.",
           lineNumber,
           typeName);
-    }
-
-    return null;
-  }
-
-  private static MigrationWarning? _checkForNestedClass(
-      ClassDeclarationSyntax classDecl,
-      string filePath,
-      string className,
-      int lineNumber) {
-    // Check if this class is nested inside another class
-    var parentClass = classDecl.Parent as ClassDeclarationSyntax;
-    if (parentClass != null) {
-      return new MigrationWarning(
-          filePath,
-          className,
-          MigrationWarningKind.NestedHandlerClass,
-          $"Handler '{className}' is a nested class inside '{parentClass.Identifier.Text}'. " +
-          "Consider extracting to a top-level class for better discoverability.",
-          lineNumber,
-          parentClass.Identifier.Text);
     }
 
     return null;
@@ -511,6 +492,29 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
     return typeName.Length >= 2 &&
            typeName[0] == 'I' &&
            char.IsUpper(typeName[1]);
+  }
+
+  /// <summary>
+  /// Infers the message type from a generic base class.
+  /// For example: BaseJdxMessageHandler&lt;WorkflowContracts.StepAssignedEvent&gt; returns "WorkflowContracts.StepAssignedEvent"
+  /// </summary>
+  private static string? _inferMessageTypeFromBaseClass(ClassDeclarationSyntax classDecl) {
+    if (classDecl.BaseList == null) {
+      return null;
+    }
+
+    foreach (var baseType in classDecl.BaseList.Types) {
+      var typeName = baseType.Type.ToString();
+
+      // Look for generic base classes that might contain message type
+      var genericArgs = _extractGenericArguments(typeName);
+      if (genericArgs.Count >= 1) {
+        // Return first generic argument as message type
+        return genericArgs[0];
+      }
+    }
+
+    return null;
   }
 
   private static List<HandlerInfo> _findConventionBasedHandlers(

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>true</IsPackable>
+    <Description>HotChocolate GraphQL integration for Whizbang Lenses with filtering, sorting, paging, and projection support.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="HotChocolate.AspNetCore" />
+    <PackageReference Include="HotChocolate.Data" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Whizbang.Core/Whizbang.Core.csproj" />
+    <ProjectReference Include="../Whizbang.Transports.Mutations/Whizbang.Transports.Mutations.csproj" />
+  </ItemGroup>
+
+</Project>
