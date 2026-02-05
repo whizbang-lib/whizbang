@@ -45,6 +45,9 @@ jobs:
             tests/Whizbang.Partitioning.Tests \
             tests/Whizbang.Policies.Tests \
             tests/Whizbang.Sequencing.Tests \
+            tests/Whizbang.Transports.Mutations.Tests \
+            tests/Whizbang.Transports.FastEndpoints.Tests \
+            tests/Whizbang.Transports.HotChocolate.Tests \
             tests/Whizbang.Transports.RabbitMQ.Tests \
             tests/Whizbang.Transports.Tests
           do
