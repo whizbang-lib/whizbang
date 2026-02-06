@@ -23,11 +23,13 @@ public sealed class TenantContextDetector {
 
   private static readonly Regex _forTenantPattern = new(
       @"\.ForTenant\s*\(",
-      RegexOptions.Compiled);
+      RegexOptions.Compiled,
+      TimeSpan.FromSeconds(1));
 
   private static readonly Regex _openSessionWithTenantPattern = new(
       @"\.OpenSession\s*\(\s*""[^""]+""",
-      RegexOptions.Compiled);
+      RegexOptions.Compiled,
+      TimeSpan.FromSeconds(1));
 
   /// <summary>
   /// Detects tenant context patterns in the given source code.
