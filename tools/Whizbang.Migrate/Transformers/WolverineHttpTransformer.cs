@@ -61,7 +61,7 @@ public sealed class WolverineHttpTransformer : ICodeTransformer {
     _detectHttpAttributesAndWarn(newRoot, warnings, changes);
 
     // 3. Remove Wolverine HTTP attributes (they won't compile without the package)
-    newRoot = _removeWolverineHttpAttributes(newRoot, changes);
+    newRoot = _removeWolverineHttpAttributes(newRoot);
 
     var transformedCode = newRoot.ToFullString();
 
@@ -172,34 +172,52 @@ public sealed class WolverineHttpTransformer : ICodeTransformer {
     var methods = root.DescendantNodes().OfType<MethodDeclarationSyntax>();
 
     foreach (var method in methods) {
-      foreach (var attrList in method.AttributeLists) {
-        foreach (var attr in attrList.Attributes) {
-          var attrName = _getAttributeName(attr);
-          if (attrName != null && _wolverineHttpAttributes.Contains(attrName)) {
-            var httpMethod = attrName.Replace("Wolverine", "").ToUpperInvariant();
-            var route = _extractRouteFromAttribute(attr);
-            var methodName = method.Identifier.Text;
-            var className = method.Parent is ClassDeclarationSyntax classDecl
-                ? classDecl.Identifier.Text
-                : "Unknown";
-
-            var lineNumber = method.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
-
-            warnings.Add(
-                $"MANUAL CONVERSION REQUIRED: {className}.{methodName}() has [{attrName}(\"{route}\")] - " +
-                $"Convert to FastEndpoints Endpoint<TRequest, TResponse> class with Configure() and HandleAsync() methods.");
-
-            changes.Add(new CodeChange(
-                lineNumber,
-                ChangeType.AttributeRemoved,
-                $"[{attrName}] requires manual conversion to FastEndpoints pattern - " +
-                $"Create new Endpoint<TRequest, TResponse> class with {httpMethod}(\"{route}\") in Configure()",
-                $"[{attrName}(\"{route}\")]",
-                "// TODO: Convert to FastEndpoints endpoint class"));
-          }
-        }
-      }
+      _processMethodForHttpAttributes(method, warnings, changes);
     }
+  }
+
+  private static void _processMethodForHttpAttributes(
+      MethodDeclarationSyntax method,
+      List<string> warnings,
+      List<CodeChange> changes) {
+    var attributes = method.AttributeLists.SelectMany(al => al.Attributes);
+
+    foreach (var attr in attributes) {
+      var attrName = _getAttributeName(attr);
+      if (attrName == null || !_wolverineHttpAttributes.Contains(attrName)) {
+        continue;
+      }
+
+      _addHttpAttributeWarning(method, attr, attrName, warnings, changes);
+    }
+  }
+
+  private static void _addHttpAttributeWarning(
+      MethodDeclarationSyntax method,
+      AttributeSyntax attr,
+      string attrName,
+      List<string> warnings,
+      List<CodeChange> changes) {
+    var httpMethod = attrName.Replace("Wolverine", "").ToUpperInvariant();
+    var route = _extractRouteFromAttribute(attr);
+    var methodName = method.Identifier.Text;
+    var className = method.Parent is ClassDeclarationSyntax classDecl
+        ? classDecl.Identifier.Text
+        : "Unknown";
+
+    var lineNumber = method.GetLocation().GetLineSpan().StartLinePosition.Line + 1;
+
+    warnings.Add(
+        $"MANUAL CONVERSION REQUIRED: {className}.{methodName}() has [{attrName}(\"{route}\")] - " +
+        $"Convert to FastEndpoints Endpoint<TRequest, TResponse> class with Configure() and HandleAsync() methods.");
+
+    changes.Add(new CodeChange(
+        lineNumber,
+        ChangeType.AttributeRemoved,
+        $"[{attrName}] requires manual conversion to FastEndpoints pattern - " +
+        $"Create new Endpoint<TRequest, TResponse> class with {httpMethod}(\"{route}\") in Configure()",
+        $"[{attrName}(\"{route}\")]",
+        "// TODO: Convert to FastEndpoints endpoint class"));
   }
 
   private static string _extractRouteFromAttribute(AttributeSyntax attr) {
@@ -213,8 +231,8 @@ public sealed class WolverineHttpTransformer : ICodeTransformer {
     return "/";
   }
 
-  private static SyntaxNode _removeWolverineHttpAttributes(SyntaxNode root, List<CodeChange> changes) {
-    var rewriter = new WolverineHttpAttributeRemover(changes);
+  private static SyntaxNode _removeWolverineHttpAttributes(SyntaxNode root) {
+    var rewriter = new WolverineHttpAttributeRemover();
     return rewriter.Visit(root);
   }
 
@@ -222,11 +240,6 @@ public sealed class WolverineHttpTransformer : ICodeTransformer {
   /// Rewriter that removes Wolverine HTTP attributes and adds TODO comments.
   /// </summary>
   private sealed class WolverineHttpAttributeRemover : CSharpSyntaxRewriter {
-    private readonly List<CodeChange> _changes;
-
-    public WolverineHttpAttributeRemover(List<CodeChange> changes) {
-      _changes = changes;
-    }
 
     public override SyntaxNode? VisitMethodDeclaration(MethodDeclarationSyntax node) {
       var hasWolverineHttpAttr = false;
@@ -267,8 +280,8 @@ public sealed class WolverineHttpTransformer : ICodeTransformer {
         }
       }
 
-      // Add TODO comment
-      var httpMethod = attrName?.Replace("Wolverine", "").ToUpperInvariant() ?? "HTTP";
+      // Add TODO comment - attrName is guaranteed non-null when hasWolverineHttpAttr is true
+      var httpMethod = attrName!.Replace("Wolverine", "").ToUpperInvariant();
       var todoComment = SyntaxFactory.Comment(
           $"// TODO: Convert to FastEndpoints - Create Endpoint<TRequest, TResponse> class with {httpMethod}(\"{route}\") in Configure()\n");
 
