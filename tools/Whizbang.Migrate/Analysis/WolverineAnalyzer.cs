@@ -88,6 +88,12 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
             HandlerKind.IHandleInterface,
             lineNumber));
 
+        // Check for nested handler class
+        var nestedWarning = _checkForNestedClass(classDecl, filePath, className, lineNumber);
+        if (nestedWarning != null) {
+          warnings.Add(nestedWarning);
+        }
+
         // Check for custom base class
         var baseClassWarning = _checkForCustomBaseClass(classDecl, filePath, className, lineNumber);
         if (baseClassWarning != null) {
@@ -121,6 +127,12 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
             HandlerKind.WolverineAttribute,
             lineNumber));
 
+        // Check for nested handler class
+        var nestedWarning = _checkForNestedClass(classDecl, filePath, className, lineNumber);
+        if (nestedWarning != null) {
+          warnings.Add(nestedWarning);
+        }
+
         // Check for custom base class
         var baseClassWarning = _checkForCustomBaseClass(classDecl, filePath, className, lineNumber);
         if (baseClassWarning != null) {
@@ -140,6 +152,12 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
       var conventionHandlers = _findConventionBasedHandlers(classDecl, filePath, fullyQualifiedName);
       if (conventionHandlers.Count > 0) {
         handlers.AddRange(conventionHandlers);
+
+        // Check for nested handler class
+        var nestedWarning = _checkForNestedClass(classDecl, filePath, className, lineNumber);
+        if (nestedWarning != null) {
+          warnings.Add(nestedWarning);
+        }
 
         // Check for custom base class
         var baseClassWarning = _checkForCustomBaseClass(classDecl, filePath, className, lineNumber);
@@ -352,6 +370,28 @@ public sealed class WolverineAnalyzer : ICodeAnalyzer {
         .Where(m => m.Identifier.Text is "Handle" or "HandleAsync")
         .Where(m => m.Modifiers.Any(SyntaxKind.PublicKeyword))
         .FirstOrDefault();
+  }
+
+  private static MigrationWarning? _checkForNestedClass(
+      ClassDeclarationSyntax classDecl,
+      string filePath,
+      string className,
+      int lineNumber) {
+    // Check if this class is nested inside another type
+    var parentType = classDecl.Parent as TypeDeclarationSyntax;
+    if (parentType != null) {
+      var parentName = parentType.Identifier.Text;
+      return new MigrationWarning(
+          filePath,
+          className,
+          MigrationWarningKind.NestedHandlerClass,
+          $"Handler '{className}' is nested inside '{parentName}'. " +
+          "Consider extracting to a top-level class for better discoverability.",
+          lineNumber,
+          parentName);
+    }
+
+    return null;
   }
 
   private static MigrationWarning? _checkForCustomBaseClass(
