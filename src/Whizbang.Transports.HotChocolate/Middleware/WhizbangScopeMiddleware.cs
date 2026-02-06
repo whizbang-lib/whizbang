@@ -57,18 +57,18 @@ public class WhizbangScopeMiddleware {
     var orgId = _extractValue(context, _options.OrganizationIdClaimType, _options.OrganizationIdHeaderName);
     var customerId = _extractValue(context, _options.CustomerIdClaimType, _options.CustomerIdHeaderName);
 
-    var extensions = new List<ScopeExtension>();
+    var extensions = new Dictionary<string, string?>();
     foreach (var (claimType, extensionKey) in _options.ExtensionClaimMappings) {
       var value = context.User?.FindFirst(claimType)?.Value;
       if (!string.IsNullOrEmpty(value)) {
-        extensions.Add(new ScopeExtension(extensionKey, value));
+        extensions[extensionKey] = value;
       }
     }
 
     foreach (var (headerName, extensionKey) in _options.ExtensionHeaderMappings) {
       if (context.Request.Headers.TryGetValue(headerName, out var headerValue) &&
           !string.IsNullOrEmpty(headerValue)) {
-        extensions.Add(new ScopeExtension(extensionKey, headerValue!));
+        extensions[extensionKey] = headerValue!;
       }
     }
 
@@ -77,7 +77,7 @@ public class WhizbangScopeMiddleware {
       UserId = userId,
       OrganizationId = orgId,
       CustomerId = customerId,
-      Extensions = extensions
+      Extensions = extensions.Count > 0 ? extensions : null
     };
   }
 

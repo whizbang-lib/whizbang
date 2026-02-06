@@ -232,9 +232,7 @@ public class WhizbangScopeMiddlewareTests {
     await Assert.That(scope.UserId).IsNull();
     await Assert.That(scope.OrganizationId).IsNull();
     await Assert.That(scope.CustomerId).IsNull();
-    // Extensions defaults to empty dictionary (not null) for JSON serialization compatibility
-    await Assert.That(scope.Extensions).IsNotNull();
-    await Assert.That(scope.Extensions.Count).IsEqualTo(0);
+    await Assert.That(scope.Extensions).IsNull();
   }
 
   [Test]
@@ -253,9 +251,7 @@ public class WhizbangScopeMiddlewareTests {
     await Assert.That(scope.UserId).IsNull();
     await Assert.That(scope.OrganizationId).IsNull();
     await Assert.That(scope.CustomerId).IsNull();
-    // Extensions defaults to empty dictionary (not null) for JSON serialization compatibility
-    await Assert.That(scope.Extensions).IsNotNull();
-    await Assert.That(scope.Extensions.Count).IsEqualTo(0);
+    await Assert.That(scope.Extensions).IsNull();
     await Assert.That(accessor.Current!.Roles.Count).IsEqualTo(0);
     await Assert.That(accessor.Current!.Permissions.Count).IsEqualTo(0);
     await Assert.That(accessor.Current!.SecurityPrincipals.Count).IsEqualTo(0);
@@ -274,9 +270,8 @@ public class WhizbangScopeMiddlewareTests {
     // Act
     await middleware.InvokeAsync(context, accessor);
 
-    // Assert - Extensions defaults to empty dictionary (not null) for JSON serialization compatibility
-    await Assert.That(accessor.Current!.Scope.Extensions).IsNotNull();
-    await Assert.That(accessor.Current!.Scope.Extensions.Count).IsEqualTo(0);
+    // Assert
+    await Assert.That(accessor.Current!.Scope.Extensions).IsNull();
   }
 
   #endregion
@@ -296,7 +291,7 @@ public class WhizbangScopeMiddlewareTests {
 
     // Assert
     await Assert.That(accessor.Current!.Scope.Extensions).IsNotNull();
-    await Assert.That(accessor.Current!.Scope.GetValue("Region")).IsEqualTo("us-east");
+    await Assert.That(accessor.Current!.Scope.Extensions!["Region"]).IsEqualTo("us-east");
   }
 
   [Test]
@@ -313,7 +308,7 @@ public class WhizbangScopeMiddlewareTests {
 
     // Assert
     await Assert.That(accessor.Current!.Scope.Extensions).IsNotNull();
-    await Assert.That(accessor.Current!.Scope.GetValue("Region")).IsEqualTo("eu-west");
+    await Assert.That(accessor.Current!.Scope.Extensions!["Region"]).IsEqualTo("eu-west");
   }
 
   [Test]
@@ -327,9 +322,8 @@ public class WhizbangScopeMiddlewareTests {
     // Act
     await middleware.InvokeAsync(context, accessor);
 
-    // Assert - Extensions defaults to empty dictionary, no entry added for empty claim
-    await Assert.That(accessor.Current!.Scope.Extensions).IsNotNull();
-    await Assert.That(accessor.Current!.Scope.Extensions.Count).IsEqualTo(0);
+    // Assert
+    await Assert.That(accessor.Current!.Scope.Extensions).IsNull();
   }
 
   [Test]
@@ -344,9 +338,8 @@ public class WhizbangScopeMiddlewareTests {
     // Act
     await middleware.InvokeAsync(context, accessor);
 
-    // Assert - Extensions defaults to empty dictionary, no entry added for missing claim
-    await Assert.That(accessor.Current!.Scope.Extensions).IsNotNull();
-    await Assert.That(accessor.Current!.Scope.Extensions.Count).IsEqualTo(0);
+    // Assert
+    await Assert.That(accessor.Current!.Scope.Extensions).IsNull();
   }
 
   [Test]
@@ -361,9 +354,8 @@ public class WhizbangScopeMiddlewareTests {
     // Act
     await middleware.InvokeAsync(context, accessor);
 
-    // Assert - Extensions defaults to empty dictionary, no entry added for empty header
-    await Assert.That(accessor.Current!.Scope.Extensions).IsNotNull();
-    await Assert.That(accessor.Current!.Scope.Extensions.Count).IsEqualTo(0);
+    // Assert
+    await Assert.That(accessor.Current!.Scope.Extensions).IsNull();
   }
 
   #endregion
