@@ -1,14 +1,14 @@
-using System;
-using System.Collections.Generic;
-using System.Collections.Immutable;
-using System.Text.Json;
-using System.Text.Json.Serialization;
-using System.Text.Json.Serialization.Metadata;
-using Whizbang.Core;
-using Whizbang.Core.Observability;
-using Whizbang.Core.Policies;
-using Whizbang.Core.ValueObjects;
-using Whizbang.Core.Transports;
+using global::System;
+using global::System.Collections.Generic;
+using global::System.Collections.Immutable;
+using global::System.Text.Json;
+using global::System.Text.Json.Serialization;
+using global::System.Text.Json.Serialization.Metadata;
+using global::Whizbang.Core;
+using global::Whizbang.Core.Observability;
+using global::Whizbang.Core.Policies;
+using global::Whizbang.Core.ValueObjects;
+using global::Whizbang.Core.Transports;
 
 #region NAMESPACE
 namespace Whizbang.Core.Generated;

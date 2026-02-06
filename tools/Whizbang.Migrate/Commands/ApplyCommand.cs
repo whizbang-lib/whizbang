@@ -22,6 +22,8 @@ public sealed class ApplyCommand {
   private readonly GlobalUsingAliasTransformer _globalUsingAliasTransformer = new();
   private readonly HotChocolateTransformer _hotChocolateTransformer = new();
   private readonly WolverineHttpTransformer _wolverineHttpTransformer = new();
+  // JSON transformer is created per-execution based on decision file settings
+  private NewtonsoftToSystemTextJsonTransformer? _jsonTransformer;
 
   /// <summary>
   /// Executes the apply command on the specified directory.
@@ -60,11 +62,17 @@ public sealed class ApplyCommand {
       ct.ThrowIfCancellationRequested();
 
       // Check decision file for skip decisions
+      // Note: Even if handlers/projections are skipped, we continue if JSON migration is enabled
+      // since it operates on different patterns (Newtonsoft.Json → System.Text.Json)
       if (decisionFile != null) {
         var handlerDecision = decisionFile.GetHandlerDecision(file);
         var projectionDecision = decisionFile.GetProjectionDecision(file);
+        var jsonMigrationEnabled = decisionFile.Decisions.JsonMigration.Enabled ||
+            decisionFile.Decisions.JsonMigration.RemoveDeadImports;
 
-        if (handlerDecision == DecisionChoice.Skip && projectionDecision == DecisionChoice.Skip) {
+        if (handlerDecision == DecisionChoice.Skip &&
+            projectionDecision == DecisionChoice.Skip &&
+            !jsonMigrationEnabled) {
           skippedCount++;
           continue;
         }
@@ -152,6 +160,15 @@ public sealed class ApplyCommand {
       if (wolverineHttpResult.Changes.Count > 0) {
         transformedCode = wolverineHttpResult.TransformedCode;
         allChanges.AddRange(wolverineHttpResult.Changes);
+      }
+
+      // Apply Newtonsoft.Json → System.Text.Json transformations (optional)
+      // This always runs to remove dead imports, but full conversion is opt-in
+      _jsonTransformer ??= _createJsonTransformer(decisionFile);
+      var jsonResult = await _jsonTransformer.TransformAsync(transformedCode, file, ct);
+      if (jsonResult.Changes.Count > 0) {
+        transformedCode = jsonResult.TransformedCode;
+        allChanges.AddRange(jsonResult.Changes);
       }
 
       // Track changes
@@ -242,6 +259,18 @@ public sealed class ApplyCommand {
     return result.Files
         .Select(f => Path.Combine(basePath, f.Path))
         .ToList();
+  }
+
+  /// <summary>
+  /// Creates a JSON transformer configured from decision file settings.
+  /// </summary>
+  private static NewtonsoftToSystemTextJsonTransformer _createJsonTransformer(DecisionFile? decisionFile) {
+    var settings = decisionFile?.Decisions.JsonMigration;
+
+    return new NewtonsoftToSystemTextJsonTransformer(
+        enabled: settings?.Enabled ?? false,
+        removeDeadImports: settings?.RemoveDeadImports ?? true,
+        addTodoForUnsupported: settings?.AddTodoForUnsupported ?? true);
   }
 }
 

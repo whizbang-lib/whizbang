@@ -50,6 +50,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_MESSAGE_ID = "MessageId";
   private const string PLACEHOLDER_FULLY_QUALIFIED_NAME = "__FULLY_QUALIFIED_NAME__";
   private const string PLACEHOLDER_SIMPLE_NAME = "__SIMPLE_NAME__";
+  private const string PLACEHOLDER_SAFE_NAME = "__SAFE_NAME__";
   private const string PLACEHOLDER_GLOBAL = "global::";
   private const string PLACEHOLDER_INDEX = "__INDEX__";
   private const string PLACEHOLDER_PROPERTY_TYPE = "__PROPERTY_TYPE__";
@@ -57,6 +58,19 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_MESSAGE_TYPE = "__MESSAGE_TYPE__";
   private const string PLACEHOLDER_SETTER = "__SETTER__";
   private const string PLACEHOLDER_PARAMETER_NAME = "__PARAMETER_NAME__";
+
+  /// <summary>
+  /// Converts a fully qualified type name to a safe C# identifier for use in method names.
+  /// This ensures unique method names even when multiple namespaces have types with the same simple name.
+  /// Example: "global::JDX.Contracts.Job.CreateCommand" → "JDX_Contracts_Job_CreateCommand"
+  /// Example: "string?" → "string_Nullable"
+  /// </summary>
+  private static string _toSafeMethodName(string fullyQualifiedName) {
+    return fullyQualifiedName
+        .Replace(PLACEHOLDER_GLOBAL, "")
+        .Replace(".", "_")
+        .Replace("?", "_Nullable");
+  }
 
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover message types (commands, events, and types with [WhizbangSerializable])
@@ -381,7 +395,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var type in allTypes) {
       var field = messageFieldSnippet
           .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, type.FullyQualifiedName)
-          .Replace(PLACEHOLDER_SIMPLE_NAME, type.SimpleName);
+          .Replace(PLACEHOLDER_SAFE_NAME, _toSafeMethodName(type.FullyQualifiedName));
       sb.AppendLine(field);
     }
     sb.AppendLine();
@@ -390,7 +404,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var type in allTypes.Where(t => t.IsCommand || t.IsEvent)) {
       var field = envelopeFieldSnippet
           .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, type.FullyQualifiedName)
-          .Replace(PLACEHOLDER_SIMPLE_NAME, type.SimpleName);
+          .Replace(PLACEHOLDER_SAFE_NAME, _toSafeMethodName(type.FullyQualifiedName));
       sb.AppendLine(field);
     }
 
@@ -452,7 +466,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var type in allTypes) {
       var check = messageCheckSnippet
           .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, type.FullyQualifiedName)
-          .Replace(PLACEHOLDER_SIMPLE_NAME, type.SimpleName);
+          .Replace(PLACEHOLDER_SAFE_NAME, _toSafeMethodName(type.FullyQualifiedName));
       sb.AppendLine(check);
       sb.AppendLine();
     }
@@ -462,7 +476,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var type in allTypes.Where(t => t.IsCommand || t.IsEvent)) {
       var check = envelopeCheckSnippet
           .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, type.FullyQualifiedName)
-          .Replace(PLACEHOLDER_SIMPLE_NAME, type.SimpleName);
+          .Replace(PLACEHOLDER_SAFE_NAME, _toSafeMethodName(type.FullyQualifiedName));
       sb.AppendLine(check);
       sb.AppendLine();
     }
@@ -473,7 +487,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       foreach (var listType in listTypes) {
         var check = listCheckSnippet
             .Replace("__ELEMENT_TYPE__", listType.ElementTypeName)
-            .Replace("__ELEMENT_SIMPLE_NAME__", listType.ElementSimpleName);
+            .Replace("__ELEMENT_SAFE_NAME__", _toSafeMethodName(listType.ElementTypeName));
         sb.AppendLine(check);
         sb.AppendLine();
       }
@@ -528,7 +542,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine("/// <param name=\"assemblyQualifiedTypeName\">Assembly-qualified type name (e.g., \"YourNamespace.Commands.CreateOrder, YourAssembly\")</param>");
     sb.AppendLine("/// <param name=\"options\">JsonSerializerOptions to use for creating JsonTypeInfo</param>");
     sb.AppendLine("/// <returns>JsonTypeInfo for the type, or null if not found in this assembly</returns>");
-    sb.AppendLine("[System.Obsolete(\"Use JsonContextRegistry.GetTypeInfoByName() for cross-assembly type resolution with fuzzy matching support.\")]");
+    sb.AppendLine("[global::System.Obsolete(\"Use JsonContextRegistry.GetTypeInfoByName() for cross-assembly type resolution with fuzzy matching support.\")]");
     sb.AppendLine("public static JsonTypeInfo? GetTypeInfoByName(string assemblyQualifiedTypeName, JsonSerializerOptions options) {");
     sb.AppendLine("  if (string.IsNullOrEmpty(assemblyQualifiedTypeName)) return null;");
     sb.AppendLine("  if (options == null) return null;");
@@ -598,7 +612,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         "PARAMETER_INFO_VALUES");
 
     foreach (var message in messages) {
-      sb.AppendLine($"private JsonTypeInfo<{message.FullyQualifiedName}> Create_{message.SimpleName}(JsonSerializerOptions options) {{");
+      var safeName = _toSafeMethodName(message.FullyQualifiedName);
+      sb.AppendLine($"private JsonTypeInfo<{message.FullyQualifiedName}> Create_{safeName}(JsonSerializerOptions options) {{");
 
       // Generate properties array
       sb.AppendLine($"  var properties = new JsonPropertyInfo[{message.Properties.Length}];");
@@ -606,9 +621,12 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
       for (int i = 0; i < message.Properties.Length; i++) {
         var prop = message.Properties[i];
+        // Note: No trailing comma - the template snippet adds the comma after __SETTER__
+        // Note: No comment for null - a // comment would hide the template's trailing comma
+        // Note: Use null-forgiving operator (!) to suppress CS8601 warnings - STJ handles null checking
         var setter = prop.IsInitOnly
-            ? "null,  // Init-only property, STJ will use reflection"
-            : $"(obj, value) => (({message.FullyQualifiedName})obj).{prop.Name} = value,";
+            ? "null"
+            : $"(obj, value) => (({message.FullyQualifiedName})obj).{prop.Name} = value!";
 
         var propertyCode = propertyCreationSnippet
             .Replace(PLACEHOLDER_INDEX, i.ToString(CultureInfo.InvariantCulture))
@@ -706,7 +724,8 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         "PARAMETER_INFO_VALUES");
 
     foreach (var message in messages) {
-      sb.AppendLine($"private JsonTypeInfo<MessageEnvelope<{message.FullyQualifiedName}>> CreateMessageEnvelope_{message.SimpleName}(JsonSerializerOptions options) {{");
+      var safeName = _toSafeMethodName(message.FullyQualifiedName);
+      sb.AppendLine($"private JsonTypeInfo<MessageEnvelope<{message.FullyQualifiedName}>> CreateMessageEnvelope_{safeName}(JsonSerializerOptions options) {{");
 
       // Generate properties array for MessageEnvelope<T> (MessageId, Payload, Hops)
       sb.AppendLine("  var properties = new JsonPropertyInfo[3];");
@@ -1018,7 +1037,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var listType in listTypes) {
       var field = snippet
           .Replace("__ELEMENT_TYPE__", listType.ElementTypeName)
-          .Replace("__ELEMENT_SIMPLE_NAME__", listType.ElementSimpleName);
+          .Replace("__ELEMENT_SAFE_NAME__", _toSafeMethodName(listType.ElementTypeName));
       sb.AppendLine(field);
     }
 
@@ -1044,7 +1063,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var listType in listTypes) {
       var factory = snippet
           .Replace("__ELEMENT_TYPE__", listType.ElementTypeName)
-          .Replace("__ELEMENT_SIMPLE_NAME__", listType.ElementSimpleName);
+          .Replace("__ELEMENT_SAFE_NAME__", _toSafeMethodName(listType.ElementTypeName));
       sb.AppendLine(factory);
       sb.AppendLine();
     }

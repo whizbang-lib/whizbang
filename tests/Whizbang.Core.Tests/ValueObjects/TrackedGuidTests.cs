@@ -494,6 +494,92 @@ public class TrackedGuidTests {
   }
 
   // ========================================
+  // IsTracking Property Tests
+  // ========================================
+
+  [Test]
+  public async Task TrackedGuid_NewMedo_IsTracking_ReturnsTrueAsync() {
+    // Act
+    var tracked = TrackedGuid.NewMedo();
+
+    // Assert - Medo-generated GUIDs have authoritative metadata
+    await Assert.That(tracked.IsTracking).IsTrue();
+  }
+
+  [Test]
+  public async Task TrackedGuid_NewMicrosoftV7_IsTracking_ReturnsTrueAsync() {
+    // Act
+    var tracked = TrackedGuid.NewMicrosoftV7();
+
+    // Assert - Microsoft-generated GUIDs have authoritative metadata
+    await Assert.That(tracked.IsTracking).IsTrue();
+  }
+
+  [Test]
+  public async Task TrackedGuid_NewRandom_IsTracking_ReturnsTrueAsync() {
+    // Act
+    var tracked = TrackedGuid.NewRandom();
+
+    // Assert - Microsoft-generated GUIDs have authoritative metadata
+    await Assert.That(tracked.IsTracking).IsTrue();
+  }
+
+  [Test]
+  public async Task TrackedGuid_FromExternal_IsTracking_ReturnsFalseAsync() {
+    // Arrange
+    var guid = Guid.CreateVersion7();
+
+    // Act
+    var tracked = TrackedGuid.FromExternal(guid);
+
+    // Assert - External GUIDs have inferred metadata, not authoritative
+    await Assert.That(tracked.IsTracking).IsFalse();
+  }
+
+  [Test]
+  public async Task TrackedGuid_Parse_IsTracking_ReturnsFalseAsync() {
+    // Arrange
+    var guidString = Guid.CreateVersion7().ToString();
+
+    // Act
+    var tracked = TrackedGuid.Parse(guidString);
+
+    // Assert - Parsed GUIDs have inferred metadata, not authoritative
+    await Assert.That(tracked.IsTracking).IsFalse();
+  }
+
+  [Test]
+  public async Task TrackedGuid_ImplicitFromGuid_IsTracking_ReturnsFalseAsync() {
+    // Arrange
+    Guid rawGuid = Guid.CreateVersion7();
+
+    // Act
+    TrackedGuid tracked = rawGuid;
+
+    // Assert - Implicit conversion has unknown source, not tracking
+    await Assert.That(tracked.IsTracking).IsFalse();
+  }
+
+  [Test]
+  public async Task TrackedGuid_IsTracking_OnlyAuthoritativeSourcesReturnTrueAsync() {
+    // Arrange & Act - Create via different methods
+    var medo = TrackedGuid.NewMedo();
+    var microsoftV7 = TrackedGuid.NewMicrosoftV7();
+    var random = TrackedGuid.NewRandom();
+    var external = TrackedGuid.FromExternal(Guid.CreateVersion7());
+    var parsed = TrackedGuid.Parse(Guid.CreateVersion7().ToString());
+    TrackedGuid implicit_ = Guid.CreateVersion7();
+
+    // Assert - Only generation methods have authoritative metadata
+    await Assert.That(medo.IsTracking).IsTrue();
+    await Assert.That(microsoftV7.IsTracking).IsTrue();
+    await Assert.That(random.IsTracking).IsTrue();
+    await Assert.That(external.IsTracking).IsFalse();
+    await Assert.That(parsed.IsTracking).IsFalse();
+    await Assert.That(implicit_.IsTracking).IsFalse();
+  }
+
+  // ========================================
   // Default Value Tests
   // ========================================
 

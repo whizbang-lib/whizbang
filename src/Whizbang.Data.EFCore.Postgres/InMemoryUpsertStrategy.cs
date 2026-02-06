@@ -69,6 +69,67 @@ public class InMemoryUpsertStrategy : IDbUpsertStrategy {
     await context.SaveChangesAsync(cancellationToken);
   }
 
+  /// <inheritdoc/>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PhysicalFieldUpsertStrategyTests.cs:UpsertWithPhysicalFields_WhenRecordDoesNotExist_CreatesShadowPropertiesAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PhysicalFieldUpsertStrategyTests.cs:UpsertWithPhysicalFields_WhenRecordExists_UpdatesShadowPropertiesAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PhysicalFieldUpsertStrategyTests.cs:UpsertWithPhysicalFields_WithNullValues_SetsShadowPropertiesToNullAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PhysicalFieldUpsertStrategyTests.cs:UpsertWithPhysicalFields_WithEmptyDictionary_DoesNotFailAsync</tests>
+  public async Task UpsertPerspectiveRowWithPhysicalFieldsAsync<TModel>(
+      DbContext context,
+      string tableName,
+      Guid id,
+      TModel model,
+      PerspectiveMetadata metadata,
+      PerspectiveScope scope,
+      IDictionary<string, object?> physicalFieldValues,
+      CancellationToken cancellationToken = default)
+      where TModel : class {
+
+    var existingRow = await context.Set<PerspectiveRow<TModel>>()
+        .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
+
+    var now = DateTime.UtcNow;
+    PerspectiveRow<TModel> row;
+
+    if (existingRow == null) {
+      // Insert new record
+      row = new PerspectiveRow<TModel> {
+        Id = id,
+        Data = model,
+        Metadata = _cloneMetadata(metadata),
+        Scope = _cloneScope(scope),
+        CreatedAt = now,
+        UpdatedAt = now,
+        Version = 1
+      };
+
+      context.Set<PerspectiveRow<TModel>>().Add(row);
+    } else {
+      // Update existing record - remove and re-add to handle owned types properly
+      context.Set<PerspectiveRow<TModel>>().Remove(existingRow);
+
+      row = new PerspectiveRow<TModel> {
+        Id = existingRow.Id,
+        Data = model,
+        Metadata = _cloneMetadata(metadata),
+        Scope = _cloneScope(scope),
+        CreatedAt = existingRow.CreatedAt, // Preserve creation time
+        UpdatedAt = now,
+        Version = existingRow.Version + 1
+      };
+
+      context.Set<PerspectiveRow<TModel>>().Add(row);
+    }
+
+    // Set shadow property values for physical fields
+    var entry = context.Entry(row);
+    foreach (var (columnName, value) in physicalFieldValues) {
+      entry.Property(columnName).CurrentValue = value;
+    }
+
+    await context.SaveChangesAsync(cancellationToken);
+  }
+
   /// <summary>
   /// Creates a clone of PerspectiveMetadata to avoid EF Core tracking issues.
   /// </summary>
@@ -99,8 +160,9 @@ public class InMemoryUpsertStrategy : IDbUpsertStrategy {
       CustomerId = scope.CustomerId,
       UserId = scope.UserId,
       OrganizationId = scope.OrganizationId,
-      AllowedPrincipals = scope.AllowedPrincipals?.ToList(),
-      Extensions = scope.Extensions?.ToDictionary(kvp => kvp.Key, kvp => kvp.Value)
+      AllowedPrincipals = scope.AllowedPrincipals?.ToList() ?? [],
+      // Extensions as List<ScopeExtension> for EF Core ComplexProperty().ToJson() compatibility
+      Extensions = scope.Extensions?.Select(e => new ScopeExtension(e.Key, e.Value)).ToList() ?? []
     };
   }
 }
