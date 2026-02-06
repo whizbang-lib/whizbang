@@ -163,6 +163,45 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
     return new Guid(hashOther);
   }
 
+  /// <summary>
+  /// Insert or update a read model with physical field values.
+  /// Physical fields are stored in shadow properties configured by the EF Core model.
+  /// Creates new row if id doesn't exist, updates if it does.
+  /// Automatically increments version for optimistic concurrency.
+  /// </summary>
+  /// <param name="streamId">Stream ID (aggregate ID) to store model for</param>
+  /// <param name="model">The read model data to store (full model or filtered for Split mode)</param>
+  /// <param name="physicalFieldValues">Dictionary of column name to value for physical fields</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PhysicalFieldUpsertStrategyTests.cs:UpsertWithPhysicalFields_WhenRecordDoesNotExist_CreatesShadowPropertiesAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PhysicalFieldUpsertStrategyTests.cs:UpsertWithPhysicalFields_WhenRecordExists_UpdatesShadowPropertiesAsync</tests>
+  public async Task UpsertWithPhysicalFieldsAsync(
+      Guid streamId,
+      TModel model,
+      IDictionary<string, object?> physicalFieldValues,
+      CancellationToken cancellationToken = default) {
+
+    // Use default metadata for generic upserts
+    var metadata = new PerspectiveMetadata {
+      EventType = "Unknown",
+      EventId = Guid.NewGuid().ToString(),
+      Timestamp = DateTime.UtcNow
+    };
+
+    var scope = new PerspectiveScope();
+
+    // Delegate to strategy for optimal database-specific implementation
+    await _upsertStrategy.UpsertPerspectiveRowWithPhysicalFieldsAsync(
+        _context,
+        _tableName,
+        streamId,
+        model,
+        metadata,
+        scope,
+        physicalFieldValues,
+        cancellationToken);
+  }
+
   /// <inheritdoc/>
   public async Task FlushAsync(CancellationToken cancellationToken = default) {
     // For EF Core, ensure all tracked changes are committed to the database

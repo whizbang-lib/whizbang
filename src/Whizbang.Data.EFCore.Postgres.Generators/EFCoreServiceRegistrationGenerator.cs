@@ -923,9 +923,22 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine($");");
       sb.AppendLine();
 
-      // Add index on created_at for time-based queries (matches EF Core configuration)
+      // Add B-tree index on created_at for time-based queries (matches EF Core configuration)
       sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{perspective.TableName.Replace("wh_per_", "")}_created_at");
       sb.AppendLine($"  ON {schema}.{perspective.TableName} (created_at);");
+      sb.AppendLine();
+
+      // Add GIN indexes on JSONB columns for full LINQ query support
+      // GIN indexes enable efficient containment queries, key/value lookups, and path expressions
+      var shortName = perspective.TableName.Replace("wh_per_", "");
+      sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_data_gin");
+      sb.AppendLine($"  ON {schema}.{perspective.TableName} USING gin (data);");
+      sb.AppendLine();
+      sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_metadata_gin");
+      sb.AppendLine($"  ON {schema}.{perspective.TableName} USING gin (metadata);");
+      sb.AppendLine();
+      sb.AppendLine($"CREATE INDEX IF NOT EXISTS idx_{shortName}_scope_gin");
+      sb.AppendLine($"  ON {schema}.{perspective.TableName} USING gin (scope);");
       sb.AppendLine();
     }
 
