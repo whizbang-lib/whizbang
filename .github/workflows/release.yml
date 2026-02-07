@@ -145,6 +145,32 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Check if version already exists
+        run: |
+          VERSION="${{ needs.version.outputs.semver }}"
+          TAG="v$VERSION"
+
+          # Check if tag already exists
+          if git tag -l "$TAG" | grep -q "$TAG"; then
+            echo "::error::Tag $TAG already exists locally"
+            exit 1
+          fi
+
+          # Check if tag exists on remote
+          if git ls-remote --tags origin | grep -q "refs/tags/$TAG"; then
+            echo "::error::Tag $TAG already exists on remote. Version $VERSION has already been released."
+            echo ""
+            echo "To release a new version, ensure your changes include commits that would bump the version:"
+            echo "  - feat: commits bump minor version"
+            echo "  - fix: commits bump patch version"
+            echo "  - BREAKING CHANGE: bumps major version"
+            echo ""
+            echo "Or manually specify a release_type (major/minor/patch) when running this workflow."
+            exit 1
+          fi
+
+          echo "✅ Version $VERSION is available for release"
+
       - name: Update Version in Directory.Build.props
         run: |
           VERSION="${{ needs.version.outputs.semver }}"
