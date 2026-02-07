@@ -3,8 +3,12 @@ name: Release
 on:
   workflow_dispatch:
     inputs:
+      version:
+        description: 'Exact version to release (e.g., 1.2.3 or 1.2.3-beta.1). Leave empty for auto-calculation.'
+        required: false
+        type: string
       release_type:
-        description: 'Release type'
+        description: 'Release type (ignored if version is specified)'
         required: true
         default: 'auto'
         type: choice
@@ -66,35 +70,58 @@ jobs:
       - name: Calculate Final Version
         id: final_version
         run: |
-          MAJOR=${{ steps.gitversion.outputs.major }}
-          MINOR=${{ steps.gitversion.outputs.minor }}
-          PATCH=${{ steps.gitversion.outputs.patch }}
-          PRERELEASE="${{ steps.gitversion.outputs.preReleaseTag }}"
+          # Check if explicit version was provided
+          EXPLICIT_VERSION="${{ inputs.version }}"
 
-          case "${{ inputs.release_type }}" in
-            major)
-              MAJOR=$((MAJOR + 1))
-              MINOR=0
-              PATCH=0
-              ;;
-            minor)
-              MINOR=$((MINOR + 1))
-              PATCH=0
-              ;;
-            patch)
-              PATCH=$((PATCH + 1))
-              ;;
-            auto)
-              # Use GitVersion's calculated version as-is
-              ;;
-          esac
+          if [ -n "$EXPLICIT_VERSION" ]; then
+            # Use explicit version - parse it into components
+            echo "Using explicit version: $EXPLICIT_VERSION"
 
-          if [ -n "$PRERELEASE" ]; then
-            SEMVER="${MAJOR}.${MINOR}.${PATCH}-${PRERELEASE}"
-            FULLSEMVER="${MAJOR}.${MINOR}.${PATCH}-${PRERELEASE}"
+            # Parse version (handles both 1.2.3 and 1.2.3-prerelease formats)
+            if [[ "$EXPLICIT_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-(.+))?$ ]]; then
+              MAJOR="${BASH_REMATCH[1]}"
+              MINOR="${BASH_REMATCH[2]}"
+              PATCH="${BASH_REMATCH[3]}"
+              PRERELEASE="${BASH_REMATCH[5]}"
+            else
+              echo "::error::Invalid version format: $EXPLICIT_VERSION. Expected format: X.Y.Z or X.Y.Z-prerelease"
+              exit 1
+            fi
+
+            SEMVER="$EXPLICIT_VERSION"
+            FULLSEMVER="$EXPLICIT_VERSION"
           else
-            SEMVER="${MAJOR}.${MINOR}.${PATCH}"
-            FULLSEMVER="${MAJOR}.${MINOR}.${PATCH}"
+            # Auto-calculate version using GitVersion
+            MAJOR=${{ steps.gitversion.outputs.major }}
+            MINOR=${{ steps.gitversion.outputs.minor }}
+            PATCH=${{ steps.gitversion.outputs.patch }}
+            PRERELEASE="${{ steps.gitversion.outputs.preReleaseTag }}"
+
+            case "${{ inputs.release_type }}" in
+              major)
+                MAJOR=$((MAJOR + 1))
+                MINOR=0
+                PATCH=0
+                ;;
+              minor)
+                MINOR=$((MINOR + 1))
+                PATCH=0
+                ;;
+              patch)
+                PATCH=$((PATCH + 1))
+                ;;
+              auto)
+                # Use GitVersion's calculated version as-is
+                ;;
+            esac
+
+            if [ -n "$PRERELEASE" ]; then
+              SEMVER="${MAJOR}.${MINOR}.${PATCH}-${PRERELEASE}"
+              FULLSEMVER="${MAJOR}.${MINOR}.${PATCH}-${PRERELEASE}"
+            else
+              SEMVER="${MAJOR}.${MINOR}.${PATCH}"
+              FULLSEMVER="${MAJOR}.${MINOR}.${PATCH}"
+            fi
           fi
 
           echo "semver=$SEMVER" >> $GITHUB_OUTPUT
@@ -119,7 +146,11 @@ jobs:
           echo "| PreRelease | ${{ steps.final_version.outputs.prerelease }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Branch | ${{ steps.gitversion.outputs.branchName }} |" >> $GITHUB_STEP_SUMMARY
           echo "| SHA | ${{ steps.gitversion.outputs.sha }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Release Type | ${{ inputs.release_type }} |" >> $GITHUB_STEP_SUMMARY
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "| Version Source | Explicit: \`${{ inputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Version Source | Auto-calculated (${{ inputs.release_type }}) |" >> $GITHUB_STEP_SUMMARY
+          fi
 
           echo ""
           echo "Calculated version: ${{ steps.final_version.outputs.semver }}"
@@ -144,6 +175,32 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Check if version already exists
+        run: |
+          VERSION="${{ needs.version.outputs.semver }}"
+          TAG="v$VERSION"
+
+          # Check if tag already exists
+          if git tag -l "$TAG" | grep -q "$TAG"; then
+            echo "::error::Tag $TAG already exists locally"
+            exit 1
+          fi
+
+          # Check if tag exists on remote
+          if git ls-remote --tags origin | grep -q "refs/tags/$TAG"; then
+            echo "::error::Tag $TAG already exists on remote. Version $VERSION has already been released."
+            echo ""
+            echo "To release a new version, ensure your changes include commits that would bump the version:"
+            echo "  - feat: commits bump minor version"
+            echo "  - fix: commits bump patch version"
+            echo "  - BREAKING CHANGE: bumps major version"
+            echo ""
+            echo "Or manually specify a release_type (major/minor/patch) when running this workflow."
+            exit 1
+          fi
+
+          echo "✅ Version $VERSION is available for release"
 
       - name: Update Version in Directory.Build.props
         run: |

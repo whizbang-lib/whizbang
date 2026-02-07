@@ -23,5 +23,8 @@ public sealed record ListTypeInfo(
   /// This prevents duplicate field/method names when element types have the same SimpleName.
   /// </summary>
   /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithSameSimpleNameInDifferentNamespaces_GeneratesUniqueIdentifiersAsync</tests>
-  public string ElementUniqueIdentifier => ElementTypeName.Replace("global::", "").Replace(".", "_");
+  public string ElementUniqueIdentifier => ElementTypeName
+    .Replace("global::", "")
+    .Replace(".", "_")
+    .Replace("?", "__Nullable");
 }
