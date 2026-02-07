@@ -50,7 +50,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_MESSAGE_ID = "MessageId";
   private const string PLACEHOLDER_FULLY_QUALIFIED_NAME = "__FULLY_QUALIFIED_NAME__";
   private const string PLACEHOLDER_SIMPLE_NAME = "__SIMPLE_NAME__";
-  private const string PLACEHOLDER_SAFE_NAME = "__SAFE_NAME__";
+  private const string PLACEHOLDER_UNIQUE_IDENTIFIER = "__UNIQUE_IDENTIFIER__";
   private const string PLACEHOLDER_GLOBAL = "global::";
   private const string PLACEHOLDER_INDEX = "__INDEX__";
   private const string PLACEHOLDER_PROPERTY_TYPE = "__PROPERTY_TYPE__";
@@ -395,7 +395,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var type in allTypes) {
       var field = messageFieldSnippet
           .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, type.FullyQualifiedName)
-          .Replace(PLACEHOLDER_SAFE_NAME, _toSafeMethodName(type.FullyQualifiedName));
+          .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, type.UniqueIdentifier);
       sb.AppendLine(field);
     }
     sb.AppendLine();
@@ -404,7 +404,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var type in allTypes.Where(t => t.IsCommand || t.IsEvent)) {
       var field = envelopeFieldSnippet
           .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, type.FullyQualifiedName)
-          .Replace(PLACEHOLDER_SAFE_NAME, _toSafeMethodName(type.FullyQualifiedName));
+          .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, type.UniqueIdentifier);
       sb.AppendLine(field);
     }
 
@@ -466,7 +466,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var type in allTypes) {
       var check = messageCheckSnippet
           .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, type.FullyQualifiedName)
-          .Replace(PLACEHOLDER_SAFE_NAME, _toSafeMethodName(type.FullyQualifiedName));
+          .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, type.UniqueIdentifier);
       sb.AppendLine(check);
       sb.AppendLine();
     }
@@ -476,7 +476,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var type in allTypes.Where(t => t.IsCommand || t.IsEvent)) {
       var check = envelopeCheckSnippet
           .Replace(PLACEHOLDER_FULLY_QUALIFIED_NAME, type.FullyQualifiedName)
-          .Replace(PLACEHOLDER_SAFE_NAME, _toSafeMethodName(type.FullyQualifiedName));
+          .Replace(PLACEHOLDER_UNIQUE_IDENTIFIER, type.UniqueIdentifier);
       sb.AppendLine(check);
       sb.AppendLine();
     }
@@ -487,7 +487,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
       foreach (var listType in listTypes) {
         var check = listCheckSnippet
             .Replace("__ELEMENT_TYPE__", listType.ElementTypeName)
-            .Replace("__ELEMENT_SAFE_NAME__", _toSafeMethodName(listType.ElementTypeName));
+            .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", listType.ElementUniqueIdentifier);
         sb.AppendLine(check);
         sb.AppendLine();
       }
@@ -612,8 +612,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         "PARAMETER_INFO_VALUES");
 
     foreach (var message in messages) {
-      var safeName = _toSafeMethodName(message.FullyQualifiedName);
-      sb.AppendLine($"private JsonTypeInfo<{message.FullyQualifiedName}> Create_{safeName}(JsonSerializerOptions options) {{");
+      sb.AppendLine($"private JsonTypeInfo<{message.FullyQualifiedName}> Create_{message.UniqueIdentifier}(JsonSerializerOptions options) {{");
 
       // Generate properties array
       sb.AppendLine($"  var properties = new JsonPropertyInfo[{message.Properties.Length}];");
@@ -724,8 +723,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         "PARAMETER_INFO_VALUES");
 
     foreach (var message in messages) {
-      var safeName = _toSafeMethodName(message.FullyQualifiedName);
-      sb.AppendLine($"private JsonTypeInfo<MessageEnvelope<{message.FullyQualifiedName}>> CreateMessageEnvelope_{safeName}(JsonSerializerOptions options) {{");
+      sb.AppendLine($"private JsonTypeInfo<MessageEnvelope<{message.FullyQualifiedName}>> CreateMessageEnvelope_{message.UniqueIdentifier}(JsonSerializerOptions options) {{");
 
       // Generate properties array for MessageEnvelope<T> (MessageId, Payload, Hops)
       sb.AppendLine("  var properties = new JsonPropertyInfo[3];");
@@ -1037,7 +1035,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var listType in listTypes) {
       var field = snippet
           .Replace("__ELEMENT_TYPE__", listType.ElementTypeName)
-          .Replace("__ELEMENT_SAFE_NAME__", _toSafeMethodName(listType.ElementTypeName));
+          .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", listType.ElementUniqueIdentifier);
       sb.AppendLine(field);
     }
 
@@ -1063,7 +1061,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     foreach (var listType in listTypes) {
       var factory = snippet
           .Replace("__ELEMENT_TYPE__", listType.ElementTypeName)
-          .Replace("__ELEMENT_SAFE_NAME__", _toSafeMethodName(listType.ElementTypeName));
+          .Replace("__ELEMENT_UNIQUE_IDENTIFIER__", listType.ElementUniqueIdentifier);
       sb.AppendLine(factory);
       sb.AppendLine();
     }
