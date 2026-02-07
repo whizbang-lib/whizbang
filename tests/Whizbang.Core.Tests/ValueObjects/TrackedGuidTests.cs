@@ -14,66 +14,15 @@ public class TrackedGuidTests {
   // ========================================
 
   [Test]
-  public async Task GuidMetadata_Version7_HasCorrectFlagValueAsync() {
-    // Arrange & Act
-    var flag = GuidMetadata.Version7;
-
-    // Assert - bit 1 should be set
-    await Assert.That((byte)flag).IsEqualTo((byte)(1 << 1));
-  }
-
-  [Test]
-  public async Task GuidMetadata_Version4_HasCorrectFlagValueAsync() {
-    // Arrange & Act
-    var flag = GuidMetadata.Version4;
-
-    // Assert - bit 0 should be set
-    await Assert.That((byte)flag).IsEqualTo((byte)(1 << 0));
-  }
-
-  [Test]
-  public async Task GuidMetadata_SourceMedo_HasCorrectFlagValueAsync() {
-    // Arrange & Act
-    var flag = GuidMetadata.SourceMedo;
-
-    // Assert - bit 2 should be set
-    await Assert.That((byte)flag).IsEqualTo((byte)(1 << 2));
-  }
-
-  [Test]
-  public async Task GuidMetadata_SourceMicrosoft_HasCorrectFlagValueAsync() {
-    // Arrange & Act
-    var flag = GuidMetadata.SourceMicrosoft;
-
-    // Assert - bit 3 should be set
-    await Assert.That((byte)flag).IsEqualTo((byte)(1 << 3));
-  }
-
-  [Test]
-  public async Task GuidMetadata_SourceParsed_HasCorrectFlagValueAsync() {
-    // Arrange & Act
-    var flag = GuidMetadata.SourceParsed;
-
-    // Assert - bit 4 should be set
-    await Assert.That((byte)flag).IsEqualTo((byte)(1 << 4));
-  }
-
-  [Test]
-  public async Task GuidMetadata_SourceExternal_HasCorrectFlagValueAsync() {
-    // Arrange & Act
-    var flag = GuidMetadata.SourceExternal;
-
-    // Assert - bit 5 should be set
-    await Assert.That((byte)flag).IsEqualTo((byte)(1 << 5));
-  }
-
-  [Test]
-  public async Task GuidMetadata_SourceUnknown_HasCorrectFlagValueAsync() {
-    // Arrange & Act
-    var flag = GuidMetadata.SourceUnknown;
-
-    // Assert - bit 6 should be set
-    await Assert.That((byte)flag).IsEqualTo((byte)(1 << 6));
+  [Arguments(GuidMetadata.Version4, 0)]
+  [Arguments(GuidMetadata.Version7, 1)]
+  [Arguments(GuidMetadata.SourceMedo, 2)]
+  [Arguments(GuidMetadata.SourceMicrosoft, 3)]
+  [Arguments(GuidMetadata.SourceParsed, 4)]
+  [Arguments(GuidMetadata.SourceExternal, 5)]
+  [Arguments(GuidMetadata.SourceUnknown, 6)]
+  public async Task GuidMetadata_Flags_HaveCorrectBitPositionsAsync(GuidMetadata flag, int bitPosition) {
+    await Assert.That((byte)flag).IsEqualTo((byte)(1 << bitPosition));
   }
 
   [Test]
@@ -496,69 +445,6 @@ public class TrackedGuidTests {
   // ========================================
   // IsTracking Property Tests
   // ========================================
-
-  [Test]
-  public async Task TrackedGuid_NewMedo_IsTracking_ReturnsTrueAsync() {
-    // Act
-    var tracked = TrackedGuid.NewMedo();
-
-    // Assert - Medo-generated GUIDs have authoritative metadata
-    await Assert.That(tracked.IsTracking).IsTrue();
-  }
-
-  [Test]
-  public async Task TrackedGuid_NewMicrosoftV7_IsTracking_ReturnsTrueAsync() {
-    // Act
-    var tracked = TrackedGuid.NewMicrosoftV7();
-
-    // Assert - Microsoft-generated GUIDs have authoritative metadata
-    await Assert.That(tracked.IsTracking).IsTrue();
-  }
-
-  [Test]
-  public async Task TrackedGuid_NewRandom_IsTracking_ReturnsTrueAsync() {
-    // Act
-    var tracked = TrackedGuid.NewRandom();
-
-    // Assert - Microsoft-generated GUIDs have authoritative metadata
-    await Assert.That(tracked.IsTracking).IsTrue();
-  }
-
-  [Test]
-  public async Task TrackedGuid_FromExternal_IsTracking_ReturnsFalseAsync() {
-    // Arrange
-    var guid = Guid.CreateVersion7();
-
-    // Act
-    var tracked = TrackedGuid.FromExternal(guid);
-
-    // Assert - External GUIDs have inferred metadata, not authoritative
-    await Assert.That(tracked.IsTracking).IsFalse();
-  }
-
-  [Test]
-  public async Task TrackedGuid_Parse_IsTracking_ReturnsFalseAsync() {
-    // Arrange
-    var guidString = Guid.CreateVersion7().ToString();
-
-    // Act
-    var tracked = TrackedGuid.Parse(guidString);
-
-    // Assert - Parsed GUIDs have inferred metadata, not authoritative
-    await Assert.That(tracked.IsTracking).IsFalse();
-  }
-
-  [Test]
-  public async Task TrackedGuid_ImplicitFromGuid_IsTracking_ReturnsFalseAsync() {
-    // Arrange
-    Guid rawGuid = Guid.CreateVersion7();
-
-    // Act
-    TrackedGuid tracked = rawGuid;
-
-    // Assert - Implicit conversion has unknown source, not tracking
-    await Assert.That(tracked.IsTracking).IsFalse();
-  }
 
   [Test]
   public async Task TrackedGuid_IsTracking_OnlyAuthoritativeSourcesReturnTrueAsync() {
