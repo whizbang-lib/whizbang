@@ -1,5 +1,6 @@
 using TUnit.Core;
 using Whizbang.Core.Perspectives;
+using Whizbang.Core.Tests.Helpers;
 
 namespace Whizbang.Core.Tests.Perspectives;
 
@@ -13,88 +14,32 @@ namespace Whizbang.Core.Tests.Perspectives;
 [Category("PhysicalFields")]
 public class PerspectiveStorageAttributeTests {
   [Test]
-  public async Task PerspectiveStorageAttribute_Constructor_SetsModeAsync() {
-    // Arrange & Act
-    var attribute = new PerspectiveStorageAttribute(FieldStorageMode.Split);
-
-    // Assert
-    await Assert.That(attribute).IsNotNull();
-    await Assert.That(attribute.Mode).IsEqualTo(FieldStorageMode.Split);
+  [Arguments(FieldStorageMode.JsonOnly)]
+  [Arguments(FieldStorageMode.Extracted)]
+  [Arguments(FieldStorageMode.Split)]
+  public async Task PerspectiveStorageAttribute_Constructor_SetsModeAsync(FieldStorageMode mode) {
+    var attribute = new PerspectiveStorageAttribute(mode);
+    await Assert.That(attribute.Mode).IsEqualTo(mode);
   }
 
   [Test]
-  public async Task PerspectiveStorageAttribute_Constructor_AcceptsExtractedModeAsync() {
-    // Arrange & Act
-    var attribute = new PerspectiveStorageAttribute(FieldStorageMode.Extracted);
-
-    // Assert
-    await Assert.That(attribute.Mode).IsEqualTo(FieldStorageMode.Extracted);
-  }
-
-  [Test]
-  public async Task PerspectiveStorageAttribute_Constructor_AcceptsJsonOnlyModeAsync() {
-    // Arrange & Act
-    var attribute = new PerspectiveStorageAttribute(FieldStorageMode.JsonOnly);
-
-    // Assert
-    await Assert.That(attribute.Mode).IsEqualTo(FieldStorageMode.JsonOnly);
-  }
-
-  [Test]
-  public async Task PerspectiveStorageAttribute_AttributeUsage_AllowsClassTargetAsync() {
-    // Arrange & Act
-    var attributeUsage = typeof(PerspectiveStorageAttribute)
-        .GetCustomAttributes(typeof(AttributeUsageAttribute), false)
-        .Cast<AttributeUsageAttribute>()
-        .FirstOrDefault();
-
-    // Assert
+  public async Task PerspectiveStorageAttribute_AttributeUsage_AllowsClassAndStructAsync() {
+    var attributeUsage = AttributeTestHelpers.GetAttributeUsage<PerspectiveStorageAttribute>();
     await Assert.That(attributeUsage).IsNotNull();
     await Assert.That(attributeUsage!.ValidOn.HasFlag(AttributeTargets.Class)).IsTrue();
+    await Assert.That(attributeUsage.ValidOn.HasFlag(AttributeTargets.Struct)).IsTrue();
   }
 
   [Test]
-  public async Task PerspectiveStorageAttribute_AttributeUsage_AllowsStructTargetAsync() {
-    // Arrange & Act
-    var attributeUsage = typeof(PerspectiveStorageAttribute)
-        .GetCustomAttributes(typeof(AttributeUsageAttribute), false)
-        .Cast<AttributeUsageAttribute>()
-        .FirstOrDefault();
-
-    // Assert
-    await Assert.That(attributeUsage).IsNotNull();
-    await Assert.That(attributeUsage!.ValidOn.HasFlag(AttributeTargets.Struct)).IsTrue();
-  }
-
-  [Test]
-  public async Task PerspectiveStorageAttribute_AttributeUsage_DoesNotAllowMultipleAsync() {
-    // Arrange & Act
-    var attributeUsage = typeof(PerspectiveStorageAttribute)
-        .GetCustomAttributes(typeof(AttributeUsageAttribute), false)
-        .Cast<AttributeUsageAttribute>()
-        .FirstOrDefault();
-
-    // Assert
+  public async Task PerspectiveStorageAttribute_AttributeUsage_DoesNotAllowMultiple_NotInheritedAsync() {
+    var attributeUsage = AttributeTestHelpers.GetAttributeUsage<PerspectiveStorageAttribute>();
     await Assert.That(attributeUsage).IsNotNull();
     await Assert.That(attributeUsage!.AllowMultiple).IsFalse();
-  }
-
-  [Test]
-  public async Task PerspectiveStorageAttribute_AttributeUsage_IsNotInheritedAsync() {
-    // Arrange & Act
-    var attributeUsage = typeof(PerspectiveStorageAttribute)
-        .GetCustomAttributes(typeof(AttributeUsageAttribute), false)
-        .Cast<AttributeUsageAttribute>()
-        .FirstOrDefault();
-
-    // Assert - not inherited to avoid confusion with derived types
-    await Assert.That(attributeUsage).IsNotNull();
-    await Assert.That(attributeUsage!.Inherited).IsFalse();
+    await Assert.That(attributeUsage.Inherited).IsFalse();
   }
 
   [Test]
   public async Task PerspectiveStorageAttribute_IsSealedAsync() {
-    // Assert - attribute class should be sealed for performance
     await Assert.That(typeof(PerspectiveStorageAttribute).IsSealed).IsTrue();
   }
 }
