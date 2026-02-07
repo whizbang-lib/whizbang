@@ -1,0 +1,155 @@
+name: Start Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Release type'
+        required: true
+        default: 'auto'
+        type: choice
+        options:
+          - auto       # Use GitVersion calculated version
+          - major      # Force major version bump (x.0.0)
+          - minor      # Force minor version bump (0.x.0)
+          - patch      # Force patch version bump (0.0.x)
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  create-release-pr:
+    name: Create Release PR
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install GitVersion
+        uses: gittools/actions/gitversion/setup@26a89e5dd4fa9ba66a853e04706ba52755ca4057 # v3.1.1
+        with:
+          versionSpec: '6.0.x'
+
+      - name: Determine Base Version
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@26a89e5dd4fa9ba66a853e04706ba52755ca4057 # v3.1.1
+        with:
+          useConfigFile: true
+          configFilePath: GitVersion.yml
+
+      - name: Calculate Final Version
+        id: version
+        run: |
+          MAJOR=${{ steps.gitversion.outputs.major }}
+          MINOR=${{ steps.gitversion.outputs.minor }}
+          PATCH=${{ steps.gitversion.outputs.patch }}
+          PRERELEASE="${{ steps.gitversion.outputs.preReleaseTag }}"
+
+          case "${{ inputs.release_type }}" in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+            auto)
+              # Use GitVersion's calculated version as-is
+              ;;
+          esac
+
+          if [ -n "$PRERELEASE" ]; then
+            SEMVER="${MAJOR}.${MINOR}.${PATCH}-${PRERELEASE}"
+          else
+            SEMVER="${MAJOR}.${MINOR}.${PATCH}"
+          fi
+
+          echo "semver=$SEMVER" >> $GITHUB_OUTPUT
+          echo "branch=release/v$SEMVER" >> $GITHUB_OUTPUT
+          echo "Calculated version: $SEMVER"
+
+      - name: Configure Git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create Release Branch
+        run: |
+          BRANCH="${{ steps.version.outputs.branch }}"
+          git checkout -b "$BRANCH"
+
+      - name: Update Version in Directory.Build.props
+        run: |
+          VERSION="${{ steps.version.outputs.semver }}"
+          echo "Updating version to: $VERSION"
+
+          # Update the version in Directory.Build.props using sed
+          sed -i "s|<Version>[^<]*</Version>|<Version>$VERSION</Version>|g" Directory.Build.props
+
+          # Verify the change
+          grep "<Version>" Directory.Build.props
+
+      - name: Commit and Push
+        run: |
+          VERSION="${{ steps.version.outputs.semver }}"
+          BRANCH="${{ steps.version.outputs.branch }}"
+
+          git add Directory.Build.props
+          git commit -m "chore(release): bump version to $VERSION"
+          git push origin "$BRANCH"
+
+      - name: Create Pull Request
+        id: create-pr
+        uses: peter-evans/create-pull-request@271a8d0340265f705b14b6d32b9829c1cb33d45e # v7.0.8
+        with:
+          branch: ${{ steps.version.outputs.branch }}
+          base: main
+          title: "chore(release): v${{ steps.version.outputs.semver }}"
+          body: |
+            ## Release v${{ steps.version.outputs.semver }}
+
+            This PR prepares the release of version **v${{ steps.version.outputs.semver }}**.
+
+            ### Changes
+            - Updated `Directory.Build.props` to version `${{ steps.version.outputs.semver }}`
+
+            ### Release Checklist
+            - [ ] All CI checks pass
+            - [ ] Version number is correct
+            - [ ] CHANGELOG updated (if applicable)
+
+            ### After Merge
+            When this PR is merged to `main`, the release workflow will:
+            1. Create git tag `v${{ steps.version.outputs.semver }}`
+            2. Create GitHub Release with auto-generated notes
+            3. Publish NuGet packages
+
+            ---
+            *This PR was automatically created by the Start Release workflow.*
+          labels: |
+            release
+            automated
+
+      - name: Summary
+        run: |
+          echo "## Release PR Created" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: v${{ steps.version.outputs.semver }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Branch**: ${{ steps.version.outputs.branch }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **PR**: Created and ready for review" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Once the PR is approved and merged, the release will be automatically published." >> $GITHUB_STEP_SUMMARY
