@@ -155,7 +155,8 @@ public record CreateOrder(string OrderId) : ICommand;
     await Assert.That(code).IsNotNull();
 
     // Should generate specific factory method for MessageEnvelope<CreateOrder>
-    await Assert.That(code!).Contains("CreateMessageEnvelope_CreateOrder");
+    // Uses unique identifier from fully qualified name: MyApp.Commands.CreateOrder -> MyApp_Commands_CreateOrder
+    await Assert.That(code!).Contains("CreateMessageEnvelope_MyApp_Commands_CreateOrder");
     await Assert.That(code).Contains("MessageEnvelope<global::MyApp.Commands.CreateOrder>");
   }
 
@@ -612,7 +613,51 @@ public record CreateOrder(string OrderId, List<PublicDetail> PublicItems) : ICom
     await Assert.That(code).IsNotNull();
     await Assert.That(code!).Contains("CreateOrder");
     await Assert.That(code).Contains("PublicDetail");
-    // PublicDetail should have factory method
-    await Assert.That(code).Contains("Create_PublicDetail");
+    // PublicDetail should have factory method (uses unique identifier from FQN)
+    await Assert.That(code).Contains("Create_MyApp_PublicDetail");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithSameSimpleNameInDifferentNamespaces_GeneratesUniqueIdentifiersAsync() {
+    // Arrange - Two types with same SimpleName but different namespaces
+    // This would previously cause duplicate field names (_StartCommand) and factory methods
+    var source = """
+using Whizbang.Core;
+
+namespace MyApp.Commands {
+  public record StartCommand(string Data) : ICommand;
+}
+
+namespace MyApp.Events {
+  public record StartCommand(string Data) : IEvent;
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - Should not have compilation errors (duplicate identifiers would cause errors)
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Both types should be present with fully qualified names
+    await Assert.That(code!).Contains("global::MyApp.Commands.StartCommand");
+    await Assert.That(code).Contains("global::MyApp.Events.StartCommand");
+
+    // Should have unique field names (not duplicate _StartCommand)
+    // Uses namespace-qualified identifiers like _MyApp_Commands_StartCommand
+    await Assert.That(code).Contains("_MyApp_Commands_StartCommand");
+    await Assert.That(code).Contains("_MyApp_Events_StartCommand");
+
+    // Should have unique factory method names
+    await Assert.That(code).Contains("Create_MyApp_Commands_StartCommand");
+    await Assert.That(code).Contains("Create_MyApp_Events_StartCommand");
+
+    // Should have unique MessageEnvelope factory method names
+    await Assert.That(code).Contains("CreateMessageEnvelope_MyApp_Commands_StartCommand");
+    await Assert.That(code).Contains("CreateMessageEnvelope_MyApp_Events_StartCommand");
   }
 }
