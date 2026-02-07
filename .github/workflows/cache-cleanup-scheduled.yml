@@ -1,0 +1,53 @@
+name: Cache Cleanup (Scheduled)
+
+on:
+  schedule:
+    - cron: '0 0 * * 0'  # Sunday midnight UTC
+  workflow_dispatch:  # Manual trigger
+
+permissions:
+  actions: write  # Required to delete caches
+
+jobs:
+  cleanup:
+    name: Cleanup Old Caches
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cleanup Old Caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          echo "Fetching cache list for $REPO..."
+
+          # Get all caches sorted by last accessed (oldest first)
+          gh api "repos/$REPO/actions/caches" \
+            --jq '.actions_caches | sort_by(.last_accessed_at) | .[] | "\(.id) \(.key) \(.size_in_bytes)"' \
+            > /tmp/caches.txt
+
+          TOTAL=$(wc -l < /tmp/caches.txt | tr -d ' ')
+          echo "Found $TOTAL caches"
+
+          # Keep newest 3 caches, delete rest
+          KEEP=3
+          DELETE=$((TOTAL - KEEP))
+
+          if [ "$DELETE" -gt 0 ]; then
+            echo "Deleting $DELETE old caches (keeping newest $KEEP)"
+
+            head -n "$DELETE" /tmp/caches.txt | while read -r id key size; do
+              size_mb=$((size / 1024 / 1024))
+              echo "Deleting cache $id (${size_mb}MB): $key"
+              gh api --method DELETE "repos/$REPO/actions/caches/$id" || true
+            done
+
+            echo "✅ Deleted $DELETE old caches"
+          else
+            echo "Only $TOTAL caches exist, nothing to delete (keeping $KEEP)"
+          fi
+
+          # Show remaining caches
+          echo ""
+          echo "=== Remaining caches ==="
+          gh api "repos/$REPO/actions/caches" \
+            --jq '.actions_caches[] | "\(.key): \(.size_in_bytes / 1024 / 1024 | floor)MB"'
