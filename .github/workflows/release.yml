@@ -207,4 +207,6 @@ jobs:
     uses: ./.github/workflows/nuget-publish.yml
     with:
       tag: v${{ needs.version.outputs.semver }}
-    secrets: inherit  # Required for OIDC trusted publishing permissions
+    # Note: No secrets needed - nuget-publish.yml uses OIDC trusted publishing
+    # which relies on id-token permission (declared in the called workflow),
+    # not repository secrets
