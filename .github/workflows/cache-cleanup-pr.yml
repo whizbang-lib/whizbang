@@ -1,0 +1,37 @@
+name: Cache Cleanup (PR)
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  actions: write  # Required to delete caches
+
+jobs:
+  cleanup:
+    name: Cleanup PR Caches
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cleanup PR Branch Caches
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: refs/pull/${{ github.event.pull_request.number }}/merge
+        run: |
+          echo "Cleaning up caches for PR #${{ github.event.pull_request.number }}"
+          echo "Branch ref: $BRANCH"
+
+          # Get cache IDs for this PR's merge ref
+          CACHE_IDS=$(gh cache list --ref "$BRANCH" --json id --jq '.[].id' 2>/dev/null || true)
+
+          if [ -z "$CACHE_IDS" ]; then
+            echo "No caches found for this PR"
+            exit 0
+          fi
+
+          # Delete each cache
+          for id in $CACHE_IDS; do
+            echo "Deleting cache $id..."
+            gh cache delete "$id" || true
+          done
+
+          echo "✅ PR cache cleanup complete"
