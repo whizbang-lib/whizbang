@@ -23,6 +23,12 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
   private readonly string _tableName;
   private readonly IDbUpsertStrategy _upsertStrategy;
 
+  private static PerspectiveMetadata _defaultMetadata => new() {
+    EventType = "Unknown",
+    EventId = Guid.NewGuid().ToString(),
+    Timestamp = DateTime.UtcNow
+  };
+
   /// <summary>
   /// Initializes a new instance of <see cref="EFCorePostgresPerspectiveStore{TModel}"/>.
   /// </summary>
@@ -61,26 +67,9 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_WhenRecordExists_UpdatesExistingRecordAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_IncrementsVersionNumber_OnEachUpdateAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertAsync_UpdatesUpdatedAtTimestamp_OnUpdateAsync</tests>
-  public async Task UpsertAsync(Guid streamId, TModel model, CancellationToken cancellationToken = default) {
-    // Use default metadata for generic upserts
-    var metadata = new PerspectiveMetadata {
-      EventType = "Unknown",
-      EventId = Guid.NewGuid().ToString(),
-      Timestamp = DateTime.UtcNow
-    };
-
-    var scope = new PerspectiveScope();
-
-    // Delegate to strategy for optimal database-specific implementation
-    await _upsertStrategy.UpsertPerspectiveRowAsync(
-        _context,
-        _tableName,
-        streamId,
-        model,
-        metadata,
-        scope,
-        cancellationToken);
-  }
+  public Task UpsertAsync(Guid streamId, TModel model, CancellationToken cancellationToken = default) =>
+    _upsertStrategy.UpsertPerspectiveRowAsync(
+        _context, _tableName, streamId, model, _defaultMetadata, new PerspectiveScope(), cancellationToken);
 
   /// <inheritdoc/>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:GetByPartitionKeyAsync_WhenRecordExists_ReturnsModelAsync</tests>
@@ -107,34 +96,14 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertByPartitionKeyAsync_WhenRecordDoesNotExist_CreatesNewRecordAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertByPartitionKeyAsync_WhenRecordExists_UpdatesExistingRecordAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresPerspectiveStoreTests.cs:UpsertByPartitionKeyAsync_IncrementsVersionNumber_OnEachUpdateAsync</tests>
-  public async Task UpsertByPartitionKeyAsync<TPartitionKey>(
+  public Task UpsertByPartitionKeyAsync<TPartitionKey>(
       TPartitionKey partitionKey,
       TModel model,
       CancellationToken cancellationToken = default)
-      where TPartitionKey : notnull {
-
-    // Convert partition key to Guid for storage
-    var partitionGuid = _convertPartitionKeyToGuid(partitionKey);
-
-    // Use default metadata for generic upserts
-    var metadata = new PerspectiveMetadata {
-      EventType = "Unknown",
-      EventId = Guid.NewGuid().ToString(),
-      Timestamp = DateTime.UtcNow
-    };
-
-    var scope = new PerspectiveScope();
-
-    // Delegate to strategy for optimal database-specific implementation
-    await _upsertStrategy.UpsertPerspectiveRowAsync(
-        _context,
-        _tableName,
-        partitionGuid,
-        model,
-        metadata,
-        scope,
-        cancellationToken);
-  }
+      where TPartitionKey : notnull =>
+    _upsertStrategy.UpsertPerspectiveRowAsync(
+        _context, _tableName, _convertPartitionKeyToGuid(partitionKey), model,
+        _defaultMetadata, new PerspectiveScope(), cancellationToken);
 
   /// <summary>
   /// Converts a partition key of any type to a Guid for storage.
@@ -175,32 +144,14 @@ public class EFCorePostgresPerspectiveStore<TModel> : IPerspectiveStore<TModel>
   /// <param name="cancellationToken">Cancellation token</param>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PhysicalFieldUpsertStrategyTests.cs:UpsertWithPhysicalFields_WhenRecordDoesNotExist_CreatesShadowPropertiesAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PhysicalFieldUpsertStrategyTests.cs:UpsertWithPhysicalFields_WhenRecordExists_UpdatesShadowPropertiesAsync</tests>
-  public async Task UpsertWithPhysicalFieldsAsync(
+  public Task UpsertWithPhysicalFieldsAsync(
       Guid streamId,
       TModel model,
       IDictionary<string, object?> physicalFieldValues,
-      CancellationToken cancellationToken = default) {
-
-    // Use default metadata for generic upserts
-    var metadata = new PerspectiveMetadata {
-      EventType = "Unknown",
-      EventId = Guid.NewGuid().ToString(),
-      Timestamp = DateTime.UtcNow
-    };
-
-    var scope = new PerspectiveScope();
-
-    // Delegate to strategy for optimal database-specific implementation
-    await _upsertStrategy.UpsertPerspectiveRowWithPhysicalFieldsAsync(
-        _context,
-        _tableName,
-        streamId,
-        model,
-        metadata,
-        scope,
-        physicalFieldValues,
-        cancellationToken);
-  }
+      CancellationToken cancellationToken = default) =>
+    _upsertStrategy.UpsertPerspectiveRowWithPhysicalFieldsAsync(
+        _context, _tableName, streamId, model, _defaultMetadata, new PerspectiveScope(),
+        physicalFieldValues, cancellationToken);
 
   /// <inheritdoc/>
   public async Task FlushAsync(CancellationToken cancellationToken = default) {
