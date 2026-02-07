@@ -1,7 +1,7 @@
-using System;
-using System.Text.Json;
-using System.Text.Json.Serialization;
-using System.Text.Json.Serialization.Metadata;
+using global::System;
+using global::System.Text.Json;
+using global::System.Text.Json.Serialization;
+using global::System.Text.Json.Serialization.Metadata;
 
 #region NAMESPACE
 namespace __NAMESPACE__;
@@ -51,8 +51,8 @@ public class WhizbangJsonContext : JsonSerializerContext, IJsonTypeInfoResolver 
     };
 
     var options = new JsonSerializerOptions {
-      TypeInfoResolver = System.Text.Json.Serialization.Metadata.JsonTypeInfoResolver.Combine(resolvers),
-      DefaultIgnoreCondition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
+      TypeInfoResolver = global::System.Text.Json.Serialization.Metadata.JsonTypeInfoResolver.Combine(resolvers),
+      DefaultIgnoreCondition = global::System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull
     };
 __CONVERTER_REGISTRATIONS__
     return options;
@@ -63,7 +63,7 @@ __CONVERTER_REGISTRATIONS__
   /// This is used when GetTypeInfo is called directly on WhizbangJsonContext.
   /// </summary>
   private static readonly IJsonTypeInfoResolver _combinedResolver =
-    System.Text.Json.Serialization.Metadata.JsonTypeInfoResolver.Combine(
+    global::System.Text.Json.Serialization.Metadata.JsonTypeInfoResolver.Combine(
       global::Whizbang.Core.Generated.WhizbangIdJsonContext.Default,
       WhizbangIdJsonContext.Default,  // Local WhizbangId types
       MessageJsonContext.Default,

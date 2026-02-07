@@ -155,7 +155,8 @@ public record CreateOrder(string OrderId) : ICommand;
     await Assert.That(code).IsNotNull();
 
     // Should generate specific factory method for MessageEnvelope<CreateOrder>
-    await Assert.That(code!).Contains("CreateMessageEnvelope_CreateOrder");
+    // Safe names use fully qualified path to avoid collisions (e.g., MyApp_Commands_CreateOrder)
+    await Assert.That(code!).Contains("CreateMessageEnvelope_MyApp_Commands_CreateOrder");
     await Assert.That(code).Contains("MessageEnvelope<global::MyApp.Commands.CreateOrder>");
   }
 
@@ -612,7 +613,7 @@ public record CreateOrder(string OrderId, List<PublicDetail> PublicItems) : ICom
     await Assert.That(code).IsNotNull();
     await Assert.That(code!).Contains("CreateOrder");
     await Assert.That(code).Contains("PublicDetail");
-    // PublicDetail should have factory method
-    await Assert.That(code).Contains("Create_PublicDetail");
+    // PublicDetail should have factory method with safe name (namespace-qualified)
+    await Assert.That(code).Contains("Create_MyApp_PublicDetail");
   }
 }
