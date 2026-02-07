@@ -23,6 +23,11 @@ env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
+# Top-level permissions for the workflow
+permissions:
+  contents: write   # For committing version changes and pushing tags
+  id-token: write   # For OIDC trusted publishing (inherited by reusable workflows)
+
 jobs:
   version:
     name: Calculate Version
@@ -202,4 +207,6 @@ jobs:
     uses: ./.github/workflows/nuget-publish.yml
     with:
       tag: v${{ needs.version.outputs.semver }}
-    # No secrets needed - workflow uses OIDC trusted publishing
+    # Note: No secrets needed - nuget-publish.yml uses OIDC trusted publishing
+    # which relies on id-token permission (declared in the called workflow),
+    # not repository secrets
