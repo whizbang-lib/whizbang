@@ -1,50 +1,78 @@
 name: Release
 
 on:
+  # Trigger when a release PR is merged to main
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+  # Keep manual trigger for dry runs
   workflow_dispatch:
     inputs:
-      release_type:
-        description: 'Release type'
-        required: true
-        default: 'auto'
-        type: choice
-        options:
-          - auto       # Use GitVersion calculated version
-          - major      # Force major version bump (x.0.0)
-          - minor      # Force minor version bump (0.x.0)
-          - patch      # Force patch version bump (0.0.x)
       dry_run:
-        description: 'Dry run (no tag or release created)'
+        description: 'Dry run (calculate version only, no tag or release)'
         required: false
-        default: false
+        default: true
         type: boolean
 
 env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
+permissions:
+  contents: write
+  id-token: write
+
 jobs:
+  # Only run if this is a merged release PR or a manual dry run
+  check-release:
+    name: Check Release Conditions
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - name: Check if release should proceed
+        id: check
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "Manual trigger - dry run mode"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "version=" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event.pull_request.merged }}" == "true" ]; then
+            # Check if PR title matches release pattern
+            PR_TITLE="${{ github.event.pull_request.title }}"
+            if [[ "$PR_TITLE" =~ ^chore\(release\):\ v([0-9]+\.[0-9]+\.[0-9]+.*) ]]; then
+              VERSION="${BASH_REMATCH[1]}"
+              echo "Release PR merged - version: $VERSION"
+              echo "should_release=true" >> $GITHUB_OUTPUT
+              echo "version=$VERSION" >> $GITHUB_OUTPUT
+            else
+              echo "PR merged but not a release PR"
+              echo "should_release=false" >> $GITHUB_OUTPUT
+              echo "version=" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "PR not merged, skipping"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "version=" >> $GITHUB_OUTPUT
+          fi
+
   version:
     name: Calculate Version
+    needs: check-release
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
     outputs:
       semver: ${{ steps.gitversion.outputs.semVer }}
-      major: ${{ steps.gitversion.outputs.major }}
-      minor: ${{ steps.gitversion.outputs.minor }}
-      patch: ${{ steps.gitversion.outputs.patch }}
-      prerelease: ${{ steps.gitversion.outputs.preReleaseTag }}
-      fullsemver: ${{ steps.gitversion.outputs.fullSemVer }}
-      informationalversion: ${{ steps.gitversion.outputs.informationalVersion }}
-      branchname: ${{ steps.gitversion.outputs.branchName }}
-      sha: ${{ steps.gitversion.outputs.sha }}
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          fetch-depth: 0  # Full history required for GitVersion
+          fetch-depth: 0
 
       - name: Install GitVersion
         uses: gittools/actions/gitversion/setup@26a89e5dd4fa9ba66a853e04706ba52755ca4057 # v3.1.1
@@ -57,40 +85,31 @@ jobs:
         with:
           useConfigFile: true
           configFilePath: GitVersion.yml
-          overrideConfig: |
-            ${{ inputs.release_type == 'major' && 'next-version: ' || '' }}${{ inputs.release_type == 'major' && format('{0}.0.0', steps.gitversion.outputs.major + 1) || '' }}
-            ${{ inputs.release_type == 'minor' && 'next-version: ' || '' }}${{ inputs.release_type == 'minor' && format('{0}.{1}.0', steps.gitversion.outputs.major, steps.gitversion.outputs.minor + 1) || '' }}
-            ${{ inputs.release_type == 'patch' && 'next-version: ' || '' }}${{ inputs.release_type == 'patch' && format('{0}.{1}.{2}', steps.gitversion.outputs.major, steps.gitversion.outputs.minor, steps.gitversion.outputs.patch + 1) || '' }}
 
       - name: Display Version Info
         run: |
-          echo "## Version Information" >> $GITHUB_STEP_SUMMARY
+          echo "## Version Information (Dry Run)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| SemVer | ${{ steps.gitversion.outputs.semVer }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| FullSemVer | ${{ steps.gitversion.outputs.fullSemVer }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Major | ${{ steps.gitversion.outputs.major }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Minor | ${{ steps.gitversion.outputs.minor }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Patch | ${{ steps.gitversion.outputs.patch }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| PreRelease | ${{ steps.gitversion.outputs.preReleaseTag }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Branch | ${{ steps.gitversion.outputs.branchName }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| SHA | ${{ steps.gitversion.outputs.sha }} |" >> $GITHUB_STEP_SUMMARY
-
-          echo ""
-          echo "Calculated version: ${{ steps.gitversion.outputs.semVer }}"
-          echo "Full SemVer: ${{ steps.gitversion.outputs.fullSemVer }}"
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "*This was a dry run. Use 'Start Release' workflow to create a release PR.*" >> $GITHUB_STEP_SUMMARY
 
   release:
     name: Create Release
-    needs: version
+    needs: check-release
+    if: needs.check-release.outputs.should_release == 'true'
     runs-on: ubuntu-latest
-    if: ${{ !inputs.dry_run }}
     permissions:
       contents: write
 
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -100,48 +119,40 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Update Version in Directory.Build.props
-        run: |
-          VERSION="${{ needs.version.outputs.semver }}"
-          echo "Updating version to: $VERSION"
-
-          # Update the version in Directory.Build.props using sed
-          sed -i "s|<Version>[^<]*</Version>|<Version>$VERSION</Version>|g" Directory.Build.props
-
-          # Verify the change
-          grep "<Version>" Directory.Build.props
-
-      - name: Commit Version Change
-        run: |
-          VERSION="${{ needs.version.outputs.semver }}"
-          git add Directory.Build.props
-          git commit -m "chore(release): bump version to $VERSION" || echo "No changes to commit"
-
       - name: Create and Push Tag
         run: |
-          VERSION="${{ needs.version.outputs.semver }}"
+          VERSION="${{ needs.check-release.outputs.version }}"
           TAG="v$VERSION"
 
           echo "Creating tag: $TAG"
           git tag -a "$TAG" -m "Release $TAG"
-          git push origin HEAD:${{ github.ref_name }}
           git push origin "$TAG"
 
-      - name: Create GitHub Release (stable only)
-        if: ${{ needs.version.outputs.prerelease == '' }}
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
+      - name: Determine if Prerelease
+        id: prerelease
+        run: |
+          VERSION="${{ needs.check-release.outputs.version }}"
+          if [[ "$VERSION" == *-* ]]; then
+            echo "is_prerelease=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_prerelease=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create GitHub Release (stable)
+        if: steps.prerelease.outputs.is_prerelease == 'false'
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
-          tag_name: v${{ needs.version.outputs.semver }}
-          name: Release v${{ needs.version.outputs.semver }}
+          tag_name: v${{ needs.check-release.outputs.version }}
+          name: Release v${{ needs.check-release.outputs.version }}
           generate_release_notes: true
           prerelease: false
 
       - name: Create GitHub Pre-Release
-        if: ${{ needs.version.outputs.prerelease != '' }}
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2
+        if: steps.prerelease.outputs.is_prerelease == 'true'
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
-          tag_name: v${{ needs.version.outputs.semver }}
-          name: Pre-release v${{ needs.version.outputs.semver }}
+          tag_name: v${{ needs.check-release.outputs.version }}
+          name: Pre-release v${{ needs.check-release.outputs.version }}
           generate_release_notes: true
           prerelease: true
 
@@ -149,8 +160,15 @@ jobs:
         run: |
           echo "## Release Created" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version**: v${{ needs.version.outputs.semver }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Tag**: [v${{ needs.version.outputs.semver }}](https://github.com/${{ github.repository }}/releases/tag/v${{ needs.version.outputs.semver }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: v${{ needs.check-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag**: [v${{ needs.check-release.outputs.version }}](https://github.com/${{ github.repository }}/releases/tag/v${{ needs.check-release.outputs.version }})" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "The NuGet publish workflow will be triggered automatically by the new tag." >> $GITHUB_STEP_SUMMARY
+          echo "The NuGet publish workflow will be triggered next." >> $GITHUB_STEP_SUMMARY
+
+  publish:
+    name: Publish to NuGet
+    needs: [check-release, release]
+    if: needs.check-release.outputs.should_release == 'true'
+    uses: ./.github/workflows/nuget-publish.yml
+    with:
+      tag: v${{ needs.check-release.outputs.version }}
