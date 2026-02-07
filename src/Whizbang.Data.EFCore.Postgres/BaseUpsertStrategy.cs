@@ -15,7 +15,7 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
   protected virtual bool ClearChangeTrackerAfterSave => false;
 
   /// <inheritdoc/>
-  public async Task UpsertPerspectiveRowAsync<TModel>(
+  public Task UpsertPerspectiveRowAsync<TModel>(
       DbContext context,
       string tableName,
       Guid id,
@@ -23,50 +23,11 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       PerspectiveMetadata metadata,
       PerspectiveScope scope,
       CancellationToken cancellationToken = default)
-      where TModel : class {
-
-    var existingRow = await context.Set<PerspectiveRow<TModel>>()
-        .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
-
-    var now = DateTime.UtcNow;
-
-    if (existingRow == null) {
-      var newRow = new PerspectiveRow<TModel> {
-        Id = id,
-        Data = model,
-        Metadata = CloneMetadata(metadata),
-        Scope = CloneScope(scope),
-        CreatedAt = now,
-        UpdatedAt = now,
-        Version = 1
-      };
-
-      context.Set<PerspectiveRow<TModel>>().Add(newRow);
-    } else {
-      context.Set<PerspectiveRow<TModel>>().Remove(existingRow);
-
-      var updatedRow = new PerspectiveRow<TModel> {
-        Id = existingRow.Id,
-        Data = model,
-        Metadata = CloneMetadata(metadata),
-        Scope = CloneScope(scope),
-        CreatedAt = existingRow.CreatedAt,
-        UpdatedAt = now,
-        Version = existingRow.Version + 1
-      };
-
-      context.Set<PerspectiveRow<TModel>>().Add(updatedRow);
-    }
-
-    await context.SaveChangesAsync(cancellationToken);
-
-    if (ClearChangeTrackerAfterSave) {
-      context.ChangeTracker.Clear();
-    }
-  }
+      where TModel : class =>
+    _upsertCoreAsync(context, id, model, metadata, scope, null, cancellationToken);
 
   /// <inheritdoc/>
-  public async Task UpsertPerspectiveRowWithPhysicalFieldsAsync<TModel>(
+  public Task UpsertPerspectiveRowWithPhysicalFieldsAsync<TModel>(
       DbContext context,
       string tableName,
       Guid id,
@@ -75,45 +36,38 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       PerspectiveScope scope,
       IDictionary<string, object?> physicalFieldValues,
       CancellationToken cancellationToken = default)
-      where TModel : class {
+      where TModel : class =>
+    _upsertCoreAsync(context, id, model, metadata, scope, physicalFieldValues, cancellationToken);
 
+  private async Task _upsertCoreAsync<TModel>(
+      DbContext context,
+      Guid id,
+      TModel model,
+      PerspectiveMetadata metadata,
+      PerspectiveScope scope,
+      IDictionary<string, object?>? physicalFieldValues,
+      CancellationToken cancellationToken)
+      where TModel : class {
     var existingRow = await context.Set<PerspectiveRow<TModel>>()
         .FirstOrDefaultAsync(r => r.Id == id, cancellationToken);
 
     var now = DateTime.UtcNow;
-    PerspectiveRow<TModel> row;
 
-    if (existingRow == null) {
-      row = new PerspectiveRow<TModel> {
-        Id = id,
-        Data = model,
-        Metadata = CloneMetadata(metadata),
-        Scope = CloneScope(scope),
-        CreatedAt = now,
-        UpdatedAt = now,
-        Version = 1
-      };
+    var row = existingRow == null
+        ? _createNewRow(id, model, metadata, scope, now)
+        : _createUpdatedRow(existingRow, model, metadata, scope, now);
 
-      context.Set<PerspectiveRow<TModel>>().Add(row);
-    } else {
+    if (existingRow != null) {
       context.Set<PerspectiveRow<TModel>>().Remove(existingRow);
-
-      row = new PerspectiveRow<TModel> {
-        Id = existingRow.Id,
-        Data = model,
-        Metadata = CloneMetadata(metadata),
-        Scope = CloneScope(scope),
-        CreatedAt = existingRow.CreatedAt,
-        UpdatedAt = now,
-        Version = existingRow.Version + 1
-      };
-
-      context.Set<PerspectiveRow<TModel>>().Add(row);
     }
 
-    var entry = context.Entry(row);
-    foreach (var (columnName, value) in physicalFieldValues) {
-      entry.Property(columnName).CurrentValue = value;
+    context.Set<PerspectiveRow<TModel>>().Add(row);
+
+    if (physicalFieldValues != null) {
+      var entry = context.Entry(row);
+      foreach (var (columnName, value) in physicalFieldValues) {
+        entry.Property(columnName).CurrentValue = value;
+      }
     }
 
     await context.SaveChangesAsync(cancellationToken);
@@ -122,6 +76,32 @@ public abstract class BaseUpsertStrategy : IDbUpsertStrategy {
       context.ChangeTracker.Clear();
     }
   }
+
+  private static PerspectiveRow<TModel> _createNewRow<TModel>(
+      Guid id, TModel model, PerspectiveMetadata metadata, PerspectiveScope scope, DateTime now)
+      where TModel : class =>
+    new() {
+      Id = id,
+      Data = model,
+      Metadata = CloneMetadata(metadata),
+      Scope = CloneScope(scope),
+      CreatedAt = now,
+      UpdatedAt = now,
+      Version = 1
+    };
+
+  private static PerspectiveRow<TModel> _createUpdatedRow<TModel>(
+      PerspectiveRow<TModel> existing, TModel model, PerspectiveMetadata metadata, PerspectiveScope scope, DateTime now)
+      where TModel : class =>
+    new() {
+      Id = existing.Id,
+      Data = model,
+      Metadata = CloneMetadata(metadata),
+      Scope = CloneScope(scope),
+      CreatedAt = existing.CreatedAt,
+      UpdatedAt = now,
+      Version = existing.Version + 1
+    };
 
   /// <summary>
   /// Creates a clone of PerspectiveMetadata to avoid EF Core tracking issues.
