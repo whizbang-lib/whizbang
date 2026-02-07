@@ -213,7 +213,7 @@ await context.SaveChangesAsync();
 
 ## Querying JSON Properties
 
-EF Core 10 provides rich querying capabilities for JsonB columns.
+EF Core 10 provides rich querying capabilities for JsonB columns via `ComplexProperty().ToJson()`.
 
 ### Filter by JSON Properties
 
@@ -226,6 +226,52 @@ var seattleOrders = await context.Orders
 // SQL Generated:
 // SELECT ... FROM "Orders"
 // WHERE "ShippingAddress"->>'City' = 'Seattle'
+```
+
+### Collection Operations (Any, Contains, Count)
+
+**EF Core 10's `ComplexProperty().ToJson()` supports full LINQ on collections:**
+
+```csharp
+// Model with collection inside JSON
+public class Order {
+    public List<OrderItem> Items { get; set; } = [];
+    public List<string> Tags { get; set; } = [];
+}
+
+// Configuration
+builder.ComplexProperty(o => o.Data, d => d.ToJson("data"));
+
+// ✅ Any() with predicate - translates to server-side SQL
+var highValueOrders = await context.Orders
+    .Where(o => o.Items.Any(i => i.Price > 100))
+    .ToListAsync();
+
+// ✅ Contains() on primitive collections
+var taggedOrders = await context.Orders
+    .Where(o => o.Tags.Contains("priority"))
+    .ToListAsync();
+
+// ✅ Count() on collections
+var bulkOrders = await context.Orders
+    .Where(o => o.Items.Count > 10)
+    .ToListAsync();
+```
+
+**Important**: These collection operations work **server-side** with `ComplexProperty().ToJson()` pattern. The old `Property().HasColumnType("jsonb")` pattern requires client-side evaluation for collection queries.
+
+### String Functions
+
+```csharp
+// String Contains - server-side
+var matchingOrders = await context.Orders
+    .Where(o => o.CustomerName.Contains("Corp"))
+    .ToListAsync();
+
+// String StartsWith
+var prefixOrders = await context.Orders
+    .Where(o => o.CustomerName.StartsWith("Acme"))
+    .ToListAsync();
 ```
 
 ### Projection from JSON
@@ -263,6 +309,65 @@ var orders = await context.Orders
         o.ShippingAddress,
         new { City = "Seattle", State = "WA" }))
     .ToListAsync();
+```
+
+---
+
+## GIN Indexes for JsonB
+
+For efficient JsonB queries, add GIN indexes. EF Core doesn't support `HasIndex` on `ComplexProperty` directly (GitHub #28605), so create indexes via SQL.
+
+### ✅ CORRECT - Create GIN indexes via raw SQL
+
+```sql
+-- In migration or schema initialization
+CREATE INDEX idx_orders_data_gin ON orders USING gin (data);
+CREATE INDEX idx_orders_metadata_gin ON orders USING gin (metadata);
+CREATE INDEX idx_orders_scope_gin ON orders USING gin (scope);
+```
+
+**GIN indexes enable:**
+- ✅ Efficient containment queries (`@>`, `<@`)
+- ✅ Key/value lookups on JsonB data
+- ✅ Path expression queries (`->`, `->>`)
+
+**Whizbang Note**: The `EFCoreServiceRegistrationGenerator` automatically creates GIN indexes in the generated `_generatePerspectiveTablesSchema()` method.
+
+---
+
+## Limitations with ComplexProperty().ToJson()
+
+### ❌ Dictionary<K,V> NOT Supported
+
+EF Core does NOT support `Dictionary<TKey, TValue>` with `ToJson()` (GitHub #29825).
+
+```csharp
+// ❌ WON'T WORK with ToJson()
+public class BadModel {
+    public Dictionary<string, string> Extensions { get; set; } = new();
+}
+
+// ✅ USE List of key-value objects instead
+public class GoodModel {
+    public List<KeyValuePair> Extensions { get; set; } = [];
+}
+
+public class KeyValuePair {
+    public string Key { get; set; } = string.Empty;
+    public string? Value { get; set; }
+}
+```
+
+### ❌ Collections of Structs NOT Supported
+
+```csharp
+// ❌ WON'T WORK - struct in collection
+public struct Point { public int X; public int Y; }
+public List<Point> Points { get; set; } = [];
+
+// ✅ USE classes instead
+public class Point { public int X { get; set; } public int Y { get; set; } }
+public List<Point> Points { get; set; } = [];
 ```
 
 ---

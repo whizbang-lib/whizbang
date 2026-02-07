@@ -786,5 +786,60 @@ public class EFCoreServiceRegistrationGeneratorTests {
     await Assert.That(errors).IsEmpty();
   }
 
+  /// <summary>
+  /// Test that schema extensions include GIN indexes for JSONB columns.
+  /// GIN indexes enable efficient LINQ queries on JSONB data (containment, key lookups, path expressions).
+  /// </summary>
+  [Test]
+  public async Task Generator_SchemaExtensions_IncludesGinIndexesForJsonbColumnsAsync() {
+    // Arrange - use explicit perspective that implements IPerspectiveFor<TModel>
+    // The PERSPECTIVE_BOILERPLATE doesn't implement the interface, so we need a full definition
+    var source = """
+      using System.Threading;
+      using System.Threading.Tasks;
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using Whizbang.Data.EFCore.Custom;
+
+      namespace TestApp;
+
+      public record TestEvent : IEvent;
+      public record TestModel { public string Id { get; init; } = ""; }
+
+      // Perspective that implements IPerspectiveFor<TModel> (required for generator discovery)
+      public class TestPerspective : IPerspectiveFor<TestModel> {
+        private readonly IPerspectiveStore<TestModel> _store;
+        public TestPerspective(IPerspectiveStore<TestModel> store) => _store = store;
+        public Task UpdateAsync(TestEvent @event, CancellationToken ct = default) => Task.CompletedTask;
+      }
+
+      [WhizbangDbContext]
+      public class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    // Should include GIN indexes for all JSONB columns
+    // GIN indexes use "USING gin (column)" syntax
+    await Assert.That(sourceText).Contains("USING gin (data)");
+    await Assert.That(sourceText).Contains("USING gin (metadata)");
+    await Assert.That(sourceText).Contains("USING gin (scope)");
+
+    // Should have index names following convention
+    await Assert.That(sourceText).Contains("_data_gin");
+    await Assert.That(sourceText).Contains("_metadata_gin");
+    await Assert.That(sourceText).Contains("_scope_gin");
+  }
+
   #endregion
 }

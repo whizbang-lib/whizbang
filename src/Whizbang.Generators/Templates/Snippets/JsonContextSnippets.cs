@@ -19,11 +19,11 @@ internal class JsonContextSnippets {
   #endregion
 
   #region LAZY_FIELD_MESSAGE
-  private JsonTypeInfo<__FULLY_QUALIFIED_NAME__>? ___SIMPLE_NAME__;
+  private JsonTypeInfo<__FULLY_QUALIFIED_NAME__>? ___SAFE_NAME__;
   #endregion
 
   #region LAZY_FIELD_MESSAGE_ENVELOPE
-  private JsonTypeInfo<MessageEnvelope<__FULLY_QUALIFIED_NAME__>>? _MessageEnvelope___SIMPLE_NAME__;
+  private JsonTypeInfo<MessageEnvelope<__FULLY_QUALIFIED_NAME__>>? _MessageEnvelope___SAFE_NAME__;
   #endregion
 
   #region GET_TYPE_INFO_VALUE_OBJECT
@@ -32,13 +32,13 @@ if (type == typeof(global::Whizbang.Core.ValueObjects.__TYPE_NAME__)) return Cre
 
   #region GET_TYPE_INFO_MESSAGE
 if (type == typeof(__FULLY_QUALIFIED_NAME__)) {
-  return Create___SIMPLE_NAME__(options);
+  return Create___SAFE_NAME__(options);
 }
   #endregion
 
   #region GET_TYPE_INFO_MESSAGE_ENVELOPE
 if (type == typeof(MessageEnvelope<__FULLY_QUALIFIED_NAME__>)) {
-  return CreateMessageEnvelope___SIMPLE_NAME__(options);
+  return CreateMessageEnvelope___SAFE_NAME__(options);
 }
   #endregion
 
@@ -52,17 +52,17 @@ private JsonTypeInfo<global::Whizbang.Core.ValueObjects.__TYPE_NAME__> Create___
 #endregion
 
 #region LAZY_FIELD_LIST
-private JsonTypeInfo<global::System.Collections.Generic.List<__ELEMENT_TYPE__>>? _List___ELEMENT_SIMPLE_NAME__;
+private JsonTypeInfo<global::System.Collections.Generic.List<__ELEMENT_TYPE__>>? _List___ELEMENT_SAFE_NAME__;
 #endregion
 
 #region GET_TYPE_INFO_LIST
 if (type == typeof(global::System.Collections.Generic.List<__ELEMENT_TYPE__>)) {
-  return CreateList___ELEMENT_SIMPLE_NAME__(options);
+  return CreateList___ELEMENT_SAFE_NAME__(options);
 }
 #endregion
 
 #region LIST_TYPE_FACTORY
-private JsonTypeInfo<global::System.Collections.Generic.List<__ELEMENT_TYPE__>> CreateList___ELEMENT_SIMPLE_NAME__(JsonSerializerOptions options) {
+private JsonTypeInfo<global::System.Collections.Generic.List<__ELEMENT_TYPE__>> CreateList___ELEMENT_SAFE_NAME__(JsonSerializerOptions options) {
   var elementInfo = GetOrCreateTypeInfo<__ELEMENT_TYPE__>(options);
   var collectionInfo = new JsonCollectionInfoValues<global::System.Collections.Generic.List<__ELEMENT_TYPE__>> {
     ObjectCreator = static () => new global::System.Collections.Generic.List<__ELEMENT_TYPE__>(),
@@ -200,7 +200,7 @@ private JsonTypeInfo<T> GetOrCreateTypeInfo<T>(JsonSerializerOptions options) {
 /// Runs automatically when the assembly is loaded - no explicit call needed.
 /// Registers WhizbangIdJsonContext and MessageJsonContext with the global JsonContextRegistry.
 /// </summary>
-[System.Runtime.CompilerServices.ModuleInitializer]
+[global::System.Runtime.CompilerServices.ModuleInitializer]
 public static void Initialize() {
   // Register local contexts with the global registry
   // These will be combined with Core's contexts (InfrastructureJsonContext, etc.)

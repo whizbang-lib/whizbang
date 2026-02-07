@@ -428,4 +428,78 @@ public static class DiagnosticDescriptors {
       isEnabledByDefault: true,
       description: "Raw Guid parameters lose metadata about precision and ordering. Consider using IWhizbangId or a strongly-typed ID generated with [WhizbangId]."
   );
+
+  // ========================================
+  // Physical Field Diagnostics (WHIZ801-809)
+  // ========================================
+
+  /// <summary>
+  /// WHIZ801: Error - [VectorField] can only be applied to float[] properties.
+  /// </summary>
+  /// <docs>diagnostics/whiz801</docs>
+  public static readonly DiagnosticDescriptor VectorFieldInvalidType = new(
+      id: "WHIZ801",
+      title: "VectorField Invalid Type",
+      messageFormat: "[VectorField] on {0}.{1} requires property type float[] or Single[]",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "The [VectorField] attribute can only be applied to properties of type float[] (System.Single[])."
+  );
+
+  /// <summary>
+  /// WHIZ802: Error - [VectorField] dimensions must be positive.
+  /// </summary>
+  /// <docs>diagnostics/whiz802</docs>
+  public static readonly DiagnosticDescriptor VectorFieldInvalidDimensions = new(
+      id: "WHIZ802",
+      title: "VectorField Invalid Dimensions",
+      messageFormat: "[VectorField] on {0}.{1} has invalid dimensions {2}. Dimensions must be a positive integer.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "The [VectorField] attribute requires a positive integer for dimensions."
+  );
+
+  /// <summary>
+  /// WHIZ803: Warning - [PhysicalField] on complex type may not benefit from indexing.
+  /// </summary>
+  /// <docs>diagnostics/whiz803</docs>
+  public static readonly DiagnosticDescriptor PhysicalFieldComplexType = new(
+      id: "WHIZ803",
+      title: "PhysicalField Complex Type",
+      messageFormat: "[PhysicalField] on {0}.{1} with type {2} may not benefit from indexing. Consider using simple types.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "Physical fields work best with simple types (string, int, decimal, bool, Guid). Complex types may not benefit from database indexing."
+  );
+
+  /// <summary>
+  /// WHIZ805: Warning - Split mode with no [PhysicalField] is equivalent to JsonOnly.
+  /// </summary>
+  /// <docs>diagnostics/whiz805</docs>
+  public static readonly DiagnosticDescriptor SplitModeNoPhysicalFields = new(
+      id: "WHIZ805",
+      title: "Split Mode No Physical Fields",
+      messageFormat: "Perspective '{0}' uses Split mode but has no [PhysicalField] or [VectorField] attributes. This is equivalent to JsonOnly mode.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Warning,
+      isEnabledByDefault: true,
+      description: "Using Split mode without any physical fields is unnecessary. Consider removing [PerspectiveStorage] or adding physical fields."
+  );
+
+  /// <summary>
+  /// WHIZ807: Info - Model has physical field(s) discovered.
+  /// </summary>
+  /// <docs>diagnostics/whiz807</docs>
+  public static readonly DiagnosticDescriptor PhysicalFieldsDiscovered = new(
+      id: "WHIZ807",
+      title: "Physical Fields Discovered",
+      messageFormat: "Model '{0}' has {1} physical field(s) in {2} mode",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "Physical fields were discovered on a perspective model and will be included as database columns."
+  );
 }

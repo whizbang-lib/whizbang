@@ -232,7 +232,7 @@ public class WhizbangScopeMiddlewareTests {
     await Assert.That(scope.UserId).IsNull();
     await Assert.That(scope.OrganizationId).IsNull();
     await Assert.That(scope.CustomerId).IsNull();
-    await Assert.That(scope.Extensions).IsNull();
+    await Assert.That(scope.Extensions).IsEmpty();
   }
 
   [Test]
@@ -251,7 +251,7 @@ public class WhizbangScopeMiddlewareTests {
     await Assert.That(scope.UserId).IsNull();
     await Assert.That(scope.OrganizationId).IsNull();
     await Assert.That(scope.CustomerId).IsNull();
-    await Assert.That(scope.Extensions).IsNull();
+    await Assert.That(scope.Extensions).IsEmpty();
     await Assert.That(accessor.Current!.Roles.Count).IsEqualTo(0);
     await Assert.That(accessor.Current!.Permissions.Count).IsEqualTo(0);
     await Assert.That(accessor.Current!.SecurityPrincipals.Count).IsEqualTo(0);
@@ -271,7 +271,7 @@ public class WhizbangScopeMiddlewareTests {
     await middleware.InvokeAsync(context, accessor);
 
     // Assert
-    await Assert.That(accessor.Current!.Scope.Extensions).IsNull();
+    await Assert.That(accessor.Current!.Scope.Extensions).IsEmpty();
   }
 
   #endregion
@@ -290,8 +290,8 @@ public class WhizbangScopeMiddlewareTests {
     await middleware.InvokeAsync(context, accessor);
 
     // Assert
-    await Assert.That(accessor.Current!.Scope.Extensions).IsNotNull();
-    await Assert.That(accessor.Current!.Scope.Extensions!["Region"]).IsEqualTo("us-east");
+    await Assert.That(accessor.Current!.Scope.Extensions).IsNotEmpty();
+    await Assert.That(accessor.Current!.Scope.Extensions.First(e => e.Key == "Region").Value).IsEqualTo("us-east");
   }
 
   [Test]
@@ -307,8 +307,8 @@ public class WhizbangScopeMiddlewareTests {
     await middleware.InvokeAsync(context, accessor);
 
     // Assert
-    await Assert.That(accessor.Current!.Scope.Extensions).IsNotNull();
-    await Assert.That(accessor.Current!.Scope.Extensions!["Region"]).IsEqualTo("eu-west");
+    await Assert.That(accessor.Current!.Scope.Extensions).IsNotEmpty();
+    await Assert.That(accessor.Current!.Scope.Extensions.First(e => e.Key == "Region").Value).IsEqualTo("eu-west");
   }
 
   [Test]
@@ -323,7 +323,7 @@ public class WhizbangScopeMiddlewareTests {
     await middleware.InvokeAsync(context, accessor);
 
     // Assert
-    await Assert.That(accessor.Current!.Scope.Extensions).IsNull();
+    await Assert.That(accessor.Current!.Scope.Extensions).IsEmpty();
   }
 
   [Test]
@@ -339,7 +339,7 @@ public class WhizbangScopeMiddlewareTests {
     await middleware.InvokeAsync(context, accessor);
 
     // Assert
-    await Assert.That(accessor.Current!.Scope.Extensions).IsNull();
+    await Assert.That(accessor.Current!.Scope.Extensions).IsEmpty();
   }
 
   [Test]
@@ -355,7 +355,7 @@ public class WhizbangScopeMiddlewareTests {
     await middleware.InvokeAsync(context, accessor);
 
     // Assert
-    await Assert.That(accessor.Current!.Scope.Extensions).IsNull();
+    await Assert.That(accessor.Current!.Scope.Extensions).IsEmpty();
   }
 
   #endregion

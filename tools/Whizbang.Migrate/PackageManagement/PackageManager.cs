@@ -30,7 +30,14 @@ public sealed class PackageManager {
     // Kafka -> AzureServiceBus (Whizbang uses ServiceBus for messaging, RabbitMQ for local dev)
     ["WolverineFx.Kafka"] = "SoftwareExtravaganza.Whizbang.Transports.AzureServiceBus",
     ["Wolverine.Kafka"] = "SoftwareExtravaganza.Whizbang.Transports.AzureServiceBus",
-    ["Confluent.Kafka"] = "SoftwareExtravaganza.Whizbang.Transports.AzureServiceBus"
+    ["Confluent.Kafka"] = "SoftwareExtravaganza.Whizbang.Transports.AzureServiceBus",
+
+    // HTTP transport -> FastEndpoints (Whizbang uses FastEndpoints for HTTP APIs)
+    ["WolverineFx.Http"] = "SoftwareExtravaganza.Whizbang.Transports.FastEndpoints",
+    ["Wolverine.Http"] = "SoftwareExtravaganza.Whizbang.Transports.FastEndpoints",
+
+    // HotChocolate Marten integration -> Whizbang HotChocolate transport
+    ["HotChocolate.Data.Marten"] = "SoftwareExtravaganza.Whizbang.Transports.HotChocolate"
   };
 
   /// <summary>
@@ -40,12 +47,8 @@ public sealed class PackageManager {
     "Marten.CommandLine",
     "Marten.PLv8",
     "Marten.NodaTime",
-    "Wolverine.Http",
-    "WolverineFx.Http",
     "Wolverine.FluentValidation",
     "WolverineFx.FluentValidation",
-    // HotChocolate Marten integration - no Whizbang equivalent yet
-    "HotChocolate.Data.Marten",
     // Kafka/Confluent packages - replaced by AzureServiceBus/RabbitMQ
     "Aspire.Confluent.Kafka",
     "Aspire.Hosting.Kafka",

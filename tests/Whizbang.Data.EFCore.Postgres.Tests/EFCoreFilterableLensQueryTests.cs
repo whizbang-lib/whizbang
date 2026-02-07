@@ -26,7 +26,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
       string? userId = null,
       string? organizationId = null,
       string? customerId = null,
-      IReadOnlyList<SecurityPrincipalId>? allowedPrincipals = null) {
+      List<string>? allowedPrincipals = null) {
 
     var order = new Order {
       OrderId = TestOrderId.From(orderId),
@@ -47,7 +47,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
         UserId = userId,
         OrganizationId = organizationId,
         CustomerId = customerId,
-        AllowedPrincipals = allowedPrincipals
+        AllowedPrincipals = allowedPrincipals ?? []
       },
       CreatedAt = DateTime.UtcNow,
       UpdatedAt = DateTime.UtcNow,
@@ -215,20 +215,17 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
     // Order 1: Shared with sales-team
     await _seedOrderAsync(context, order1Id, 100m,
       tenantId: "tenant-1",
-      allowedPrincipals: [SecurityPrincipalId.Group("sales-team")]);
+      allowedPrincipals: ["group:sales-team"]);
 
     // Order 2: Shared with engineering-team
     await _seedOrderAsync(context, order2Id, 200m,
       tenantId: "tenant-1",
-      allowedPrincipals: [SecurityPrincipalId.Group("engineering-team")]);
+      allowedPrincipals: ["group:engineering-team"]);
 
     // Order 3: Shared with both teams
     await _seedOrderAsync(context, order3Id, 300m,
       tenantId: "tenant-1",
-      allowedPrincipals: [
-        SecurityPrincipalId.Group("sales-team"),
-        SecurityPrincipalId.Group("managers")
-      ]);
+      allowedPrincipals: ["group:sales-team", "group:managers"]);
 
     var callerPrincipals = new HashSet<SecurityPrincipalId> {
       SecurityPrincipalId.User("alice"),
@@ -262,7 +259,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
     var orderId = _idProvider.NewGuid();
     await _seedOrderAsync(context, orderId, 100m,
       tenantId: "tenant-1",
-      allowedPrincipals: [SecurityPrincipalId.Group("sales-team")]);
+      allowedPrincipals: ["group:sales-team"]);
 
     var callerPrincipals = new HashSet<SecurityPrincipalId> {
       SecurityPrincipalId.Group("engineering-team")
@@ -303,13 +300,13 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
     await _seedOrderAsync(context, order2Id, 200m,
       tenantId: "tenant-1",
       userId: "user-bob",
-      allowedPrincipals: [SecurityPrincipalId.Group("sales-team")]);
+      allowedPrincipals: ["group:sales-team"]);
 
     // Order 3: Owned by charlie, not shared with alice
     await _seedOrderAsync(context, order3Id, 300m,
       tenantId: "tenant-1",
       userId: "user-charlie",
-      allowedPrincipals: [SecurityPrincipalId.Group("engineering-team")]);
+      allowedPrincipals: ["group:engineering-team"]);
 
     var callerPrincipals = new HashSet<SecurityPrincipalId> {
       SecurityPrincipalId.User("alice"),
@@ -379,7 +376,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
     await _seedOrderAsync(context, orderId, 100m,
       tenantId: "tenant-1",
       userId: "user-bob",
-      allowedPrincipals: [SecurityPrincipalId.Group("sales-team")]);
+      allowedPrincipals: ["group:sales-team"]);
 
     var callerPrincipals = new HashSet<SecurityPrincipalId> {
       SecurityPrincipalId.User("alice"),
@@ -458,7 +455,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
     var orderId = _idProvider.NewGuid();
     await _seedOrderAsync(context, orderId, 100m,
       tenantId: "tenant-1",
-      allowedPrincipals: [SecurityPrincipalId.Group("sales-team")]);
+      allowedPrincipals: ["group:sales-team"]);
 
     var callerPrincipals = new HashSet<SecurityPrincipalId> {
       SecurityPrincipalId.Group("sales-team")
@@ -488,7 +485,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
     var orderId = _idProvider.NewGuid();
     await _seedOrderAsync(context, orderId, 100m,
       tenantId: "tenant-1",
-      allowedPrincipals: [SecurityPrincipalId.Group("sales-team")]);
+      allowedPrincipals: ["group:sales-team"]);
 
     var callerPrincipals = new HashSet<SecurityPrincipalId> {
       SecurityPrincipalId.Group("engineering-team")  // No overlap
@@ -566,12 +563,12 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
     // Order 1: Right tenant, matching principal
     await _seedOrderAsync(context, order1Id, 100m,
       tenantId: "tenant-1",
-      allowedPrincipals: [SecurityPrincipalId.Group("sales-team")]);
+      allowedPrincipals: ["group:sales-team"]);
 
     // Order 2: Wrong tenant, matching principal (should NOT be returned!)
     await _seedOrderAsync(context, order2Id, 200m,
       tenantId: "tenant-2",
-      allowedPrincipals: [SecurityPrincipalId.Group("sales-team")]);
+      allowedPrincipals: ["group:sales-team"]);
 
     var callerPrincipals = new HashSet<SecurityPrincipalId> {
       SecurityPrincipalId.Group("sales-team")
@@ -616,25 +613,17 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
     // Order that matches one of the 100 principals (group-050)
     await _seedOrderAsync(context, matchingOrderId, 100m,
       tenantId: "tenant-1",
-      allowedPrincipals: [
-        SecurityPrincipalId.Group("group-050")
-      ]);
+      allowedPrincipals: ["group:group-050"]);
 
     // Order that doesn't match any principal
     await _seedOrderAsync(context, nonMatchingOrderId, 200m,
       tenantId: "tenant-1",
-      allowedPrincipals: [
-        SecurityPrincipalId.Group("other-group")
-      ]);
+      allowedPrincipals: ["group:other-group"]);
 
     // Order that matches multiple of the caller's principals
     await _seedOrderAsync(context, multiMatchOrderId, 300m,
       tenantId: "tenant-1",
-      allowedPrincipals: [
-        SecurityPrincipalId.User("alice"),
-        SecurityPrincipalId.Group("group-001"),
-        SecurityPrincipalId.Group("group-099")
-      ]);
+      allowedPrincipals: ["user:alice", "group:group-001", "group:group-099"]);
 
     lensQuery.ApplyFilter(new ScopeFilterInfo {
       Filters = ScopeFilter.Tenant | ScopeFilter.Principal,
@@ -670,9 +659,7 @@ public class EFCoreFilterableLensQueryTests : EFCoreTestBase {
     var orderId = _idProvider.NewGuid();
     await _seedOrderAsync(context, orderId, 100m,
       tenantId: "tenant-1",
-      allowedPrincipals: [
-        SecurityPrincipalId.Group("group-050")
-      ]);
+      allowedPrincipals: ["group:group-050"]);
 
     lensQuery.ApplyFilter(new ScopeFilterInfo {
       Filters = ScopeFilter.Tenant | ScopeFilter.Principal,

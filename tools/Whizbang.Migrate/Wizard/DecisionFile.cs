@@ -20,6 +20,7 @@ namespace Whizbang.Migrate.Wizard;
 [JsonSerializable(typeof(CustomBaseClassDecisions))]
 [JsonSerializable(typeof(UnknownInterfaceDecisions))]
 [JsonSerializable(typeof(PackageDecisions))]
+[JsonSerializable(typeof(JsonMigrationDecisions))]
 internal sealed partial class DecisionFileJsonContext : JsonSerializerContext { }
 
 /// <summary>
@@ -322,6 +323,33 @@ public sealed class DecisionFile {
 
       // Packages to preserve (don't remove even if Marten/Wolverine)
       "preserve_packages": []
+    },
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // JSON LIBRARY MIGRATION (OPTIONAL)
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Transforms Newtonsoft.Json to System.Text.Json. This is OPTIONAL and opt-in.
+    // Dead imports are always removed regardless of this setting.
+    "json_migration": {
+      // Enable JSON library migration. Default: false (opt-in)
+      // When true, transforms:
+      //   - [JsonProperty(Required = Required.Always)] → [JsonRequired]
+      //   - [JsonProperty("name")] → [JsonPropertyName("name")]
+      //   - JsonConvert.SerializeObject → JsonSerializer.Serialize
+      //   - JsonConvert.DeserializeObject<T> → JsonSerializer.Deserialize<T>
+      "enabled": {{Decisions.JsonMigration.Enabled.ToString().ToLowerInvariant()}},
+
+      // Remove unused Newtonsoft.Json imports (runs even if enabled=false)
+      "remove_dead_imports": {{Decisions.JsonMigration.RemoveDeadImports.ToString().ToLowerInvariant()}},
+
+      // Add TODO comments for patterns that can't be auto-converted
+      "add_todo_for_unsupported": {{Decisions.JsonMigration.AddTodoForUnsupported.ToString().ToLowerInvariant()}}
+
+      // NOTE: These patterns require manual migration:
+      //   - JObject/JArray/JToken → JsonDocument/JsonElement
+      //   - JSchemaGenerator → NJsonSchema package
+      //   - Custom JsonConverters → System.Text.Json.Serialization.JsonConverter<T>
+      //   - JsonSerializerSettings → JsonSerializerOptions
     }
   }
 }
@@ -542,6 +570,11 @@ public sealed class MigrationDecisions {
   /// Package management decisions.
   /// </summary>
   public PackageDecisions Packages { get; set; } = new();
+
+  /// <summary>
+  /// JSON library migration decisions (optional Newtonsoft → STJ).
+  /// </summary>
+  public JsonMigrationDecisions JsonMigration { get; set; } = new();
 }
 
 /// <summary>
@@ -976,4 +1009,36 @@ public sealed class PackageDecisions {
   /// Packages to preserve (don't remove even if Marten/Wolverine).
   /// </summary>
   public List<string> PreservePackages { get; set; } = [];
+}
+
+/// <summary>
+/// JSON library migration decisions (Newtonsoft.Json → System.Text.Json).
+/// </summary>
+public sealed class JsonMigrationDecisions {
+  /// <summary>
+  /// Whether to migrate Newtonsoft.Json to System.Text.Json. Default: false (opt-in).
+  /// </summary>
+  public bool Enabled { get; set; }
+
+  /// <summary>
+  /// Whether to remove unused Newtonsoft.Json imports. Default: true.
+  /// This runs even if Enabled is false.
+  /// </summary>
+  public bool RemoveDeadImports { get; set; } = true;
+
+  /// <summary>
+  /// Whether to add TODO comments for unsupported patterns. Default: true.
+  /// </summary>
+  public bool AddTodoForUnsupported { get; set; } = true;
+
+  /// <summary>
+  /// Patterns that require manual migration and cannot be auto-converted.
+  /// </summary>
+  public List<string> UnsupportedPatterns { get; } =
+  [
+    "JObject/JArray/JToken → JsonDocument/JsonElement",
+    "JSchemaGenerator → NJsonSchema",
+    "Custom JsonConverters → System.Text.Json.Serialization.JsonConverter<T>",
+    "JsonSerializerSettings → JsonSerializerOptions"
+  ];
 }
