@@ -29,24 +29,21 @@ public class EFCoreSnippets {
       // Primary key
       entity.Property(e => e.Id).HasColumnName("id");
 
-      // JSONB columns (PostgreSQL with Npgsql)
-      // Property().HasColumnType("jsonb") enables POCO JSON mapping for custom types
-      // Requires ConfigureJsonOptions() THEN EnableDynamicJson() on NpgsqlDataSourceBuilder (order matters!)
-      // JSON serialization uses source-generated converters (WhizbangJsonContext)
-      entity.Property(e => e.Data)
-        .HasColumnName("data")
-        .HasColumnType("jsonb")
-        .IsRequired();
-
-      entity.Property(e => e.Metadata)
-        .HasColumnName("metadata")
-        .HasColumnType("jsonb")
-        .IsRequired();
-
-      entity.Property(e => e.Scope)
-        .HasColumnName("scope")
-        .HasColumnType("jsonb")
-        .IsRequired();
+      // JSONB columns - EF Core 10 ComplexProperty().ToJson() for full LINQ support
+      //
+      // All columns use ComplexProperty().ToJson() for:
+      //   - Full LINQ query support (Where, OrderBy, Select on nested properties)
+      //   - Collection queries (Any, Contains, Count)
+      //   - String methods (Contains, StartsWith)
+      //
+      // Prerequisites (implemented in Whizbang):
+      //   1. WhizbangId types store Guid directly (not TrackedGuid) for simple EF Core construction
+      //   2. PerspectiveScope.Extensions uses List<ScopeExtension> instead of Dictionary
+      //   3. Custom principal filtering translators for AllowedPrincipals queries
+      //
+      entity.ComplexProperty(e => e.Data, d => d.ToJson("data"));
+      entity.ComplexProperty(e => e.Metadata, m => m.ToJson("metadata"));
+      entity.ComplexProperty(e => e.Scope, s => s.ToJson("scope"));
 
       // System fields
       entity.Property(e => e.CreatedAt).HasColumnName("created_at").IsRequired();
@@ -56,12 +53,16 @@ public class EFCoreSnippets {
       // Indexes
       entity.HasIndex(e => e.CreatedAt);
 
-      // GIN index on scope JSONB for efficient principal filtering
-      // Uses jsonb_path_ops for optimized @>, ?|, and containment queries
-      // This enables efficient "AllowedPrincipals ?| ARRAY[...]" queries
-      entity.HasIndex(e => e.Scope)
-        .HasMethod("GIN")
-        .HasOperators("jsonb_path_ops");
+      // GIN indexes for JSONB columns are automatically created by EFCoreServiceRegistrationGenerator
+      // in the generated _generatePerspectiveTablesSchema() method. GIN indexes enable:
+      //   - Efficient containment queries (@>, <@)
+      //   - Key/value lookups on JSONB data
+      //   - Path expression queries (->, ->>)
+      // EF Core doesn't support HasIndex on ComplexProperty directly (GitHub #28605),
+      // so we generate the indexes via SQL in the schema creation script.
+
+      // Physical fields (shadow properties for database columns)
+__PHYSICAL_FIELD_CONFIGS__
     });
     #endregion
   }

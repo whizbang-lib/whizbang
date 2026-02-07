@@ -1,7 +1,6 @@
 # Whizbang
 
-[![Build](https://github.com/whizbang-lib/whizbang/actions/workflows/build.yml/badge.svg)](https://github.com/whizbang-lib/whizbang/actions/workflows/build.yml)
-[![Tests](https://github.com/whizbang-lib/whizbang/actions/workflows/test.yml/badge.svg)](https://github.com/whizbang-lib/whizbang/actions/workflows/test.yml)
+[![CI](https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml/badge.svg)](https://github.com/whizbang-lib/whizbang/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/whizbang-lib/whizbang/branch/main/graph/badge.svg)](https://codecov.io/gh/whizbang-lib/whizbang)
 [![Quality Gate Status](https://sonarcloud.io/api/project_badges/measure?project=whizbang-lib_whizbang&metric=alert_status)](https://sonarcloud.io/dashboard?id=whizbang-lib_whizbang)
 [![Secret Scanning](https://github.com/whizbang-lib/whizbang/actions/workflows/security-secrets.yml/badge.svg)](https://github.com/whizbang-lib/whizbang/actions/workflows/security-secrets.yml)

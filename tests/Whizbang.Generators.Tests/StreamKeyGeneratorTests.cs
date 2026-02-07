@@ -379,4 +379,86 @@ public class ClassBasedEvent : IEvent {
     await Assert.That(code!).Contains("ClassBasedEvent");
     await Assert.That(code).Contains("EventId");
   }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task StreamKeyGenerator_InheritedStreamKey_GeneratesExtractorAsync() {
+    // Arrange - Tests inherited [StreamKey] detection from base class
+    var source = """
+using Whizbang.Core;
+using System;
+
+namespace MyApp.Events;
+
+// Base class with [StreamKey] on StreamId property
+public abstract class BaseEvent : IEvent {
+  [StreamKey]
+  public virtual Guid StreamId { get; set; }
+  public string? CorrelationId { get; set; }
+}
+
+// Derived event - should inherit [StreamKey] from base
+public class OrderCreatedEvent : BaseEvent {
+  public string OrderName { get; set; } = "";
+}
+
+// Another derived event - also inherits [StreamKey]
+public class OrderShippedEvent : BaseEvent {
+  public string TrackingNumber { get; set; } = "";
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<StreamKeyGenerator>(source);
+
+    // Assert - Should NOT report WHIZ009 (missing StreamKey) for derived classes
+    var whiz009Warnings = result.Diagnostics.Where(d =>
+        d.Id == "WHIZ009" &&
+        (d.GetMessage(CultureInfo.InvariantCulture).Contains("OrderCreatedEvent") ||
+         d.GetMessage(CultureInfo.InvariantCulture).Contains("OrderShippedEvent")));
+    await Assert.That(whiz009Warnings).IsEmpty();
+
+    // Assert - Should generate extractors for all three event types
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "StreamKeyExtractors.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("BaseEvent");
+    await Assert.That(code).Contains("OrderCreatedEvent");
+    await Assert.That(code).Contains("OrderShippedEvent");
+    await Assert.That(code).Contains("StreamId"); // All use inherited StreamId property
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task StreamKeyGenerator_InheritedStreamKey_NoFalsePositiveWarningsAsync() {
+    // Arrange - Verify derived classes don't trigger WHIZ009 false positives
+    var source = """
+using Whizbang.Core;
+using System;
+
+namespace MyApp;
+
+public class BaseJdxEvent : IEvent {
+  [StreamKey]
+  public virtual Guid StreamId { get; set; }
+}
+
+public class DerivedEvent : BaseJdxEvent {
+  public string Data { get; set; } = "";
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<StreamKeyGenerator>(source);
+
+    // Assert - No WHIZ009 warning for DerivedEvent (it inherits [StreamKey])
+    var derivedWarnings = result.Diagnostics.Where(d =>
+        d.Id == "WHIZ009" &&
+        d.GetMessage(CultureInfo.InvariantCulture).Contains("DerivedEvent"));
+    await Assert.That(derivedWarnings).IsEmpty();
+
+    // Assert - Extractor generated for derived event
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "StreamKeyExtractors.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("DerivedEvent");
+  }
 }

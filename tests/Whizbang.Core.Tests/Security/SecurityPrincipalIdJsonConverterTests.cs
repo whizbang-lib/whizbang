@@ -123,7 +123,7 @@ public class SecurityPrincipalIdJsonConverterTests {
     await Assert.That(scope!.TenantId).IsEqualTo("tenant-123");
     await Assert.That(scope.AllowedPrincipals).IsNotNull();
     await Assert.That(scope.AllowedPrincipals!.Count).IsEqualTo(2);
-    await Assert.That(scope.AllowedPrincipals[0].Value).IsEqualTo("user:user-456");
-    await Assert.That(scope.AllowedPrincipals[1].Value).IsEqualTo("group:team-A");
+    await Assert.That(scope.AllowedPrincipals[0]).IsEqualTo("user:user-456");
+    await Assert.That(scope.AllowedPrincipals[1]).IsEqualTo("group:team-A");
   }
 }

@@ -200,7 +200,7 @@ private JsonTypeInfo<T> GetOrCreateTypeInfo<T>(JsonSerializerOptions options) {
 /// Runs automatically when the assembly is loaded - no explicit call needed.
 /// Registers WhizbangIdJsonContext and MessageJsonContext with the global JsonContextRegistry.
 /// </summary>
-[System.Runtime.CompilerServices.ModuleInitializer]
+[global::System.Runtime.CompilerServices.ModuleInitializer]
 public static void Initialize() {
   // Register local contexts with the global registry
   // These will be combined with Core's contexts (InfrastructureJsonContext, etc.)

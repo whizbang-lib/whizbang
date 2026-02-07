@@ -4,6 +4,18 @@ on:
   push:
     tags:
       - 'v*'  # Trigger on version tags: v0.1.0-alpha, v0.1.0-beta, v0.1.0
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to publish (e.g., v0.3.0-alpha.26)'
+        required: true
+        type: string
+  workflow_call:
+    inputs:
+      tag:
+        description: 'Tag to publish'
+        required: true
+        type: string
 
 jobs:
   publish:
@@ -14,9 +26,26 @@ jobs:
       id-token: write   # Required for NuGet trusted publishing (OIDC)
 
     steps:
-    - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       with:
         fetch-depth: 0  # Full history for GitVersion
+        ref: ${{ inputs.tag || github.ref }}
+
+    - name: Display Version Info
+      run: |
+        VERSION_REF="${{ inputs.tag || github.ref }}"
+        VERSION=$(echo "$VERSION_REF" | sed 's|refs/tags/||')
+        echo "## Publishing Version" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
+        echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
+        echo "| **Version** | \`$VERSION\` |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Ref** | \`$VERSION_REF\` |" >> $GITHUB_STEP_SUMMARY
+        echo "| **Commit** | \`$(git rev-parse HEAD)\` |" >> $GITHUB_STEP_SUMMARY
+        echo ""
+        echo "Publishing version: $VERSION"
+        echo "From ref: $VERSION_REF"
+        echo "Commit: $(git rev-parse HEAD)"
 
     - name: Setup .NET
       uses: actions/setup-dotnet@baa11fbfe1d6520db94683bd5c7a3818018e4309 # v5.1.0 # v4.3.1
@@ -62,6 +91,7 @@ jobs:
     - name: Create GitHub Release
       uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
       with:
+        tag_name: ${{ inputs.tag || github.ref_name }}
         files: |
           ./packages/*.nupkg
           ./packages/*.sha256

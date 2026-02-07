@@ -18,7 +18,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6.0.2
         with:
           fetch-depth: 0  # Full history for SonarCloud
 
@@ -53,7 +53,7 @@ jobs:
           ls -laR coverage/ || echo "Coverage directory empty or missing"
 
       - name: Upload Merged Coverage to Codecov
-        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4.6.0
+        uses: codecov/codecov-action@671740ac38dd9b0130fbe1cec585b89eea48d3de # v5.5.2
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
           directory: coverage
@@ -86,6 +86,9 @@ jobs:
               tests/Whizbang.Partitioning.Tests \
               tests/Whizbang.Policies.Tests \
               tests/Whizbang.Sequencing.Tests \
+              tests/Whizbang.Transports.Mutations.Tests \
+              tests/Whizbang.Transports.FastEndpoints.Tests \
+              tests/Whizbang.Transports.HotChocolate.Tests \
               tests/Whizbang.Transports.RabbitMQ.Tests \
               tests/Whizbang.Transports.Tests
             do
@@ -98,10 +101,12 @@ jobs:
           echo "Coverage files to merge: $COVERAGE_FILES"
 
           # Generate merged report in SonarQube format
+          # Exclude source-generated files from coverage (*.g.cs, .whizbang-generated)
           reportgenerator \
             "-reports:${COVERAGE_FILES}" \
             "-targetdir:coverage/sonarqube" \
-            "-reporttypes:SonarQube"
+            "-reporttypes:SonarQube" \
+            "-filefilters:-*.g.cs;-*/.whizbang-generated/*"
 
           # Convert absolute paths to relative paths for SonarCloud
           sed -i 's|/home/runner/work/whizbang/whizbang/||g' coverage/sonarqube/SonarQube.xml
@@ -111,10 +116,12 @@ jobs:
           head -30 coverage/sonarqube/SonarQube.xml
 
           # Also generate text summary for coverage check
+          # Use same exclusions as SonarQube report
           reportgenerator \
             "-reports:${COVERAGE_FILES}" \
             "-targetdir:coverage/summary" \
-            "-reporttypes:TextSummary"
+            "-reporttypes:TextSummary" \
+            "-filefilters:-*.g.cs;-*/.whizbang-generated/*"
 
       - name: Check Coverage Threshold
         run: |
@@ -132,6 +139,8 @@ jobs:
           fi
 
       - name: SonarCloud Analysis
+        # Only run on main/develop pushes - PR analysis not supported by current SonarCloud plan
+        if: github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/develop')
         env:
           GITHUB_TOKEN: ${{ github.token }}
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
@@ -139,8 +148,9 @@ jobs:
           dotnet-sonarscanner begin /k:"whizbang-lib_whizbang" /o:"whizbang-lib" \
             /d:sonar.token="${SONAR_TOKEN}" \
             /d:sonar.host.url="https://sonarcloud.io" \
-            /d:sonar.exclusions="**/samples/**,**/benchmarks/**,**/*Generated.cs,**/.whizbang-generated/**" \
-            /d:sonar.coverage.exclusions="**/samples/**,**/benchmarks/**,**/tests/**,src/Whizbang.Generators/**,src/Whizbang.Generators.Shared/**,src/Whizbang.Data.Schema/**,src/Whizbang.Data.EFCore.Postgres.Generators/**,src/Whizbang.Hosting.Azure.ServiceBus/**,src/Whizbang.Hosting.RabbitMQ/**,src/Whizbang.Data.Dapper.Postgres/**,src/Whizbang.Transports.RabbitMQ/**,src/Whizbang.Data.EFCore.Postgres/**,src/Whizbang.Transports.AzureServiceBus/**,src/Whizbang.Data.Dapper.Sqlite/**,src/Whizbang.Data.Dapper.Custom/**,src/Whizbang.Data.EFCore.Custom/**,src/Whizbang.Data.Postgres/**,src/Whizbang.Testing/**,src/Whizbang.Observability/**,src/Whizbang.SignalR/**" \
+            /d:sonar.exclusions="**/samples/**,**/benchmarks/**,**/node_modules/**,**/*Generated.cs,**/.whizbang-generated/**" \
+            /d:sonar.cpd.exclusions="**/tests/**,**/tools/**,**/samples/**,**/benchmarks/**,src/Whizbang.Generators/**,src/Whizbang.Generators.Shared/**,src/Whizbang.Data.EFCore.Postgres.Generators/**,src/Whizbang.Transports.HotChocolate.Generators/**,src/Whizbang.Transports.FastEndpoints.Generators/**" \
+            /d:sonar.coverage.exclusions="**/samples/**,**/benchmarks/**,**/tests/**,**/tools/**,src/Whizbang.Generators/**,src/Whizbang.Generators.Shared/**,src/Whizbang.Data.Schema/**,src/Whizbang.Data.EFCore.Postgres.Generators/**,src/Whizbang.Transports.HotChocolate.Generators/**,src/Whizbang.Transports.FastEndpoints.Generators/**,src/Whizbang.Hosting.Azure.ServiceBus/**,src/Whizbang.Hosting.RabbitMQ/**,src/Whizbang.Data.Dapper.Postgres/**,src/Whizbang.Transports.RabbitMQ/**,src/Whizbang.Data.EFCore.Postgres/**,src/Whizbang.Transports.AzureServiceBus/**,src/Whizbang.Data.Dapper.Sqlite/**,src/Whizbang.Data.Dapper.Custom/**,src/Whizbang.Data.EFCore.Custom/**,src/Whizbang.Data.Postgres/**,src/Whizbang.Testing/**,src/Whizbang.Observability/**,src/Whizbang.SignalR/**" \
             /d:sonar.coverageReportPaths="coverage/sonarqube/SonarQube.xml" \
             /d:sonar.issue.ignore.multicriteria="e1,e2,e3,e4,e5,e6" \
             /d:sonar.issue.ignore.multicriteria.e1.ruleKey="csharpsquid:S1192" \

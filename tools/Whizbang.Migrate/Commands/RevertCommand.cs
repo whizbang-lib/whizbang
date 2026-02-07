@@ -111,7 +111,7 @@ public sealed class RevertCommand {
       }
     } else {
       try {
-        await decisionFile.SaveAsync(state.DecisionFilePath, ct);
+        await decisionFile.SaveAsync(state.DecisionFilePath, ct: ct);
       } catch {
         // Non-fatal
       }

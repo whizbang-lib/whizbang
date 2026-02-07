@@ -14,66 +14,15 @@ public class TrackedGuidTests {
   // ========================================
 
   [Test]
-  public async Task GuidMetadata_Version7_HasCorrectFlagValueAsync() {
-    // Arrange & Act
-    var flag = GuidMetadata.Version7;
-
-    // Assert - bit 1 should be set
-    await Assert.That((byte)flag).IsEqualTo((byte)(1 << 1));
-  }
-
-  [Test]
-  public async Task GuidMetadata_Version4_HasCorrectFlagValueAsync() {
-    // Arrange & Act
-    var flag = GuidMetadata.Version4;
-
-    // Assert - bit 0 should be set
-    await Assert.That((byte)flag).IsEqualTo((byte)(1 << 0));
-  }
-
-  [Test]
-  public async Task GuidMetadata_SourceMedo_HasCorrectFlagValueAsync() {
-    // Arrange & Act
-    var flag = GuidMetadata.SourceMedo;
-
-    // Assert - bit 2 should be set
-    await Assert.That((byte)flag).IsEqualTo((byte)(1 << 2));
-  }
-
-  [Test]
-  public async Task GuidMetadata_SourceMicrosoft_HasCorrectFlagValueAsync() {
-    // Arrange & Act
-    var flag = GuidMetadata.SourceMicrosoft;
-
-    // Assert - bit 3 should be set
-    await Assert.That((byte)flag).IsEqualTo((byte)(1 << 3));
-  }
-
-  [Test]
-  public async Task GuidMetadata_SourceParsed_HasCorrectFlagValueAsync() {
-    // Arrange & Act
-    var flag = GuidMetadata.SourceParsed;
-
-    // Assert - bit 4 should be set
-    await Assert.That((byte)flag).IsEqualTo((byte)(1 << 4));
-  }
-
-  [Test]
-  public async Task GuidMetadata_SourceExternal_HasCorrectFlagValueAsync() {
-    // Arrange & Act
-    var flag = GuidMetadata.SourceExternal;
-
-    // Assert - bit 5 should be set
-    await Assert.That((byte)flag).IsEqualTo((byte)(1 << 5));
-  }
-
-  [Test]
-  public async Task GuidMetadata_SourceUnknown_HasCorrectFlagValueAsync() {
-    // Arrange & Act
-    var flag = GuidMetadata.SourceUnknown;
-
-    // Assert - bit 6 should be set
-    await Assert.That((byte)flag).IsEqualTo((byte)(1 << 6));
+  [Arguments(GuidMetadata.Version4, 0)]
+  [Arguments(GuidMetadata.Version7, 1)]
+  [Arguments(GuidMetadata.SourceMedo, 2)]
+  [Arguments(GuidMetadata.SourceMicrosoft, 3)]
+  [Arguments(GuidMetadata.SourceParsed, 4)]
+  [Arguments(GuidMetadata.SourceExternal, 5)]
+  [Arguments(GuidMetadata.SourceUnknown, 6)]
+  public async Task GuidMetadata_Flags_HaveCorrectBitPositionsAsync(GuidMetadata flag, int bitPosition) {
+    await Assert.That((byte)flag).IsEqualTo((byte)(1 << bitPosition));
   }
 
   [Test]
@@ -491,6 +440,29 @@ public class TrackedGuidTests {
 
     // Assert
     await Assert.That(stringValue).IsEqualTo(tracked.Value.ToString());
+  }
+
+  // ========================================
+  // IsTracking Property Tests
+  // ========================================
+
+  [Test]
+  public async Task TrackedGuid_IsTracking_OnlyAuthoritativeSourcesReturnTrueAsync() {
+    // Arrange & Act - Create via different methods
+    var medo = TrackedGuid.NewMedo();
+    var microsoftV7 = TrackedGuid.NewMicrosoftV7();
+    var random = TrackedGuid.NewRandom();
+    var external = TrackedGuid.FromExternal(Guid.CreateVersion7());
+    var parsed = TrackedGuid.Parse(Guid.CreateVersion7().ToString());
+    TrackedGuid implicit_ = Guid.CreateVersion7();
+
+    // Assert - Only generation methods have authoritative metadata
+    await Assert.That(medo.IsTracking).IsTrue();
+    await Assert.That(microsoftV7.IsTracking).IsTrue();
+    await Assert.That(random.IsTracking).IsTrue();
+    await Assert.That(external.IsTracking).IsFalse();
+    await Assert.That(parsed.IsTracking).IsFalse();
+    await Assert.That(implicit_.IsTracking).IsFalse();
   }
 
   // ========================================

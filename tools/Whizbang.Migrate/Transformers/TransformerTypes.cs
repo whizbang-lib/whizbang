@@ -47,8 +47,14 @@ public enum ChangeType {
   /// <summary>Using directive was removed.</summary>
   UsingRemoved,
 
+  /// <summary>Using directive was replaced.</summary>
+  UsingReplaced,
+
   /// <summary>Attribute was removed.</summary>
   AttributeRemoved,
+
+  /// <summary>Attribute was replaced with a different attribute.</summary>
+  AttributeReplaced,
 
   /// <summary>Type name was changed.</summary>
   TypeRename,
@@ -58,6 +64,9 @@ public enum ChangeType {
 
   /// <summary>Method call was replaced.</summary>
   MethodCallReplacement,
+
+  /// <summary>Method was replaced with a different method.</summary>
+  MethodReplaced,
 
   /// <summary>Method was transformed (e.g., ShouldDelete to Apply returning ModelAction).</summary>
   MethodTransformed

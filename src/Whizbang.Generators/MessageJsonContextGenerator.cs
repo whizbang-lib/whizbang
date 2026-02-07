@@ -59,6 +59,19 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   private const string PLACEHOLDER_SETTER = "__SETTER__";
   private const string PLACEHOLDER_PARAMETER_NAME = "__PARAMETER_NAME__";
 
+  /// <summary>
+  /// Converts a fully qualified type name to a safe C# identifier for use in method names.
+  /// This ensures unique method names even when multiple namespaces have types with the same simple name.
+  /// Example: "global::JDX.Contracts.Job.CreateCommand" → "JDX_Contracts_Job_CreateCommand"
+  /// Example: "string?" → "string_Nullable"
+  /// </summary>
+  private static string _toSafeMethodName(string fullyQualifiedName) {
+    return fullyQualifiedName
+        .Replace(PLACEHOLDER_GLOBAL, "")
+        .Replace(".", "_")
+        .Replace("?", "_Nullable");
+  }
+
   public void Initialize(IncrementalGeneratorInitializationContext context) {
     // Discover message types (commands, events, and types with [WhizbangSerializable])
     var messageTypes = context.SyntaxProvider.CreateSyntaxProvider(
@@ -529,7 +542,7 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
     sb.AppendLine("/// <param name=\"assemblyQualifiedTypeName\">Assembly-qualified type name (e.g., \"YourNamespace.Commands.CreateOrder, YourAssembly\")</param>");
     sb.AppendLine("/// <param name=\"options\">JsonSerializerOptions to use for creating JsonTypeInfo</param>");
     sb.AppendLine("/// <returns>JsonTypeInfo for the type, or null if not found in this assembly</returns>");
-    sb.AppendLine("[System.Obsolete(\"Use JsonContextRegistry.GetTypeInfoByName() for cross-assembly type resolution with fuzzy matching support.\")]");
+    sb.AppendLine("[global::System.Obsolete(\"Use JsonContextRegistry.GetTypeInfoByName() for cross-assembly type resolution with fuzzy matching support.\")]");
     sb.AppendLine("public static JsonTypeInfo? GetTypeInfoByName(string assemblyQualifiedTypeName, JsonSerializerOptions options) {");
     sb.AppendLine("  if (string.IsNullOrEmpty(assemblyQualifiedTypeName)) return null;");
     sb.AppendLine("  if (options == null) return null;");
@@ -607,9 +620,12 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
       for (int i = 0; i < message.Properties.Length; i++) {
         var prop = message.Properties[i];
+        // Note: No trailing comma - the template snippet adds the comma after __SETTER__
+        // Note: No comment for null - a // comment would hide the template's trailing comma
+        // Note: Use null-forgiving operator (!) to suppress CS8601 warnings - STJ handles null checking
         var setter = prop.IsInitOnly
-            ? "null,  // Init-only property, STJ will use reflection"
-            : $"(obj, value) => (({message.FullyQualifiedName})obj).{prop.Name} = value,";
+            ? "null"
+            : $"(obj, value) => (({message.FullyQualifiedName})obj).{prop.Name} = value!";
 
         var propertyCode = propertyCreationSnippet
             .Replace(PLACEHOLDER_INDEX, i.ToString(CultureInfo.InvariantCulture))
