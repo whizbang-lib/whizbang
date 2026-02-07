@@ -461,6 +461,17 @@ try {
         }
     }
 
+    # Helper function to check if a DLL is in its primary project location (not copied to another project's bin folder)
+    # When project A references project B, B's DLL gets copied to A's bin folder. This causes duplicate test discovery.
+    # We only want to run each test DLL from its primary location (where DLL name matches project folder name).
+    function Test-IsPrimaryTestDll {
+        param([System.IO.FileInfo]$DllFile)
+        $dllName = [System.IO.Path]::GetFileNameWithoutExtension($DllFile.Name)
+        $projectDir = $DllFile.DirectoryName -replace "[/\\]bin[/\\]Debug[/\\]net10\.0$", ""
+        $projectName = [System.IO.Path]::GetFileName($projectDir)
+        return $dllName -eq $projectName
+    }
+
     # Use --test-modules with globbing pattern for project filtering
     if ($ProjectFilter) {
         # Native .NET 10 globbing: **/bin/**/Debug/net10.0/*{Filter}*.dll
@@ -496,6 +507,7 @@ try {
         # Pattern: bin/Debug/net10.0/ - works for standard .NET output paths
         $allTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]" } |
+            Where-Object { Test-IsPrimaryTestDll $_ } |
             Where-Object { -not (Test-IsIntegrationTest $_.Name) } |
             ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
 
@@ -512,9 +524,26 @@ try {
             exit 1
         }
     } else {
-        # Use the main solution file (already filtered to test projects via <IsTestProject>)
-        $testArgs += "--solution"
-        $testArgs += "Whizbang.slnx"
+        # Include ALL test projects (including integration tests)
+        # Use explicit DLL discovery instead of --solution to avoid picking up library projects like Whizbang.Testing
+        Ensure-BuildExists
+        # CRITICAL: Filter using Test-IsPrimaryTestDll to exclude copied DLLs from other projects' bin folders
+        $allTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]" } |
+            Where-Object { Test-IsPrimaryTestDll $_ } |
+            ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
+
+        if ($allTestDlls.Count -gt 0) {
+            $testArgs += "--test-modules"
+            $testArgs += ($allTestDlls -join ";")
+
+            if (-not $useAiOutput) {
+                Write-Host "Discovered $($allTestDlls.Count) test projects (including integration tests)" -ForegroundColor Gray
+            }
+        } else {
+            Write-Warning "No test DLLs found after build. Check that test projects exist."
+            exit 1
+        }
     }
 
     # Use --treenode-filter for test name filtering (MTP native filtering)
