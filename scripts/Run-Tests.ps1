@@ -608,6 +608,7 @@ try {
         $buildErrors = @()
         $buildWarnings = @()
         $projectErrors = @()  # Track test project-level errors (not individual test failures)
+        $infrastructureErrors = 0  # Track MTP infrastructure error count from summary
         $currentFailedTest = $null
         $capturingStackTrace = $false
         $stackTraceLines = @()
@@ -949,10 +950,11 @@ try {
                 $errorCount = $matches[2]
                 $projectErrors += "$projectName failed with $errorCount error(s)"
             }
-            # Capture generic "error:" lines from test output
+            # Capture generic "error:" lines from test output (infrastructure errors)
             elseif ($lineStr -match "^\s*error:\s+(\d+)") {
-                # This catches the final "error: 1" summary line
-                # Don't add to projectErrors here as it's already captured above
+                # This catches the final "error: X" summary line from MTP
+                # Infrastructure errors are setup/teardown failures separate from test failures
+                $infrastructureErrors += [int]$matches[1]
             }
             # Capture build errors
             elseif ($lineStr -match "error\s+(CS\d+|MSB\d+):") {
@@ -996,6 +998,9 @@ try {
         if ($currentFailedTest -and $stackTraceLines.Count -gt 0) {
             $testDetails[$currentFailedTest]["StackTrace"] = $stackTraceLines -join "`n"
         }
+
+        # Capture any stderr content for display
+        $stderrContent = $stderrBuilder.ToString().Trim()
 
         # Calculate elapsed time
         $endTime = Get-Date
@@ -1056,6 +1061,39 @@ try {
             Write-Host ""
             Write-Host "Note: These are test project-level errors (setup/teardown failures, resource issues)" -ForegroundColor Yellow
             Write-Host "      Run the specific project individually for more details" -ForegroundColor Yellow
+        }
+
+        if ($infrastructureErrors -gt 0) {
+            Write-Host ""
+            Write-Host "=== INFRASTRUCTURE ERRORS ($infrastructureErrors) ===" -ForegroundColor Red
+            Write-Host ""
+            Write-Host "MTP reported $infrastructureErrors infrastructure error(s)." -ForegroundColor Red
+            Write-Host "These are setup/teardown failures or test host issues, not test failures." -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "Possible causes:" -ForegroundColor Yellow
+            Write-Host "  - Test fixture setup/teardown exceptions" -ForegroundColor Gray
+            Write-Host "  - Container startup failures (Docker issues)" -ForegroundColor Gray
+            Write-Host "  - Resource cleanup errors" -ForegroundColor Gray
+            Write-Host "  - Assembly loading failures" -ForegroundColor Gray
+            Write-Host ""
+            Write-Host "Run the test project directly for detailed error messages:" -ForegroundColor Yellow
+            Write-Host "  cd tests/YourProject.Tests && dotnet run" -ForegroundColor Gray
+        }
+
+        # Display stderr if any (may contain error details not in stdout)
+        if ($stderrContent) {
+            Write-Host ""
+            Write-Host "=== STDERR OUTPUT ===" -ForegroundColor Yellow
+            Write-Host ""
+            # Show first 30 lines of stderr
+            $stderrLines = $stderrContent -split "`n"
+            $linesToShow = [Math]::Min($stderrLines.Count, 30)
+            for ($i = 0; $i -lt $linesToShow; $i++) {
+                Write-Host "  $($stderrLines[$i])" -ForegroundColor Gray
+            }
+            if ($stderrLines.Count -gt 30) {
+                Write-Host "  ... ($($stderrLines.Count - 30) more lines)" -ForegroundColor DarkGray
+            }
         }
 
         if ($buildErrors.Count -gt 0) {
@@ -1126,7 +1164,7 @@ try {
         # In AI mode, use the process exit code and check captured errors
         # Note: dotnet test returns 0 on success, non-zero on failure
         # Don't count processExitCode alone - it can be non-zero due to skipped tests or cancellation
-        $hasErrors = $totalFailed -gt 0 -or $failFastTriggered -or $projectErrors.Count -gt 0 -or $buildErrors.Count -gt 0
+        $hasErrors = $totalFailed -gt 0 -or $failFastTriggered -or $projectErrors.Count -gt 0 -or $buildErrors.Count -gt 0 -or $infrastructureErrors -gt 0
     } else {
         $hasErrors = $LASTEXITCODE -ne 0
     }
