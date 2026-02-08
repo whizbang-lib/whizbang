@@ -227,7 +227,7 @@ param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Debug",  # Build configuration (Debug or Release)
 
-    [string]$ExcludeProjectFilter = ""  # Exclude projects matching this pattern (regex)
+    [string]$ExcludeProjectFilter = "",  # Exclude projects matching this pattern (regex)
 
     # Legacy parameters (deprecated, use -Mode instead)
     [bool]$ExcludeIntegration,
