@@ -57,8 +57,13 @@ jobs:
           echo "Running InMemory integration tests"
           MAX_RETRIES=3
           RETRY_COUNT=0
+          PROJECT_PATH="samples/ECommerce/tests/ECommerce.InMemory.Integration.Tests"
           # TUnit with Microsoft.Testing.Platform compiles to executable
-          until ./samples/ECommerce/tests/ECommerce.InMemory.Integration.Tests/bin/Release/net10.0/ECommerce.InMemory.Integration.Tests; do
+          # Coverage is collected via Microsoft.Testing.Extensions.CodeCoverage
+          until ./$PROJECT_PATH/bin/Release/net10.0/ECommerce.InMemory.Integration.Tests \
+            --coverage \
+            --coverage-output-format cobertura \
+            --coverage-output "$PROJECT_PATH/TestResults/coverage.cobertura.xml"; do
             RETRY_COUNT=$((RETRY_COUNT + 1))
             if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
               echo "::error::Tests failed after $MAX_RETRIES attempts"
@@ -69,4 +74,12 @@ jobs:
           done
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
+
+      - name: Upload Coverage
+        if: success()
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-inmemory
+          path: 'samples/ECommerce/tests/*/TestResults/*.cobertura.xml'
+          retention-days: 1
 

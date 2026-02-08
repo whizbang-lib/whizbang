@@ -69,24 +69,22 @@ jobs:
           dotnet build --configuration Release -maxcpucount:1
           echo "Build complete - all source-generated files now exist"
 
-      - name: Skip Coverage If No Files
+      - name: Check Coverage Files
         id: check-coverage
         run: |
           # Find all cobertura XML files
           COVERAGE_FILES=$(find coverage -name "*.cobertura.xml" 2>/dev/null | tr '\n' ';')
 
           if [ -z "$COVERAGE_FILES" ]; then
-            echo "No coverage files found - coverage collection is disabled in test workflows"
-            echo "Skipping coverage-related steps"
-            echo "skip=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "Found coverage files: $COVERAGE_FILES"
-            echo "skip=false" >> "$GITHUB_OUTPUT"
-            echo "files=$COVERAGE_FILES" >> "$GITHUB_OUTPUT"
+            echo "::error::No coverage files found - this should not happen"
+            echo "Coverage files are required for quality analysis"
+            exit 1
           fi
 
+          echo "Found coverage files: $COVERAGE_FILES"
+          echo "files=$COVERAGE_FILES" >> "$GITHUB_OUTPUT"
+
       - name: Merge Coverage Reports
-        if: steps.check-coverage.outputs.skip != 'true'
         run: |
           COVERAGE_FILES="${{ steps.check-coverage.outputs.files }}"
           echo "Coverage files to merge: $COVERAGE_FILES"
@@ -115,7 +113,6 @@ jobs:
             "-filefilters:-*.g.cs;-*/.whizbang-generated/*"
 
       - name: Check Coverage Threshold
-        if: steps.check-coverage.outputs.skip != 'true'
         run: |
           # Parse coverage from TextSummary report
           COVERAGE=$(grep "Line coverage:" coverage/summary/Summary.txt | grep -oP '\d+(\.\d+)?(?=%)' | head -1)

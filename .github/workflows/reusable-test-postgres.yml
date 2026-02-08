@@ -56,6 +56,7 @@ jobs:
         run: |
           # Run PostgreSQL integration tests with Testcontainers
           # TUnit with Microsoft.Testing.Platform compiles to executable
+          # Coverage is collected via Microsoft.Testing.Extensions.CodeCoverage
           MAX_RETRIES=3
           for project in \
             Whizbang.Data.Postgres.Tests \
@@ -63,7 +64,10 @@ jobs:
           do
             echo "Running tests in $project"
             RETRY_COUNT=0
-            until ./tests/$project/bin/Release/net10.0/$project; do
+            until ./tests/$project/bin/Release/net10.0/$project \
+              --coverage \
+              --coverage-output-format cobertura \
+              --coverage-output "tests/$project/TestResults/coverage.cobertura.xml"; do
               RETRY_COUNT=$((RETRY_COUNT + 1))
               if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
                 echo "::error::Tests in $project failed after $MAX_RETRIES attempts"
@@ -75,4 +79,12 @@ jobs:
           done
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
+
+      - name: Upload Coverage
+        if: success()
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-postgres
+          path: 'tests/*/TestResults/*.cobertura.xml'
+          retention-days: 1
 
