@@ -56,6 +56,7 @@ jobs:
         run: |
           # Run unit tests using TUnit executables (Microsoft.Testing.Platform)
           # Test projects are executables with TUnit, run them directly
+          # Coverage is collected via Microsoft.Testing.Extensions.CodeCoverage
           for project in \
             Whizbang.Core.Tests \
             Whizbang.Execution.Tests \
@@ -74,6 +75,18 @@ jobs:
           do
             echo "Running tests in $project"
             # TUnit with Microsoft.Testing.Platform compiles to executable
-            ./tests/$project/bin/Release/net10.0/$project
+            # Pass coverage args to collect coverage via Microsoft.Testing.Extensions.CodeCoverage
+            ./tests/$project/bin/Release/net10.0/$project \
+              --coverage \
+              --coverage-output-format cobertura \
+              --coverage-output "tests/$project/TestResults/coverage.cobertura.xml"
           done
+
+      - name: Upload Coverage
+        if: success()
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage-unit
+          path: 'tests/*/TestResults/*.cobertura.xml'
+          retention-days: 1
 
