@@ -1,21 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  Minimal coverage settings for Microsoft.Testing.Extensions.CodeCoverage
-  Used with: dotnet run --coverage --coverage-settings codecoverage.runsettings
+  Coverage settings for dotnet test with Microsoft.Testing.Extensions.CodeCoverage
 
   Key setting: ExcludeAssembliesWithoutSources=None
   - Default (MissingAll) excludes assemblies if source files are missing from PDB paths
   - In CI, artifact downloads may have different paths than build, causing empty coverage
   - Setting to None ensures coverage is collected regardless of source file availability
 
-  All other settings use defaults to match main branch behavior (80.2% coverage).
-
   See: https://github.com/microsoft/codecoverage/blob/main/docs/configuration.md
 -->
-<Configuration>
-  <!-- Disable source file requirement - PDB paths may not match in CI artifacts -->
-  <!-- Values: None, MissingAny, MissingAll, NotSpecified -->
-  <ExcludeAssembliesWithoutSources>None</ExcludeAssembliesWithoutSources>
-
-  <!-- Use default for all other settings -->
-</Configuration>
+<RunSettings>
+  <DataCollectionRunSettings>
+    <DataCollectors>
+      <DataCollector friendlyName="XPlat Code Coverage">
+        <Configuration>
+          <Format>cobertura</Format>
+          <ExcludeAssembliesWithoutSources>None</ExcludeAssembliesWithoutSources>
+        </Configuration>
+      </DataCollector>
+    </DataCollectors>
+  </DataCollectionRunSettings>
+</RunSettings>
