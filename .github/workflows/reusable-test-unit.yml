@@ -48,24 +48,26 @@ jobs:
 
       - name: Run Unit Tests
         run: |
-          # Run unit tests (excluding integration tests that need external services)
+          # Run unit tests using TUnit executables (Microsoft.Testing.Platform)
+          # Test projects are executables with TUnit, run them directly
           for project in \
-            tests/Whizbang.Core.Tests \
-            tests/Whizbang.Execution.Tests \
-            tests/Whizbang.Generators.Tests \
-            tests/Whizbang.Hosting.Azure.ServiceBus.Tests \
-            tests/Whizbang.Hosting.RabbitMQ.Tests \
-            tests/Whizbang.Observability.Tests \
-            tests/Whizbang.Partitioning.Tests \
-            tests/Whizbang.Policies.Tests \
-            tests/Whizbang.Sequencing.Tests \
-            tests/Whizbang.Transports.Mutations.Tests \
-            tests/Whizbang.Transports.FastEndpoints.Tests \
-            tests/Whizbang.Transports.HotChocolate.Tests \
-            tests/Whizbang.Transports.RabbitMQ.Tests \
-            tests/Whizbang.Transports.Tests
+            Whizbang.Core.Tests \
+            Whizbang.Execution.Tests \
+            Whizbang.Generators.Tests \
+            Whizbang.Hosting.Azure.ServiceBus.Tests \
+            Whizbang.Hosting.RabbitMQ.Tests \
+            Whizbang.Observability.Tests \
+            Whizbang.Partitioning.Tests \
+            Whizbang.Policies.Tests \
+            Whizbang.Sequencing.Tests \
+            Whizbang.Transports.Mutations.Tests \
+            Whizbang.Transports.FastEndpoints.Tests \
+            Whizbang.Transports.HotChocolate.Tests \
+            Whizbang.Transports.RabbitMQ.Tests \
+            Whizbang.Transports.Tests
           do
             echo "Running tests in $project"
-            dotnet test "$project" --no-restore --no-build --configuration Release
+            # TUnit with Microsoft.Testing.Platform compiles to executable
+            ./tests/$project/bin/Release/net10.0/$project
           done
 
