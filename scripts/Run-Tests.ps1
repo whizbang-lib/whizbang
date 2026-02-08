@@ -499,6 +499,7 @@ try {
         $allPassed = $true
         $totalProjectsPassed = 0
         $totalProjectsFailed = 0
+        $failFastTriggered = $false  # Initialize for finally block
         $startTime = Get-Date
 
         foreach ($projectPath in $testProjectPaths) {
@@ -511,12 +512,16 @@ try {
                 Write-Host "Testing: $projectName" -ForegroundColor Gray
             }
 
+            # Use dotnet run instead of dotnet test to avoid global.json VSTest validation issues
+            # TUnit/MTP tests run directly via dotnet run on the test project
+            $projectDir = [System.IO.Path]::GetDirectoryName($projectPath)
             $projectArgs = @(
-                "test"
+                "run"
+                "--project"
                 "`"$projectPath`""
-                "--no-restore"
                 "--configuration"
                 $Configuration
+                "--"  # Separator for test runner args
                 "--coverage"
                 "--coverage-output-format"
                 "cobertura"
@@ -546,6 +551,7 @@ try {
                 }
                 if ($FailFast) {
                     Write-Host "Stopping due to -FailFast" -ForegroundColor Red
+                    $failFastTriggered = $true
                     break
                 }
             }
