@@ -60,5 +60,5 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: coverage-postgres
-          path: 'tests/*/TestResults/*.cobertura.xml'
+          path: 'tests/**/TestResults/*.cobertura.xml'
           retention-days: 1
