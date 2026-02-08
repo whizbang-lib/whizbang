@@ -2,6 +2,11 @@ name: Unit Tests (Reusable)
 
 on:
   workflow_call:
+    inputs:
+      artifact-name:
+        description: 'Build artifact to download (skips build if provided)'
+        type: string
+        required: false
 
 jobs:
   unit-tests:
@@ -18,7 +23,14 @@ jobs:
         with:
           dotnet-version: '10.0.x'
 
+      - name: Download Build Artifacts
+        if: inputs.artifact-name != ''
+        uses: actions/download-artifact@v6
+        with:
+          name: ${{ inputs.artifact-name }}
+
       - name: Cache NuGet packages
+        if: inputs.artifact-name == ''
         uses: actions/cache@v5
         with:
           path: ~/.nuget/packages
@@ -27,9 +39,11 @@ jobs:
             ${{ runner.os }}-nuget-
 
       - name: Restore Dependencies
+        if: inputs.artifact-name == ''
         run: dotnet restore
 
       - name: Build Solution
+        if: inputs.artifact-name == ''
         run: dotnet build --no-restore --configuration Release -maxcpucount:1
 
       - name: Run Unit Tests
