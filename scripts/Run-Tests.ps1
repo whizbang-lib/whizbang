@@ -444,15 +444,9 @@ try {
     }
 
     # Add coverage collection if requested
-    # Uses runsettings with ExcludeAssembliesWithoutSources=None for CI compatibility
-    # The runsettings file is included in build artifacts for test jobs to use
+    # Don't use runsettings - main branch achieves 80%+ coverage with defaults
     if ($Coverage) {
         $testArgs += "--coverage"
-        $runsettingsPath = Join-Path $repoRoot "codecoverage.runsettings"
-        if (Test-Path $runsettingsPath) {
-            $testArgs += "--coverage-settings"
-            $testArgs += $runsettingsPath
-        }
         $testArgs += "--coverage-output-format"
         $testArgs += "cobertura"
     }
