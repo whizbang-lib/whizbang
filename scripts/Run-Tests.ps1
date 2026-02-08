@@ -448,8 +448,11 @@ try {
     # This ensures coverage is collected even when source paths don't match in artifacts
     if ($Coverage) {
         $testArgs += "--coverage"
-        $testArgs += "--coverage-settings"
-        $testArgs += "codecoverage.runsettings"
+        $runsettingsPath = Join-Path $repoRoot "codecoverage.runsettings"
+        if (Test-Path $runsettingsPath) {
+            $testArgs += "--coverage-settings"
+            $testArgs += $runsettingsPath
+        }
         $testArgs += "--coverage-output-format"
         $testArgs += "cobertura"
     }
