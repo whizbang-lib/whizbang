@@ -48,10 +48,12 @@ jobs:
 
       - name: Run PostgreSQL Integration Tests
         run: |
-          # Run PostgreSQL integration tests using Run-Tests.ps1
-          # Uses -ProjectFilter "Postgres" to run only Whizbang.Data.Postgres.Tests and Whizbang.Data.EFCore.Postgres.Tests
-          # Uses Testcontainers for real PostgreSQL
-          pwsh scripts/Run-Tests.ps1 -ProjectFilter "Postgres" -Coverage -Configuration Release
+          # Run PostgreSQL tests per-project for proper coverage collection
+          for project in $(find tests -name "*Postgres*.csproj" -type f | sort); do
+            echo "Running tests in $project"
+            dotnet test "$project" --no-restore --no-build --configuration Release \
+              --coverage --coverage-output-format cobertura || true
+          done
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 

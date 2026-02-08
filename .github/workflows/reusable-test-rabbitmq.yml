@@ -48,10 +48,11 @@ jobs:
 
       - name: Run RabbitMQ Integration Tests
         run: |
-          # Run RabbitMQ integration tests using Run-Tests.ps1
-          # Uses -ProjectFilter to run only ECommerce.RabbitMQ.Integration.Tests
-          # Uses Testcontainers for real RabbitMQ
-          pwsh scripts/Run-Tests.ps1 -ProjectFilter "ECommerce.RabbitMQ.Integration" -Mode IntegrationsOnly -Coverage -Configuration Release
+          # Run RabbitMQ integration tests per-project
+          project="samples/ECommerce/tests/ECommerce.RabbitMQ.Integration.Tests/ECommerce.RabbitMQ.Integration.Tests.csproj"
+          echo "Running tests in $project"
+          dotnet test "$project" --no-restore --no-build --configuration Release \
+            --coverage --coverage-output-format cobertura
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 

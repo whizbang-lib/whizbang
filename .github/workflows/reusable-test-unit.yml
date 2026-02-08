@@ -48,11 +48,13 @@ jobs:
 
       - name: Run Unit Tests
         run: |
-          # Run unit tests using Run-Tests.ps1
-          # Uses -Mode Ci for full output, -Coverage for coverage collection
-          # Uses -Configuration Release to match CI build
-          # Dynamically discovers 19 unit test projects (excludes Postgres and integration tests)
-          pwsh scripts/Run-Tests.ps1 -Mode Ci -Coverage -Configuration Release
+          # Run unit tests per-project for proper coverage collection
+          # Dynamically discovers all unit test projects (excludes Postgres and integration tests)
+          for project in $(find tests -name "*.csproj" -type f | grep -v "Postgres" | grep -v "Integration" | sort); do
+            echo "Running tests in $project"
+            dotnet test "$project" --no-restore --no-build --configuration Release \
+              --coverage --coverage-output-format cobertura || true
+          done
 
       - name: Upload Coverage
         if: success()
