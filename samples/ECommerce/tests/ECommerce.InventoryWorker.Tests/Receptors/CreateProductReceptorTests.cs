@@ -5,6 +5,7 @@ using Microsoft.Extensions.Logging;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 
 namespace ECommerce.InventoryWorker.Tests.Receptors;
 
@@ -319,6 +320,20 @@ internal class TestDispatcher : IDispatcher {
     throw new NotImplementedException();
 
   public ValueTask<IEnumerable<TResult>> LocalInvokeManyAsync<TResult>(IEnumerable<object> messages) =>
+    throw new NotImplementedException();
+
+  // DispatchOptions overloads
+  public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, DispatchOptions options) where TMessage : notnull =>
+    throw new NotImplementedException();
+  public Task<IDeliveryReceipt> SendAsync(object message, DispatchOptions options) =>
+    throw new NotImplementedException();
+  public Task<IDeliveryReceipt> SendAsync(object message, IMessageContext context, DispatchOptions options, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) =>
+    throw new NotImplementedException();
+  public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, DispatchOptions options) =>
+    throw new NotImplementedException();
+  public ValueTask LocalInvokeAsync(object message, DispatchOptions options) =>
+    throw new NotImplementedException();
+  public Task PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) =>
     throw new NotImplementedException();
 }
 

@@ -4,6 +4,7 @@ using ECommerce.Contracts.Events;
 using ECommerce.ShippingWorker.Receptors;
 using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.ValueObjects;
 
 namespace ECommerce.ShippingWorker.Tests;
@@ -98,5 +99,21 @@ public class CreateShipmentReceptorTests {
         Task.FromResult<IEnumerable<IDeliveryReceipt>>([]);
     public ValueTask<IEnumerable<TResult>> LocalInvokeManyAsync<TResult>(IEnumerable<object> messages) =>
         ValueTask.FromResult<IEnumerable<TResult>>([]);
+
+    // DispatchOptions overloads
+    public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, DispatchOptions options) where TMessage : notnull =>
+        Task.FromResult<IDeliveryReceipt>(DeliveryReceipt.Accepted(MessageId.New(), "test"));
+    public Task<IDeliveryReceipt> SendAsync(object message, DispatchOptions options) =>
+        Task.FromResult<IDeliveryReceipt>(DeliveryReceipt.Accepted(MessageId.New(), "test"));
+    public Task<IDeliveryReceipt> SendAsync(object message, IMessageContext context, DispatchOptions options, [CallerMemberName] string callerMemberName = "", [CallerFilePath] string callerFilePath = "", [CallerLineNumber] int callerLineNumber = 0) =>
+        Task.FromResult<IDeliveryReceipt>(DeliveryReceipt.Accepted(MessageId.New(), "test"));
+    public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, DispatchOptions options) =>
+        ValueTask.FromResult(default(TResult)!);
+    public ValueTask LocalInvokeAsync(object message, DispatchOptions options) =>
+        ValueTask.CompletedTask;
+    public Task PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) {
+      PublishedEvents.Add(eventData!);
+      return Task.CompletedTask;
+    }
   }
 }
