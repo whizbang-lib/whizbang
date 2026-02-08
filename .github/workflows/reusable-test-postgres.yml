@@ -56,8 +56,7 @@ jobs:
           do
             echo "Running tests in $project"
             RETRY_COUNT=0
-            until dotnet test "$project" --no-restore --no-build --configuration Release \
-              --coverage --coverage-output-format cobertura; do
+            until dotnet test "$project" --no-restore --no-build --configuration Release; do
               RETRY_COUNT=$((RETRY_COUNT + 1))
               if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
                 echo "::error::Tests in $project failed after $MAX_RETRIES attempts"
@@ -70,10 +69,3 @@ jobs:
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 
-      - name: Upload Coverage
-        if: success()
-        uses: actions/upload-artifact@v6
-        with:
-          name: coverage-postgres
-          path: '**/TestResults/*.cobertura.xml'
-          retention-days: 1

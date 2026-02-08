@@ -52,8 +52,7 @@ jobs:
           MAX_RETRIES=3
           RETRY_COUNT=0
           until dotnet test samples/ECommerce/tests/ECommerce.Integration.Tests \
-            --no-restore --no-build --configuration Release \
-            --coverage --coverage-output-format cobertura; do
+            --no-restore --no-build --configuration Release; do
             RETRY_COUNT=$((RETRY_COUNT + 1))
             if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
               echo "::error::Tests failed after $MAX_RETRIES attempts"
@@ -63,10 +62,3 @@ jobs:
             sleep 10
           done
 
-      - name: Upload Coverage
-        if: success()
-        uses: actions/upload-artifact@v6
-        with:
-          name: coverage-servicebus
-          path: '**/TestResults/*.cobertura.xml'
-          retention-days: 1

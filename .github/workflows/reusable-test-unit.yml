@@ -66,14 +66,6 @@ jobs:
             tests/Whizbang.Transports.Tests
           do
             echo "Running tests in $project"
-            dotnet test "$project" --no-restore --no-build --configuration Release \
-              --coverage --coverage-output-format cobertura
+            dotnet test "$project" --no-restore --no-build --configuration Release
           done
 
-      - name: Upload Coverage
-        if: success()
-        uses: actions/upload-artifact@v6
-        with:
-          name: coverage-unit
-          path: '**/TestResults/*.cobertura.xml'
-          retention-days: 1
