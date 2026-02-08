@@ -499,11 +499,28 @@ try {
         return $dllName -eq $projectName
     }
 
-    # Use --test-modules with globbing pattern for project filtering
+    # Use --test-modules with explicit DLL discovery for project filtering
+    # This allows us to properly exclude AppHost projects which aren't test projects
     if ($ProjectFilter) {
-        # Native .NET 10 globbing: **/bin/**/Debug/net10.0/*{Filter}*.dll
-        $testArgs += "--test-modules"
-        $testArgs += "**/bin/**/$Configuration/net10.0/*$ProjectFilter*.dll"
+        Ensure-BuildExists
+        # Find DLLs matching the filter, excluding AppHost and ensuring they're primary test DLLs
+        $filteredDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*$ProjectFilter*.dll" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
+            Where-Object { $_.Name -notmatch "AppHost" } |
+            Where-Object { Test-IsPrimaryTestDll $_ } |
+            ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
+
+        if ($filteredDlls.Count -gt 0) {
+            $testArgs += "--test-modules"
+            $testArgs += ($filteredDlls -join ";")
+
+            if (-not $useAiOutput) {
+                Write-Host "Discovered $($filteredDlls.Count) test projects matching '$ProjectFilter'" -ForegroundColor Gray
+            }
+        } else {
+            Write-Warning "No test DLLs found matching '$ProjectFilter'. Check the project name."
+            exit 1
+        }
     } elseif ($onlyIntegrationTests) {
         # Run ONLY integration tests
         Ensure-BuildExists
