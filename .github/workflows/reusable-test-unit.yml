@@ -46,44 +46,13 @@ jobs:
         if: inputs.artifact-name == ''
         run: dotnet build --no-restore --configuration Release -maxcpucount:1
 
-      - name: Make Test Executables Executable
-        if: inputs.artifact-name != ''
-        run: |
-          # Artifacts lose execute permissions - restore them
-          find tests -name "*.Tests" -type f -path "*/bin/Release/net10.0/*" -exec chmod +x {} \;
-
       - name: Run Unit Tests
         run: |
-          # Run unit tests using TUnit executables (Microsoft.Testing.Platform)
-          # Test projects are executables with TUnit, run them directly
-          # Coverage is collected via Microsoft.Testing.Extensions.CodeCoverage
-          for project in \
-            Whizbang.Core.Tests \
-            Whizbang.Execution.Tests \
-            Whizbang.Generators.Tests \
-            Whizbang.Hosting.Azure.ServiceBus.Tests \
-            Whizbang.Hosting.RabbitMQ.Tests \
-            Whizbang.Observability.Tests \
-            Whizbang.Partitioning.Tests \
-            Whizbang.Policies.Tests \
-            Whizbang.Sequencing.Tests \
-            Whizbang.Transports.Mutations.Tests \
-            Whizbang.Transports.FastEndpoints.Tests \
-            Whizbang.Transports.HotChocolate.Tests \
-            Whizbang.Transports.RabbitMQ.Tests \
-            Whizbang.Transports.Tests
-          do
-            echo "Running tests in $project"
-            # TUnit with Microsoft.Testing.Platform compiles to executable
-            # Coverage is always output to TestResults/ subdirectory relative to working dir
-            ./tests/$project/bin/Release/net10.0/$project \
-              --coverage \
-              --coverage-output-format cobertura \
-              --coverage-output coverage.cobertura.xml
-            # Move coverage file from bin/TestResults to tests/TestResults
-            mkdir -p "tests/$project/TestResults"
-            mv "tests/$project/bin/Release/net10.0/TestResults/coverage.cobertura.xml" "tests/$project/TestResults/" || true
-          done
+          # Run unit tests using Run-Tests.ps1
+          # Uses -Mode Ci for full output, -Coverage for coverage collection
+          # Uses -Configuration Release to match CI build
+          # Dynamically discovers 19 unit test projects (excludes Postgres and integration tests)
+          pwsh scripts/Run-Tests.ps1 -Mode Ci -Coverage -Configuration Release
 
       - name: Upload Coverage
         if: success()
@@ -92,4 +61,3 @@ jobs:
           name: coverage-unit
           path: 'tests/*/TestResults/*.cobertura.xml'
           retention-days: 1
-

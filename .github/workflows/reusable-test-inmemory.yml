@@ -46,35 +46,11 @@ jobs:
         if: inputs.artifact-name == ''
         run: dotnet build --no-restore --configuration Release -maxcpucount:1
 
-      - name: Make Test Executables Executable
-        if: inputs.artifact-name != ''
-        run: |
-          # Artifacts lose execute permissions - restore them
-          chmod +x samples/ECommerce/tests/ECommerce.InMemory.Integration.Tests/bin/Release/net10.0/ECommerce.InMemory.Integration.Tests || true
-
       - name: Run InMemory Integration Tests
         run: |
-          echo "Running InMemory integration tests"
-          MAX_RETRIES=3
-          RETRY_COUNT=0
-          PROJECT_PATH="samples/ECommerce/tests/ECommerce.InMemory.Integration.Tests"
-          # TUnit with Microsoft.Testing.Platform compiles to executable
-          # Coverage is collected via Microsoft.Testing.Extensions.CodeCoverage
-          until ./$PROJECT_PATH/bin/Release/net10.0/ECommerce.InMemory.Integration.Tests \
-            --coverage \
-            --coverage-output-format cobertura \
-            --coverage-output coverage.cobertura.xml; do
-            RETRY_COUNT=$((RETRY_COUNT + 1))
-            if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
-              echo "::error::Tests failed after $MAX_RETRIES attempts"
-              exit 1
-            fi
-            echo "::warning::Test attempt $RETRY_COUNT failed, retrying..."
-            sleep 10
-          done
-          # Move coverage file from bin/TestResults to samples/TestResults
-          mkdir -p "$PROJECT_PATH/TestResults"
-          mv "$PROJECT_PATH/bin/Release/net10.0/TestResults/coverage.cobertura.xml" "$PROJECT_PATH/TestResults/" || true
+          # Run InMemory integration tests using Run-Tests.ps1
+          # Uses -ProjectFilter to run only ECommerce.InMemory.Integration.Tests
+          pwsh scripts/Run-Tests.ps1 -ProjectFilter "ECommerce.InMemory.Integration" -Mode IntegrationsOnly -Coverage -Configuration Release
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 
@@ -85,4 +61,3 @@ jobs:
           name: coverage-inmemory
           path: 'samples/ECommerce/tests/*/TestResults/*.cobertura.xml'
           retention-days: 1
-

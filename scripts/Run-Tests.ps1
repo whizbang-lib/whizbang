@@ -119,6 +119,10 @@
     Runs all tests including integration tests, stops on first failure
 
 .EXAMPLE
+    ./Run-Tests.ps1 -Coverage
+    Runs tests with code coverage collection (outputs Cobertura XML)
+
+.EXAMPLE
     ./Run-Tests.ps1 -TestFilter "Lifecycle"
     Runs all tests with "Lifecycle" in the class or test name
     Pattern: /*/*/*/*Lifecycle*
@@ -218,6 +222,10 @@ param(
     [switch]$LiveUpdates,  # Show progress immediately when counts change (Ai modes only)
     [switch]$FailFast,  # Stop on first test failure
     [int]$HangTimeout = 180,  # Seconds of no output before hang warning (0 to disable)
+    [switch]$Coverage,  # Collect code coverage (outputs Cobertura XML to TestResults/)
+
+    [ValidateSet("Debug", "Release")]
+    [string]$Configuration = "Debug",  # Build configuration (Debug or Release)
 
     # Legacy parameters (deprecated, use -Mode instead)
     [bool]$ExcludeIntegration,
@@ -376,6 +384,9 @@ try {
         if ($FailFast) {
             Write-Host "Fail Fast: Enabled (stops on first failure)" -ForegroundColor Yellow
         }
+        if ($Coverage) {
+            Write-Host "Coverage: Enabled (Cobertura XML output)" -ForegroundColor Yellow
+        }
         Write-Host ""
     } else {
         Write-Host "[WHIZBANG TEST SUITE - AI MODE]" -ForegroundColor Cyan
@@ -406,6 +417,9 @@ try {
         if ($FailFast) {
             Write-Host "Fail Fast: Enabled" -ForegroundColor Gray
         }
+        if ($Coverage) {
+            Write-Host "Coverage: Enabled" -ForegroundColor Gray
+        }
     }
 
     # Build the dotnet test command
@@ -429,9 +443,22 @@ try {
         $testArgs += "--fail-fast"
     }
 
-    # Pattern for identifying integration test DLLs: *Integration.Tests.dll or *IntegrationTests.dll
+    # Add coverage collection if requested
+    if ($Coverage) {
+        $testArgs += "--coverage"
+        $testArgs += "--coverage-settings"
+        $testArgs += "codecoverage.runsettings"
+        $testArgs += "--coverage-output-format"
+        $testArgs += "cobertura"
+        $testArgs += "--coverage-output"
+        $testArgs += "coverage.cobertura.xml"
+    }
+
+    # Pattern for identifying tests that require external infrastructure (Docker):
+    # - Integration tests: *Integration.Tests.dll or *IntegrationTests.dll
+    # - Infrastructure tests: *Postgres*.Tests.dll (require PostgreSQL via Testcontainers)
     # Excludes AppHost projects which are Aspire hosts, not test projects
-    $integrationTestPattern = "Integration\.Tests\.dll$|IntegrationTests\.dll$"
+    $integrationTestPattern = "Integration\.Tests\.dll$|IntegrationTests\.dll$|Postgres\.Tests\.dll$"
     $excludePattern = "AppHost"
 
     # Helper function to test if a DLL name is an integration test
@@ -442,9 +469,9 @@ try {
 
     # Helper function to ensure build exists for dynamic DLL discovery
     function Ensure-BuildExists {
-        # Pattern: bin/Debug/net10.0/ - works for standard .NET output paths
+        # Pattern: bin/{Configuration}/net10.0/ - works for standard .NET output paths
         $anyDll = Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]" } |
+            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Select-Object -First 1
 
         if (-not $anyDll) {
@@ -467,7 +494,7 @@ try {
     function Test-IsPrimaryTestDll {
         param([System.IO.FileInfo]$DllFile)
         $dllName = [System.IO.Path]::GetFileNameWithoutExtension($DllFile.Name)
-        $projectDir = $DllFile.DirectoryName -replace "[/\\]bin[/\\]Debug[/\\]net10\.0$", ""
+        $projectDir = $DllFile.DirectoryName -replace "[/\\]bin[/\\]$Configuration[/\\]net10\.0$", ""
         $projectName = [System.IO.Path]::GetFileName($projectDir)
         return $dllName -eq $projectName
     }
@@ -476,14 +503,14 @@ try {
     if ($ProjectFilter) {
         # Native .NET 10 globbing: **/bin/**/Debug/net10.0/*{Filter}*.dll
         $testArgs += "--test-modules"
-        $testArgs += "**/bin/**/Debug/net10.0/*$ProjectFilter*.dll"
+        $testArgs += "**/bin/**/$Configuration/net10.0/*$ProjectFilter*.dll"
     } elseif ($onlyIntegrationTests) {
         # Run ONLY integration tests
         Ensure-BuildExists
         # Wrap in @() to ensure array even when empty (prevents null.Count error with StrictMode)
-        # Pattern: bin/Debug/net10.0/ - works for standard .NET output paths
+        # Pattern: bin/{Configuration}/net10.0/ - works for standard .NET output paths
         $integrationDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.dll" -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]" } |
+            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { Test-IsIntegrationTest $_.Name } |
             ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
 
@@ -504,9 +531,9 @@ try {
         # This ensures all test projects are discovered while excluding slow integration tests
         Ensure-BuildExists
         # Wrap in @() to ensure array even when empty (prevents null.Count error with StrictMode)
-        # Pattern: bin/Debug/net10.0/ - works for standard .NET output paths
+        # Pattern: bin/{Configuration}/net10.0/ - works for standard .NET output paths
         $allTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]" } |
+            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { Test-IsPrimaryTestDll $_ } |
             Where-Object { -not (Test-IsIntegrationTest $_.Name) } |
             ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
@@ -529,7 +556,7 @@ try {
         Ensure-BuildExists
         # CRITICAL: Filter using Test-IsPrimaryTestDll to exclude copied DLLs from other projects' bin folders
         $allTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]" } |
+            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { Test-IsPrimaryTestDll $_ } |
             ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
 

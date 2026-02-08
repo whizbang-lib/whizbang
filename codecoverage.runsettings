@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Coverage settings for Microsoft.Testing.Extensions.CodeCoverage
+  Used with: dotnet run - - coverage - - coverage-settings coverage.settings.xml
+
+  Key setting: ExcludeAssembliesWithoutSources=None
+  - Default (MissingAll) excludes assemblies if source files are missing from PDB paths
+  - In CI, artifact downloads may have different paths than build, causing empty coverage
+  - Setting to None ensures coverage is collected regardless of source file availability
+
+  See: https://github.com/microsoft/codecoverage/blob/main/docs/configuration.md
+-->
+<Configuration>
+  <!-- Disable source file requirement - PDB paths may not match in CI artifacts -->
+  <!-- Values: None, MissingAny, MissingAll, NotSpecified -->
+  <ExcludeAssembliesWithoutSources>None</ExcludeAssembliesWithoutSources>
+
+  <!-- Exclude test assemblies from coverage (default for MTP.CodeCoverage) -->
+  <IncludeTestAssembly>False</IncludeTestAssembly>
+
+  <!-- Include/exclude patterns for coverage using ECMAScript regex syntax -->
+  <CodeCoverage>
+    <ModulePaths>
+      <!-- Include all Whizbang and ECommerce assemblies -->
+      <Include>
+        <ModulePath>.*Whizbang.*\.dll$</ModulePath>
+        <ModulePath>.*ECommerce.*\.dll$</ModulePath>
+      </Include>
+      <!-- Exclude test assemblies and third-party libraries -->
+      <Exclude>
+        <ModulePath>.*\.Tests\.dll$</ModulePath>
+        <ModulePath>.*TestUtilities\.dll$</ModulePath>
+        <ModulePath>.*Testcontainers.*\.dll$</ModulePath>
+        <ModulePath>.*TUnit.*\.dll$</ModulePath>
+        <ModulePath>.*Rocks.*\.dll$</ModulePath>
+        <ModulePath>.*Bogus.*\.dll$</ModulePath>
+      </Exclude>
+    </ModulePaths>
+  </CodeCoverage>
+</Configuration>
