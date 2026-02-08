@@ -444,14 +444,12 @@ try {
     }
 
     # Add coverage collection if requested
+    # Note: Don't use --coverage-settings to match main branch behavior
+    # Default MTP coverage provides better results than custom runsettings
     if ($Coverage) {
         $testArgs += "--coverage"
-        $testArgs += "--coverage-settings"
-        $testArgs += "codecoverage.runsettings"
         $testArgs += "--coverage-output-format"
         $testArgs += "cobertura"
-        $testArgs += "--coverage-output"
-        $testArgs += "coverage.cobertura.xml"
     }
 
     # Pattern for identifying tests that require external infrastructure (Docker):
