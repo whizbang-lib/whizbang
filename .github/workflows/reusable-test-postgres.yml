@@ -49,14 +49,15 @@ jobs:
       - name: Run PostgreSQL Integration Tests
         run: |
           # Run PostgreSQL integration tests with Testcontainers
+          # TUnit with Microsoft.Testing.Platform compiles to executable
           MAX_RETRIES=3
           for project in \
-            tests/Whizbang.Data.Postgres.Tests \
-            tests/Whizbang.Data.EFCore.Postgres.Tests
+            Whizbang.Data.Postgres.Tests \
+            Whizbang.Data.EFCore.Postgres.Tests
           do
             echo "Running tests in $project"
             RETRY_COUNT=0
-            until dotnet test "$project" --no-restore --no-build --configuration Release; do
+            until ./tests/$project/bin/Release/net10.0/$project; do
               RETRY_COUNT=$((RETRY_COUNT + 1))
               if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
                 echo "::error::Tests in $project failed after $MAX_RETRIES attempts"
