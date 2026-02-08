@@ -6,6 +6,10 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
 
+    <!-- Default: Don't pack projects unless explicitly set -->
+    <!-- src/ projects override this via src/Directory.Build.props -->
+    <IsPackable>false</IsPackable>
+
     <!-- Enforce .editorconfig code style rules during build -->
     <!-- This makes IDE1006 (naming violations) fail compilation when severity = error -->
     <EnforceCodeStyleInBuild>true</EnforceCodeStyleInBuild>

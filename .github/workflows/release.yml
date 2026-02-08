@@ -229,23 +229,8 @@ jobs:
           git push origin HEAD:${{ github.ref_name }}
           git push origin "$TAG"
 
-      - name: Create GitHub Release (stable only)
-        if: ${{ needs.version.outputs.prerelease == '' }}
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
-        with:
-          tag_name: v${{ needs.version.outputs.semver }}
-          name: Release v${{ needs.version.outputs.semver }}
-          generate_release_notes: true
-          prerelease: false
-
-      - name: Create GitHub Pre-Release
-        if: ${{ needs.version.outputs.prerelease != '' }}
-        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
-        with:
-          tag_name: v${{ needs.version.outputs.semver }}
-          name: Pre-release v${{ needs.version.outputs.semver }}
-          generate_release_notes: true
-          prerelease: true
+      # Note: GitHub Release is created by nuget-publish.yml with NuGet packages attached
+      # Don't create it here to avoid "Cannot upload assets to an immutable release" error
 
       - name: Summary
         run: |
