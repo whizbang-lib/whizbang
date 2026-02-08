@@ -48,5 +48,6 @@ jobs:
             **/obj/Release
             !**/obj/Release/**/ref/**
             !**/obj/Release/**/refint/**
+            codecoverage.runsettings
           retention-days: 1
           compression-level: 6
