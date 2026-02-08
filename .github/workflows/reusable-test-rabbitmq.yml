@@ -58,12 +58,14 @@ jobs:
           MAX_RETRIES=3
           RETRY_COUNT=0
           PROJECT_PATH="samples/ECommerce/tests/ECommerce.RabbitMQ.Integration.Tests"
+          mkdir -p "$PROJECT_PATH/TestResults"
           # TUnit with Microsoft.Testing.Platform compiles to executable
           # Coverage is collected via Microsoft.Testing.Extensions.CodeCoverage
-          until ./$PROJECT_PATH/bin/Release/net10.0/ECommerce.RabbitMQ.Integration.Tests \
+          cd "$PROJECT_PATH/bin/Release/net10.0"
+          until ./ECommerce.RabbitMQ.Integration.Tests \
             --coverage \
             --coverage-output-format cobertura \
-            --coverage-output "$PROJECT_PATH/TestResults/coverage.cobertura.xml"; do
+            --coverage-output coverage.cobertura.xml; do
             RETRY_COUNT=$((RETRY_COUNT + 1))
             if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
               echo "::error::Tests failed after $MAX_RETRIES attempts"
@@ -72,6 +74,8 @@ jobs:
             echo "::warning::Test attempt $RETRY_COUNT failed, retrying..."
             sleep 10
           done
+          mv coverage.cobertura.xml "../../../../../$PROJECT_PATH/TestResults/" || true
+          cd ../../../../../
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 

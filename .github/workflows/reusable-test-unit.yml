@@ -74,12 +74,18 @@ jobs:
             Whizbang.Transports.Tests
           do
             echo "Running tests in $project"
+            # Create TestResults directory
+            mkdir -p "tests/$project/TestResults"
             # TUnit with Microsoft.Testing.Platform compiles to executable
-            # Pass coverage args to collect coverage via Microsoft.Testing.Extensions.CodeCoverage
-            ./tests/$project/bin/Release/net10.0/$project \
+            # Coverage output path must be relative to the executable's working directory
+            cd "tests/$project/bin/Release/net10.0"
+            ./$project \
               --coverage \
               --coverage-output-format cobertura \
-              --coverage-output "tests/$project/TestResults/coverage.cobertura.xml"
+              --coverage-output coverage.cobertura.xml
+            # Move coverage file to TestResults
+            mv coverage.cobertura.xml "../../../../../tests/$project/TestResults/" || true
+            cd ../../../../../
           done
 
       - name: Upload Coverage
