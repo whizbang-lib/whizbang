@@ -60,5 +60,5 @@ jobs:
         uses: actions/upload-artifact@v6
         with:
           name: coverage-rabbitmq
-          path: 'samples/ECommerce/tests/*/TestResults/*.cobertura.xml'
+          path: 'samples/ECommerce/tests/**/TestResults/*.cobertura.xml'
           retention-days: 1
