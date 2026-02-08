@@ -63,10 +63,8 @@ jobs:
             Whizbang.Data.EFCore.Postgres.Tests
           do
             echo "Running tests in $project"
-            mkdir -p "tests/$project/TestResults"
             RETRY_COUNT=0
-            cd "tests/$project/bin/Release/net10.0"
-            until ./$project \
+            until ./tests/$project/bin/Release/net10.0/$project \
               --coverage \
               --coverage-output-format cobertura \
               --coverage-output coverage.cobertura.xml; do
@@ -78,8 +76,9 @@ jobs:
               echo "::warning::Test attempt $RETRY_COUNT for $project failed, retrying..."
               sleep 10
             done
-            mv coverage.cobertura.xml "../../../../../tests/$project/TestResults/" || true
-            cd ../../../../../
+            # Move coverage file from bin/TestResults to tests/TestResults
+            mkdir -p "tests/$project/TestResults"
+            mv "tests/$project/bin/Release/net10.0/TestResults/coverage.cobertura.xml" "tests/$project/TestResults/" || true
           done
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
