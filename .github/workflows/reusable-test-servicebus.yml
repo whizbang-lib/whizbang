@@ -48,11 +48,12 @@ jobs:
 
       - name: Run Azure Service Bus Integration Tests
         run: |
-          # Run Azure Service Bus integration tests using Run-Tests.ps1
-          # Uses -ProjectFilter to run only ECommerce.Integration.Tests (ServiceBus)
-          # The pattern matches exactly "ECommerce.Integration.Tests" but not "ECommerce.InMemory.Integration.Tests"
-          # Uses Azure ServiceBus emulator via Docker
-          pwsh scripts/Run-Tests.ps1 -ProjectFilter "ECommerce.Integration.Tests" -Mode IntegrationsOnly -Coverage -Configuration Release
+          # Run Azure Service Bus integration tests per-project
+          # Uses ECommerce.Integration.Tests (not InMemory or RabbitMQ variants)
+          project="samples/ECommerce/tests/ECommerce.Integration.Tests/ECommerce.Integration.Tests.csproj"
+          echo "Running tests in $project"
+          dotnet test "$project" --no-restore --no-build --configuration Release \
+            --coverage --coverage-output-format cobertura
 
       - name: Upload Coverage
         if: success()

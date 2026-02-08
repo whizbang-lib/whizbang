@@ -48,9 +48,11 @@ jobs:
 
       - name: Run InMemory Integration Tests
         run: |
-          # Run InMemory integration tests using Run-Tests.ps1
-          # Uses -ProjectFilter to run only ECommerce.InMemory.Integration.Tests
-          pwsh scripts/Run-Tests.ps1 -ProjectFilter "ECommerce.InMemory.Integration" -Mode IntegrationsOnly -Coverage -Configuration Release
+          # Run InMemory integration tests per-project
+          project="samples/ECommerce/tests/ECommerce.InMemory.Integration.Tests/ECommerce.InMemory.Integration.Tests.csproj"
+          echo "Running tests in $project"
+          dotnet test "$project" --no-restore --no-build --configuration Release \
+            --coverage --coverage-output-format cobertura
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 
