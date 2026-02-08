@@ -1,6 +1,12 @@
 name: Release
 
 on:
+  # Trigger when a release PR is merged to main
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+  # Keep manual trigger for dry runs
   workflow_dispatch:
     inputs:
       version:
@@ -18,9 +24,9 @@ on:
           - minor      # Force minor version bump (0.x.0)
           - patch      # Force patch version bump (0.0.x)
       dry_run:
-        description: 'Dry run (no tag or release created)'
+        description: 'Dry run (calculate version only, no tag or release)'
         required: false
-        default: false
+        default: true
         type: boolean
 
 env:
@@ -33,8 +39,44 @@ permissions:
   id-token: write   # For OIDC trusted publishing (inherited by reusable workflows)
 
 jobs:
+  # Only run if this is a merged release PR or a manual dry run
+  check-release:
+    name: Check Release Conditions
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - name: Check if release should proceed
+        id: check
+        run: |
+          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
+            echo "Manual trigger - dry run mode"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "version=" >> $GITHUB_OUTPUT
+          elif [ "${{ github.event.pull_request.merged }}" == "true" ]; then
+            # Check if PR title matches release pattern
+            PR_TITLE="${{ github.event.pull_request.title }}"
+            if [[ "$PR_TITLE" =~ ^chore\(release\):\ v([0-9]+\.[0-9]+\.[0-9]+.*) ]]; then
+              VERSION="${BASH_REMATCH[1]}"
+              echo "Release PR merged - version: $VERSION"
+              echo "should_release=true" >> $GITHUB_OUTPUT
+              echo "version=$VERSION" >> $GITHUB_OUTPUT
+            else
+              echo "PR merged but not a release PR"
+              echo "should_release=false" >> $GITHUB_OUTPUT
+              echo "version=" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "PR not merged, skipping"
+            echo "should_release=false" >> $GITHUB_OUTPUT
+            echo "version=" >> $GITHUB_OUTPUT
+          fi
+
   version:
     name: Calculate Version
+    needs: check-release
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -53,7 +95,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
-          fetch-depth: 0  # Full history required for GitVersion
+          fetch-depth: 0
 
       - name: Install GitVersion
         uses: gittools/actions/gitversion/setup@26a89e5dd4fa9ba66a853e04706ba52755ca4057 # v3.1.1
@@ -135,7 +177,8 @@ jobs:
 
       - name: Display Version Info
         run: |
-          echo "## Version Information" >> $GITHUB_STEP_SUMMARY
+          echo "## Version Information (Dry Run)" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
           echo "| SemVer | ${{ steps.final_version.outputs.semver }} |" >> $GITHUB_STEP_SUMMARY
@@ -158,9 +201,9 @@ jobs:
 
   release:
     name: Create Release
-    needs: version
+    needs: check-release
+    if: needs.check-release.outputs.should_release == 'true'
     runs-on: ubuntu-latest
-    if: ${{ !inputs.dry_run }}
     permissions:
       contents: write
 
@@ -221,24 +264,37 @@ jobs:
 
       - name: Create and Push Tag
         run: |
-          VERSION="${{ needs.version.outputs.semver }}"
+          VERSION="${{ needs.check-release.outputs.version }}"
           TAG="v$VERSION"
 
           echo "Creating tag: $TAG"
           git tag -a "$TAG" -m "Release $TAG"
-          git push origin HEAD:${{ github.ref_name }}
           git push origin "$TAG"
 
-      # Note: GitHub Release is created by nuget-publish.yml with NuGet packages attached
-      # Don't create it here to avoid "Cannot upload assets to an immutable release" error
+      - name: Create GitHub Release (stable only)
+        if: ${{ needs.version.outputs.prerelease == '' }}
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
+        with:
+          tag_name: v${{ needs.check-release.outputs.version }}
+          name: Release v${{ needs.check-release.outputs.version }}
+          generate_release_notes: true
+          prerelease: false
+
+      - name: Create GitHub Pre-Release
+        if: ${{ needs.version.outputs.prerelease != '' }}
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
+        with:
+          tag_name: v${{ needs.check-release.outputs.version }}
+          name: Pre-release v${{ needs.check-release.outputs.version }}
+          generate_release_notes: true
+          prerelease: true
 
       - name: Summary
         run: |
           echo "## Release Created" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "- **Version**: v${{ needs.version.outputs.semver }}" >> $GITHUB_STEP_SUMMARY
-          echo "- **Tag**: [v${{ needs.version.outputs.semver }}](https://github.com/${{ github.repository }}/releases/tag/v${{ needs.version.outputs.semver }})" >> $GITHUB_STEP_SUMMARY
-          echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Version**: v${{ needs.check-release.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- **Tag**: [v${{ needs.check-release.outputs.version }}](https://github.com/${{ github.repository }}/releases/tag/v${{ needs.check-release.outputs.version }})" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "The NuGet publish workflow will be triggered next." >> $GITHUB_STEP_SUMMARY
 
