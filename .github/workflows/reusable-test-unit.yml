@@ -47,19 +47,14 @@ jobs:
         run: dotnet build --no-restore --configuration Release -maxcpucount:1
 
       - name: Run Unit Tests
-        run: |
-          # Run unit tests per-project for proper coverage collection
-          # Dynamically discovers all unit test projects (excludes Postgres and integration tests)
-          for project in $(find tests -name "*.csproj" -type f | grep -v "Postgres" | grep -v "Integration" | sort); do
-            echo "Running tests in $project"
-            dotnet test "$project" --no-restore --no-build --configuration Release \
-              --coverage --coverage-output-format cobertura || true
-          done
+        run: pwsh scripts/Run-Tests.ps1 -Mode Ci -Coverage -Configuration Release
 
       - name: Upload Coverage
         if: success()
         uses: actions/upload-artifact@v6
         with:
           name: coverage-unit
-          path: 'tests/**/TestResults/*.cobertura.xml'
+          path: |
+            tests/**/TestResults/*.cobertura.xml
+            samples/**/TestResults/*.cobertura.xml
           retention-days: 1

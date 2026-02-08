@@ -227,6 +227,8 @@ param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Debug",  # Build configuration (Debug or Release)
 
+    [string]$ExcludeProjectFilter = ""  # Exclude projects matching this pattern (regex)
+
     # Legacy parameters (deprecated, use -Mode instead)
     [bool]$ExcludeIntegration,
     [switch]$AiMode
@@ -443,12 +445,134 @@ try {
         $testArgs += "--fail-fast"
     }
 
-    # Add coverage collection if requested
-    # Don't use runsettings - main branch achieves 80%+ coverage with defaults
+    # Coverage mode: Run per-project instead of --test-modules for accurate coverage collection
+    # The --test-modules approach doesn't collect coverage correctly (31% vs 80%+)
     if ($Coverage) {
-        $testArgs += "--coverage"
-        $testArgs += "--coverage-output-format"
-        $testArgs += "cobertura"
+        # Run tests per-project for proper coverage collection
+        # This is slower but gives accurate coverage results
+        if (-not $useAiOutput) {
+            Write-Host "Coverage mode: Running tests per-project for accurate coverage collection" -ForegroundColor Yellow
+        } else {
+            Write-Host "Coverage mode: Per-project execution" -ForegroundColor Gray
+        }
+
+        # Discover test projects
+        $testProjectPaths = @()
+
+        # Get tests from main tests/ directory
+        $testProjectPaths += Get-ChildItem -Path "$repoRoot/tests" -Recurse -Filter "*.csproj" -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notmatch "AppHost" } |
+            ForEach-Object { $_.FullName }
+
+        # Get tests from samples directory
+        $testProjectPaths += Get-ChildItem -Path "$repoRoot/samples" -Recurse -Filter "*.Tests.csproj" -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notmatch "AppHost" } |
+            ForEach-Object { $_.FullName }
+
+        # Apply project filter if specified
+        if ($ProjectFilter) {
+            $testProjectPaths = $testProjectPaths | Where-Object { $_ -match $ProjectFilter }
+        }
+
+        # Apply integration test filtering based on mode
+        if ($onlyIntegrationTests) {
+            $testProjectPaths = $testProjectPaths | Where-Object { $_ -match "Integration\.Tests|IntegrationTests|Postgres\.Tests" }
+        } elseif (-not $includeIntegrationTests) {
+            $testProjectPaths = $testProjectPaths | Where-Object { $_ -notmatch "Integration\.Tests|IntegrationTests|Postgres\.Tests" }
+        }
+
+        # Apply exclude filter if specified
+        if ($ExcludeProjectFilter) {
+            $testProjectPaths = $testProjectPaths | Where-Object { $_ -notmatch $ExcludeProjectFilter }
+        }
+
+        if ($testProjectPaths.Count -eq 0) {
+            Write-Warning "No test projects found matching filters."
+            exit 1
+        }
+
+        if (-not $useAiOutput) {
+            Write-Host "Discovered $($testProjectPaths.Count) test projects" -ForegroundColor Gray
+        }
+
+        # Run each project with coverage
+        $allPassed = $true
+        $totalProjectsPassed = 0
+        $totalProjectsFailed = 0
+        $startTime = Get-Date
+
+        foreach ($projectPath in $testProjectPaths) {
+            $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
+
+            if (-not $useAiOutput) {
+                Write-Host ""
+                Write-Host "Running: $projectName" -ForegroundColor Cyan
+            } else {
+                Write-Host "Testing: $projectName" -ForegroundColor Gray
+            }
+
+            $projectArgs = @(
+                "test"
+                "`"$projectPath`""
+                "--no-restore"
+                "--configuration"
+                $Configuration
+                "--coverage"
+                "--coverage-output-format"
+                "cobertura"
+            )
+
+            if ($TestFilter) {
+                $projectArgs += "--treenode-filter"
+                $projectArgs += "/*/*/*/*$TestFilter*"
+            }
+
+            if ($FailFast) {
+                $projectArgs += "--fail-fast"
+            }
+
+            $projectResult = & dotnet @projectArgs
+
+            if ($LASTEXITCODE -eq 0) {
+                $totalProjectsPassed++
+                if ($useAiOutput) {
+                    Write-Host "  ✓ $projectName passed" -ForegroundColor Green
+                }
+            } else {
+                $totalProjectsFailed++
+                $allPassed = $false
+                if ($useAiOutput) {
+                    Write-Host "  ✗ $projectName failed" -ForegroundColor Red
+                }
+                if ($FailFast) {
+                    Write-Host "Stopping due to -FailFast" -ForegroundColor Red
+                    break
+                }
+            }
+        }
+
+        $endTime = Get-Date
+        $elapsed = $endTime - $startTime
+        $elapsedString = if ($elapsed.TotalMinutes -ge 1) {
+            "{0:F0}m {1:F0}s" -f [Math]::Floor($elapsed.TotalMinutes), $elapsed.Seconds
+        } else {
+            "{0:F1}s" -f $elapsed.TotalSeconds
+        }
+
+        Write-Host ""
+        Write-Host "=== COVERAGE TEST RESULTS ===" -ForegroundColor Cyan
+        Write-Host "Duration: $elapsedString" -ForegroundColor Cyan
+        Write-Host "Projects Passed: $totalProjectsPassed" -ForegroundColor Green
+        Write-Host "Projects Failed: $totalProjectsFailed" -ForegroundColor $(if ($totalProjectsFailed -gt 0) { "Red" } else { "Green" })
+        Write-Host ""
+
+        if ($allPassed) {
+            Write-Host "=== STATUS: ALL TESTS PASSED ===" -ForegroundColor Green
+            exit 0
+        } else {
+            Write-Host "=== STATUS: SOME TESTS FAILED ===" -ForegroundColor Red
+            exit 1
+        }
     }
 
     # Pattern for identifying tests that require external infrastructure (Docker):
@@ -504,6 +628,7 @@ try {
         $filteredDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*$ProjectFilter*.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { $_.Name -notmatch "AppHost" } |
+            Where-Object { -not $ExcludeProjectFilter -or $_.Name -notmatch $ExcludeProjectFilter } |
             Where-Object { Test-IsPrimaryTestDll $_ } |
             ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
 
