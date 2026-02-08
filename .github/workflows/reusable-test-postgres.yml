@@ -63,11 +63,13 @@ jobs:
             Whizbang.Data.EFCore.Postgres.Tests
           do
             echo "Running tests in $project"
+            mkdir -p "tests/$project/TestResults"
             RETRY_COUNT=0
-            until ./tests/$project/bin/Release/net10.0/$project \
+            cd "tests/$project/bin/Release/net10.0"
+            until ./$project \
               --coverage \
               --coverage-output-format cobertura \
-              --coverage-output "tests/$project/TestResults/coverage.cobertura.xml"; do
+              --coverage-output coverage.cobertura.xml; do
               RETRY_COUNT=$((RETRY_COUNT + 1))
               if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
                 echo "::error::Tests in $project failed after $MAX_RETRIES attempts"
@@ -76,6 +78,8 @@ jobs:
               echo "::warning::Test attempt $RETRY_COUNT for $project failed, retrying..."
               sleep 10
             done
+            mv coverage.cobertura.xml "../../../../../tests/$project/TestResults/" || true
+            cd ../../../../../
           done
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'

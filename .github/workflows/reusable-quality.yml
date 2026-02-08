@@ -40,7 +40,7 @@ jobs:
           dotnet tool install --global dotnet-reportgenerator-globaltool
 
       - name: Download All Coverage Artifacts
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v6
         with:
           pattern: coverage-*
           path: coverage
