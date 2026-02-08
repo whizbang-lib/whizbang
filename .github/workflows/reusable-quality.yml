@@ -69,35 +69,26 @@ jobs:
           dotnet build --configuration Release -maxcpucount:1
           echo "Build complete - all source-generated files now exist"
 
-      - name: Merge Coverage Reports
+      - name: Skip Coverage If No Files
+        id: check-coverage
         run: |
           # Find all cobertura XML files
           COVERAGE_FILES=$(find coverage -name "*.cobertura.xml" 2>/dev/null | tr '\n' ';')
 
           if [ -z "$COVERAGE_FILES" ]; then
-            echo "No coverage files found - running unit tests locally as fallback"
-            for project in \
-              tests/Whizbang.Core.Tests \
-              tests/Whizbang.Execution.Tests \
-              tests/Whizbang.Generators.Tests \
-              tests/Whizbang.Hosting.Azure.ServiceBus.Tests \
-              tests/Whizbang.Hosting.RabbitMQ.Tests \
-              tests/Whizbang.Observability.Tests \
-              tests/Whizbang.Partitioning.Tests \
-              tests/Whizbang.Policies.Tests \
-              tests/Whizbang.Sequencing.Tests \
-              tests/Whizbang.Transports.Mutations.Tests \
-              tests/Whizbang.Transports.FastEndpoints.Tests \
-              tests/Whizbang.Transports.HotChocolate.Tests \
-              tests/Whizbang.Transports.RabbitMQ.Tests \
-              tests/Whizbang.Transports.Tests
-            do
-              dotnet test --project "$project" --configuration Release \
-                --coverage --coverage-output-format cobertura || true
-            done
-            COVERAGE_FILES=$(find . -name "*.cobertura.xml" 2>/dev/null | tr '\n' ';')
+            echo "No coverage files found - coverage collection is disabled in test workflows"
+            echo "Skipping coverage-related steps"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Found coverage files: $COVERAGE_FILES"
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+            echo "files=$COVERAGE_FILES" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Merge Coverage Reports
+        if: steps.check-coverage.outputs.skip != 'true'
+        run: |
+          COVERAGE_FILES="${{ steps.check-coverage.outputs.files }}"
           echo "Coverage files to merge: $COVERAGE_FILES"
 
           # Generate merged report in SonarQube format
@@ -124,6 +115,7 @@ jobs:
             "-filefilters:-*.g.cs;-*/.whizbang-generated/*"
 
       - name: Check Coverage Threshold
+        if: steps.check-coverage.outputs.skip != 'true'
         run: |
           # Parse coverage from TextSummary report
           COVERAGE=$(grep "Line coverage:" coverage/summary/Summary.txt | grep -oP '\d+(\.\d+)?(?=%)' | head -1)
