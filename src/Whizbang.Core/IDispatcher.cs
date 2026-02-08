@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Runtime.CompilerServices;
+using Whizbang.Core.Dispatch;
 
 namespace Whizbang.Core;
 
@@ -56,6 +57,47 @@ public interface IDispatcher {
   Task<IDeliveryReceipt> SendAsync(
     object message,
     IMessageContext context,
+    [CallerMemberName] string callerMemberName = "",
+    [CallerFilePath] string callerFilePath = "",
+    [CallerLineNumber] int callerLineNumber = 0
+  );
+
+  /// <summary>
+  /// Sends a typed message with dispatch options and returns a delivery receipt (AOT-compatible).
+  /// </summary>
+  /// <typeparam name="TMessage">The message type</typeparam>
+  /// <param name="message">The message to send</param>
+  /// <param name="options">Options controlling dispatch behavior (cancellation, timeout)</param>
+  /// <returns>Delivery receipt with correlation information</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:SendAsync_WithDispatchOptions_ReturnsDeliveryReceiptAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:SendAsync_WithDispatchOptions_Generic_PreservesTypeAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:SendAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync</tests>
+  Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, DispatchOptions options) where TMessage : notnull;
+
+  /// <summary>
+  /// Sends a message with dispatch options and returns a delivery receipt.
+  /// </summary>
+  /// <param name="message">The message to send</param>
+  /// <param name="options">Options controlling dispatch behavior (cancellation, timeout)</param>
+  /// <returns>Delivery receipt with correlation information</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:SendAsync_WithDefaultOptions_BehavesSameAsWithoutOptionsAsync</tests>
+  Task<IDeliveryReceipt> SendAsync(object message, DispatchOptions options);
+
+  /// <summary>
+  /// Sends a message with explicit context and dispatch options.
+  /// </summary>
+  /// <param name="message">The message to send</param>
+  /// <param name="context">The message context</param>
+  /// <param name="options">Options controlling dispatch behavior (cancellation, timeout)</param>
+  /// <param name="callerMemberName">Caller method name (auto-captured)</param>
+  /// <param name="callerFilePath">Caller file path (auto-captured)</param>
+  /// <param name="callerLineNumber">Caller line number (auto-captured)</param>
+  /// <returns>Delivery receipt with correlation information</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:SendAsync_WithContext_AndDispatchOptions_PreservesCorrelationAsync</tests>
+  Task<IDeliveryReceipt> SendAsync(
+    object message,
+    IMessageContext context,
+    DispatchOptions options,
     [CallerMemberName] string callerMemberName = "",
     [CallerFilePath] string callerFilePath = "",
     [CallerLineNumber] int callerLineNumber = 0
@@ -208,6 +250,27 @@ public interface IDispatcher {
     [CallerLineNumber] int callerLineNumber = 0
   );
 
+  /// <summary>
+  /// Invokes a receptor in-process with dispatch options and returns the typed business result.
+  /// </summary>
+  /// <typeparam name="TResult">The expected business result type</typeparam>
+  /// <param name="message">The message to process</param>
+  /// <param name="options">Options controlling dispatch behavior (cancellation, timeout)</param>
+  /// <returns>The typed business result from the receptor</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_WithDispatchOptions_ReturnsResultAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync</tests>
+  ValueTask<TResult> LocalInvokeAsync<TResult>(object message, DispatchOptions options);
+
+  /// <summary>
+  /// Invokes a void receptor in-process with dispatch options.
+  /// </summary>
+  /// <param name="message">The message to process</param>
+  /// <param name="options">Options controlling dispatch behavior (cancellation, timeout)</param>
+  /// <returns>ValueTask representing the completion</returns>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_Void_WithDispatchOptions_CompletesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:LocalInvokeAsync_Void_WithCancelledToken_ThrowsAsync</tests>
+  ValueTask LocalInvokeAsync(object message, DispatchOptions options);
+
   // ========================================
   // PUBLISH PATTERN - Event Broadcasting
   // ========================================
@@ -220,6 +283,16 @@ public interface IDispatcher {
   /// <param name="eventData">The event to publish</param>
   /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:Publish_WithEvent_ShouldNotifyAllHandlersAsync</tests>
   Task PublishAsync<TEvent>(TEvent eventData);
+
+  /// <summary>
+  /// Publishes an event with dispatch options (fire-and-forget).
+  /// </summary>
+  /// <typeparam name="TEvent">The event type</typeparam>
+  /// <param name="eventData">The event to publish</param>
+  /// <param name="options">Options controlling dispatch behavior (cancellation, timeout)</param>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:PublishAsync_WithDispatchOptions_CompletesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:PublishAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync</tests>
+  Task PublishAsync<TEvent>(TEvent eventData, DispatchOptions options);
 
   // ========================================
   // BATCH OPERATIONS

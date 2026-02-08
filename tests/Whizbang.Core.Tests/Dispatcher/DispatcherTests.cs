@@ -822,6 +822,194 @@ public class DispatcherTests {
     await Assert.That(lifecycleInvoker.InvokeCount).IsGreaterThanOrEqualTo(1);
   }
 
+  // ========================================
+  // DISPATCH OPTIONS TESTS
+  // ========================================
+
+  [Test]
+  public async Task SendAsync_WithDispatchOptions_ReturnsDeliveryReceiptAsync() {
+    // Arrange
+    var dispatcher = _createDispatcher();
+    var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
+    var options = new Whizbang.Core.Dispatch.DispatchOptions();
+
+    // Act
+    var receipt = await dispatcher.SendAsync(command, options);
+
+    // Assert
+    await Assert.That(receipt).IsNotNull();
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
+  }
+
+  [Test]
+  public async Task SendAsync_WithDispatchOptions_Generic_PreservesTypeAsync() {
+    // Arrange
+    var services = new ServiceCollection();
+    services.AddSingleton<Whizbang.Core.Observability.IServiceInstanceProvider>(
+      new Whizbang.Core.Observability.ServiceInstanceProvider(configuration: null));
+    services.AddReceptors();
+    var traceStore = new Whizbang.Core.Observability.InMemoryTraceStore();
+    services.AddSingleton<Whizbang.Core.Observability.ITraceStore>(traceStore);
+    services.AddWhizbangDispatcher();
+    var serviceProvider = services.BuildServiceProvider();
+    var dispatcher = serviceProvider.GetRequiredService<IDispatcher>();
+
+    var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
+    var options = new Whizbang.Core.Dispatch.DispatchOptions();
+
+    // Act
+    var receipt = await dispatcher.SendAsync(command, options);
+
+    // Assert - Receipt returned
+    await Assert.That(receipt).IsNotNull();
+    await Assert.That(receipt.Status).IsEqualTo(DeliveryStatus.Delivered);
+  }
+
+  [Test]
+  public async Task SendAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+    // Arrange
+    var dispatcher = _createDispatcher();
+    var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
+    using var cts = new CancellationTokenSource();
+    cts.Cancel();
+    var options = new Whizbang.Core.Dispatch.DispatchOptions()
+      .WithCancellationToken(cts.Token);
+
+    // Act & Assert
+    await Assert.That(async () => await dispatcher.SendAsync(command, options))
+      .Throws<OperationCanceledException>();
+  }
+
+  [Test]
+  public async Task SendAsync_WithDefaultOptions_BehavesSameAsWithoutOptionsAsync() {
+    // Arrange
+    var dispatcher = _createDispatcher();
+    var command1 = new CreateOrder(Guid.NewGuid(), ["item1"]);
+    var command2 = new CreateOrder(Guid.NewGuid(), ["item2"]);
+    var options = Whizbang.Core.Dispatch.DispatchOptions.Default;
+
+    // Act
+    var receiptWithoutOptions = await dispatcher.SendAsync(command1);
+    var receiptWithOptions = await dispatcher.SendAsync(command2, options);
+
+    // Assert - Both should behave the same
+    await Assert.That(receiptWithoutOptions.Status).IsEqualTo(receiptWithOptions.Status);
+    await Assert.That(receiptWithoutOptions.Destination).IsEqualTo(receiptWithOptions.Destination);
+  }
+
+  [Test]
+  public async Task SendAsync_WithContext_AndDispatchOptions_PreservesCorrelationAsync() {
+    // Arrange
+    var dispatcher = _createDispatcher();
+    var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
+    var correlationId = CorrelationId.New();
+    var causationId = MessageId.New();
+    var context = MessageContext.Create(correlationId, causationId);
+    var options = new Whizbang.Core.Dispatch.DispatchOptions();
+
+    // Act
+    var receipt = await dispatcher.SendAsync(command, context, options);
+
+    // Assert
+    await Assert.That(receipt).IsNotNull();
+    await Assert.That(receipt.CorrelationId).IsEqualTo(correlationId);
+    await Assert.That(receipt.CausationId).IsEqualTo(causationId);
+  }
+
+  [Test]
+  public async Task LocalInvokeAsync_WithDispatchOptions_ReturnsResultAsync() {
+    // Arrange
+    var dispatcher = _createDispatcher();
+    var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
+    var options = new Whizbang.Core.Dispatch.DispatchOptions();
+
+    // Act
+    var result = await dispatcher.LocalInvokeAsync<OrderCreated>(command, options);
+
+    // Assert
+    await Assert.That(result).IsNotNull();
+    await Assert.That(result.OrderId).IsNotEqualTo(Guid.Empty);
+  }
+
+  [Test]
+  public async Task LocalInvokeAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+    // Arrange
+    var dispatcher = _createDispatcher();
+    var command = new CreateOrder(Guid.NewGuid(), ["item1"]);
+    using var cts = new CancellationTokenSource();
+    cts.Cancel();
+    var options = new Whizbang.Core.Dispatch.DispatchOptions()
+      .WithCancellationToken(cts.Token);
+
+    // Act & Assert
+    await Assert.That(async () => await dispatcher.LocalInvokeAsync<OrderCreated>(command, options))
+      .Throws<OperationCanceledException>();
+  }
+
+  [Test]
+  [NotInParallel]
+  public async Task LocalInvokeAsync_Void_WithDispatchOptions_CompletesAsync() {
+    // Arrange
+    LogReceptor.Reset();
+    var dispatcher = _createDispatcher();
+    var command = new LogCommand("Test with options");
+    var options = new Whizbang.Core.Dispatch.DispatchOptions();
+
+    // Act
+    await dispatcher.LocalInvokeAsync(command, options);
+
+    // Assert
+    await Assert.That(LogReceptor.ProcessedCount).IsEqualTo(1);
+  }
+
+  [Test]
+  [NotInParallel]
+  public async Task LocalInvokeAsync_Void_WithCancelledToken_ThrowsAsync() {
+    // Arrange
+    LogReceptor.Reset();
+    var dispatcher = _createDispatcher();
+    var command = new LogCommand("Test with cancelled token");
+    using var cts = new CancellationTokenSource();
+    cts.Cancel();
+    var options = new Whizbang.Core.Dispatch.DispatchOptions()
+      .WithCancellationToken(cts.Token);
+
+    // Act & Assert
+    await Assert.That(async () => await dispatcher.LocalInvokeAsync(command, options))
+      .Throws<OperationCanceledException>();
+
+    // Assert - Handler should NOT have been called
+    await Assert.That(LogReceptor.ProcessedCount).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task PublishAsync_WithDispatchOptions_CompletesAsync() {
+    // Arrange
+    var dispatcher = _createDispatcher();
+    var orderCreated = new OrderCreated(Guid.NewGuid(), Guid.NewGuid());
+    var options = new Whizbang.Core.Dispatch.DispatchOptions();
+
+    // Act - Should complete without throwing
+    await dispatcher.PublishAsync(orderCreated, options);
+
+    // Assert - No exception means success for fire-and-forget
+  }
+
+  [Test]
+  public async Task PublishAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync() {
+    // Arrange
+    var dispatcher = _createDispatcher();
+    var orderCreated = new OrderCreated(Guid.NewGuid(), Guid.NewGuid());
+    using var cts = new CancellationTokenSource();
+    cts.Cancel();
+    var options = new Whizbang.Core.Dispatch.DispatchOptions()
+      .WithCancellationToken(cts.Token);
+
+    // Act & Assert
+    await Assert.That(async () => await dispatcher.PublishAsync(orderCreated, options))
+      .Throws<OperationCanceledException>();
+  }
+
   // Mock lifecycle invoker for testing
   private sealed class MockLifecycleInvoker : ILifecycleInvoker {
     public int InvokeCount { get; private set; }
