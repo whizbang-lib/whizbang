@@ -47,12 +47,7 @@ jobs:
         run: dotnet build --no-restore --configuration Release -maxcpucount:1
 
       - name: Run InMemory Integration Tests
-        run: |
-          # Run InMemory integration tests per-project
-          project="samples/ECommerce/tests/ECommerce.InMemory.Integration.Tests/ECommerce.InMemory.Integration.Tests.csproj"
-          echo "Running tests in $project"
-          dotnet test "$project" --no-restore --no-build --configuration Release \
-            --coverage --coverage-output-format cobertura
+        run: pwsh scripts/Run-Tests.ps1 -Mode Full -Coverage -Configuration Release -ProjectFilter "InMemory.Integration"
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 
