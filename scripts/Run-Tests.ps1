@@ -444,10 +444,12 @@ try {
     }
 
     # Add coverage collection if requested
-    # Note: Don't use --coverage-settings to match main branch behavior
-    # Default MTP coverage provides better results than custom runsettings
+    # Uses minimal runsettings with ExcludeAssembliesWithoutSources=None for CI compatibility
+    # This ensures coverage is collected even when source paths don't match in artifacts
     if ($Coverage) {
         $testArgs += "--coverage"
+        $testArgs += "--coverage-settings"
+        $testArgs += "codecoverage.runsettings"
         $testArgs += "--coverage-output-format"
         $testArgs += "cobertura"
     }
