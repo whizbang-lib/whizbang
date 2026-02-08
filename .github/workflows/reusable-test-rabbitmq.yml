@@ -46,6 +46,12 @@ jobs:
         if: inputs.artifact-name == ''
         run: dotnet build --no-restore --configuration Release -maxcpucount:1
 
+      - name: Make Test Executables Executable
+        if: inputs.artifact-name != ''
+        run: |
+          # Artifacts lose execute permissions - restore them
+          chmod +x samples/ECommerce/tests/ECommerce.RabbitMQ.Integration.Tests/bin/Release/net10.0/ECommerce.RabbitMQ.Integration.Tests || true
+
       - name: Run RabbitMQ Integration Tests
         run: |
           echo "Running RabbitMQ integration tests"
