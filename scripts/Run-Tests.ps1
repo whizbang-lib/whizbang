@@ -471,19 +471,19 @@ try {
 
         # Apply project filter if specified
         if ($ProjectFilter) {
-            $testProjectPaths = $testProjectPaths | Where-Object { $_ -match $ProjectFilter }
+            $testProjectPaths = @($testProjectPaths | Where-Object { $_ -match $ProjectFilter })
         }
 
         # Apply integration test filtering based on mode
         if ($onlyIntegrationTests) {
-            $testProjectPaths = $testProjectPaths | Where-Object { $_ -match "Integration\.Tests|IntegrationTests|Postgres\.Tests" }
+            $testProjectPaths = @($testProjectPaths | Where-Object { $_ -match "Integration\.Tests|IntegrationTests|Postgres\.Tests" })
         } elseif (-not $includeIntegrationTests) {
-            $testProjectPaths = $testProjectPaths | Where-Object { $_ -notmatch "Integration\.Tests|IntegrationTests|Postgres\.Tests" }
+            $testProjectPaths = @($testProjectPaths | Where-Object { $_ -notmatch "Integration\.Tests|IntegrationTests|Postgres\.Tests" })
         }
 
         # Apply exclude filter if specified
         if ($ExcludeProjectFilter) {
-            $testProjectPaths = $testProjectPaths | Where-Object { $_ -notmatch $ExcludeProjectFilter }
+            $testProjectPaths = @($testProjectPaths | Where-Object { $_ -notmatch $ExcludeProjectFilter })
         }
 
         if ($testProjectPaths.Count -eq 0) {
