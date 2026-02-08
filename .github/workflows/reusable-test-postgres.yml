@@ -56,7 +56,7 @@ jobs:
           do
             echo "Running tests in $project"
             RETRY_COUNT=0
-            until dotnet test --project "$project" --no-restore --no-build --configuration Release \
+            until dotnet test "$project" --no-restore --no-build --configuration Release \
               --coverage --coverage-output-format cobertura; do
               RETRY_COUNT=$((RETRY_COUNT + 1))
               if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
