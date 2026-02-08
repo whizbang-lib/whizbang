@@ -1,3 +1,6 @@
+using System.Collections.Immutable;
+using Whizbang.Generators.Shared.Models;
+
 namespace Whizbang.Data.EFCore.Postgres.Generators;
 
 /// <summary>
@@ -16,7 +19,9 @@ namespace Whizbang.Data.EFCore.Postgres.Generators;
 /// </summary>
 /// <param name="ModelTypeName">Fully qualified model type name (e.g., "global::MyApp.Orders.OrderSummary")</param>
 /// <param name="TableName">PostgreSQL table name for this perspective</param>
+/// <param name="PhysicalFields">Array of physical fields discovered on the model</param>
 internal sealed record PerspectiveInfo(
     string ModelTypeName,
-    string TableName
+    string TableName,
+    ImmutableArray<PhysicalFieldInfo> PhysicalFields
 );

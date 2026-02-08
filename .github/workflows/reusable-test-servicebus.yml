@@ -2,6 +2,11 @@ name: Azure Service Bus Integration Tests (Reusable)
 
 on:
   workflow_call:
+    inputs:
+      artifact-name:
+        description: 'Build artifact to download (skips build if provided)'
+        type: string
+        required: false
 
 jobs:
   servicebus-tests:
@@ -11,14 +16,21 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6.0.2
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
+      - name: Download Build Artifacts
+        if: inputs.artifact-name != ''
+        uses: actions/download-artifact@v6
+        with:
+          name: ${{ inputs.artifact-name }}
+
       - name: Cache NuGet packages
+        if: inputs.artifact-name == ''
         uses: actions/cache@v5
         with:
           path: ~/.nuget/packages
@@ -27,19 +39,26 @@ jobs:
             ${{ runner.os }}-nuget-
 
       - name: Restore Dependencies
+        if: inputs.artifact-name == ''
         run: dotnet restore
 
       - name: Build Solution
+        if: inputs.artifact-name == ''
         run: dotnet build --no-restore --configuration Release -maxcpucount:1
+
+      - name: Make Test Executables Executable
+        if: inputs.artifact-name != ''
+        run: |
+          # Artifacts lose execute permissions - restore them
+          chmod +x samples/ECommerce/tests/ECommerce.Integration.Tests/bin/Release/net10.0/ECommerce.Integration.Tests || true
 
       - name: Run Azure Service Bus Integration Tests
         run: |
           echo "Running Azure Service Bus integration tests"
           MAX_RETRIES=3
           RETRY_COUNT=0
-          until dotnet test --project samples/ECommerce/tests/ECommerce.Integration.Tests \
-            --no-restore --no-build --configuration Release \
-            --coverage --coverage-output-format cobertura; do
+          # TUnit with Microsoft.Testing.Platform compiles to executable
+          until ./samples/ECommerce/tests/ECommerce.Integration.Tests/bin/Release/net10.0/ECommerce.Integration.Tests; do
             RETRY_COUNT=$((RETRY_COUNT + 1))
             if [ $RETRY_COUNT -ge $MAX_RETRIES ]; then
               echo "::error::Tests failed after $MAX_RETRIES attempts"
@@ -49,10 +68,3 @@ jobs:
             sleep 10
           done
 
-      - name: Upload Coverage
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: coverage-servicebus
-          path: '**/TestResults/*.cobertura.xml'
-          retention-days: 1

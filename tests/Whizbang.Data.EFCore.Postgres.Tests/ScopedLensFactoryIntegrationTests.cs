@@ -355,7 +355,7 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
       decimal amount,
       string? tenantId = null,
       string? userId = null,
-      IReadOnlyList<SecurityPrincipalId>? allowedPrincipals = null) {
+      List<string>? allowedPrincipals = null) {
 
     var order = new Order {
       OrderId = TestOrderId.From(orderId),
@@ -374,7 +374,7 @@ public class ScopedLensFactoryIntegrationTests : EFCoreTestBase {
       Scope = new PerspectiveScope {
         TenantId = tenantId,
         UserId = userId,
-        AllowedPrincipals = allowedPrincipals
+        AllowedPrincipals = allowedPrincipals ?? []
       },
       CreatedAt = DateTime.UtcNow,
       UpdatedAt = DateTime.UtcNow,

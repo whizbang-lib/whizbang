@@ -8,7 +8,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Use head branch for PRs, ref_name for pushes - ensures push and PR from same branch share group
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
@@ -23,23 +24,38 @@ jobs:
 
   unit-tests:
     name: Unit Tests
+    needs: build
     uses: ./.github/workflows/reusable-test-unit.yml
+    with:
+      artifact-name: build-${{ github.run_id }}
 
   postgres-integration:
     name: PostgreSQL Integration
+    needs: build
     uses: ./.github/workflows/reusable-test-postgres.yml
+    with:
+      artifact-name: build-${{ github.run_id }}
 
   inmemory-integration:
     name: InMemory Integration
+    needs: build
     uses: ./.github/workflows/reusable-test-inmemory.yml
+    with:
+      artifact-name: build-${{ github.run_id }}
 
   rabbitmq-integration:
     name: RabbitMQ Integration
+    needs: build
     uses: ./.github/workflows/reusable-test-rabbitmq.yml
+    with:
+      artifact-name: build-${{ github.run_id }}
 
   servicebus-integration:
     name: Service Bus Integration
+    needs: build
     uses: ./.github/workflows/reusable-test-servicebus.yml
+    with:
+      artifact-name: build-${{ github.run_id }}
 
   quality:
     name: Quality

@@ -15,4 +15,16 @@ public sealed record ListTypeInfo(
     string ListTypeName,
     string ElementTypeName,
     string ElementSimpleName
-);
+) {
+  /// <summary>
+  /// Unique identifier derived from element type name, suitable for C# identifiers.
+  /// Strips "global::" prefix and replaces "." with "_".
+  /// E.g., "global::MyApp.Models.OrderLineItem" becomes "MyApp_Models_OrderLineItem".
+  /// This prevents duplicate field/method names when element types have the same SimpleName.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithSameSimpleNameInDifferentNamespaces_GeneratesUniqueIdentifiersAsync</tests>
+  public string ElementUniqueIdentifier => ElementTypeName
+    .Replace("global::", "")
+    .Replace(".", "_")
+    .Replace("?", "__Nullable");
+}

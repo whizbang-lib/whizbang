@@ -52,7 +52,12 @@
     <Project Path="src/Whizbang.SignalR/Whizbang.SignalR.csproj" />
     <Project Path="src/Whizbang.Testing/Whizbang.Testing.csproj" />
     <Project Path="src/Whizbang.Transports.AzureServiceBus/Whizbang.Transports.AzureServiceBus.csproj" />
+    <Project Path="src/Whizbang.Transports.HotChocolate.Generators/Whizbang.Transports.HotChocolate.Generators.csproj" />
     <Project Path="src/Whizbang.Transports.RabbitMQ/Whizbang.Transports.RabbitMQ.csproj" />
+    <Project Path="src/Whizbang.Transports.HotChocolate/Whizbang.Transports.HotChocolate.csproj" />
+    <Project Path="src/Whizbang.Transports.Mutations/Whizbang.Transports.Mutations.csproj" />
+    <Project Path="src/Whizbang.Transports.FastEndpoints/Whizbang.Transports.FastEndpoints.csproj" />
+    <Project Path="src/Whizbang.Transports.FastEndpoints.Generators/Whizbang.Transports.FastEndpoints.Generators.csproj" />
   </Folder>
   <Folder Name="/test-diagnostics/">
     <Project Path="test-diagnostics/DiagnosticsTest.csproj" />
@@ -76,6 +81,9 @@
     <Project Path="tests/Whizbang.SignalR.Tests/Whizbang.SignalR.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.RabbitMQ.Tests/Whizbang.Transports.RabbitMQ.Tests.csproj" />
     <Project Path="tests/Whizbang.Transports.Tests/Whizbang.Transports.Tests.csproj" />
+    <Project Path="tests/Whizbang.Transports.HotChocolate.Tests/Whizbang.Transports.HotChocolate.Tests.csproj" />
+    <Project Path="tests/Whizbang.Transports.Mutations.Tests/Whizbang.Transports.Mutations.Tests.csproj" />
+    <Project Path="tests/Whizbang.Transports.FastEndpoints.Tests/Whizbang.Transports.FastEndpoints.Tests.csproj" />
   </Folder>
   <Folder Name="/tools/">
     <Project Path="tools/Whizbang.CLI/Whizbang.CLI.csproj" />

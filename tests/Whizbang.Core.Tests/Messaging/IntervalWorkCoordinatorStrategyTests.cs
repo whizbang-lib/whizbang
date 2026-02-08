@@ -557,6 +557,172 @@ public class IntervalWorkCoordinatorStrategyTests {
   }
 
   // ========================================
+  // CONSTRUCTOR VALIDATION TESTS
+  // ========================================
+
+  [Test]
+  public async Task Constructor_WithNullCoordinator_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    // Act & Assert
+    await Assert.That(() => new IntervalWorkCoordinatorStrategy(
+      null!,
+      instanceProvider,
+      options
+    )).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task Constructor_WithNullInstanceProvider_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var options = new WorkCoordinatorOptions();
+
+    // Act & Assert
+    await Assert.That(() => new IntervalWorkCoordinatorStrategy(
+      fakeCoordinator,
+      null!,
+      options
+    )).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task Constructor_WithNullOptions_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+
+    // Act & Assert
+    await Assert.That(() => new IntervalWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      null!
+    )).Throws<ArgumentNullException>();
+  }
+
+  // ========================================
+  // DEBUG MODE TESTS
+  // ========================================
+
+  [Test]
+  public async Task FlushAsync_WithDebugMode_SetsDebugFlagAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinatorWithFlags();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions {
+      IntervalMilliseconds = 5000,
+      DebugMode = true
+    };
+
+    var sut = new IntervalWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    var messageId = _idProvider.NewGuid();
+    sut.QueueOutboxCompletion(messageId, MessageProcessingStatus.Published);
+
+    // Act
+    await sut.FlushAsync(WorkBatchFlags.None);
+
+    // Assert - DebugMode flag should be set
+    await Assert.That(fakeCoordinator.LastFlags & WorkBatchFlags.DebugMode).IsEqualTo(WorkBatchFlags.DebugMode);
+
+    // Cleanup
+    await sut.DisposeAsync();
+  }
+
+  // ========================================
+  // MORE DISPOSED STATE TESTS
+  // ========================================
+
+  [Test]
+  public async Task QueueInboxMessage_AfterDispose_ThrowsObjectDisposedExceptionAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions { IntervalMilliseconds = 5000 };
+
+    var sut = new IntervalWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, options);
+    await sut.DisposeAsync();
+
+    var messageId = _idProvider.NewGuid();
+    var envelope = _createTestEnvelope(messageId);
+
+    // Act & Assert
+    await Assert.That(() => sut.QueueInboxMessage(new InboxMessage {
+      MessageId = messageId,
+      HandlerName = "TestHandler",
+      Envelope = envelope,
+      EnvelopeType = "Test",
+      MessageType = "Test"
+    })).ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task QueueOutboxCompletion_AfterDispose_ThrowsObjectDisposedExceptionAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions { IntervalMilliseconds = 5000 };
+
+    var sut = new IntervalWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, options);
+    await sut.DisposeAsync();
+
+    // Act & Assert
+    await Assert.That(() => sut.QueueOutboxCompletion(_idProvider.NewGuid(), MessageProcessingStatus.Published))
+      .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task QueueInboxCompletion_AfterDispose_ThrowsObjectDisposedExceptionAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions { IntervalMilliseconds = 5000 };
+
+    var sut = new IntervalWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, options);
+    await sut.DisposeAsync();
+
+    // Act & Assert
+    await Assert.That(() => sut.QueueInboxCompletion(_idProvider.NewGuid(), MessageProcessingStatus.Published))
+      .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task QueueOutboxFailure_AfterDispose_ThrowsObjectDisposedExceptionAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions { IntervalMilliseconds = 5000 };
+
+    var sut = new IntervalWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, options);
+    await sut.DisposeAsync();
+
+    // Act & Assert
+    await Assert.That(() => sut.QueueOutboxFailure(_idProvider.NewGuid(), MessageProcessingStatus.Failed, "error"))
+      .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  [Test]
+  public async Task QueueInboxFailure_AfterDispose_ThrowsObjectDisposedExceptionAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions { IntervalMilliseconds = 5000 };
+
+    var sut = new IntervalWorkCoordinatorStrategy(fakeCoordinator, instanceProvider, options);
+    await sut.DisposeAsync();
+
+    // Act & Assert
+    await Assert.That(() => sut.QueueInboxFailure(_idProvider.NewGuid(), MessageProcessingStatus.Failed, "error"))
+      .ThrowsExactly<ObjectDisposedException>();
+  }
+
+  // ========================================
   // Test Fakes
   // ========================================
 
@@ -580,6 +746,40 @@ public class IntervalWorkCoordinatorStrategyTests {
       LastOutboxFailures = request.OutboxFailures;
       LastInboxFailures = request.InboxFailures;
 
+      return Task.FromResult(new WorkBatch {
+        OutboxWork = [],
+        InboxWork = [],
+        PerspectiveWork = []
+      });
+    }
+
+    public Task ReportPerspectiveCompletionAsync(
+      PerspectiveCheckpointCompletion completion,
+      CancellationToken cancellationToken = default) {
+      return Task.CompletedTask;
+    }
+
+    public Task ReportPerspectiveFailureAsync(
+      PerspectiveCheckpointFailure failure,
+      CancellationToken cancellationToken = default) {
+      return Task.CompletedTask;
+    }
+
+    public Task<PerspectiveCheckpointInfo?> GetPerspectiveCheckpointAsync(
+      Guid streamId,
+      string perspectiveName,
+      CancellationToken cancellationToken = default) {
+      return Task.FromResult<PerspectiveCheckpointInfo?>(null);
+    }
+  }
+
+  private sealed class FakeWorkCoordinatorWithFlags : IWorkCoordinator {
+    public WorkBatchFlags LastFlags { get; private set; }
+
+    public Task<WorkBatch> ProcessWorkBatchAsync(
+      ProcessWorkBatchRequest request,
+      CancellationToken cancellationToken = default) {
+      LastFlags = request.Flags;
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
         InboxWork = [],

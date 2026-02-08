@@ -187,6 +187,233 @@ public class ImmediateWorkCoordinatorStrategyTests {
   }
 
   // ========================================
+  // Constructor Tests
+  // ========================================
+
+  [Test]
+  public async Task Constructor_WithNullCoordinator_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    // Act & Assert
+    await Assert.That(() => new ImmediateWorkCoordinatorStrategy(
+      null!,
+      instanceProvider,
+      options
+    )).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task Constructor_WithNullInstanceProvider_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var coordinator = new FakeWorkCoordinator();
+    var options = new WorkCoordinatorOptions();
+
+    // Act & Assert
+    await Assert.That(() => new ImmediateWorkCoordinatorStrategy(
+      coordinator,
+      null!,
+      options
+    )).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task Constructor_WithNullOptions_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var coordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+
+    // Act & Assert
+    await Assert.That(() => new ImmediateWorkCoordinatorStrategy(
+      coordinator,
+      instanceProvider,
+      null!
+    )).Throws<ArgumentNullException>();
+  }
+
+  // ========================================
+  // Completion/Failure Queue Tests
+  // ========================================
+
+  [Test]
+  public async Task QueueOutboxCompletion_FlushesOnCallAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ImmediateWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    var messageId = _idProvider.NewGuid();
+
+    // Act
+    sut.QueueOutboxCompletion(messageId, MessageProcessingStatus.Published);
+    await sut.FlushAsync(WorkBatchFlags.None);
+
+    // Assert
+    await Assert.That(fakeCoordinator.LastOutboxCompletions).Count().IsEqualTo(1);
+    await Assert.That(fakeCoordinator.LastOutboxCompletions[0].MessageId).IsEqualTo(messageId);
+    await Assert.That(fakeCoordinator.LastOutboxCompletions[0].Status).IsEqualTo(MessageProcessingStatus.Published);
+  }
+
+  [Test]
+  public async Task QueueInboxCompletion_FlushesOnCallAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ImmediateWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    var messageId = _idProvider.NewGuid();
+
+    // Act
+    sut.QueueInboxCompletion(messageId, MessageProcessingStatus.Stored | MessageProcessingStatus.EventStored);
+    await sut.FlushAsync(WorkBatchFlags.None);
+
+    // Assert
+    await Assert.That(fakeCoordinator.LastInboxCompletions).Count().IsEqualTo(1);
+    await Assert.That(fakeCoordinator.LastInboxCompletions[0].MessageId).IsEqualTo(messageId);
+    await Assert.That(fakeCoordinator.LastInboxCompletions[0].Status).IsEqualTo(MessageProcessingStatus.Stored | MessageProcessingStatus.EventStored);
+  }
+
+  [Test]
+  public async Task QueueOutboxFailure_FlushesOnCallAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ImmediateWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    var messageId = _idProvider.NewGuid();
+
+    // Act
+    sut.QueueOutboxFailure(messageId, MessageProcessingStatus.Stored, "Delivery failed");
+    await sut.FlushAsync(WorkBatchFlags.None);
+
+    // Assert
+    await Assert.That(fakeCoordinator.LastOutboxFailures).Count().IsEqualTo(1);
+    await Assert.That(fakeCoordinator.LastOutboxFailures[0].MessageId).IsEqualTo(messageId);
+    await Assert.That(fakeCoordinator.LastOutboxFailures[0].CompletedStatus).IsEqualTo(MessageProcessingStatus.Stored);
+    await Assert.That(fakeCoordinator.LastOutboxFailures[0].Error).IsEqualTo("Delivery failed");
+  }
+
+  [Test]
+  public async Task QueueInboxFailure_FlushesOnCallAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ImmediateWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    var messageId = _idProvider.NewGuid();
+
+    // Act
+    sut.QueueInboxFailure(messageId, MessageProcessingStatus.Stored, "Handler threw exception");
+    await sut.FlushAsync(WorkBatchFlags.None);
+
+    // Assert
+    await Assert.That(fakeCoordinator.LastInboxFailures).Count().IsEqualTo(1);
+    await Assert.That(fakeCoordinator.LastInboxFailures[0].MessageId).IsEqualTo(messageId);
+    await Assert.That(fakeCoordinator.LastInboxFailures[0].CompletedStatus).IsEqualTo(MessageProcessingStatus.Stored);
+    await Assert.That(fakeCoordinator.LastInboxFailures[0].Error).IsEqualTo("Handler threw exception");
+  }
+
+  // ========================================
+  // Flush Clears Queue Tests
+  // ========================================
+
+  [Test]
+  public async Task FlushAsync_ClearsQueuesAfterFlushAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions();
+
+    var sut = new ImmediateWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    var messageId = _idProvider.NewGuid();
+    sut.QueueOutboxCompletion(messageId, MessageProcessingStatus.Published);
+    sut.QueueInboxCompletion(messageId, MessageProcessingStatus.Stored);
+
+    // Act - First flush
+    await sut.FlushAsync(WorkBatchFlags.None);
+    // Second flush should have empty queues
+    await sut.FlushAsync(WorkBatchFlags.None);
+
+    // Assert - Second flush should have empty arrays
+    await Assert.That(fakeCoordinator.LastOutboxCompletions).Count().IsEqualTo(0);
+    await Assert.That(fakeCoordinator.LastInboxCompletions).Count().IsEqualTo(0);
+  }
+
+  // ========================================
+  // DebugMode Flag Tests
+  // ========================================
+
+  [Test]
+  public async Task FlushAsync_WithDebugMode_SetsDebugFlagAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions { DebugMode = true };
+
+    var sut = new ImmediateWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    // Act
+    await sut.FlushAsync(WorkBatchFlags.None);
+
+    // Assert - DebugMode should be set
+    await Assert.That(fakeCoordinator.LastFlags & WorkBatchFlags.DebugMode).IsEqualTo(WorkBatchFlags.DebugMode);
+  }
+
+  [Test]
+  public async Task FlushAsync_WithoutDebugMode_DoesNotSetDebugFlagAsync() {
+    // Arrange
+    var fakeCoordinator = new FakeWorkCoordinator();
+    var instanceProvider = new FakeServiceInstanceProvider();
+    var options = new WorkCoordinatorOptions { DebugMode = false };
+
+    var sut = new ImmediateWorkCoordinatorStrategy(
+      fakeCoordinator,
+      instanceProvider,
+      options
+    );
+
+    // Act
+    await sut.FlushAsync(WorkBatchFlags.None);
+
+    // Assert - DebugMode should not be set
+    await Assert.That(fakeCoordinator.LastFlags & WorkBatchFlags.DebugMode).IsEqualTo(WorkBatchFlags.None);
+  }
+
+  // ========================================
   // Test Fakes
   // ========================================
 
@@ -194,6 +421,11 @@ public class ImmediateWorkCoordinatorStrategyTests {
     public int ProcessWorkBatchCallCount { get; private set; }
     public OutboxMessage[] LastNewOutboxMessages { get; private set; } = [];
     public InboxMessage[] LastNewInboxMessages { get; private set; } = [];
+    public MessageCompletion[] LastOutboxCompletions { get; private set; } = [];
+    public MessageCompletion[] LastInboxCompletions { get; private set; } = [];
+    public MessageFailure[] LastOutboxFailures { get; private set; } = [];
+    public MessageFailure[] LastInboxFailures { get; private set; } = [];
+    public WorkBatchFlags LastFlags { get; private set; }
 
     public Task<WorkBatch> ProcessWorkBatchAsync(
       ProcessWorkBatchRequest request,
@@ -201,6 +433,11 @@ public class ImmediateWorkCoordinatorStrategyTests {
       ProcessWorkBatchCallCount++;
       LastNewOutboxMessages = request.NewOutboxMessages;
       LastNewInboxMessages = request.NewInboxMessages;
+      LastOutboxCompletions = request.OutboxCompletions;
+      LastInboxCompletions = request.InboxCompletions;
+      LastOutboxFailures = request.OutboxFailures;
+      LastInboxFailures = request.InboxFailures;
+      LastFlags = request.Flags;
 
       return Task.FromResult(new WorkBatch {
         OutboxWork = [],
