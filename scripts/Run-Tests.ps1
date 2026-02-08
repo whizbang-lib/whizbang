@@ -518,7 +518,8 @@ try {
             $projectArgs = @(
                 "run"
                 "--project"
-                "`"$projectPath`""
+                $projectPath  # PowerShell handles spacing properly, no extra quotes needed
+                "--no-build"  # Use pre-built binaries from artifact
                 "--configuration"
                 $Configuration
                 "--"  # Separator for test runner args
