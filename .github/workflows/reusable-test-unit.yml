@@ -66,7 +66,7 @@ jobs:
             tests/Whizbang.Transports.Tests
           do
             echo "Running tests in $project"
-            dotnet test --project "$project" --no-restore --no-build --configuration Release \
+            dotnet test "$project" --no-restore --no-build --configuration Release \
               --coverage --coverage-output-format cobertura
           done
 

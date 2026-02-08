@@ -51,7 +51,7 @@ jobs:
           echo "Running RabbitMQ integration tests"
           MAX_RETRIES=3
           RETRY_COUNT=0
-          until dotnet test --project samples/ECommerce/tests/ECommerce.RabbitMQ.Integration.Tests \
+          until dotnet test samples/ECommerce/tests/ECommerce.RabbitMQ.Integration.Tests \
             --no-restore --no-build --configuration Release \
             --coverage --coverage-output-format cobertura; do
             RETRY_COUNT=$((RETRY_COUNT + 1))
