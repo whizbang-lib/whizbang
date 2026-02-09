@@ -515,6 +515,15 @@ try {
             # Use dotnet run instead of dotnet test to avoid global.json VSTest validation issues
             # TUnit/MTP tests run directly via dotnet run on the test project
             $projectDir = [System.IO.Path]::GetDirectoryName($projectPath)
+
+            # On Linux/macOS, set execute permission on test executable (lost during artifact extraction)
+            if ($IsLinux -or $IsMacOS) {
+                $testExe = Join-Path $projectDir "bin" $Configuration "net10.0" $projectName
+                if (Test-Path $testExe) {
+                    chmod +x $testExe 2>$null
+                }
+            }
+
             $projectArgs = @(
                 "run"
                 "--project"
