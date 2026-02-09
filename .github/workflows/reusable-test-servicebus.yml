@@ -48,7 +48,7 @@ jobs:
 
       - name: Run Azure Service Bus Integration Tests
         # Uses WhizbangTestTags for precise project filtering
-        run: pwsh scripts/Run-Tests.ps1 -Mode IntegrationsOnly -Coverage -Configuration Release -Tag AzureServiceBus
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag AzureServiceBus
 
       - name: Upload Coverage
         if: success()

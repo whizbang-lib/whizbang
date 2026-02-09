@@ -29,12 +29,14 @@
 
 .PARAMETER Mode
     Test execution mode (default: Ai)
-    - Ai: AI-optimized sparse output + exclude integration tests (fast, token-efficient)
-    - Ci: Full output + exclude integration tests (for CI/CD pipelines)
-    - Full: Full output + include all tests (comprehensive validation)
-    - AiFull: AI-optimized output + include all tests (comprehensive but token-efficient)
-    - IntegrationsOnly: Full output + only integration tests
-    - AiIntegrations: AI-optimized output + only integration tests
+    AI modes (sparse output, token-efficient):
+    - Ai: ALL tests (default)
+    - AiUnit: unit tests only (fast)
+    - AiIntegrations: integration tests only
+
+    Verbose modes (full output):
+    - Unit: unit tests only
+    - Integration: integration tests only
 
 .PARAMETER ProgressInterval
     Progress update interval in seconds for AI modes (default: 60)
@@ -79,28 +81,28 @@
     Runs all tests with detailed output
 
 .EXAMPLE
+    ./Run-Tests.ps1
+    Runs ALL tests with AI-optimized output (default mode)
+
+.EXAMPLE
     ./Run-Tests.ps1 -Mode Ai
-    Runs tests with AI-optimized output, excluding integration tests (default mode)
+    Same as above - runs ALL tests with AI-optimized output
 
 .EXAMPLE
-    ./Run-Tests.ps1 -Mode Ci
-    Runs tests with full output, excluding integration tests (for CI/CD)
-
-.EXAMPLE
-    ./Run-Tests.ps1 -Mode Full
-    Runs ALL tests including integration tests with full output (5-10+ minutes)
-
-.EXAMPLE
-    ./Run-Tests.ps1 -Mode AiFull
-    Runs ALL tests including integration tests with AI-optimized output
-
-.EXAMPLE
-    ./Run-Tests.ps1 -Mode IntegrationsOnly
-    Runs ONLY integration tests with full output
+    ./Run-Tests.ps1 -Mode AiUnit
+    Runs unit tests only with AI-optimized output (fast)
 
 .EXAMPLE
     ./Run-Tests.ps1 -Mode AiIntegrations
-    Runs ONLY integration tests with AI-optimized output
+    Runs integration tests only with AI-optimized output
+
+.EXAMPLE
+    ./Run-Tests.ps1 -Mode Unit
+    Runs unit tests only with full verbose output
+
+.EXAMPLE
+    ./Run-Tests.ps1 -Mode Integration
+    Runs integration tests only with full verbose output
 
 .EXAMPLE
     ./Run-Tests.ps1 -Mode Ai -ProgressInterval 30
@@ -115,7 +117,7 @@
     Runs tests and stops immediately on first failure
 
 .EXAMPLE
-    ./Run-Tests.ps1 -Mode AiFull -FailFast
+    ./Run-Tests.ps1 -Mode Ai -FailFast
     Runs all tests including integration tests, stops on first failure
 
 .EXAMPLE
@@ -227,8 +229,8 @@ param(
     [string]$TestFilter = "",
     [switch]$VerboseOutput,
 
-    [ValidateSet("Ai", "Ci", "Full", "AiFull", "IntegrationsOnly", "AiIntegrations")]
-    [string]$Mode = "Ai",  # Test execution mode: Ai (default), Ci, Full, AiFull, IntegrationsOnly, AiIntegrations
+    [ValidateSet("Ai", "AiUnit", "AiIntegrations", "Unit", "Integration")]
+    [string]$Mode = "Ai",  # Test execution mode: Ai (all tests), AiUnit, AiIntegrations, Unit, Integration
 
     [int]$ProgressInterval = 60,  # Progress update interval in seconds (Ai modes only)
     [switch]$LiveUpdates,  # Show progress immediately when counts change (Ai modes only)
@@ -271,20 +273,20 @@ Set-StrictMode -Version Latest
 if ($PSBoundParameters.ContainsKey('AiMode') -or $PSBoundParameters.ContainsKey('ExcludeIntegration')) {
     Write-Warning "Parameters -AiMode and -ExcludeIntegration are deprecated. Use -Mode instead."
     if ($AiMode -and $PSBoundParameters.ContainsKey('ExcludeIntegration') -and -not $ExcludeIntegration) {
-        $Mode = "AiFull"
-    } elseif ($useAiOutput) {
-        $Mode = "Ai"
+        $Mode = "Ai"  # AI mode with all tests
+    } elseif ($AiMode) {
+        $Mode = "AiUnit"  # AI mode with unit tests only
     } elseif ($PSBoundParameters.ContainsKey('ExcludeIntegration') -and -not $ExcludeIntegration) {
-        $Mode = "Full"
+        $Mode = "Ai"  # All tests (was Full)
     } else {
-        $Mode = "Ci"
+        $Mode = "Unit"  # Verbose unit tests only
     }
 }
 
 # Derive settings from Mode
-$useAiOutput = $Mode -in @("Ai", "AiFull", "AiIntegrations")
-$includeIntegrationTests = $Mode -in @("Full", "AiFull", "IntegrationsOnly", "AiIntegrations")
-$onlyIntegrationTests = $Mode -in @("IntegrationsOnly", "AiIntegrations")
+$useAiOutput = $Mode -in @("Ai", "AiUnit", "AiIntegrations")
+$includeIntegrationTests = $Mode -in @("Ai", "Integration", "AiIntegrations")
+$onlyIntegrationTests = $Mode -in @("Integration", "AiIntegrations")
 
 # Navigate to repo root
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -405,7 +407,7 @@ try {
         if ($onlyIntegrationTests) {
             Write-Host "Integration Tests: Only (other tests excluded)" -ForegroundColor Yellow
         } elseif (-not $includeIntegrationTests) {
-            Write-Host "Integration Tests: Excluded (use -Mode Full or -Mode AiFull to include)" -ForegroundColor Yellow
+            Write-Host "Integration Tests: Excluded (use -Mode Ai or -Mode Full to include)" -ForegroundColor Yellow
         }
         if ($ProjectFilter) {
             Write-Host "Project Filter: $ProjectFilter" -ForegroundColor Yellow
@@ -796,7 +798,7 @@ try {
         } elseif (-not $includeIntegrationTests) {
             $tagFilteredDlls = @($tagFilteredDlls | Where-Object { Test-IsUnitTest $_ })
         } else {
-            $tagFilteredDlls = @($tagFilteredDlls | Where-Object { Test-IsUnitTest $_ -or Test-IsIntegrationTest $_ })
+            $tagFilteredDlls = @($tagFilteredDlls | Where-Object { (Test-IsUnitTest $_) -or (Test-IsIntegrationTest $_) })
         }
 
         if ($tagFilteredDlls.Count -gt 0) {
@@ -881,7 +883,7 @@ try {
         $allTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { Test-IsPrimaryTestDll $_ } |
-            Where-Object { Test-IsUnitTest $_ -or Test-IsIntegrationTest $_ } |
+            Where-Object { (Test-IsUnitTest $_) -or (Test-IsIntegrationTest $_) } |
             ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
 
         if ($allTestDlls.Count -gt 0) {

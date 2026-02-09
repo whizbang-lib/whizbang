@@ -47,7 +47,7 @@ jobs:
         run: dotnet build --no-restore --configuration Release -maxcpucount:1
 
       - name: Run Unit Tests
-        run: pwsh scripts/Run-Tests.ps1 -Mode Ci -Coverage -Configuration Release
+        run: pwsh scripts/Run-Tests.ps1 -Mode Unit -Coverage -Configuration Release
 
       - name: Upload Coverage
         if: success()

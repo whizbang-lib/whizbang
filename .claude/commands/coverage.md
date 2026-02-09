@@ -6,12 +6,11 @@ pwsh scripts/Run-Tests.ps1 -Coverage
 ```
 
 Options:
-- `-Mode Ai` - AI-optimized output, excludes integration tests (default)
-- `-Mode Ci` - Full output, excludes integration tests
-- `-Mode AiFull` - AI-optimized output, includes all tests
-- `-Mode Full` - Full output, includes all tests
-- `-Mode AiIntegrations` - AI-optimized output, only integration tests
-- `-Mode IntegrationsOnly` - Full output, only integration tests
+- `-Mode Ai` - AI-optimized output, ALL tests (default)
+- `-Mode AiUnit` - AI-optimized output, unit tests only
+- `-Mode AiIntegrations` - AI-optimized output, integration tests only
+- `-Mode Unit` - Verbose output, unit tests only
+- `-Mode Integration` - Verbose output, integration tests only
 - `-ProjectFilter "Core"` - Run only matching projects
 
 This will:
