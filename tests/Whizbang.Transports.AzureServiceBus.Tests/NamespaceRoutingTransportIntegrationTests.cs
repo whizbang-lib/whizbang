@@ -23,7 +23,7 @@ namespace Whizbang.Transports.AzureServiceBus.Tests;
 /// </summary>
 [Category("Integration")]
 [NotInParallel("ServiceBus")]
-[Timeout(90_000)]
+[Timeout(240_000)] // 240s timeout for integration tests using shared emulator fixture
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulatorFixtureSource fixtureSource) {
   private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
@@ -132,7 +132,8 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
     // Drain any existing messages
     await _drainMessagesAsync("topic-00", "sub-00-a");
 
-    var receivedTcs = new TaskCompletionSource<string>();
+    // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlock when Dispose() waits for handler
+    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
     var subscription = await transport.SubscribeAsync(
       async (envelope, envelopeType, ct) => {
         receivedTcs.TrySetResult(envelope.MessageId.ToString());
@@ -172,7 +173,8 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
 
     var receivedCount = 0;
     var expectedCount = 3;
-    var allReceivedTcs = new TaskCompletionSource<bool>();
+    // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlock when Dispose() waits for handler
+    var allReceivedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
     var subscription = await transport.SubscribeAsync(
       async (envelope, envelopeType, ct) => {
@@ -216,8 +218,9 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
     await _drainMessagesAsync("topic-00", "sub-00-a");
     await _drainMessagesAsync("topic-01", "sub-01-a");
 
-    var topic00Received = new TaskCompletionSource<string>();
-    var topic01Received = new TaskCompletionSource<string>();
+    // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlock when Dispose() waits for handler
+    var topic00Received = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var topic01Received = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
 
     var subscription00 = await transport.SubscribeAsync(
       async (envelope, envelopeType, ct) => {

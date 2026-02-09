@@ -127,6 +127,9 @@ public class ServiceCollectionExtensionsTests(ServiceBusEmulatorFixtureSource fi
     services.AddSingleton(_fixture.Client);
     services.AddAzureServiceBusTransport(_fixture.ConnectionString);
 
+    // HealthCheckService requires ILogger - add logging support
+    services.AddLogging();
+
     // Act
     services.AddAzureServiceBusHealthChecks();
     var provider = services.BuildServiceProvider();

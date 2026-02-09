@@ -64,11 +64,25 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
     await File.WriteAllTextAsync(_dockerComposeFile, dockerComposeContent, cancellationToken);
 
     try {
-      // Stop any existing containers on this port
-      await _runDockerComposeAsync("down", _dockerComposeFile, cancellationToken);
+      // CRITICAL: Force cleanup any stale containers from previous test runs
+      // This handles the case where tests were aborted without proper cleanup
+      Console.WriteLine("[ServiceBusEmulator] Cleaning up any stale containers...");
+      await _forceCleanupContainersAsync(cancellationToken);
 
-      // Start containers
-      await _runDockerComposeAsync("up -d", _dockerComposeFile, cancellationToken);
+      // Stop any existing containers on this port (via docker-compose with full cleanup)
+      // Using -v to remove volumes and --remove-orphans to clean orphaned containers
+      // Use explicit project name to ensure consistent network naming
+      var projectName = $"sbtest{_port}";
+      await _runDockerComposeAsyncIgnoreErrors($"-p {projectName} down -v --remove-orphans", _dockerComposeFile, cancellationToken);
+
+      // Also remove the network explicitly in case docker-compose didn't
+      await _removeNetworkAsync($"{projectName}_default", cancellationToken);
+
+      // Give Docker a moment to fully release resources
+      await Task.Delay(TimeSpan.FromSeconds(3), cancellationToken);
+
+      // Start containers with explicit project name and --force-recreate
+      await _runDockerComposeAsync($"-p {projectName} up -d --force-recreate", _dockerComposeFile, cancellationToken);
 
       // Wait for emulator to be ready
       Console.WriteLine("[ServiceBusEmulator] Waiting for emulator to be ready (up to 180 seconds)...");
@@ -99,6 +113,11 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
           $"Service Bus Emulator failed to start within {maxWaitSeconds} seconds. Check logs:\n{finalLogs}"
         );
       }
+
+      // Wait for AMQP connections to be fully ready
+      // The emulator reports "Successfully Up" but AMQP connections may not be ready yet
+      Console.WriteLine("[ServiceBusEmulator] Waiting 40 seconds for AMQP connections to stabilize...");
+      await Task.Delay(TimeSpan.FromSeconds(40), cancellationToken);
 
       // Create client and verify connectivity
       _client = new ServiceBusClient(ConnectionString);
@@ -138,7 +157,9 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
     }
 
     if (File.Exists(_dockerComposeFile)) {
-      await _runDockerComposeAsync("down", _dockerComposeFile);
+      var projectName = $"sbtest{_port}";
+      await _runDockerComposeAsyncIgnoreErrors($"-p {projectName} down -v --remove-orphans", _dockerComposeFile);
+      await _removeNetworkAsync($"{projectName}_default");
       File.Delete(_dockerComposeFile);
     }
 
@@ -251,6 +272,34 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
     }
   }
 
+  /// <summary>
+  /// Run docker compose command ignoring errors (for cleanup operations).
+  /// </summary>
+  private static async Task _runDockerComposeAsyncIgnoreErrors(
+    string arguments,
+    string composeFile,
+    CancellationToken cancellationToken = default
+  ) {
+    try {
+      var psi = new ProcessStartInfo {
+        FileName = "docker",
+        Arguments = $"compose -f \"{composeFile}\" {arguments}",
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        UseShellExecute = false,
+        CreateNoWindow = true
+      };
+
+      using var process = Process.Start(psi);
+      if (process != null) {
+        await process.WaitForExitAsync(cancellationToken);
+        // Ignore exit code - cleanup may fail if containers don't exist
+      }
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
+
   private static async Task<string> _getDockerLogsAsync(
     string containerName,
     CancellationToken cancellationToken = default
@@ -275,5 +324,80 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
     var stderr = await process.StandardError.ReadToEndAsync(cancellationToken);
 
     return stdout + stderr;
+  }
+
+  /// <summary>
+  /// Remove a Docker network by name (ignores errors if network doesn't exist).
+  /// </summary>
+  private static async Task _removeNetworkAsync(string networkName, CancellationToken cancellationToken = default) {
+    try {
+      var psi = new ProcessStartInfo {
+        FileName = "docker",
+        Arguments = $"network rm {networkName}",
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        UseShellExecute = false,
+        CreateNoWindow = true
+      };
+
+      using var process = Process.Start(psi);
+      if (process != null) {
+        await process.WaitForExitAsync(cancellationToken);
+        // Ignore exit code - network may not exist
+      }
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
+
+  /// <summary>
+  /// Force cleanup any stale containers from previous test runs.
+  /// This handles the case where tests were aborted without proper cleanup.
+  /// </summary>
+  private async Task _forceCleanupContainersAsync(CancellationToken cancellationToken = default) {
+    var containerNames = new[] {
+      $"servicebus-emulator-test-{_port}",
+      $"mssql-servicebus-test-{_port}"
+    };
+
+    foreach (var containerName in containerNames) {
+      try {
+        var psi = new ProcessStartInfo {
+          FileName = "docker",
+          Arguments = $"rm -f {containerName}",
+          RedirectStandardOutput = true,
+          RedirectStandardError = true,
+          UseShellExecute = false,
+          CreateNoWindow = true
+        };
+
+        using var process = Process.Start(psi);
+        if (process != null) {
+          await process.WaitForExitAsync(cancellationToken);
+          // Ignore exit code - container may not exist
+        }
+      } catch {
+        // Ignore cleanup errors
+      }
+    }
+
+    // Also prune any dangling networks
+    try {
+      var psi = new ProcessStartInfo {
+        FileName = "docker",
+        Arguments = "network prune -f",
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        UseShellExecute = false,
+        CreateNoWindow = true
+      };
+
+      using var process = Process.Start(psi);
+      if (process != null) {
+        await process.WaitForExitAsync(cancellationToken);
+      }
+    } catch {
+      // Ignore cleanup errors
+    }
   }
 }

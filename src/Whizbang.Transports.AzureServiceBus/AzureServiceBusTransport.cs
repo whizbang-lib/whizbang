@@ -197,10 +197,10 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
         message.ApplicationProperties["CausationId"] = causationId.Value.Value.ToString();
       }
 
-      // Add custom metadata
+      // Add custom metadata (converting JsonElement to AMQP-compatible primitives)
       if (destination.Metadata != null) {
         foreach (var (key, value) in destination.Metadata) {
-          message.ApplicationProperties[key] = value;
+          message.ApplicationProperties[key] = _convertJsonElementToAmqpValue(value);
         }
       }
 
@@ -303,7 +303,10 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
 
       // Configure message handler
       processor.ProcessMessageAsync += async args => {
+        Console.WriteLine($"[TRANSPORT DIAGNOSTIC] ProcessMessageAsync invoked! MessageId={args.Message.MessageId}, IsActive={subscription.IsActive}");
+
         if (!subscription.IsActive) {
+          Console.WriteLine($"[TRANSPORT DIAGNOSTIC] Subscription NOT active - abandoning message");
           // If paused, abandon the message so it can be reprocessed
           await args.AbandonMessageAsync(args.Message, cancellationToken: args.CancellationToken);
           return;
@@ -313,6 +316,7 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
           // Get envelope type from message metadata
           if (!args.Message.ApplicationProperties.TryGetValue("EnvelopeType", out var envelopeTypeObj) ||
               envelopeTypeObj is not string envelopeTypeName) {
+            Console.WriteLine($"[TRANSPORT DIAGNOSTIC] Missing EnvelopeType metadata! MessageId={args.Message.MessageId}");
             _logger.LogError("Message {MessageId} missing EnvelopeType metadata", args.Message.MessageId);
             await args.DeadLetterMessageAsync(
               args.Message,
@@ -322,6 +326,7 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
             );
             return;
           }
+          Console.WriteLine($"[TRANSPORT DIAGNOSTIC] EnvelopeType={envelopeTypeName}");
 
           // Deserialize envelope using AOT-compatible JsonContextRegistry
           // Use JsonContextRegistry.GetTypeInfoByName() instead of Type.GetType() to support
@@ -368,10 +373,13 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
           );
 
           // Invoke handler with envelope type metadata
+          Console.WriteLine($"[TRANSPORT DIAGNOSTIC] Invoking handler for MessageId={envelope.MessageId.Value}");
           await handler(envelope, envelopeTypeName, args.CancellationToken);
+          Console.WriteLine($"[TRANSPORT DIAGNOSTIC] Handler completed, completing message MessageId={envelope.MessageId.Value}");
 
           // Complete the message
           await args.CompleteMessageAsync(args.Message, cancellationToken: args.CancellationToken);
+          Console.WriteLine($"[TRANSPORT DIAGNOSTIC] Message completed MessageId={envelope.MessageId.Value}");
 
           _logger.LogDebug(
             "Processed message {MessageId} from {TopicName}/{SubscriptionName}",
@@ -411,6 +419,7 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
 
       // Configure error handler
       processor.ProcessErrorAsync += args => {
+        Console.WriteLine($"[TRANSPORT DIAGNOSTIC] ProcessErrorAsync invoked! ErrorSource={args.ErrorSource}, Exception={args.Exception.Message}");
         _logger.LogError(
           args.Exception,
           "Error in Service Bus processor for {TopicName}/{SubscriptionName}: {ErrorSource}",
@@ -542,6 +551,25 @@ public class AzureServiceBusTransport : ITransport, IAsyncDisposable {
       );
       throw;
     }
+  }
+
+  /// <summary>
+  /// Converts a JsonElement to an AMQP-compatible primitive value.
+  /// AMQP application properties only support: string, bool, byte, sbyte, short, ushort,
+  /// int, uint, long, ulong, float, double, decimal, Guid, DateTimeOffset, TimeSpan, Uri.
+  /// </summary>
+  private static object? _convertJsonElementToAmqpValue(JsonElement element) {
+    return element.ValueKind switch {
+      JsonValueKind.String => element.GetString(),
+      JsonValueKind.Number when element.TryGetInt64(out var longVal) => longVal,
+      JsonValueKind.Number when element.TryGetDouble(out var doubleVal) => doubleVal,
+      JsonValueKind.True => true,
+      JsonValueKind.False => false,
+      JsonValueKind.Null => null,
+      // For arrays and objects, serialize back to JSON string (AMQP doesn't support complex types)
+      JsonValueKind.Array or JsonValueKind.Object => element.GetRawText(),
+      _ => element.ToString()
+    };
   }
 
   private async Task<ServiceBusSender> _getOrCreateSenderAsync(string topicName, CancellationToken cancellationToken) {
