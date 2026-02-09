@@ -241,7 +241,7 @@ pwsh scripts/Run-Tests.ps1
 pwsh scripts/Run-Tests.ps1 -ProjectFilter "Core"
 
 # Run with AI-friendly output
-pwsh scripts/Run-Tests.ps1 -AiMode
+pwsh scripts/Run-Tests.ps1
 ```
 
 ### 1.3 Fix Absolute Paths
@@ -990,7 +990,7 @@ pwsh scripts/Run-Tests.ps1 -ProjectFilter "Core"
 pwsh scripts/Run-Tests.ps1 -TestFilter "DispatcherTests"
 
 # AI-friendly output
-pwsh scripts/Run-Tests.ps1 -AiMode
+pwsh scripts/Run-Tests.ps1
 ```
 
 ## Building

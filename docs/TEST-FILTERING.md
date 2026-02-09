@@ -7,11 +7,16 @@ Quick reference for filtering tests using the `Run-Tests.ps1` script.
 ## Basic Usage
 
 ```bash
-# Run all tests
+# Run all tests (default: unit + integration, verbose output)
 pwsh scripts/Run-Tests.ps1
 
-# Run all tests in AI mode (compact output)
-pwsh scripts/Run-Tests.ps1 -AiMode
+# Explicit modes
+pwsh scripts/Run-Tests.ps1 -Mode All             # All tests, verbose (default)
+pwsh scripts/Run-Tests.ps1 -Mode Ai              # All tests, compact AI output
+pwsh scripts/Run-Tests.ps1 -Mode AiUnit          # Unit tests only, compact
+pwsh scripts/Run-Tests.ps1 -Mode AiIntegrations  # Integration tests only, compact
+pwsh scripts/Run-Tests.ps1 -Mode Unit            # Unit tests only, verbose
+pwsh scripts/Run-Tests.ps1 -Mode Integration     # Integration tests only, verbose
 ```
 
 ---
@@ -82,7 +87,7 @@ pwsh scripts/Run-Tests.ps1 -MaxParallel 4
 pwsh scripts/Run-Tests.ps1 -Verbose
 
 # Combine options
-pwsh scripts/Run-Tests.ps1 -ProjectFilter "EFCore" -TestFilter "NoWork" -AiMode
+pwsh scripts/Run-Tests.ps1 -ProjectFilter "EFCore" -TestFilter "NoWork"
 ```
 
 ---
@@ -125,7 +130,7 @@ pwsh scripts/Run-Tests.ps1 -TestFilter "Integration"
 
 **Tests run slowly:**
 - Reduce `-MaxParallel` if system is overloaded
-- Use `-AiMode` for cleaner output when debugging
+- Default output is already compact; use `-Mode Unit` for verbose output
 
 **Need test names:**
 - Run without filter and examine output
