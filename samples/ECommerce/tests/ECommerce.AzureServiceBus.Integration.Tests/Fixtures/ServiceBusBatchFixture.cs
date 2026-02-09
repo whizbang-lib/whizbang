@@ -22,7 +22,7 @@ public sealed class ServiceBusBatchFixture : IAsyncDisposable {
   /// <param name="batchIndex">Zero-based batch index (always 0 for single emulator)</param>
   public ServiceBusBatchFixture(int batchIndex) {
     _batchIndex = batchIndex;
-    _basePort = 5672;  // Always port 5672 - single emulator
+    _basePort = 5682;  // Use 5682 to avoid conflict with Whizbang.Transports.AzureServiceBus.Tests on 5672
   }
 
   /// <summary>
