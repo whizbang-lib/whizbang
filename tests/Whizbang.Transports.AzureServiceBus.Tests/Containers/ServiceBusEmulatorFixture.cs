@@ -15,6 +15,15 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
   private ServiceBusClient? _client;
 
   /// <summary>
+  /// Known topic/subscription pairs configured in Config.json.
+  /// Used for dead letter queue monitoring.
+  /// </summary>
+  private static readonly (string Topic, string Subscription)[] _knownSubscriptions = [
+    ("topic-00", "sub-00-a"),
+    ("topic-01", "sub-01-a")
+  ];
+
+  /// <summary>
   /// Creates a fixture with the default port (5672).
   /// </summary>
   public ServiceBusEmulatorFixture() : this(5672) {
@@ -152,7 +161,9 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
 
     Console.WriteLine("[ServiceBusEmulator] Stopping emulator...");
 
+    // Check dead letter queues before shutdown for diagnostics
     if (_client != null) {
+      await CheckDeadLetterQueuesAsync();
       await _client.DisposeAsync();
     }
 
@@ -164,6 +175,85 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
     }
 
     Console.WriteLine("[ServiceBusEmulator] ✅ Emulator stopped");
+  }
+
+  /// <summary>
+  /// Checks all known dead letter queues and prints diagnostics if any messages are found.
+  /// Call this to diagnose why messages might not be reaching handlers.
+  /// </summary>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <returns>Total count of dead-lettered messages across all subscriptions.</returns>
+  public async Task<int> CheckDeadLetterQueuesAsync(CancellationToken cancellationToken = default) {
+    if (_client == null) {
+      return 0;
+    }
+
+    var totalDeadLettered = 0;
+    Console.WriteLine("[ServiceBusEmulator] Checking dead letter queues...");
+
+    foreach (var (topic, subscription) in _knownSubscriptions) {
+      try {
+        // Create receiver for the dead letter sub-queue
+        // The dead letter queue path is: {topic}/Subscriptions/{subscription}/$DeadLetterQueue
+        var dlqReceiver = _client.CreateReceiver(
+          topic,
+          subscription,
+          new ServiceBusReceiverOptions {
+            SubQueue = SubQueue.DeadLetter,
+            ReceiveMode = ServiceBusReceiveMode.PeekLock
+          }
+        );
+
+        try {
+          // Peek messages (don't consume them) to see what's in the DLQ
+          var messages = await dlqReceiver.PeekMessagesAsync(
+            maxMessages: 100,
+            cancellationToken: cancellationToken
+          );
+
+          if (messages.Count > 0) {
+            totalDeadLettered += messages.Count;
+            Console.WriteLine($"[ServiceBusEmulator] ⚠️ DEAD LETTER QUEUE: {topic}/{subscription} has {messages.Count} message(s):");
+
+            foreach (var msg in messages) {
+              var deadLetterReason = msg.DeadLetterReason ?? "Unknown";
+              var deadLetterDescription = msg.DeadLetterErrorDescription ?? "No description";
+              var envelopeType = msg.ApplicationProperties.TryGetValue("EnvelopeType", out var et) ? et?.ToString() : "Unknown";
+
+              Console.WriteLine($"  - MessageId: {msg.MessageId}");
+              Console.WriteLine($"    EnvelopeType: {envelopeType}");
+              Console.WriteLine($"    DeadLetterReason: {deadLetterReason}");
+              Console.WriteLine($"    DeadLetterDescription: {deadLetterDescription}");
+              Console.WriteLine($"    DeliveryCount: {msg.DeliveryCount}");
+              Console.WriteLine($"    EnqueuedTime: {msg.EnqueuedTime}");
+
+              // Try to show body preview (first 200 chars)
+              try {
+                var bodyText = msg.Body.ToString();
+                if (bodyText.Length > 200) {
+                  bodyText = bodyText[..200] + "...";
+                }
+                Console.WriteLine($"    Body: {bodyText}");
+              } catch {
+                Console.WriteLine($"    Body: [Unable to read]");
+              }
+            }
+          }
+        } finally {
+          await dlqReceiver.DisposeAsync();
+        }
+      } catch (Exception ex) {
+        Console.WriteLine($"[ServiceBusEmulator] Warning: Could not check DLQ for {topic}/{subscription}: {ex.Message}");
+      }
+    }
+
+    if (totalDeadLettered == 0) {
+      Console.WriteLine("[ServiceBusEmulator] ✅ No dead-lettered messages found");
+    } else {
+      Console.WriteLine($"[ServiceBusEmulator] ⚠️ Total dead-lettered messages: {totalDeadLettered}");
+    }
+
+    return totalDeadLettered;
   }
 
   private string _generateDockerComposeContent() {
