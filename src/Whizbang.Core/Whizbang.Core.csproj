@@ -28,11 +28,4 @@
     <!-- Reference source generators for build-time code generation -->
     <ProjectReference Include="../Whizbang.Generators/Whizbang.Generators.csproj" OutputItemType="Analyzer" ReferenceOutputAssembly="false" />
   </ItemGroup>
-  <!-- Bundle the source generators in this package so users don't need to install separately -->
-  <ItemGroup>
-    <None Include="$(MSBuildProjectDirectory)/../Whizbang.Generators/bin/$(Configuration)/netstandard2.0/Whizbang.Generators.dll"
-          Pack="true"
-          PackagePath="analyzers/dotnet/cs"
-          Visible="false" />
-  </ItemGroup>
 </Project>
