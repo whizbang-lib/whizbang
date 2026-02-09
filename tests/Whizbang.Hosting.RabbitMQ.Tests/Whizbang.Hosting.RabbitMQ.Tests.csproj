@@ -7,6 +7,10 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!-- Unit: Fast tests, no external infrastructure needed -->
+    <WhizbangTestType>Unit</WhizbangTestType>
+    <!-- Tags for filtering: RabbitMQ, Messaging -->
+    <WhizbangTestTags>RabbitMQ;Messaging</WhizbangTestTags>
   </PropertyGroup>
 
   <ItemGroup>

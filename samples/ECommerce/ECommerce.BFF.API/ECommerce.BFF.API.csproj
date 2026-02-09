@@ -22,7 +22,7 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <InternalsVisibleTo Include="ECommerce.Integration.Tests" />
+    <InternalsVisibleTo Include="ECommerce.AzureServiceBus.Integration.Tests" />
   </ItemGroup>
 
   <ItemGroup>

@@ -6,6 +6,8 @@
     <Nullable>enable</Nullable>
     <IsTestProject>true</IsTestProject>
     <IsPackable>false</IsPackable>
+    <!-- Integration: Requires PostgreSQL + Azurite via Testcontainers -->
+    <WhizbangTestType>Integration</WhizbangTestType>
   </PropertyGroup>
 
   <ItemGroup>
