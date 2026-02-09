@@ -49,22 +49,30 @@ public class PerspectiveRow<TModel> where TModel : class {
   /// Stored as JSONB/JSON.
   /// Useful for filtering by event source or time range.
   /// </summary>
+  /// <remarks>
+  /// Uses <c>set</c> accessor (not <c>init</c>) for EF Core ComplexProperty materialization compatibility.
+  /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OrderPerspectiveTests.cs:OrderPerspective_Update_StoresDefaultMetadataAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:Query_CanFilterByMetadataFields_ReturnsMatchingRowsAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:Query_CanProjectAcrossColumns_ReturnsAnonymousTypeAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:Query_SupportsCombinedFilters_FromAllColumnsAsync</tests>
-  public required PerspectiveMetadata Metadata { get; init; }
+  public required PerspectiveMetadata Metadata { get; set; }
 
   /// <summary>
   /// Multi-tenancy and security scope (tenant ID, user ID, org ID).
   /// Stored as JSONB/JSON.
   /// Enables efficient tenant isolation queries.
   /// </summary>
+  /// <remarks>
+  /// Uses <c>set</c> accessor (not <c>init</c>) for EF Core OwnsOne/ComplexProperty materialization compatibility.
+  /// The <c>required</c> keyword ensures the property is set during initialization while <c>set</c> allows
+  /// EF Core to populate the instance during query materialization.
+  /// </remarks>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/OrderPerspectiveTests.cs:OrderPerspective_Update_StoresDefaultScopeAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:Query_CanFilterByScopeFields_ReturnsMatchingRowsAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:Query_CanProjectAcrossColumns_ReturnsAnonymousTypeAsync</tests>
   /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/EFCorePostgresLensQueryTests.cs:Query_SupportsCombinedFilters_FromAllColumnsAsync</tests>
-  public required PerspectiveScope Scope { get; init; }
+  public required PerspectiveScope Scope { get; set; }
 
   /// <summary>
   /// When this row was first created.

@@ -5,6 +5,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Logging.Abstractions;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 
 namespace ECommerce.OrderService.Tests;
@@ -52,6 +53,17 @@ public class CreateOrderReceptorTests {
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull => throw new NotImplementedException();
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages) => throw new NotImplementedException();
     public ValueTask<IEnumerable<TResult>> LocalInvokeManyAsync<TResult>(IEnumerable<object> messages) => throw new NotImplementedException();
+
+    // DispatchOptions overloads
+    public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, DispatchOptions options) where TMessage : notnull => throw new NotImplementedException();
+    public Task<IDeliveryReceipt> SendAsync(object message, DispatchOptions options) => throw new NotImplementedException();
+    public Task<IDeliveryReceipt> SendAsync(object message, IMessageContext context, DispatchOptions options, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
+    public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, DispatchOptions options) => throw new NotImplementedException();
+    public ValueTask LocalInvokeAsync(object message, DispatchOptions options) => throw new NotImplementedException();
+    public Task PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) {
+      PublishedMessages.Add(eventData!);
+      return Task.CompletedTask;
+    }
   }
 
   [Test]

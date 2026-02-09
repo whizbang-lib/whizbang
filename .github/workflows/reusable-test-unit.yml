@@ -2,6 +2,11 @@ name: Unit Tests (Reusable)
 
 on:
   workflow_call:
+    inputs:
+      artifact-name:
+        description: 'Build artifact to download (skips build if provided)'
+        type: string
+        required: false
 
 jobs:
   unit-tests:
@@ -11,14 +16,21 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6.0.2
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
 
+      - name: Download Build Artifacts
+        if: inputs.artifact-name != ''
+        uses: actions/download-artifact@v6
+        with:
+          name: ${{ inputs.artifact-name }}
+
       - name: Cache NuGet packages
+        if: inputs.artifact-name == ''
         uses: actions/cache@v5
         with:
           path: ~/.nuget/packages
@@ -27,36 +39,22 @@ jobs:
             ${{ runner.os }}-nuget-
 
       - name: Restore Dependencies
+        if: inputs.artifact-name == ''
         run: dotnet restore
 
       - name: Build Solution
+        if: inputs.artifact-name == ''
         run: dotnet build --no-restore --configuration Release -maxcpucount:1
 
       - name: Run Unit Tests
-        run: |
-          # Run unit tests (excluding integration tests that need external services)
-          for project in \
-            tests/Whizbang.Core.Tests \
-            tests/Whizbang.Execution.Tests \
-            tests/Whizbang.Generators.Tests \
-            tests/Whizbang.Hosting.Azure.ServiceBus.Tests \
-            tests/Whizbang.Hosting.RabbitMQ.Tests \
-            tests/Whizbang.Observability.Tests \
-            tests/Whizbang.Partitioning.Tests \
-            tests/Whizbang.Policies.Tests \
-            tests/Whizbang.Sequencing.Tests \
-            tests/Whizbang.Transports.RabbitMQ.Tests \
-            tests/Whizbang.Transports.Tests
-          do
-            echo "Running tests in $project"
-            dotnet test --project "$project" --no-restore --no-build --configuration Release \
-              --coverage --coverage-output-format cobertura
-          done
+        run: pwsh scripts/Run-Tests.ps1 -Mode Ci -Coverage -Configuration Release
 
       - name: Upload Coverage
         if: success()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v6
         with:
           name: coverage-unit
-          path: '**/TestResults/*.cobertura.xml'
+          path: |
+            tests/**/TestResults/*.cobertura.xml
+            samples/**/TestResults/*.cobertura.xml
           retention-days: 1

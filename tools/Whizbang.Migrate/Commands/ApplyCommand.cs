@@ -1,5 +1,8 @@
+using Microsoft.Extensions.FileSystemGlobbing;
 using Whizbang.Migrate.Analysis;
+using Whizbang.Migrate.PackageManagement;
 using Whizbang.Migrate.Transformers;
+using Whizbang.Migrate.Wizard;
 
 namespace Whizbang.Migrate.Commands;
 
@@ -15,17 +18,31 @@ public sealed class ApplyCommand {
   private readonly EventStoreTransformer _eventStoreTransformer = new();
   private readonly GuidToIdProviderTransformer _guidTransformer = new();
   private readonly DIRegistrationTransformer _diTransformer = new();
+  private readonly MarkerInterfaceTransformer _markerInterfaceTransformer = new();
+  private readonly GlobalUsingAliasTransformer _globalUsingAliasTransformer = new();
+  private readonly HotChocolateTransformer _hotChocolateTransformer = new();
+  private readonly WolverineHttpTransformer _wolverineHttpTransformer = new();
+  // JSON transformer is created per-execution based on decision file settings
+  private NewtonsoftToSystemTextJsonTransformer? _jsonTransformer;
 
   /// <summary>
   /// Executes the apply command on the specified directory.
   /// </summary>
   /// <param name="projectPath">Path to the project directory.</param>
   /// <param name="dryRun">If true, reports changes without modifying files.</param>
+  /// <param name="includePatterns">Glob patterns for files to include.</param>
+  /// <param name="excludePatterns">Glob patterns for files to exclude.</param>
+  /// <param name="decisionFile">Optional decision file for controlling migration behavior.</param>
+  /// <param name="managePackages">If true (default), manages package references.</param>
   /// <param name="ct">Cancellation token.</param>
   /// <returns>The apply result.</returns>
   public async Task<ApplyResult> ExecuteAsync(
       string projectPath,
       bool dryRun = false,
+      string[]? includePatterns = null,
+      string[]? excludePatterns = null,
+      DecisionFile? decisionFile = null,
+      bool managePackages = true,
       CancellationToken ct = default) {
     if (!Directory.Exists(projectPath)) {
       return new ApplyResult(false, ErrorMessage: $"Directory not found: {projectPath}");
@@ -33,31 +50,70 @@ public sealed class ApplyCommand {
 
     var fileChanges = new List<FileChange>();
     var transformedCount = 0;
+    var skippedCount = 0;
 
     // Find all C# files recursively
     var csFiles = Directory.GetFiles(projectPath, "*.cs", SearchOption.AllDirectories);
 
-    foreach (var file in csFiles) {
+    // Apply include/exclude filters
+    var filesToProcess = _filterFiles(csFiles, projectPath, includePatterns, excludePatterns);
+
+    foreach (var file in filesToProcess) {
       ct.ThrowIfCancellationRequested();
+
+      // Check decision file for skip decisions
+      // Note: Even if handlers/projections are skipped, we continue if JSON migration is enabled
+      // since it operates on different patterns (Newtonsoft.Json → System.Text.Json)
+      if (decisionFile != null) {
+        var handlerDecision = decisionFile.GetHandlerDecision(file);
+        var projectionDecision = decisionFile.GetProjectionDecision(file);
+        var jsonMigrationEnabled = decisionFile.Decisions.JsonMigration.Enabled ||
+            decisionFile.Decisions.JsonMigration.RemoveDeadImports;
+
+        if (handlerDecision == DecisionChoice.Skip &&
+            projectionDecision == DecisionChoice.Skip &&
+            !jsonMigrationEnabled) {
+          skippedCount++;
+          continue;
+        }
+      }
 
       var sourceCode = await File.ReadAllTextAsync(file, ct);
       var allChanges = new List<CodeChange>();
       var transformedCode = sourceCode;
 
+      // Apply global using alias transformations FIRST (e.g., MartenIEvent = Marten.Events.IEvent)
+      // This must run before other transformers to handle aliases correctly
+      var globalUsingResult = await _globalUsingAliasTransformer.TransformAsync(transformedCode, file, ct);
+      if (globalUsingResult.Changes.Count > 0) {
+        transformedCode = globalUsingResult.TransformedCode;
+        allChanges.AddRange(globalUsingResult.Changes);
+      }
+
       // Check if file has Wolverine handlers
       var wolverineResult = await _wolverineAnalyzer.AnalyzeAsync(sourceCode, file, ct);
       if (wolverineResult.Handlers.Count > 0) {
-        var handlerResult = await _handlerTransformer.TransformAsync(transformedCode, file, ct);
-        transformedCode = handlerResult.TransformedCode;
-        allChanges.AddRange(handlerResult.Changes);
+        var shouldTransform = decisionFile == null ||
+            decisionFile.GetHandlerDecision(file) != DecisionChoice.Skip;
+
+        if (shouldTransform) {
+          var handlerResult = await _handlerTransformer.TransformAsync(transformedCode, file, ct);
+          transformedCode = handlerResult.TransformedCode;
+          allChanges.AddRange(handlerResult.Changes);
+        }
       }
 
       // Check if file has Marten projections
       var martenResult = await _martenAnalyzer.AnalyzeAsync(transformedCode, file, ct);
       if (martenResult.Projections.Count > 0) {
-        var projectionResult = await _projectionTransformer.TransformAsync(transformedCode, file, ct);
-        transformedCode = projectionResult.TransformedCode;
-        allChanges.AddRange(projectionResult.Changes);
+        var shouldTransform = decisionFile == null ||
+            decisionFile.GetProjectionDecision(file) != DecisionChoice.Skip;
+
+        if (shouldTransform) {
+          var projectionResult = await _projectionTransformer.TransformAsync(transformedCode, file, ct);
+          transformedCode = projectionResult.TransformedCode;
+          allChanges.AddRange(projectionResult.Changes);
+        }
       }
 
       // Apply EventStore transformations (IDocumentStore → IEventStore, session patterns)
@@ -68,10 +124,13 @@ public sealed class ApplyCommand {
       }
 
       // Apply Guid → IWhizbangIdProvider transformations
-      var guidResult = await _guidTransformer.TransformAsync(transformedCode, file, ct);
-      if (guidResult.Changes.Count > 0) {
-        transformedCode = guidResult.TransformedCode;
-        allChanges.AddRange(guidResult.Changes);
+      if (decisionFile == null ||
+          decisionFile.Decisions.IdGeneration.GuidNewGuid != DecisionChoice.Skip) {
+        var guidResult = await _guidTransformer.TransformAsync(transformedCode, file, ct);
+        if (guidResult.Changes.Count > 0) {
+          transformedCode = guidResult.TransformedCode;
+          allChanges.AddRange(guidResult.Changes);
+        }
       }
 
       // Apply DI registration transformations (for Program.cs and startup files)
@@ -79,6 +138,37 @@ public sealed class ApplyCommand {
       if (diResult.Changes.Count > 0) {
         transformedCode = diResult.TransformedCode;
         allChanges.AddRange(diResult.Changes);
+      }
+
+      // Apply marker interface transformations (IEvent, ICommand from Wolverine → Whizbang.Core)
+      // This catches files that only have marker interface usage without other Wolverine patterns
+      var markerResult = await _markerInterfaceTransformer.TransformAsync(transformedCode, file, ct);
+      if (markerResult.Changes.Count > 0) {
+        transformedCode = markerResult.TransformedCode;
+        allChanges.AddRange(markerResult.Changes);
+      }
+
+      // Apply HotChocolate Marten transformations (AddMartenFiltering → AddWhizbangLenses, etc.)
+      var hotChocolateResult = await _hotChocolateTransformer.TransformAsync(transformedCode, file, ct);
+      if (hotChocolateResult.Changes.Count > 0) {
+        transformedCode = hotChocolateResult.TransformedCode;
+        allChanges.AddRange(hotChocolateResult.Changes);
+      }
+
+      // Apply Wolverine.Http transformations (flags methods for manual FastEndpoints conversion)
+      var wolverineHttpResult = await _wolverineHttpTransformer.TransformAsync(transformedCode, file, ct);
+      if (wolverineHttpResult.Changes.Count > 0) {
+        transformedCode = wolverineHttpResult.TransformedCode;
+        allChanges.AddRange(wolverineHttpResult.Changes);
+      }
+
+      // Apply Newtonsoft.Json → System.Text.Json transformations (optional)
+      // This always runs to remove dead imports, but full conversion is opt-in
+      _jsonTransformer ??= _createJsonTransformer(decisionFile);
+      var jsonResult = await _jsonTransformer.TransformAsync(transformedCode, file, ct);
+      if (jsonResult.Changes.Count > 0) {
+        transformedCode = jsonResult.TransformedCode;
+        allChanges.AddRange(jsonResult.Changes);
       }
 
       // Track changes
@@ -93,10 +183,94 @@ public sealed class ApplyCommand {
       }
     }
 
+    // Calculate skipped from filtering
+    skippedCount += csFiles.Length - filesToProcess.Count;
+
+    // Manage packages if enabled and not dry run
+    var packageChanges = new List<PackageChange>();
+    var shouldManagePackages = managePackages &&
+        (decisionFile?.Decisions.Packages.AutoManage ?? true);
+
+    if (shouldManagePackages && !dryRun && fileChanges.Count > 0) {
+      var transformedFilePaths = fileChanges.Select(fc => fc.FilePath).ToList();
+
+      // Build package settings from decision file or defaults
+      var packageSettings = new PackageSettings {
+        AutoManage = true,
+        WhizbangVersion = decisionFile?.Decisions.Packages.WhizbangVersion ?? "1.0.0",
+        RemoveOldPackages = decisionFile?.Decisions.Packages.RemoveOldPackages ?? true,
+        PreservePackages = decisionFile?.Decisions.Packages.PreservePackages ?? []
+      };
+
+      var packageResult = await PackageManager.UpdatePackagesAsync(
+          projectPath,
+          transformedFilePaths,
+          packageSettings,
+          ct);
+
+      packageChanges.AddRange(packageResult.Changes);
+    }
+
     return new ApplyResult(
         true,
         transformedCount,
-        fileChanges);
+        fileChanges,
+        SkippedFileCount: skippedCount,
+        PackageChanges: packageChanges);
+  }
+
+  private static List<string> _filterFiles(
+      string[] allFiles,
+      string basePath,
+      string[]? includePatterns,
+      string[]? excludePatterns) {
+    // If no patterns specified, return all files (except obj/bin by default)
+    if ((includePatterns == null || includePatterns.Length == 0) &&
+        (excludePatterns == null || excludePatterns.Length == 0)) {
+      return allFiles
+          .Where(f => !f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}") &&
+                      !f.Contains($"{Path.DirectorySeparatorChar}bin{Path.DirectorySeparatorChar}"))
+          .ToList();
+    }
+
+    var matcher = new Matcher();
+
+    // Add include patterns (default to **/*.cs if none specified)
+    if (includePatterns == null || includePatterns.Length == 0) {
+      matcher.AddInclude("**/*.cs");
+    } else {
+      foreach (var pattern in includePatterns) {
+        matcher.AddInclude(pattern);
+      }
+    }
+
+    // Add exclude patterns (always exclude obj/bin)
+    matcher.AddExclude("**/obj/**");
+    matcher.AddExclude("**/bin/**");
+    if (excludePatterns != null) {
+      foreach (var pattern in excludePatterns) {
+        matcher.AddExclude(pattern);
+      }
+    }
+
+    var result = matcher.Execute(new Microsoft.Extensions.FileSystemGlobbing.Abstractions.DirectoryInfoWrapper(
+        new DirectoryInfo(basePath)));
+
+    return result.Files
+        .Select(f => Path.Combine(basePath, f.Path))
+        .ToList();
+  }
+
+  /// <summary>
+  /// Creates a JSON transformer configured from decision file settings.
+  /// </summary>
+  private static NewtonsoftToSystemTextJsonTransformer _createJsonTransformer(DecisionFile? decisionFile) {
+    var settings = decisionFile?.Decisions.JsonMigration;
+
+    return new NewtonsoftToSystemTextJsonTransformer(
+        enabled: settings?.Enabled ?? false,
+        removeDeadImports: settings?.RemoveDeadImports ?? true,
+        addTodoForUnsupported: settings?.AddTodoForUnsupported ?? true);
   }
 }
 
@@ -106,16 +280,25 @@ public sealed class ApplyCommand {
 /// <param name="Success">Whether the apply completed successfully.</param>
 /// <param name="TransformedFileCount">Number of files transformed.</param>
 /// <param name="Changes">List of changes made.</param>
+/// <param name="SkippedFileCount">Number of files skipped due to filters or decisions.</param>
+/// <param name="PackageChanges">List of package changes made.</param>
 /// <param name="ErrorMessage">Error message if the apply failed.</param>
 public sealed record ApplyResult(
     bool Success,
     int TransformedFileCount = 0,
     IReadOnlyList<FileChange>? Changes = null,
+    int SkippedFileCount = 0,
+    IReadOnlyList<PackageChange>? PackageChanges = null,
     string? ErrorMessage = null) {
   /// <summary>
   /// Gets the list of changes, never null.
   /// </summary>
   public IReadOnlyList<FileChange> Changes { get; } = Changes ?? [];
+
+  /// <summary>
+  /// Gets the list of package changes, never null.
+  /// </summary>
+  public IReadOnlyList<PackageChange> PackageChanges { get; } = PackageChanges ?? [];
 }
 
 /// <summary>

@@ -462,15 +462,20 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine();
 
     // Struct declaration - implements IWhizbangId, IEquatable, IComparable
+    // EF Core ComplexProperty().ToJson() compatible - exposes Guid Value property for mapping
+    // Internally stores TrackedGuid to preserve metadata for freshly created IDs
     sb.AppendLine($"public readonly partial struct {id.TypeName} : global::Whizbang.Core.IWhizbangId, IEquatable<{id.TypeName}>, IComparable<{id.TypeName}> {{");
 
-    // Private backing field - TrackedGuid instead of Guid
+    // Private backing field - stores TrackedGuid for metadata tracking
+    // Fresh IDs via New() have IsTracking=true, deserialized IDs have IsTracking=false
     sb.AppendLine("  private readonly TrackedGuid _tracked;");
     sb.AppendLine();
 
-    // Value property (for backwards compatibility)
+    // Value property - the ONLY public property for EF Core binding
+    // Uses init accessor for EF Core ComplexProperty().ToJson() deserialization
+    // When EF Core deserializes, it sets Value which creates an untracked TrackedGuid
     sb.AppendLine("  /// <summary>Gets the underlying Guid value.</summary>");
-    sb.AppendLine("  public Guid Value => _tracked.Value;");
+    sb.AppendLine("  public Guid Value { get => _tracked.Value; init => _tracked = TrackedGuid.FromExternal(value); }");
     sb.AppendLine();
 
     // IWhizbangId.ToGuid() implementation
@@ -478,33 +483,57 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine("  public Guid ToGuid() => _tracked.Value;");
     sb.AppendLine();
 
-    // IWhizbangId.IsTimeOrdered
+    // IWhizbangId metadata properties - explicit interface implementation
+    // Explicit implementation hides these from EF Core ComplexProperty so only Value is mapped
+    // Delegates to TrackedGuid for accurate metadata based on creation source
     sb.AppendLine("  /// <summary>Gets whether this ID is time-ordered (UUIDv7).</summary>");
-    sb.AppendLine("  public bool IsTimeOrdered => _tracked.IsTimeOrdered;");
+    sb.AppendLine("  bool global::Whizbang.Core.IWhizbangId.IsTimeOrdered => _tracked.IsTimeOrdered;");
     sb.AppendLine();
 
-    // IWhizbangId.SubMillisecondPrecision
     sb.AppendLine("  /// <summary>Gets whether this ID has sub-millisecond precision (Medo-generated).</summary>");
-    sb.AppendLine("  public bool SubMillisecondPrecision => _tracked.SubMillisecondPrecision;");
+    sb.AppendLine("  bool global::Whizbang.Core.IWhizbangId.SubMillisecondPrecision => _tracked.SubMillisecondPrecision;");
     sb.AppendLine();
 
-    // IWhizbangId.Timestamp
     sb.AppendLine("  /// <summary>Gets the timestamp embedded in this ID (for UUIDv7).</summary>");
-    sb.AppendLine("  public DateTimeOffset Timestamp => _tracked.Timestamp;");
+    sb.AppendLine("  DateTimeOffset global::Whizbang.Core.IWhizbangId.Timestamp => _tracked.Timestamp;");
     sb.AppendLine();
 
-    // Private constructor from TrackedGuid
-    sb.AppendLine("  /// <summary>Creates an instance from a TrackedGuid.</summary>");
+    // Provide public convenience methods for accessing metadata (won't interfere with EF Core)
+    sb.AppendLine("  /// <summary>Gets whether this ID is time-ordered (UUIDv7).</summary>");
+    sb.AppendLine("  public bool GetIsTimeOrdered() => _tracked.IsTimeOrdered;");
+    sb.AppendLine();
+
+    sb.AppendLine("  /// <summary>");
+    sb.AppendLine("  /// Gets whether this ID has sub-millisecond precision.");
+    sb.AppendLine("  /// True for freshly created IDs via New(), false for deserialized IDs.");
+    sb.AppendLine("  /// </summary>");
+    sb.AppendLine("  public bool GetSubMillisecondPrecision() => _tracked.SubMillisecondPrecision;");
+    sb.AppendLine();
+
+    sb.AppendLine("  /// <summary>Gets the timestamp embedded in this ID (for UUIDv7).</summary>");
+    sb.AppendLine("  public DateTimeOffset GetTimestamp() => _tracked.Timestamp;");
+    sb.AppendLine();
+
+    sb.AppendLine("  /// <summary>");
+    sb.AppendLine("  /// Gets whether this ID has authoritative tracking metadata.");
+    sb.AppendLine("  /// True for freshly created IDs via New(), false for deserialized IDs.");
+    sb.AppendLine("  /// </summary>");
+    sb.AppendLine("  public bool GetIsTracking() => _tracked.IsTracking;");
+    sb.AppendLine();
+
+    // Private constructor for internal use with TrackedGuid (preserves tracking)
     sb.AppendLine($"  private {id.TypeName}(TrackedGuid tracked) => _tracked = tracked;");
     sb.AppendLine();
 
-    // Public constructor for EF Core compatibility (wraps in FromExternal)
-    sb.AppendLine("  /// <summary>Creates an instance from a Guid value. Public for EF Core compatibility.</summary>");
-    sb.AppendLine($"  public {id.TypeName}(Guid value) => _tracked = TrackedGuid.FromExternal(value);");
+    // Public constructor for EF Core ComplexProperty().ToJson() compatibility
+    // Parameter name MUST match property name (Value) for EF Core constructor binding
+    // Creates untracked TrackedGuid since we don't know the original source
+    sb.AppendLine("  /// <summary>Creates an instance from a Guid value. Parameter name matches property for EF Core binding.</summary>");
+    sb.AppendLine($"  public {id.TypeName}(Guid Value) => _tracked = TrackedGuid.FromExternal(Value);");
     sb.AppendLine();
 
-    // From(TrackedGuid) factory method - preserves metadata
-    sb.AppendLine("  /// <summary>Creates an instance from a TrackedGuid, preserving metadata.</summary>");
+    // From(TrackedGuid) factory method - preserves tracking metadata
+    sb.AppendLine("  /// <summary>Creates an instance from a TrackedGuid, preserving tracking metadata.</summary>");
     sb.AppendLine($"  public static {id.TypeName} From(TrackedGuid tracked) {{");
     sb.AppendLine("    if (!tracked.IsTimeOrdered)");
     sb.AppendLine($"      throw new ArgumentException(\"{id.TypeName} requires UUIDv7 (time-ordered) but received a non-v7 Guid\", nameof(tracked));");
@@ -512,7 +541,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine("  }");
     sb.AppendLine();
 
-    // From(Guid) factory method - validates v7
+    // From(Guid) factory method - validates v7, creates untracked
     sb.AppendLine("  /// <summary>Creates an instance from a Guid value. Throws if not UUIDv7.</summary>");
     sb.AppendLine($"  public static {id.TypeName} From(Guid value) {{");
     sb.AppendLine("    if (value.Version != 7)");
@@ -521,14 +550,14 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine("  }");
     sb.AppendLine();
 
-    // New factory method using TrackedGuid.NewMedo()
-    sb.AppendLine("  /// <summary>Creates a new instance with sub-millisecond precision using Medo.Uuid7.</summary>");
+    // New factory method using TrackedGuid.NewMedo() - generates new UUIDv7 with tracking
+    sb.AppendLine("  /// <summary>Creates a new instance with sub-millisecond precision using Medo.Uuid7. Preserves tracking metadata.</summary>");
     sb.AppendLine($"  public static {id.TypeName} New() => new(TrackedGuid.NewMedo());");
     sb.AppendLine();
 
-    // Equality members
+    // Equality members - compare Guid values directly
     sb.AppendLine("  /// <summary>Determines whether two instances are equal.</summary>");
-    sb.AppendLine($"  public bool Equals({id.TypeName} other) => _tracked.Equals(other._tracked);");
+    sb.AppendLine($"  public bool Equals({id.TypeName} other) => _tracked.Value.Equals(other._tracked.Value);");
     sb.AppendLine();
 
     sb.AppendLine("  /// <summary>Determines whether this instance equals another IWhizbangId.</summary>");
@@ -540,12 +569,12 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
     sb.AppendLine();
 
     sb.AppendLine("  /// <summary>Returns the hash code for this instance.</summary>");
-    sb.AppendLine("  public override int GetHashCode() => _tracked.GetHashCode();");
+    sb.AppendLine("  public override int GetHashCode() => _tracked.Value.GetHashCode();");
     sb.AppendLine();
 
     // Comparison
     sb.AppendLine("  /// <summary>Compares this instance to another.</summary>");
-    sb.AppendLine($"  public int CompareTo({id.TypeName} other) => _tracked.CompareTo(other._tracked);");
+    sb.AppendLine($"  public int CompareTo({id.TypeName} other) => _tracked.Value.CompareTo(other._tracked.Value);");
     sb.AppendLine();
 
     sb.AppendLine("  /// <summary>Compares this instance to another IWhizbangId.</summary>");
@@ -579,7 +608,7 @@ public class WhizbangIdGenerator : IIncrementalGenerator {
 
     // ToString
     sb.AppendLine("  /// <summary>Returns the string representation of the underlying Guid.</summary>");
-    sb.AppendLine("  public override string ToString() => _tracked.ToString();");
+    sb.AppendLine("  public override string ToString() => _tracked.Value.ToString();");
     sb.AppendLine();
 
     // Implicit conversion to Guid

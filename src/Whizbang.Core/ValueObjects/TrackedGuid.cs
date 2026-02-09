@@ -35,6 +35,35 @@ public readonly struct TrackedGuid : IEquatable<TrackedGuid>, IComparable<Tracke
   public bool SubMillisecondPrecision => (_metadata & GuidMetadata.SourceMedo) != 0;
 
   /// <summary>
+  /// Gets whether this TrackedGuid has authoritative metadata from creation.
+  /// True when created via NewMedo(), NewMicrosoftV7(), or NewRandom() - we know exactly how it was generated.
+  /// False when loaded from external sources (FromExternal, Parse, implicit conversion) where metadata is inferred.
+  /// </summary>
+  /// <remarks>
+  /// <para>
+  /// Tracking metadata is only useful at GUID creation time. Once a GUID is serialized
+  /// (to database, JSON, etc.) and deserialized, the tracking information is lost.
+  /// The deserialized GUID will have <see cref="IsTracking"/> = false.
+  /// </para>
+  /// <para>
+  /// Use this property to check if metadata like <see cref="SubMillisecondPrecision"/>
+  /// is authoritative before relying on it.
+  /// </para>
+  /// </remarks>
+  /// <example>
+  /// <code>
+  /// var fresh = TrackedGuid.NewMedo();
+  /// Console.WriteLine(fresh.IsTracking);           // true
+  /// Console.WriteLine(fresh.SubMillisecondPrecision); // true (authoritative)
+  ///
+  /// var loaded = TrackedGuid.FromExternal(someGuid);
+  /// Console.WriteLine(loaded.IsTracking);          // false
+  /// Console.WriteLine(loaded.SubMillisecondPrecision); // false (unknown, not authoritative)
+  /// </code>
+  /// </example>
+  public bool IsTracking => (_metadata & (GuidMetadata.SourceMedo | GuidMetadata.SourceMicrosoft)) != 0;
+
+  /// <summary>
   /// Extracts the timestamp from a UUIDv7.
   /// Returns DateTimeOffset.MinValue for non-v7 UUIDs.
   /// </summary>

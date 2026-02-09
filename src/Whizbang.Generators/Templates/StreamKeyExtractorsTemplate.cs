@@ -4,7 +4,7 @@
 #endregion
 #nullable enable
 
-using System;
+using global::System;
 
 #region NAMESPACE
 namespace Whizbang.Core.Generated;
@@ -20,13 +20,13 @@ public static partial class StreamKeyExtractors {
   /// Zero-reflection alternative to StreamKeyResolver.Resolve().
   /// </summary>
   public static string Resolve(global::Whizbang.Core.IEvent @event) {
-    System.ArgumentNullException.ThrowIfNull(@event);
+    global::System.ArgumentNullException.ThrowIfNull(@event);
 
     #region RESOLVE_DISPATCH
     // Type-based dispatch to correct extractor
     #endregion
 
-    throw new System.InvalidOperationException(
+    throw new global::System.InvalidOperationException(
       $"No stream key extractor found for event type '{@event.GetType().Name}'. " +
       "Ensure the event type has a property or parameter marked with [StreamKey].");
   }

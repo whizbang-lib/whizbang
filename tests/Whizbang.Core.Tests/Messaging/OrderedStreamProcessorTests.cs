@@ -262,7 +262,458 @@ public class OrderedStreamProcessorTests {
     await Assert.That(processedOrder[4]).IsEqualTo(messages[4].MessageId);
   }
 
+  // ========================================
+  // Null/Empty Input Tests
+  // ========================================
+
+  [Test]
+  public async Task ProcessInboxWorkAsync_WithNullList_ReturnsEarlyAsync() {
+    // Arrange
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var processorCalled = false;
+
+    // Act
+    await sut.ProcessInboxWorkAsync(
+      null!,
+      processor: async _ => {
+        processorCalled = true;
+        return await Task.FromResult(MessageProcessingStatus.EventStored);
+      },
+      completionHandler: (_, _) => { },
+      failureHandler: (_, _, _) => { }
+    );
+
+    // Assert - processor should never be called
+    await Assert.That(processorCalled).IsFalse();
+  }
+
+  [Test]
+  public async Task ProcessInboxWorkAsync_WithEmptyList_ReturnsEarlyAsync() {
+    // Arrange
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var processorCalled = false;
+
+    // Act
+    await sut.ProcessInboxWorkAsync(
+      [],
+      processor: async _ => {
+        processorCalled = true;
+        return await Task.FromResult(MessageProcessingStatus.EventStored);
+      },
+      completionHandler: (_, _) => { },
+      failureHandler: (_, _, _) => { }
+    );
+
+    // Assert - processor should never be called
+    await Assert.That(processorCalled).IsFalse();
+  }
+
+  [Test]
+  public async Task ProcessOutboxWorkAsync_WithNullList_ReturnsEarlyAsync() {
+    // Arrange
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var processorCalled = false;
+
+    // Act
+    await sut.ProcessOutboxWorkAsync(
+      null!,
+      processor: async _ => {
+        processorCalled = true;
+        return await Task.FromResult(MessageProcessingStatus.Published);
+      },
+      completionHandler: (_, _) => { },
+      failureHandler: (_, _, _) => { }
+    );
+
+    // Assert - processor should never be called
+    await Assert.That(processorCalled).IsFalse();
+  }
+
+  [Test]
+  public async Task ProcessOutboxWorkAsync_WithEmptyList_ReturnsEarlyAsync() {
+    // Arrange
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var processorCalled = false;
+
+    // Act
+    await sut.ProcessOutboxWorkAsync(
+      [],
+      processor: async _ => {
+        processorCalled = true;
+        return await Task.FromResult(MessageProcessingStatus.Published);
+      },
+      completionHandler: (_, _) => { },
+      failureHandler: (_, _, _) => { }
+    );
+
+    // Assert - processor should never be called
+    await Assert.That(processorCalled).IsFalse();
+  }
+
+  // ========================================
+  // Cancellation Tests
+  // ========================================
+
+  [Test]
+  public async Task ProcessInboxWorkAsync_WithCancellation_StopsProcessingAsync() {
+    // Arrange
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var streamId = _idProvider.NewGuid();
+    var cts = new CancellationTokenSource();
+    var processedCount = 0;
+
+    var messages = new List<InboxWork> {
+      _createInboxWork(streamId),
+      _createInboxWork(streamId),
+      _createInboxWork(streamId),
+      _createInboxWork(streamId),
+      _createInboxWork(streamId)
+    };
+
+    // Act
+    await sut.ProcessInboxWorkAsync(
+      messages,
+      processor: async _ => {
+        processedCount++;
+        if (processedCount == 2) {
+          // Cancel after processing 2 messages
+          await cts.CancelAsync();
+        }
+        return await Task.FromResult(MessageProcessingStatus.EventStored);
+      },
+      completionHandler: (_, _) => { },
+      failureHandler: (_, _, _) => { },
+      ct: cts.Token
+    );
+
+    // Assert - should stop after cancellation
+    await Assert.That(processedCount).IsLessThanOrEqualTo(3)
+      .Because("Processing should stop after cancellation requested");
+  }
+
+  [Test]
+  public async Task ProcessOutboxWorkAsync_WithCancellation_StopsProcessingAsync() {
+    // Arrange
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var streamId = _idProvider.NewGuid();
+    var cts = new CancellationTokenSource();
+    var processedCount = 0;
+
+    var messages = new List<OutboxWork> {
+      _createOutboxWork(streamId),
+      _createOutboxWork(streamId),
+      _createOutboxWork(streamId),
+      _createOutboxWork(streamId),
+      _createOutboxWork(streamId)
+    };
+
+    // Act
+    await sut.ProcessOutboxWorkAsync(
+      messages,
+      processor: async _ => {
+        processedCount++;
+        if (processedCount == 2) {
+          await cts.CancelAsync();
+        }
+        return await Task.FromResult(MessageProcessingStatus.Published);
+      },
+      completionHandler: (_, _) => { },
+      failureHandler: (_, _, _) => { },
+      ct: cts.Token
+    );
+
+    // Assert - should stop after cancellation
+    await Assert.That(processedCount).IsLessThanOrEqualTo(3)
+      .Because("Processing should stop after cancellation requested");
+  }
+
+  // ========================================
+  // Null Stream ID Tests
+  // ========================================
+
+  [Test]
+  public async Task ProcessInboxWorkAsync_WithNullStreamId_GroupsTogetherAsync() {
+    // Arrange
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var processedOrder = new List<Medo.Uuid7>();
+
+    // Create messages without stream IDs (null)
+    var messages = new List<InboxWork> {
+      _createInboxWorkWithoutStream(),
+      _createInboxWorkWithoutStream(),
+      _createInboxWorkWithoutStream()
+    };
+
+    // Act
+    await sut.ProcessInboxWorkAsync(
+      messages,
+      processor: async work => {
+        processedOrder.Add(work.MessageId);
+        return await Task.FromResult(MessageProcessingStatus.EventStored);
+      },
+      completionHandler: (_, _) => { },
+      failureHandler: (_, _, _) => { }
+    );
+
+    // Assert - all should be processed (grouped into empty stream)
+    await Assert.That(processedOrder).Count().IsEqualTo(3);
+  }
+
+  [Test]
+  public async Task ProcessOutboxWorkAsync_WithNullStreamId_GroupsTogetherAsync() {
+    // Arrange
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var processedOrder = new List<Medo.Uuid7>();
+
+    // Create messages without stream IDs
+    var messages = new List<OutboxWork> {
+      _createOutboxWorkWithoutStream(),
+      _createOutboxWorkWithoutStream(),
+      _createOutboxWorkWithoutStream()
+    };
+
+    // Act
+    await sut.ProcessOutboxWorkAsync(
+      messages,
+      processor: async work => {
+        processedOrder.Add(work.MessageId);
+        return await Task.FromResult(MessageProcessingStatus.Published);
+      },
+      completionHandler: (_, _) => { },
+      failureHandler: (_, _, _) => { }
+    );
+
+    // Assert - all should be processed (grouped into empty stream)
+    await Assert.That(processedOrder).Count().IsEqualTo(3);
+  }
+
+  // ========================================
+  // Additional Outbox Tests
+  // ========================================
+
+  [Test]
+  public async Task ProcessOutboxWorkAsync_StreamWithError_ContinuesOtherStreamsAsync() {
+    // Arrange
+    var sut = new OrderedStreamProcessor(parallelizeStreams: true);
+    var stream1 = _idProvider.NewGuid();  // Will fail
+    var stream2 = _idProvider.NewGuid();  // Should continue
+
+    var processedMessages = new ConcurrentBag<Guid>();
+    var failedMessages = new ConcurrentBag<Guid>();
+
+    var stream1msg1 = _createOutboxWork(stream1);
+    var stream1msg2 = _createOutboxWork(stream1);
+    var stream2msg1 = _createOutboxWork(stream2);
+    var stream2msg2 = _createOutboxWork(stream2);
+
+    var messages = new List<OutboxWork> { stream1msg1, stream1msg2, stream2msg1, stream2msg2 };
+
+    // Act
+    await sut.ProcessOutboxWorkAsync(
+      messages,
+      processor: async work => {
+        // Fail first message of stream1
+        if (work.MessageId == stream1msg1.MessageId) {
+          throw new InvalidOperationException("Simulated failure");
+        }
+
+        processedMessages.Add(work.MessageId);
+        return await Task.FromResult(MessageProcessingStatus.Published);
+      },
+      completionHandler: (_, _) => { },
+      failureHandler: (messageId, _, _) => {
+        failedMessages.Add(messageId);
+      }
+    );
+
+    // Assert
+    await Assert.That(failedMessages).Count().IsEqualTo(1)
+      .Because("Only 1 message should fail");
+
+    await Assert.That(processedMessages).Count().IsEqualTo(2)
+      .Because("Stream 2 should continue processing despite stream 1 failure");
+  }
+
+  [Test]
+  public async Task ProcessOutboxWorkAsync_MultipleStreams_ProcessesConcurrentlyAsync() {
+    // Arrange
+    var sut = new OrderedStreamProcessor(parallelizeStreams: true);
+    var stream1 = _idProvider.NewGuid();
+    var stream2 = _idProvider.NewGuid();
+    var stream3 = _idProvider.NewGuid();
+
+    var processedStreams = new ConcurrentBag<Guid>();
+    var processingStarted = new Dictionary<Guid, DateTimeOffset>();
+    var processingCompleted = new Dictionary<Guid, DateTimeOffset>();
+    var lockObj = new object();
+
+    var messages = new List<OutboxWork> {
+      _createOutboxWork(stream1),
+      _createOutboxWork(stream1),
+      _createOutboxWork(stream2),
+      _createOutboxWork(stream2),
+      _createOutboxWork(stream3),
+      _createOutboxWork(stream3)
+    };
+
+    // Act
+    await sut.ProcessOutboxWorkAsync(
+      messages,
+      processor: async work => {
+        var streamId = work.StreamId!.Value;
+
+        lock (lockObj) {
+          if (!processingStarted.ContainsKey(streamId)) {
+            processingStarted[streamId] = DateTimeOffset.UtcNow;
+          }
+        }
+
+        processedStreams.Add(streamId);
+        await Task.Delay(10);  // Simulate work
+
+        lock (lockObj) {
+          processingCompleted[streamId] = DateTimeOffset.UtcNow;
+        }
+
+        return MessageProcessingStatus.Published;
+      },
+      completionHandler: (_, _) => { },
+      failureHandler: (_, _, _) => { }
+    );
+
+    // Assert - All 3 streams processed
+    await Assert.That(processedStreams.Distinct()).Count().IsEqualTo(3);
+  }
+
+  // ========================================
+  // Completion Handler Tests
+  // ========================================
+
+  [Test]
+  public async Task ProcessInboxWorkAsync_OnSuccess_CallsCompletionHandlerAsync() {
+    // Arrange
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var streamId = _idProvider.NewGuid();
+    var completedMessages = new List<(Guid MessageId, MessageProcessingStatus Status)>();
+
+    var messages = new List<InboxWork> {
+      _createInboxWork(streamId),
+      _createInboxWork(streamId)
+    };
+
+    // Act
+    await sut.ProcessInboxWorkAsync(
+      messages,
+      processor: async _ => {
+        return await Task.FromResult(MessageProcessingStatus.EventStored);
+      },
+      completionHandler: (messageId, status) => {
+        completedMessages.Add((messageId, status));
+      },
+      failureHandler: (_, _, _) => { }
+    );
+
+    // Assert - completion handler should be called for each message
+    await Assert.That(completedMessages).Count().IsEqualTo(2);
+    await Assert.That(completedMessages[0].Status).IsEqualTo(MessageProcessingStatus.EventStored);
+    await Assert.That(completedMessages[1].Status).IsEqualTo(MessageProcessingStatus.EventStored);
+  }
+
+  [Test]
+  public async Task ProcessOutboxWorkAsync_OnSuccess_CallsCompletionHandlerAsync() {
+    // Arrange
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var streamId = _idProvider.NewGuid();
+    var completedMessages = new List<(Guid MessageId, MessageProcessingStatus Status)>();
+
+    var messages = new List<OutboxWork> {
+      _createOutboxWork(streamId),
+      _createOutboxWork(streamId)
+    };
+
+    // Act
+    await sut.ProcessOutboxWorkAsync(
+      messages,
+      processor: async _ => {
+        return await Task.FromResult(MessageProcessingStatus.Published);
+      },
+      completionHandler: (messageId, status) => {
+        completedMessages.Add((messageId, status));
+      },
+      failureHandler: (_, _, _) => { }
+    );
+
+    // Assert - completion handler should be called for each message
+    await Assert.That(completedMessages).Count().IsEqualTo(2);
+    await Assert.That(completedMessages[0].Status).IsEqualTo(MessageProcessingStatus.Published);
+  }
+
+  [Test]
+  public async Task ProcessOutboxWorkAsync_OnFailure_ReportsPartialStatusAsync() {
+    // Arrange
+    var sut = new OrderedStreamProcessor(parallelizeStreams: false);
+    var streamId = _idProvider.NewGuid();
+
+    MessageProcessingStatus? reportedPartialStatus = null;
+    string? reportedError = null;
+
+    var message = _createOutboxWork(streamId);
+    message = message with {
+      Status = MessageProcessingStatus.Stored
+    };
+
+    // Act
+    await sut.ProcessOutboxWorkAsync(
+      [message],
+      processor: async _ => {
+        throw new InvalidOperationException("Publishing failed");
+      },
+      completionHandler: (_, _) => { },
+      failureHandler: (_, partialStatus, error) => {
+        reportedPartialStatus = partialStatus;
+        reportedError = error;
+      }
+    );
+
+    // Assert
+    await Assert.That(reportedPartialStatus).IsNotNull();
+    await Assert.That((reportedPartialStatus!.Value & MessageProcessingStatus.Stored) == MessageProcessingStatus.Stored).IsTrue()
+      .Because("Partial completion should include Stored flag");
+    await Assert.That(reportedError).Contains("Publishing failed");
+  }
+
   // Helper methods
+
+  private InboxWork _createInboxWorkWithoutStream() {
+    var messageId = _idProvider.NewGuid();
+    var envelope = _createTestEnvelope(messageId);
+    return new InboxWork {
+      MessageId = messageId,
+      Envelope = envelope,
+      MessageType = "Whizbang.Core.Tests.Messaging.TestMessage, Whizbang.Core.Tests",
+      StreamId = null,  // No stream ID
+      PartitionNumber = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchFlags.None
+    };
+  }
+
+  private OutboxWork _createOutboxWorkWithoutStream() {
+    var messageId = _idProvider.NewGuid();
+    var envelope = _createTestEnvelope(messageId);
+    return new OutboxWork {
+      MessageId = messageId,
+      Destination = "test-topic",
+      Envelope = envelope,
+      EnvelopeType = "Whizbang.Core.Observability.MessageEnvelope`1[[System.Text.Json.JsonElement, System.Text.Json]], Whizbang.Core",
+      MessageType = "System.Text.Json.JsonElement, System.Text.Json",
+      StreamId = null,  // No stream ID
+      PartitionNumber = 0,
+      Attempts = 0,
+      Status = MessageProcessingStatus.Stored,
+      Flags = WorkBatchFlags.None
+    };
+  }
 
   private InboxWork _createInboxWork(Guid streamId) {
     var messageId = _idProvider.NewGuid();  // UUIDv7 with temporal ordering

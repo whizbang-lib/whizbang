@@ -49,8 +49,7 @@ public class PostgresDatabaseReadinessCheckTests : PostgresTestBase {
   [Test]
   public async Task IsReadyAsync_WithMissingTables_ReturnsFalseAsync() {
     // Arrange - Create a fresh database without Whizbang schema
-    await using var testContainer = new Testcontainers.PostgreSql.PostgreSqlBuilder()
-      .WithImage("postgres:17-alpine")
+    await using var testContainer = new Testcontainers.PostgreSql.PostgreSqlBuilder("postgres:17-alpine")
       .WithDatabase("empty_test")
       .WithUsername("postgres")
       .WithPassword("postgres")

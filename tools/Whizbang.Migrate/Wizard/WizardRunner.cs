@@ -122,7 +122,7 @@ public sealed class WizardRunner {
       throw new InvalidOperationException("No decision file to save. Call GenerateDecisionFile or LoadDecisionFileAsync first.");
     }
 
-    await DecisionFile.SaveAsync(path, ct);
+    await DecisionFile.SaveAsync(path, ct: ct);
   }
 
   /// <summary>

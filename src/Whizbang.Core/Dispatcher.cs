@@ -7,6 +7,7 @@ using System.Text.Json;
 using System.Text.Json.Serialization.Metadata;
 using System.Threading.Tasks;
 using Microsoft.Extensions.DependencyInjection;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
@@ -206,6 +207,93 @@ public abstract class Dispatcher(
   }
 
   /// <summary>
+  /// Sends a typed message with dispatch options (AOT-compatible).
+  /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, DispatchOptions options) where TMessage : notnull {
+    options.CancellationToken.ThrowIfCancellationRequested();
+    var context = MessageContext.New();
+    return _sendAsyncInternalWithOptionsAsync<TMessage>(message, context, options);
+  }
+
+  /// <summary>
+  /// Sends a message with dispatch options.
+  /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public Task<IDeliveryReceipt> SendAsync(object message, DispatchOptions options) {
+    options.CancellationToken.ThrowIfCancellationRequested();
+    var context = MessageContext.New();
+    return SendAsync(message, context, options);
+  }
+
+  /// <summary>
+  /// Sends a message with explicit context and dispatch options.
+  /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public async Task<IDeliveryReceipt> SendAsync(
+    object message,
+    IMessageContext context,
+    DispatchOptions options,
+    [CallerMemberName] string callerMemberName = "",
+    [CallerFilePath] string callerFilePath = "",
+    [CallerLineNumber] int callerLineNumber = 0
+  ) {
+    options.CancellationToken.ThrowIfCancellationRequested();
+    ArgumentNullException.ThrowIfNull(message);
+    ArgumentNullException.ThrowIfNull(context);
+
+    var messageType = message.GetType();
+    var invoker = GetReceptorInvoker<object>(message, messageType);
+
+    if (invoker == null) {
+      return await _sendToOutboxViaScopeAsync(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
+    }
+
+    var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
+    _envelopeRegistry?.Register(envelope);
+    try {
+      if (_traceStore != null) {
+        await _traceStore.StoreAsync(envelope, options.CancellationToken);
+      }
+
+      options.CancellationToken.ThrowIfCancellationRequested();
+      var result = await invoker(message);
+      await _cascadeEventsFromResultAsync(result);
+
+      if (_lifecycleInvoker is not null) {
+        var lifecycleContext = new LifecycleExecutionContext {
+          CurrentStage = LifecycleStage.ImmediateAsync,
+          EventId = null,
+          StreamId = null,
+          LastProcessedEventId = null,
+          MessageSource = MessageSource.Local,
+          AttemptNumber = 1
+        };
+        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, options.CancellationToken);
+      }
+    } finally {
+      _envelopeRegistry?.Unregister(envelope);
+    }
+
+    var destination = messageType.Name;
+    return DeliveryReceipt.Delivered(
+      envelope.MessageId,
+      destination,
+      context.CorrelationId,
+      context.CausationId
+    );
+  }
+
+  /// <summary>
   /// Internal generic implementation of SendAsync that preserves type information.
   /// This method is called by the public SendAsync&lt;TMessage&gt; overload to avoid type erasure.
   /// </summary>
@@ -272,6 +360,68 @@ public abstract class Dispatcher(
 
     // Return delivery receipt
     var destination = messageType.Name; // Will be enhanced with actual receptor name in future
+    return DeliveryReceipt.Delivered(
+      envelope.MessageId,
+      destination,
+      context.CorrelationId,
+      context.CausationId
+    );
+  }
+
+  /// <summary>
+  /// Internal generic implementation of SendAsync with DispatchOptions that preserves type information.
+  /// This method is called by the public SendAsync&lt;TMessage&gt; overload to avoid type erasure.
+  /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  [SuppressMessage("Performance", "CA1859:Use concrete types when possible for improved performance", Justification = "Interface parameter required as this method is called from public API with IMessageContext")]
+  private async Task<IDeliveryReceipt> _sendAsyncInternalWithOptionsAsync<TMessage>(
+    TMessage message,
+    IMessageContext context,
+    DispatchOptions options,
+    [CallerMemberName] string callerMemberName = "",
+    [CallerFilePath] string callerFilePath = "",
+    [CallerLineNumber] int callerLineNumber = 0
+  ) where TMessage : notnull {
+    ArgumentNullException.ThrowIfNull(message);
+    ArgumentNullException.ThrowIfNull(context);
+
+    var messageType = typeof(TMessage);
+    var invoker = GetReceptorInvoker<object>(message, messageType);
+
+    if (invoker == null) {
+      return await _sendToOutboxViaScopeAsync<TMessage>(message, messageType, context, callerMemberName, callerFilePath, callerLineNumber);
+    }
+
+    var envelope = _createEnvelope<TMessage>(message, context, callerMemberName, callerFilePath, callerLineNumber);
+    _envelopeRegistry?.Register(envelope);
+    try {
+      if (_traceStore != null) {
+        await _traceStore.StoreAsync(envelope, options.CancellationToken);
+      }
+
+      options.CancellationToken.ThrowIfCancellationRequested();
+      var result = await invoker(message);
+      await _cascadeEventsFromResultAsync(result);
+
+      if (_lifecycleInvoker is not null) {
+        var lifecycleContext = new LifecycleExecutionContext {
+          CurrentStage = LifecycleStage.ImmediateAsync,
+          EventId = null,
+          StreamId = null,
+          LastProcessedEventId = null,
+          MessageSource = MessageSource.Local,
+          AttemptNumber = 1
+        };
+        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, options.CancellationToken);
+      }
+    } finally {
+      _envelopeRegistry?.Unregister(envelope);
+    }
+
+    var destination = messageType.Name;
     return DeliveryReceipt.Delivered(
       envelope.MessageId,
       destination,
@@ -769,6 +919,174 @@ public abstract class Dispatcher(
     }
   }
 
+  // ========================================
+  // LOCAL INVOKE WITH DISPATCH OPTIONS
+  // ========================================
+
+  /// <summary>
+  /// Invokes a receptor in-process with dispatch options and returns the typed business result.
+  /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, DispatchOptions options) {
+    options.CancellationToken.ThrowIfCancellationRequested();
+    var context = MessageContext.New();
+    return _localInvokeWithOptionsAsync<TResult>(message, context, options);
+  }
+
+  /// <summary>
+  /// Invokes a void receptor in-process with dispatch options.
+  /// </summary>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public ValueTask LocalInvokeAsync(object message, DispatchOptions options) {
+    options.CancellationToken.ThrowIfCancellationRequested();
+    var context = MessageContext.New();
+    return _localInvokeVoidWithOptionsAsync(message, context, options);
+  }
+
+  /// <summary>
+  /// Internal implementation of LocalInvokeAsync with DispatchOptions.
+  /// </summary>
+  private async ValueTask<TResult> _localInvokeWithOptionsAsync<TResult>(
+    object message,
+    IMessageContext context,
+    DispatchOptions options,
+    [CallerMemberName] string callerMemberName = "",
+    [CallerFilePath] string callerFilePath = "",
+    [CallerLineNumber] int callerLineNumber = 0
+  ) {
+    ArgumentNullException.ThrowIfNull(message);
+    ArgumentNullException.ThrowIfNull(context);
+
+    var messageType = message.GetType();
+    var asyncInvoker = GetReceptorInvoker<TResult>(message, messageType);
+
+    if (asyncInvoker != null) {
+      if (_traceStore != null || _lifecycleInvoker != null) {
+        return await _localInvokeWithTracingAndOptionsAsync(message, context, asyncInvoker, options, callerMemberName, callerFilePath, callerLineNumber);
+      }
+      options.CancellationToken.ThrowIfCancellationRequested();
+      return await _localInvokeWithCascadeAsync(asyncInvoker, message);
+    }
+
+    var syncInvoker = GetSyncReceptorInvoker<TResult>(message, messageType);
+    if (syncInvoker != null) {
+      options.CancellationToken.ThrowIfCancellationRequested();
+      return await _localInvokeSyncWithCascadeAsync(syncInvoker, message);
+    }
+
+    throw new HandlerNotFoundException(messageType);
+  }
+
+  /// <summary>
+  /// Internal implementation of void LocalInvokeAsync with DispatchOptions.
+  /// </summary>
+  private async ValueTask _localInvokeVoidWithOptionsAsync(
+    object message,
+    IMessageContext context,
+    DispatchOptions options,
+    [CallerMemberName] string callerMemberName = "",
+    [CallerFilePath] string callerFilePath = "",
+    [CallerLineNumber] int callerLineNumber = 0
+  ) {
+    ArgumentNullException.ThrowIfNull(message);
+    ArgumentNullException.ThrowIfNull(context);
+
+    var messageType = message.GetType();
+    var asyncInvoker = GetVoidReceptorInvoker(message, messageType);
+
+    if (asyncInvoker != null) {
+      if (_traceStore != null) {
+        await _localInvokeVoidWithTracingAndOptionsAsync(message, context, asyncInvoker, options, callerMemberName, callerFilePath, callerLineNumber);
+        return;
+      }
+      options.CancellationToken.ThrowIfCancellationRequested();
+      await asyncInvoker(message);
+      return;
+    }
+
+    var syncInvoker = GetVoidSyncReceptorInvoker(message, messageType);
+    if (syncInvoker != null) {
+      options.CancellationToken.ThrowIfCancellationRequested();
+      syncInvoker(message);
+      return;
+    }
+
+    throw new HandlerNotFoundException(messageType);
+  }
+
+  /// <summary>
+  /// LocalInvoke with tracing and DispatchOptions support.
+  /// </summary>
+  private async ValueTask<TResult> _localInvokeWithTracingAndOptionsAsync<TResult>(
+    object message,
+    IMessageContext context,
+    ReceptorInvoker<TResult> invoker,
+    DispatchOptions options,
+    string callerMemberName,
+    string callerFilePath,
+    int callerLineNumber
+  ) {
+    var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
+    _envelopeRegistry?.Register(envelope);
+    try {
+      if (_traceStore != null) {
+        await _traceStore.StoreAsync(envelope, options.CancellationToken);
+      }
+
+      options.CancellationToken.ThrowIfCancellationRequested();
+      var result = await invoker(message);
+      await _cascadeEventsFromResultAsync(result);
+
+      if (_lifecycleInvoker is not null) {
+        var lifecycleContext = new LifecycleExecutionContext {
+          CurrentStage = LifecycleStage.ImmediateAsync,
+          EventId = null,
+          StreamId = null,
+          LastProcessedEventId = null,
+          MessageSource = MessageSource.Local,
+          AttemptNumber = 1
+        };
+        await _lifecycleInvoker.InvokeAsync(message, LifecycleStage.ImmediateAsync, lifecycleContext, options.CancellationToken);
+      }
+
+      return result;
+    } finally {
+      _envelopeRegistry?.Unregister(envelope);
+    }
+  }
+
+  /// <summary>
+  /// Void LocalInvoke with tracing and DispatchOptions support.
+  /// </summary>
+  private async ValueTask _localInvokeVoidWithTracingAndOptionsAsync(
+    object message,
+    IMessageContext context,
+    VoidReceptorInvoker invoker,
+    DispatchOptions options,
+    string callerMemberName,
+    string callerFilePath,
+    int callerLineNumber
+  ) {
+    var envelope = _createEnvelope(message, context, callerMemberName, callerFilePath, callerLineNumber);
+    _envelopeRegistry?.Register(envelope);
+    try {
+      if (_traceStore != null) {
+        await _traceStore.StoreAsync(envelope, options.CancellationToken);
+      }
+
+      options.CancellationToken.ThrowIfCancellationRequested();
+      await invoker(message);
+    } finally {
+      _envelopeRegistry?.Unregister(envelope);
+    }
+  }
+
   /// <summary>
   /// Creates a MessageEnvelope with initial hop containing caller information and context.
   /// Generic version - preserves type information at compile time.
@@ -911,6 +1229,34 @@ public abstract class Dispatcher(
 
     // Publish event for cross-service delivery if work coordinator strategy is available
     // process_work_batch will store events to wh_event_store and create perspective events atomically
+    await _publishToOutboxViaScopeAsync(eventData, eventType, messageId);
+  }
+
+  /// <summary>
+  /// Publishes an event to all registered handlers with dispatch options.
+  /// </summary>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:PublishAsync_WithDispatchOptions_CompletesAsync</tests>
+  /// <tests>tests/Whizbang.Core.Tests/Dispatcher/DispatcherTests.cs:PublishAsync_WithCancelledToken_ThrowsOperationCanceledExceptionAsync</tests>
+#if !WHIZBANG_ENABLE_FRAMEWORK_DEBUGGING
+  [DebuggerStepThrough]
+  [StackTraceHidden]
+#endif
+  public async Task PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) {
+#pragma warning disable S2955 // Generic parameters not constrained to reference types should not be compared to 'null'
+    if (eventData == null) {
+      throw new ArgumentNullException(nameof(eventData));
+    }
+#pragma warning restore S2955
+
+    options.CancellationToken.ThrowIfCancellationRequested();
+
+    var eventType = eventData.GetType();
+    var messageId = MessageId.New();
+    var publisher = GetReceptorPublisher(eventData, eventType);
+
+    options.CancellationToken.ThrowIfCancellationRequested();
+    await publisher(eventData);
+
     await _publishToOutboxViaScopeAsync(eventData, eventType, messageId);
   }
 

@@ -71,10 +71,23 @@ public sealed class EventStoreTransformer : ICodeTransformer {
         .OfType<IdentifierNameSyntax>()
         .Any(id => id.Identifier.Text == "IDocumentStore");
 
-    // Check for session.Events usage
+    // Check for session.Events usage - must be followed by Marten event methods
+    // e.g., session.Events.StartStream(), session.Events.Append(), session.Events.FetchStreamAsync()
     var hasSessionEvents = root.DescendantNodes()
         .OfType<MemberAccessExpressionSyntax>()
-        .Any(ma => ma.Name.Identifier.Text == "Events");
+        .Any(ma => {
+          // Check if this is .Events.SomeMethod pattern
+          if (ma.Name.Identifier.Text != "Events") {
+            return false;
+          }
+          // Check if parent is another member access (e.g., .Events.StartStream)
+          if (ma.Parent is MemberAccessExpressionSyntax parentAccess) {
+            var methodName = parentAccess.Name.Identifier.Text;
+            return methodName is "StartStream" or "Append" or "AppendExclusive" or "AppendOptimistic"
+                or "FetchStreamAsync" or "AggregateStreamAsync" or "FetchForWriting";
+          }
+          return false;
+        });
 
     // Check for Marten using directive
     var hasMartenUsing = root.DescendantNodes()
@@ -211,6 +224,13 @@ public sealed class EventStoreTransformer : ICodeTransformer {
     foreach (var usingDirective in compilationUnit.Usings) {
       var name = usingDirective.Name?.ToString();
 
+      // Skip global using aliases - they're handled by GlobalUsingAliasTransformer
+      if (usingDirective.GlobalKeyword.IsKind(SyntaxKind.GlobalKeyword) &&
+          usingDirective.Alias != null) {
+        newUsings.Add(usingDirective);
+        continue;
+      }
+
       if (name != null && name.StartsWith("Marten", StringComparison.Ordinal)) {
         // Replace first Marten using with Whizbang.Core.Messaging
         if (!addedWhizbangMessaging) {
@@ -245,7 +265,8 @@ public sealed class EventStoreTransformer : ICodeTransformer {
     // If no Marten using was found but we have patterns, add Whizbang.Core.Messaging
     if (!removedMarten && !addedWhizbangMessaging) {
       var whizbangUsing = SyntaxFactory.UsingDirective(
-          SyntaxFactory.ParseName("Whizbang.Core.Messaging"))
+          SyntaxFactory.ParseName("Whizbang.Core.Messaging")
+              .WithLeadingTrivia(SyntaxFactory.Space))
           .WithTrailingTrivia(SyntaxFactory.CarriageReturnLineFeed);
       newUsings.Insert(0, whizbangUsing);
 

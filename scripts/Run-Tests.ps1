@@ -119,6 +119,10 @@
     Runs all tests including integration tests, stops on first failure
 
 .EXAMPLE
+    ./Run-Tests.ps1 -Coverage
+    Runs tests with code coverage collection (outputs Cobertura XML)
+
+.EXAMPLE
     ./Run-Tests.ps1 -TestFilter "Lifecycle"
     Runs all tests with "Lifecycle" in the class or test name
     Pattern: /*/*/*/*Lifecycle*
@@ -218,6 +222,12 @@ param(
     [switch]$LiveUpdates,  # Show progress immediately when counts change (Ai modes only)
     [switch]$FailFast,  # Stop on first test failure
     [int]$HangTimeout = 180,  # Seconds of no output before hang warning (0 to disable)
+    [switch]$Coverage,  # Collect code coverage (outputs Cobertura XML to TestResults/)
+
+    [ValidateSet("Debug", "Release")]
+    [string]$Configuration = "Debug",  # Build configuration (Debug or Release)
+
+    [string]$ExcludeProjectFilter = "",  # Exclude projects matching this pattern (regex)
 
     # Legacy parameters (deprecated, use -Mode instead)
     [bool]$ExcludeIntegration,
@@ -376,6 +386,9 @@ try {
         if ($FailFast) {
             Write-Host "Fail Fast: Enabled (stops on first failure)" -ForegroundColor Yellow
         }
+        if ($Coverage) {
+            Write-Host "Coverage: Enabled (Cobertura XML output)" -ForegroundColor Yellow
+        }
         Write-Host ""
     } else {
         Write-Host "[WHIZBANG TEST SUITE - AI MODE]" -ForegroundColor Cyan
@@ -406,6 +419,9 @@ try {
         if ($FailFast) {
             Write-Host "Fail Fast: Enabled" -ForegroundColor Gray
         }
+        if ($Coverage) {
+            Write-Host "Coverage: Enabled" -ForegroundColor Gray
+        }
     }
 
     # Build the dotnet test command
@@ -429,9 +445,156 @@ try {
         $testArgs += "--fail-fast"
     }
 
-    # Pattern for identifying integration test DLLs: *Integration.Tests.dll or *IntegrationTests.dll
+    # Coverage mode: Run per-project instead of --test-modules for accurate coverage collection
+    # The --test-modules approach doesn't collect coverage correctly (31% vs 80%+)
+    if ($Coverage) {
+        # Run tests per-project for proper coverage collection
+        # This is slower but gives accurate coverage results
+        if (-not $useAiOutput) {
+            Write-Host "Coverage mode: Running tests per-project for accurate coverage collection" -ForegroundColor Yellow
+        } else {
+            Write-Host "Coverage mode: Per-project execution" -ForegroundColor Gray
+        }
+
+        # Discover test projects
+        $testProjectPaths = @()
+
+        # Get tests from main tests/ directory
+        $testProjectPaths += Get-ChildItem -Path "$repoRoot/tests" -Recurse -Filter "*.csproj" -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notmatch "AppHost" } |
+            ForEach-Object { $_.FullName }
+
+        # Get tests from samples directory
+        $testProjectPaths += Get-ChildItem -Path "$repoRoot/samples" -Recurse -Filter "*.Tests.csproj" -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -notmatch "AppHost" } |
+            ForEach-Object { $_.FullName }
+
+        # Apply project filter if specified
+        if ($ProjectFilter) {
+            $testProjectPaths = @($testProjectPaths | Where-Object { $_ -match $ProjectFilter })
+        }
+
+        # Apply integration test filtering based on mode
+        if ($onlyIntegrationTests) {
+            $testProjectPaths = @($testProjectPaths | Where-Object { $_ -match "Integration\.Tests|IntegrationTests|Postgres\.Tests" })
+        } elseif (-not $includeIntegrationTests) {
+            $testProjectPaths = @($testProjectPaths | Where-Object { $_ -notmatch "Integration\.Tests|IntegrationTests|Postgres\.Tests" })
+        }
+
+        # Apply exclude filter if specified
+        if ($ExcludeProjectFilter) {
+            $testProjectPaths = @($testProjectPaths | Where-Object { $_ -notmatch $ExcludeProjectFilter })
+        }
+
+        if ($testProjectPaths.Count -eq 0) {
+            Write-Warning "No test projects found matching filters."
+            exit 1
+        }
+
+        if (-not $useAiOutput) {
+            Write-Host "Discovered $($testProjectPaths.Count) test projects" -ForegroundColor Gray
+        }
+
+        # Run each project with coverage
+        $allPassed = $true
+        $totalProjectsPassed = 0
+        $totalProjectsFailed = 0
+        $failFastTriggered = $false  # Initialize for finally block
+        $startTime = Get-Date
+
+        foreach ($projectPath in $testProjectPaths) {
+            $projectName = [System.IO.Path]::GetFileNameWithoutExtension($projectPath)
+
+            if (-not $useAiOutput) {
+                Write-Host ""
+                Write-Host "Running: $projectName" -ForegroundColor Cyan
+            } else {
+                Write-Host "Testing: $projectName" -ForegroundColor Gray
+            }
+
+            # Use dotnet run instead of dotnet test to avoid global.json VSTest validation issues
+            # TUnit/MTP tests run directly via dotnet run on the test project
+            $projectDir = [System.IO.Path]::GetDirectoryName($projectPath)
+
+            # On Linux/macOS, set execute permission on test executable (lost during artifact extraction)
+            if ($IsLinux -or $IsMacOS) {
+                $testExe = Join-Path $projectDir "bin" $Configuration "net10.0" $projectName
+                if (Test-Path $testExe) {
+                    chmod +x $testExe 2>$null
+                }
+            }
+
+            $projectArgs = @(
+                "run"
+                "--project"
+                $projectPath  # PowerShell handles spacing properly, no extra quotes needed
+                "--configuration"
+                $Configuration
+                "--"  # Separator for test runner args
+                "--coverage"
+                "--coverage-output-format"
+                "cobertura"
+            )
+
+            if ($TestFilter) {
+                $projectArgs += "--treenode-filter"
+                $projectArgs += "/*/*/*/*$TestFilter*"
+            }
+
+            if ($FailFast) {
+                $projectArgs += "--fail-fast"
+            }
+
+            $projectResult = & dotnet @projectArgs
+
+            if ($LASTEXITCODE -eq 0) {
+                $totalProjectsPassed++
+                if ($useAiOutput) {
+                    Write-Host "  ✓ $projectName passed" -ForegroundColor Green
+                }
+            } else {
+                $totalProjectsFailed++
+                $allPassed = $false
+                if ($useAiOutput) {
+                    Write-Host "  ✗ $projectName failed" -ForegroundColor Red
+                }
+                if ($FailFast) {
+                    Write-Host "Stopping due to -FailFast" -ForegroundColor Red
+                    $failFastTriggered = $true
+                    break
+                }
+            }
+        }
+
+        $endTime = Get-Date
+        $elapsed = $endTime - $startTime
+        $elapsedString = if ($elapsed.TotalMinutes -ge 1) {
+            "{0:F0}m {1:F0}s" -f [Math]::Floor($elapsed.TotalMinutes), $elapsed.Seconds
+        } else {
+            "{0:F1}s" -f $elapsed.TotalSeconds
+        }
+
+        Write-Host ""
+        Write-Host "=== COVERAGE TEST RESULTS ===" -ForegroundColor Cyan
+        Write-Host "Duration: $elapsedString" -ForegroundColor Cyan
+        Write-Host "Projects Passed: $totalProjectsPassed" -ForegroundColor Green
+        Write-Host "Projects Failed: $totalProjectsFailed" -ForegroundColor $(if ($totalProjectsFailed -gt 0) { "Red" } else { "Green" })
+        Write-Host ""
+
+        if ($allPassed) {
+            Write-Host "=== STATUS: ALL TESTS PASSED ===" -ForegroundColor Green
+            exit 0
+        } else {
+            Write-Host "=== STATUS: SOME TESTS FAILED ===" -ForegroundColor Red
+            exit 1
+        }
+    }
+
+    # Pattern for identifying tests that require external infrastructure (Docker):
+    # - Integration tests: *Integration.Tests.dll or *IntegrationTests.dll
+    # - Infrastructure tests: *Postgres*.Tests.dll (require PostgreSQL via Testcontainers)
     # Excludes AppHost projects which are Aspire hosts, not test projects
-    $integrationTestPattern = "Integration\.Tests\.dll$|IntegrationTests\.dll$"
+    $integrationTestPattern = "Integration\.Tests\.dll$|IntegrationTests\.dll$|Postgres\.Tests\.dll$"
     $excludePattern = "AppHost"
 
     # Helper function to test if a DLL name is an integration test
@@ -442,9 +605,9 @@ try {
 
     # Helper function to ensure build exists for dynamic DLL discovery
     function Ensure-BuildExists {
-        # Pattern: bin/Debug/net10.0/ - works for standard .NET output paths
+        # Pattern: bin/{Configuration}/net10.0/ - works for standard .NET output paths
         $anyDll = Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]" } |
+            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Select-Object -First 1
 
         if (-not $anyDll) {
@@ -461,18 +624,47 @@ try {
         }
     }
 
-    # Use --test-modules with globbing pattern for project filtering
+    # Helper function to check if a DLL is in its primary project location (not copied to another project's bin folder)
+    # When project A references project B, B's DLL gets copied to A's bin folder. This causes duplicate test discovery.
+    # We only want to run each test DLL from its primary location (where DLL name matches project folder name).
+    function Test-IsPrimaryTestDll {
+        param([System.IO.FileInfo]$DllFile)
+        $dllName = [System.IO.Path]::GetFileNameWithoutExtension($DllFile.Name)
+        $projectDir = $DllFile.DirectoryName -replace "[/\\]bin[/\\]$Configuration[/\\]net10\.0$", ""
+        $projectName = [System.IO.Path]::GetFileName($projectDir)
+        return $dllName -eq $projectName
+    }
+
+    # Use --test-modules with explicit DLL discovery for project filtering
+    # This allows us to properly exclude AppHost projects which aren't test projects
     if ($ProjectFilter) {
-        # Native .NET 10 globbing: **/bin/**/Debug/net10.0/*{Filter}*.dll
-        $testArgs += "--test-modules"
-        $testArgs += "**/bin/**/Debug/net10.0/*$ProjectFilter*.dll"
+        Ensure-BuildExists
+        # Find DLLs matching the filter, excluding AppHost and ensuring they're primary test DLLs
+        $filteredDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*$ProjectFilter*.dll" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
+            Where-Object { $_.Name -notmatch "AppHost" } |
+            Where-Object { -not $ExcludeProjectFilter -or $_.Name -notmatch $ExcludeProjectFilter } |
+            Where-Object { Test-IsPrimaryTestDll $_ } |
+            ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
+
+        if ($filteredDlls.Count -gt 0) {
+            $testArgs += "--test-modules"
+            $testArgs += ($filteredDlls -join ";")
+
+            if (-not $useAiOutput) {
+                Write-Host "Discovered $($filteredDlls.Count) test projects matching '$ProjectFilter'" -ForegroundColor Gray
+            }
+        } else {
+            Write-Warning "No test DLLs found matching '$ProjectFilter'. Check the project name."
+            exit 1
+        }
     } elseif ($onlyIntegrationTests) {
         # Run ONLY integration tests
         Ensure-BuildExists
         # Wrap in @() to ensure array even when empty (prevents null.Count error with StrictMode)
-        # Pattern: bin/Debug/net10.0/ - works for standard .NET output paths
+        # Pattern: bin/{Configuration}/net10.0/ - works for standard .NET output paths
         $integrationDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.dll" -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]" } |
+            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { Test-IsIntegrationTest $_.Name } |
             ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
 
@@ -493,9 +685,10 @@ try {
         # This ensures all test projects are discovered while excluding slow integration tests
         Ensure-BuildExists
         # Wrap in @() to ensure array even when empty (prevents null.Count error with StrictMode)
-        # Pattern: bin/Debug/net10.0/ - works for standard .NET output paths
+        # Pattern: bin/{Configuration}/net10.0/ - works for standard .NET output paths
         $allTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
-            Where-Object { $_.FullName -match "bin[/\\]Debug[/\\]net10\.0[/\\]" } |
+            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
+            Where-Object { Test-IsPrimaryTestDll $_ } |
             Where-Object { -not (Test-IsIntegrationTest $_.Name) } |
             ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
 
@@ -512,9 +705,26 @@ try {
             exit 1
         }
     } else {
-        # Use the main solution file (already filtered to test projects via <IsTestProject>)
-        $testArgs += "--solution"
-        $testArgs += "Whizbang.slnx"
+        # Include ALL test projects (including integration tests)
+        # Use explicit DLL discovery instead of --solution to avoid picking up library projects like Whizbang.Testing
+        Ensure-BuildExists
+        # CRITICAL: Filter using Test-IsPrimaryTestDll to exclude copied DLLs from other projects' bin folders
+        $allTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
+            Where-Object { Test-IsPrimaryTestDll $_ } |
+            ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
+
+        if ($allTestDlls.Count -gt 0) {
+            $testArgs += "--test-modules"
+            $testArgs += ($allTestDlls -join ";")
+
+            if (-not $useAiOutput) {
+                Write-Host "Discovered $($allTestDlls.Count) test projects (including integration tests)" -ForegroundColor Gray
+            }
+        } else {
+            Write-Warning "No test DLLs found after build. Check that test projects exist."
+            exit 1
+        }
     }
 
     # Use --treenode-filter for test name filtering (MTP native filtering)
@@ -552,6 +762,7 @@ try {
         $buildErrors = @()
         $buildWarnings = @()
         $projectErrors = @()  # Track test project-level errors (not individual test failures)
+        $infrastructureErrors = 0  # Track MTP infrastructure error count from summary
         $currentFailedTest = $null
         $capturingStackTrace = $false
         $stackTraceLines = @()
@@ -893,10 +1104,11 @@ try {
                 $errorCount = $matches[2]
                 $projectErrors += "$projectName failed with $errorCount error(s)"
             }
-            # Capture generic "error:" lines from test output
+            # Capture generic "error:" lines from test output (infrastructure errors)
             elseif ($lineStr -match "^\s*error:\s+(\d+)") {
-                # This catches the final "error: 1" summary line
-                # Don't add to projectErrors here as it's already captured above
+                # This catches the final "error: X" summary line from MTP
+                # Infrastructure errors are setup/teardown failures separate from test failures
+                $infrastructureErrors += [int]$matches[1]
             }
             # Capture build errors
             elseif ($lineStr -match "error\s+(CS\d+|MSB\d+):") {
@@ -940,6 +1152,9 @@ try {
         if ($currentFailedTest -and $stackTraceLines.Count -gt 0) {
             $testDetails[$currentFailedTest]["StackTrace"] = $stackTraceLines -join "`n"
         }
+
+        # Capture any stderr content for display
+        $stderrContent = $stderrBuilder.ToString().Trim()
 
         # Calculate elapsed time
         $endTime = Get-Date
@@ -1000,6 +1215,39 @@ try {
             Write-Host ""
             Write-Host "Note: These are test project-level errors (setup/teardown failures, resource issues)" -ForegroundColor Yellow
             Write-Host "      Run the specific project individually for more details" -ForegroundColor Yellow
+        }
+
+        if ($infrastructureErrors -gt 0) {
+            Write-Host ""
+            Write-Host "=== INFRASTRUCTURE ERRORS ($infrastructureErrors) ===" -ForegroundColor Red
+            Write-Host ""
+            Write-Host "MTP reported $infrastructureErrors infrastructure error(s)." -ForegroundColor Red
+            Write-Host "These are setup/teardown failures or test host issues, not test failures." -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "Possible causes:" -ForegroundColor Yellow
+            Write-Host "  - Test fixture setup/teardown exceptions" -ForegroundColor Gray
+            Write-Host "  - Container startup failures (Docker issues)" -ForegroundColor Gray
+            Write-Host "  - Resource cleanup errors" -ForegroundColor Gray
+            Write-Host "  - Assembly loading failures" -ForegroundColor Gray
+            Write-Host ""
+            Write-Host "Run the test project directly for detailed error messages:" -ForegroundColor Yellow
+            Write-Host "  cd tests/YourProject.Tests && dotnet run" -ForegroundColor Gray
+        }
+
+        # Display stderr if any (may contain error details not in stdout)
+        if ($stderrContent) {
+            Write-Host ""
+            Write-Host "=== STDERR OUTPUT ===" -ForegroundColor Yellow
+            Write-Host ""
+            # Show first 30 lines of stderr
+            $stderrLines = $stderrContent -split "`n"
+            $linesToShow = [Math]::Min($stderrLines.Count, 30)
+            for ($i = 0; $i -lt $linesToShow; $i++) {
+                Write-Host "  $($stderrLines[$i])" -ForegroundColor Gray
+            }
+            if ($stderrLines.Count -gt 30) {
+                Write-Host "  ... ($($stderrLines.Count - 30) more lines)" -ForegroundColor DarkGray
+            }
         }
 
         if ($buildErrors.Count -gt 0) {
@@ -1070,7 +1318,7 @@ try {
         # In AI mode, use the process exit code and check captured errors
         # Note: dotnet test returns 0 on success, non-zero on failure
         # Don't count processExitCode alone - it can be non-zero due to skipped tests or cancellation
-        $hasErrors = $totalFailed -gt 0 -or $failFastTriggered -or $projectErrors.Count -gt 0 -or $buildErrors.Count -gt 0
+        $hasErrors = $totalFailed -gt 0 -or $failFastTriggered -or $projectErrors.Count -gt 0 -or $buildErrors.Count -gt 0 -or $infrastructureErrors -gt 0
     } else {
         $hasErrors = $LASTEXITCODE -ne 0
     }

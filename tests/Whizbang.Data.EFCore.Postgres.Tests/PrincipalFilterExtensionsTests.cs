@@ -29,7 +29,7 @@ public class PrincipalFilterExtensionsTests : EFCoreTestBase {
       Guid orderId,
       string tenantId,
       string? userId,
-      IReadOnlyList<SecurityPrincipalId>? allowedPrincipals) {
+      List<string>? allowedPrincipals) {
 
     var order = new Order {
       OrderId = TestOrderId.From(orderId),
@@ -48,7 +48,7 @@ public class PrincipalFilterExtensionsTests : EFCoreTestBase {
       Scope = new PerspectiveScope {
         TenantId = tenantId,
         UserId = userId,
-        AllowedPrincipals = allowedPrincipals
+        AllowedPrincipals = allowedPrincipals ?? []
       },
       CreatedAt = DateTime.UtcNow,
       UpdatedAt = DateTime.UtcNow,
@@ -70,7 +70,7 @@ public class PrincipalFilterExtensionsTests : EFCoreTestBase {
     var orderId = _idProvider.NewGuid();
     await _seedOrderWithPrincipalsAsync(
       context, orderId, "tenant-1", "user-1",
-      [SecurityPrincipalId.User("user-1")]);
+      ["user:user-1"]);
 
     // Act - Empty principals means no access
     var result = await context.Set<PerspectiveRow<Order>>()
@@ -89,7 +89,7 @@ public class PrincipalFilterExtensionsTests : EFCoreTestBase {
     var orderId = _idProvider.NewGuid();
     await _seedOrderWithPrincipalsAsync(
       context, orderId, "tenant-1", "user-1",
-      [SecurityPrincipalId.User("alice")]);
+      ["user:alice"]);
 
     var callerPrincipals = new HashSet<SecurityPrincipalId> {
       SecurityPrincipalId.User("alice")
@@ -113,10 +113,7 @@ public class PrincipalFilterExtensionsTests : EFCoreTestBase {
     var orderId = _idProvider.NewGuid();
     await _seedOrderWithPrincipalsAsync(
       context, orderId, "tenant-1", "user-1",
-      [
-        SecurityPrincipalId.Group("sales-team"),
-        SecurityPrincipalId.Group("managers")
-      ]);
+      ["group:sales-team", "group:managers"]);
 
     var callerPrincipals = new HashSet<SecurityPrincipalId> {
       SecurityPrincipalId.User("bob"),
@@ -141,10 +138,7 @@ public class PrincipalFilterExtensionsTests : EFCoreTestBase {
     var orderId = _idProvider.NewGuid();
     await _seedOrderWithPrincipalsAsync(
       context, orderId, "tenant-1", "user-1",
-      [
-        SecurityPrincipalId.User("alice"),
-        SecurityPrincipalId.Group("sales-team")
-      ]);
+      ["user:alice", "group:sales-team"]);
 
     var callerPrincipals = new HashSet<SecurityPrincipalId> {
       SecurityPrincipalId.User("bob"),
@@ -169,22 +163,19 @@ public class PrincipalFilterExtensionsTests : EFCoreTestBase {
     var order1Id = _idProvider.NewGuid();
     await _seedOrderWithPrincipalsAsync(
       context, order1Id, "tenant-1", "user-1",
-      [SecurityPrincipalId.Group("sales-team")]);
+      ["group:sales-team"]);
 
     // Row 2: Shared with engineering (no overlap with caller)
     var order2Id = _idProvider.NewGuid();
     await _seedOrderWithPrincipalsAsync(
       context, order2Id, "tenant-1", "user-2",
-      [SecurityPrincipalId.Group("engineering")]);
+      ["group:engineering"]);
 
     // Row 3: Shared with both sales-team and managers
     var order3Id = _idProvider.NewGuid();
     await _seedOrderWithPrincipalsAsync(
       context, order3Id, "tenant-1", "user-3",
-      [
-        SecurityPrincipalId.Group("sales-team"),
-        SecurityPrincipalId.Group("managers")
-      ]);
+      ["group:sales-team", "group:managers"]);
 
     var callerPrincipals = new HashSet<SecurityPrincipalId> {
       SecurityPrincipalId.User("bob"),
@@ -237,7 +228,7 @@ public class PrincipalFilterExtensionsTests : EFCoreTestBase {
     var orderId = _idProvider.NewGuid();
     await _seedOrderWithPrincipalsAsync(
       context, orderId, "tenant-1", "user-alice",
-      [SecurityPrincipalId.Group("other-team")]);
+      ["group:other-team"]);
 
     var callerPrincipals = new HashSet<SecurityPrincipalId> {
       SecurityPrincipalId.User("alice"),
@@ -262,7 +253,7 @@ public class PrincipalFilterExtensionsTests : EFCoreTestBase {
     var orderId = _idProvider.NewGuid();
     await _seedOrderWithPrincipalsAsync(
       context, orderId, "tenant-1", "user-bob",  // Different user
-      [SecurityPrincipalId.Group("sales-team")]);
+      ["group:sales-team"]);
 
     var callerPrincipals = new HashSet<SecurityPrincipalId> {
       SecurityPrincipalId.User("alice"),
@@ -294,13 +285,13 @@ public class PrincipalFilterExtensionsTests : EFCoreTestBase {
     var order2Id = _idProvider.NewGuid();
     await _seedOrderWithPrincipalsAsync(
       context, order2Id, "tenant-1", "user-bob",
-      [SecurityPrincipalId.Group("alice-team")]);
+      ["group:alice-team"]);
 
     // Row 3: Neither owned nor shared with alice
     var order3Id = _idProvider.NewGuid();
     await _seedOrderWithPrincipalsAsync(
       context, order3Id, "tenant-1", "user-charlie",
-      [SecurityPrincipalId.Group("other-team")]);
+      ["group:other-team"]);
 
     var callerPrincipals = new HashSet<SecurityPrincipalId> {
       SecurityPrincipalId.User("alice"),
@@ -328,7 +319,7 @@ public class PrincipalFilterExtensionsTests : EFCoreTestBase {
     var orderId = _idProvider.NewGuid();
     await _seedOrderWithPrincipalsAsync(
       context, orderId, "tenant-1", "user-bob",
-      [SecurityPrincipalId.Group("bob-team")]);
+      ["group:bob-team"]);
 
     var callerPrincipals = new HashSet<SecurityPrincipalId> {
       SecurityPrincipalId.User("alice"),
@@ -355,13 +346,13 @@ public class PrincipalFilterExtensionsTests : EFCoreTestBase {
     var orderId = _idProvider.NewGuid();
     await _seedOrderWithPrincipalsAsync(
       context, orderId, "tenant-1", "user-1",
-      [SecurityPrincipalId.Group("target-team")]);
+      ["group:target-team"]);
 
     // Row without the target principal
     var otherOrderId = _idProvider.NewGuid();
     await _seedOrderWithPrincipalsAsync(
       context, otherOrderId, "tenant-1", "user-2",
-      [SecurityPrincipalId.Group("other-team")]);
+      ["group:other-team"]);
 
     // Caller has >10 principals (triggers array overlap mode)
     var callerPrincipals = new HashSet<SecurityPrincipalId>();
@@ -388,7 +379,7 @@ public class PrincipalFilterExtensionsTests : EFCoreTestBase {
     var orderId = _idProvider.NewGuid();
     await _seedOrderWithPrincipalsAsync(
       context, orderId, "tenant-1", "user-1",
-      [SecurityPrincipalId.Group("specific-team")]);
+      ["group:specific-team"]);
 
     // Caller has >10 principals but none overlap
     var callerPrincipals = new HashSet<SecurityPrincipalId>();
@@ -414,22 +405,19 @@ public class PrincipalFilterExtensionsTests : EFCoreTestBase {
     var order1Id = _idProvider.NewGuid();
     await _seedOrderWithPrincipalsAsync(
       context, order1Id, "tenant-1", "user-1",
-      [SecurityPrincipalId.Group("target-team")]);
+      ["group:target-team"]);
 
     // Row 2: Shared with other-team (no overlap with caller)
     var order2Id = _idProvider.NewGuid();
     await _seedOrderWithPrincipalsAsync(
       context, order2Id, "tenant-1", "user-2",
-      [SecurityPrincipalId.Group("other-team")]);
+      ["group:other-team"]);
 
     // Row 3: Shared with both target-team and managers (should match)
     var order3Id = _idProvider.NewGuid();
     await _seedOrderWithPrincipalsAsync(
       context, order3Id, "tenant-1", "user-3",
-      [
-        SecurityPrincipalId.Group("target-team"),
-        SecurityPrincipalId.Group("managers")
-      ]);
+      ["group:target-team", "group:managers"]);
 
     // Caller has >10 principals including target-team
     var callerPrincipals = new HashSet<SecurityPrincipalId>();
@@ -484,10 +472,7 @@ public class PrincipalFilterExtensionsTests : EFCoreTestBase {
     var orderId = _idProvider.NewGuid();
     await _seedOrderWithPrincipalsAsync(
       context, orderId, "tenant-1", "user-1",
-      [
-        SecurityPrincipalId.Group("sales-team"),
-        SecurityPrincipalId.Group("managers")
-      ]);
+      ["group:sales-team", "group:managers"]);
 
     // Caller has >10 principals, one of which matches
     var callerPrincipals = new HashSet<SecurityPrincipalId>();

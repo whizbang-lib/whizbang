@@ -20,7 +20,16 @@ internal sealed record JsonMessageTypeInfo(
     bool IsSerializable,
     PropertyInfo[] Properties,
     bool HasParameterizedConstructor
-);
+) {
+  /// <summary>
+  /// Unique identifier derived from fully qualified name, suitable for C# identifiers.
+  /// Strips "global::" prefix and replaces "." with "_".
+  /// E.g., "global::MyApp.Commands.StartCommand" becomes "MyApp_Commands_StartCommand".
+  /// This prevents duplicate field/method names when types have the same SimpleName.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_WithSameSimpleNameInDifferentNamespaces_GeneratesUniqueIdentifiersAsync</tests>
+  public string UniqueIdentifier => FullyQualifiedName.Replace("global::", "").Replace(".", "_");
+}
 
 /// <summary>
 /// Information about a property for JSON serialization.

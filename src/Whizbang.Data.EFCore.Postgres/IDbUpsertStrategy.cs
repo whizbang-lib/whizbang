@@ -39,4 +39,32 @@ public interface IDbUpsertStrategy {
       PerspectiveScope scope,
       CancellationToken cancellationToken = default)
       where TModel : class;
+
+  /// <summary>
+  /// Performs an atomic upsert (insert or update) of a perspective row with physical field values.
+  /// Physical fields are stored in shadow properties configured by the EF Core model.
+  /// </summary>
+  /// <typeparam name="TModel">The model type stored in the perspective</typeparam>
+  /// <param name="context">The EF Core DbContext</param>
+  /// <param name="tableName">The table name for the perspective rows</param>
+  /// <param name="id">The unique identifier for the perspective row</param>
+  /// <param name="model">The model data to store in the JSONB column</param>
+  /// <param name="metadata">Metadata about the event that created/updated this row</param>
+  /// <param name="scope">Multi-tenancy and security scope information</param>
+  /// <param name="physicalFieldValues">Dictionary of column name to value for physical fields</param>
+  /// <param name="cancellationToken">Cancellation token</param>
+  /// <returns>Task representing the asynchronous operation</returns>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PhysicalFieldUpsertStrategyTests.cs:UpsertWithPhysicalFields_WhenRecordDoesNotExist_CreatesShadowPropertiesAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PhysicalFieldUpsertStrategyTests.cs:UpsertWithPhysicalFields_WhenRecordExists_UpdatesShadowPropertiesAsync</tests>
+  /// <tests>tests/Whizbang.Data.EFCore.Postgres.Tests/PhysicalFieldUpsertStrategyTests.cs:UpsertWithPhysicalFields_PostgresStrategy_SetsShadowPropertiesAsync</tests>
+  Task UpsertPerspectiveRowWithPhysicalFieldsAsync<TModel>(
+      DbContext context,
+      string tableName,
+      Guid id,
+      TModel model,
+      PerspectiveMetadata metadata,
+      PerspectiveScope scope,
+      IDictionary<string, object?> physicalFieldValues,
+      CancellationToken cancellationToken = default)
+      where TModel : class;
 }

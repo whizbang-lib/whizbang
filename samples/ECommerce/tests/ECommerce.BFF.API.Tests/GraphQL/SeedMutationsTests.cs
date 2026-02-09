@@ -6,6 +6,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
 using Whizbang.Core;
+using Whizbang.Core.Dispatch;
 using Whizbang.Core.Messaging;
 using Whizbang.Core.ValueObjects;
 
@@ -42,6 +43,7 @@ public class SeedMutationsTests {
     public ValueTask LocalInvokeAsync(object message) => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
     public Task PublishAsync<TEvent>(TEvent @event) => throw new NotImplementedException();
+    public Task PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) => throw new NotImplementedException();
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull {
       var receipts = new List<IDeliveryReceipt>();
       foreach (var message in messages) {
@@ -52,6 +54,11 @@ public class SeedMutationsTests {
     }
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages) => throw new NotImplementedException();
     public ValueTask<IEnumerable<TResult>> LocalInvokeManyAsync<TResult>(IEnumerable<object> messages) => throw new NotImplementedException();
+    public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, DispatchOptions options) where TMessage : notnull => SendAsync(message);
+    public Task<IDeliveryReceipt> SendAsync(object message, DispatchOptions options) => throw new NotImplementedException();
+    public Task<IDeliveryReceipt> SendAsync(object message, IMessageContext context, DispatchOptions options, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
+    public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, DispatchOptions options) => throw new NotImplementedException();
+    public ValueTask LocalInvokeAsync(object message, DispatchOptions options) => throw new NotImplementedException();
   }
 
   /// <summary>
@@ -204,10 +211,16 @@ public class SeedMutationsTests {
     public ValueTask LocalInvokeAsync(object message) => throw new NotImplementedException();
     public ValueTask LocalInvokeAsync(object message, IMessageContext context, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
     public Task PublishAsync<TEvent>(TEvent @event) => throw new NotImplementedException();
+    public Task PublishAsync<TEvent>(TEvent eventData, DispatchOptions options) => throw new NotImplementedException();
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync<TMessage>(IEnumerable<TMessage> messages) where TMessage : notnull {
       throw new InvalidOperationException("Dispatcher failure");
     }
     public Task<IEnumerable<IDeliveryReceipt>> SendManyAsync(IEnumerable<object> messages) => throw new NotImplementedException();
     public ValueTask<IEnumerable<TResult>> LocalInvokeManyAsync<TResult>(IEnumerable<object> messages) => throw new NotImplementedException();
+    public Task<IDeliveryReceipt> SendAsync<TMessage>(TMessage message, DispatchOptions options) where TMessage : notnull => SendAsync(message);
+    public Task<IDeliveryReceipt> SendAsync(object message, DispatchOptions options) => throw new NotImplementedException();
+    public Task<IDeliveryReceipt> SendAsync(object message, IMessageContext context, DispatchOptions options, string callerMemberName = "", string callerFilePath = "", int callerLineNumber = 0) => throw new NotImplementedException();
+    public ValueTask<TResult> LocalInvokeAsync<TResult>(object message, DispatchOptions options) => throw new NotImplementedException();
+    public ValueTask LocalInvokeAsync(object message, DispatchOptions options) => throw new NotImplementedException();
   }
 }

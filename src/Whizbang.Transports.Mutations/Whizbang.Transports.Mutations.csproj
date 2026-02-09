@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>true</IsPackable>
+    <Description>Core mutations abstraction for Whizbang transports. Provides [CommandEndpoint] attribute and MutationEndpointBase with pre/post hooks for both REST and GraphQL.</Description>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="../Whizbang.Core/Whizbang.Core.csproj" />
+  </ItemGroup>
+
+</Project>
