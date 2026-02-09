@@ -471,19 +471,19 @@ try {
 
         # Apply project filter if specified
         if ($ProjectFilter) {
-            $testProjectPaths = $testProjectPaths | Where-Object { $_ -match $ProjectFilter }
+            $testProjectPaths = @($testProjectPaths | Where-Object { $_ -match $ProjectFilter })
         }
 
         # Apply integration test filtering based on mode
         if ($onlyIntegrationTests) {
-            $testProjectPaths = $testProjectPaths | Where-Object { $_ -match "Integration\.Tests|IntegrationTests|Postgres\.Tests" }
+            $testProjectPaths = @($testProjectPaths | Where-Object { $_ -match "Integration\.Tests|IntegrationTests|Postgres\.Tests" })
         } elseif (-not $includeIntegrationTests) {
-            $testProjectPaths = $testProjectPaths | Where-Object { $_ -notmatch "Integration\.Tests|IntegrationTests|Postgres\.Tests" }
+            $testProjectPaths = @($testProjectPaths | Where-Object { $_ -notmatch "Integration\.Tests|IntegrationTests|Postgres\.Tests" })
         }
 
         # Apply exclude filter if specified
         if ($ExcludeProjectFilter) {
-            $testProjectPaths = $testProjectPaths | Where-Object { $_ -notmatch $ExcludeProjectFilter }
+            $testProjectPaths = @($testProjectPaths | Where-Object { $_ -notmatch $ExcludeProjectFilter })
         }
 
         if ($testProjectPaths.Count -eq 0) {
@@ -499,6 +499,7 @@ try {
         $allPassed = $true
         $totalProjectsPassed = 0
         $totalProjectsFailed = 0
+        $failFastTriggered = $false  # Initialize for finally block
         $startTime = Get-Date
 
         foreach ($projectPath in $testProjectPaths) {
@@ -511,12 +512,25 @@ try {
                 Write-Host "Testing: $projectName" -ForegroundColor Gray
             }
 
+            # Use dotnet run instead of dotnet test to avoid global.json VSTest validation issues
+            # TUnit/MTP tests run directly via dotnet run on the test project
+            $projectDir = [System.IO.Path]::GetDirectoryName($projectPath)
+
+            # On Linux/macOS, set execute permission on test executable (lost during artifact extraction)
+            if ($IsLinux -or $IsMacOS) {
+                $testExe = Join-Path $projectDir "bin" $Configuration "net10.0" $projectName
+                if (Test-Path $testExe) {
+                    chmod +x $testExe 2>$null
+                }
+            }
+
             $projectArgs = @(
-                "test"
-                "`"$projectPath`""
-                "--no-restore"
+                "run"
+                "--project"
+                $projectPath  # PowerShell handles spacing properly, no extra quotes needed
                 "--configuration"
                 $Configuration
+                "--"  # Separator for test runner args
                 "--coverage"
                 "--coverage-output-format"
                 "cobertura"
@@ -546,6 +560,7 @@ try {
                 }
                 if ($FailFast) {
                     Write-Host "Stopping due to -FailFast" -ForegroundColor Red
+                    $failFastTriggered = $true
                     break
                 }
             }
