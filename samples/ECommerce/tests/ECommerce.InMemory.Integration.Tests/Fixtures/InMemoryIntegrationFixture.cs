@@ -752,10 +752,11 @@ public sealed class InMemoryIntegrationFixture : IAsyncDisposable {
     var totalPerspectives = inventoryPerspectives + bffPerspectives;
     Console.WriteLine($"[WaitForPerspective] Waiting for {typeof(TEvent).Name} processing (Inventory={inventoryPerspectives}, BFF={bffPerspectives}, Total={totalPerspectives}, timeout={timeoutMilliseconds}ms)");
 
-    var inventoryCompletionSource = new TaskCompletionSource<bool>();
+    // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlocks
+    var inventoryCompletionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var inventoryCompletedPerspectives = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>();
 
-    var bffCompletionSource = new TaskCompletionSource<bool>();
+    var bffCompletionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var bffCompletedPerspectives = new System.Collections.Concurrent.ConcurrentDictionary<string, byte>();
 
     var tasksToWait = new List<Task>();

@@ -142,3 +142,67 @@ public sealed class MessageIdAwaiter {
     }
   }
 }
+
+/// <summary>
+/// A counting message awaiter that waits for a specific number of messages.
+/// Thread-safe and uses RunContinuationsAsynchronously to prevent deadlocks.
+/// </summary>
+public sealed class CountingMessageAwaiter {
+  private readonly TaskCompletionSource<bool> _tcs =
+    new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+  private readonly int _expectedCount;
+  private int _receivedCount;
+
+  /// <summary>
+  /// Creates a new counting message awaiter.
+  /// </summary>
+  /// <param name="expectedCount">Number of messages to wait for.</param>
+  public CountingMessageAwaiter(int expectedCount) {
+    ArgumentOutOfRangeException.ThrowIfNegativeOrZero(expectedCount);
+    _expectedCount = expectedCount;
+  }
+
+  /// <summary>
+  /// Gets the number of messages received so far.
+  /// </summary>
+  public int ReceivedCount => _receivedCount;
+
+  /// <summary>
+  /// Gets the expected message count.
+  /// </summary>
+  public int ExpectedCount => _expectedCount;
+
+  /// <summary>
+  /// Gets whether all expected messages have been received.
+  /// </summary>
+  public bool IsCompleted => _tcs.Task.IsCompleted;
+
+  /// <summary>
+  /// Gets the handler delegate to pass to ITransport.SubscribeAsync.
+  /// </summary>
+  public Func<IMessageEnvelope, string?, CancellationToken, Task> Handler =>
+    async (envelope, envelopeType, ct) => {
+      if (Interlocked.Increment(ref _receivedCount) >= _expectedCount) {
+        _tcs.TrySetResult(true);
+      }
+      await Task.CompletedTask;
+    };
+
+  /// <summary>
+  /// Waits for all expected messages to be received.
+  /// </summary>
+  /// <param name="timeout">Maximum time to wait.</param>
+  /// <param name="cancellationToken">Cancellation token.</param>
+  /// <exception cref="TimeoutException">Thrown if not all messages are received within the timeout.</exception>
+  public async Task WaitAsync(TimeSpan timeout, CancellationToken cancellationToken = default) {
+    using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+    cts.CancelAfter(timeout);
+
+    try {
+      await _tcs.Task.WaitAsync(cts.Token);
+    } catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested) {
+      throw new TimeoutException($"Expected {_expectedCount} messages but only received {_receivedCount} within {timeout}");
+    }
+  }
+}

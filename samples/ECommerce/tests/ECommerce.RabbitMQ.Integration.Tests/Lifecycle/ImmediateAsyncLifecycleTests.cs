@@ -111,7 +111,7 @@ public class ImmediateAsyncLifecycleTests {
       ImageUrl = "https://example.com/image.jpg"
     };
 
-    var completionSource = new TaskCompletionSource<bool>();
+    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new GenericLifecycleCompletionReceptor<CreateProductCommand>(completionSource);
 
     var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
@@ -168,7 +168,7 @@ public class ImmediateAsyncLifecycleTests {
       }
     };
 
-    var completionSource = new TaskCompletionSource<bool>();
+    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new GenericLifecycleCompletionReceptor<CreateProductCommand>(completionSource);
 
     var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
@@ -240,7 +240,7 @@ public class ImmediateAsyncLifecycleTests {
       InitialStock = 10
     };
 
-    var completionSource = new TaskCompletionSource<bool>();
+    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new GenericLifecycleCompletionReceptor<CreateProductCommand>(completionSource);
 
     var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();

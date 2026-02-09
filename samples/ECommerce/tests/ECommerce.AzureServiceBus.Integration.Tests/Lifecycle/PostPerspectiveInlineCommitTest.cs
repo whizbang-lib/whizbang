@@ -68,7 +68,8 @@ public class PostPerspectiveInlineCommitTest {
     };
     Console.WriteLine($"[TEST] Created command: Name={command.Name}, Price={command.Price}, InitialStock={command.InitialStock}");
 
-    var completionSource = new TaskCompletionSource<bool>();
+    // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlocks
+    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(
       completionSource,
       perspectiveName: "ProductCatalogPerspective");

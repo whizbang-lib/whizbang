@@ -4,6 +4,7 @@ using ECommerce.Contracts.Events;
 using ECommerce.Integration.Tests.Fixtures;
 using Microsoft.Extensions.DependencyInjection;
 using Whizbang.Core.Messaging;
+using Whizbang.Testing.Lifecycle;
 
 namespace ECommerce.Integration.Tests.Lifecycle;
 
@@ -103,29 +104,21 @@ public class ImmediateAsyncLifecycleTests {
       ImageUrl = "https://example.com/image.jpg"
     };
 
-    var completionSource = new TaskCompletionSource<bool>();
-    var receptor = new GenericLifecycleCompletionReceptor<CreateProductCommand>(completionSource);
+    // Use LifecycleAwaiter harness (auto-registers/unregisters, uses RunContinuationsAsynchronously)
+    using var awaiter = LifecycleAwaiter.ForImmediateAsync<CreateProductCommand>(fixture.InventoryHost);
 
-    var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
-    registry.Register<CreateProductCommand>(receptor, LifecycleStage.ImmediateAsync);
+    // Act - Dispatch command
+    await fixture.Dispatcher.SendAsync(command);
 
-    try {
-      // Act - Dispatch command
-      await fixture.Dispatcher.SendAsync(command);
+    // Wait for ImmediateAsync stage
+    await awaiter.WaitAsync(5000);
 
-      // Wait for ImmediateAsync stage
-      await completionSource.Task.WaitAsync(TimeSpan.FromSeconds(5));
-
-      // Assert - At this point, ImmediateAsync has fired
-      // But the event should NOT be in event store yet (database write hasn't committed)
-      // Note: This is a timing assertion - we're checking that ImmediateAsync fires
-      // before the transaction commits. In practice, we can't easily verify the
-      // "no database writes" guarantee without mocking, but we can verify timing.
-      await Assert.That(receptor.InvocationCount).IsEqualTo(1);
-
-    } finally {
-      registry.Unregister<CreateProductCommand>(receptor, LifecycleStage.ImmediateAsync);
-    }
+    // Assert - At this point, ImmediateAsync has fired
+    // But the event should NOT be in event store yet (database write hasn't committed)
+    // Note: This is a timing assertion - we're checking that ImmediateAsync fires
+    // before the transaction commits. In practice, we can't easily verify the
+    // "no database writes" guarantee without mocking, but we can verify timing.
+    await Assert.That(awaiter.InvocationCount).IsEqualTo(1);
   }
 
   /// <summary>
@@ -160,7 +153,7 @@ public class ImmediateAsyncLifecycleTests {
       }
     };
 
-    var completionSource = new TaskCompletionSource<bool>();
+    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new GenericLifecycleCompletionReceptor<CreateProductCommand>(completionSource);
 
     var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
@@ -232,7 +225,7 @@ public class ImmediateAsyncLifecycleTests {
       InitialStock = 10
     };
 
-    var completionSource = new TaskCompletionSource<bool>();
+    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new GenericLifecycleCompletionReceptor<CreateProductCommand>(completionSource);
 
     var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
