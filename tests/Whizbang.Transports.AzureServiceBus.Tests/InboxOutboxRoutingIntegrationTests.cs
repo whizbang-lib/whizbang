@@ -24,7 +24,7 @@ namespace Whizbang.Transports.AzureServiceBus.Tests;
 /// </summary>
 [Category("Integration")]
 [NotInParallel("ServiceBus")]
-[Timeout(90_000)]
+[Timeout(240_000)] // 240s timeout for integration tests using shared emulator fixture
 [ClassDataSource<ServiceBusEmulatorFixtureSource>(Shared = SharedType.PerAssembly)]
 public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixtureSource fixtureSource) {
   private readonly ServiceBusEmulatorFixture _fixture = fixtureSource.Fixture;
@@ -52,20 +52,54 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
     // Drain any existing messages
     await _drainMessagesAsync("topic-00", "sub-00-a");
 
-    // Create transport and set up consumer
+    // Create transport and set up consumer with warmup detection
     var transport = await _createTransportAsync();
-    var receivedTcs = new TaskCompletionSource<string>();
+    // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlock when Dispose() waits for handler
+    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var warmupTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var warmupId = $"warmup-{Guid.NewGuid():N}";
+
     var subscription = await transport.SubscribeAsync(
       async (envelope, envelopeType, ct) => {
-        receivedTcs.TrySetResult(envelope.MessageId.ToString());
+        // Check if this is the warmup message or the actual test message
+        if (envelope is MessageEnvelope<TestMessage> testEnvelope &&
+            testEnvelope.Payload.Content.Contains(warmupId)) {
+          warmupTcs.TrySetResult(true);
+        } else {
+          receivedTcs.TrySetResult(envelope.MessageId.ToString());
+        }
         await Task.CompletedTask;
       },
       new TransportDestination("topic-00", "sub-00-a")
     );
 
     try {
-      await Task.Delay(500);
+      // Give the processor time to establish its AMQP connection
+      // StartProcessingAsync returns immediately but the actual connection takes time
+      await Task.Delay(TimeSpan.FromSeconds(5));
 
+      // Warmup: Keep sending messages until one is received (confirms subscription is ready)
+      using var warmupCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+      while (!warmupTcs.Task.IsCompleted && !warmupCts.Token.IsCancellationRequested) {
+        var warmupEnvelope = _createTestEnvelopeWithContent(warmupId);
+        await transport.PublishAsync(warmupEnvelope, destination);
+
+        var received = await Task.WhenAny(
+          warmupTcs.Task,
+          Task.Delay(TimeSpan.FromSeconds(2), warmupCts.Token)
+        ) == warmupTcs.Task;
+
+        if (received) {
+          break;
+        }
+      }
+
+      if (!warmupTcs.Task.IsCompleted) {
+        Assert.Fail("Subscription warmup timed out after 30 seconds");
+      }
+
+      // Act: Now publish the actual test message
       var envelope = _createTestEnvelope();
       await transport.PublishAsync(envelope, destination);
 
@@ -106,26 +140,56 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
     // Drain any existing messages
     await _drainMessagesAsync("topic-01", "sub-01-a");
 
-    // Create transport and set up consumer
+    // Create transport and set up consumer with warmup detection
     var transport = await _createTransportAsync();
-    var receivedTcs = new TaskCompletionSource<string>();
+    // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlock when Dispose() waits for handler
+    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var warmupTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var warmupId = $"warmup-{Guid.NewGuid():N}";
+
     var transportSubscription = await transport.SubscribeAsync(
       async (envelope, envelopeType, ct) => {
-        receivedTcs.TrySetResult(envelope.MessageId.ToString());
+        if (envelope is MessageEnvelope<TestMessage> testEnvelope &&
+            testEnvelope.Payload.Content.Contains(warmupId)) {
+          warmupTcs.TrySetResult(true);
+        } else {
+          receivedTcs.TrySetResult(envelope.MessageId.ToString());
+        }
         await Task.CompletedTask;
       },
       new TransportDestination("topic-01", "sub-01-a")
     );
 
     try {
-      await Task.Delay(500);
+      // Give the processor time to establish its AMQP connection
+      // StartProcessingAsync returns immediately but the actual connection takes time
+      await Task.Delay(TimeSpan.FromSeconds(5));
 
-      // Publish command to shared inbox
+      // Warmup: Keep sending messages until one is received (confirms subscription is ready)
+      var publishDestination = new TransportDestination(subscriptionInfo.Topic);
+      using var warmupCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+      while (!warmupTcs.Task.IsCompleted && !warmupCts.Token.IsCancellationRequested) {
+        var warmupEnvelope = _createTestEnvelopeWithContent(warmupId);
+        await transport.PublishAsync(warmupEnvelope, publishDestination);
+
+        var received = await Task.WhenAny(
+          warmupTcs.Task,
+          Task.Delay(TimeSpan.FromSeconds(2), warmupCts.Token)
+        ) == warmupTcs.Task;
+
+        if (received) {
+          break;
+        }
+      }
+
+      if (!warmupTcs.Task.IsCompleted) {
+        Assert.Fail("Subscription warmup timed out after 30 seconds");
+      }
+
+      // Act: Publish command to shared inbox
       var envelope = _createTestEnvelope();
-      await transport.PublishAsync(
-        envelope,
-        new TransportDestination(subscriptionInfo.Topic)
-      );
+      await transport.PublishAsync(envelope, publishDestination);
 
       // Assert
       using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
@@ -171,23 +235,57 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
     // Drain any existing messages
     await _drainMessagesAsync("topic-00", "sub-00-a");
 
-    // Create transport and set up consumer
+    // Create transport and set up consumer with warmup detection
     var transport = await _createTransportAsync();
-    var receivedTcs = new TaskCompletionSource<string>();
+    // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlock when Dispose() waits for handler
+    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var warmupTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var warmupId = $"warmup-{Guid.NewGuid():N}";
+
     var transportSubscription = await transport.SubscribeAsync(
       async (envelope, envelopeType, ct) => {
-        receivedTcs.TrySetResult(envelope.MessageId.ToString());
+        if (envelope is MessageEnvelope<TestMessage> testEnvelope &&
+            testEnvelope.Payload.Content.Contains(warmupId)) {
+          warmupTcs.TrySetResult(true);
+        } else {
+          receivedTcs.TrySetResult(envelope.MessageId.ToString());
+        }
         await Task.CompletedTask;
       },
       new TransportDestination(subscriptionInfo.Topic, "sub-00-a")
     );
 
     try {
-      await Task.Delay(500);
+      // Give the processor time to establish its AMQP connection
+      // StartProcessingAsync returns immediately but the actual connection takes time
+      await Task.Delay(TimeSpan.FromSeconds(5));
 
+      // Warmup: Keep sending messages until one is received (confirms subscription is ready)
+      using var warmupCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+
+      while (!warmupTcs.Task.IsCompleted && !warmupCts.Token.IsCancellationRequested) {
+        var warmupEnvelope = _createTestEnvelopeWithContent(warmupId);
+        await transport.PublishAsync(warmupEnvelope, destination);
+
+        var received = await Task.WhenAny(
+          warmupTcs.Task,
+          Task.Delay(TimeSpan.FromSeconds(2), warmupCts.Token)
+        ) == warmupTcs.Task;
+
+        if (received) {
+          break;
+        }
+      }
+
+      if (!warmupTcs.Task.IsCompleted) {
+        Assert.Fail("Subscription warmup timed out after 30 seconds");
+      }
+
+      // Act: Publish the actual test message
       var envelope = _createTestEnvelope();
       await transport.PublishAsync(envelope, destination);
 
+      // Assert
       using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
       try {
         var receivedMessageId = await receivedTcs.Task.WaitAsync(timeoutCts.Token);
@@ -290,9 +388,13 @@ public sealed class InboxOutboxRoutingIntegrationTests(ServiceBusEmulatorFixture
   }
 
   private static MessageEnvelope<TestMessage> _createTestEnvelope() {
+    return _createTestEnvelopeWithContent("test-inbox-outbox-content");
+  }
+
+  private static MessageEnvelope<TestMessage> _createTestEnvelopeWithContent(string content) {
     return new MessageEnvelope<TestMessage> {
       MessageId = MessageId.New(),
-      Payload = new TestMessage("test-inbox-outbox-content"),
+      Payload = new TestMessage(content),
       Hops = [
         new MessageHop {
           Type = HopType.Current,
