@@ -141,6 +141,18 @@
     ./Run-Tests.ps1 -TestFilter "/*/Whizbang.Core.Tests/*/*"
     Runs all tests in the Whizbang.Core.Tests assembly
 
+.EXAMPLE
+    ./Run-Tests.ps1 -Tag AzureServiceBus
+    Runs only test projects tagged with "AzureServiceBus"
+
+.EXAMPLE
+    ./Run-Tests.ps1 -Tag Docker
+    Runs all test projects that require Docker (tagged with "Docker")
+
+.EXAMPLE
+    ./Run-Tests.ps1 -Tag Messaging -Mode AiIntegrations
+    Runs all messaging transport integration tests with AI output
+
 .NOTES
     TUnit TreeNode Filter Syntax:
     - Format: /Assembly/Namespace/ClassName/TestName
@@ -228,6 +240,24 @@ param(
     [string]$Configuration = "Debug",  # Build configuration (Debug or Release)
 
     [string]$ExcludeProjectFilter = "",  # Exclude projects matching this pattern (regex)
+
+    [ArgumentCompleter({
+        param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+        # Get all unique tags from test projects
+        $repoRoot = Split-Path -Parent $PSScriptRoot
+        $tags = @()
+        Get-ChildItem -Path "$repoRoot/tests", "$repoRoot/samples" -Recurse -Filter "*.csproj" -ErrorAction SilentlyContinue |
+            ForEach-Object {
+                $content = Get-Content $_.FullName -Raw -ErrorAction SilentlyContinue
+                if ($content -match '<WhizbangTestTags>([^<]+)</WhizbangTestTags>') {
+                    $tags += $matches[1] -split ';'
+                }
+            }
+        $tags | Sort-Object -Unique | Where-Object { $_ -like "*$wordToComplete*" } | ForEach-Object {
+            [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
+        }
+    })]
+    [string]$Tag = "",  # Filter by WhizbangTestTags (e.g., "AzureServiceBus", "Docker", "Messaging")
 
     # Legacy parameters (deprecated, use -Mode instead)
     [bool]$ExcludeIntegration,
@@ -389,6 +419,9 @@ try {
         if ($Coverage) {
             Write-Host "Coverage: Enabled (Cobertura XML output)" -ForegroundColor Yellow
         }
+        if ($Tag) {
+            Write-Host "Tag Filter: $Tag" -ForegroundColor Yellow
+        }
         Write-Host ""
     } else {
         Write-Host "[WHIZBANG TEST SUITE - AI MODE]" -ForegroundColor Cyan
@@ -421,6 +454,9 @@ try {
         }
         if ($Coverage) {
             Write-Host "Coverage: Enabled" -ForegroundColor Gray
+        }
+        if ($Tag) {
+            Write-Host "Tag Filter: $Tag" -ForegroundColor Gray
         }
     }
 
@@ -590,17 +626,118 @@ try {
         }
     }
 
-    # Pattern for identifying tests that require external infrastructure (Docker):
-    # - Integration tests: *Integration.Tests.dll or *IntegrationTests.dll
-    # - Infrastructure tests: *Postgres*.Tests.dll (require PostgreSQL via Testcontainers)
-    # Excludes AppHost projects which are Aspire hosts, not test projects
-    $integrationTestPattern = "Integration\.Tests\.dll$|IntegrationTests\.dll$|Postgres\.Tests\.dll$"
-    $excludePattern = "AppHost"
+    # Test type discovery using WhizbangTestType MSBuild property
+    # Projects set <WhizbangTestType>Unit</WhizbangTestType> or <WhizbangTestType>Integration</WhizbangTestType>
+    # This replaces regex pattern matching for more explicit control
+    $excludePattern = "AppHost|TestUtilities"
 
-    # Helper function to test if a DLL name is an integration test
+    # Cache for project test types (project path -> Unit|Integration)
+    $script:projectTestTypeCache = @{}
+
+    # Helper function to get WhizbangTestType from a .csproj file
+    function Get-ProjectTestType {
+        param([string]$CsprojPath)
+
+        # Check cache first
+        if ($script:projectTestTypeCache.ContainsKey($CsprojPath)) {
+            return $script:projectTestTypeCache[$CsprojPath]
+        }
+
+        $testType = $null
+        if (Test-Path $CsprojPath) {
+            $content = Get-Content $CsprojPath -Raw
+            if ($content -match '<WhizbangTestType>(\w+)</WhizbangTestType>') {
+                $testType = $matches[1]
+            }
+        }
+
+        $script:projectTestTypeCache[$CsprojPath] = $testType
+        return $testType
+    }
+
+    # Cache for project tags (project path -> array of tags)
+    $script:projectTagsCache = @{}
+
+    # Helper function to get WhizbangTestTags from a .csproj file
+    function Get-ProjectTags {
+        param([string]$CsprojPath)
+
+        # Check cache first
+        if ($script:projectTagsCache.ContainsKey($CsprojPath)) {
+            return $script:projectTagsCache[$CsprojPath]
+        }
+
+        $tags = @()
+        if (Test-Path $CsprojPath) {
+            $content = Get-Content $CsprojPath -Raw
+            if ($content -match '<WhizbangTestTags>([^<]+)</WhizbangTestTags>') {
+                $tags = $matches[1] -split ';' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne '' }
+            }
+        }
+
+        $script:projectTagsCache[$CsprojPath] = $tags
+        return $tags
+    }
+
+    # Helper function to test if a DLL has a specific tag
+    function Test-HasTag {
+        param(
+            [System.IO.FileInfo]$DllFile,
+            [string]$TagToMatch
+        )
+
+        $csprojPath = Get-CsprojForDll $DllFile
+        if (-not $csprojPath) { return $false }
+
+        $tags = Get-ProjectTags $csprojPath
+        return $tags -contains $TagToMatch
+    }
+
+    # Helper function to find the .csproj for a DLL
+    function Get-CsprojForDll {
+        param([System.IO.FileInfo]$DllFile)
+
+        $dllName = [System.IO.Path]::GetFileNameWithoutExtension($DllFile.Name)
+        $projectDir = $DllFile.DirectoryName -replace "[/\\]bin[/\\]$Configuration[/\\]net10\.0$", ""
+        $csprojPath = Join-Path $projectDir "$dllName.csproj"
+
+        if (Test-Path $csprojPath) {
+            return $csprojPath
+        }
+        return $null
+    }
+
+    # Helper function to test if a DLL is an integration test (based on WhizbangTestType property)
     function Test-IsIntegrationTest {
-        param([string]$DllName)
-        return ($DllName -match $integrationTestPattern) -and ($DllName -notmatch $excludePattern)
+        param([System.IO.FileInfo]$DllFile)
+
+        $csprojPath = Get-CsprojForDll $DllFile
+        if (-not $csprojPath) { return $false }
+
+        $testType = Get-ProjectTestType $csprojPath
+        return $testType -eq "Integration"
+    }
+
+    # Helper function to test if a DLL is a unit test (based on WhizbangTestType property)
+    function Test-IsUnitTest {
+        param([System.IO.FileInfo]$DllFile)
+
+        $csprojPath = Get-CsprojForDll $DllFile
+        if (-not $csprojPath) { return $false }
+
+        $testType = Get-ProjectTestType $csprojPath
+        return $testType -eq "Unit"
+    }
+
+    # Helper function to test if a DLL has a valid test type defined
+    function Test-HasTestType {
+        param([System.IO.FileInfo]$DllFile)
+
+        $csprojPath = Get-CsprojForDll $DllFile
+        if (-not $csprojPath) { return $false }
+
+        $testType = Get-ProjectTestType $csprojPath
+        return $null -ne $testType
     }
 
     # Helper function to ensure build exists for dynamic DLL discovery
@@ -637,7 +774,44 @@ try {
 
     # Use --test-modules with explicit DLL discovery for project filtering
     # This allows us to properly exclude AppHost projects which aren't test projects
-    if ($ProjectFilter) {
+    # Tag filtering applies to all discovery modes
+    if ($Tag) {
+        Ensure-BuildExists
+        # Find all test DLLs and filter by tag
+        $tagFilteredDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
+            Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
+            Where-Object { $_.Name -notmatch $excludePattern } |
+            Where-Object { -not $ExcludeProjectFilter -or $_.Name -notmatch $ExcludeProjectFilter } |
+            Where-Object { Test-IsPrimaryTestDll $_ } |
+            Where-Object { Test-HasTag $_ $Tag })
+
+        # Apply project filter if also specified
+        if ($ProjectFilter) {
+            $tagFilteredDlls = @($tagFilteredDlls | Where-Object { $_.Name -match $ProjectFilter })
+        }
+
+        # Apply test type filtering based on mode
+        if ($onlyIntegrationTests) {
+            $tagFilteredDlls = @($tagFilteredDlls | Where-Object { Test-IsIntegrationTest $_ })
+        } elseif (-not $includeIntegrationTests) {
+            $tagFilteredDlls = @($tagFilteredDlls | Where-Object { Test-IsUnitTest $_ })
+        } else {
+            $tagFilteredDlls = @($tagFilteredDlls | Where-Object { Test-IsUnitTest $_ -or Test-IsIntegrationTest $_ })
+        }
+
+        if ($tagFilteredDlls.Count -gt 0) {
+            $dllPaths = $tagFilteredDlls | ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) }
+            $testArgs += "--test-modules"
+            $testArgs += ($dllPaths -join ";")
+
+            if (-not $useAiOutput) {
+                Write-Host "Discovered $($tagFilteredDlls.Count) test projects with tag '$Tag'" -ForegroundColor Gray
+            }
+        } else {
+            Write-Warning "No test projects found with tag '$Tag'. Check that projects have <WhizbangTestTags>$Tag</WhizbangTestTags>."
+            exit 1
+        }
+    } elseif ($ProjectFilter) {
         Ensure-BuildExists
         # Find DLLs matching the filter, excluding AppHost and ensuring they're primary test DLLs
         $filteredDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*$ProjectFilter*.dll" -ErrorAction SilentlyContinue |
@@ -659,59 +833,55 @@ try {
             exit 1
         }
     } elseif ($onlyIntegrationTests) {
-        # Run ONLY integration tests
+        # Run ONLY integration tests (WhizbangTestType=Integration)
         Ensure-BuildExists
-        # Wrap in @() to ensure array even when empty (prevents null.Count error with StrictMode)
-        # Pattern: bin/{Configuration}/net10.0/ - works for standard .NET output paths
-        $integrationDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.dll" -ErrorAction SilentlyContinue |
+        # Filter by WhizbangTestType property in .csproj files
+        $integrationDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
-            Where-Object { Test-IsIntegrationTest $_.Name } |
+            Where-Object { Test-IsPrimaryTestDll $_ } |
+            Where-Object { Test-IsIntegrationTest $_ } |
             ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
 
         if ($integrationDlls.Count -gt 0) {
             $testArgs += "--test-modules"
-            # Use relative paths - dotnet test has issues with absolute paths containing semicolons
             $testArgs += ($integrationDlls -join ";")
 
             if (-not $useAiOutput) {
-                Write-Host "Discovered $($integrationDlls.Count) integration test projects" -ForegroundColor Gray
+                Write-Host "Discovered $($integrationDlls.Count) integration test projects (WhizbangTestType=Integration)" -ForegroundColor Gray
             }
         } else {
-            Write-Warning "No integration test DLLs found after build. Check that integration test projects exist."
+            Write-Warning "No integration test projects found. Check that projects have <WhizbangTestType>Integration</WhizbangTestType>."
             exit 1
         }
     } elseif (-not $includeIntegrationTests) {
-        # Exclude integration tests - find all *.Tests.dll and filter out integration tests
-        # This ensures all test projects are discovered while excluding slow integration tests
+        # Run only unit tests (WhizbangTestType=Unit)
         Ensure-BuildExists
-        # Wrap in @() to ensure array even when empty (prevents null.Count error with StrictMode)
-        # Pattern: bin/{Configuration}/net10.0/ - works for standard .NET output paths
-        $allTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
+        # Filter by WhizbangTestType property - only include Unit tests
+        $unitTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { Test-IsPrimaryTestDll $_ } |
-            Where-Object { -not (Test-IsIntegrationTest $_.Name) } |
+            Where-Object { Test-IsUnitTest $_ } |
             ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
 
-        if ($allTestDlls.Count -gt 0) {
+        if ($unitTestDlls.Count -gt 0) {
             $testArgs += "--test-modules"
-            # Use relative paths - dotnet test has issues with absolute paths containing semicolons
-            $testArgs += ($allTestDlls -join ";")
+            $testArgs += ($unitTestDlls -join ";")
 
             if (-not $useAiOutput) {
-                Write-Host "Discovered $($allTestDlls.Count) test projects (excluding integration tests)" -ForegroundColor Gray
+                Write-Host "Discovered $($unitTestDlls.Count) unit test projects (WhizbangTestType=Unit)" -ForegroundColor Gray
             }
         } else {
-            Write-Warning "No test DLLs found after build. Check that test projects exist."
+            Write-Warning "No unit test projects found. Check that projects have <WhizbangTestType>Unit</WhizbangTestType>."
             exit 1
         }
     } else {
-        # Include ALL test projects (including integration tests)
-        # Use explicit DLL discovery instead of --solution to avoid picking up library projects like Whizbang.Testing
+        # Include ALL test projects (Unit + Integration, excludes Benchmark)
         Ensure-BuildExists
-        # CRITICAL: Filter using Test-IsPrimaryTestDll to exclude copied DLLs from other projects' bin folders
+        # Filter to projects with WhizbangTestType of Unit or Integration (not Benchmark)
         $allTestDlls = @(Get-ChildItem -Path $repoRoot -Recurse -Filter "*.Tests.dll" -ErrorAction SilentlyContinue |
             Where-Object { $_.FullName -match "bin[/\\]$Configuration[/\\]net10\.0[/\\]" } |
             Where-Object { Test-IsPrimaryTestDll $_ } |
+            Where-Object { Test-IsUnitTest $_ -or Test-IsIntegrationTest $_ } |
             ForEach-Object { [System.IO.Path]::GetRelativePath($repoRoot, $_.FullName) })
 
         if ($allTestDlls.Count -gt 0) {
@@ -719,10 +889,10 @@ try {
             $testArgs += ($allTestDlls -join ";")
 
             if (-not $useAiOutput) {
-                Write-Host "Discovered $($allTestDlls.Count) test projects (including integration tests)" -ForegroundColor Gray
+                Write-Host "Discovered $($allTestDlls.Count) test projects (Unit + Integration)" -ForegroundColor Gray
             }
         } else {
-            Write-Warning "No test DLLs found after build. Check that test projects exist."
+            Write-Warning "No test projects found. Check that projects have <WhizbangTestType>Unit|Integration</WhizbangTestType>."
             exit 1
         }
     }

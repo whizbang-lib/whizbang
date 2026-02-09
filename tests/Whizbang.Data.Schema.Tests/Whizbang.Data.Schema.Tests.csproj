@@ -8,6 +8,8 @@
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <!-- Unit: Fast tests, no external infrastructure needed -->
+    <WhizbangTestType>Unit</WhizbangTestType>
 
     <!-- Emit generated files for inspection -->
     <EmitCompilerGeneratedFiles>true</EmitCompilerGeneratedFiles>

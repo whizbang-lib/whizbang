@@ -1,0 +1,264 @@
+using System.Diagnostics;
+using Azure.Messaging.ServiceBus;
+
+namespace Whizbang.Transports.AzureServiceBus.Tests.Containers;
+
+/// <summary>
+/// Manages Azure Service Bus Emulator for integration tests.
+/// Uses docker-compose to start both the emulator and required SQL Server instance.
+/// </summary>
+public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
+  private readonly int _port;
+  private bool _isInitialized;
+  private ServiceBusClient? _client;
+
+  /// <summary>
+  /// Creates a fixture with the default port (5672).
+  /// </summary>
+  public ServiceBusEmulatorFixture() : this(5672) {
+  }
+
+  /// <summary>
+  /// Creates a fixture with a custom port.
+  /// </summary>
+  public ServiceBusEmulatorFixture(int port) {
+    _port = port;
+  }
+
+  /// <summary>
+  /// Gets the Service Bus connection string for the emulator.
+  /// </summary>
+  public string ConnectionString =>
+    $"Endpoint=sb://localhost:{_port};SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE;UseDevelopmentEmulator=true;";
+
+  /// <summary>
+  /// Gets the ServiceBusClient for the emulator.
+  /// </summary>
+  public ServiceBusClient Client =>
+    _client ?? throw new InvalidOperationException("Call InitializeAsync() first.");
+
+  /// <summary>
+  /// Initializes the emulator by starting docker containers.
+  /// </summary>
+  public async Task InitializeAsync(CancellationToken cancellationToken = default) {
+    if (_isInitialized) {
+      return;
+    }
+
+    Console.WriteLine("[ServiceBusEmulator] Starting Azure Service Bus Emulator...");
+
+    // Generate docker-compose content
+    var dockerComposeContent = _generateDockerComposeContent();
+    var tempDockerComposeFile = Path.Combine(Path.GetTempPath(), $"docker-compose-sb-test-{Guid.NewGuid():N}.yml");
+    await File.WriteAllTextAsync(tempDockerComposeFile, dockerComposeContent, cancellationToken);
+
+    try {
+      // Stop any existing containers on this port
+      await _runDockerComposeAsync("down", tempDockerComposeFile, cancellationToken);
+
+      // Start containers
+      await _runDockerComposeAsync("up -d", tempDockerComposeFile, cancellationToken);
+
+      // Wait for emulator to be ready
+      Console.WriteLine("[ServiceBusEmulator] Waiting for emulator to be ready (up to 180 seconds)...");
+      var containerName = $"servicebus-emulator-test-{_port}";
+      var maxWaitSeconds = 180;
+      var pollIntervalSeconds = 5;
+      var elapsed = 0;
+
+      while (elapsed < maxWaitSeconds) {
+        var logs = await _getDockerLogsAsync(containerName, cancellationToken);
+        if (logs.Contains("Emulator Service is Successfully Up!")) {
+          Console.WriteLine($"[ServiceBusEmulator] Emulator ready after {elapsed} seconds");
+          break;
+        }
+
+        if (elapsed % 30 == 0 && elapsed > 0) {
+          Console.WriteLine($"[ServiceBusEmulator] Still waiting... ({elapsed}s elapsed)");
+        }
+
+        await Task.Delay(TimeSpan.FromSeconds(pollIntervalSeconds), cancellationToken);
+        elapsed += pollIntervalSeconds;
+      }
+
+      // Final verification
+      var finalLogs = await _getDockerLogsAsync(containerName, cancellationToken);
+      if (!finalLogs.Contains("Emulator Service is Successfully Up!")) {
+        throw new InvalidOperationException(
+          $"Service Bus Emulator failed to start within {maxWaitSeconds} seconds. Check logs:\n{finalLogs}"
+        );
+      }
+
+      // Create client and verify connectivity
+      _client = new ServiceBusClient(ConnectionString);
+
+      // Warmup: Send and receive a test message
+      await _warmupAsync(cancellationToken);
+
+      Console.WriteLine("[ServiceBusEmulator] ✅ Emulator is ready!");
+      _isInitialized = true;
+    } finally {
+      // Clean up temp file on failure
+      if (!_isInitialized && File.Exists(tempDockerComposeFile)) {
+        try {
+          await _runDockerComposeAsync("down", tempDockerComposeFile, cancellationToken);
+        } catch {
+          // Ignore cleanup errors
+        }
+        File.Delete(tempDockerComposeFile);
+      }
+    }
+  }
+
+  /// <summary>
+  /// Stops the emulator containers.
+  /// </summary>
+  public async ValueTask DisposeAsync() {
+    if (!_isInitialized) {
+      return;
+    }
+
+    Console.WriteLine("[ServiceBusEmulator] Stopping emulator...");
+
+    if (_client != null) {
+      await _client.DisposeAsync();
+    }
+
+    var tempDockerComposeFile = Path.Combine(Path.GetTempPath(), $"docker-compose-sb-test-{_port}.yml");
+    if (File.Exists(tempDockerComposeFile)) {
+      await _runDockerComposeAsync("down", tempDockerComposeFile);
+      File.Delete(tempDockerComposeFile);
+    }
+
+    Console.WriteLine("[ServiceBusEmulator] ✅ Emulator stopped");
+  }
+
+  private string _generateDockerComposeContent() {
+    // Uses the emulator's default built-in configuration which includes:
+    // - topic-00 with sub-00-a subscription
+    // - topic-01 with sub-01-a subscription
+    return $@"services:
+  servicebus-emulator:
+    container_name: servicebus-emulator-test-{_port}
+    image: mcr.microsoft.com/azure-messaging/servicebus-emulator:latest
+    ports:
+      - ""{_port}:5672""
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=ServiceBus!Pass
+      - SQL_SERVER=mssql
+    depends_on:
+      - mssql
+    mem_limit: 4g
+
+  mssql:
+    container_name: mssql-servicebus-test-{_port}
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    ports:
+      - ""{_port + 10000}:1433""
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=ServiceBus!Pass
+    mem_limit: 4g
+";
+  }
+
+  private async Task _warmupAsync(CancellationToken cancellationToken = default) {
+    if (_client == null) {
+      return;
+    }
+
+    Console.WriteLine("[ServiceBusEmulator] Warming up...");
+
+    // Warmup topic-00
+    var topicName = "topic-00";
+    var subscriptionName = "sub-00-a";
+
+    var sender = _client.CreateSender(topicName);
+    var receiver = _client.CreateReceiver(topicName, subscriptionName);
+
+    try {
+      var message = new ServiceBusMessage("{\"warmup\":true}") {
+        MessageId = Guid.NewGuid().ToString(),
+        ContentType = "application/json"
+      };
+
+      await sender.SendMessageAsync(message, cancellationToken);
+
+      // Wait for message with retries
+      ServiceBusReceivedMessage? received = null;
+      for (int attempt = 0; attempt < 20; attempt++) {
+        received = await receiver.ReceiveMessageAsync(TimeSpan.FromSeconds(5), cancellationToken);
+        if (received != null) {
+          await receiver.CompleteMessageAsync(received, cancellationToken);
+          break;
+        }
+
+        var delayMs = Math.Min(500 * (1 << attempt), 8000);
+        await Task.Delay(delayMs, cancellationToken);
+      }
+
+      if (received == null) {
+        throw new TimeoutException($"Warmup message to {topicName} never received - emulator may not be fully ready");
+      }
+
+      Console.WriteLine("[ServiceBusEmulator] ✓ Warmup complete");
+    } finally {
+      await sender.DisposeAsync();
+      await receiver.DisposeAsync();
+    }
+  }
+
+  private static async Task _runDockerComposeAsync(
+    string arguments,
+    string composeFile,
+    CancellationToken cancellationToken = default
+  ) {
+    var psi = new ProcessStartInfo {
+      FileName = "docker",
+      Arguments = $"compose -f \"{composeFile}\" {arguments}",
+      RedirectStandardOutput = true,
+      RedirectStandardError = true,
+      UseShellExecute = false,
+      CreateNoWindow = true
+    };
+
+    using var process = Process.Start(psi);
+    if (process == null) {
+      throw new InvalidOperationException("Failed to start docker compose process");
+    }
+
+    await process.WaitForExitAsync(cancellationToken);
+
+    if (process.ExitCode != 0) {
+      var error = await process.StandardError.ReadToEndAsync(cancellationToken);
+      throw new InvalidOperationException($"docker compose failed: {error}");
+    }
+  }
+
+  private static async Task<string> _getDockerLogsAsync(
+    string containerName,
+    CancellationToken cancellationToken = default
+  ) {
+    var psi = new ProcessStartInfo {
+      FileName = "docker",
+      Arguments = $"logs {containerName}",
+      RedirectStandardOutput = true,
+      RedirectStandardError = true,
+      UseShellExecute = false,
+      CreateNoWindow = true
+    };
+
+    using var process = Process.Start(psi);
+    if (process == null) {
+      return string.Empty;
+    }
+
+    await process.WaitForExitAsync(cancellationToken);
+
+    var stdout = await process.StandardOutput.ReadToEndAsync(cancellationToken);
+    var stderr = await process.StandardError.ReadToEndAsync(cancellationToken);
+
+    return stdout + stderr;
+  }
+}

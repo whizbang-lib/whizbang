@@ -6,6 +6,8 @@
     <IsTestProject>true</IsTestProject>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- Unit: Fast tests, no external infrastructure needed -->
+    <WhizbangTestType>Unit</WhizbangTestType>
   </PropertyGroup>
 
   <ItemGroup>

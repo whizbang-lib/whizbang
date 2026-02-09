@@ -3,6 +3,8 @@
   <PropertyGroup>
     <IsPackable>false</IsPackable>
     <OutputType>Exe</OutputType>
+    <!-- Benchmark: Performance tests, run separately via /benchmarks command -->
+    <WhizbangTestType>Benchmark</WhizbangTestType>
     <!-- Suppress CA rules that conflict with BenchmarkDotNet requirements -->
     <!-- CA1707: Benchmark method names use underscores for readability -->
     <!-- CA1822: Benchmark methods cannot be static (BenchmarkDotNet requirement) -->

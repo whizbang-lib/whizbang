@@ -27,9 +27,12 @@
   <PropertyGroup>
     <OutputType>Exe</OutputType>
     <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!-- Integration: Requires PostgreSQL via Testcontainers -->
+    <WhizbangTestType>Integration</WhizbangTestType>
     <!-- Suppress trimming warnings for test project using EF Core InMemory -->
     <NoWarn>$(NoWarn);IL2026;IL3050</NoWarn>
 

@@ -47,7 +47,8 @@ jobs:
         run: dotnet build --no-restore --configuration Release -maxcpucount:1
 
       - name: Run RabbitMQ Integration Tests
-        run: pwsh scripts/Run-Tests.ps1 -Mode Full -Coverage -Configuration Release -ProjectFilter "RabbitMQ.Integration"
+        # Uses WhizbangTestTags for precise project filtering
+        run: pwsh scripts/Run-Tests.ps1 -Mode IntegrationsOnly -Coverage -Configuration Release -Tag RabbitMQ
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 
