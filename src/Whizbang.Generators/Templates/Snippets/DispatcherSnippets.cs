@@ -14,8 +14,9 @@ namespace Whizbang.Generators.Templates.Snippets;
 /// Each #region contains a code snippet that gets extracted and has placeholders replaced.
 /// </summary>
 public class DispatcherSnippets {
-  // Placeholder property to make snippets compile
+  // Placeholder properties to make snippets compile
   protected IServiceProvider ServiceProvider => null!;
+  protected IServiceScopeFactory _scopeFactory => null!;
 
   /// <summary>
   /// Example method showing snippet structure for Send routing.
@@ -24,27 +25,30 @@ public class DispatcherSnippets {
   protected ReceptorInvoker<TResult>? SendRoutingExample<TResult>(object message, Type messageType) {
     #region SEND_ROUTING_SNIPPET
     if (messageType == typeof(__MESSAGE_TYPE__)) {
-      var receptor = ServiceProvider.GetService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
-      if (receptor == null) {
-        return null;
+      // Check if receptor is registered before returning invoker
+      // Use a temporary scope to check registration
+      using (var checkScope = _scopeFactory.CreateScope()) {
+        var checkReceptor = checkScope.ServiceProvider.GetService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
+        if (checkReceptor == null) {
+          return null;
+        }
       }
 
       [System.Diagnostics.DebuggerStepThrough]
-      ValueTask<TResult> InvokeReceptor(object msg) {
-        var typedMsg = (__MESSAGE_TYPE__)msg;
-        var task = receptor.HandleAsync(typedMsg);
-
-        // Fast path: Avoid async state machine for synchronously-completed tasks
-        if (task.IsCompletedSuccessfully) {
-          return new ValueTask<TResult>((TResult)(object)task.Result!);
-        }
-
-        // Slow path: Await asynchronously-completing tasks
-        return AwaitAndCast(task);
-
-        async ValueTask<TResult> AwaitAndCast(ValueTask<__RESPONSE_TYPE__> t) {
-          var result = await t;
+      async ValueTask<TResult> InvokeReceptor(object msg) {
+        // Create scope for each invocation to properly handle scoped services
+        var scope = _scopeFactory.CreateScope();
+        try {
+          var receptor = scope.ServiceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
+          var typedMsg = (__MESSAGE_TYPE__)msg;
+          var result = await receptor.HandleAsync(typedMsg);
           return (TResult)(object)result!;
+        } finally {
+          if (scope is IAsyncDisposable asyncDisposable) {
+            await asyncDisposable.DisposeAsync();
+          } else {
+            scope.Dispose();
+          }
         }
       }
 
@@ -62,13 +66,22 @@ public class DispatcherSnippets {
   protected ReceptorPublisher<TEvent> PublishRoutingExample<TEvent>(TEvent @event, Type eventType) {
     #region PUBLISH_ROUTING_SNIPPET
     if (eventType == typeof(__MESSAGE_TYPE__)) {
-      var receptors = ServiceProvider.GetServices<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, object>>();
-
       [System.Diagnostics.DebuggerStepThrough]
       async Task PublishToReceptors(TEvent evt) {
-        var typedEvt = (__MESSAGE_TYPE__)(object)evt!;
-        foreach (var receptor in receptors) {
-          await receptor.HandleAsync(typedEvt);
+        // Create scope for each invocation to properly handle scoped services
+        var scope = _scopeFactory.CreateScope();
+        try {
+          var receptors = scope.ServiceProvider.GetServices<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, object>>();
+          var typedEvt = (__MESSAGE_TYPE__)(object)evt!;
+          foreach (var receptor in receptors) {
+            await receptor.HandleAsync(typedEvt);
+          }
+        } finally {
+          if (scope is IAsyncDisposable asyncDisposable) {
+            await asyncDisposable.DisposeAsync();
+          } else {
+            scope.Dispose();
+          }
         }
       }
 
@@ -86,17 +99,26 @@ public class DispatcherSnippets {
   protected Func<object, Task>? UntypedPublishRoutingExample(Type eventType) {
     #region UNTYPED_PUBLISH_ROUTING_SNIPPET
     if (eventType == typeof(__MESSAGE_TYPE__)) {
-      var receptors = ServiceProvider.GetServices<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, object>>();
-      var voidReceptors = ServiceProvider.GetServices<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
-
       [System.Diagnostics.DebuggerStepThrough]
       async Task PublishToReceptorsUntyped(object evt) {
-        var typedEvt = (__MESSAGE_TYPE__)evt;
-        foreach (var receptor in receptors) {
-          await receptor.HandleAsync(typedEvt);
-        }
-        foreach (var voidReceptor in voidReceptors) {
-          await voidReceptor.HandleAsync(typedEvt);
+        // Create scope for each invocation to properly handle scoped services
+        var scope = _scopeFactory.CreateScope();
+        try {
+          var receptors = scope.ServiceProvider.GetServices<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, object>>();
+          var voidReceptors = scope.ServiceProvider.GetServices<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
+          var typedEvt = (__MESSAGE_TYPE__)evt;
+          foreach (var receptor in receptors) {
+            await receptor.HandleAsync(typedEvt);
+          }
+          foreach (var voidReceptor in voidReceptors) {
+            await voidReceptor.HandleAsync(typedEvt);
+          }
+        } finally {
+          if (scope is IAsyncDisposable asyncDisposable) {
+            await asyncDisposable.DisposeAsync();
+          } else {
+            scope.Dispose();
+          }
         }
       }
 
@@ -131,23 +153,30 @@ public class DispatcherSnippets {
   protected VoidReceptorInvoker? VoidSendRoutingExample(object message, Type messageType) {
     #region VOID_SEND_ROUTING_SNIPPET
     if (messageType == typeof(__MESSAGE_TYPE__)) {
-      var receptor = ServiceProvider.GetService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
-      if (receptor == null) {
-        return null;
+      // Check if receptor is registered before returning invoker
+      // Use a temporary scope to check registration
+      using (var checkScope = _scopeFactory.CreateScope()) {
+        var checkReceptor = checkScope.ServiceProvider.GetService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
+        if (checkReceptor == null) {
+          return null;
+        }
       }
 
       [System.Diagnostics.DebuggerStepThrough]
-      ValueTask InvokeReceptor(object msg) {
-        var typedMsg = (__MESSAGE_TYPE__)msg;
-        var task = receptor.HandleAsync(typedMsg);
-
-        // Fast path: Avoid async state machine for synchronously-completed tasks
-        if (task.IsCompletedSuccessfully) {
-          return ValueTask.CompletedTask;
+      async ValueTask InvokeReceptor(object msg) {
+        // Create scope for each invocation to properly handle scoped services
+        var scope = _scopeFactory.CreateScope();
+        try {
+          var receptor = scope.ServiceProvider.GetRequiredService<__RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
+          var typedMsg = (__MESSAGE_TYPE__)msg;
+          await receptor.HandleAsync(typedMsg);
+        } finally {
+          if (scope is IAsyncDisposable asyncDisposable) {
+            await asyncDisposable.DisposeAsync();
+          } else {
+            scope.Dispose();
+          }
         }
-
-        // Slow path: Await asynchronously-completing tasks
-        return task;
       }
 
       return InvokeReceptor;
@@ -164,13 +193,20 @@ public class DispatcherSnippets {
   protected SyncReceptorInvoker<TResult>? SyncSendRoutingExample<TResult>(object message, Type messageType) {
     #region SYNC_SEND_ROUTING_SNIPPET
     if (messageType == typeof(__MESSAGE_TYPE__)) {
-      var receptor = ServiceProvider.GetService<__SYNC_RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
-      if (receptor == null) {
-        return null;
+      // Check if receptor is registered before returning invoker
+      // Use a temporary scope to check registration
+      using (var checkScope = _scopeFactory.CreateScope()) {
+        var checkReceptor = checkScope.ServiceProvider.GetService<__SYNC_RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
+        if (checkReceptor == null) {
+          return null;
+        }
       }
 
       [System.Diagnostics.DebuggerStepThrough]
       TResult InvokeReceptor(object msg) {
+        // Create scope for each invocation to properly handle scoped services
+        using var scope = _scopeFactory.CreateScope();
+        var receptor = scope.ServiceProvider.GetRequiredService<__SYNC_RECEPTOR_INTERFACE__<__MESSAGE_TYPE__, __RESPONSE_TYPE__>>();
         var typedMsg = (__MESSAGE_TYPE__)msg;
         return (TResult)(object)receptor.Handle(typedMsg)!;
       }
@@ -189,13 +225,20 @@ public class DispatcherSnippets {
   protected VoidSyncReceptorInvoker? VoidSyncSendRoutingExample(object message, Type messageType) {
     #region VOID_SYNC_SEND_ROUTING_SNIPPET
     if (messageType == typeof(__MESSAGE_TYPE__)) {
-      var receptor = ServiceProvider.GetService<__SYNC_RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
-      if (receptor == null) {
-        return null;
+      // Check if receptor is registered before returning invoker
+      // Use a temporary scope to check registration
+      using (var checkScope = _scopeFactory.CreateScope()) {
+        var checkReceptor = checkScope.ServiceProvider.GetService<__SYNC_RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
+        if (checkReceptor == null) {
+          return null;
+        }
       }
 
       [System.Diagnostics.DebuggerStepThrough]
       void InvokeReceptor(object msg) {
+        // Create scope for each invocation to properly handle scoped services
+        using var scope = _scopeFactory.CreateScope();
+        var receptor = scope.ServiceProvider.GetRequiredService<__SYNC_RECEPTOR_INTERFACE__<__MESSAGE_TYPE__>>();
         var typedMsg = (__MESSAGE_TYPE__)msg;
         receptor.Handle(typedMsg);
       }

@@ -28,6 +28,8 @@ namespace Whizbang.Core.Generated;
 [ExcludeFromCodeCoverage]
 [DebuggerNonUserCode]
 internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
+  private readonly IServiceScopeFactory _scopeFactory;
+
   public GeneratedDispatcher(
     IServiceProvider serviceProvider,
     IServiceInstanceProvider instanceProvider,
@@ -39,6 +41,7 @@ internal sealed class GeneratedDispatcher : global::Whizbang.Core.Dispatcher {
     ILifecycleInvoker? lifecycleInvoker = null,
     IEnvelopeSerializer? envelopeSerializer = null
   ) : base(serviceProvider, instanceProvider, traceStore, jsonOptions, topicRegistry, topicRoutingStrategy, aggregateIdExtractor, lifecycleInvoker, envelopeSerializer) {
+    _scopeFactory = serviceProvider.GetRequiredService<IServiceScopeFactory>();
   }
 
   /// <summary>
