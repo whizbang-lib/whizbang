@@ -13,6 +13,11 @@ on:
           - major      # Force major version bump (x.0.0)
           - minor      # Force minor version bump (0.x.0)
           - patch      # Force patch version bump (0.0.x)
+          - manual     # Use manually specified version
+      manual_version:
+        description: 'Manual version (only used when release_type is "manual", e.g., 1.2.3 or 1.2.3-beta.1)'
+        required: false
+        type: string
 
 env:
   DOTNET_NOLOGO: true
@@ -49,33 +54,48 @@ jobs:
       - name: Calculate Final Version
         id: version
         run: |
-          MAJOR=${{ steps.gitversion.outputs.major }}
-          MINOR=${{ steps.gitversion.outputs.minor }}
-          PATCH=${{ steps.gitversion.outputs.patch }}
-          PRERELEASE="${{ steps.gitversion.outputs.preReleaseTag }}"
-
-          case "${{ inputs.release_type }}" in
-            major)
-              MAJOR=$((MAJOR + 1))
-              MINOR=0
-              PATCH=0
-              ;;
-            minor)
-              MINOR=$((MINOR + 1))
-              PATCH=0
-              ;;
-            patch)
-              PATCH=$((PATCH + 1))
-              ;;
-            auto)
-              # Use GitVersion's calculated version as-is
-              ;;
-          esac
-
-          if [ -n "$PRERELEASE" ]; then
-            SEMVER="${MAJOR}.${MINOR}.${PATCH}-${PRERELEASE}"
+          if [ "${{ inputs.release_type }}" = "manual" ]; then
+            # Use manually specified version
+            MANUAL_VER="${{ inputs.manual_version }}"
+            if [ -z "$MANUAL_VER" ]; then
+              echo "::error::Manual version is required when release_type is 'manual'"
+              exit 1
+            fi
+            # Validate version format (basic semver check)
+            if ! echo "$MANUAL_VER" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$'; then
+              echo "::error::Invalid version format. Expected: x.y.z or x.y.z-prerelease"
+              exit 1
+            fi
+            SEMVER="$MANUAL_VER"
           else
-            SEMVER="${MAJOR}.${MINOR}.${PATCH}"
+            MAJOR=${{ steps.gitversion.outputs.major }}
+            MINOR=${{ steps.gitversion.outputs.minor }}
+            PATCH=${{ steps.gitversion.outputs.patch }}
+            PRERELEASE="${{ steps.gitversion.outputs.preReleaseTag }}"
+
+            case "${{ inputs.release_type }}" in
+              major)
+                MAJOR=$((MAJOR + 1))
+                MINOR=0
+                PATCH=0
+                ;;
+              minor)
+                MINOR=$((MINOR + 1))
+                PATCH=0
+                ;;
+              patch)
+                PATCH=$((PATCH + 1))
+                ;;
+              auto)
+                # Use GitVersion's calculated version as-is
+                ;;
+            esac
+
+            if [ -n "$PRERELEASE" ]; then
+              SEMVER="${MAJOR}.${MINOR}.${PATCH}-${PRERELEASE}"
+            else
+              SEMVER="${MAJOR}.${MINOR}.${PATCH}"
+            fi
           fi
 
           echo "semver=$SEMVER" >> $GITHUB_OUTPUT
