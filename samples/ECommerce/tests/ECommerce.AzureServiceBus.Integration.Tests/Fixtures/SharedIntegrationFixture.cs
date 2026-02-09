@@ -598,10 +598,11 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
       .FirstOrDefault();
 
     // Create TaskCompletionSources for all 4 workers
-    var inventoryPublisherTcs = new TaskCompletionSource<bool>();
-    var bffPublisherTcs = new TaskCompletionSource<bool>();
-    var inventoryPerspectiveTcs = new TaskCompletionSource<bool>();
-    var bffPerspectiveTcs = new TaskCompletionSource<bool>();
+    // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlocks
+    var inventoryPublisherTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var bffPublisherTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var inventoryPerspectiveTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var bffPerspectiveTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
     // Wire up one-time idle callbacks
     WorkProcessingIdleHandler? inventoryPublisherHandler = null;

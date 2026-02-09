@@ -187,7 +187,7 @@ public class OutboxLifecycleTests {
       InitialStock = 10
     };
 
-    var completionSource = new TaskCompletionSource<bool>();
+    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 
     var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
@@ -283,10 +283,10 @@ public class OutboxLifecycleTests {
     var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();
 
     // Create receptors for all 4 stages
-    var preInlineCompletion = new TaskCompletionSource<bool>();
-    var preAsyncCompletion = new TaskCompletionSource<bool>();
-    var postAsyncCompletion = new TaskCompletionSource<bool>();
-    var postInlineCompletion = new TaskCompletionSource<bool>();
+    var preInlineCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var preAsyncCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var postAsyncCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var postInlineCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
     var preInlineReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(preInlineCompletion);
     var preAsyncReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(preAsyncCompletion);
@@ -351,7 +351,7 @@ public class OutboxLifecycleTests {
       }
     };
 
-    var completionSource = new TaskCompletionSource<bool>();
+    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 
     var registry = fixture.InventoryHost.Services.GetRequiredService<ILifecycleReceptorRegistry>();

@@ -7,6 +7,7 @@ using Whizbang.Core.Routing;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Testing.Transport;
 using Whizbang.Transports.AzureServiceBus.Tests.Containers;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
@@ -132,13 +133,10 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
     // Drain any existing messages
     await _drainMessagesAsync("topic-00", "sub-00-a");
 
-    // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlock when Dispose() waits for handler
-    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    // Use MessageIdAwaiter harness (internally uses RunContinuationsAsynchronously)
+    var awaiter = new MessageIdAwaiter();
     var subscription = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
-        receivedTcs.TrySetResult(envelope.MessageId.ToString());
-        await Task.CompletedTask;
-      },
+      awaiter.Handler,
       new TransportDestination("topic-00", "sub-00-a")
     );
 
@@ -149,14 +147,9 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
       var envelope = _createTestEnvelope();
       await transport.PublishAsync(envelope, new TransportDestination("topic-00"));
 
-      // Assert
-      using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-      try {
-        var receivedMessageId = await receivedTcs.Task.WaitAsync(timeoutCts.Token);
-        await Assert.That(receivedMessageId).IsNotNull();
-      } catch (OperationCanceledException) {
-        Assert.Fail("Message should arrive at topic-00 within timeout");
-      }
+      // Assert - harness handles timeout with proper exception
+      var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(30));
+      await Assert.That(receivedMessageId).IsNotNull();
     } finally {
       subscription.Dispose();
       await transport.DisposeAsync();
@@ -171,18 +164,11 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
     // Drain existing messages
     await _drainMessagesAsync("topic-00", "sub-00-a");
 
-    var receivedCount = 0;
-    var expectedCount = 3;
-    // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlock when Dispose() waits for handler
-    var allReceivedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    // Use CountingMessageAwaiter harness (internally uses RunContinuationsAsynchronously)
+    var awaiter = new CountingMessageAwaiter(expectedCount: 3);
 
     var subscription = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
-        if (Interlocked.Increment(ref receivedCount) >= expectedCount) {
-          allReceivedTcs.TrySetResult(true);
-        }
-        await Task.CompletedTask;
-      },
+      awaiter.Handler,
       new TransportDestination("topic-00", "sub-00-a")
     );
 
@@ -190,19 +176,14 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
       await Task.Delay(500);
 
       // Publish multiple messages
-      for (int i = 0; i < expectedCount; i++) {
+      for (int i = 0; i < awaiter.ExpectedCount; i++) {
         var envelope = _createTestEnvelope();
         await transport.PublishAsync(envelope, new TransportDestination("topic-00"));
       }
 
-      // Assert
-      using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-      try {
-        await allReceivedTcs.Task.WaitAsync(timeoutCts.Token);
-        await Assert.That(receivedCount).IsEqualTo(expectedCount);
-      } catch (OperationCanceledException) {
-        Assert.Fail($"Expected {expectedCount} messages but only received {receivedCount}");
-      }
+      // Assert - harness handles timeout with diagnostic message
+      await awaiter.WaitAsync(TimeSpan.FromSeconds(30));
+      await Assert.That(awaiter.ReceivedCount).IsEqualTo(awaiter.ExpectedCount);
     } finally {
       subscription.Dispose();
       await transport.DisposeAsync();

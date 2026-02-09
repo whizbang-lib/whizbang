@@ -58,7 +58,8 @@ public static class LifecycleReceptorTestExtensions {
     // the receptor in each host's registry. See ServiceBusIntegrationFixtureSanityTests.cs for example.
 
     // Create completion source for signaling
-    var completionSource = new TaskCompletionSource<bool>();
+    // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlocks
+    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
     // Create receptor that will signal completion
     var receptor = new PerspectiveCompletionReceptor<TEvent>(completionSource, perspectiveName);
@@ -124,7 +125,8 @@ public static class LifecycleReceptorTestExtensions {
     }
 
     // Create completion sources for each event type
-    var completionSources = eventTypes.Select(_ => new TaskCompletionSource<bool>()).ToArray();
+    // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlocks
+    var completionSources = eventTypes.Select(_ => new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously)).ToArray();
     var receptors = new List<object>();
     var registry = host.Services.GetRequiredService<ILifecycleReceptorRegistry>();
 

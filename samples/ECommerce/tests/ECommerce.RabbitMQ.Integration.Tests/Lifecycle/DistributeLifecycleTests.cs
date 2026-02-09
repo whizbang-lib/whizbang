@@ -208,7 +208,7 @@ public class DistributeLifecycleTests {
       }
     };
 
-    var completionSource = new TaskCompletionSource<bool>();
+    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     // NOTE: Distribute stages fire for PUBLISHED EVENTS (in outbox), not commands
     var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 
@@ -336,11 +336,11 @@ public class DistributeLifecycleTests {
 
     // Create receptors for all 5 stages
     // NOTE: Distribute stages fire for PUBLISHED EVENTS (in outbox), not commands
-    var preInlineCompletion = new TaskCompletionSource<bool>();
-    var preAsyncCompletion = new TaskCompletionSource<bool>();
-    var distributeAsyncCompletion = new TaskCompletionSource<bool>();
-    var postAsyncCompletion = new TaskCompletionSource<bool>();
-    var postInlineCompletion = new TaskCompletionSource<bool>();
+    var preInlineCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var preAsyncCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var distributeAsyncCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var postAsyncCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var postInlineCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
     var preInlineReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(preInlineCompletion);
     var preAsyncReceptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(preAsyncCompletion);
@@ -411,7 +411,7 @@ public class DistributeLifecycleTests {
       }
     };
 
-    var completionSource = new TaskCompletionSource<bool>();
+    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     // NOTE: Distribute stages fire for PUBLISHED EVENTS (in outbox), not commands
     var receptor = new GenericLifecycleCompletionReceptor<ProductCreatedEvent>(completionSource);
 

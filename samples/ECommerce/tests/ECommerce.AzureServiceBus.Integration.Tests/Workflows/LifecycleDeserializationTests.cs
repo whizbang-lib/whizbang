@@ -59,7 +59,8 @@ public class LifecycleDeserializationTests {
     };
 
     // Register a receptor at PostDistributeInline stage to capture the deserialized event
-    var completionSource = new TaskCompletionSource<ProductCreatedEvent>();
+    // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlocks
+    var completionSource = new TaskCompletionSource<ProductCreatedEvent>(TaskCreationOptions.RunContinuationsAsynchronously);
     var receptor = new DistributeStageTestReceptor(completionSource);
 
     var registry = fixture.InventoryHost!.Services.GetRequiredService<ILifecycleReceptorRegistry>();
@@ -116,11 +117,12 @@ public class LifecycleDeserializationTests {
 
     // Use ConcurrentDictionary to deduplicate by ProductId (Service Bus has at-least-once delivery)
     var receivedEvents = new System.Collections.Concurrent.ConcurrentDictionary<Guid, ProductCreatedEvent>();
-    var completionSource = new TaskCompletionSource<bool>();
+    // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlocks
+    var completionSource = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
     var expectedCount = commands.Length;
     var expectedProductIds = commands.Select(c => c.ProductId.Value).ToHashSet();  // Extract Guid from ProductId value object
 
-    var receptor = new DistributeStageTestReceptor(new TaskCompletionSource<ProductCreatedEvent>());
+    var receptor = new DistributeStageTestReceptor(new TaskCompletionSource<ProductCreatedEvent>(TaskCreationOptions.RunContinuationsAsynchronously));
 
     // Create a custom receptor that counts events ONLY for products sent in THIS test
     // This prevents counting stale events from previous tests or concurrent processes
