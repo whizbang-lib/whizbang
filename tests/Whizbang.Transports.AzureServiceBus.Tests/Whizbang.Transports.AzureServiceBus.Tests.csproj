@@ -27,6 +27,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <Content Include="Config.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="../../src/Whizbang.Core/Whizbang.Core.csproj" />
     <ProjectReference Include="../../src/Whizbang.Transports.AzureServiceBus/Whizbang.Transports.AzureServiceBus.csproj" />
     <ProjectReference Include="../../src/Whizbang.Testing/Whizbang.Testing.csproj" />

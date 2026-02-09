@@ -9,6 +9,8 @@ namespace Whizbang.Transports.AzureServiceBus.Tests.Containers;
 /// </summary>
 public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
   private readonly int _port;
+  private readonly string _configFilePath;
+  private readonly string _dockerComposeFile;
   private bool _isInitialized;
   private ServiceBusClient? _client;
 
@@ -23,6 +25,8 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
   /// </summary>
   public ServiceBusEmulatorFixture(int port) {
     _port = port;
+    _configFilePath = Path.Combine(AppContext.BaseDirectory, "Config.json");
+    _dockerComposeFile = Path.Combine(Path.GetTempPath(), $"docker-compose-sb-test-{_port}.yml");
   }
 
   /// <summary>
@@ -45,19 +49,26 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
       return;
     }
 
-    Console.WriteLine("[ServiceBusEmulator] Starting Azure Service Bus Emulator...");
+    // Verify config file exists
+    if (!File.Exists(_configFilePath)) {
+      throw new FileNotFoundException(
+        $"Config.json not found at: {_configFilePath}. Ensure the file is copied to output directory.",
+        _configFilePath
+      );
+    }
 
-    // Generate docker-compose content
+    Console.WriteLine($"[ServiceBusEmulator] Starting Azure Service Bus Emulator with config: {_configFilePath}");
+
+    // Generate docker-compose content (use consistent file path)
     var dockerComposeContent = _generateDockerComposeContent();
-    var tempDockerComposeFile = Path.Combine(Path.GetTempPath(), $"docker-compose-sb-test-{Guid.NewGuid():N}.yml");
-    await File.WriteAllTextAsync(tempDockerComposeFile, dockerComposeContent, cancellationToken);
+    await File.WriteAllTextAsync(_dockerComposeFile, dockerComposeContent, cancellationToken);
 
     try {
       // Stop any existing containers on this port
-      await _runDockerComposeAsync("down", tempDockerComposeFile, cancellationToken);
+      await _runDockerComposeAsync("down", _dockerComposeFile, cancellationToken);
 
       // Start containers
-      await _runDockerComposeAsync("up -d", tempDockerComposeFile, cancellationToken);
+      await _runDockerComposeAsync("up -d", _dockerComposeFile, cancellationToken);
 
       // Wait for emulator to be ready
       Console.WriteLine("[ServiceBusEmulator] Waiting for emulator to be ready (up to 180 seconds)...");
@@ -98,14 +109,16 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
       Console.WriteLine("[ServiceBusEmulator] ✅ Emulator is ready!");
       _isInitialized = true;
     } finally {
-      // Clean up temp file on failure
-      if (!_isInitialized && File.Exists(tempDockerComposeFile)) {
+      // Clean up on failure (keep compose file for dispose)
+      if (!_isInitialized) {
         try {
-          await _runDockerComposeAsync("down", tempDockerComposeFile, cancellationToken);
+          await _runDockerComposeAsync("down", _dockerComposeFile, cancellationToken);
         } catch {
           // Ignore cleanup errors
         }
-        File.Delete(tempDockerComposeFile);
+        if (File.Exists(_dockerComposeFile)) {
+          File.Delete(_dockerComposeFile);
+        }
       }
     }
   }
@@ -124,17 +137,16 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
       await _client.DisposeAsync();
     }
 
-    var tempDockerComposeFile = Path.Combine(Path.GetTempPath(), $"docker-compose-sb-test-{_port}.yml");
-    if (File.Exists(tempDockerComposeFile)) {
-      await _runDockerComposeAsync("down", tempDockerComposeFile);
-      File.Delete(tempDockerComposeFile);
+    if (File.Exists(_dockerComposeFile)) {
+      await _runDockerComposeAsync("down", _dockerComposeFile);
+      File.Delete(_dockerComposeFile);
     }
 
     Console.WriteLine("[ServiceBusEmulator] ✅ Emulator stopped");
   }
 
   private string _generateDockerComposeContent() {
-    // Uses the emulator's default built-in configuration which includes:
+    // Mounts Config.json which defines:
     // - topic-00 with sub-00-a subscription
     // - topic-01 with sub-01-a subscription
     return $@"services:
@@ -147,6 +159,9 @@ public sealed class ServiceBusEmulatorFixture : IAsyncDisposable {
       - ACCEPT_EULA=Y
       - MSSQL_SA_PASSWORD=ServiceBus!Pass
       - SQL_SERVER=mssql
+      - CONFIG_PATH=/ServiceBus_Emulator/ConfigFiles/Config.json
+    volumes:
+      - ""{_configFilePath}:/ServiceBus_Emulator/ConfigFiles/Config.json:ro""
     depends_on:
       - mssql
     mem_limit: 4g
