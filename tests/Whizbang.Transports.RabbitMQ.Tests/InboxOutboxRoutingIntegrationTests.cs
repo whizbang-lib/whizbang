@@ -9,6 +9,7 @@ using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Testing.Containers;
+using Whizbang.Testing.Transport;
 using Whizbang.Transports.RabbitMQ;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
@@ -112,12 +113,9 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(destination.RoutingKey).IsEqualTo("ordercreated");
 
     // Set up consumer to verify message arrival at domain exchange
-    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var awaiter = new MessageIdAwaiter();
     var subscription = await _transport!.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
-        receivedTcs.TrySetResult(envelope.MessageId.ToString());
-        await Task.CompletedTask;
-      },
+      awaiter.Handler,
       new TransportDestination(destination.Address, $"test-queue-{Guid.NewGuid():N}"),
       cancellationToken
     );
@@ -130,13 +128,10 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
       await _transport.PublishAsync(envelope, destination, cancellationToken: cancellationToken);
 
       // Assert - Message should arrive at "orders" exchange
-      using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-      timeoutCts.CancelAfter(5000);
-
       try {
-        var receivedMessageId = await receivedTcs.Task.WaitAsync(timeoutCts.Token);
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
         await Assert.That(receivedMessageId).IsNotNull();
-      } catch (OperationCanceledException) {
+      } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at exchange '{destination.Address}' within timeout");
       }
     } finally {
@@ -164,12 +159,9 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(destination.Address).IsEqualTo("custom-orders");
 
     // Set up consumer
-    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var awaiter = new MessageIdAwaiter();
     var subscription = await _transport!.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
-        receivedTcs.TrySetResult(envelope.MessageId.ToString());
-        await Task.CompletedTask;
-      },
+      awaiter.Handler,
       new TransportDestination(destination.Address, $"test-queue-{Guid.NewGuid():N}"),
       cancellationToken
     );
@@ -180,13 +172,10 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
       var envelope = _createTestEnvelope();
       await _transport.PublishAsync(envelope, destination, cancellationToken: cancellationToken);
 
-      using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-      timeoutCts.CancelAfter(5000);
-
       try {
-        var receivedMessageId = await receivedTcs.Task.WaitAsync(timeoutCts.Token);
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
         await Assert.That(receivedMessageId).IsNotNull();
-      } catch (OperationCanceledException) {
+      } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at custom exchange '{destination.Address}' within timeout");
       }
     } finally {
@@ -219,12 +208,9 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(destination.Metadata is not null).IsTrue();
 
     // Set up consumer on shared exchange with routing key
-    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var awaiter = new MessageIdAwaiter();
     var subscription = await _transport!.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
-        receivedTcs.TrySetResult(envelope.MessageId.ToString());
-        await Task.CompletedTask;
-      },
+      awaiter.Handler,
       new TransportDestination(destination.Address, $"test-queue-{Guid.NewGuid():N}"),
       cancellationToken
     );
@@ -235,13 +221,10 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
       var envelope = _createTestEnvelope();
       await _transport.PublishAsync(envelope, destination, cancellationToken: cancellationToken);
 
-      using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-      timeoutCts.CancelAfter(5000);
-
       try {
-        var receivedMessageId = await receivedTcs.Task.WaitAsync(timeoutCts.Token);
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
         await Assert.That(receivedMessageId).IsNotNull();
-      } catch (OperationCanceledException) {
+      } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at shared exchange '{destination.Address}' within timeout");
       }
     } finally {
@@ -268,12 +251,9 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(destination.Address).IsEqualTo("whizbang.events");
 
     // Set up consumer
-    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var awaiter = new MessageIdAwaiter();
     var subscription = await _transport!.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
-        receivedTcs.TrySetResult(envelope.MessageId.ToString());
-        await Task.CompletedTask;
-      },
+      awaiter.Handler,
       new TransportDestination(destination.Address, $"test-queue-{Guid.NewGuid():N}"),
       cancellationToken
     );
@@ -284,13 +264,10 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
       var envelope = _createTestEnvelope();
       await _transport.PublishAsync(envelope, destination, cancellationToken: cancellationToken);
 
-      using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-      timeoutCts.CancelAfter(5000);
-
       try {
-        var receivedMessageId = await receivedTcs.Task.WaitAsync(timeoutCts.Token);
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
         await Assert.That(receivedMessageId).IsNotNull();
-      } catch (OperationCanceledException) {
+      } catch (TimeoutException) {
         Assert.Fail("Message should arrive at default shared exchange within timeout");
       }
     } finally {
@@ -322,12 +299,9 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(subscription.FilterExpression).IsNull(); // No filter for domain topics
 
     // Set up consumer on domain inbox
-    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var awaiter = new MessageIdAwaiter();
     var transportSubscription = await _transport!.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
-        receivedTcs.TrySetResult(envelope.MessageId.ToString());
-        await Task.CompletedTask;
-      },
+      awaiter.Handler,
       new TransportDestination(subscription.Topic, $"test-queue-{Guid.NewGuid():N}"),
       cancellationToken
     );
@@ -343,13 +317,10 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
         cancellationToken: cancellationToken
       );
 
-      using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-      timeoutCts.CancelAfter(5000);
-
       try {
-        var receivedMessageId = await receivedTcs.Task.WaitAsync(timeoutCts.Token);
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
         await Assert.That(receivedMessageId).IsNotNull();
-      } catch (OperationCanceledException) {
+      } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at domain inbox '{subscription.Topic}' within timeout");
       }
     } finally {
@@ -375,12 +346,9 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(subscription.Topic).IsEqualTo("orders.in");
 
     // Set up consumer
-    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var awaiter = new MessageIdAwaiter();
     var transportSubscription = await _transport!.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
-        receivedTcs.TrySetResult(envelope.MessageId.ToString());
-        await Task.CompletedTask;
-      },
+      awaiter.Handler,
       new TransportDestination(subscription.Topic, $"test-queue-{Guid.NewGuid():N}"),
       cancellationToken
     );
@@ -395,13 +363,10 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
         cancellationToken: cancellationToken
       );
 
-      using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-      timeoutCts.CancelAfter(5000);
-
       try {
-        var receivedMessageId = await receivedTcs.Task.WaitAsync(timeoutCts.Token);
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
         await Assert.That(receivedMessageId).IsNotNull();
-      } catch (OperationCanceledException) {
+      } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at custom inbox '{subscription.Topic}' within timeout");
       }
     } finally {
@@ -434,12 +399,9 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(subscription.Metadata is not null).IsTrue();
 
     // Set up consumer on shared inbox
-    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var awaiter = new MessageIdAwaiter();
     var transportSubscription = await _transport!.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
-        receivedTcs.TrySetResult(envelope.MessageId.ToString());
-        await Task.CompletedTask;
-      },
+      awaiter.Handler,
       new TransportDestination(subscription.Topic, $"test-queue-{Guid.NewGuid():N}"),
       cancellationToken
     );
@@ -454,13 +416,10 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
         cancellationToken: cancellationToken
       );
 
-      using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-      timeoutCts.CancelAfter(5000);
-
       try {
-        var receivedMessageId = await receivedTcs.Task.WaitAsync(timeoutCts.Token);
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
         await Assert.That(receivedMessageId).IsNotNull();
-      } catch (OperationCanceledException) {
+      } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at shared inbox '{subscription.Topic}' within timeout");
       }
     } finally {
@@ -487,12 +446,9 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(subscription.Topic).IsEqualTo("whizbang.inbox");
 
     // Set up consumer
-    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var awaiter = new MessageIdAwaiter();
     var transportSubscription = await _transport!.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
-        receivedTcs.TrySetResult(envelope.MessageId.ToString());
-        await Task.CompletedTask;
-      },
+      awaiter.Handler,
       new TransportDestination(subscription.Topic, $"test-queue-{Guid.NewGuid():N}"),
       cancellationToken
     );
@@ -507,13 +463,10 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
         cancellationToken: cancellationToken
       );
 
-      using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-      timeoutCts.CancelAfter(5000);
-
       try {
-        var receivedMessageId = await receivedTcs.Task.WaitAsync(timeoutCts.Token);
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
         await Assert.That(receivedMessageId).IsNotNull();
-      } catch (OperationCanceledException) {
+      } catch (TimeoutException) {
         Assert.Fail("Message should arrive at default shared inbox within timeout");
       }
     } finally {
@@ -543,12 +496,9 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     );
 
     // Set up consumer using inbox strategy (subscribing to domain topic)
-    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var awaiter = new MessageIdAwaiter();
     var transportSubscription = await _transport!.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
-        receivedTcs.TrySetResult(envelope.MessageId.ToString());
-        await Task.CompletedTask;
-      },
+      awaiter.Handler,
       new TransportDestination(destination.Address, $"test-queue-{Guid.NewGuid():N}"),
       cancellationToken
     );
@@ -560,13 +510,10 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
       var envelope = _createTestEnvelope();
       await _transport.PublishAsync(envelope, destination, cancellationToken: cancellationToken);
 
-      using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-      timeoutCts.CancelAfter(5000);
-
       try {
-        var receivedMessageId = await receivedTcs.Task.WaitAsync(timeoutCts.Token);
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
         await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString());
-      } catch (OperationCanceledException) {
+      } catch (TimeoutException) {
         Assert.Fail("End-to-end domain routing should work within timeout");
       }
     } finally {
@@ -601,12 +548,9 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(destination.Address).IsEqualTo(subscription.Topic);
 
     // Set up consumer
-    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var awaiter = new MessageIdAwaiter();
     var transportSubscription = await _transport!.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
-        receivedTcs.TrySetResult(envelope.MessageId.ToString());
-        await Task.CompletedTask;
-      },
+      awaiter.Handler,
       new TransportDestination(subscription.Topic, $"test-queue-{Guid.NewGuid():N}"),
       cancellationToken
     );
@@ -617,13 +561,10 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
       var envelope = _createTestEnvelope();
       await _transport.PublishAsync(envelope, destination, cancellationToken: cancellationToken);
 
-      using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-      timeoutCts.CancelAfter(5000);
-
       try {
-        var receivedMessageId = await receivedTcs.Task.WaitAsync(timeoutCts.Token);
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
         await Assert.That(receivedMessageId).IsEqualTo(envelope.MessageId.ToString());
-      } catch (OperationCanceledException) {
+      } catch (TimeoutException) {
         Assert.Fail("End-to-end shared topic routing should work within timeout");
       }
     } finally {

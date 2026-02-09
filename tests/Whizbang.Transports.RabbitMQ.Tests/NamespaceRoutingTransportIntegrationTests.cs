@@ -9,6 +9,7 @@ using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
 using Whizbang.Testing.Containers;
+using Whizbang.Testing.Transport;
 using Whizbang.Transports.RabbitMQ;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
@@ -107,12 +108,9 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     await Assert.That(topic).IsEqualTo("orders");
 
     // Set up consumer to verify message arrival
-    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var awaiter = new MessageIdAwaiter();
     var subscription = await _transport!.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
-        receivedTcs.TrySetResult(envelope.MessageId.ToString());
-        await Task.CompletedTask;
-      },
+      awaiter.Handler,
       new TransportDestination(topic, $"test-queue-{Guid.NewGuid():N}"),
       cancellationToken
     );
@@ -126,13 +124,10 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
       await _transport.PublishAsync(envelope, new TransportDestination(topic), cancellationToken: cancellationToken);
 
       // Assert - Message should arrive at "orders" exchange
-      using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-      timeoutCts.CancelAfter(5000);
-
       try {
-        var receivedMessageId = await receivedTcs.Task.WaitAsync(timeoutCts.Token);
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
         await Assert.That(receivedMessageId).IsNotNull();
-      } catch (OperationCanceledException) {
+      } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at exchange '{topic}' within timeout");
       }
     } finally {
@@ -156,12 +151,9 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     await Assert.That(topic).IsEqualTo("order");
 
     // Set up consumer
-    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var awaiter = new MessageIdAwaiter();
     var subscription = await _transport!.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
-        receivedTcs.TrySetResult(envelope.MessageId.ToString());
-        await Task.CompletedTask;
-      },
+      awaiter.Handler,
       new TransportDestination(topic, $"test-queue-{Guid.NewGuid():N}"),
       cancellationToken
     );
@@ -175,13 +167,10 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
       await _transport.PublishAsync(envelope, new TransportDestination(topic), cancellationToken: cancellationToken);
 
       // Assert - Message should arrive at "order" exchange
-      using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-      timeoutCts.CancelAfter(5000);
-
       try {
-        var receivedMessageId = await receivedTcs.Task.WaitAsync(timeoutCts.Token);
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
         await Assert.That(receivedMessageId).IsNotNull();
-      } catch (OperationCanceledException) {
+      } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at exchange '{topic}' within timeout");
       }
     } finally {
@@ -208,12 +197,9 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     await Assert.That(topic).IsEqualTo("orders-01");
 
     // Set up consumer
-    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var awaiter = new MessageIdAwaiter();
     var subscription = await _transport!.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
-        receivedTcs.TrySetResult(envelope.MessageId.ToString());
-        await Task.CompletedTask;
-      },
+      awaiter.Handler,
       new TransportDestination(topic, $"test-queue-{Guid.NewGuid():N}"),
       cancellationToken
     );
@@ -227,13 +213,10 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
       await _transport.PublishAsync(envelope, new TransportDestination(topic), cancellationToken: cancellationToken);
 
       // Assert - Message should arrive at "orders-01" exchange
-      using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-      timeoutCts.CancelAfter(5000);
-
       try {
-        var receivedMessageId = await receivedTcs.Task.WaitAsync(timeoutCts.Token);
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
         await Assert.That(receivedMessageId).IsNotNull();
-      } catch (OperationCanceledException) {
+      } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at exchange '{topic}' within timeout");
       }
     } finally {
@@ -259,12 +242,9 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     await Assert.That(topic).IsEqualTo("custom-topic-ordercreated");
 
     // Set up consumer
-    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var awaiter = new MessageIdAwaiter();
     var subscription = await _transport!.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
-        receivedTcs.TrySetResult(envelope.MessageId.ToString());
-        await Task.CompletedTask;
-      },
+      awaiter.Handler,
       new TransportDestination(topic, $"test-queue-{Guid.NewGuid():N}"),
       cancellationToken
     );
@@ -278,13 +258,10 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
       await _transport.PublishAsync(envelope, new TransportDestination(topic), cancellationToken: cancellationToken);
 
       // Assert - Message should arrive at custom exchange
-      using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-      timeoutCts.CancelAfter(5000);
-
       try {
-        var receivedMessageId = await receivedTcs.Task.WaitAsync(timeoutCts.Token);
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
         await Assert.That(receivedMessageId).IsNotNull();
-      } catch (OperationCanceledException) {
+      } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at exchange '{topic}' within timeout");
       }
     } finally {
@@ -373,12 +350,9 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     await Assert.That(topic).IsEqualTo("order");
 
     // Set up consumer
-    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var awaiter = new MessageIdAwaiter();
     var subscription = await _transport!.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
-        receivedTcs.TrySetResult(envelope.MessageId.ToString());
-        await Task.CompletedTask;
-      },
+      awaiter.Handler,
       new TransportDestination(topic, $"test-queue-{Guid.NewGuid():N}"),
       cancellationToken
     );
@@ -392,13 +366,10 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
       await _transport.PublishAsync(envelope, new TransportDestination(topic), cancellationToken: cancellationToken);
 
       // Assert
-      using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
-      timeoutCts.CancelAfter(5000);
-
       try {
-        var receivedMessageId = await receivedTcs.Task.WaitAsync(timeoutCts.Token);
+        var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
         await Assert.That(receivedMessageId).IsNotNull();
-      } catch (OperationCanceledException) {
+      } catch (TimeoutException) {
         Assert.Fail($"Message should arrive at exchange '{topic}' within timeout");
       }
     } finally {
