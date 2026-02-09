@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
     - name: Setup .NET
       uses: actions/setup-dotnet@baa11fbfe1d6520db94683bd5c7a3818018e4309 # v5.1.0 # v4.3.1
@@ -47,6 +47,11 @@ jobs:
           "SoftwareExtravaganza.Whizbang.SignalR"
           "SoftwareExtravaganza.Whizbang.Transports.AzureServiceBus"
           "SoftwareExtravaganza.Whizbang.Transports.RabbitMQ"
+          "SoftwareExtravaganza.Whizbang.Transports.Mutations"
+          "SoftwareExtravaganza.Whizbang.Transports.FastEndpoints"
+          "SoftwareExtravaganza.Whizbang.Transports.FastEndpoints.Generators"
+          "SoftwareExtravaganza.Whizbang.Transports.HotChocolate"
+          "SoftwareExtravaganza.Whizbang.Transports.HotChocolate.Generators"
           "SoftwareExtravaganza.Whizbang.Hosting.Azure.ServiceBus"
           "SoftwareExtravaganza.Whizbang.Hosting.RabbitMQ"
           "SoftwareExtravaganza.Whizbang.Testing"

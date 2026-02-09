@@ -335,18 +335,18 @@ public class SecurityIntegrationTests {
         SecurityPrincipalId.Group("managers"),
         SecurityPrincipalId.Group("finance-team")
       ],
-      Extensions = new Dictionary<string, string?> {
-        ["department"] = "Engineering",
-        ["costCenter"] = "CC-123"
-      }
+      Extensions = [
+        new ScopeExtension("department", "Engineering"),
+        new ScopeExtension("costCenter", "CC-123")
+      ]
     };
 
-    // Act & Assert - Indexer access
-    await Assert.That(scope["TenantId"]).IsEqualTo("tenant-1");
-    await Assert.That(scope["UserId"]).IsEqualTo("user-1");
-    await Assert.That(scope["department"]).IsEqualTo("Engineering");
-    await Assert.That(scope["costCenter"]).IsEqualTo("CC-123");
-    await Assert.That(scope["unknown"]).IsNull();
+    // Act & Assert - GetValue access
+    await Assert.That(scope.GetValue("TenantId")).IsEqualTo("tenant-1");
+    await Assert.That(scope.GetValue("UserId")).IsEqualTo("user-1");
+    await Assert.That(scope.GetValue("department")).IsEqualTo("Engineering");
+    await Assert.That(scope.GetValue("costCenter")).IsEqualTo("CC-123");
+    await Assert.That(scope.GetValue("unknown")).IsNull();
 
     // Principal checks
     await Assert.That(scope.AllowedPrincipals!.Count).IsEqualTo(3);

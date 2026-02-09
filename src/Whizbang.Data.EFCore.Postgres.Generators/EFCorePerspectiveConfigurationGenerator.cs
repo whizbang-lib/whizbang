@@ -1,10 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.Collections.Immutable;
 using System.Globalization;
 using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Shared.Models;
 using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Data.EFCore.Postgres.Generators;
@@ -201,9 +203,173 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     var modelType = perspectiveForInterface.TypeArguments[0];
     var tableName = "wh_per_" + _toSnakeCase(modelType.Name);
 
+    // Extract physical fields from model type
+    var physicalFields = _extractPhysicalFields(modelType as INamedTypeSymbol);
+
     return new PerspectiveInfo(
         ModelTypeName: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-        TableName: tableName
+        TableName: tableName,
+        PhysicalFields: physicalFields
+    );
+  }
+
+  private const string PHYSICAL_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.PhysicalFieldAttribute";
+  private const string VECTOR_FIELD_ATTRIBUTE = "Whizbang.Core.Perspectives.VectorFieldAttribute";
+
+  /// <summary>
+  /// Extracts physical field information from a model type.
+  /// </summary>
+  private static ImmutableArray<PhysicalFieldInfo> _extractPhysicalFields(INamedTypeSymbol? modelType) {
+    if (modelType is null) {
+      return ImmutableArray<PhysicalFieldInfo>.Empty;
+    }
+
+    var physicalFields = new List<PhysicalFieldInfo>();
+    var properties = modelType.GetMembers()
+        .OfType<IPropertySymbol>()
+        .Where(p => !p.IsStatic);
+
+    foreach (var property in properties) {
+      var physicalFieldAttr = property.GetAttributes()
+          .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == PHYSICAL_FIELD_ATTRIBUTE);
+
+      var vectorFieldAttr = property.GetAttributes()
+          .FirstOrDefault(a => a.AttributeClass?.ToDisplayString() == VECTOR_FIELD_ATTRIBUTE);
+
+      if (physicalFieldAttr is not null) {
+        var info = _extractPhysicalFieldInfo(property, physicalFieldAttr);
+        if (info is not null) {
+          physicalFields.Add(info);
+        }
+      } else if (vectorFieldAttr is not null) {
+        var info = _extractVectorFieldInfo(property, vectorFieldAttr);
+        if (info is not null) {
+          physicalFields.Add(info);
+        }
+      }
+    }
+
+    return physicalFields.ToImmutableArray();
+  }
+
+  /// <summary>
+  /// Extracts PhysicalFieldInfo from a [PhysicalField] attribute.
+  /// </summary>
+  private static PhysicalFieldInfo? _extractPhysicalFieldInfo(IPropertySymbol property, AttributeData attribute) {
+    var propertyName = property.Name;
+    var typeName = property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+    // Extract named arguments
+    bool isIndexed = false;
+    bool isUnique = false;
+    int? maxLength = null;
+    string? columnName = null;
+
+    foreach (var namedArg in attribute.NamedArguments) {
+      switch (namedArg.Key) {
+        case "Indexed":
+          isIndexed = namedArg.Value.Value is true;
+          break;
+        case "Unique":
+          isUnique = namedArg.Value.Value is true;
+          break;
+        case "MaxLength":
+          // Handle various numeric types - -1 or 0 means "not set" (unlimited TEXT)
+          if (namedArg.Value.Kind == TypedConstantKind.Primitive && namedArg.Value.Value != null) {
+            var maxLengthVal = System.Convert.ToInt32(namedArg.Value.Value, CultureInfo.InvariantCulture);
+            if (maxLengthVal > 0) {
+              maxLength = maxLengthVal;
+            }
+          }
+          break;
+        case "ColumnName":
+          columnName = namedArg.Value.Value as string;
+          break;
+      }
+    }
+
+    // Default column name is snake_case of property name
+    var finalColumnName = columnName ?? _toSnakeCase(propertyName);
+
+    return new PhysicalFieldInfo(
+        PropertyName: propertyName,
+        ColumnName: finalColumnName,
+        TypeName: typeName,
+        IsIndexed: isIndexed,
+        IsUnique: isUnique,
+        MaxLength: maxLength,
+        IsVector: false,
+        VectorDimensions: null,
+        VectorDistanceMetric: null,
+        VectorIndexType: null,
+        VectorIndexLists: null
+    );
+  }
+
+  /// <summary>
+  /// Extracts PhysicalFieldInfo from a [VectorField] attribute.
+  /// </summary>
+  private static PhysicalFieldInfo? _extractVectorFieldInfo(IPropertySymbol property, AttributeData attribute) {
+    var propertyName = property.Name;
+    var typeName = property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
+
+    // Extract constructor argument (dimensions)
+    int? dimensions = null;
+    if (attribute.ConstructorArguments.Length > 0) {
+      dimensions = attribute.ConstructorArguments[0].Value as int?;
+    }
+
+    // Extract named arguments
+    var distanceMetric = GeneratorVectorDistanceMetric.Cosine; // Default
+    var indexType = GeneratorVectorIndexType.IVFFlat; // Default
+    var isIndexed = true; // Vectors are indexed by default
+    string? columnName = null;
+    int? indexLists = null;
+
+    foreach (var namedArg in attribute.NamedArguments) {
+      switch (namedArg.Key) {
+        case "DistanceMetric":
+          if (namedArg.Value.Value is int metricValue) {
+            distanceMetric = (GeneratorVectorDistanceMetric)metricValue;
+          }
+          break;
+        case "IndexType":
+          if (namedArg.Value.Value is int indexTypeValue) {
+            indexType = (GeneratorVectorIndexType)indexTypeValue;
+          }
+          break;
+        case "Indexed":
+          isIndexed = namedArg.Value.Value is true;
+          break;
+        case "ColumnName":
+          columnName = namedArg.Value.Value as string;
+          break;
+        case "IndexLists":
+          indexLists = namedArg.Value.Value as int?;
+          break;
+      }
+    }
+
+    // Default column name is snake_case of property name
+    var finalColumnName = columnName ?? _toSnakeCase(propertyName);
+
+    // If not indexed, set index type to None
+    if (!isIndexed) {
+      indexType = GeneratorVectorIndexType.None;
+    }
+
+    return new PhysicalFieldInfo(
+        PropertyName: propertyName,
+        ColumnName: finalColumnName,
+        TypeName: typeName,
+        IsIndexed: isIndexed,
+        IsUnique: false, // Vectors are never unique
+        MaxLength: null, // N/A for vectors
+        IsVector: true,
+        VectorDimensions: dimensions,
+        VectorDistanceMetric: distanceMetric,
+        VectorIndexType: indexType,
+        VectorIndexLists: indexLists
     );
   }
 
@@ -231,6 +397,140 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     }
 
     return sb.ToString();
+  }
+
+  /// <summary>
+  /// Generates EF Core shadow property configurations for physical fields.
+  /// </summary>
+  private static string _generatePhysicalFieldConfigurations(
+      ImmutableArray<PhysicalFieldInfo> physicalFields,
+      string tableName) {
+    if (physicalFields.IsEmpty) {
+      return string.Empty;
+    }
+
+    var sb = new StringBuilder();
+
+    foreach (var field in physicalFields) {
+      // Generate shadow property configuration
+      var columnType = _getEFCoreColumnType(field);
+
+      sb.AppendLine($"      // Physical field: {field.PropertyName}");
+      sb.AppendLine($"      entity.Property<{_getCSharpType(field)}>(\"{field.ColumnName}\")");
+      sb.AppendLine($"        .HasColumnName(\"{field.ColumnName}\")");
+      sb.AppendLine($"        .HasColumnType(\"{columnType}\");");
+      sb.AppendLine();
+
+      // Generate index if configured
+      if (field.IsIndexed && !field.IsVector) {
+        var indexName = $"ix_{tableName}_{field.ColumnName}";
+        if (field.IsUnique) {
+          sb.AppendLine($"      entity.HasIndex(\"{field.ColumnName}\")");
+          sb.AppendLine($"        .HasDatabaseName(\"{indexName}\")");
+          sb.AppendLine($"        .IsUnique();");
+        } else {
+          sb.AppendLine($"      entity.HasIndex(\"{field.ColumnName}\")");
+          sb.AppendLine($"        .HasDatabaseName(\"{indexName}\");");
+        }
+        sb.AppendLine();
+      }
+
+      // Generate vector index if configured
+      if (field.IsVector && field.IsIndexed && field.VectorIndexType != GeneratorVectorIndexType.None) {
+        var indexName = $"ix_{tableName}_{field.ColumnName}_vec";
+        var indexMethod = field.VectorIndexType == GeneratorVectorIndexType.HNSW ? "hnsw" : "ivfflat";
+        var opClass = _getVectorOperatorClass(field.VectorDistanceMetric);
+
+        sb.AppendLine($"      entity.HasIndex(\"{field.ColumnName}\")");
+        sb.AppendLine($"        .HasDatabaseName(\"{indexName}\")");
+        sb.AppendLine($"        .HasMethod(\"{indexMethod}\")");
+        sb.AppendLine($"        .HasOperators(\"{opClass}\");");
+        sb.AppendLine();
+      }
+    }
+
+    return sb.ToString();
+  }
+
+  /// <summary>
+  /// Gets the EF Core column type for a physical field.
+  /// </summary>
+  private static string _getEFCoreColumnType(PhysicalFieldInfo field) {
+    if (field.IsVector && field.VectorDimensions.HasValue) {
+      return $"vector({field.VectorDimensions.Value})";
+    }
+
+    // Normalize the type name
+    var typeName = field.TypeName
+        .Replace("global::", "")
+        .TrimEnd('?');
+
+    return typeName switch {
+      "System.String" or "string" => field.MaxLength.HasValue
+          ? $"varchar({field.MaxLength.Value})"
+          : "text",
+      "System.Int32" or "int" => "integer",
+      "System.Int64" or "long" => "bigint",
+      "System.Int16" or "short" => "smallint",
+      "System.Decimal" or "decimal" => "decimal",
+      "System.Double" or "double" => "double precision",
+      "System.Single" or "float" => "real",
+      "System.Boolean" or "bool" => "boolean",
+      "System.Guid" => "uuid",
+      "System.DateTime" => "timestamp",
+      "System.DateTimeOffset" => "timestamptz",
+      "System.DateOnly" => "date",
+      "System.TimeOnly" => "time",
+      _ => "text" // Default fallback
+    };
+  }
+
+  /// <summary>
+  /// Gets the C# type for a physical field shadow property.
+  /// </summary>
+  private static string _getCSharpType(PhysicalFieldInfo field) {
+    if (field.IsVector) {
+      return "Pgvector.Vector";
+    }
+
+    // Return the normalized type
+    var typeName = field.TypeName
+        .Replace("global::", "");
+
+    // Handle nullable types
+    if (typeName.EndsWith("?", StringComparison.Ordinal)) {
+      return typeName;
+    }
+
+    // Non-nullable value types that could be null in database
+    return typeName switch {
+      "System.Int32" or "int" => "int?",
+      "System.Int64" or "long" => "long?",
+      "System.Int16" or "short" => "short?",
+      "System.Decimal" or "decimal" => "decimal?",
+      "System.Double" or "double" => "double?",
+      "System.Single" or "float" => "float?",
+      "System.Boolean" or "bool" => "bool?",
+      "System.Guid" => "System.Guid?",
+      "System.DateTime" => "System.DateTime?",
+      "System.DateTimeOffset" => "System.DateTimeOffset?",
+      "System.DateOnly" => "System.DateOnly?",
+      "System.TimeOnly" => "System.TimeOnly?",
+      "System.String" or "string" => "string?",
+      _ => $"{typeName}?"
+    };
+  }
+
+  /// <summary>
+  /// Gets the pgvector operator class for a distance metric.
+  /// </summary>
+  private static string _getVectorOperatorClass(GeneratorVectorDistanceMetric? metric) {
+    return metric switch {
+      GeneratorVectorDistanceMetric.L2 => "vector_l2_ops",
+      GeneratorVectorDistanceMetric.InnerProduct => "vector_ip_ops",
+      GeneratorVectorDistanceMetric.Cosine => "vector_cosine_ops",
+      _ => "vector_cosine_ops" // Default to cosine
+    };
   }
 
   /// <summary>
@@ -312,10 +612,15 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
         // Replace placeholders
         // Use provided schema, or default to "public" if not specified
         var effectiveSchema = schema ?? "public";
+
+        // Generate physical field configurations
+        var physicalFieldConfigs = _generatePhysicalFieldConfigurations(perspective.PhysicalFields, perspective.TableName);
+
         var config = snippet
             .Replace("__MODEL_TYPE__", perspective.ModelTypeName)
             .Replace("__TABLE_NAME__", perspective.TableName)
-            .Replace("__SCHEMA__", effectiveSchema);
+            .Replace("__SCHEMA__", effectiveSchema)
+            .Replace("__PHYSICAL_FIELD_CONFIGS__", physicalFieldConfigs);
 
         perspectiveConfigs.AppendLine(TemplateUtilities.IndentCode(config, "  "));
         perspectiveConfigs.AppendLine();

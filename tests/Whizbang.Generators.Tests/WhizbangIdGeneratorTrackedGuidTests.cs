@@ -4,13 +4,15 @@ using Microsoft.CodeAnalysis;
 namespace Whizbang.Generators.Tests;
 
 /// <summary>
-/// Tests for WhizbangIdGenerator TrackedGuid integration.
-/// Ensures generated IDs use TrackedGuid backing and implement IWhizbangId.
+/// Tests for WhizbangIdGenerator Guid storage.
+/// Ensures generated IDs use Guid backing for EF Core ComplexProperty compatibility
+/// and implement IWhizbangId.
 /// </summary>
 [Category("SourceGenerators")]
 public class WhizbangIdGeneratorTrackedGuidTests {
   /// <summary>
-  /// Test that generated ID uses TrackedGuid backing field.
+  /// Test that generated ID uses TrackedGuid backing field for metadata tracking.
+  /// EF Core sees only the Guid Value property.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles()]
@@ -32,9 +34,10 @@ public class WhizbangIdGeneratorTrackedGuidTests {
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductId.g.cs");
     await Assert.That(generatedSource).IsNotNull();
 
-    // Should use TrackedGuid backing field instead of Guid
+    // Should use TrackedGuid backing field for metadata tracking
     await Assert.That(generatedSource!).Contains("TrackedGuid _tracked");
-    await Assert.That(generatedSource).DoesNotContain("Guid _value");
+    // EF Core sees only the Guid Value property
+    await Assert.That(generatedSource).Contains("public Guid Value { get => _tracked.Value; init => _tracked = TrackedGuid.FromExternal(value); }");
   }
 
   /// <summary>
@@ -93,7 +96,7 @@ public class WhizbangIdGeneratorTrackedGuidTests {
   }
 
   /// <summary>
-  /// Test that generated ID has IsTimeOrdered property.
+  /// Test that generated ID has IsTimeOrdered property delegating to TrackedGuid.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles()]
@@ -115,13 +118,13 @@ public class WhizbangIdGeneratorTrackedGuidTests {
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductId.g.cs");
     await Assert.That(generatedSource).IsNotNull();
 
-    // Should have IsTimeOrdered property that delegates to TrackedGuid
-    await Assert.That(generatedSource!).Contains("bool IsTimeOrdered");
-    await Assert.That(generatedSource).Contains("_tracked.IsTimeOrdered");
+    // Should have IsTimeOrdered delegating to _tracked
+    await Assert.That(generatedSource!).Contains("IsTimeOrdered => _tracked.IsTimeOrdered");
   }
 
   /// <summary>
-  /// Test that generated ID has SubMillisecondPrecision property.
+  /// Test that generated ID has SubMillisecondPrecision property that delegates to TrackedGuid.
+  /// Fresh IDs via New() return true, deserialized IDs return false.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles()]
@@ -143,13 +146,14 @@ public class WhizbangIdGeneratorTrackedGuidTests {
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductId.g.cs");
     await Assert.That(generatedSource).IsNotNull();
 
-    // Should have SubMillisecondPrecision property that delegates to TrackedGuid
-    await Assert.That(generatedSource!).Contains("bool SubMillisecondPrecision");
-    await Assert.That(generatedSource).Contains("_tracked.SubMillisecondPrecision");
+    // Should have SubMillisecondPrecision delegating to _tracked
+    await Assert.That(generatedSource!).Contains("SubMillisecondPrecision => _tracked.SubMillisecondPrecision");
+    // Also has public convenience method delegating to _tracked
+    await Assert.That(generatedSource).Contains("GetSubMillisecondPrecision() => _tracked.SubMillisecondPrecision");
   }
 
   /// <summary>
-  /// Test that generated ID has Timestamp property.
+  /// Test that generated ID has Timestamp property delegating to TrackedGuid.
   /// </summary>
   [Test]
   [RequiresAssemblyFiles()]
@@ -171,9 +175,9 @@ public class WhizbangIdGeneratorTrackedGuidTests {
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductId.g.cs");
     await Assert.That(generatedSource).IsNotNull();
 
-    // Should have Timestamp property that delegates to TrackedGuid
-    await Assert.That(generatedSource!).Contains("DateTimeOffset Timestamp");
-    await Assert.That(generatedSource).Contains("_tracked.Timestamp");
+    // Should have Timestamp delegating to _tracked
+    await Assert.That(generatedSource!).Contains("DateTimeOffset");
+    await Assert.That(generatedSource).Contains("Timestamp => _tracked.Timestamp");
   }
 
   /// <summary>
@@ -199,9 +203,9 @@ public class WhizbangIdGeneratorTrackedGuidTests {
     var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "ProductId.g.cs");
     await Assert.That(generatedSource).IsNotNull();
 
-    // Should have ToGuid method
+    // Should have ToGuid method that returns _tracked.Value
     await Assert.That(generatedSource!).Contains("Guid ToGuid()");
-    await Assert.That(generatedSource).Contains("_tracked.Value");
+    await Assert.That(generatedSource).Contains("ToGuid() => _tracked.Value");
   }
 
   /// <summary>

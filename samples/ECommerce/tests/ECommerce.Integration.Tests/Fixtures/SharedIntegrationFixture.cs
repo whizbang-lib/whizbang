@@ -51,8 +51,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
     // Create SQL Server container with increased memory for Service Bus emulator
     // The Service Bus emulator requires SQL Server and can run out of memory on ARM64
     // 6GB is required for SQL Server 2022 on ARM64 to handle the Service Bus emulator workload
-    _mssqlContainer = new MsSqlBuilder()
-      .WithImage("mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04")
+    _mssqlContainer = new MsSqlBuilder("mcr.microsoft.com/mssql/server:2022-CU14-ubuntu-22.04")
       .WithNetwork(_network)
       .WithNetworkAliases("database-container")  // Network alias for Service Bus emulator to find SQL Server
       .WithCreateParameterModifier(x => x.HostConfig.Memory = 6L * 1024 * 1024 * 1024)  // 6GB memory limit for ARM64
@@ -60,8 +59,7 @@ public sealed class SharedIntegrationFixture : IAsyncDisposable {
 
     // Configure topics and subscriptions using ServiceBusBuilder's WithConfig API
     var configPath = Path.Combine(AppContext.BaseDirectory, "servicebus-config.json");
-    _serviceBusContainer = new ServiceBusBuilder()
-      .WithImage("mcr.microsoft.com/azure-messaging/servicebus-emulator:latest")
+    _serviceBusContainer = new ServiceBusBuilder("mcr.microsoft.com/azure-messaging/servicebus-emulator:latest")
       .WithAcceptLicenseAgreement(true)
       .WithConfig(configPath)  // Use Testcontainers API instead of generic WithBindMount
       .WithMsSqlContainer(_network, _mssqlContainer, "database-container")  // Use our SQL Server container with increased memory

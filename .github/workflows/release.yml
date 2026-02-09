@@ -9,6 +9,20 @@ on:
   # Keep manual trigger for dry runs
   workflow_dispatch:
     inputs:
+      version:
+        description: 'Exact version to release (e.g., 1.2.3 or 1.2.3-beta.1). Leave empty for auto-calculation.'
+        required: false
+        type: string
+      release_type:
+        description: 'Release type (ignored if version is specified)'
+        required: true
+        default: 'auto'
+        type: choice
+        options:
+          - auto       # Use GitVersion calculated version
+          - major      # Force major version bump (x.0.0)
+          - minor      # Force minor version bump (0.x.0)
+          - patch      # Force patch version bump (0.0.x)
       dry_run:
         description: 'Dry run (calculate version only, no tag or release)'
         required: false
@@ -19,9 +33,10 @@ env:
   DOTNET_NOLOGO: true
   DOTNET_CLI_TELEMETRY_OPTOUT: true
 
+# Top-level permissions for the workflow
 permissions:
-  contents: write
-  id-token: write
+  contents: write   # For committing version changes and pushing tags
+  id-token: write   # For OIDC trusted publishing (inherited by reusable workflows)
 
 jobs:
   # Only run if this is a merged release PR or a manual dry run
@@ -66,7 +81,15 @@ jobs:
     permissions:
       contents: read
     outputs:
-      semver: ${{ steps.gitversion.outputs.semVer }}
+      semver: ${{ steps.final_version.outputs.semver }}
+      major: ${{ steps.final_version.outputs.major }}
+      minor: ${{ steps.final_version.outputs.minor }}
+      patch: ${{ steps.final_version.outputs.patch }}
+      prerelease: ${{ steps.final_version.outputs.prerelease }}
+      fullsemver: ${{ steps.final_version.outputs.fullsemver }}
+      informationalversion: ${{ steps.gitversion.outputs.informationalVersion }}
+      branchname: ${{ steps.gitversion.outputs.branchName }}
+      sha: ${{ steps.gitversion.outputs.sha }}
 
     steps:
       - name: Checkout
@@ -79,12 +102,78 @@ jobs:
         with:
           versionSpec: '6.0.x'
 
-      - name: Determine Version
+      - name: Determine Base Version
         id: gitversion
         uses: gittools/actions/gitversion/execute@26a89e5dd4fa9ba66a853e04706ba52755ca4057 # v3.1.1
         with:
           useConfigFile: true
           configFilePath: GitVersion.yml
+
+      - name: Calculate Final Version
+        id: final_version
+        run: |
+          # Check if explicit version was provided
+          EXPLICIT_VERSION="${{ inputs.version }}"
+
+          if [ -n "$EXPLICIT_VERSION" ]; then
+            # Use explicit version - parse it into components
+            echo "Using explicit version: $EXPLICIT_VERSION"
+
+            # Parse version (handles both 1.2.3 and 1.2.3-prerelease formats)
+            if [[ "$EXPLICIT_VERSION" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-(.+))?$ ]]; then
+              MAJOR="${BASH_REMATCH[1]}"
+              MINOR="${BASH_REMATCH[2]}"
+              PATCH="${BASH_REMATCH[3]}"
+              PRERELEASE="${BASH_REMATCH[5]}"
+            else
+              echo "::error::Invalid version format: $EXPLICIT_VERSION. Expected format: X.Y.Z or X.Y.Z-prerelease"
+              exit 1
+            fi
+
+            SEMVER="$EXPLICIT_VERSION"
+            FULLSEMVER="$EXPLICIT_VERSION"
+          else
+            # Auto-calculate version using GitVersion
+            MAJOR=${{ steps.gitversion.outputs.major }}
+            MINOR=${{ steps.gitversion.outputs.minor }}
+            PATCH=${{ steps.gitversion.outputs.patch }}
+            PRERELEASE="${{ steps.gitversion.outputs.preReleaseTag }}"
+
+            case "${{ inputs.release_type }}" in
+              major)
+                MAJOR=$((MAJOR + 1))
+                MINOR=0
+                PATCH=0
+                ;;
+              minor)
+                MINOR=$((MINOR + 1))
+                PATCH=0
+                ;;
+              patch)
+                PATCH=$((PATCH + 1))
+                ;;
+              auto)
+                # Use GitVersion's calculated version as-is
+                ;;
+            esac
+
+            if [ -n "$PRERELEASE" ]; then
+              SEMVER="${MAJOR}.${MINOR}.${PATCH}-${PRERELEASE}"
+              FULLSEMVER="${MAJOR}.${MINOR}.${PATCH}-${PRERELEASE}"
+            else
+              SEMVER="${MAJOR}.${MINOR}.${PATCH}"
+              FULLSEMVER="${MAJOR}.${MINOR}.${PATCH}"
+            fi
+          fi
+
+          echo "semver=$SEMVER" >> $GITHUB_OUTPUT
+          echo "fullsemver=$FULLSEMVER" >> $GITHUB_OUTPUT
+          echo "major=$MAJOR" >> $GITHUB_OUTPUT
+          echo "minor=$MINOR" >> $GITHUB_OUTPUT
+          echo "patch=$PATCH" >> $GITHUB_OUTPUT
+          echo "prerelease=$PRERELEASE" >> $GITHUB_OUTPUT
+
+          echo "Final version: $SEMVER"
 
       - name: Display Version Info
         run: |
@@ -92,12 +181,23 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Property | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|----------|-------|" >> $GITHUB_STEP_SUMMARY
-          echo "| SemVer | ${{ steps.gitversion.outputs.semVer }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Major | ${{ steps.gitversion.outputs.major }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Minor | ${{ steps.gitversion.outputs.minor }} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Patch | ${{ steps.gitversion.outputs.patch }} |" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "*This was a dry run. Use 'Start Release' workflow to create a release PR.*" >> $GITHUB_STEP_SUMMARY
+          echo "| SemVer | ${{ steps.final_version.outputs.semver }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| FullSemVer | ${{ steps.final_version.outputs.fullsemver }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Major | ${{ steps.final_version.outputs.major }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Minor | ${{ steps.final_version.outputs.minor }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Patch | ${{ steps.final_version.outputs.patch }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| PreRelease | ${{ steps.final_version.outputs.prerelease }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Branch | ${{ steps.gitversion.outputs.branchName }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| SHA | ${{ steps.gitversion.outputs.sha }} |" >> $GITHUB_STEP_SUMMARY
+          if [ -n "${{ inputs.version }}" ]; then
+            echo "| Version Source | Explicit: \`${{ inputs.version }}\` |" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "| Version Source | Auto-calculated (${{ inputs.release_type }}) |" >> $GITHUB_STEP_SUMMARY
+          fi
+
+          echo ""
+          echo "Calculated version: ${{ steps.final_version.outputs.semver }}"
+          echo "Full SemVer: ${{ steps.final_version.outputs.fullsemver }}"
 
   release:
     name: Create Release
@@ -119,6 +219,49 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
 
+      - name: Check if version already exists
+        run: |
+          VERSION="${{ needs.version.outputs.semver }}"
+          TAG="v$VERSION"
+
+          # Check if tag already exists
+          if git tag -l "$TAG" | grep -q "$TAG"; then
+            echo "::error::Tag $TAG already exists locally"
+            exit 1
+          fi
+
+          # Check if tag exists on remote
+          if git ls-remote --tags origin | grep -q "refs/tags/$TAG"; then
+            echo "::error::Tag $TAG already exists on remote. Version $VERSION has already been released."
+            echo ""
+            echo "To release a new version, ensure your changes include commits that would bump the version:"
+            echo "  - feat: commits bump minor version"
+            echo "  - fix: commits bump patch version"
+            echo "  - BREAKING CHANGE: bumps major version"
+            echo ""
+            echo "Or manually specify a release_type (major/minor/patch) when running this workflow."
+            exit 1
+          fi
+
+          echo "✅ Version $VERSION is available for release"
+
+      - name: Update Version in Directory.Build.props
+        run: |
+          VERSION="${{ needs.version.outputs.semver }}"
+          echo "Updating version to: $VERSION"
+
+          # Update the version in Directory.Build.props using sed
+          sed -i "s|<Version>[^<]*</Version>|<Version>$VERSION</Version>|g" Directory.Build.props
+
+          # Verify the change
+          grep "<Version>" Directory.Build.props
+
+      - name: Commit Version Change
+        run: |
+          VERSION="${{ needs.version.outputs.semver }}"
+          git add Directory.Build.props
+          git commit -m "chore(release): bump version to $VERSION" || echo "No changes to commit"
+
       - name: Create and Push Tag
         run: |
           VERSION="${{ needs.check-release.outputs.version }}"
@@ -128,18 +271,8 @@ jobs:
           git tag -a "$TAG" -m "Release $TAG"
           git push origin "$TAG"
 
-      - name: Determine if Prerelease
-        id: prerelease
-        run: |
-          VERSION="${{ needs.check-release.outputs.version }}"
-          if [[ "$VERSION" == *-* ]]; then
-            echo "is_prerelease=true" >> $GITHUB_OUTPUT
-          else
-            echo "is_prerelease=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Create GitHub Release (stable)
-        if: steps.prerelease.outputs.is_prerelease == 'false'
+      - name: Create GitHub Release (stable only)
+        if: ${{ needs.version.outputs.prerelease == '' }}
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
           tag_name: v${{ needs.check-release.outputs.version }}
@@ -148,7 +281,7 @@ jobs:
           prerelease: false
 
       - name: Create GitHub Pre-Release
-        if: steps.prerelease.outputs.is_prerelease == 'true'
+        if: ${{ needs.version.outputs.prerelease != '' }}
         uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7b # v2.5.0
         with:
           tag_name: v${{ needs.check-release.outputs.version }}
@@ -167,8 +300,11 @@ jobs:
 
   publish:
     name: Publish to NuGet
-    needs: [check-release, release]
-    if: needs.check-release.outputs.should_release == 'true'
+    needs: [version, release]
+    if: ${{ !inputs.dry_run }}
     uses: ./.github/workflows/nuget-publish.yml
     with:
-      tag: v${{ needs.check-release.outputs.version }}
+      tag: v${{ needs.version.outputs.semver }}
+    # Note: No secrets needed - nuget-publish.yml uses OIDC trusted publishing
+    # which relies on id-token permission (declared in the called workflow),
+    # not repository secrets
