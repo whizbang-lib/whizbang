@@ -48,7 +48,7 @@ jobs:
 
       - name: Run InMemory Integration Tests
         # Uses WhizbangTestTags for precise project filtering
-        run: pwsh scripts/Run-Tests.ps1 -Mode IntegrationsOnly -Coverage -Configuration Release -Tag InMemory
+        run: pwsh scripts/Run-Tests.ps1 -Mode Integration -Coverage -Configuration Release -Tag InMemory
         env:
           TESTCONTAINERS_RYUK_DISABLED: 'false'
 
