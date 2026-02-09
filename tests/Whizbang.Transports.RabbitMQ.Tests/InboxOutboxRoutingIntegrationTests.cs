@@ -112,7 +112,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(destination.RoutingKey).IsEqualTo("ordercreated");
 
     // Set up consumer to verify message arrival at domain exchange
-    var receivedTcs = new TaskCompletionSource<string>();
+    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
     var subscription = await _transport!.SubscribeAsync(
       async (envelope, envelopeType, ct) => {
         receivedTcs.TrySetResult(envelope.MessageId.ToString());
@@ -164,7 +164,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(destination.Address).IsEqualTo("custom-orders");
 
     // Set up consumer
-    var receivedTcs = new TaskCompletionSource<string>();
+    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
     var subscription = await _transport!.SubscribeAsync(
       async (envelope, envelopeType, ct) => {
         receivedTcs.TrySetResult(envelope.MessageId.ToString());
@@ -219,7 +219,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(destination.Metadata is not null).IsTrue();
 
     // Set up consumer on shared exchange with routing key
-    var receivedTcs = new TaskCompletionSource<string>();
+    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
     var subscription = await _transport!.SubscribeAsync(
       async (envelope, envelopeType, ct) => {
         receivedTcs.TrySetResult(envelope.MessageId.ToString());
@@ -268,7 +268,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(destination.Address).IsEqualTo("whizbang.events");
 
     // Set up consumer
-    var receivedTcs = new TaskCompletionSource<string>();
+    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
     var subscription = await _transport!.SubscribeAsync(
       async (envelope, envelopeType, ct) => {
         receivedTcs.TrySetResult(envelope.MessageId.ToString());
@@ -322,7 +322,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(subscription.FilterExpression).IsNull(); // No filter for domain topics
 
     // Set up consumer on domain inbox
-    var receivedTcs = new TaskCompletionSource<string>();
+    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
     var transportSubscription = await _transport!.SubscribeAsync(
       async (envelope, envelopeType, ct) => {
         receivedTcs.TrySetResult(envelope.MessageId.ToString());
@@ -375,7 +375,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(subscription.Topic).IsEqualTo("orders.in");
 
     // Set up consumer
-    var receivedTcs = new TaskCompletionSource<string>();
+    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
     var transportSubscription = await _transport!.SubscribeAsync(
       async (envelope, envelopeType, ct) => {
         receivedTcs.TrySetResult(envelope.MessageId.ToString());
@@ -434,7 +434,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(subscription.Metadata is not null).IsTrue();
 
     // Set up consumer on shared inbox
-    var receivedTcs = new TaskCompletionSource<string>();
+    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
     var transportSubscription = await _transport!.SubscribeAsync(
       async (envelope, envelopeType, ct) => {
         receivedTcs.TrySetResult(envelope.MessageId.ToString());
@@ -487,7 +487,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(subscription.Topic).IsEqualTo("whizbang.inbox");
 
     // Set up consumer
-    var receivedTcs = new TaskCompletionSource<string>();
+    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
     var transportSubscription = await _transport!.SubscribeAsync(
       async (envelope, envelopeType, ct) => {
         receivedTcs.TrySetResult(envelope.MessageId.ToString());
@@ -543,7 +543,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     );
 
     // Set up consumer using inbox strategy (subscribing to domain topic)
-    var receivedTcs = new TaskCompletionSource<string>();
+    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
     var transportSubscription = await _transport!.SubscribeAsync(
       async (envelope, envelopeType, ct) => {
         receivedTcs.TrySetResult(envelope.MessageId.ToString());
@@ -601,7 +601,7 @@ public sealed class InboxOutboxRoutingIntegrationTests : IAsyncDisposable {
     await Assert.That(destination.Address).IsEqualTo(subscription.Topic);
 
     // Set up consumer
-    var receivedTcs = new TaskCompletionSource<string>();
+    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
     var transportSubscription = await _transport!.SubscribeAsync(
       async (envelope, envelopeType, ct) => {
         receivedTcs.TrySetResult(envelope.MessageId.ToString());

@@ -107,7 +107,7 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     await Assert.That(topic).IsEqualTo("orders");
 
     // Set up consumer to verify message arrival
-    var receivedTcs = new TaskCompletionSource<string>();
+    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
     var subscription = await _transport!.SubscribeAsync(
       async (envelope, envelopeType, ct) => {
         receivedTcs.TrySetResult(envelope.MessageId.ToString());
@@ -156,7 +156,7 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     await Assert.That(topic).IsEqualTo("order");
 
     // Set up consumer
-    var receivedTcs = new TaskCompletionSource<string>();
+    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
     var subscription = await _transport!.SubscribeAsync(
       async (envelope, envelopeType, ct) => {
         receivedTcs.TrySetResult(envelope.MessageId.ToString());
@@ -208,7 +208,7 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     await Assert.That(topic).IsEqualTo("orders-01");
 
     // Set up consumer
-    var receivedTcs = new TaskCompletionSource<string>();
+    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
     var subscription = await _transport!.SubscribeAsync(
       async (envelope, envelopeType, ct) => {
         receivedTcs.TrySetResult(envelope.MessageId.ToString());
@@ -259,7 +259,7 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     await Assert.That(topic).IsEqualTo("custom-topic-ordercreated");
 
     // Set up consumer
-    var receivedTcs = new TaskCompletionSource<string>();
+    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
     var subscription = await _transport!.SubscribeAsync(
       async (envelope, envelopeType, ct) => {
         receivedTcs.TrySetResult(envelope.MessageId.ToString());
@@ -314,7 +314,7 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
       // Set up consumers for each unique topic
       foreach (var (messageType, expectedTopic) in testCases) {
         if (!receivedMessages.ContainsKey(expectedTopic)) {
-          receivedMessages[expectedTopic] = new TaskCompletionSource<bool>();
+          receivedMessages[expectedTopic] = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
           var topicForClosure = expectedTopic;
           var subscription = await _transport!.SubscribeAsync(
@@ -373,7 +373,7 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     await Assert.That(topic).IsEqualTo("order");
 
     // Set up consumer
-    var receivedTcs = new TaskCompletionSource<string>();
+    var receivedTcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
     var subscription = await _transport!.SubscribeAsync(
       async (envelope, envelopeType, ct) => {
         receivedTcs.TrySetResult(envelope.MessageId.ToString());
