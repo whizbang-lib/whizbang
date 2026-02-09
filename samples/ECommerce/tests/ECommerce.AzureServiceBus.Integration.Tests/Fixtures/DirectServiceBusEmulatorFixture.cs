@@ -7,10 +7,11 @@ namespace ECommerce.Integration.Tests.Fixtures;
 /// This approach avoids Aspire's memory issues and provides better control over emulator configuration.
 /// </summary>
 public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
-  private readonly string _dockerComposeFile;
   private readonly string _configFile;
   private readonly string? _customConfigFile;
   private readonly int _port;
+  private readonly string _projectName;
+  private string? _activeComposeFile;  // The compose file currently in use (persisted for cleanup)
   private bool _isInitialized;
 
   /// <summary>
@@ -26,9 +27,9 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
   /// <param name="configFileName">Optional config file name (e.g., "Config-Default.json"). If null, uses built-in config.</param>
   public DirectServiceBusEmulatorFixture(int port, string? configFileName) {
     _port = port;
-    // Store paths for docker-compose and Config.json
+    _projectName = $"sbecommerce{_port}";  // Explicit project name to avoid conflicts
+    // Store paths for Config.json
     var testDirectory = AppContext.BaseDirectory;
-    _dockerComposeFile = Path.Combine(testDirectory, "docker-compose.servicebus.yml");
     _configFile = Path.Combine(testDirectory, "Config.json");
 
     if (configFileName != null) {
@@ -62,16 +63,17 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
     }
 
     // Generate docker-compose file dynamically based on config choice
+    // Use a consistent file name based on port (not GUID) so we can find it for cleanup
     var dockerComposeContent = _generateDockerComposeContent();
-    var tempDockerComposeFile = Path.Combine(Path.GetTempPath(), $"docker-compose-sb-{Guid.NewGuid():N}.yml");
-    await File.WriteAllTextAsync(tempDockerComposeFile, dockerComposeContent, cancellationToken);
+    _activeComposeFile = Path.Combine(Path.GetTempPath(), $"docker-compose-sb-ecommerce-{_port}.yml");
+    await File.WriteAllTextAsync(_activeComposeFile, dockerComposeContent, cancellationToken);
 
     try {
-      // Stop any existing containers
-      await _runDockerComposeAsync("down", cancellationToken, tempDockerComposeFile);
+      // Stop any existing containers (use project name to avoid conflicts)
+      await _runDockerComposeAsync($"-p {_projectName} down -v --remove-orphans", cancellationToken);
 
-      // Start containers
-      await _runDockerComposeAsync("up -d", cancellationToken, tempDockerComposeFile);
+      // Start containers with explicit project name
+      await _runDockerComposeAsync($"-p {_projectName} up -d --force-recreate", cancellationToken);
 
       // Wait for emulator to be ready by polling logs until "Successfully Up!" appears
       // SQL Server can take 60-120 seconds to start (especially on ARM64), and the emulator
@@ -107,24 +109,33 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
 
       Console.WriteLine("[DirectEmulator] ✅ Emulator is ready!");
       _isInitialized = true;
-    } finally {
-      // Clean up temp docker-compose file
-      if (File.Exists(tempDockerComposeFile)) {
-        File.Delete(tempDockerComposeFile);
+    } catch {
+      // Clean up compose file on failure (it's kept for successful dispose)
+      if (_activeComposeFile != null && File.Exists(_activeComposeFile)) {
+        File.Delete(_activeComposeFile);
+        _activeComposeFile = null;
       }
+      throw;
     }
   }
 
   /// <summary>
-  /// Stops the emulator containers.
+  /// Stops the emulator containers and cleans up the compose file.
   /// </summary>
   public async ValueTask DisposeAsync() {
-    if (!_isInitialized) {
+    if (!_isInitialized || _activeComposeFile == null) {
       return;
     }
 
     Console.WriteLine("[DirectEmulator] Stopping emulator containers...");
-    await _runDockerComposeAsync("down");
+    try {
+      await _runDockerComposeAsyncIgnoreErrors($"-p {_projectName} down -v --remove-orphans");
+    } finally {
+      // Clean up compose file
+      if (File.Exists(_activeComposeFile)) {
+        File.Delete(_activeComposeFile);
+      }
+    }
     Console.WriteLine("[DirectEmulator] ✅ Emulator stopped");
   }
 
@@ -173,13 +184,16 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
 ";
   }
 
-  private async Task _runDockerComposeAsync(string arguments, CancellationToken cancellationToken = default, string? composeFile = null) {
-    var file = composeFile ?? _dockerComposeFile;
+  private async Task _runDockerComposeAsync(string arguments, CancellationToken cancellationToken = default) {
+    if (_activeComposeFile == null) {
+      throw new InvalidOperationException("No active compose file - call InitializeAsync first");
+    }
+
     // Use "docker compose" (v2) instead of "docker-compose" (v1)
     // GitHub Actions ubuntu-24.04 only has docker compose v2
     var psi = new ProcessStartInfo {
       FileName = "docker",
-      Arguments = $"compose -f \"{file}\" {arguments}",
+      Arguments = $"compose -f \"{_activeComposeFile}\" {arguments}",
       RedirectStandardOutput = true,
       RedirectStandardError = true,
       UseShellExecute = false,
@@ -196,6 +210,33 @@ public sealed class DirectServiceBusEmulatorFixture : IAsyncDisposable {
     if (process.ExitCode != 0) {
       var error = await process.StandardError.ReadToEndAsync(cancellationToken);
       throw new InvalidOperationException($"docker compose failed: {error}");
+    }
+  }
+
+  /// <summary>
+  /// Run docker compose command ignoring errors (for cleanup operations).
+  /// </summary>
+  private async Task _runDockerComposeAsyncIgnoreErrors(string arguments, CancellationToken cancellationToken = default) {
+    if (_activeComposeFile == null) {
+      return;
+    }
+
+    try {
+      var psi = new ProcessStartInfo {
+        FileName = "docker",
+        Arguments = $"compose -f \"{_activeComposeFile}\" {arguments}",
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        UseShellExecute = false,
+        CreateNoWindow = true
+      };
+
+      using var process = Process.Start(psi);
+      if (process != null) {
+        await process.WaitForExitAsync(cancellationToken);
+      }
+    } catch {
+      // Ignore errors during cleanup
     }
   }
 

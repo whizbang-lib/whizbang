@@ -28,15 +28,17 @@
     Show detailed test output for each project
 
 .PARAMETER Mode
-    Test execution mode (default: Ai)
-    AI modes (sparse output, token-efficient):
-    - Ai: ALL tests (default)
-    - AiUnit: unit tests only (fast)
-    - AiIntegrations: integration tests only
+    Test execution mode (default: All)
 
     Verbose modes (full output):
+    - All: ALL tests (default)
     - Unit: unit tests only
     - Integration: integration tests only
+
+    AI modes (sparse output, token-efficient):
+    - Ai: ALL tests
+    - AiUnit: unit tests only (fast)
+    - AiIntegrations: integration tests only
 
 .PARAMETER ProgressInterval
     Progress update interval in seconds for AI modes (default: 60)
@@ -82,11 +84,11 @@
 
 .EXAMPLE
     ./Run-Tests.ps1
-    Runs ALL tests with AI-optimized output (default mode)
+    Runs ALL tests with verbose output (default mode)
 
 .EXAMPLE
     ./Run-Tests.ps1 -Mode Ai
-    Same as above - runs ALL tests with AI-optimized output
+    Runs ALL tests with AI-optimized sparse output
 
 .EXAMPLE
     ./Run-Tests.ps1 -Mode AiUnit
@@ -229,8 +231,8 @@ param(
     [string]$TestFilter = "",
     [switch]$VerboseOutput,
 
-    [ValidateSet("Ai", "AiUnit", "AiIntegrations", "Unit", "Integration")]
-    [string]$Mode = "Ai",  # Test execution mode: Ai (all tests), AiUnit, AiIntegrations, Unit, Integration
+    [ValidateSet("All", "Ai", "AiUnit", "AiIntegrations", "Unit", "Integration")]
+    [string]$Mode = "All",  # Test execution mode: All (verbose), Ai (sparse), AiUnit, AiIntegrations, Unit, Integration
 
     [int]$ProgressInterval = 60,  # Progress update interval in seconds (Ai modes only)
     [switch]$LiveUpdates,  # Show progress immediately when counts change (Ai modes only)
@@ -285,7 +287,7 @@ if ($PSBoundParameters.ContainsKey('AiMode') -or $PSBoundParameters.ContainsKey(
 
 # Derive settings from Mode
 $useAiOutput = $Mode -in @("Ai", "AiUnit", "AiIntegrations")
-$includeIntegrationTests = $Mode -in @("Ai", "Integration", "AiIntegrations")
+$includeIntegrationTests = $Mode -in @("All", "Ai", "Integration", "AiIntegrations")
 $onlyIntegrationTests = $Mode -in @("Integration", "AiIntegrations")
 
 # Navigate to repo root
