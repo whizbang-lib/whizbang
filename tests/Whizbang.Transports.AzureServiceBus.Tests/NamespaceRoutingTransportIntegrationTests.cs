@@ -199,23 +199,17 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
     await _drainMessagesAsync("topic-00", "sub-00-a");
     await _drainMessagesAsync("topic-01", "sub-01-a");
 
-    // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlock when Dispose() waits for handler
-    var topic00Received = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var topic01Received = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
+    // Use MessageIdAwaiter harnesses (internally use RunContinuationsAsynchronously)
+    var awaiter00 = new MessageIdAwaiter();
+    var awaiter01 = new MessageIdAwaiter();
 
     var subscription00 = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
-        topic00Received.TrySetResult(envelope.MessageId.ToString());
-        await Task.CompletedTask;
-      },
+      awaiter00.Handler,
       new TransportDestination("topic-00", "sub-00-a")
     );
 
     var subscription01 = await transport.SubscribeAsync(
-      async (envelope, envelopeType, ct) => {
-        topic01Received.TrySetResult(envelope.MessageId.ToString());
-        await Task.CompletedTask;
-      },
+      awaiter01.Handler,
       new TransportDestination("topic-01", "sub-01-a")
     );
 
@@ -229,17 +223,12 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
       await transport.PublishAsync(envelope00, new TransportDestination("topic-00"));
       await transport.PublishAsync(envelope01, new TransportDestination("topic-01"));
 
-      // Assert
-      using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-      try {
-        var received00 = await topic00Received.Task.WaitAsync(timeoutCts.Token);
-        var received01 = await topic01Received.Task.WaitAsync(timeoutCts.Token);
+      // Assert - harnesses handle timeout with proper exception
+      var received00 = await awaiter00.WaitAsync(TimeSpan.FromSeconds(30));
+      var received01 = await awaiter01.WaitAsync(TimeSpan.FromSeconds(30));
 
-        await Assert.That(received00).IsEqualTo(envelope00.MessageId.ToString());
-        await Assert.That(received01).IsEqualTo(envelope01.MessageId.ToString());
-      } catch (OperationCanceledException) {
-        Assert.Fail("Messages should arrive at their respective topics within timeout");
-      }
+      await Assert.That(received00).IsEqualTo(envelope00.MessageId.ToString());
+      await Assert.That(received01).IsEqualTo(envelope01.MessageId.ToString());
     } finally {
       subscription00.Dispose();
       subscription01.Dispose();

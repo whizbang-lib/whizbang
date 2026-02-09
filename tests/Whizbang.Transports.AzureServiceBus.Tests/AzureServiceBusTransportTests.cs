@@ -8,6 +8,7 @@ using Whizbang.Core.Observability;
 using Whizbang.Core.Serialization;
 using Whizbang.Core.Transports;
 using Whizbang.Core.ValueObjects;
+using Whizbang.Testing.Transport;
 using Whizbang.Transports.AzureServiceBus.Tests.Containers;
 
 #pragma warning disable CA1707 // Identifiers should not contain underscores (test method names use underscores by convention)
@@ -149,16 +150,15 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
     await transport.InitializeAsync();
 
     var destination = new TransportDestination("topic-01", "sub-01-a");
-    var receivedEnvelope = default(IMessageEnvelope);
-    // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlock!
-    // Without this, TrySetResult can run the continuation synchronously, which then
-    // calls subscription.Dispose(), which waits for the handler to complete - DEADLOCK!
-    var receivedTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var warmupTcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
-    var warmupId = $"warmup-{Guid.NewGuid():N}";
+    var publishDestination = new TransportDestination("topic-01");
 
     // Drain any existing messages first
     await _drainMessagesAsync("topic-01", "sub-01-a");
+
+    // Create warmup and test awaiters using harnesses
+    var warmupId = SubscriptionWarmup.GenerateWarmupId();
+    var warmupAwaiter = new SignalAwaiter();
+    var testAwaiter = new MessageAwaiter<IMessageEnvelope>(envelope => envelope);
 
     // Act - Create subscription with warmup detection
     var subscription = await transport.SubscribeAsync(
@@ -166,57 +166,31 @@ public class AzureServiceBusTransportTests(ServiceBusEmulatorFixtureSource fixtu
         // Check if this is the warmup message or actual test message
         if (envelope is MessageEnvelope<TestMessage> testEnvelope &&
             testEnvelope.Payload.Content.Contains(warmupId)) {
-          warmupTcs.TrySetResult(true);
+          warmupAwaiter.Signal();
         } else {
-          receivedEnvelope = envelope;
-          receivedTcs.TrySetResult(true);
+          await testAwaiter.Handler(envelope, envelopeType, ct);
         }
-        await Task.CompletedTask;
       },
       destination
     );
 
     try {
-      // Give the processor time to establish its AMQP connection
-      // StartProcessingAsync returns immediately but the actual connection takes time
-      await Task.Delay(TimeSpan.FromSeconds(5));
-
-      // Warmup: Keep sending messages until one is received (confirms subscription is ready)
-      // This handles the race where the processor isn't ready when the first message arrives
-      var publishDestination = new TransportDestination("topic-01");
-      using var warmupCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-
-      while (!warmupTcs.Task.IsCompleted && !warmupCts.Token.IsCancellationRequested) {
-        var warmupEnvelope = _createTestEnvelopeWithContent(warmupId);
-        await transport.PublishAsync(warmupEnvelope, publishDestination);
-
-        // Wait a bit for the message to be received before retrying
-        var received = await Task.WhenAny(
-          warmupTcs.Task,
-          Task.Delay(TimeSpan.FromSeconds(2), warmupCts.Token)
-        ) == warmupTcs.Task;
-
-        if (received) {
-          break;
-        }
-      }
-
-      if (!warmupTcs.Task.IsCompleted) {
-        throw new TimeoutException("Subscription warmup timed out after 30 seconds");
-      }
+      // Warmup subscription using harness
+      await SubscriptionWarmup.WarmupAsync(
+        transport,
+        publishDestination,
+        () => _createTestEnvelopeWithContent(warmupId),
+        warmupAwaiter
+      );
 
       // Act: Publish the actual test message
       var envelope = _createTestEnvelope();
       await transport.PublishAsync(envelope, publishDestination);
 
       // Wait for handler to be invoked
-      var handlerInvoked = await Task.WhenAny(
-        receivedTcs.Task,
-        Task.Delay(TimeSpan.FromSeconds(30))
-      ) == receivedTcs.Task;
+      var receivedEnvelope = await testAwaiter.WaitAsync(TimeSpan.FromSeconds(30));
 
       // Assert
-      await Assert.That(handlerInvoked).IsTrue();
       await Assert.That(receivedEnvelope).IsNotNull();
       await Assert.That(receivedEnvelope!.MessageId.Value).IsEqualTo(envelope.MessageId.Value);
     } finally {

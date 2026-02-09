@@ -65,7 +65,8 @@ public class ServiceBusProcessorSanityTest(ServiceBusEmulatorFixtureSource fixtu
 
     // Track received messages
     var receivedMessageId = "";
-    var messageReceived = new TaskCompletionSource<bool>();
+    // CRITICAL: Use RunContinuationsAsynchronously to prevent deadlock when Dispose() waits for handler
+    var messageReceived = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
     processor.ProcessMessageAsync += async args => {
       Console.WriteLine($"[PROCESSOR TEST] ✅ PROCESSOR RECEIVED MESSAGE: {args.Message.MessageId}");
