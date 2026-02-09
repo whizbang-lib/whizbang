@@ -133,36 +133,41 @@ jobs:
           git push origin "$BRANCH"
 
       - name: Create Pull Request
-        id: create-pr
-        uses: peter-evans/create-pull-request@271a8d0340265f705b14b6d32b9829c1cb33d45e # v7.0.8
-        with:
-          branch: ${{ steps.version.outputs.branch }}
-          base: main
-          title: "chore(release): v${{ steps.version.outputs.semver }}"
-          body: |
-            ## Release v${{ steps.version.outputs.semver }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${{ steps.version.outputs.semver }}"
+          BRANCH="${{ steps.version.outputs.branch }}"
 
-            This PR prepares the release of version **v${{ steps.version.outputs.semver }}**.
+          gh pr create \
+            --base main \
+            --head "$BRANCH" \
+            --title "chore(release): v$VERSION" \
+            --label "release" \
+            --label "automated" \
+            --body "$(cat <<'EOF'
+          ## Release v${{ steps.version.outputs.semver }}
 
-            ### Changes
-            - Updated `Directory.Build.props` to version `${{ steps.version.outputs.semver }}`
+          This PR prepares the release of version **v${{ steps.version.outputs.semver }}**.
 
-            ### Release Checklist
-            - [ ] All CI checks pass
-            - [ ] Version number is correct
-            - [ ] CHANGELOG updated (if applicable)
+          ### Changes
+          - Updated `Directory.Build.props` to version `${{ steps.version.outputs.semver }}`
 
-            ### After Merge
-            When this PR is merged to `main`, the release workflow will:
-            1. Create git tag `v${{ steps.version.outputs.semver }}`
-            2. Create GitHub Release with auto-generated notes
-            3. Publish NuGet packages
+          ### Release Checklist
+          - [ ] All CI checks pass
+          - [ ] Version number is correct
+          - [ ] CHANGELOG updated (if applicable)
 
-            ---
-            *This PR was automatically created by the Start Release workflow.*
-          labels: |
-            release
-            automated
+          ### After Merge
+          When this PR is merged to `main`, the release workflow will:
+          1. Create git tag `v${{ steps.version.outputs.semver }}`
+          2. Create GitHub Release with auto-generated notes
+          3. Publish NuGet packages
+
+          ---
+          *This PR was automatically created by the Start Release workflow.*
+          EOF
+          )"
 
       - name: Summary
         run: |
