@@ -13,6 +13,10 @@
 .PARAMETER Clean
     Clean the local-packages directory before packing.
 
+.PARAMETER IncrementVersion
+    Increment the prerelease version number before packing to avoid NuGet cache issues.
+    For example: 0.5.1-alpha.2 -> 0.5.1-alpha.3
+
 .EXAMPLE
     ./scripts/Pack-LocalPackages.ps1
     Packs all packages in Debug configuration.
@@ -20,13 +24,19 @@
 .EXAMPLE
     ./scripts/Pack-LocalPackages.ps1 -Configuration Release -Clean
     Cleans local-packages and packs all packages in Release configuration.
+
+.EXAMPLE
+    ./scripts/Pack-LocalPackages.ps1 -IncrementVersion
+    Increments the prerelease version and packs all packages.
 #>
 
 param(
     [ValidateSet("Debug", "Release")]
     [string]$Configuration = "Debug",
 
-    [switch]$Clean
+    [switch]$Clean,
+
+    [switch]$IncrementVersion
 )
 
 $ErrorActionPreference = "Stop"
@@ -37,6 +47,41 @@ if (-not $scriptDir) {
     $scriptDir = Get-Location
 }
 $repoRoot = Split-Path $scriptDir -Parent
+
+# Increment version if requested
+if ($IncrementVersion) {
+    $propsFile = Join-Path $repoRoot "Directory.Build.props"
+    $propsContent = Get-Content $propsFile -Raw
+
+    # Match version like 0.5.1-alpha.2
+    if ($propsContent -match '<Version>(\d+\.\d+\.\d+)-([a-z]+)\.(\d+)</Version>') {
+        $baseVersion = $Matches[1]
+        $prerelease = $Matches[2]
+        $prereleaseNum = [int]$Matches[3]
+        $newPrereleaseNum = $prereleaseNum + 1
+        $oldVersion = "$baseVersion-$prerelease.$prereleaseNum"
+        $newVersion = "$baseVersion-$prerelease.$newPrereleaseNum"
+
+        $propsContent = $propsContent -replace "<Version>$([regex]::Escape($oldVersion))</Version>", "<Version>$newVersion</Version>"
+        Set-Content $propsFile $propsContent -NoNewline
+
+        Write-Host "Version incremented: $oldVersion -> $newVersion" -ForegroundColor Green
+    }
+    elseif ($propsContent -match '<Version>(\d+\.\d+\.\d+)</Version>') {
+        # No prerelease suffix, add one
+        $baseVersion = $Matches[1]
+        $oldVersion = $baseVersion
+        $newVersion = "$baseVersion-alpha.1"
+
+        $propsContent = $propsContent -replace "<Version>$([regex]::Escape($oldVersion))</Version>", "<Version>$newVersion</Version>"
+        Set-Content $propsFile $propsContent -NoNewline
+
+        Write-Host "Version incremented: $oldVersion -> $newVersion" -ForegroundColor Green
+    }
+    else {
+        Write-Host "Could not parse version from Directory.Build.props" -ForegroundColor Yellow
+    }
+}
 
 $localPackagesDir = Join-Path $repoRoot "local-packages"
 $srcDir = Join-Path $repoRoot "src"
