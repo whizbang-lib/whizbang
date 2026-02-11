@@ -363,41 +363,6 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       totalRegistrations++;
     }
 
-    // Generate message associations JSON for database registration
-    var associations = new StringBuilder();
-    int associationCount = 0;
-    bool isFirstAssociation = true;
-
-    foreach (var perspective in perspectives) {
-      // Extract perspective class name (without namespace)
-      var perspectiveClassName = _getSimpleName(perspective.ClassName);
-
-      // Each event type creates one association
-      // Use MessageTypeNames which already has the correct database format (no global:: prefix)
-      foreach (var messageTypeName in perspective.MessageTypeNames) {
-        // Add comma separator (except for first item)
-        if (!isFirstAssociation) {
-          associations.AppendLine("    json.AppendLine(\",\");");
-        }
-        isFirstAssociation = false;
-
-        // MessageTypeNames already in correct format: "TypeName, AssemblyName"
-        // No need to strip global:: or recalculate assembly name
-
-        // Generate C# code that appends JSON object
-        associations.AppendLine($"    json.Append(\"    {{\");");
-        associations.AppendLine($"    json.Append($\"\\\"MessageType\\\": \\\"{messageTypeName}\\\", \");");
-        associations.AppendLine("    json.Append(\"\\\"AssociationType\\\": \\\"perspective\\\", \");");
-        associations.AppendLine($"    json.Append($\"\\\"TargetName\\\": \\\"{perspectiveClassName}\\\", \");");
-        associations.AppendLine("    json.Append(\"\\\"ServiceName\\\": \\\"\");");
-        associations.AppendLine("    json.Append(serviceName);");
-        associations.AppendLine("    json.Append(\"\\\"\");");
-        associations.AppendLine("    json.Append(\"}\");");
-
-        associationCount++;
-      }
-    }
-
     // Generate message associations array for C# querying
     var associationsArray = new StringBuilder();
     associationsArray.AppendLine("    return new MessageAssociation[] {");
@@ -430,9 +395,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceHeaderRegion(typeof(PerspectiveDiscoveryGenerator).Assembly, result);
     result = result.Replace("{{PERSPECTIVE_CLASS_COUNT}}", perspectives.Length.ToString(CultureInfo.InvariantCulture));
     result = result.Replace("{{REGISTRATION_COUNT}}", totalRegistrations.ToString(CultureInfo.InvariantCulture));
-    result = result.Replace("{{ASSOCIATION_COUNT}}", associationCount.ToString(CultureInfo.InvariantCulture));
     result = TemplateUtilities.ReplaceRegion(result, "PERSPECTIVE_REGISTRATIONS", registrations.ToString());
-    result = TemplateUtilities.ReplaceRegion(result, "MESSAGE_ASSOCIATIONS_JSON", associations.ToString());
     result = TemplateUtilities.ReplaceRegion(result, "MESSAGE_ASSOCIATIONS_ARRAY", associationsArray.ToString());
 
     // Generate PERSPECTIVE_ASSOCIATIONS_TYPED region (Phase 3: Delegates)

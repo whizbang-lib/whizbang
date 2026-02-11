@@ -1,0 +1,202 @@
+using System.Diagnostics.CodeAnalysis;
+using Microsoft.CodeAnalysis;
+using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
+using TUnit.Core;
+using Whizbang.Data.EFCore.Postgres.Generators;
+
+namespace Whizbang.Generators.Tests;
+
+/// <summary>
+/// Tests for the EFCorePerspectiveAssociationGenerator source generator.
+/// Ensures EF Core-specific perspective association registration code is generated correctly.
+/// </summary>
+public class EFCorePerspectiveAssociationGeneratorTests {
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_WithPerspective_GeneratesEFCoreRegistrationMethodAsync() {
+    // Arrange
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    public string OrderId { get; init; } = """";
+  }
+
+  public record OrderModel {
+    public string OrderId { get; set; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData;
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveAssociationGenerator>(source);
+
+    // Assert - Should generate EF Core specific registration method
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "EFCorePerspectiveAssociations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+
+    // Should have EF Core usings
+    await Assert.That(generatedSource!).Contains("using Microsoft.EntityFrameworkCore;");
+    await Assert.That(generatedSource!).Contains("using Microsoft.Extensions.Logging;");
+
+    // Should have RegisterPerspectiveAssociationsAsync method
+    await Assert.That(generatedSource!).Contains("RegisterPerspectiveAssociationsAsync");
+    await Assert.That(generatedSource!).Contains("DbContext");
+    await Assert.That(generatedSource!).Contains("ExecuteSqlRawAsync");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_EmptyCompilation_GeneratesNothingAsync() {
+    // Arrange
+    var source = @"
+using System;
+
+namespace TestNamespace {
+  public class SomeClass {
+    public void SomeMethod() { }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveAssociationGenerator>(source);
+
+    // Assert - Should not generate any files when no perspectives exist
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "EFCorePerspectiveAssociations.g.cs");
+    await Assert.That(generatedSource).IsNull();
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_MultiplePerspectives_GeneratesAllAssociationsAsync() {
+    // Arrange
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    public string OrderId { get; init; } = """";
+  }
+
+  public record PaymentProcessedEvent : IEvent {
+    public string PaymentId { get; init; } = """";
+  }
+
+  public record OrderModel {
+    public string OrderId { get; set; } = """";
+  }
+
+  public record PaymentModel {
+    public string PaymentId { get; set; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData;
+    }
+  }
+
+  public class PaymentPerspective : IPerspectiveFor<PaymentModel, PaymentProcessedEvent> {
+    public PaymentModel Apply(PaymentModel currentData, PaymentProcessedEvent @event) {
+      return currentData;
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveAssociationGenerator>(source);
+
+    // Assert - Should generate associations for both perspectives
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "EFCorePerspectiveAssociations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource!).Contains("OrderPerspective");
+    await Assert.That(generatedSource!).Contains("PaymentPerspective");
+    await Assert.That(generatedSource!).Contains("OrderCreatedEvent");
+    await Assert.That(generatedSource!).Contains("PaymentProcessedEvent");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_GeneratesJsonFormatForDatabaseAsync() {
+    // Arrange
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record ProductCreatedEvent : IEvent {
+    public string ProductId { get; init; } = """";
+  }
+
+  public record ProductModel {
+    public string ProductId { get; set; } = """";
+  }
+
+  public class ProductPerspective : IPerspectiveFor<ProductModel, ProductCreatedEvent> {
+    public ProductModel Apply(ProductModel currentData, ProductCreatedEvent @event) {
+      return currentData;
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveAssociationGenerator>(source);
+
+    // Assert - Should generate JSON format for database registration
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "EFCorePerspectiveAssociations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource!).Contains("MessageType");
+    await Assert.That(generatedSource!).Contains("AssociationType");
+    await Assert.That(generatedSource!).Contains("TargetName");
+    await Assert.That(generatedSource!).Contains("ServiceName");
+    await Assert.That(generatedSource!).Contains("perspective");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_AbstractClass_IsIgnoredAsync() {
+    // Arrange
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    public string OrderId { get; init; } = """";
+  }
+
+  public record OrderModel {
+    public string OrderId { get; set; } = """";
+  }
+
+  public abstract class BasePerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public abstract OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event);
+  }
+
+  public class ConcretePerspective : BasePerspective {
+    public override OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData;
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<EFCorePerspectiveAssociationGenerator>(source);
+
+    // Assert - Should only register the concrete class, not the abstract base
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "EFCorePerspectiveAssociations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource!).Contains("ConcretePerspective");
+    await Assert.That(generatedSource!).DoesNotContain("BasePerspective");
+  }
+}
