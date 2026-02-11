@@ -6,6 +6,7 @@ namespace Whizbang.Generators;
 /// A perspective class implements IPerspectiveFor&lt;TModel, TEvent1, TEvent2, ...&gt; with all type arguments.
 /// </summary>
 /// <param name="ClassName">Fully qualified class name implementing IPerspectiveFor</param>
+/// <param name="SimpleName">Simple class name including parent type for nested classes (e.g., "DraftJobStatus.Projection" or "OrderPerspective")</param>
 /// <param name="InterfaceTypeArguments">All type arguments from IPerspectiveFor interface (TModel, TEvent1, TEvent2, ...) as fully qualified names with global:: prefix for code generation</param>
 /// <param name="EventTypes">Array of fully qualified event type names with global:: prefix for code generation (extracted from InterfaceTypeArguments for diagnostics)</param>
 /// <param name="MessageTypeNames">Array of event type names in database format (TypeName, AssemblyName - no global:: prefix) for message association registration</param>
@@ -18,6 +19,7 @@ namespace Whizbang.Generators;
 /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerGeneratorTests.cs</tests>
 internal sealed record PerspectiveInfo(
     string ClassName,
+    string SimpleName,
     string[] InterfaceTypeArguments,
     string[] EventTypes,
     string[] MessageTypeNames,

@@ -110,12 +110,29 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
         })
         .ToArray();
 
+    // Compute nested-aware simple name
+    var simpleName = _getSimpleName(classSymbol);
+
     return new PerspectiveInfo(
         ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        SimpleName: simpleName,
         InterfaceTypeArguments: typeArguments,
         EventTypes: eventTypes,
         MessageTypeNames: messageTypeNames
     );
+  }
+
+  /// <summary>
+  /// Gets a name that includes containing type for nested classes.
+  /// E.g., "DraftJobStatus.Projection" for nested class, "OrderPerspective" for top-level.
+  /// </summary>
+  private static string _getSimpleName(INamedTypeSymbol classSymbol) {
+    if (classSymbol.ContainingType != null) {
+      // Nested type - include containing type name
+      return $"{classSymbol.ContainingType.Name}.{classSymbol.Name}";
+    }
+    // Top-level type - just the simple name
+    return classSymbol.Name;
   }
 
   /// <summary>

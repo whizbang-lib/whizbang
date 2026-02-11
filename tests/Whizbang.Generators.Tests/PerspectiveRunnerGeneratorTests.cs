@@ -1078,4 +1078,77 @@ namespace TestNamespace {
     await Assert.That(runnerSource!).Contains("OrderCreatedEvent");
     await Assert.That(runnerSource!).Contains("OrderCancelledEvent");
   }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveRunnerGenerator_NestedClasses_GeneratesUniqueHintNamesAsync() {
+    // Arrange - Multiple nested classes with the same simple name "Projection"
+    // should generate unique hintNames like "DraftJobStatusProjectionRunner.g.cs"
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record DraftCreatedEvent : IEvent {
+    [StreamKey]
+    public string DraftId { get; init; } = """";
+  }
+
+  public record EmbeddingCreatedEvent : IEvent {
+    [StreamKey]
+    public string EmbeddingId { get; init; } = """";
+  }
+
+  public record DraftModel {
+    [StreamKey]
+    public string DraftId { get; init; } = """";
+    public string Content { get; init; } = """";
+  }
+
+  public record EmbeddingModel {
+    [StreamKey]
+    public string EmbeddingId { get; init; } = """";
+    public string Content { get; init; } = """";
+  }
+
+  public static class DraftJobStatus {
+    public class Projection : IPerspectiveFor<DraftModel, DraftCreatedEvent> {
+      public DraftModel Apply(DraftModel currentData, DraftCreatedEvent @event) {
+        return currentData with { Content = ""Draft"" };
+      }
+    }
+  }
+
+  public static class Embedding {
+    public class Projection : IPerspectiveFor<EmbeddingModel, EmbeddingCreatedEvent> {
+      public EmbeddingModel Apply(EmbeddingModel currentData, EmbeddingCreatedEvent @event) {
+        return currentData with { Content = ""Embedding"" };
+      }
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveRunnerGenerator>(source);
+
+    // Assert - Should generate 2 runners with unique hintNames
+    // Check that no CS8785 error (duplicate hintName) exists
+    var duplicateHintErrors = result.Diagnostics
+        .Where(d => d.Id == "CS8785" || d.GetMessage(CultureInfo.InvariantCulture).Contains("hintName"))
+        .ToList();
+    await Assert.That(duplicateHintErrors).Count().IsEqualTo(0);
+
+    await Assert.That(result.GeneratedTrees).Count().IsEqualTo(2);
+
+    // The hintNames should include parent type names for uniqueness
+    var draftRunner = GeneratorTestHelper.GetGeneratedSource(result, "DraftJobStatusProjectionRunner.g.cs");
+    var embeddingRunner = GeneratorTestHelper.GetGeneratedSource(result, "EmbeddingProjectionRunner.g.cs");
+
+    await Assert.That(draftRunner).IsNotNull();
+    await Assert.That(embeddingRunner).IsNotNull();
+
+    // Verify the class names also include parent type
+    await Assert.That(draftRunner!).Contains("class DraftJobStatusProjectionRunner");
+    await Assert.That(embeddingRunner!).Contains("class EmbeddingProjectionRunner");
+  }
 }

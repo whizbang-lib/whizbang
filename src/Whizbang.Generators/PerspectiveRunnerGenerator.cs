@@ -99,8 +99,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Extract return types for each Apply method
     var eventReturnTypes = _extractEventReturnTypes(classSymbol, eventTypes, modelType);
 
+    // Compute nested-aware simple name for unique hintNames
+    var simpleName = _getSimpleName(classSymbol);
+
     return new PerspectiveInfo(
         ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        SimpleName: simpleName,
         InterfaceTypeArguments: typeArguments,
         EventTypes: eventTypes.ToArray(),
         MessageTypeNames: messageTypeNames,
@@ -145,14 +149,14 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     // Generate a runner for each perspective
     foreach (var perspective in perspectives) {
       var runnerSource = _generateRunnerSource(compilation, perspective);
-      var runnerName = _getRunnerName(perspective.ClassName);
+      var runnerName = _getRunnerName(perspective.SimpleName);
       context.AddSource($"{runnerName}.g.cs", runnerSource);
 
       // Report diagnostic
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.PerspectiveRunnerGenerated,
           Location.None,
-          _getSimpleName(perspective.ClassName),
+          perspective.SimpleName,
           runnerName
       ));
     }
@@ -172,12 +176,12 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
         "PerspectiveRunnerTemplate.cs"
     );
 
-    var runnerName = _getRunnerName(perspective.ClassName);
-    var perspectiveSimpleName = _getSimpleName(perspective.ClassName);
+    var runnerName = _getRunnerName(perspective.SimpleName);
+    var perspectiveSimpleName = perspective.SimpleName;
 
     // Model type is always the first type argument
     var modelTypeName = perspective.InterfaceTypeArguments[0];
-    var modelSimpleName = _getSimpleName(modelTypeName);
+    var modelSimpleName = _getSimpleNameFromString(modelTypeName);
 
     // Generate AOT-compatible switch cases for event application
     var mustExistEvents = perspective.MustExistEventTypes ?? Array.Empty<string>();
@@ -186,7 +190,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var applyCases = new StringBuilder();
     foreach (var eventType in perspective.EventTypes) {
       var isMustExist = mustExistEvents.Contains(eventType);
-      var eventSimpleName = _getSimpleName(eventType);
+      var eventSimpleName = _getSimpleNameFromString(eventType);
 
       // Get return type for this event, default to Model
       var returnType = returnTypeLookup.TryGetValue(eventType, out var rt) ? rt : ApplyReturnType.Model;
@@ -253,7 +257,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     if (perspective.EventStreamKeys != null) {
       foreach (var eventStreamKey in perspective.EventStreamKeys) {
         extractStreamIdMethods.AppendLine($"  /// <summary>");
-        extractStreamIdMethods.AppendLine($"  /// Extracts the stream ID from {_getSimpleName(eventStreamKey.EventTypeName)} event.");
+        extractStreamIdMethods.AppendLine($"  /// Extracts the stream ID from {_getSimpleNameFromString(eventStreamKey.EventTypeName)} event.");
         extractStreamIdMethods.AppendLine($"  /// </summary>");
         extractStreamIdMethods.AppendLine($"  private static string ExtractStreamId({eventStreamKey.EventTypeName} @event) {{");
         extractStreamIdMethods.AppendLine($"    return @event.{eventStreamKey.StreamKeyPropertyName}.ToString();");
@@ -505,19 +509,34 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Gets the runner class name from a perspective class name.
-  /// E.g., "MyApp.OrderPerspective" -> "OrderPerspectiveRunner"
+  /// Gets the runner class name from a perspective simple name.
+  /// E.g., "OrderPerspective" -> "OrderPerspectiveRunner"
+  /// E.g., "DraftJobStatus.Projection" -> "DraftJobStatusProjectionRunner"
   /// </summary>
-  private static string _getRunnerName(string perspectiveClassName) {
-    var simpleName = _getSimpleName(perspectiveClassName);
-    return $"{simpleName}Runner";
+  private static string _getRunnerName(string simpleName) {
+    // Remove dots from nested type names to create valid C# identifier
+    return $"{simpleName.Replace(".", "")}Runner";
   }
 
   /// <summary>
-  /// Gets the simple name from a fully qualified type name.
+  /// Gets a name that includes containing type for nested classes.
+  /// E.g., "DraftJobStatus.Projection" for nested class, "OrderPerspective" for top-level.
+  /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerGeneratorTests.cs:PerspectiveRunnerGenerator_NestedClasses_GeneratesUniqueHintNamesAsync</tests>
+  private static string _getSimpleName(INamedTypeSymbol classSymbol) {
+    if (classSymbol.ContainingType != null) {
+      // Nested type - include containing type name
+      return $"{classSymbol.ContainingType.Name}.{classSymbol.Name}";
+    }
+    // Top-level type - just the simple name
+    return classSymbol.Name;
+  }
+
+  /// <summary>
+  /// Gets the simple name from a fully qualified type name (string version).
   /// E.g., "global::MyApp.OrderPerspective" -> "OrderPerspective"
   /// </summary>
-  private static string _getSimpleName(string fullyQualifiedName) {
+  private static string _getSimpleNameFromString(string fullyQualifiedName) {
     var lastDot = fullyQualifiedName.LastIndexOf('.');
     return lastDot >= 0 ? fullyQualifiedName[(lastDot + 1)..] : fullyQualifiedName;
   }

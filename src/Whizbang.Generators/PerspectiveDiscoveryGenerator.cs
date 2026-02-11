@@ -123,6 +123,9 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
 
     var className = classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
+    // Compute nested-aware simple name
+    var simpleName = _getSimpleName(classSymbol);
+
     // Generate one PerspectiveInfo per implemented interface
     var results = perspectiveInterfaces.Select(perspectiveInterface => {
       // Extract all type arguments: [TModel, TEvent1, TEvent2, ...]
@@ -148,6 +151,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
 
       return new PerspectiveInfo(
           ClassName: className,
+          SimpleName: simpleName,
           InterfaceTypeArguments: typeArguments,
           EventTypes: eventTypes,
           MessageTypeNames: messageTypeNames,
@@ -458,6 +462,19 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     return sb.ToString();
   }
 
+
+  /// <summary>
+  /// Gets a name that includes containing type for nested classes.
+  /// E.g., "DraftJobStatus.Projection" for nested class, "OrderPerspective" for top-level.
+  /// </summary>
+  private static string _getSimpleName(INamedTypeSymbol classSymbol) {
+    if (classSymbol.ContainingType != null) {
+      // Nested type - include containing type name
+      return $"{classSymbol.ContainingType.Name}.{classSymbol.Name}";
+    }
+    // Top-level type - just the simple name
+    return classSymbol.Name;
+  }
 
   /// <summary>
   /// Gets the simple name from a fully qualified type name.
