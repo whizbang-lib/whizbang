@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
@@ -113,24 +114,41 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     }
 
     var className = classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-    var simpleName = _getSimpleName(className);
+    var simpleName = _getSimpleName(classSymbol);
 
     return new PerspectiveRegistryInfo(
         ClassName: className,
         SimpleName: simpleName,
-        RunnerName: $"{simpleName}Runner"
+        RunnerName: $"{simpleName.Replace(".", "")}Runner"
     );
   }
 
   /// <summary>
   /// Generates the static registry class with GetRunner() and AddPerspectiveRunners() methods.
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerRegistryGeneratorTests.cs:Generator_WithDuplicateNames_EmitsCollisionErrorAsync</tests>
   private static void _generatePerspectiveRunnerRegistry(
       SourceProductionContext context,
       Compilation compilation,
       ImmutableArray<PerspectiveRegistryInfo> perspectives) {
 
     if (perspectives.IsEmpty) {
+      return;
+    }
+
+    // Check for name collisions before generating
+    var nameGroups = perspectives.GroupBy(p => p.SimpleName).Where(g => g.Count() > 1).ToList();
+    if (nameGroups.Count > 0) {
+      foreach (var group in nameGroups) {
+        var classNames = string.Join(", ", group.Select(p => p.ClassName));
+        context.ReportDiagnostic(Diagnostic.Create(
+            DiagnosticDescriptors.PerspectiveNameCollision,
+            Location.None,
+            group.Key,
+            classNames
+        ));
+      }
+      // Skip generation if collisions found
       return;
     }
 
@@ -224,12 +242,18 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Gets the simple name from a fully qualified type name.
-  /// E.g., "global::MyApp.OrderPerspective" -> "OrderPerspective"
+  /// Gets a name that includes containing type for nested classes.
+  /// E.g., "DraftJobStatus.Projection" for nested class, "OrderPerspective" for top-level.
   /// </summary>
-  private static string _getSimpleName(string fullyQualifiedName) {
-    var lastDot = fullyQualifiedName.LastIndexOf('.');
-    return lastDot >= 0 ? fullyQualifiedName[(lastDot + 1)..] : fullyQualifiedName;
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerRegistryGeneratorTests.cs:Generator_WithNestedPerspective_UsesQualifiedNameAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerRegistryGeneratorTests.cs:Generator_WithNonNestedPerspective_UsesSimpleNameAsync</tests>
+  private static string _getSimpleName(INamedTypeSymbol classSymbol) {
+    if (classSymbol.ContainingType != null) {
+      // Nested type - include containing type name
+      return $"{classSymbol.ContainingType.Name}.{classSymbol.Name}";
+    }
+    // Top-level type - just the simple name
+    return classSymbol.Name;
   }
 }
 

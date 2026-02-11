@@ -312,6 +312,21 @@ public static class DiagnosticDescriptors {
       description: "Each event type can only have one property marked with [StreamKey] attribute."
   );
 
+  /// <summary>
+  /// WHIZ032: Error - Perspective name collision detected.
+  /// </summary>
+  /// <docs>diagnostics/whiz032</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerRegistryGeneratorTests.cs:Generator_WithDuplicateNames_EmitsCollisionErrorAsync</tests>
+  public static readonly DiagnosticDescriptor PerspectiveNameCollision = new(
+      id: "WHIZ032",
+      title: "Perspective Name Collision",
+      messageFormat: "Multiple perspectives found with name '{0}': {1}. Use unique class names.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "Two or more perspective classes resolve to the same name, which would cause duplicate switch cases in the runner registry."
+  );
+
   // ========================================
   // Test Linking Diagnostics (WHIZ050-069)
   // ========================================
