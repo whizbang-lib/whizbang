@@ -167,17 +167,22 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   /// <summary>
   /// Finds the StreamKey property in a model type.
   /// Returns the property name if found, null otherwise.
+  /// Searches the type hierarchy to find [StreamKey] on inherited properties.
   /// </summary>
   private static string? _findStreamKeyProperty(ITypeSymbol modelType) {
-    foreach (var member in modelType.GetMembers()) {
-      if (member is IPropertySymbol property) {
-        var hasStreamKeyAttribute = property.GetAttributes()
-            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
+    var currentType = modelType as INamedTypeSymbol;
+    while (currentType is not null) {
+      foreach (var member in currentType.GetMembers()) {
+        if (member is IPropertySymbol property) {
+          var hasStreamKeyAttribute = property.GetAttributes()
+              .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
 
-        if (hasStreamKeyAttribute) {
-          return property.Name;
+          if (hasStreamKeyAttribute) {
+            return property.Name;
+          }
         }
       }
+      currentType = currentType.BaseType;
     }
     return null;
   }
@@ -215,6 +220,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   /// Validates that an event type has exactly one property marked with [StreamKey].
   /// Returns validation error if found, null if valid.
   /// Handles array types by validating the element type.
+  /// Searches the type hierarchy to find [StreamKey] on inherited properties.
   /// </summary>
   private static EventValidationError? _validateEventStreamKey(ITypeSymbol eventTypeSymbol) {
     // If this is an array type, validate the element type instead
@@ -225,15 +231,20 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
 
     var streamKeyProperties = new List<string>();
 
-    foreach (var member in typeToValidate.GetMembers()) {
-      if (member is IPropertySymbol property) {
-        var hasStreamKeyAttribute = property.GetAttributes()
-            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
+    // Traverse the type hierarchy to find [StreamKey] on inherited properties
+    var currentType = typeToValidate as INamedTypeSymbol;
+    while (currentType is not null) {
+      foreach (var member in currentType.GetMembers()) {
+        if (member is IPropertySymbol property) {
+          var hasStreamKeyAttribute = property.GetAttributes()
+              .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
 
-        if (hasStreamKeyAttribute) {
-          streamKeyProperties.Add(property.Name);
+          if (hasStreamKeyAttribute) {
+            streamKeyProperties.Add(property.Name);
+          }
         }
       }
+      currentType = currentType.BaseType;
     }
 
     var eventTypeName = typeToValidate.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
@@ -252,6 +263,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   /// Extracts the StreamKey property name from an event type.
   /// Returns the property name if exactly one [StreamKey] is found, null otherwise.
   /// Handles array types by extracting from the element type.
+  /// Searches the type hierarchy to find [StreamKey] on inherited properties.
   /// </summary>
   private static string? _extractStreamKeyProperty(ITypeSymbol eventTypeSymbol) {
     // If this is an array type, extract from the element type instead
@@ -260,15 +272,20 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       typeToExtract = arrayType.ElementType;
     }
 
-    foreach (var member in typeToExtract.GetMembers()) {
-      if (member is IPropertySymbol property) {
-        var hasStreamKeyAttribute = property.GetAttributes()
-            .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
+    // Traverse the type hierarchy to find [StreamKey] on inherited properties
+    var currentType = typeToExtract as INamedTypeSymbol;
+    while (currentType is not null) {
+      foreach (var member in currentType.GetMembers()) {
+        if (member is IPropertySymbol property) {
+          var hasStreamKeyAttribute = property.GetAttributes()
+              .Any(a => a.AttributeClass?.ToDisplayString() == "Whizbang.Core.StreamKeyAttribute");
 
-        if (hasStreamKeyAttribute) {
-          return property.Name;
+          if (hasStreamKeyAttribute) {
+            return property.Name;
+          }
         }
       }
+      currentType = currentType.BaseType;
     }
 
     return null;
