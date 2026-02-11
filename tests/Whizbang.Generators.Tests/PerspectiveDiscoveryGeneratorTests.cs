@@ -1233,4 +1233,50 @@ namespace TestNamespace {
     // Should use compile-time instantiation with global:: prefix
     await Assert.That(generatedSource!).Contains("new global::TestNamespace.ShipmentPerspective()");
   }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_DoesNotGenerateEFCoreCodeAsync() {
+    // Arrange - Base generator should NOT include EF Core-specific code
+    // EF Core code should be in Whizbang.Data.EFCore.Postgres.Generators instead
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  public record OrderCreatedEvent : IEvent {
+    public string OrderId { get; init; } = """";
+  }
+
+  public record OrderModel {
+    public string OrderId { get; set; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return currentData;
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    // Assert - Should NOT contain EF Core specific code
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+
+    // Should NOT have EF Core usings
+    await Assert.That(generatedSource!).DoesNotContain("using Microsoft.EntityFrameworkCore;");
+    await Assert.That(generatedSource!).DoesNotContain("using Microsoft.Extensions.Logging;");
+
+    // Should NOT have RegisterPerspectiveAssociationsAsync method
+    await Assert.That(generatedSource!).DoesNotContain("RegisterPerspectiveAssociationsAsync");
+    await Assert.That(generatedSource!).DoesNotContain("ExecuteSqlRawAsync");
+    await Assert.That(generatedSource!).DoesNotContain("DbContext");
+
+    // Should still have non-EF Core functionality
+    await Assert.That(generatedSource!).Contains("GetMessageAssociations");
+    await Assert.That(generatedSource!).Contains("AddWhizbangPerspectives");
+  }
 }

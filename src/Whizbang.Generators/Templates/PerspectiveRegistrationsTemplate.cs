@@ -1,12 +1,7 @@
 using System;
 using System.Linq;
-using System.Text;
 using System.Text.RegularExpressions;
-using System.Threading;
-using System.Threading.Tasks;
-using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
-using Microsoft.Extensions.Logging;
 using Whizbang.Core;
 using Whizbang.Core.Perspectives;
 
@@ -70,53 +65,6 @@ public static class PerspectiveRegistrationExtensions {
     #endregion
 
     return new WhizbangPerspectiveBuilder(services);
-  }
-
-  /// <summary>
-  /// Registers perspective → event type associations in the database.
-  /// This enables the work coordinator to automatically create perspective checkpoints when events arrive.
-  /// MUST be called during database initialization (after EnsureWhizbangDatabaseInitializedAsync).
-  /// </summary>
-  /// <param name="context">The DbContext instance</param>
-  /// <param name="schema">The schema name for the database (e.g., "inventory", "bff")</param>
-  /// <param name="serviceName">The service name (assembly name)</param>
-  /// <param name="logger">Optional logger for diagnostic messages</param>
-  /// <param name="cancellationToken">Cancellation token</param>
-  public static async Task RegisterPerspectiveAssociationsAsync<TDbContext>(
-    this TDbContext context,
-    string schema,
-    string serviceName,
-    ILogger? logger = null,
-    CancellationToken cancellationToken = default)
-    where TDbContext : DbContext {
-
-    // Build JSON array of message associations
-    var json = new StringBuilder();
-    json.AppendLine("[");
-
-    #region MESSAGE_ASSOCIATIONS_JSON
-    // This region gets replaced with generated association JSON
-    #endregion
-
-    json.AppendLine("]");
-
-    var jsonString = json.ToString();
-
-    logger?.LogInformation("Registering {Count} perspective message association(s) in schema '{Schema}'...", {{ASSOCIATION_COUNT}}, schema);
-
-    // Call the schema-qualified register_message_associations function
-    // Uses parameterized query to avoid SQL injection
-    var sql = $@"
-      SELECT {schema}.register_message_associations(@p0::jsonb)
-    ";
-
-    try {
-      await context.Database.ExecuteSqlRawAsync(sql, new[] { jsonString }, cancellationToken);
-      logger?.LogInformation("Successfully registered perspective message associations");
-    } catch (Exception ex) {
-      logger?.LogError(ex, "Failed to register perspective message associations in schema '{Schema}'", schema);
-      throw;
-    }
   }
 
   /// <summary>
