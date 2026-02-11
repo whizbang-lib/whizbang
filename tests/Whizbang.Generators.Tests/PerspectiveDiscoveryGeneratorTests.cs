@@ -786,6 +786,53 @@ namespace TestNamespace {
     await Assert.That(whiz030.GetMessage(CultureInfo.InvariantCulture)).Contains("OrderEvent");
   }
 
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task PerspectiveDiscoveryGenerator_InheritedStreamKey_FindsAttributeOnBaseClassAsync() {
+    // Arrange - Tests that [StreamKey] is found on inherited properties from base class
+    var source = @"
+using System;
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+
+namespace TestNamespace {
+  // Base event class with [StreamKey] on inherited property
+  public abstract record BaseEvent : IEvent {
+    [StreamKey]
+    public virtual Guid StreamId { get; init; }
+  }
+
+  // Derived event that inherits StreamKey from base class
+  public record OrderCreatedEvent : BaseEvent {
+    public string OrderName { get; init; } = """";
+  }
+
+  public record OrderModel {
+    public Guid StreamId { get; set; }
+    public string OrderName { get; set; } = """";
+  }
+
+  public class OrderPerspective : IPerspectiveFor<OrderModel, OrderCreatedEvent> {
+    public OrderModel Apply(OrderModel currentData, OrderCreatedEvent @event) {
+      return new OrderModel { StreamId = @event.StreamId, OrderName = @event.OrderName };
+    }
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    // Assert - Should NOT report WHIZ030 error (StreamKey is inherited from base class)
+    var whiz030 = result.Diagnostics.FirstOrDefault(d => d.Id == "WHIZ030");
+    await Assert.That(whiz030).IsNull();
+
+    // Should generate perspective registration successfully
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource!).Contains("OrderPerspective");
+    await Assert.That(generatedSource!).Contains("OrderCreatedEvent");
+  }
+
   /// <summary>
   /// Helper method to count occurrences of a substring in a string.
   /// </summary>
