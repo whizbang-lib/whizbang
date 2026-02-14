@@ -78,15 +78,15 @@ public sealed class GraphQLLensTypeGenerator : IIncrementalGenerator {
     var modelType = lensQueryInterface.TypeArguments[0];
 
     // Extract attribute properties
-    var queryName = _getAttributeStringValue(graphQLLensAttr, "QueryName")
-                    ?? _getDefaultQueryName(modelType.Name);
-    var scope = _getAttributeIntValue(graphQLLensAttr, "Scope", 0);
-    var enableFiltering = _getAttributeBoolValue(graphQLLensAttr, "EnableFiltering", true);
-    var enableSorting = _getAttributeBoolValue(graphQLLensAttr, "EnableSorting", true);
-    var enablePaging = _getAttributeBoolValue(graphQLLensAttr, "EnablePaging", true);
-    var enableProjection = _getAttributeBoolValue(graphQLLensAttr, "EnableProjection", true);
-    var defaultPageSize = _getAttributeIntValue(graphQLLensAttr, "DefaultPageSize", 10);
-    var maxPageSize = _getAttributeIntValue(graphQLLensAttr, "MaxPageSize", 100);
+    var queryName = AttributeUtilities.GetStringValue(graphQLLensAttr, "QueryName")
+                    ?? NamingConventionUtilities.ToDefaultQueryName(modelType.Name);
+    var scope = AttributeUtilities.GetIntValue(graphQLLensAttr, "Scope", 0);
+    var enableFiltering = AttributeUtilities.GetBoolValue(graphQLLensAttr, "EnableFiltering", true);
+    var enableSorting = AttributeUtilities.GetBoolValue(graphQLLensAttr, "EnableSorting", true);
+    var enablePaging = AttributeUtilities.GetBoolValue(graphQLLensAttr, "EnablePaging", true);
+    var enableProjection = AttributeUtilities.GetBoolValue(graphQLLensAttr, "EnableProjection", true);
+    var defaultPageSize = AttributeUtilities.GetIntValue(graphQLLensAttr, "DefaultPageSize", 10);
+    var maxPageSize = AttributeUtilities.GetIntValue(graphQLLensAttr, "MaxPageSize", 100);
 
     return new GraphQLLensInfo(
         InterfaceName: symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
@@ -101,68 +101,6 @@ public sealed class GraphQLLensTypeGenerator : IIncrementalGenerator {
         MaxPageSize: maxPageSize,
         Namespace: symbol.ContainingNamespace.ToDisplayString()
     );
-  }
-
-  /// <summary>
-  /// Get a string property value from an attribute.
-  /// </summary>
-  private static string? _getAttributeStringValue(AttributeData attribute, string propertyName) {
-    var namedArg = attribute.NamedArguments
-        .FirstOrDefault(a => a.Key == propertyName);
-
-    if (namedArg.Key is null || namedArg.Value.Value is not string value) {
-      return null;
-    }
-
-    return value;
-  }
-
-  /// <summary>
-  /// Get a boolean property value from an attribute.
-  /// </summary>
-  private static bool _getAttributeBoolValue(AttributeData attribute, string propertyName, bool defaultValue) {
-    var namedArg = attribute.NamedArguments
-        .FirstOrDefault(a => a.Key == propertyName);
-
-    if (namedArg.Key is null || namedArg.Value.Value is not bool value) {
-      return defaultValue;
-    }
-
-    return value;
-  }
-
-  /// <summary>
-  /// Get an integer property value from an attribute.
-  /// </summary>
-  private static int _getAttributeIntValue(AttributeData attribute, string propertyName, int defaultValue) {
-    var namedArg = attribute.NamedArguments
-        .FirstOrDefault(a => a.Key == propertyName);
-
-    if (namedArg.Key is null || namedArg.Value.Value is not int value) {
-      return defaultValue;
-    }
-
-    return value;
-  }
-
-  /// <summary>
-  /// Generate default query name from model type name.
-  /// E.g., "OrderReadModel" -> "orders"
-  /// </summary>
-  private static string _getDefaultQueryName(string modelTypeName) {
-    // Remove common suffixes
-    var name = modelTypeName;
-    if (name.EndsWith("ReadModel", StringComparison.Ordinal)) {
-      name = name.Substring(0, name.Length - 9);
-    } else if (name.EndsWith("Model", StringComparison.Ordinal)) {
-      name = name.Substring(0, name.Length - 5);
-    } else if (name.EndsWith("Dto", StringComparison.Ordinal)) {
-      name = name.Substring(0, name.Length - 3);
-    }
-
-    // Simple pluralization and lowercase
-    var pluralized = name.EndsWith("s", StringComparison.Ordinal) ? name : name + "s";
-    return char.ToLowerInvariant(pluralized[0]) + pluralized.Substring(1);
   }
 
   /// <summary>

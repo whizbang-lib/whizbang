@@ -55,26 +55,22 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
       return null;
     }
 
-    // Look for IPerspectiveFor<TModel, TEvent1..5> interfaces (single-stream)
+    // Look for IPerspectiveFor<TModel, TEvent1..50> interfaces (single-stream)
     var singleStreamInterfaces = classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
-          return (originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1>" ||
-                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2>" ||
-                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2, TEvent3>" ||
-                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2, TEvent3, TEvent4>" ||
-                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5>")
+          // Match IPerspectiveFor<TModel, TEvent1, ...> with any number of event types (1-50)
+          return originalDef.StartsWith(PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent", StringComparison.Ordinal)
                  && i.TypeArguments.Length >= 2;
         })
         .ToList();
 
-    // Look for IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1..3> interfaces (multi-stream)
+    // Look for IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1..50> interfaces (multi-stream)
     var globalInterfaces = classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
-          return (originalDef == GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent1>" ||
-                  originalDef == GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent1, TEvent2>" ||
-                  originalDef == GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent1, TEvent2, TEvent3>")
+          // Match IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1, ...> with any number of event types (1-50)
+          return originalDef.StartsWith(GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent", StringComparison.Ordinal)
                  && i.TypeArguments.Length >= 3;
         })
         .ToList();
@@ -114,7 +110,7 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     }
 
     var className = classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-    var simpleName = _getSimpleName(classSymbol);
+    var simpleName = TypeNameUtilities.GetSimpleName(classSymbol);
 
     return new PerspectiveRegistryInfo(
         ClassName: className,
@@ -241,20 +237,6 @@ public class PerspectiveRunnerRegistryGenerator : IIncrementalGenerator {
     ));
   }
 
-  /// <summary>
-  /// Gets a name that includes containing type for nested classes.
-  /// E.g., "DraftJobStatus.Projection" for nested class, "OrderPerspective" for top-level.
-  /// </summary>
-  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerRegistryGeneratorTests.cs:Generator_WithNestedPerspective_UsesQualifiedNameAsync</tests>
-  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerRegistryGeneratorTests.cs:Generator_WithNonNestedPerspective_UsesSimpleNameAsync</tests>
-  private static string _getSimpleName(INamedTypeSymbol classSymbol) {
-    if (classSymbol.ContainingType != null) {
-      // Nested type - include containing type name
-      return $"{classSymbol.ContainingType.Name}.{classSymbol.Name}";
-    }
-    // Top-level type - just the simple name
-    return classSymbol.Name;
-  }
 }
 
 /// <summary>

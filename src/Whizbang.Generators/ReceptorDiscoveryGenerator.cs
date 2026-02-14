@@ -289,12 +289,12 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
 
     // Report each discovered receptor
     foreach (var receptor in receptors) {
-      var responseTypeName = receptor.IsVoid ? "void" : _getSimpleName(receptor.ResponseType!);
+      var responseTypeName = receptor.IsVoid ? "void" : TypeNameUtilities.GetSimpleName(receptor.ResponseType!);
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.ReceptorDiscovered,
           Location.None,
-          _getSimpleName(receptor.ClassName),
-          _getSimpleName(receptor.MessageType),
+          TypeNameUtilities.GetSimpleName(receptor.ClassName),
+          TypeNameUtilities.GetSimpleName(receptor.MessageType),
           responseTypeName
       ));
     }
@@ -709,11 +709,11 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     var messages = new StringBuilder();
     for (int i = 0; i < receptors.Length; i++) {
       var receptor = receptors[i];
-      var responseTypeName = receptor.IsVoid ? "void" : _getSimpleName(receptor.ResponseType!);
+      var responseTypeName = receptor.IsVoid ? "void" : TypeNameUtilities.GetSimpleName(receptor.ResponseType!);
       var generatedCode = messageSnippet
           .Replace(PLACEHOLDER_INDEX, (i + 1).ToString(CultureInfo.InvariantCulture))
-          .Replace(PLACEHOLDER_RECEPTOR_NAME, _getSimpleName(receptor.ClassName))
-          .Replace(PLACEHOLDER_MESSAGE_NAME, _getSimpleName(receptor.MessageType))
+          .Replace(PLACEHOLDER_RECEPTOR_NAME, TypeNameUtilities.GetSimpleName(receptor.ClassName))
+          .Replace(PLACEHOLDER_MESSAGE_NAME, TypeNameUtilities.GetSimpleName(receptor.MessageType))
           .Replace(PLACEHOLDER_RESPONSE_NAME, responseTypeName);
 
       messages.Append(TemplateUtilities.IndentCode(generatedCode, "            "));
@@ -733,66 +733,5 @@ public class ReceptorDiscoveryGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "DIAGNOSTIC_MESSAGES", messages.ToString());
 
     return result;
-  }
-
-  /// <summary>
-  /// Gets the simple name from a fully qualified type name.
-  /// Handles tuples, arrays, and nested types.
-  /// E.g., "global::MyApp.Commands.CreateOrder" -> "CreateOrder"
-  /// E.g., "(global::A.B, global::C.D)" -> "(B, D)"
-  /// E.g., "global::MyApp.Events.NotificationEvent[]" -> "NotificationEvent[]"
-  /// </summary>
-  private static string _getSimpleName(string fullyQualifiedName) {
-    // Handle tuples: (Type1, Type2, ...)
-    if (fullyQualifiedName.StartsWith("(", StringComparison.Ordinal) && fullyQualifiedName.EndsWith(")", StringComparison.Ordinal)) {
-      var inner = fullyQualifiedName[1..^1];
-      var parts = _splitTupleParts(inner);
-      var simplifiedParts = new string[parts.Length];
-      for (int i = 0; i < parts.Length; i++) {
-        simplifiedParts[i] = _getSimpleName(parts[i].Trim());
-      }
-      return "(" + string.Join(", ", simplifiedParts) + ")";
-    }
-
-    // Handle arrays: Type[]
-    if (fullyQualifiedName.EndsWith("[]", StringComparison.Ordinal)) {
-      var baseType = fullyQualifiedName[..^2];
-      return _getSimpleName(baseType) + "[]";
-    }
-
-    // Handle simple types
-    var lastDot = fullyQualifiedName.LastIndexOf('.');
-    return lastDot >= 0 ? fullyQualifiedName[(lastDot + 1)..] : fullyQualifiedName;
-  }
-
-  /// <summary>
-  /// Splits tuple parts respecting nested tuples and parentheses.
-  /// E.g., "A, B, (C, D)" -> ["A", "B", "(C, D)"]
-  /// </summary>
-  private static string[] _splitTupleParts(string tupleContent) {
-    var parts = new System.Collections.Generic.List<string>();
-    var currentPart = new System.Text.StringBuilder();
-    var depth = 0;
-
-    foreach (var ch in tupleContent) {
-      if (ch == ',' && depth == 0) {
-        parts.Add(currentPart.ToString());
-        currentPart.Clear();
-      } else {
-        if (ch == '(') {
-          depth++;
-        } else if (ch == ')') {
-          depth--;
-        }
-
-        currentPart.Append(ch);
-      }
-    }
-
-    if (currentPart.Length > 0) {
-      parts.Add(currentPart.ToString());
-    }
-
-    return [.. parts];
   }
 }

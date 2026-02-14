@@ -56,36 +56,6 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Extracts perspective information from a class declaration.
-  /// Returns array of PerspectiveInfo (one per implemented interface).
-  /// Supports both patterns:
-  /// - Single variadic: IPerspectiveFor&lt;TModel, TEvent1, TEvent2, ...&gt;
-  /// - Multiple separate: IPerspectiveFor&lt;TModel, TEvent1&gt;, IPerspectiveFor&lt;TModel, TEvent2&gt;
-  /// </summary>
-  private static string _formatTypeNameForRuntime(ITypeSymbol typeSymbol) {
-    if (typeSymbol == null) {
-      throw new ArgumentNullException(nameof(typeSymbol));
-    }
-
-    // Get fully qualified type name WITHOUT global:: prefix
-    var typeName = typeSymbol.ToDisplayString(new SymbolDisplayFormat(
-        typeQualificationStyle: SymbolDisplayTypeQualificationStyle.NameAndContainingTypesAndNamespaces,
-        genericsOptions: SymbolDisplayGenericsOptions.IncludeTypeParameters
-    ));
-
-    // Get assembly name (simple name only, no version/culture/publicKeyToken)
-    // For array types, get assembly from the element type (array types don't have ContainingAssembly)
-    var assemblyName = typeSymbol is IArrayTypeSymbol arrayType
-        ? arrayType.ElementType.ContainingAssembly.Name
-        : typeSymbol.ContainingAssembly.Name;
-
-    // Format: "TypeName, AssemblyName"
-    // Example: "ECommerce.Contracts.ProductCreatedEvent, ECommerce.Contracts"
-    // Example (array): "ECommerce.Contracts.ProductCreatedEvent[], ECommerce.Contracts"
-    return $"{typeName}, {assemblyName}";
-  }
-
-  /// <summary>
   /// Extracts perspective information from a class that implements IPerspectiveFor interfaces.
   private static PerspectiveInfo[]? _extractPerspectiveInfos(
       GeneratorSyntaxContext context,
@@ -124,7 +94,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     var className = classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
 
     // Compute nested-aware simple name
-    var simpleName = _getSimpleName(classSymbol);
+    var simpleName = TypeNameUtilities.GetSimpleName(classSymbol);
 
     // Generate one PerspectiveInfo per implemented interface
     var results = perspectiveInterfaces.Select(perspectiveInterface => {
@@ -143,7 +113,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
       // Calculate DATABASE FORMAT (TypeName, AssemblyName - no global:: prefix)
       // This format is used for registration in wh_message_associations table
       var messageTypeNames = eventTypeSymbols
-          .Select(t => _formatTypeNameForRuntime(t))
+          .Select(t => TypeNameUtilities.FormatTypeNameForRuntime(t))
           .ToArray();
 
       // Validate event types and extract StreamKey information
@@ -248,7 +218,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     }
 
     var eventTypeName = typeToValidate.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-    var simpleEventName = _getSimpleName(eventTypeName);
+    var simpleEventName = TypeNameUtilities.GetSimpleName(eventTypeName);
 
     if (streamKeyProperties.Count == 0) {
       return new EventValidationError(simpleEventName, StreamKeyErrorType.MissingStreamKey);
@@ -308,18 +278,18 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
 
     // Report each discovered perspective and any validation errors
     foreach (var perspective in perspectives) {
-      var eventNames = string.Join(", ", perspective.EventTypes.Select(_getSimpleName));
+      var eventNames = string.Join(", ", perspective.EventTypes.Select(TypeNameUtilities.GetSimpleName));
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.PerspectiveDiscovered,
           Location.None,
-          _getSimpleName(perspective.ClassName),
+          TypeNameUtilities.GetSimpleName(perspective.ClassName),
           eventNames
       ));
 
       // Report validation errors for this perspective
       if (perspective.EventValidationErrors != null) {
         foreach (var error in perspective.EventValidationErrors) {
-          var simplePerspectiveName = _getSimpleName(perspective.ClassName);
+          var simplePerspectiveName = TypeNameUtilities.GetSimpleName(perspective.ClassName);
 
           if (error.ErrorType == StreamKeyErrorType.MissingStreamKey) {
             context.ReportDiagnostic(Diagnostic.Create(
@@ -390,7 +360,7 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     bool isFirst = true;
 
     foreach (var perspective in perspectives) {
-      var perspectiveClassName = _getSimpleName(perspective.ClassName);
+      var perspectiveClassName = TypeNameUtilities.GetSimpleName(perspective.ClassName);
 
       // Use MessageTypeNames which already has the correct database format
       foreach (var messageTypeName in perspective.MessageTypeNames) {
@@ -477,36 +447,5 @@ public class PerspectiveDiscoveryGenerator : IIncrementalGenerator {
     sb.AppendLine("    return Array.Empty<PerspectiveAssociationInfo<TModel, TEvent>>();");
 
     return sb.ToString();
-  }
-
-
-  /// <summary>
-  /// Gets a name that includes containing type for nested classes.
-  /// E.g., "DraftJobStatus.Projection" for nested class, "OrderPerspective" for top-level.
-  /// </summary>
-  private static string _getSimpleName(INamedTypeSymbol classSymbol) {
-    if (classSymbol.ContainingType != null) {
-      // Nested type - include containing type name
-      return $"{classSymbol.ContainingType.Name}.{classSymbol.Name}";
-    }
-    // Top-level type - just the simple name
-    return classSymbol.Name;
-  }
-
-  /// <summary>
-  /// Gets the simple name from a fully qualified type name.
-  /// Handles tuples, arrays, and nested types.
-  /// E.g., "global::MyApp.Events.OrderCreatedEvent" -> "OrderCreatedEvent"
-  /// </summary>
-  private static string _getSimpleName(string fullyQualifiedName) {
-    // Handle arrays: Type[]
-    if (fullyQualifiedName.EndsWith("[]", StringComparison.Ordinal)) {
-      var baseType = fullyQualifiedName[..^2];
-      return _getSimpleName(baseType) + "[]";
-    }
-
-    // Handle simple types
-    var lastDot = fullyQualifiedName.LastIndexOf('.');
-    return lastDot >= 0 ? fullyQualifiedName[(lastDot + 1)..] : fullyQualifiedName;
   }
 }

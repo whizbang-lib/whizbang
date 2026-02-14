@@ -141,4 +141,29 @@ public static class GeneratorTestHelper {
     return result.GeneratedTrees
         .Select(t => (Path.GetFileName(t.FilePath), t.ToString()));
   }
+
+  /// <summary>
+  /// Creates a simple compilation from source code for testing Roslyn symbol APIs.
+  /// </summary>
+  /// <param name="source">The C# source code to compile</param>
+  /// <param name="assemblyName">Optional assembly name (defaults to "TestAssembly")</param>
+  /// <returns>A CSharpCompilation that can be used to get type symbols</returns>
+  public static CSharpCompilation CreateCompilation(string source, string assemblyName = "TestAssembly") {
+    // Parse the source code
+    var syntaxTree = CSharpSyntaxTree.ParseText(source);
+
+    // Get references to basic assemblies
+    var references = new List<MetadataReference>();
+    var assemblyPath = Path.GetDirectoryName(typeof(object).Assembly.Location)!;
+    references.Add(MetadataReference.CreateFromFile(typeof(object).Assembly.Location));
+    references.Add(MetadataReference.CreateFromFile(Path.Combine(assemblyPath, "System.Runtime.dll")));
+
+    // Create compilation
+    return CSharpCompilation.Create(
+        assemblyName: assemblyName,
+        syntaxTrees: new[] { syntaxTree },
+        references: references,
+        options: new CSharpCompilationOptions(OutputKind.DynamicallyLinkedLibrary)
+    );
+  }
 }

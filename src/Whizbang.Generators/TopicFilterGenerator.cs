@@ -4,6 +4,7 @@ using System.Linq;
 using System.Text;
 using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.CSharp.Syntax;
+using Whizbang.Generators.Shared.Utilities;
 
 namespace Whizbang.Generators;
 
@@ -207,7 +208,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.TopicFilterDiscovered,
           Location.None,
-          _getSimpleName(filter.CommandType),
+          TypeNameUtilities.GetSimpleName(filter.CommandType),
           filter.Filter
       ));
     }
@@ -285,7 +286,7 @@ public class TopicFilterGenerator : IIncrementalGenerator {
       var commandType = kvp.Key;
       var commandFilters = kvp.Value;
 
-      var simpleName = _getSimpleName(commandType);
+      var simpleName = TypeNameUtilities.GetSimpleName(commandType);
       var filterArrayContent = string.Join(", ", commandFilters.Select(f => $"\"{_escapeString(f)}\""));
       sb.AppendLine($"      {{ \"{_escapeString(simpleName)}\", new[] {{ {filterArrayContent} }} }},");
     }
@@ -298,15 +299,6 @@ public class TopicFilterGenerator : IIncrementalGenerator {
 
     // Add source
     context.AddSource("TopicFilterRegistry.g.cs", sb.ToString());
-  }
-
-  /// <summary>
-  /// Gets the simple name from a fully qualified type name.
-  /// E.g., "global::MyApp.Commands.CreateOrder" -> "CreateOrder"
-  /// </summary>
-  private static string _getSimpleName(string fullyQualifiedName) {
-    var lastDot = fullyQualifiedName.LastIndexOf('.');
-    return lastDot >= 0 ? fullyQualifiedName[(lastDot + 1)..] : fullyQualifiedName;
   }
 
   /// <summary>

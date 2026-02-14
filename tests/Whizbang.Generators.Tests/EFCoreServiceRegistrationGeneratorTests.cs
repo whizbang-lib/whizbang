@@ -842,4 +842,377 @@ public class EFCoreServiceRegistrationGeneratorTests {
   }
 
   #endregion
+
+  #region Nested Model Class Tests
+
+  /// <summary>
+  /// Test that perspectives with nested Model classes generate unique DbSet property names.
+  /// Nested Model classes like "ActiveJobTemplate.Model" and "TaskItem.Model" should generate
+  /// "ActiveJobTemplateModels" and "TaskItemModels", not duplicate "Models".
+  /// This is the fix for CS0102: duplicate DbSet property names.
+  /// </summary>
+  [Test]
+  public async Task Generator_WithNestedModelClasses_GeneratesUniqueDbSetNamesAsync() {
+    // Arrange - Two perspectives with nested Model classes (the bug scenario)
+    var source = """
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using System.Threading;
+      using System.Threading.Tasks;
+
+      namespace TestApp;
+
+      // First nested Model pattern
+      public static class ActiveJobTemplate {
+        public record Model {
+          public string Id { get; init; } = "";
+          public string Name { get; init; } = "";
+        }
+      }
+
+      // Second nested Model pattern
+      public static class TaskItem {
+        public record Model {
+          public string Id { get; init; } = "";
+          public string Description { get; init; } = "";
+        }
+      }
+
+      // Event for perspectives
+      public record JobEvent : IEvent;
+
+      // Perspective for ActiveJobTemplate.Model
+      public class ActiveJobTemplatePerspective : IPerspectiveFor<ActiveJobTemplate.Model> {
+        private readonly IPerspectiveStore<ActiveJobTemplate.Model> _store;
+        public ActiveJobTemplatePerspective(IPerspectiveStore<ActiveJobTemplate.Model> store) => _store = store;
+        public string StreamKey { get; } = "job";
+        public Task ApplyAsync(MessageEnvelope<JobEvent> envelope, CancellationToken ct) => Task.CompletedTask;
+      }
+
+      // Perspective for TaskItem.Model
+      public class TaskItemPerspective : IPerspectiveFor<TaskItem.Model> {
+        private readonly IPerspectiveStore<TaskItem.Model> _store;
+        public TaskItemPerspective(IPerspectiveStore<TaskItem.Model> store) => _store = store;
+        public string StreamKey { get; } = "task";
+        public Task ApplyAsync(MessageEnvelope<JobEvent> envelope, CancellationToken ct) => Task.CompletedTask;
+      }
+
+      [WhizbangDbContext]
+      public partial class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var partialClass = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("TestDbContext.Generated"));
+    await Assert.That(partialClass).IsNotNull();
+
+    var sourceText = partialClass!.SourceText.ToString();
+
+    // Should have UNIQUE DbSet property names for nested Model classes
+    // Bug fix: "Model" should become "ActiveJobTemplateModels" and "TaskItemModels"
+    // not just "Models" for both (which causes CS0102 duplicate error)
+    await Assert.That(sourceText).Contains("ActiveJobTemplateModels");
+    await Assert.That(sourceText).Contains("TaskItemModels");
+
+    // Should NOT have duplicate "Models" property
+    // Count occurrences of " Models " (with spaces to avoid false positives)
+    var modelsCount = sourceText.Split("public DbSet").Length - 1;
+    await Assert.That(modelsCount).IsEqualTo(2); // Two unique DbSet properties
+  }
+
+  /// <summary>
+  /// Test that perspectives with nested Model classes generate correct table names.
+  /// Nested Model classes should have table names that include the parent type.
+  /// E.g., "wh_per_active_job_template_model" not just "wh_per_model"
+  /// </summary>
+  [Test]
+  public async Task Generator_WithNestedModelClasses_GeneratesCorrectTableNamesAsync() {
+    // Arrange - Same scenario as above
+    var source = """
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+      using System.Threading;
+      using System.Threading.Tasks;
+
+      namespace TestApp;
+
+      public static class ActiveJobTemplate {
+        public record Model {
+          public string Id { get; init; } = "";
+        }
+      }
+
+      public record JobEvent : IEvent;
+
+      public class ActiveJobTemplatePerspective : IPerspectiveFor<ActiveJobTemplate.Model> {
+        private readonly IPerspectiveStore<ActiveJobTemplate.Model> _store;
+        public ActiveJobTemplatePerspective(IPerspectiveStore<ActiveJobTemplate.Model> store) => _store = store;
+        public string StreamKey { get; } = "job";
+        public Task ApplyAsync(MessageEnvelope<JobEvent> envelope, CancellationToken ct) => Task.CompletedTask;
+      }
+
+      [WhizbangDbContext]
+      public partial class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert
+    var schemaExtensions = result.GeneratedSources.FirstOrDefault(s => s.HintName.Contains("SchemaExtensions"));
+    await Assert.That(schemaExtensions).IsNotNull();
+
+    var sourceText = schemaExtensions!.SourceText.ToString();
+
+    // Table name should include both parent and nested type
+    // "ActiveJobTemplate.Model" -> "wh_per_active_job_template_model"
+    await Assert.That(sourceText).Contains("wh_per_active_job_template_model");
+
+    // Should NOT have just "wh_per_model" (which would be the bug)
+    // We can verify indirectly by ensuring the parent name is included
+    await Assert.That(sourceText).Contains("active_job_template");
+  }
+
+  #endregion
+
+  #region Nested Perspective Class Tests
+
+  /// <summary>
+  /// Test that perspectives nested inside static classes are discovered and registered.
+  /// JDNext pattern: static class contains both Model and Projection classes.
+  /// The Projection class implements IPerspectiveFor and should be discovered.
+  /// </summary>
+  /// <remarks>
+  /// Bug report: Nested perspective classes like ActiveSessions.Projection were not being
+  /// discovered, causing ILensQuery&lt;TModel&gt; to not be registered in DI.
+  /// </remarks>
+  [Test]
+  public async Task Generator_WithNestedPerspectiveClass_DiscoversPerspectiveAsync() {
+    // Arrange - JDNext pattern: static class with nested Model and Projection
+    var source = """
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      // Event type
+      public record SessionStarted : IEvent;
+      public record SessionEnded : IEvent;
+
+      // JDNext pattern: static class contains both Model and Projection
+      public static class ActiveSessions {
+        public class ActiveSessionsModel {
+          public string Id { get; init; } = "";
+          public string SessionName { get; init; } = "";
+        }
+
+        // Nested perspective class - THIS is the pattern that was failing
+        public class Projection : IPerspectiveFor<ActiveSessionsModel, SessionStarted, SessionEnded> {
+          public ActiveSessionsModel Apply(ActiveSessionsModel current, SessionStarted e) => current;
+          public ActiveSessionsModel Apply(ActiveSessionsModel current, SessionEnded e) => current;
+        }
+      }
+
+      [WhizbangDbContext]
+      public partial class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert - The perspective should be discovered
+    var diagnostics = result.Diagnostics
+        .Where(d => d.Id == "EFCORE104" || d.Id == "EFCORE105")
+        .ToList();
+
+    // EFCORE104 reports count of discovered perspectives
+    var countDiag = diagnostics.FirstOrDefault(d => d.Id == "EFCORE104");
+    await Assert.That(countDiag).IsNotNull();
+    await Assert.That(countDiag!.GetMessage(System.Globalization.CultureInfo.InvariantCulture)).Contains("1 perspective");
+
+    // EFCORE105 reports each discovered perspective
+    var perspectiveDiag = diagnostics.FirstOrDefault(d => d.Id == "EFCORE105");
+    await Assert.That(perspectiveDiag).IsNotNull();
+    await Assert.That(perspectiveDiag!.GetMessage(System.Globalization.CultureInfo.InvariantCulture)).Contains("ActiveSessions");
+  }
+
+  /// <summary>
+  /// Test that nested perspective classes result in ILensQuery registration.
+  /// The generated code should include registration for ILensQuery&lt;TModel&gt;.
+  /// </summary>
+  [Test]
+  public async Task Generator_WithNestedPerspectiveClass_GeneratesLensQueryRegistrationAsync() {
+    // Arrange - Same JDNext pattern
+    var source = """
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      public record ChatMessage : IEvent;
+
+      public static class ActiveChatSummary {
+        public class ActiveChatSummaryModel {
+          public string Id { get; init; } = "";
+          public int MessageCount { get; init; }
+        }
+
+        public class Projection : IPerspectiveFor<ActiveChatSummaryModel, ChatMessage> {
+          public ActiveChatSummaryModel Apply(ActiveChatSummaryModel current, ChatMessage e) => current;
+        }
+      }
+
+      [WhizbangDbContext]
+      public partial class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert - Check that registration metadata is generated
+    var registrationFile = result.GeneratedSources
+        .FirstOrDefault(s => s.HintName.Contains("EFCoreModelRegistration"));
+    await Assert.That(registrationFile).IsNotNull();
+
+    var sourceText = registrationFile!.SourceText.ToString();
+
+    // Should register ILensQuery for the nested model
+    await Assert.That(sourceText).Contains("ILensQuery<");
+    await Assert.That(sourceText).Contains("ActiveChatSummaryModel");
+  }
+
+  /// <summary>
+  /// Debug test: Output the full generated registration code for nested perspective classes.
+  /// This helps verify that ILensQuery registration is properly generated.
+  /// </summary>
+  [Test]
+  public async Task Generator_WithNestedPerspectiveClass_GeneratesCorrectRegistrationCodeAsync() {
+    // Arrange - JDNext pattern
+    var source = """
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      public record SessionStarted : IEvent;
+
+      public static class ActiveSessions {
+        public class ActiveSessionsModel {
+          public string Id { get; init; } = "";
+        }
+
+        public class Projection : IPerspectiveFor<ActiveSessionsModel, SessionStarted> {
+          public ActiveSessionsModel Apply(ActiveSessionsModel current, SessionStarted e) => current;
+        }
+      }
+
+      [WhizbangDbContext]
+      public partial class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert - Check registration code
+    var registrationFile = result.GeneratedSources
+        .FirstOrDefault(s => s.HintName.Contains("EFCoreModelRegistration"));
+    await Assert.That(registrationFile).IsNotNull();
+
+    var sourceText = registrationFile!.SourceText.ToString();
+
+    // The registration code should include:
+    // 1. ILensQuery<ActiveSessions.ActiveSessionsModel> registration
+    // 2. IPerspectiveStore<ActiveSessions.ActiveSessionsModel> registration
+    // 3. Table name includes containing type (wh_per_active_sessions_active_sessions_model)
+
+    await Assert.That(sourceText).Contains("ILensQuery<global::TestApp.ActiveSessions.ActiveSessionsModel>");
+    await Assert.That(sourceText).Contains("IPerspectiveStore<global::TestApp.ActiveSessions.ActiveSessionsModel>");
+    // Nested model: ActiveSessions.ActiveSessionsModel -> table: wh_per_active_sessions_active_sessions_model
+    await Assert.That(sourceText).Contains("wh_per_");
+    await Assert.That(sourceText).Contains("active_sessions");
+  }
+
+  /// <summary>
+  /// Test that multiple nested perspective classes in different static containers are all discovered.
+  /// </summary>
+  [Test]
+  public async Task Generator_WithMultipleNestedPerspectiveClasses_DiscoversAllAsync() {
+    // Arrange - Multiple static classes with nested perspectives
+    var source = """
+      using Microsoft.EntityFrameworkCore;
+      using Whizbang.Data.EFCore.Custom;
+      using Whizbang.Core;
+      using Whizbang.Core.Perspectives;
+
+      namespace TestApp;
+
+      public record UserEvent : IEvent;
+      public record OrderEvent : IEvent;
+
+      public static class UserSessions {
+        public class Model {
+          public string Id { get; init; } = "";
+        }
+        public class Projection : IPerspectiveFor<Model, UserEvent> {
+          public Model Apply(Model current, UserEvent e) => current;
+        }
+      }
+
+      public static class OrderSummary {
+        public class Model {
+          public string Id { get; init; } = "";
+        }
+        public class Projection : IPerspectiveFor<Model, OrderEvent> {
+          public Model Apply(Model current, OrderEvent e) => current;
+        }
+      }
+
+      [WhizbangDbContext]
+      public partial class TestDbContext : DbContext {
+        public TestDbContext(DbContextOptions<TestDbContext> options) : base(options) { }
+      }
+      """;
+
+    // Act
+    var result = await GeneratorTestHelpers.RunServiceRegistrationGeneratorAsync(source);
+
+    // Assert - Both perspectives should be discovered
+    var countDiag = result.Diagnostics.FirstOrDefault(d => d.Id == "EFCORE104");
+    await Assert.That(countDiag).IsNotNull();
+    await Assert.That(countDiag!.GetMessage(System.Globalization.CultureInfo.InvariantCulture)).Contains("2 perspective");
+
+    // DbContext partial should have DbSets for both
+    var partialClass = result.GeneratedSources
+        .FirstOrDefault(s => s.HintName.Contains("TestDbContext.Generated"));
+    await Assert.That(partialClass).IsNotNull();
+
+    var sourceText = partialClass!.SourceText.ToString();
+    // Should have unique DbSet names based on containing type
+    await Assert.That(sourceText).Contains("UserSessionsModels");
+    await Assert.That(sourceText).Contains("OrderSummaryModels");
+  }
+
+  #endregion
 }

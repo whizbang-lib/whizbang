@@ -111,7 +111,7 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
         .ToArray();
 
     // Compute nested-aware simple name
-    var simpleName = _getSimpleName(classSymbol);
+    var simpleName = TypeNameUtilities.GetSimpleName(classSymbol);
 
     return new PerspectiveInfo(
         ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
@@ -120,19 +120,6 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
         EventTypes: eventTypes,
         MessageTypeNames: messageTypeNames
     );
-  }
-
-  /// <summary>
-  /// Gets a name that includes containing type for nested classes.
-  /// E.g., "DraftJobStatus.Projection" for nested class, "OrderPerspective" for top-level.
-  /// </summary>
-  private static string _getSimpleName(INamedTypeSymbol classSymbol) {
-    if (classSymbol.ContainingType != null) {
-      // Nested type - include containing type name
-      return $"{classSymbol.ContainingType.Name}.{classSymbol.Name}";
-    }
-    // Top-level type - just the simple name
-    return classSymbol.Name;
   }
 
   /// <summary>
@@ -158,11 +145,11 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
 
     // Report each discovered perspective for routing
     foreach (var perspective in perspectives) {
-      var eventNames = string.Join(", ", perspective.EventTypes.Select(_getSimpleName));
+      var eventNames = string.Join(", ", perspective.EventTypes.Select(TypeNameUtilities.GetSimpleName));
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.PerspectiveInvokerGenerated,
           Location.None,
-          _getSimpleName(perspective.ClassName),
+          TypeNameUtilities.GetSimpleName(perspective.ClassName),
           eventNames
       ));
     }
@@ -231,15 +218,5 @@ public class PerspectiveInvokerGenerator : IIncrementalGenerator {
     result = TemplateUtilities.ReplaceRegion(result, "PERSPECTIVE_ROUTING", "// No perspectives discovered");
 
     context.AddSource("PerspectiveInvoker.g.cs", result);
-  }
-
-  /// <summary>
-  /// Gets the simple name from a fully qualified type name.
-  /// E.g., "global::MyApp.Events.OrderCreatedEvent" -> "OrderCreatedEvent"
-  /// </summary>
-  /// <tests>No tests found</tests>
-  private static string _getSimpleName(string fullyQualifiedName) {
-    var lastDot = fullyQualifiedName.LastIndexOf('.');
-    return lastDot >= 0 ? fullyQualifiedName[(lastDot + 1)..] : fullyQualifiedName;
   }
 }

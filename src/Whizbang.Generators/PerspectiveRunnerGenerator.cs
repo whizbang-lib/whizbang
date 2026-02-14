@@ -100,7 +100,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var eventReturnTypes = _extractEventReturnTypes(classSymbol, eventTypes, modelType);
 
     // Compute nested-aware simple name for unique hintNames
-    var simpleName = _getSimpleName(classSymbol);
+    var simpleName = TypeNameUtilities.GetSimpleName(classSymbol);
 
     return new PerspectiveInfo(
         ClassName: classSymbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
@@ -181,7 +181,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
 
     // Model type is always the first type argument
     var modelTypeName = perspective.InterfaceTypeArguments[0];
-    var modelSimpleName = _getSimpleNameFromString(modelTypeName);
+    var modelSimpleName = TypeNameUtilities.GetSimpleName(modelTypeName);
 
     // Generate AOT-compatible switch cases for event application
     var mustExistEvents = perspective.MustExistEventTypes ?? Array.Empty<string>();
@@ -190,7 +190,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     var applyCases = new StringBuilder();
     foreach (var eventType in perspective.EventTypes) {
       var isMustExist = mustExistEvents.Contains(eventType);
-      var eventSimpleName = _getSimpleNameFromString(eventType);
+      var eventSimpleName = TypeNameUtilities.GetSimpleName(eventType);
 
       // Get return type for this event, default to Model
       var returnType = returnTypeLookup.TryGetValue(eventType, out var rt) ? rt : ApplyReturnType.Model;
@@ -257,7 +257,7 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     if (perspective.EventStreamKeys != null) {
       foreach (var eventStreamKey in perspective.EventStreamKeys) {
         extractStreamIdMethods.AppendLine($"  /// <summary>");
-        extractStreamIdMethods.AppendLine($"  /// Extracts the stream ID from {_getSimpleNameFromString(eventStreamKey.EventTypeName)} event.");
+        extractStreamIdMethods.AppendLine($"  /// Extracts the stream ID from {TypeNameUtilities.GetSimpleName(eventStreamKey.EventTypeName)} event.");
         extractStreamIdMethods.AppendLine($"  /// </summary>");
         extractStreamIdMethods.AppendLine($"  private static string ExtractStreamId({eventStreamKey.EventTypeName} @event) {{");
         extractStreamIdMethods.AppendLine($"    return @event.{eventStreamKey.StreamKeyPropertyName}.ToString();");
@@ -294,11 +294,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     return classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
-          return (originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1>" ||
-                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2>" ||
-                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2, TEvent3>" ||
-                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2, TEvent3, TEvent4>" ||
-                  originalDef == PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent1, TEvent2, TEvent3, TEvent4, TEvent5>")
+          // Match IPerspectiveFor<TModel, TEvent1, ...> with any number of event types (1-50)
+          return originalDef.StartsWith(PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TEvent", StringComparison.Ordinal)
                  && i.TypeArguments.Length >= 2;
         })
         .ToList();
@@ -311,9 +308,8 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     return classSymbol.AllInterfaces
         .Where(i => {
           var originalDef = i.OriginalDefinition.ToDisplayString();
-          return (originalDef == GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent1>" ||
-                  originalDef == GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent1, TEvent2>" ||
-                  originalDef == GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent1, TEvent2, TEvent3>")
+          // Match IGlobalPerspectiveFor<TModel, TPartitionKey, TEvent1, ...> with any number of event types (1-50)
+          return originalDef.StartsWith(GLOBAL_PERSPECTIVE_FOR_INTERFACE_NAME + "<TModel, TPartitionKey, TEvent", StringComparison.Ordinal)
                  && i.TypeArguments.Length >= 3;
         })
         .ToList();
@@ -518,26 +514,4 @@ public class PerspectiveRunnerGenerator : IIncrementalGenerator {
     return $"{simpleName.Replace(".", "")}Runner";
   }
 
-  /// <summary>
-  /// Gets a name that includes containing type for nested classes.
-  /// E.g., "DraftJobStatus.Projection" for nested class, "OrderPerspective" for top-level.
-  /// </summary>
-  /// <tests>tests/Whizbang.Generators.Tests/PerspectiveRunnerGeneratorTests.cs:PerspectiveRunnerGenerator_NestedClasses_GeneratesUniqueHintNamesAsync</tests>
-  private static string _getSimpleName(INamedTypeSymbol classSymbol) {
-    if (classSymbol.ContainingType != null) {
-      // Nested type - include containing type name
-      return $"{classSymbol.ContainingType.Name}.{classSymbol.Name}";
-    }
-    // Top-level type - just the simple name
-    return classSymbol.Name;
-  }
-
-  /// <summary>
-  /// Gets the simple name from a fully qualified type name (string version).
-  /// E.g., "global::MyApp.OrderPerspective" -> "OrderPerspective"
-  /// </summary>
-  private static string _getSimpleNameFromString(string fullyQualifiedName) {
-    var lastDot = fullyQualifiedName.LastIndexOf('.');
-    return lastDot >= 0 ? fullyQualifiedName[(lastDot + 1)..] : fullyQualifiedName;
-  }
 }

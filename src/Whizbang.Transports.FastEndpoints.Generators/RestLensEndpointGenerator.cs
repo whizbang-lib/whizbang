@@ -78,13 +78,13 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
     var modelType = lensQueryInterface.TypeArguments[0];
 
     // Extract attribute properties
-    var route = _getAttributeStringValue(restLensAttr, "Route")
-                ?? _getDefaultRoute(modelType.Name);
-    var enableFiltering = _getAttributeBoolValue(restLensAttr, "EnableFiltering", true);
-    var enableSorting = _getAttributeBoolValue(restLensAttr, "EnableSorting", true);
-    var enablePaging = _getAttributeBoolValue(restLensAttr, "EnablePaging", true);
-    var defaultPageSize = _getAttributeIntValue(restLensAttr, "DefaultPageSize", 10);
-    var maxPageSize = _getAttributeIntValue(restLensAttr, "MaxPageSize", 100);
+    var route = AttributeUtilities.GetStringValue(restLensAttr, "Route")
+                ?? NamingConventionUtilities.ToDefaultRouteName(modelType.Name);
+    var enableFiltering = AttributeUtilities.GetBoolValue(restLensAttr, "EnableFiltering", true);
+    var enableSorting = AttributeUtilities.GetBoolValue(restLensAttr, "EnableSorting", true);
+    var enablePaging = AttributeUtilities.GetBoolValue(restLensAttr, "EnablePaging", true);
+    var defaultPageSize = AttributeUtilities.GetIntValue(restLensAttr, "DefaultPageSize", 10);
+    var maxPageSize = AttributeUtilities.GetIntValue(restLensAttr, "MaxPageSize", 100);
 
     // Generate endpoint class name from interface name
     var endpointClassName = _getEndpointClassName(symbol.Name, modelType.Name);
@@ -101,69 +101,6 @@ public sealed class RestLensEndpointGenerator : IIncrementalGenerator {
         Namespace: symbol.ContainingNamespace.ToDisplayString(),
         EndpointClassName: endpointClassName
     );
-  }
-
-  /// <summary>
-  /// Get a string property value from an attribute.
-  /// </summary>
-  private static string? _getAttributeStringValue(AttributeData attribute, string propertyName) {
-    var namedArg = attribute.NamedArguments
-        .FirstOrDefault(a => a.Key == propertyName);
-
-    if (namedArg.Key is null || namedArg.Value.Value is not string value) {
-      return null;
-    }
-
-    return value;
-  }
-
-  /// <summary>
-  /// Get a boolean property value from an attribute.
-  /// </summary>
-  private static bool _getAttributeBoolValue(AttributeData attribute, string propertyName, bool defaultValue) {
-    var namedArg = attribute.NamedArguments
-        .FirstOrDefault(a => a.Key == propertyName);
-
-    if (namedArg.Key is null || namedArg.Value.Value is not bool value) {
-      return defaultValue;
-    }
-
-    return value;
-  }
-
-  /// <summary>
-  /// Get an integer property value from an attribute.
-  /// </summary>
-  private static int _getAttributeIntValue(AttributeData attribute, string propertyName, int defaultValue) {
-    var namedArg = attribute.NamedArguments
-        .FirstOrDefault(a => a.Key == propertyName);
-
-    if (namedArg.Key is null || namedArg.Value.Value is not int value) {
-      return defaultValue;
-    }
-
-    return value;
-  }
-
-  /// <summary>
-  /// Generate default route from model type name.
-  /// E.g., "OrderReadModel" -> "/api/orders"
-  /// </summary>
-  private static string _getDefaultRoute(string modelTypeName) {
-    // Remove common suffixes
-    var name = modelTypeName;
-    if (name.EndsWith("ReadModel", StringComparison.Ordinal)) {
-      name = name.Substring(0, name.Length - 9);
-    } else if (name.EndsWith("Model", StringComparison.Ordinal)) {
-      name = name.Substring(0, name.Length - 5);
-    } else if (name.EndsWith("Dto", StringComparison.Ordinal)) {
-      name = name.Substring(0, name.Length - 3);
-    }
-
-    // Simple pluralization and lowercase
-    var pluralized = name.EndsWith("s", StringComparison.Ordinal) ? name : name + "s";
-    var lowercased = char.ToLowerInvariant(pluralized[0]) + pluralized.Substring(1);
-    return "/api/" + lowercased;
   }
 
   /// <summary>

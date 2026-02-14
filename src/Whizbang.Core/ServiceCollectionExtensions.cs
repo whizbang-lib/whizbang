@@ -42,6 +42,7 @@ public static class ServiceCollectionExtensions {
   /// <tests>tests/Whizbang.Core.Tests/ServiceCollectionExtensionsTests.cs:AddWhizbang_RegistersCoreServices_SuccessfullyAsync</tests>
   public static WhizbangBuilder AddWhizbang(this IServiceCollection services) {
     // Register core infrastructure services
+    services.AddSingleton<ITimeProvider, SystemTimeProvider>();
     services.AddSingleton<Observability.ITraceStore, Observability.InMemoryTraceStore>();
     services.AddSingleton<Policies.IPolicyEngine, Policies.PolicyEngine>();
     services.AddSingleton<Messaging.ILifecycleReceptorRegistry, Messaging.DefaultLifecycleReceptorRegistry>();
