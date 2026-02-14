@@ -660,4 +660,294 @@ namespace MyApp.Events {
     await Assert.That(code).Contains("CreateMessageEnvelope_MyApp_Commands_StartCommand");
     await Assert.That(code).Contains("CreateMessageEnvelope_MyApp_Events_StartCommand");
   }
+
+  // ==================== Recursive Nested Type Discovery Tests (100% branch coverage) ====================
+
+  /// <summary>
+  /// Primary bug fix test: Verifies that deeply nested types (3+ levels) are discovered.
+  /// Example: Event → List&lt;Stage&gt; → List&lt;Step&gt; → List&lt;Action&gt;
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_MessageWithDeeplyNestedTypes_DiscoversAllLevelsAsync() {
+    // Arrange - Four levels of nesting (Event → Stage → Step → Action)
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record BlueprintCreatedEvent : IEvent {
+    public List<StageBlueprint> Stages { get; init; } = new();
+}
+
+public record StageBlueprint {
+    public string Name { get; init; } = "";
+    public List<StepBlueprint> Steps { get; init; } = new();
+}
+
+public record StepBlueprint {
+    public string Name { get; init; } = "";
+    public List<ActionBlueprint> Actions { get; init; } = new();
+}
+
+public record ActionBlueprint {
+    public string Name { get; init; } = "";
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - All levels discovered
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // All four levels must be present
+    await Assert.That(code!).Contains("BlueprintCreatedEvent");
+    await Assert.That(code).Contains("StageBlueprint");
+    await Assert.That(code).Contains("StepBlueprint");       // Level 3 - nested-nested
+    await Assert.That(code).Contains("ActionBlueprint");     // Level 4 - deeply nested
+  }
+
+  /// <summary>
+  /// Tests circular reference handling: TypeA → TypeB → TypeA.
+  /// Should not cause infinite loop due to processedTypes HashSet.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_MessageWithCircularReferences_HandlesWithoutInfiniteLoopAsync() {
+    // Arrange - TypeA → TypeB → TypeA (circular)
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record CircularEvent : IEvent {
+    public List<NodeA> Nodes { get; init; } = new();
+}
+
+public record NodeA {
+    public string Name { get; init; } = "";
+    public List<NodeB> Children { get; init; } = new();
+}
+
+public record NodeB {
+    public string Name { get; init; } = "";
+    public List<NodeA> BackReferences { get; init; } = new();
+}
+""";
+
+    // Act - Should complete without stack overflow
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - Both types discovered, no duplicates
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("NodeA");
+    await Assert.That(code).Contains("NodeB");
+  }
+
+  /// <summary>
+  /// Tests self-referential types: TreeNode contains List&lt;TreeNode&gt;.
+  /// Should discover once without duplication.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_MessageWithSelfReferencingType_HandlesCorrectlyAsync() {
+    // Arrange - TreeNode references itself
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record TreeEvent : IEvent {
+    public List<TreeNode> Roots { get; init; } = new();
+}
+
+public record TreeNode {
+    public string Name { get; init; } = "";
+    public List<TreeNode> Children { get; init; } = new();
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - TreeNode discovered once
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("TreeNode");
+  }
+
+  /// <summary>
+  /// Tests primitive collection skip: List&lt;string&gt;, List&lt;int&gt; should not trigger nested discovery.
+  /// Also tests that custom nested types ARE discovered through the recursion.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_MessageWithMixedNestedAndPrimitiveCollections_SkipsPrimitivesAndDiscoversNestedAsync() {
+    // Arrange - Mix of List<CustomType> and List<string>
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record MixedEvent : IEvent {
+    public List<string> Tags { get; init; } = new();
+    public List<CustomItem> Items { get; init; } = new();
+    public List<int> Counts { get; init; } = new();
+}
+
+public record CustomItem {
+    public string Name { get; init; } = "";
+    public List<NestedItem> Nested { get; init; } = new();
+}
+
+public record NestedItem {
+    public decimal Value { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Custom types discovered (including deeply nested NestedItem)
+    await Assert.That(code!).Contains("CustomItem");
+    await Assert.That(code).Contains("NestedItem");
+  }
+
+  /// <summary>
+  /// Tests internal type skip during recursive discovery.
+  /// Internal types nested within public types should not have factory methods generated.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_MessageWithInternalNestedType_SkipsInternalTypesInRecursionAsync() {
+    // Arrange - Public event with internal nested type in recursion
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record EventWithInternalNested : IEvent {
+    public List<PublicWrapper> Items { get; init; } = new();
+}
+
+public record PublicWrapper {
+    public string Name { get; init; } = "";
+    public List<InternalItem> Hidden { get; init; } = new();
+}
+
+internal record InternalItem {
+    public string Secret { get; init; } = "";
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - PublicWrapper discovered with factory, InternalItem skipped (no factory)
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // PublicWrapper should have factory method
+    await Assert.That(code!).Contains("Create_TestApp_PublicWrapper");
+
+    // InternalItem should NOT have factory method (internal types skipped)
+    await Assert.That(code).DoesNotContain("Create_TestApp_InternalItem");
+  }
+
+  /// <summary>
+  /// Tests empty queue case: event with no collection properties.
+  /// Should not discover any nested types.
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_MessageWithNoCollectionProperties_DiscoversNoNestedTypesAsync() {
+    // Arrange - Simple event with no collections
+    var source = """
+using Whizbang.Core;
+
+namespace TestApp;
+
+public record SimpleEvent : IEvent {
+    public string Name { get; init; } = "";
+    public int Count { get; init; }
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - Only the event type, no nested types
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+    await Assert.That(code!).Contains("SimpleEvent");
+  }
+
+  /// <summary>
+  /// Tests deduplication: multiple events using the same nested type.
+  /// SharedItem should have exactly one factory method generated (deduplicated).
+  /// </summary>
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_MultipleEventsWithSameNestedType_DeduplicatesCorrectlyAsync() {
+    // Arrange - Two events using the same nested type
+    var source = """
+using Whizbang.Core;
+using System.Collections.Generic;
+
+namespace TestApp;
+
+public record EventA : IEvent {
+    public List<SharedItem> ItemsA { get; init; } = new();
+}
+
+public record EventB : IEvent {
+    public List<SharedItem> ItemsB { get; init; } = new();
+}
+
+public record SharedItem {
+    public string Name { get; init; } = "";
+}
+""";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<MessageJsonContextGenerator>(source);
+
+    // Assert - SharedItem discovered and code generated without errors
+    await Assert.That(result.Diagnostics).DoesNotContain(d => d.Severity == DiagnosticSeverity.Error);
+
+    var code = GeneratorTestHelper.GetGeneratedSource(result, "MessageJsonContext.g.cs");
+    await Assert.That(code).IsNotNull();
+
+    // Check that SharedItem factory method exists (deduplication ensures one factory per type)
+    // Use exact method signature to avoid false positives from CreateList_TestApp_SharedItem
+    await Assert.That(code!).Contains("JsonTypeInfo<global::TestApp.SharedItem> Create_TestApp_SharedItem(JsonSerializerOptions options)");
+
+    // Count factory method DEFINITIONS (not calls) - signature pattern is unique
+    var factorySignatureCount = code.Split("JsonTypeInfo<global::TestApp.SharedItem> Create_TestApp_SharedItem").Length - 1;
+    await Assert.That(factorySignatureCount).IsEqualTo(1);
+  }
 }

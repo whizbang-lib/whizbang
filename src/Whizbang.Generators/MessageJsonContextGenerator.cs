@@ -832,24 +832,41 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
 
   /// <summary>
   /// Discovers nested custom types used in message properties (e.g., OrderLineItem inside List&lt;OrderLineItem&gt;).
+  /// Uses queue-based recursion to discover deeply nested types (e.g., Event → Stage → Step → Action).
   /// These types need JsonTypeInfo generated for AOT serialization to work properly.
   /// </summary>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithDeeplyNestedTypes_DiscoversAllLevelsAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithCircularReferences_HandlesWithoutInfiniteLoopAsync</tests>
+  /// <tests>tests/Whizbang.Generators.Tests/MessageJsonContextGeneratorTests.cs:Generator_MessageWithSelfReferencingType_HandlesCorrectlyAsync</tests>
   private static ImmutableArray<JsonMessageTypeInfo> _discoverNestedTypes(
       ImmutableArray<JsonMessageTypeInfo> messages,
       Compilation compilation) {
 
     var nestedTypes = new Dictionary<string, JsonMessageTypeInfo>();
 
-    foreach (var message in messages) {
-      foreach (var property in message.Properties) {
+    // Use a queue to process types recursively - starts with all message types
+    var typesToProcess = new Queue<JsonMessageTypeInfo>(messages);
+
+    // Track all processed types to prevent infinite loops (circular references, self-references)
+    var processedTypes = new HashSet<string>(messages.Select(m => m.FullyQualifiedName));
+
+    while (typesToProcess.Count > 0) {
+      var currentType = typesToProcess.Dequeue();
+
+      foreach (var property in currentType.Properties) {
         // Extract element type from generic collections
         var elementTypeName = _extractElementType(property.Type);
         if (elementTypeName == null) {
           continue;
         }
 
-        // Check if this type should be skipped
-        if (_shouldSkipNestedType(elementTypeName, nestedTypes, messages)) {
+        // Skip if already processed (handles circular and self-references)
+        if (processedTypes.Contains(elementTypeName)) {
+          continue;
+        }
+
+        // Skip primitive and framework types
+        if (_isPrimitiveOrFrameworkType(elementTypeName)) {
           continue;
         }
 
@@ -875,6 +892,10 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
         );
 
         nestedTypes[elementTypeName] = nestedTypeInfo;
+        processedTypes.Add(elementTypeName);
+
+        // Queue for recursive processing - discovers deeply nested types
+        typesToProcess.Enqueue(nestedTypeInfo);
       }
     }
 
@@ -1072,32 +1093,6 @@ public class MessageJsonContextGenerator : IIncrementalGenerator {
   // ========================================
   // Helper Methods for _discoverNestedTypes Complexity Reduction
   // ========================================
-
-  /// <summary>
-  /// Checks if a nested type should be skipped during discovery.
-  /// </summary>
-  private static bool _shouldSkipNestedType(
-      string elementTypeName,
-      Dictionary<string, JsonMessageTypeInfo> nestedTypes,
-      ImmutableArray<JsonMessageTypeInfo> messages) {
-
-    // Skip if already discovered
-    if (nestedTypes.ContainsKey(elementTypeName)) {
-      return true;
-    }
-
-    // Skip if it's already a message type
-    if (messages.Any(m => m.FullyQualifiedName == elementTypeName)) {
-      return true;
-    }
-
-    // Skip primitive and framework types
-    if (_isPrimitiveOrFrameworkType(elementTypeName)) {
-      return true;
-    }
-
-    return false;
-  }
 
   /// <summary>
   /// Attempts to get a public type symbol from the compilation.
