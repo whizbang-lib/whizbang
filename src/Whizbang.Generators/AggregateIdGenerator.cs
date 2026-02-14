@@ -222,7 +222,7 @@ public class AggregateIdGenerator : IIncrementalGenerator {
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.AggregateIdPropertyDiscovered,
           Location.None,
-          _getSimpleName(prop.MessageType),
+          TypeNameUtilities.GetSimpleName(prop.MessageType),
           prop.PropertyName
       ));
 
@@ -231,7 +231,7 @@ public class AggregateIdGenerator : IIncrementalGenerator {
         context.ReportDiagnostic(Diagnostic.Create(
             DiagnosticDescriptors.MultipleAggregateIdAttributes,
             Location.None,
-            _getSimpleName(prop.MessageType),
+            TypeNameUtilities.GetSimpleName(prop.MessageType),
             prop.PropertyName
         ));
       }
@@ -242,7 +242,7 @@ public class AggregateIdGenerator : IIncrementalGenerator {
       context.ReportDiagnostic(Diagnostic.Create(
           DiagnosticDescriptors.AggregateIdMustBeGuid,
           Location.None,
-          _getSimpleName(prop.MessageType),
+          TypeNameUtilities.GetSimpleName(prop.MessageType),
           prop.PropertyName
       ));
     }
@@ -357,14 +357,5 @@ public static class AggregateIdExtractors {
   }
 }
 """;
-  }
-
-  /// <summary>
-  /// Gets the simple name from a fully qualified type name.
-  /// E.g., "global::MyApp.Commands.CreateOrder" -> "CreateOrder"
-  /// </summary>
-  private static string _getSimpleName(string fullyQualifiedName) {
-    var lastDot = fullyQualifiedName.LastIndexOf('.');
-    return lastDot >= 0 ? fullyQualifiedName[(lastDot + 1)..] : fullyQualifiedName;
   }
 }

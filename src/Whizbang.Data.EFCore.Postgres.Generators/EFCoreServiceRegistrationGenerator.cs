@@ -315,7 +315,9 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     // Perspective discovered - extract TModel from first type argument
     var modelType = perspectiveForInterface.TypeArguments[0];
-    var tableName = "wh_per_" + _toSnakeCase(modelType.Name);
+    var tableBaseName = TypeNameUtilities.GetTableBaseName(modelType);
+    var tableName = "wh_per_" + NamingConventionUtilities.ToSnakeCase(tableBaseName);
+    var dbSetPropertyName = TypeNameUtilities.GetDbSetPropertyName(modelType);
 
     // Check for [WhizbangPerspective] attribute (optional)
     var perspectiveAttribute = symbol.GetAttributes()
@@ -333,35 +335,11 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
     return new PerspectiveModelInfo(
         PerspectiveClassName: symbol.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
         ModelTypeName: modelType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
+        DbSetPropertyName: dbSetPropertyName,
         TableName: tableName,
         NamespaceHint: symbol.ContainingNamespace.ToDisplayString(),
         Keys: keys
     );
-  }
-
-  /// <summary>
-  /// Converts PascalCase to snake_case.
-  /// </summary>
-  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesPartialClassAsync</tests>
-  private static string _toSnakeCase(string input) {
-    if (string.IsNullOrEmpty(input)) {
-      return input;
-    }
-
-    var sb = new StringBuilder();
-    sb.Append(char.ToLowerInvariant(input[0]));
-
-    for (int i = 1; i < input.Length; i++) {
-      char c = input[i];
-      if (char.IsUpper(c)) {
-        sb.Append('_');
-        sb.Append(char.ToLowerInvariant(c));
-      } else {
-        sb.Append(c);
-      }
-    }
-
-    return sb.ToString();
   }
 
   /// <summary>
@@ -498,11 +476,10 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
       sb.AppendLine($"public partial class {dbContext.ClassName} {{");
 
       foreach (var model in uniqueModels) {
-        var modelName = _extractSimpleName(model.ModelTypeName);
-        var propertyName = $"{modelName}s";  // Pluralize
+        var propertyName = model.DbSetPropertyName;
 
         sb.AppendLine($"  /// <summary>");
-        sb.AppendLine($"  /// DbSet for {modelName} perspective (table: {model.TableName})");
+        sb.AppendLine($"  /// DbSet for {propertyName} perspective (table: {model.TableName})");
         sb.AppendLine($"  /// </summary>");
         sb.AppendLine($"  public DbSet<PerspectiveRow<{model.ModelTypeName}>> {propertyName} => Set<PerspectiveRow<{model.ModelTypeName}>>();");
         sb.AppendLine();
@@ -866,17 +843,6 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
   }
 
   /// <summary>
-  /// Extracts simple type name from fully qualified name.
-  /// </summary>
-  /// <tests>tests/Whizbang.Generators.Tests/EFCoreServiceRegistrationGeneratorTests.cs:Generator_WithDiscoveredDbContext_GeneratesPartialClassAsync</tests>
-  private static string _extractSimpleName(string fullyQualifiedName) {
-    var withoutGlobal = fullyQualifiedName.Replace("global::", "");
-    var lastDot = withoutGlobal.LastIndexOf('.');
-    return lastDot >= 0 ? withoutGlobal.Substring(lastDot + 1) : withoutGlobal;
-  }
-
-
-  /// <summary>
   /// Generates CREATE TABLE statements for perspective tables.
   /// Inspects PerspectiveRow&lt;TModel&gt; to determine schema.
   /// PerspectiveRow has fixed schema: id (UUID PK), data (JSONB), metadata (JSONB), scope (JSONB), created_at, updated_at, version (INTEGER).
@@ -911,7 +877,7 @@ public class EFCoreServiceRegistrationGenerator : IIncrementalGenerator {
 
     foreach (var perspective in uniqueTables) {
       // PerspectiveRow<TModel> has fixed schema defined in Whizbang.Core
-      sb.AppendLine($"-- {schema}.{perspective.TableName} (model: {_extractSimpleName(perspective.ModelTypeName)})");
+      sb.AppendLine($"-- {schema}.{perspective.TableName} (model: {TypeNameUtilities.GetSimpleName(perspective.ModelTypeName)})");
       sb.AppendLine($"CREATE TABLE IF NOT EXISTS {schema}.{perspective.TableName} (");
       sb.AppendLine($"  id UUID NOT NULL PRIMARY KEY,");
       sb.AppendLine($"  data JSONB NOT NULL,");
@@ -983,12 +949,14 @@ internal sealed record DbContextInfo(
 /// </summary>
 /// <param name="PerspectiveClassName">Fully qualified perspective class name</param>
 /// <param name="ModelTypeName">Fully qualified model type name (TModel)</param>
+/// <param name="DbSetPropertyName">Property name for DbSet (e.g., "ActiveJobTemplateModels" for nested Model classes)</param>
 /// <param name="TableName">Snake_case table name</param>
 /// <param name="NamespaceHint">Namespace hint for DbContext generation</param>
 /// <param name="Keys">Array of keys that identify which DbContexts should include this perspective. Empty = default context only</param>
 internal sealed record PerspectiveModelInfo(
     string PerspectiveClassName,
     string ModelTypeName,
+    string DbSetPropertyName,
     string TableName,
     string NamespaceHint,
     string[] Keys);

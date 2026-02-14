@@ -201,7 +201,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
 
     // Perspective discovered - extract TModel from first type argument
     var modelType = perspectiveForInterface.TypeArguments[0];
-    var tableName = "wh_per_" + _toSnakeCase(modelType.Name);
+    var tableName = "wh_per_" + NamingConventionUtilities.ToSnakeCase(modelType.Name);
 
     // Extract physical fields from model type
     var physicalFields = _extractPhysicalFields(modelType as INamedTypeSymbol);
@@ -289,7 +289,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     }
 
     // Default column name is snake_case of property name
-    var finalColumnName = columnName ?? _toSnakeCase(propertyName);
+    var finalColumnName = columnName ?? NamingConventionUtilities.ToSnakeCase(propertyName);
 
     return new PhysicalFieldInfo(
         PropertyName: propertyName,
@@ -351,7 +351,7 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     }
 
     // Default column name is snake_case of property name
-    var finalColumnName = columnName ?? _toSnakeCase(propertyName);
+    var finalColumnName = columnName ?? NamingConventionUtilities.ToSnakeCase(propertyName);
 
     // If not indexed, set index type to None
     if (!isIndexed) {
@@ -373,31 +373,6 @@ public class EFCorePerspectiveConfigurationGenerator : IIncrementalGenerator {
     );
   }
 
-
-  /// <summary>
-  /// Converts PascalCase to snake_case.
-  /// </summary>
-  /// <tests>tests/Whizbang.Generators.Tests/EFCorePerspectiveConfigurationGeneratorDiagnosticsTests.cs:LogDiscoveryDiagnostics_OutputsPerspectiveDetailsAsync</tests>
-  private static string _toSnakeCase(string input) {
-    if (string.IsNullOrEmpty(input)) {
-      return input;
-    }
-
-    var sb = new StringBuilder();
-    sb.Append(char.ToLowerInvariant(input[0]));
-
-    for (int i = 1; i < input.Length; i++) {
-      char c = input[i];
-      if (char.IsUpper(c)) {
-        sb.Append('_');
-        sb.Append(char.ToLowerInvariant(c));
-      } else {
-        sb.Append(c);
-      }
-    }
-
-    return sb.ToString();
-  }
 
   /// <summary>
   /// Generates EF Core shadow property configurations for physical fields.

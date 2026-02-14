@@ -1326,4 +1326,106 @@ namespace TestNamespace {
     await Assert.That(generatedSource!).Contains("GetMessageAssociations");
     await Assert.That(generatedSource!).Contains("AddWhizbangPerspectives");
   }
+
+  // ==================== Multi-Event Support Tests (6-50 events) ====================
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_PerspectiveWith10Events_GeneratesRegistrationsAsync() {
+    // Arrange - Perspective implementing IPerspectiveFor with 10 event types
+    var source = @"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {
+  public record Event1 : IEvent { [StreamKey] public Guid Id { get; init; } }
+  public record Event2 : IEvent { [StreamKey] public Guid Id { get; init; } }
+  public record Event3 : IEvent { [StreamKey] public Guid Id { get; init; } }
+  public record Event4 : IEvent { [StreamKey] public Guid Id { get; init; } }
+  public record Event5 : IEvent { [StreamKey] public Guid Id { get; init; } }
+  public record Event6 : IEvent { [StreamKey] public Guid Id { get; init; } }
+  public record Event7 : IEvent { [StreamKey] public Guid Id { get; init; } }
+  public record Event8 : IEvent { [StreamKey] public Guid Id { get; init; } }
+  public record Event9 : IEvent { [StreamKey] public Guid Id { get; init; } }
+  public record Event10 : IEvent { [StreamKey] public Guid Id { get; init; } }
+
+  public record MultiEventModel {
+    [StreamKey]
+    public Guid Id { get; init; }
+    public int Counter { get; init; }
+  }
+
+  public class MultiEventPerspective : IPerspectiveFor<MultiEventModel, Event1, Event2, Event3, Event4, Event5, Event6, Event7, Event8, Event9, Event10> {
+    public MultiEventModel Apply(MultiEventModel current, Event1 @event) => current with { Counter = current.Counter + 1 };
+    public MultiEventModel Apply(MultiEventModel current, Event2 @event) => current with { Counter = current.Counter + 2 };
+    public MultiEventModel Apply(MultiEventModel current, Event3 @event) => current with { Counter = current.Counter + 3 };
+    public MultiEventModel Apply(MultiEventModel current, Event4 @event) => current with { Counter = current.Counter + 4 };
+    public MultiEventModel Apply(MultiEventModel current, Event5 @event) => current with { Counter = current.Counter + 5 };
+    public MultiEventModel Apply(MultiEventModel current, Event6 @event) => current with { Counter = current.Counter + 6 };
+    public MultiEventModel Apply(MultiEventModel current, Event7 @event) => current with { Counter = current.Counter + 7 };
+    public MultiEventModel Apply(MultiEventModel current, Event8 @event) => current with { Counter = current.Counter + 8 };
+    public MultiEventModel Apply(MultiEventModel current, Event9 @event) => current with { Counter = current.Counter + 9 };
+    public MultiEventModel Apply(MultiEventModel current, Event10 @event) => current with { Counter = current.Counter + 10 };
+  }
+}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    // Assert - Should generate registrations for perspective with 10 events
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource!).Contains("MultiEventPerspective");
+    await Assert.That(generatedSource!).Contains("MultiEventModel");
+    // Should contain all 10 event types
+    await Assert.That(generatedSource!).Contains("Event1");
+    await Assert.That(generatedSource!).Contains("Event10");
+  }
+
+  [Test]
+  [RequiresAssemblyFiles()]
+  public async Task Generator_PerspectiveWith25Events_GeneratesRegistrationsAsync() {
+    // Arrange - Perspective implementing IPerspectiveFor with 25 event types
+    var eventDeclarations = string.Join("\n",
+        Enumerable.Range(1, 25).Select(i =>
+            $"  public record Evt{i} : IEvent {{ [StreamKey] public Guid Id {{ get; init; }} }}"));
+
+    var applyMethods = string.Join("\n",
+        Enumerable.Range(1, 25).Select(i =>
+            $"    public Model Apply(Model c, Evt{i} e) => c with {{ Counter = c.Counter + {i} }};"));
+
+    var eventTypeParams = string.Join(", ", Enumerable.Range(1, 25).Select(i => $"Evt{i}"));
+
+    var source = $@"
+using Whizbang.Core;
+using Whizbang.Core.Perspectives;
+using System;
+
+namespace TestNamespace {{
+{eventDeclarations}
+
+  public record Model {{
+    [StreamKey]
+    public Guid Id {{ get; init; }}
+    public int Counter {{ get; init; }}
+  }}
+
+  public class BigPerspective : IPerspectiveFor<Model, {eventTypeParams}> {{
+{applyMethods}
+  }}
+}}";
+
+    // Act
+    var result = GeneratorTestHelper.RunGenerator<PerspectiveDiscoveryGenerator>(source);
+
+    // Assert - Should generate registrations for perspective with 25 events
+    var generatedSource = GeneratorTestHelper.GetGeneratedSource(result, "PerspectiveRegistrations.g.cs");
+    await Assert.That(generatedSource).IsNotNull();
+    await Assert.That(generatedSource!).Contains("BigPerspective");
+    await Assert.That(generatedSource!).Contains("Model");
+    // Should contain first and last event types
+    await Assert.That(generatedSource!).Contains("Evt1");
+    await Assert.That(generatedSource!).Contains("Evt25");
+  }
 }
