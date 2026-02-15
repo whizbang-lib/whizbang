@@ -328,6 +328,58 @@ public static class DiagnosticDescriptors {
   );
 
   // ========================================
+  // Service Registration Diagnostics (WHIZ040-049)
+  // ========================================
+
+  /// <summary>
+  /// WHIZ040: Info - User service discovered during source generation.
+  /// Reports when a user-defined interface extending Whizbang interfaces is registered.
+  /// </summary>
+  /// <docs>diagnostics/whiz040</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/ServiceRegistrationGeneratorTests.cs</tests>
+  public static readonly DiagnosticDescriptor UserServiceDiscovered = new(
+      id: "WHIZ040",
+      title: "User Service Discovered",
+      messageFormat: "Registered {0} '{1}' as scoped service implementing '{2}'",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "A user-defined service implementing a Whizbang interface was discovered and will be registered with the DI container."
+  );
+
+  /// <summary>
+  /// WHIZ041: Info - Abstract class skipped for service registration.
+  /// Reports when an abstract class implementing Whizbang interfaces is skipped.
+  /// </summary>
+  /// <docs>diagnostics/whiz041</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/ServiceRegistrationGeneratorTests.cs</tests>
+  public static readonly DiagnosticDescriptor AbstractClassSkipped = new(
+      id: "WHIZ041",
+      title: "Abstract Class Skipped",
+      messageFormat: "Abstract class '{0}' implementing '{1}' skipped for service registration",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "An abstract class implementing a Whizbang interface was skipped because abstract classes cannot be instantiated."
+  );
+
+  /// <summary>
+  /// WHIZ042: Info - No user services found in the compilation.
+  /// Reports when no lens or perspective services are discovered.
+  /// </summary>
+  /// <docs>diagnostics/whiz042</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/ServiceRegistrationGeneratorTests.cs</tests>
+  public static readonly DiagnosticDescriptor NoUserServicesFound = new(
+      id: "WHIZ042",
+      title: "No User Services Found",
+      messageFormat: "No user-defined lens or perspective services were found for service registration",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Info,
+      isEnabledByDefault: true,
+      description: "The source generator did not find any user-defined interfaces extending ILensQuery or IPerspectiveFor."
+  );
+
+  // ========================================
   // Test Linking Diagnostics (WHIZ050-069)
   // ========================================
 
@@ -397,7 +449,71 @@ public static class DiagnosticDescriptors {
   );
 
   // ========================================
-  // Guid Usage Diagnostics (WHIZ055-069)
+  // Serialization Validation Diagnostics (WHIZ060-069)
+  // ========================================
+
+  /// <summary>
+  /// WHIZ060: Error - Property uses non-serializable type 'object'.
+  /// </summary>
+  /// <docs>diagnostics/whiz060</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/SerializablePropertyAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor NonSerializablePropertyObject = new(
+      id: "WHIZ060",
+      title: "Property uses non-serializable type 'object'",
+      messageFormat: "Property '{0}' on '{1}' uses type 'object' which cannot be serialized for AOT. Use a concrete type instead.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "Properties of type 'object' require runtime reflection for serialization, which is not compatible with AOT."
+  );
+
+  /// <summary>
+  /// WHIZ061: Error - Property uses non-serializable type 'dynamic'.
+  /// </summary>
+  /// <docs>diagnostics/whiz061</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/SerializablePropertyAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor NonSerializablePropertyDynamic = new(
+      id: "WHIZ061",
+      title: "Property uses non-serializable type 'dynamic'",
+      messageFormat: "Property '{0}' on '{1}' uses type 'dynamic' which cannot be serialized for AOT. Use a concrete type instead.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "Properties of type 'dynamic' require runtime reflection for serialization."
+  );
+
+  /// <summary>
+  /// WHIZ062: Error - Property uses non-serializable interface type.
+  /// </summary>
+  /// <docs>diagnostics/whiz062</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/SerializablePropertyAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor NonSerializablePropertyInterface = new(
+      id: "WHIZ062",
+      title: "Property uses non-serializable interface type",
+      messageFormat: "Property '{0}' on '{1}' uses interface type '{2}' which cannot be serialized for AOT. Use a concrete type or generic collection instead.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "Interface properties (without generic parameters) require runtime type discovery."
+  );
+
+  /// <summary>
+  /// WHIZ063: Error - Nested type contains non-serializable property.
+  /// </summary>
+  /// <docs>diagnostics/whiz063</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/SerializablePropertyAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor NonSerializableNestedProperty = new(
+      id: "WHIZ063",
+      title: "Nested type contains non-serializable property",
+      messageFormat: "Nested type '{0}' (used by '{1}.{2}') contains non-serializable property '{3}' of type '{4}'",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "Nested types used in messages must also have serializable properties."
+  );
+
+  // ========================================
+  // Guid Usage Diagnostics (WHIZ055-057)
   // ========================================
 
   /// <summary>
@@ -516,5 +632,24 @@ public static class DiagnosticDescriptors {
       defaultSeverity: DiagnosticSeverity.Info,
       isEnabledByDefault: true,
       description: "Physical fields were discovered on a perspective model and will be included as database columns."
+  );
+
+  // ========================================
+  // Vector Dependency Diagnostics (WHIZ070)
+  // ========================================
+
+  /// <summary>
+  /// WHIZ070: Error - [VectorField] requires Pgvector.EntityFrameworkCore package.
+  /// </summary>
+  /// <docs>diagnostics/whiz070</docs>
+  /// <tests>tests/Whizbang.Generators.Tests/VectorDependencyAnalyzerTests.cs</tests>
+  public static readonly DiagnosticDescriptor VectorFieldMissingPackage = new(
+      id: "WHIZ070",
+      title: "Missing Pgvector.EntityFrameworkCore Package",
+      messageFormat: "Property '{0}' uses [VectorField] but Pgvector.EntityFrameworkCore package is not referenced. Add <PackageReference Include=\"Pgvector.EntityFrameworkCore\" Version=\"0.3.0\" /> to your .csproj file.",
+      category: CATEGORY,
+      defaultSeverity: DiagnosticSeverity.Error,
+      isEnabledByDefault: true,
+      description: "The [VectorField] attribute requires the Pgvector.EntityFrameworkCore package for vector similarity queries."
   );
 }
