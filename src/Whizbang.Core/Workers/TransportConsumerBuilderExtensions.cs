@@ -2,6 +2,7 @@ using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Options;
+using Whizbang.Core.Messaging;
 using Whizbang.Core.Observability;
 using Whizbang.Core.Perspectives;
 using Whizbang.Core.Routing;
@@ -154,6 +155,9 @@ public static class TransportConsumerBuilderExtensions {
       return options;
     });
 
+    // Register OrderedStreamProcessor (required by TransportConsumerWorker)
+    builder.Services.TryAddSingleton<OrderedStreamProcessor>();
+
     // Register TransportConsumerWorker as hosted service
     builder.Services.AddHostedService<TransportConsumerWorker>();
 
@@ -231,6 +235,9 @@ public static class TransportConsumerBuilderExtensions {
 
       return options;
     });
+
+    // Register OrderedStreamProcessor (required by TransportConsumerWorker)
+    builder.Services.TryAddSingleton<OrderedStreamProcessor>();
 
     // Register TransportConsumerWorker as hosted service
     builder.Services.AddHostedService<TransportConsumerWorker>();
