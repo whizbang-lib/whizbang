@@ -90,6 +90,11 @@ public static class RoutingBuilderExtensions {
     // Register as IOptions<RoutingOptions> using Options.Create (AOT-safe, no reflection)
     builder.Services.AddSingleton(Options.Create(options));
 
+    // Register routing strategies from options for use by TransportPublishStrategy
+    // These transform outbox destinations (e.g., "createtenant" → "inbox")
+    builder.Services.AddSingleton<IOutboxRoutingStrategy>(options.OutboxStrategy);
+    builder.Services.AddSingleton<IInboxRoutingStrategy>(options.InboxStrategy);
+
     // Register EventSubscriptionDiscovery for event namespace discovery
     builder.Services.AddSingleton<EventSubscriptionDiscovery>();
 
