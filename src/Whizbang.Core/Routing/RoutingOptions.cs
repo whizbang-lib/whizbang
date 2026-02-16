@@ -4,15 +4,37 @@ namespace Whizbang.Core.Routing;
 /// Configuration options for message routing strategies.
 /// Supports fluent API for configuring domain ownership and inbox/outbox routing.
 /// </summary>
+/// <remarks>
+/// <para>
+/// Key configuration methods:
+/// - <see cref="OwnDomains"/>: Command namespaces this service handles (filters on shared inbox)
+/// - <see cref="SubscribeTo"/>: Event namespaces to subscribe to (manual override, adds to auto-discovered)
+/// </para>
+/// <para>
+/// Event subscriptions are typically auto-discovered from registered perspectives and receptors.
+/// Use SubscribeTo() for additional manual subscriptions beyond auto-discovery.
+/// </para>
+/// </remarks>
 /// <docs>core-concepts/routing#routing-options</docs>
 public sealed class RoutingOptions {
   private readonly HashSet<string> _ownedDomains = new(StringComparer.OrdinalIgnoreCase);
+  private readonly HashSet<string> _subscribedNamespaces = new(StringComparer.OrdinalIgnoreCase);
 
   /// <summary>
-  /// Gets the domains owned by this service.
-  /// Commands to owned domains are routed to this service's inbox.
+  /// Gets the command namespaces owned by this service.
+  /// Commands matching these namespaces are filtered from the shared inbox to this service.
   /// </summary>
+  /// <example>
+  /// opts.OwnDomains("myapp.users.commands"); // This service handles user commands
+  /// opts.OwnDomains("myapp.users.*"); // Wildcard: handles all myapp.users.* namespaces
+  /// </example>
   public IReadOnlySet<string> OwnedDomains => _ownedDomains;
+
+  /// <summary>
+  /// Gets the event namespaces this service subscribes to (manual subscriptions).
+  /// These are combined with auto-discovered subscriptions from perspectives/receptors.
+  /// </summary>
+  public IReadOnlySet<string> SubscribedNamespaces => _subscribedNamespaces;
 
   /// <summary>
   /// Gets or sets the inbox routing strategy.
@@ -47,18 +69,54 @@ public sealed class RoutingOptions {
   }
 
   /// <summary>
-  /// Declares domains owned by this service.
-  /// Commands to owned domains are routed to this service's inbox.
+  /// Declares command namespaces owned by this service.
+  /// Commands matching these namespaces are filtered from the shared inbox to this service.
   /// </summary>
-  /// <param name="domains">Domain names (case-insensitive).</param>
+  /// <param name="namespaces">Command namespace patterns (case-insensitive).
+  /// Use ".*" suffix for wildcards (e.g., "myapp.users.*" matches all myapp.users.* namespaces).</param>
   /// <returns>This options instance for chaining.</returns>
-  /// <exception cref="ArgumentNullException">Thrown when domains is null.</exception>
-  public RoutingOptions OwnDomains(params string[] domains) {
-    ArgumentNullException.ThrowIfNull(domains);
+  /// <exception cref="ArgumentNullException">Thrown when namespaces is null.</exception>
+  /// <example>
+  /// opts.OwnDomains("myapp.users.commands"); // Exact namespace
+  /// opts.OwnDomains("myapp.users.*"); // Wildcard: all myapp.users.* namespaces
+  /// opts.OwnDomains("myapp.users.commands", "myapp.users.queries"); // Multiple
+  /// </example>
+  public RoutingOptions OwnDomains(params string[] namespaces) {
+    ArgumentNullException.ThrowIfNull(namespaces);
 
-    foreach (var domain in domains) {
-      if (!string.IsNullOrWhiteSpace(domain)) {
-        _ownedDomains.Add(domain);
+    foreach (var ns in namespaces) {
+      if (!string.IsNullOrWhiteSpace(ns)) {
+        _ownedDomains.Add(ns.ToLowerInvariant());
+      }
+    }
+
+    return this;
+  }
+
+  /// <summary>
+  /// Subscribes to event namespaces for receiving events from other services.
+  /// These are combined with auto-discovered subscriptions from perspectives/receptors.
+  /// </summary>
+  /// <param name="namespaces">Event namespace patterns (case-insensitive).
+  /// Use ".*" suffix for wildcards (e.g., "myapp.orders.*" matches all myapp.orders.* namespaces).</param>
+  /// <returns>This options instance for chaining.</returns>
+  /// <exception cref="ArgumentNullException">Thrown when namespaces is null.</exception>
+  /// <remarks>
+  /// Event subscriptions are typically auto-discovered from registered perspectives and receptors.
+  /// Use this method for additional subscriptions beyond auto-discovery, or to ensure
+  /// subscriptions are created before perspective/receptor registration.
+  /// </remarks>
+  /// <example>
+  /// opts.SubscribeTo("myapp.orders.events"); // Subscribe to order events
+  /// opts.SubscribeTo("myapp.orders.*"); // Wildcard: all myapp.orders.* namespaces
+  /// opts.SubscribeTo("myapp.orders.events", "myapp.payments.events"); // Multiple
+  /// </example>
+  public RoutingOptions SubscribeTo(params string[] namespaces) {
+    ArgumentNullException.ThrowIfNull(namespaces);
+
+    foreach (var ns in namespaces) {
+      if (!string.IsNullOrWhiteSpace(ns)) {
+        _subscribedNamespaces.Add(ns.ToLowerInvariant());
       }
     }
 
@@ -167,13 +225,24 @@ public sealed class OutboxRoutingOptionsBuilder {
   }
 
   /// <summary>
-  /// Uses shared topic outbox strategy.
-  /// All events publish to a single shared topic with metadata.
+  /// Uses shared topic outbox strategy for namespace-based routing.
+  /// Commands route to a shared inbox topic with namespace-based routing keys.
+  /// Events route to namespace-specific topics for pub/sub.
   /// </summary>
-  /// <param name="topic">Topic name. Default: "whizbang.events".</param>
+  /// <param name="inboxTopic">The shared inbox topic name for commands. Default: "inbox".</param>
   /// <returns>The parent options for chaining.</returns>
-  public RoutingOptions UseSharedTopic(string topic = "whizbang.events") {
-    _parent.SetOutboxStrategy(new SharedTopicOutboxStrategy(topic));
+  /// <remarks>
+  /// <para>
+  /// Command flow: All commands → shared inbox topic → services filter by owned namespaces.
+  /// Routing key format: "{namespace}.{typename}" (e.g., "myapp.users.commands.createtenantcommand").
+  /// </para>
+  /// <para>
+  /// Event flow: Events → namespace-specific topics → services subscribe to namespaces they care about.
+  /// Topic is the full namespace (e.g., "myapp.users.events"), routing key is the type name.
+  /// </para>
+  /// </remarks>
+  public RoutingOptions UseSharedTopic(string inboxTopic = "inbox") {
+    _parent.SetOutboxStrategy(new SharedTopicOutboxStrategy(inboxTopic));
     return _parent;
   }
 

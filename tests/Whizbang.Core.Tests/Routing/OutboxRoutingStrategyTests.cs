@@ -17,27 +17,27 @@ public class OutboxRoutingStrategyTests {
   #region DomainTopicOutboxStrategy
 
   [Test]
-  public async Task DomainTopicOutboxStrategy_GetDestination_ExtractsDomainFromNamespaceAsync() {
+  public async Task DomainTopicOutboxStrategy_GetDestination_ReturnsFullNamespaceAsTopicAsync() {
     // Arrange
     var strategy = new DomainTopicOutboxStrategy();
-    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders" };
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "outboxtesttypes.orders.events" };
 
-    // Act - Event in MyApp.Orders.Events namespace
+    // Act - Event in OutboxTestTypes.Orders.Events namespace
     var destination = strategy.GetDestination(
       typeof(OutboxTestTypes.Orders.Events.OrderCreated),
       ownedDomains,
       MessageKind.Event
     );
 
-    // Assert - Domain extracted from namespace
-    await Assert.That(destination.Address).IsEqualTo("orders");
+    // Assert - Topic is full namespace in lowercase
+    await Assert.That(destination.Address).IsEqualTo("outboxtesttypes.orders.events");
   }
 
   [Test]
   public async Task DomainTopicOutboxStrategy_GetDestination_SetsRoutingKeyFromTypeNameAsync() {
     // Arrange
     var strategy = new DomainTopicOutboxStrategy();
-    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders" };
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "outboxtesttypes.orders.events" };
 
     // Act
     var destination = strategy.GetDestination(
@@ -56,7 +56,7 @@ public class OutboxRoutingStrategyTests {
     var strategy = new DomainTopicOutboxStrategy(new NamespaceRoutingStrategy(
       type => "custom-domain"
     ));
-    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders" };
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "outboxtesttypes.orders.events" };
 
     // Act
     var destination = strategy.GetDestination(
@@ -86,7 +86,7 @@ public class OutboxRoutingStrategyTests {
   public async Task DomainTopicOutboxStrategy_GetDestination_NullMessageType_ThrowsArgumentNullExceptionAsync() {
     // Arrange
     var strategy = new DomainTopicOutboxStrategy();
-    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders" };
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "outboxtesttypes.orders.events" };
 
     // Act & Assert
     await Assert.That(() => strategy.GetDestination(
@@ -98,47 +98,85 @@ public class OutboxRoutingStrategyTests {
 
   #endregion
 
-  #region SharedTopicOutboxStrategy
+  #region SharedTopicOutboxStrategy - Command Routing
 
   [Test]
-  public async Task SharedTopicOutboxStrategy_GetDestination_ReturnsDefaultTopicAsync() {
+  public async Task SharedTopicOutboxStrategy_Command_RoutesToInboxTopicAsync() {
     // Arrange
     var strategy = new SharedTopicOutboxStrategy();
-    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders" };
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "outboxtesttypes.orders.commands" };
 
-    // Act
+    // Act - Command goes to shared inbox
     var destination = strategy.GetDestination(
       typeof(OutboxTestTypes.Orders.Events.OrderCreated),
       ownedDomains,
-      MessageKind.Event
+      MessageKind.Command
     );
 
-    // Assert - All events go to shared topic
-    await Assert.That(destination.Address).IsEqualTo("whizbang.events");
+    // Assert - Commands go to shared inbox topic
+    await Assert.That(destination.Address).IsEqualTo("inbox");
   }
 
   [Test]
-  public async Task SharedTopicOutboxStrategy_GetDestination_WithCustomTopic_ReturnsCustomTopicAsync() {
+  public async Task SharedTopicOutboxStrategy_Command_SetsNamespaceBasedRoutingKeyAsync() {
     // Arrange
-    var strategy = new SharedTopicOutboxStrategy("my.events");
-    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders" };
+    var strategy = new SharedTopicOutboxStrategy();
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "outboxtesttypes.orders.commands" };
 
     // Act
     var destination = strategy.GetDestination(
       typeof(OutboxTestTypes.Orders.Events.OrderCreated),
       ownedDomains,
-      MessageKind.Event
+      MessageKind.Command
+    );
+
+    // Assert - Routing key is namespace.typename for command filtering
+    await Assert.That(destination.RoutingKey).IsEqualTo("outboxtesttypes.orders.events.ordercreated");
+  }
+
+  [Test]
+  public async Task SharedTopicOutboxStrategy_Command_WithCustomInboxTopic_UsesCustomTopicAsync() {
+    // Arrange
+    var strategy = new SharedTopicOutboxStrategy("my-inbox");
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "outboxtesttypes.orders.commands" };
+
+    // Act
+    var destination = strategy.GetDestination(
+      typeof(OutboxTestTypes.Orders.Events.OrderCreated),
+      ownedDomains,
+      MessageKind.Command
     );
 
     // Assert
-    await Assert.That(destination.Address).IsEqualTo("my.events");
+    await Assert.That(destination.Address).IsEqualTo("my-inbox");
+  }
+
+  #endregion
+
+  #region SharedTopicOutboxStrategy - Event Routing
+
+  [Test]
+  public async Task SharedTopicOutboxStrategy_Event_RoutesToNamespaceTopicAsync() {
+    // Arrange
+    var strategy = new SharedTopicOutboxStrategy();
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "outboxtesttypes.orders.events" };
+
+    // Act - Event goes to namespace topic
+    var destination = strategy.GetDestination(
+      typeof(OutboxTestTypes.Orders.Events.OrderCreated),
+      ownedDomains,
+      MessageKind.Event
+    );
+
+    // Assert - Events go to namespace-specific topic
+    await Assert.That(destination.Address).IsEqualTo("outboxtesttypes.orders.events");
   }
 
   [Test]
-  public async Task SharedTopicOutboxStrategy_GetDestination_SetsCompoundRoutingKeyAsync() {
+  public async Task SharedTopicOutboxStrategy_Event_SetsTypeNameRoutingKeyAsync() {
     // Arrange
     var strategy = new SharedTopicOutboxStrategy();
-    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders" };
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "outboxtesttypes.orders.events" };
 
     // Act
     var destination = strategy.GetDestination(
@@ -147,15 +185,15 @@ public class OutboxRoutingStrategyTests {
       MessageKind.Event
     );
 
-    // Assert - Routing key is domain.typename
-    await Assert.That(destination.RoutingKey).IsEqualTo("orders.ordercreated");
+    // Assert - Routing key is just the type name for events
+    await Assert.That(destination.RoutingKey).IsEqualTo("ordercreated");
   }
 
   [Test]
-  public async Task SharedTopicOutboxStrategy_GetDestination_IncludesDomainInMetadataAsync() {
+  public async Task SharedTopicOutboxStrategy_Event_IncludesNamespaceInMetadataAsync() {
     // Arrange
     var strategy = new SharedTopicOutboxStrategy();
-    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders" };
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "outboxtesttypes.orders.events" };
 
     // Act
     var destination = strategy.GetDestination(
@@ -164,10 +202,32 @@ public class OutboxRoutingStrategyTests {
       MessageKind.Event
     );
 
-    // Assert - Metadata includes domain for filtering
+    // Assert - Metadata includes namespace for filtering
     await Assert.That(destination.Metadata is not null).IsTrue();
-    await Assert.That(destination.Metadata!.ContainsKey("Domain")).IsTrue();
+    await Assert.That(destination.Metadata!.ContainsKey("Namespace")).IsTrue();
   }
+
+  [Test]
+  public async Task SharedTopicOutboxStrategy_Event_IncludesKindInMetadataAsync() {
+    // Arrange
+    var strategy = new SharedTopicOutboxStrategy();
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "outboxtesttypes.orders.events" };
+
+    // Act
+    var destination = strategy.GetDestination(
+      typeof(OutboxTestTypes.Orders.Events.OrderCreated),
+      ownedDomains,
+      MessageKind.Event
+    );
+
+    // Assert - Metadata includes kind
+    await Assert.That(destination.Metadata is not null).IsTrue();
+    await Assert.That(destination.Metadata!.ContainsKey("Kind")).IsTrue();
+  }
+
+  #endregion
+
+  #region SharedTopicOutboxStrategy - Validation
 
   [Test]
   public async Task SharedTopicOutboxStrategy_GetDestination_NullOwnedDomains_ThrowsArgumentNullExceptionAsync() {
@@ -182,15 +242,35 @@ public class OutboxRoutingStrategyTests {
     )).Throws<ArgumentNullException>();
   }
 
+  [Test]
+  public async Task SharedTopicOutboxStrategy_GetDestination_NullMessageType_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var strategy = new SharedTopicOutboxStrategy();
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "outboxtesttypes.orders.events" };
+
+    // Act & Assert
+    await Assert.That(() => strategy.GetDestination(
+      null!,
+      ownedDomains,
+      MessageKind.Event
+    )).Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task SharedTopicOutboxStrategy_DefaultInboxTopic_ReturnsInboxAsync() {
+    // Assert - Static property returns default inbox topic
+    await Assert.That(SharedTopicOutboxStrategy.DefaultInboxTopic).IsEqualTo("inbox");
+  }
+
   #endregion
 
   #region Integration with NamespaceRoutingStrategy
 
   [Test]
-  public async Task DomainTopicOutboxStrategy_WithFlatNamespace_ExtractsDomainFromTypeNameAsync() {
+  public async Task DomainTopicOutboxStrategy_ContractsNamespace_ReturnsFullNamespaceAsync() {
     // Arrange
     var strategy = new DomainTopicOutboxStrategy();
-    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "orders" };
+    var ownedDomains = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "outboxtesttypes.contracts.events" };
 
     // Act - Type in flat namespace (Contracts.Events)
     var destination = strategy.GetDestination(
@@ -199,8 +279,8 @@ public class OutboxRoutingStrategyTests {
       MessageKind.Event
     );
 
-    // Assert - Domain extracted from type name since namespace is generic
-    await Assert.That(destination.Address).IsEqualTo("product");
+    // Assert - Returns full namespace as topic
+    await Assert.That(destination.Address).IsEqualTo("outboxtesttypes.contracts.events");
   }
 
   #endregion

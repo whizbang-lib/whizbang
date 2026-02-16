@@ -4,34 +4,55 @@ using Whizbang.Core.Transports;
 namespace Whizbang.Core.Routing;
 
 /// <summary>
-/// All events publish to a single shared topic with metadata.
-/// Alternative strategy - single topic for all events.
+/// Unified outbox routing strategy for namespace-based message routing.
 /// </summary>
+/// <remarks>
+/// <para>
+/// Commands are routed to a shared "inbox" topic with namespace-based routing keys
+/// for broker-side filtering. Routing key format: "{namespace}.{typename}".
+/// Example: "myapp.users.commands.createtenantcommand"
+/// </para>
+/// <para>
+/// Events are routed to namespace-specific topics for direct subscription.
+/// Topic is the full namespace, routing key is the type name.
+/// Example: Topic "myapp.users.events", routing key "tenantcreatedevent"
+/// </para>
+/// </remarks>
 /// <docs>core-concepts/routing#shared-topic-outbox</docs>
 public sealed class SharedTopicOutboxStrategy : IOutboxRoutingStrategy {
-  private readonly string _outboxTopic;
+  /// <summary>
+  /// The default inbox topic name for commands.
+  /// </summary>
+  private const string DEFAULT_INBOX_TOPIC = "inbox";
+
+  /// <summary>
+  /// Gets the default inbox topic name for commands.
+  /// </summary>
+  public static string DefaultInboxTopic => DEFAULT_INBOX_TOPIC;
+
+  private readonly string _inboxTopic;
   private readonly ITopicRoutingStrategy _topicResolver;
 
   /// <summary>
   /// Creates a shared topic outbox strategy with defaults.
   /// </summary>
   public SharedTopicOutboxStrategy()
-      : this("whizbang.events", new NamespaceRoutingStrategy()) { }
+      : this(DEFAULT_INBOX_TOPIC, new NamespaceRoutingStrategy()) { }
 
   /// <summary>
-  /// Creates a shared topic outbox strategy with custom topic name.
+  /// Creates a shared topic outbox strategy with custom inbox topic name.
   /// </summary>
-  /// <param name="outboxTopic">The shared outbox topic name.</param>
-  public SharedTopicOutboxStrategy(string outboxTopic)
-      : this(outboxTopic, new NamespaceRoutingStrategy()) { }
+  /// <param name="inboxTopic">The shared inbox topic name for commands.</param>
+  public SharedTopicOutboxStrategy(string inboxTopic)
+      : this(inboxTopic, new NamespaceRoutingStrategy()) { }
 
   /// <summary>
-  /// Creates a shared topic outbox strategy with custom topic and resolver.
+  /// Creates a shared topic outbox strategy with custom inbox topic and resolver.
   /// </summary>
-  /// <param name="outboxTopic">The shared outbox topic name.</param>
-  /// <param name="topicResolver">Strategy for resolving domain from message type.</param>
-  public SharedTopicOutboxStrategy(string outboxTopic, ITopicRoutingStrategy topicResolver) {
-    _outboxTopic = outboxTopic ?? throw new ArgumentNullException(nameof(outboxTopic));
+  /// <param name="inboxTopic">The shared inbox topic name for commands.</param>
+  /// <param name="topicResolver">Strategy for resolving namespace from message type.</param>
+  public SharedTopicOutboxStrategy(string inboxTopic, ITopicRoutingStrategy topicResolver) {
+    _inboxTopic = inboxTopic ?? throw new ArgumentNullException(nameof(inboxTopic));
     _topicResolver = topicResolver ?? throw new ArgumentNullException(nameof(topicResolver));
   }
 
@@ -44,23 +65,39 @@ public sealed class SharedTopicOutboxStrategy : IOutboxRoutingStrategy {
     ArgumentNullException.ThrowIfNull(messageType);
     ArgumentNullException.ThrowIfNull(ownedDomains);
 
-    // Extract domain from message type for routing and metadata
-    var domain = _topicResolver.ResolveTopic(messageType, "", null);
+    // Get the full namespace from the message type
+    var ns = _topicResolver.ResolveTopic(messageType, "", null);
+    var typeName = messageType.Name.ToLowerInvariant();
 
-    // Compound routing key: domain.typename
-    var routingKey = $"{domain}.{messageType.Name.ToLowerInvariant()}";
+    if (kind == MessageKind.Command) {
+      // Commands go to shared inbox topic with namespace-based routing key
+      // This allows services to filter by owned command namespaces
+      var routingKey = $"{ns}.{typeName}";  // "myapp.users.commands.createtenantcommand"
 
-    // Include domain in metadata for filtering
-    // Use JsonDocument.Parse for AOT-safe JSON element creation
-    var metadata = new Dictionary<string, JsonElement> {
-      ["Domain"] = _createStringElement(domain)
-    };
+      return new TransportDestination(
+        Address: _inboxTopic,
+        RoutingKey: routingKey,
+        Metadata: _createMetadata(ns, kind)
+      );
+    }
 
+    // Events go to namespace-specific topic
+    // Subscribers bind directly to namespace topics they care about
     return new TransportDestination(
-      Address: _outboxTopic,
-      RoutingKey: routingKey,
-      Metadata: metadata
+      Address: ns,           // "myapp.users.events"
+      RoutingKey: typeName,  // "tenantcreatedevent"
+      Metadata: _createMetadata(ns, kind)
     );
+  }
+
+  /// <summary>
+  /// Creates metadata for transport-specific features.
+  /// </summary>
+  private static Dictionary<string, JsonElement> _createMetadata(string ns, MessageKind kind) {
+    return new Dictionary<string, JsonElement> {
+      ["Namespace"] = _createStringElement(ns),
+      ["Kind"] = _createStringElement(kind.ToString())
+    };
   }
 
   /// <summary>

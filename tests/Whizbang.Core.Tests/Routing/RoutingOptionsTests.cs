@@ -227,20 +227,37 @@ public class RoutingOptionsTests {
   }
 
   [Test]
-  public async Task Outbox_UseSharedTopic_WithCustomTopic_SetsCustomTopicAsync() {
+  public async Task Outbox_UseSharedTopic_WithCustomInboxTopic_RoutesCommandsToCustomInboxAsync() {
     // Arrange
     var options = new RoutingOptions();
 
     // Act
-    options.Outbox.UseSharedTopic("my.custom.events");
+    options.Outbox.UseSharedTopic("my.custom.inbox");
 
-    // Assert
+    // Assert - Commands route to the custom inbox topic
     var destination = options.OutboxStrategy!.GetDestination(
       typeof(OutboxTestTypes.Orders.Events.OrderCreated),
-      new HashSet<string> { "orders" },
+      new HashSet<string> { "outboxtesttypes.orders.commands" },
+      MessageKind.Command
+    );
+    await Assert.That(destination.Address).IsEqualTo("my.custom.inbox");
+  }
+
+  [Test]
+  public async Task Outbox_UseSharedTopic_EventsRouteToNamespaceTopicsAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    options.Outbox.UseSharedTopic("my.custom.inbox");
+
+    // Assert - Events route to namespace-specific topics, not the inbox
+    var destination = options.OutboxStrategy!.GetDestination(
+      typeof(OutboxTestTypes.Orders.Events.OrderCreated),
+      new HashSet<string> { "outboxtesttypes.orders.events" },
       MessageKind.Event
     );
-    await Assert.That(destination.Address).IsEqualTo("my.custom.events");
+    await Assert.That(destination.Address).IsEqualTo("outboxtesttypes.orders.events");
   }
 
   [Test]
