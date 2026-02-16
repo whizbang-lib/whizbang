@@ -1,4 +1,6 @@
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
+using Whizbang.Core.Observability;
 
 namespace Whizbang.Core;
 
@@ -54,6 +56,12 @@ public static class ServiceCollectionExtensions {
     services.AddSingleton<Messaging.IEnvelopeSerializer>(sp => {
       var jsonOptions = sp.GetService<System.Text.Json.JsonSerializerOptions>();
       return new Messaging.EnvelopeSerializer(jsonOptions);
+    });
+
+    // Register IServiceInstanceProvider - use TryAdd to allow overrides
+    services.TryAddSingleton<IServiceInstanceProvider>(sp => {
+      var configuration = sp.GetService<Microsoft.Extensions.Configuration.IConfiguration>();
+      return new ServiceInstanceProvider(configuration);
     });
 
     // FUTURE: Register generated services once available in consuming projects

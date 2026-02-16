@@ -202,12 +202,12 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       var inventoryDbContext = initScope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
       var logger = initScope.ServiceProvider.GetRequiredService<ILogger<ServiceBusIntegrationFixture>>();
 
-      await ECommerce.InventoryWorker.Generated.PerspectiveRegistrationExtensions.RegisterPerspectiveAssociationsAsync(
+      await ECommerce.InventoryWorker.Generated.EFCorePerspectiveAssociationExtensions.RegisterPerspectiveAssociationsAsync(
         inventoryDbContext,
-        schema: "inventory",
-        serviceName: "ECommerce.InventoryWorker",
-        logger: logger,
-        cancellationToken: cancellationToken
+        "inventory",
+        "ECommerce.InventoryWorker",
+        logger,
+        cancellationToken
       );
 
       Console.WriteLine("[ServiceBusFixture] InventoryWorker message associations registered (inventory schema)");
@@ -216,12 +216,12 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
       var bffDbContext = initScope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
       var logger = initScope.ServiceProvider.GetRequiredService<ILogger<ServiceBusIntegrationFixture>>();
 
-      await ECommerce.BFF.API.Generated.PerspectiveRegistrationExtensions.RegisterPerspectiveAssociationsAsync(
+      await ECommerce.BFF.API.Generated.EFCorePerspectiveAssociationExtensions.RegisterPerspectiveAssociationsAsync(
         bffDbContext,
-        schema: "bff",
-        serviceName: "ECommerce.BFF.API",
-        logger: logger,
-        cancellationToken: cancellationToken
+        "bff",
+        "ECommerce.BFF.API",
+        logger,
+        cancellationToken
       );
 
       Console.WriteLine("[ServiceBusFixture] BFF message associations registered (bff schema)");
@@ -376,6 +376,11 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
     builder.Services.AddDbContext<ECommerce.InventoryWorker.InventoryDbContext>(options => {
       options.UseNpgsql(inventoryDataSource);
     });
+
+    // CRITICAL: Register IDatabaseReadinessCheck that always returns true
+    // The fixture ensures the database schema is created before starting hosts,
+    // and PostgresDatabaseReadinessCheck checks for tables in 'public' schema but we use named schemas.
+    builder.Services.AddSingleton<IDatabaseReadinessCheck>(sp => new DefaultDatabaseReadinessCheck());
 
     // Register Whizbang with EFCore infrastructure
     _ = builder.Services
@@ -546,6 +551,11 @@ public sealed class ServiceBusIntegrationFixture : IAsyncDisposable {
 
     builder.Services.AddDbContext<ECommerce.BFF.API.BffDbContext>(options =>
       options.UseNpgsql(bffDataSource));
+
+    // CRITICAL: Register IDatabaseReadinessCheck that always returns true
+    // The fixture ensures the database schema is created before starting hosts,
+    // and PostgresDatabaseReadinessCheck checks for tables in 'public' schema but we use named schemas.
+    builder.Services.AddSingleton<IDatabaseReadinessCheck>(sp => new DefaultDatabaseReadinessCheck());
 
     // Register Whizbang with EFCore infrastructure
     _ = builder.Services

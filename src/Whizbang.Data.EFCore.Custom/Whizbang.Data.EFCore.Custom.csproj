@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <IsPackable>false</IsPackable>
+    <IsPackable>true</IsPackable>
     <Description>Base Entity Framework Core abstractions and interfaces for building custom database providers.</Description>
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>

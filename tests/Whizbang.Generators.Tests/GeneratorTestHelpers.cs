@@ -44,6 +44,37 @@ public static class GeneratorTestHelpers {
   }
 
   /// <summary>
+  /// Runs the EFCorePerspectiveConfigurationGenerator with EF Core references.
+  /// Use this when testing scenarios that involve DbContext discovery with [WhizbangDbContext] attribute.
+  /// Returns the generator output for inspection.
+  /// </summary>
+  public static async Task<GeneratorResult> RunEFCoreGeneratorWithEFCoreReferencesAsync(string source) {
+    // Create compilation from source WITH EF Core references
+    var compilation = _createCompilationWithEFCore(source);
+
+    // Create generator driver
+    var generator = new EFCorePerspectiveConfigurationGenerator();
+    var driver = CSharpGeneratorDriver.Create(generator);
+
+    // Run generator
+    driver = (CSharpGeneratorDriver)driver.RunGenerators(compilation);
+
+    // Get results
+    var runResult = driver.GetRunResult();
+
+    return await Task.FromResult(new GeneratorResult {
+      Compilation = compilation,
+      GeneratedSources = runResult.GeneratedTrees
+        .Select(t => new GeneratedSource {
+          HintName = _getHintName(runResult, t),
+          SourceText = t.GetText()
+        })
+        .ToImmutableArray(),
+      Diagnostics = runResult.Diagnostics
+    });
+  }
+
+  /// <summary>
   /// Runs the EFCoreServiceRegistrationGenerator on the provided source code.
   /// Tests attribute-based DbContext discovery and generated registration code.
   /// Returns the generator output for inspection.

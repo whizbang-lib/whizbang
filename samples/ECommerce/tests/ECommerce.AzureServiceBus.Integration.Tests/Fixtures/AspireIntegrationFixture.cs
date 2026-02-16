@@ -167,12 +167,12 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       var inventoryDbContext = initScope.ServiceProvider.GetRequiredService<ECommerce.InventoryWorker.InventoryDbContext>();
       var logger = initScope.ServiceProvider.GetRequiredService<ILogger<AspireIntegrationFixture>>();
 
-      await ECommerce.InventoryWorker.Generated.PerspectiveRegistrationExtensions.RegisterPerspectiveAssociationsAsync(
+      await ECommerce.InventoryWorker.Generated.EFCorePerspectiveAssociationExtensions.RegisterPerspectiveAssociationsAsync(
         inventoryDbContext,
-        schema: "inventory",
-        serviceName: "ECommerce.InventoryWorker",
-        logger: logger,
-        cancellationToken: cancellationToken
+        "inventory",
+        "ECommerce.InventoryWorker",
+        logger,
+        cancellationToken
       );
 
       Console.WriteLine("[AspireFixture] InventoryWorker message associations registered (inventory schema)");
@@ -181,12 +181,12 @@ public sealed class AspireIntegrationFixture : IAsyncDisposable {
       var bffDbContext = initScope.ServiceProvider.GetRequiredService<ECommerce.BFF.API.BffDbContext>();
       var logger = initScope.ServiceProvider.GetRequiredService<ILogger<AspireIntegrationFixture>>();
 
-      await ECommerce.BFF.API.Generated.PerspectiveRegistrationExtensions.RegisterPerspectiveAssociationsAsync(
+      await ECommerce.BFF.API.Generated.EFCorePerspectiveAssociationExtensions.RegisterPerspectiveAssociationsAsync(
         bffDbContext,
-        schema: "bff",
-        serviceName: "ECommerce.BFF.API",
-        logger: logger,
-        cancellationToken: cancellationToken
+        "bff",
+        "ECommerce.BFF.API",
+        logger,
+        cancellationToken
       );
 
       Console.WriteLine("[AspireFixture] BFF message associations registered (bff schema)");

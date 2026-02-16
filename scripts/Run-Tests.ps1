@@ -56,6 +56,14 @@
     duration, a warning is displayed. After 2x this timeout, the test run is terminated.
     Set to 0 to disable hang detection.
 
+.PARAMETER Cleanup
+    Clean up ALL test containers after tests complete, including shared containers
+    (whizbang-test-postgres, whizbang-test-rabbitmq). Default: $true.
+    Use -Cleanup:$false to preserve shared containers for faster subsequent runs.
+
+.PARAMETER CleanupOnly
+    Only clean up test containers without running any tests. Useful for freeing resources.
+
 .PARAMETER ExcludeIntegration
     DEPRECATED: Use -Mode instead. Exclude integration tests from the run.
 
@@ -263,6 +271,9 @@ param(
     })]
     [string]$Tag = "",  # Filter by WhizbangTestTags (e.g., "AzureServiceBus", "Docker", "Messaging")
 
+    [bool]$Cleanup = $true,  # Clean up ALL containers after tests (default: true). Use -Cleanup:$false to preserve shared containers
+    [switch]$CleanupOnly,  # Only clean up containers, don't run tests
+
     # Legacy parameters (deprecated, use -Mode instead)
     [bool]$ExcludeIntegration,
     [switch]$AiMode
@@ -289,6 +300,53 @@ if ($PSBoundParameters.ContainsKey('AiMode') -or $PSBoundParameters.ContainsKey(
 $useAiOutput = $Mode -in @("Ai", "AiUnit", "AiIntegrations")
 $includeIntegrationTests = $Mode -in @("All", "Ai", "Integration", "AiIntegrations")
 $onlyIntegrationTests = $Mode -in @("Integration", "AiIntegrations")
+
+# Handle -CleanupOnly: just clean up containers and exit
+if ($CleanupOnly) {
+    Write-Host "Cleaning up ALL test containers..." -ForegroundColor Yellow
+
+    # Stop and remove all test containers including shared ones
+    $allTestContainers = @(
+        "whizbang-test-postgres",
+        "whizbang-test-rabbitmq"
+    )
+
+    foreach ($name in $allTestContainers) {
+        $container = docker ps -a --filter "name=$name" --format "{{.ID}}" 2>$null
+        if ($container) {
+            Write-Host "  Stopping $name..." -ForegroundColor Gray
+            docker stop $container 2>&1 | Out-Null
+            docker rm $container 2>&1 | Out-Null
+        }
+    }
+
+    # Clean up ServiceBus emulator containers
+    $serviceBusContainers = docker ps -a --filter "name=servicebus-emulator" --format "{{.ID}}" 2>$null
+    if ($serviceBusContainers) {
+        Write-Host "  Stopping ServiceBus emulator containers..." -ForegroundColor Gray
+        $serviceBusContainers | ForEach-Object { docker stop $_ 2>&1 | Out-Null; docker rm $_ 2>&1 | Out-Null }
+    }
+
+    # Clean up SQL Server containers for ServiceBus
+    $mssqlContainers = docker ps -a --filter "name=mssql-servicebus" --format "{{.ID}}" 2>$null
+    if ($mssqlContainers) {
+        Write-Host "  Stopping SQL Server containers..." -ForegroundColor Gray
+        $mssqlContainers | ForEach-Object { docker stop $_ 2>&1 | Out-Null; docker rm $_ 2>&1 | Out-Null }
+    }
+
+    # Clean up Testcontainers ryuk
+    $ryukContainers = docker ps -a --filter "ancestor=testcontainers/ryuk" --format "{{.ID}}" 2>$null
+    if ($ryukContainers) {
+        $ryukContainers | ForEach-Object { docker stop $_ 2>&1 | Out-Null; docker rm $_ 2>&1 | Out-Null }
+    }
+
+    # Prune unused networks and volumes
+    docker network prune -f 2>&1 | Out-Null
+    docker volume prune -f 2>&1 | Out-Null
+
+    Write-Host "Container cleanup complete." -ForegroundColor Green
+    exit 0
+}
 
 # Navigate to repo root
 $repoRoot = Split-Path -Parent $PSScriptRoot
@@ -383,8 +441,9 @@ if ($includeIntegrationTests -or $onlyIntegrationTests) {
         $ryukContainers | ForEach-Object { docker stop $_ 2>&1 | Out-Null; docker rm $_ 2>&1 | Out-Null }
     }
 
-    # Prune stale Docker networks (non-interactive)
+    # Prune stale Docker networks and volumes (non-interactive)
     docker network prune -f 2>&1 | Out-Null
+    docker volume prune -f 2>&1 | Out-Null
 
     if (-not $useAiOutput) {
         Write-Host "Container cleanup complete." -ForegroundColor Green
@@ -1522,17 +1581,15 @@ try {
 } finally {
     # Clean up test containers after test run completes (especially important after fail-fast)
     # This ensures containers don't hang around after abrupt test termination
-    if ($includeIntegrationTests -or $onlyIntegrationTests -or $failFastTriggered) {
+    if ($includeIntegrationTests -or $onlyIntegrationTests -or $failFastTriggered -or $Cleanup) {
         if (-not $useAiOutput) {
             Write-Host ""
             Write-Host "Cleaning up test containers..." -ForegroundColor Yellow
         }
 
         # Stop and remove all testcontainers (postgres, servicebus, etc.)
-        # NOTE: We preserve whizbang-test-rabbitmq as it's designed to persist across runs
         # Use image-based filtering to catch containers that may have random names
         $testImages = @(
-            "postgres:*",
             "mcr.microsoft.com/azure-messaging/servicebus-emulator:*",
             "mcr.microsoft.com/mssql/server:*",
             "testcontainers/ryuk:*"
@@ -1548,18 +1605,56 @@ try {
             }
         }
 
-        # Clean up RabbitMQ containers by image, but preserve the shared one
-        $rabbitContainers = docker ps -a --filter "ancestor=rabbitmq:3.13-management-alpine" --format "{{.ID}} {{.Names}}" 2>$null | Where-Object { $_ -notmatch "whizbang-test-rabbitmq" } | ForEach-Object { ($_ -split " ")[0] }
-        if ($rabbitContainers) {
-            $rabbitContainers | ForEach-Object {
-                docker stop $_ 2>&1 | Out-Null
-                docker rm $_ 2>&1 | Out-Null
+        # Clean up postgres containers - include shared container if $Cleanup is true
+        if ($Cleanup) {
+            $postgresContainers = docker ps -a --filter "ancestor=postgres" --format "{{.ID}}" 2>$null
+            if ($postgresContainers) {
+                $postgresContainers | ForEach-Object {
+                    docker stop $_ 2>&1 | Out-Null
+                    docker rm $_ 2>&1 | Out-Null
+                }
+            }
+            # Also catch pgvector images
+            $pgvectorContainers = docker ps -a --filter "ancestor=pgvector/pgvector" --format "{{.ID}}" 2>$null
+            if ($pgvectorContainers) {
+                $pgvectorContainers | ForEach-Object {
+                    docker stop $_ 2>&1 | Out-Null
+                    docker rm $_ 2>&1 | Out-Null
+                }
+            }
+        } else {
+            # Preserve whizbang-test-postgres
+            $postgresContainers = docker ps -a --filter "ancestor=postgres" --format "{{.ID}} {{.Names}}" 2>$null | Where-Object { $_ -notmatch "whizbang-test-postgres" } | ForEach-Object { ($_ -split " ")[0] }
+            if ($postgresContainers) {
+                $postgresContainers | ForEach-Object {
+                    docker stop $_ 2>&1 | Out-Null
+                    docker rm $_ 2>&1 | Out-Null
+                }
+            }
+        }
+
+        # Clean up RabbitMQ containers - include shared container if $Cleanup is true
+        if ($Cleanup) {
+            $rabbitContainers = docker ps -a --filter "ancestor=rabbitmq:3.13-management-alpine" --format "{{.ID}}" 2>$null
+            if ($rabbitContainers) {
+                $rabbitContainers | ForEach-Object {
+                    docker stop $_ 2>&1 | Out-Null
+                    docker rm $_ 2>&1 | Out-Null
+                }
+            }
+        } else {
+            # Preserve whizbang-test-rabbitmq
+            $rabbitContainers = docker ps -a --filter "ancestor=rabbitmq:3.13-management-alpine" --format "{{.ID}} {{.Names}}" 2>$null | Where-Object { $_ -notmatch "whizbang-test-rabbitmq" } | ForEach-Object { ($_ -split " ")[0] }
+            if ($rabbitContainers) {
+                $rabbitContainers | ForEach-Object {
+                    docker stop $_ 2>&1 | Out-Null
+                    docker rm $_ 2>&1 | Out-Null
+                }
             }
         }
 
         # Also clean up by name pattern for any containers that might have escaped image filtering
-        # NOTE: Exclude whizbang-test-rabbitmq from rabbitmq cleanup
-        $namePatterns = @("postgres", "servicebus-emulator", "mssql-servicebus")
+        $namePatterns = @("servicebus-emulator", "mssql-servicebus")
         foreach ($pattern in $namePatterns) {
             $containers = docker ps -a --filter "name=$pattern" --format "{{.ID}}" 2>$null
             if ($containers) {
@@ -1570,13 +1665,18 @@ try {
             }
         }
 
-        # Clean up other rabbitmq containers but preserve the shared one
-        $otherRabbitContainers = docker ps -a --filter "name=rabbitmq" --format "{{.ID}} {{.Names}}" 2>$null | Where-Object { $_ -notmatch "whizbang-test-rabbitmq" } | ForEach-Object { ($_ -split " ")[0] }
-        if ($otherRabbitContainers) {
-            $otherRabbitContainers | ForEach-Object {
-                docker stop $_ 2>&1 | Out-Null
-                docker rm $_ 2>&1 | Out-Null
+        # Clean up by name for postgres/rabbitmq based on $Cleanup flag
+        if ($Cleanup) {
+            $sharedContainers = docker ps -a --filter "name=whizbang-test" --format "{{.ID}}" 2>$null
+            if ($sharedContainers) {
+                $sharedContainers | ForEach-Object {
+                    docker stop $_ 2>&1 | Out-Null
+                    docker rm $_ 2>&1 | Out-Null
+                }
             }
+
+            # Prune unused volumes (only when doing full cleanup)
+            docker volume prune -f 2>&1 | Out-Null
         }
 
         if (-not $useAiOutput) {
