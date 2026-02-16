@@ -34,7 +34,7 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
   // ========================================
 
   [Test]
-  public async Task NamespaceRoutingStrategy_HierarchicalNamespace_ExtractsDomainAsync() {
+  public async Task NamespaceRoutingStrategy_HierarchicalNamespace_ReturnsFullNamespaceAsync() {
     // Arrange
     var routingStrategy = new NamespaceRoutingStrategy();
     var messageType = typeof(TestNamespaces.MyApp.Orders.Events.OrderCreated);
@@ -42,12 +42,12 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
     // Act
     var topic = routingStrategy.ResolveTopic(messageType, "");
 
-    // Assert
-    await Assert.That(topic).IsEqualTo("orders");
+    // Assert - Now returns full namespace
+    await Assert.That(topic).IsEqualTo("testnamespaces.myapp.orders.events");
   }
 
   [Test]
-  public async Task NamespaceRoutingStrategy_FlatNamespace_ExtractsFromTypeNameAsync() {
+  public async Task NamespaceRoutingStrategy_CommandNamespace_ReturnsFullNamespaceAsync() {
     // Arrange
     var routingStrategy = new NamespaceRoutingStrategy();
     var messageType = typeof(TestNamespaces.MyApp.Contracts.Commands.CreateOrder);
@@ -55,8 +55,8 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
     // Act
     var topic = routingStrategy.ResolveTopic(messageType, "");
 
-    // Assert
-    await Assert.That(topic).IsEqualTo("order");
+    // Assert - Now returns full namespace
+    await Assert.That(topic).IsEqualTo("testnamespaces.myapp.contracts.commands");
   }
 
   [Test]
@@ -75,7 +75,7 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
   }
 
   [Test]
-  public async Task NamespaceRoutingStrategy_EventsNamespace_StripsCreatedSuffixAsync() {
+  public async Task NamespaceRoutingStrategy_EventsNamespace_ReturnsFullNamespaceAsync() {
     // Arrange
     var routingStrategy = new NamespaceRoutingStrategy();
     var messageType = typeof(TestNamespaces.MyApp.Contracts.Events.OrderCreated);
@@ -83,8 +83,8 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
     // Act
     var topic = routingStrategy.ResolveTopic(messageType, "");
 
-    // Assert
-    await Assert.That(topic).IsEqualTo("order");
+    // Assert - Now returns full namespace
+    await Assert.That(topic).IsEqualTo("testnamespaces.myapp.contracts.events");
   }
 
   [Test]
@@ -98,7 +98,7 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
 
     // Assert
     await Assert.That(topic).IsEqualTo(topic.ToLowerInvariant());
-    await Assert.That(topic).IsEqualTo("orders");
+    await Assert.That(topic).IsEqualTo("testnamespaces.myapp.orders.events");
   }
 
   // ========================================
@@ -117,8 +117,8 @@ public sealed class NamespaceRoutingTransportIntegrationTests(ServiceBusEmulator
     // Act
     var topic = composite.ResolveTopic(messageType, "");
 
-    // Assert
-    await Assert.That(topic).IsEqualTo("orders-01");
+    // Assert - Full namespace + suffix
+    await Assert.That(topic).IsEqualTo("testnamespaces.myapp.orders.events-01");
   }
 
   // ========================================

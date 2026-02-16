@@ -104,8 +104,8 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     // Get topic from strategy
     var topic = routingStrategy.ResolveTopic(messageType, "");
 
-    // Verify topic is correct
-    await Assert.That(topic).IsEqualTo("orders");
+    // Verify topic is correct - now returns full namespace
+    await Assert.That(topic).IsEqualTo("testnamespaces.myapp.orders.events");
 
     // Set up consumer to verify message arrival
     var awaiter = new MessageIdAwaiter();
@@ -147,8 +147,8 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     // Get topic from strategy
     var topic = routingStrategy.ResolveTopic(messageType, "");
 
-    // Verify topic is correct (extracted from type name)
-    await Assert.That(topic).IsEqualTo("order");
+    // Verify topic is correct - now returns full namespace
+    await Assert.That(topic).IsEqualTo("testnamespaces.myapp.contracts.commands");
 
     // Set up consumer
     var awaiter = new MessageIdAwaiter();
@@ -166,7 +166,7 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
       var envelope = _createTestEnvelope();
       await _transport.PublishAsync(envelope, new TransportDestination(topic), cancellationToken: cancellationToken);
 
-      // Assert - Message should arrive at "order" exchange
+      // Assert - Message should arrive at namespace exchange
       try {
         var receivedMessageId = await awaiter.WaitAsync(TimeSpan.FromSeconds(5), cancellationToken);
         await Assert.That(receivedMessageId).IsNotNull();
@@ -193,8 +193,8 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     // Get topic from composite strategy
     var topic = composite.ResolveTopic(messageType, "");
 
-    // Verify topic is correct
-    await Assert.That(topic).IsEqualTo("orders-01");
+    // Verify topic is correct - full namespace with suffix
+    await Assert.That(topic).IsEqualTo("testnamespaces.myapp.orders.events-01");
 
     // Set up consumer
     var awaiter = new MessageIdAwaiter();
@@ -277,11 +277,11 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     // Arrange
     var routingStrategy = new NamespaceRoutingStrategy();
 
-    // Define message types and their expected topics
+    // Define message types and their expected topics - now returns full namespace
     var testCases = new (Type MessageType, string ExpectedTopic)[] {
-      (typeof(TestNamespaces.MyApp.Orders.Events.OrderCreated), "orders"),
-      (typeof(TestNamespaces.MyApp.Contracts.Commands.CreateOrder), "order"),
-      (typeof(TestNamespaces.MyApp.Contracts.Events.OrderCreated), "order")
+      (typeof(TestNamespaces.MyApp.Orders.Events.OrderCreated), "testnamespaces.myapp.orders.events"),
+      (typeof(TestNamespaces.MyApp.Contracts.Commands.CreateOrder), "testnamespaces.myapp.contracts.commands"),
+      (typeof(TestNamespaces.MyApp.Contracts.Events.OrderCreated), "testnamespaces.myapp.contracts.events")
     };
 
     var receivedMessages = new Dictionary<string, TaskCompletionSource<bool>>();
@@ -336,7 +336,7 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
 
   [Test]
   [Timeout(30000)]
-  public async Task PublishAsync_WithEventsNamespace_StripsCreatedSuffixAsync(
+  public async Task PublishAsync_WithEventsNamespace_ReturnsFullNamespaceAsync(
     CancellationToken cancellationToken
   ) {
     // Arrange
@@ -346,8 +346,8 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     // Get topic from strategy
     var topic = routingStrategy.ResolveTopic(messageType, "");
 
-    // Verify topic is correct (strips "Created" suffix)
-    await Assert.That(topic).IsEqualTo("order");
+    // Verify topic is correct - now returns full namespace
+    await Assert.That(topic).IsEqualTo("testnamespaces.myapp.contracts.events");
 
     // Set up consumer
     var awaiter = new MessageIdAwaiter();
@@ -386,9 +386,9 @@ public sealed class NamespaceRoutingTransportIntegrationTests : IAsyncDisposable
     // Act
     var topic = routingStrategy.ResolveTopic(messageType, "");
 
-    // Assert
+    // Assert - now returns full namespace in lowercase
     await Assert.That(topic).IsEqualTo(topic.ToLowerInvariant());
-    await Assert.That(topic).IsEqualTo("orders");
+    await Assert.That(topic).IsEqualTo("testnamespaces.myapp.orders.events");
   }
 
   // ========================================
