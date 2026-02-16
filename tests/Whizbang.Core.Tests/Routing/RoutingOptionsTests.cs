@@ -115,6 +115,303 @@ public class RoutingOptionsTests {
 
   #endregion
 
+  #region OwnNamespaceOf<T>
+
+  [Test]
+  public async Task OwnNamespaceOf_WithValidType_AddsNamespaceAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    options.OwnNamespaceOf<OutboxTestTypes.Orders.Commands.CreateOrder>();
+
+    // Assert
+    await Assert.That(options.OwnedDomains).Contains("outboxtesttypes.orders.commands");
+  }
+
+  [Test]
+  public async Task OwnNamespaceOf_WithMultipleTypes_AddsAllNamespacesAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    options.OwnNamespaceOf<OutboxTestTypes.Orders.Commands.CreateOrder>()
+           .OwnNamespaceOf<OutboxTestTypes.Users.Commands.CreateUser>();
+
+    // Assert
+    await Assert.That(options.OwnedDomains.Count).IsEqualTo(2);
+    await Assert.That(options.OwnedDomains).Contains("outboxtesttypes.orders.commands");
+    await Assert.That(options.OwnedDomains).Contains("outboxtesttypes.users.commands");
+  }
+
+  [Test]
+  public async Task OwnNamespaceOf_ReturnsOptionsForChainingAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    var result = options.OwnNamespaceOf<OutboxTestTypes.Orders.Commands.CreateOrder>();
+
+    // Assert
+    await Assert.That(result).IsSameReferenceAs(options);
+  }
+
+  [Test]
+  public async Task OwnNamespaceOf_WithTypeWithoutNamespace_ThrowsInvalidOperationExceptionAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act & Assert
+    await Assert.That(() => options.OwnNamespaceOf<TypeWithoutNamespace>())
+      .Throws<InvalidOperationException>()
+      .WithMessageContaining("has no namespace");
+  }
+
+  [Test]
+  public async Task OwnNamespaceOf_CanChainWithOwnDomainsAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    options.OwnNamespaceOf<OutboxTestTypes.Orders.Commands.CreateOrder>()
+           .OwnDomains("myapp.legacy.*");
+
+    // Assert
+    await Assert.That(options.OwnedDomains.Count).IsEqualTo(2);
+    await Assert.That(options.OwnedDomains).Contains("outboxtesttypes.orders.commands");
+    await Assert.That(options.OwnedDomains).Contains("myapp.legacy.*");
+  }
+
+  [Test]
+  public async Task OwnNamespaceOf_WithSameNamespaceTwice_DeduplicatesAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act - Both types are in same namespace
+    options.OwnNamespaceOf<OutboxTestTypes.Orders.Commands.CreateOrder>()
+           .OwnNamespaceOf<OutboxTestTypes.Orders.Commands.UpdateOrder>();
+
+    // Assert
+    await Assert.That(options.OwnedDomains.Count).IsEqualTo(1);
+  }
+
+  #endregion
+
+  #region SubscribeTo
+
+  [Test]
+  public async Task SubscribeTo_WithSingleNamespace_AddsNamespaceAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    options.SubscribeTo("myapp.orders.events");
+
+    // Assert
+    await Assert.That(options.SubscribedNamespaces).Contains("myapp.orders.events");
+  }
+
+  [Test]
+  public async Task SubscribeTo_WithMultipleNamespaces_AddsAllNamespacesAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    options.SubscribeTo("myapp.orders.events", "myapp.payments.events", "myapp.users.events");
+
+    // Assert
+    await Assert.That(options.SubscribedNamespaces.Count).IsEqualTo(3);
+    await Assert.That(options.SubscribedNamespaces).Contains("myapp.orders.events");
+    await Assert.That(options.SubscribedNamespaces).Contains("myapp.payments.events");
+    await Assert.That(options.SubscribedNamespaces).Contains("myapp.users.events");
+  }
+
+  [Test]
+  public async Task SubscribeTo_IsCaseInsensitiveAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    options.SubscribeTo("MyApp.Orders.Events", "MYAPP.PAYMENTS.EVENTS");
+
+    // Assert - Should store lowercase and match case-insensitively
+    await Assert.That(options.SubscribedNamespaces.Contains("myapp.orders.events")).IsTrue();
+    await Assert.That(options.SubscribedNamespaces.Contains("MYAPP.ORDERS.EVENTS")).IsTrue();
+  }
+
+  [Test]
+  public async Task SubscribeTo_CalledMultipleTimes_AccumulatesNamespacesAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    options.SubscribeTo("myapp.orders.events");
+    options.SubscribeTo("myapp.payments.events");
+
+    // Assert
+    await Assert.That(options.SubscribedNamespaces.Count).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task SubscribeTo_WithDuplicates_DeduplicatesAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    options.SubscribeTo("myapp.orders.events", "myapp.orders.events", "myapp.payments.events");
+
+    // Assert
+    await Assert.That(options.SubscribedNamespaces.Count).IsEqualTo(2);
+  }
+
+  [Test]
+  public async Task SubscribeTo_ReturnsOptionsForChainingAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    var result = options.SubscribeTo("myapp.orders.events");
+
+    // Assert
+    await Assert.That(result).IsSameReferenceAs(options);
+  }
+
+  [Test]
+  public async Task SubscribeTo_WithNullArray_ThrowsArgumentNullExceptionAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act & Assert
+    await Assert.That(() => options.SubscribeTo(null!))
+      .Throws<ArgumentNullException>();
+  }
+
+  [Test]
+  public async Task SubscribeTo_WithEmptyArray_DoesNothingAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    options.SubscribeTo();
+
+    // Assert
+    await Assert.That(options.SubscribedNamespaces.Count).IsEqualTo(0);
+  }
+
+  [Test]
+  public async Task SubscribeTo_WithWhitespaceOnlyStrings_IgnoresWhitespaceAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    options.SubscribeTo("myapp.orders.events", "  ", "", "\t", "myapp.payments.events");
+
+    // Assert - Only non-whitespace namespaces should be added
+    await Assert.That(options.SubscribedNamespaces.Count).IsEqualTo(2);
+    await Assert.That(options.SubscribedNamespaces).Contains("myapp.orders.events");
+    await Assert.That(options.SubscribedNamespaces).Contains("myapp.payments.events");
+  }
+
+  #endregion
+
+  #region SubscribeToNamespaceOf<T>
+
+  [Test]
+  public async Task SubscribeToNamespaceOf_WithValidType_AddsNamespaceAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    options.SubscribeToNamespaceOf<OutboxTestTypes.Orders.Events.OrderCreated>();
+
+    // Assert
+    await Assert.That(options.SubscribedNamespaces).Contains("outboxtesttypes.orders.events");
+  }
+
+  [Test]
+  public async Task SubscribeToNamespaceOf_WithMultipleTypes_AddsAllNamespacesAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    options.SubscribeToNamespaceOf<OutboxTestTypes.Orders.Events.OrderCreated>()
+           .SubscribeToNamespaceOf<OutboxTestTypes.Users.Events.UserCreated>();
+
+    // Assert
+    await Assert.That(options.SubscribedNamespaces.Count).IsEqualTo(2);
+    await Assert.That(options.SubscribedNamespaces).Contains("outboxtesttypes.orders.events");
+    await Assert.That(options.SubscribedNamespaces).Contains("outboxtesttypes.users.events");
+  }
+
+  [Test]
+  public async Task SubscribeToNamespaceOf_ReturnsOptionsForChainingAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    var result = options.SubscribeToNamespaceOf<OutboxTestTypes.Orders.Events.OrderCreated>();
+
+    // Assert
+    await Assert.That(result).IsSameReferenceAs(options);
+  }
+
+  [Test]
+  public async Task SubscribeToNamespaceOf_WithTypeWithoutNamespace_ThrowsInvalidOperationExceptionAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act & Assert
+    await Assert.That(() => options.SubscribeToNamespaceOf<TypeWithoutNamespace>())
+      .Throws<InvalidOperationException>()
+      .WithMessageContaining("has no namespace");
+  }
+
+  [Test]
+  public async Task SubscribeToNamespaceOf_CanChainWithSubscribeToAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    options.SubscribeToNamespaceOf<OutboxTestTypes.Orders.Events.OrderCreated>()
+           .SubscribeTo("myapp.legacy.events");
+
+    // Assert
+    await Assert.That(options.SubscribedNamespaces.Count).IsEqualTo(2);
+    await Assert.That(options.SubscribedNamespaces).Contains("outboxtesttypes.orders.events");
+    await Assert.That(options.SubscribedNamespaces).Contains("myapp.legacy.events");
+  }
+
+  [Test]
+  public async Task SubscribeToNamespaceOf_WithSameNamespaceTwice_DeduplicatesAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act - Both types are in same namespace
+    options.SubscribeToNamespaceOf<OutboxTestTypes.Orders.Events.OrderCreated>()
+           .SubscribeToNamespaceOf<OutboxTestTypes.Orders.Events.OrderUpdated>();
+
+    // Assert
+    await Assert.That(options.SubscribedNamespaces.Count).IsEqualTo(1);
+  }
+
+  [Test]
+  public async Task SubscribeToNamespaceOf_CanMixWithOwnNamespaceOfAsync() {
+    // Arrange
+    var options = new RoutingOptions();
+
+    // Act
+    options.OwnNamespaceOf<OutboxTestTypes.Orders.Commands.CreateOrder>()
+           .SubscribeToNamespaceOf<OutboxTestTypes.Users.Events.UserCreated>();
+
+    // Assert
+    await Assert.That(options.OwnedDomains.Count).IsEqualTo(1);
+    await Assert.That(options.SubscribedNamespaces.Count).IsEqualTo(1);
+    await Assert.That(options.OwnedDomains).Contains("outboxtesttypes.orders.commands");
+    await Assert.That(options.SubscribedNamespaces).Contains("outboxtesttypes.users.events");
+  }
+
+  #endregion
+
   #region Inbox Strategy
 
   [Test]

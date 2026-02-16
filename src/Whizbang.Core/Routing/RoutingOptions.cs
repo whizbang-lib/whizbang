@@ -94,6 +94,24 @@ public sealed class RoutingOptions {
   }
 
   /// <summary>
+  /// Declares command namespace ownership using a type from that namespace.
+  /// The namespace is extracted from the type at runtime.
+  /// </summary>
+  /// <typeparam name="T">Any type from the command namespace to own.</typeparam>
+  /// <returns>This options instance for chaining.</returns>
+  /// <exception cref="InvalidOperationException">Thrown when the type has no namespace.</exception>
+  /// <example>
+  /// opts.OwnNamespaceOf&lt;CreateUserCommand&gt;(); // Owns "myapp.users.commands"
+  /// </example>
+  /// <docs>core-concepts/routing#own-namespace-of</docs>
+  /// <tests>Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:OwnNamespaceOf</tests>
+  public RoutingOptions OwnNamespaceOf<T>() {
+    var ns = typeof(T).Namespace
+      ?? throw new InvalidOperationException($"Type {typeof(T).Name} has no namespace");
+    return OwnDomains(ns);
+  }
+
+  /// <summary>
   /// Subscribes to event namespaces for receiving events from other services.
   /// These are combined with auto-discovered subscriptions from perspectives/receptors.
   /// </summary>
@@ -121,6 +139,24 @@ public sealed class RoutingOptions {
     }
 
     return this;
+  }
+
+  /// <summary>
+  /// Subscribes to an event namespace using a type from that namespace.
+  /// The namespace is extracted from the type at runtime.
+  /// </summary>
+  /// <typeparam name="T">Any type from the event namespace to subscribe to.</typeparam>
+  /// <returns>This options instance for chaining.</returns>
+  /// <exception cref="InvalidOperationException">Thrown when the type has no namespace.</exception>
+  /// <example>
+  /// opts.SubscribeToNamespaceOf&lt;OrderCreatedEvent&gt;(); // Subscribes to "myapp.orders.events"
+  /// </example>
+  /// <docs>core-concepts/routing#subscribe-to-namespace-of</docs>
+  /// <tests>Whizbang.Core.Tests/Routing/RoutingOptionsTests.cs:SubscribeToNamespaceOf</tests>
+  public RoutingOptions SubscribeToNamespaceOf<T>() {
+    var ns = typeof(T).Namespace
+      ?? throw new InvalidOperationException($"Type {typeof(T).Name} has no namespace");
+    return SubscribeTo(ns);
   }
 
   /// <summary>
